@@ -2,6 +2,7 @@ import { api, type CommandResult, type SessionActivity, type SessionInfo, type S
 
 const MESSAGE_PAGE_SIZE = 100;
 import { normalizeMessages, textMessage } from "../chatMessages";
+import { readChatHistoryCache, mergeChatHistory, writeChatHistoryCache, type RawMessagePage } from "../chatHistoryCache";
 import { applyTranscriptEvent } from "../chatTranscript";
 import { isShellInput } from "../inputModes";
 import { GlobalSessionSocket, SessionSocket, type SessionUiEvent } from "../sessionSocket";
@@ -48,7 +49,8 @@ export class SessionController {
       const buffered: SessionUiEvent[] = [];
       this.socket.connect(session.id, (event) => buffered.push(event));
       const [page, status] = await Promise.all([api.messages(session.id, { limit: MESSAGE_PAGE_SIZE }), api.status(session.id)]);
-      this.setState({ selectedSession: session, messages: normalizeMessages(page.messages), messagePageStart: page.start, messagePageTotal: page.total, isLoadingEarlierMessages: false, status });
+      const history = this.mergeAndCacheHistory(session.id, page);
+      this.setState({ selectedSession: session, messages: normalizeMessages(history.messages), messagePageStart: history.start, messagePageTotal: history.total, isLoadingEarlierMessages: false, status });
       this.applyStatus(status);
       for (const event of buffered) this.applyEvent(event);
       this.socket.setHandler((event) => { this.applyEvent(event); });
@@ -66,10 +68,11 @@ export class SessionController {
     try {
       const page = await api.messages(session.id, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE });
       if (this.getState().selectedSession?.id !== session.id) return;
+      const history = this.mergeAndCacheHistory(session.id, page);
       this.setState({
-        messages: [...normalizeMessages(page.messages), ...this.getState().messages],
-        messagePageStart: page.start,
-        messagePageTotal: page.total,
+        messages: normalizeMessages(history.messages),
+        messagePageStart: history.start,
+        messagePageTotal: history.total,
       });
     } catch (error) {
       this.setState({ error: String(error) });
@@ -140,6 +143,12 @@ export class SessionController {
       this.clearActiveSession();
       this.updateUrl();
     }
+  }
+
+  private mergeAndCacheHistory(sessionId: string, page: RawMessagePage): RawMessagePage {
+    const history = mergeChatHistory(readChatHistoryCache(sessionId), page);
+    writeChatHistoryCache(sessionId, history);
+    return history;
   }
 
   private applyCommandResult(result: CommandResult) {
