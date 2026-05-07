@@ -103,21 +103,22 @@ export class PromptEditor extends LitElement {
           ...(command.description === undefined ? {} : { description: command.description }),
         }));
     } else if (trigger.kind === "file" && this.cwd !== undefined && this.cwd !== "") {
-      const files = await api.files(this.cwd, trigger.query, trigger.fileKind).catch(emptyFileSuggestions);
+      const files = await api.files(this.cwd, trigger.query, trigger.fileKind, trigger.fileMode).catch(emptyFileSuggestions);
       if (version !== this.requestVersion) return;
       this.completions = files
         .slice(0, 12)
-        .map((file) => ({ kind: "file", replaceFrom: trigger.from, replaceTo: trigger.to, insertText: `@${file.path}`, detail: file.kind }));
+        .map((file) => ({ kind: "file", replaceFrom: trigger.from, replaceTo: trigger.to, insertText: `${trigger.fileMode === "path" ? "" : "@"}${file.path}`, detail: file.kind }));
     }
   }
 
-  private currentTrigger(): { kind: "command" | "file"; query: string; from: number; to: number; fileKind?: FileSuggestion["kind"] } | undefined {
+  private currentTrigger(): { kind: "command" | "file"; query: string; from: number; to: number; fileKind?: FileSuggestion["kind"]; fileMode?: "file" | "path" } | undefined {
     const cursor = this.textarea?.selectionStart ?? this.draft.length;
     const beforeCursor = this.draft.slice(0, cursor);
-    if (beforeCursor.endsWith("@ ")) return { kind: "file", query: "", from: beforeCursor.length - 2, to: cursor, fileKind: "untracked" };
 
     const tokenStart = Math.max(beforeCursor.lastIndexOf(" "), beforeCursor.lastIndexOf("\n")) + 1;
     const token = beforeCursor.slice(tokenStart);
+    const beforeToken = beforeCursor.slice(0, tokenStart);
+    if (beforeToken.endsWith("@ ")) return { kind: "file", query: token, from: tokenStart, to: cursor, fileMode: "path" };
     if (token.startsWith("/") && tokenStart === 0) return { kind: "command", query: token.slice(1), from: tokenStart, to: cursor };
     if (token.startsWith("@")) return { kind: "file", query: token.slice(1), from: tokenStart, to: cursor };
     return undefined;
@@ -154,7 +155,8 @@ export class PromptEditor extends LitElement {
   }
 
   private pick(item: CompletionItem) {
-    this.draft = `${this.draft.slice(0, item.replaceFrom)}${item.insertText} ${this.draft.slice(item.replaceTo)}`;
+    const suffix = item.kind === "file" && item.insertText.endsWith("/") ? "" : " ";
+    this.draft = `${this.draft.slice(0, item.replaceFrom)}${item.insertText}${suffix}${this.draft.slice(item.replaceTo)}`;
     if (this.sessionId !== undefined && this.sessionId !== "") saveDraft(this.sessionId, this.draft);
     this.completions = [];
   }

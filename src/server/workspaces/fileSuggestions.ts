@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { ClientFileSuggestion } from "../types.js";
 
@@ -10,6 +12,29 @@ export async function listFileSuggestions(cwd: string, query = "", kind?: Client
   return files
     .filter((file) => !kind || file.kind === kind)
     .filter((file) => !normalizedQuery || file.path.toLowerCase().includes(normalizedQuery))
+    .sort((a, b) => Number(!a.path.endsWith("/")) - Number(!b.path.endsWith("/")) || a.path.localeCompare(b.path))
+    .slice(0, 80);
+}
+
+export async function listPathSuggestions(cwd: string, prefix = ""): Promise<ClientFileSuggestion[]> {
+  const normalizedPrefix = prefix.replace(/^@/, "").replace(/\\/g, "/");
+  const directoryPrefix = normalizedPrefix.endsWith("/") ? normalizedPrefix : dirname(normalizedPrefix) === "." ? "" : `${dirname(normalizedPrefix)}/`;
+  const searchPrefix = normalizedPrefix.endsWith("/") ? "" : basename(normalizedPrefix);
+  const entries = await readdir(join(cwd, directoryPrefix), { withFileTypes: true });
+  const suggestions: ClientFileSuggestion[] = [];
+  for (const entry of entries) {
+    if (!entry.name.toLowerCase().startsWith(searchPrefix.toLowerCase())) continue;
+    let isDirectory = entry.isDirectory();
+    if (!isDirectory && entry.isSymbolicLink()) {
+      try {
+        isDirectory = (await stat(join(cwd, directoryPrefix, entry.name))).isDirectory();
+      } catch {
+        isDirectory = false;
+      }
+    }
+    suggestions.push({ path: `${directoryPrefix}${entry.name}${isDirectory ? "/" : ""}`, kind: "other" });
+  }
+  return suggestions
     .sort((a, b) => Number(!a.path.endsWith("/")) - Number(!b.path.endsWith("/")) || a.path.localeCompare(b.path))
     .slice(0, 80);
 }

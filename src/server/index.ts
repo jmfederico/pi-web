@@ -6,7 +6,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
 import { ProjectService } from "./projects/projectService.js";
 import { WorkspaceService } from "./workspaces/workspaceService.js";
-import { listFileSuggestions } from "./workspaces/fileSuggestions.js";
+import { listFileSuggestions, listPathSuggestions } from "./workspaces/fileSuggestions.js";
 import { registerSessionProxyRoutes } from "./sessiond/sessionProxyRoutes.js";
 
 const app = Fastify({ logger: true });
@@ -36,9 +36,10 @@ app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/workspaces"
 
 registerSessionProxyRoutes(app);
 
-app.get<{ Querystring: { cwd?: string; q?: string; kind?: "tracked" | "untracked" | "other" } }>("/api/files", async (request, reply) => {
+app.get<{ Querystring: { cwd?: string; q?: string; kind?: "tracked" | "untracked" | "other"; mode?: "file" | "path" } }>("/api/files", async (request, reply) => {
   if (request.query.cwd === undefined || request.query.cwd === "") return reply.code(400).send({ error: "cwd query parameter is required" });
   try {
+    if (request.query.mode === "path") return await listPathSuggestions(request.query.cwd, request.query.q ?? "");
     return await listFileSuggestions(request.query.cwd, request.query.q ?? "", request.query.kind);
   } catch (error) {
     return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
