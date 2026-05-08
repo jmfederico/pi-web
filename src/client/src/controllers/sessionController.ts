@@ -17,7 +17,8 @@ export class SessionController {
   connectStatusUpdates() {
     this.globalSocket.connect((event) => {
       if (event.type === "status.update") this.applyStatus(event.status);
-      else this.applyActivity(event.activity);
+      else if (event.type === "activity.update") this.applyActivity(event.activity);
+      else this.applySessionName(event.sessionId, event.name);
     });
   }
 
@@ -220,6 +221,21 @@ export class SessionController {
     });
   }
 
+  private applySessionName(sessionId: string, name: string | undefined) {
+    const rename = (session: SessionInfo) => {
+      if (session.id !== sessionId) return session;
+      const next = { ...session };
+      if (name === undefined || name === "") delete next.name;
+      else next.name = name;
+      return next;
+    };
+    const selectedSession = this.getState().selectedSession;
+    this.setState({
+      sessions: this.getState().sessions.map(rename),
+      selectedSession: selectedSession === undefined ? undefined : rename(selectedSession),
+    });
+  }
+
   private applyEvent(event: SessionUiEvent) {
     const transcript = applyTranscriptEvent(this.getState().messages, event);
     if (transcript) {
@@ -228,6 +244,8 @@ export class SessionController {
       this.applyStatus(event.status);
     } else if (event.type === "activity.update") {
       this.applyActivity(event.activity);
+    } else if (event.type === "session.name") {
+      this.applySessionName(event.sessionId, event.name);
     }
   }
 }

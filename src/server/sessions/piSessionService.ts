@@ -15,6 +15,7 @@ import { BUILTIN_COMMANDS } from "./builtinCommands.js";
 import { SessionCommandService } from "./sessionCommandService.js";
 import { SessionArchiveStore } from "./sessionArchiveStore.js";
 import type { ActiveSession } from "./sessionRuntimeStore.js";
+import { generateShortSessionName } from "./sessionNameGenerator.js";
 
 function noop(): void {
   // Intentionally empty default unsubscribe callback.
@@ -129,6 +130,7 @@ export class PiSessionService {
   async prompt(sessionId: string, text: string, streamingBehavior?: "steer" | "followUp"): Promise<void> {
     await this.assertWritable(sessionId);
     const session = await this.getOrOpen(sessionId);
+    this.maybeGenerateSessionName(session, text);
     const behavior = session.isStreaming || session.isCompacting ? streamingBehavior ?? "followUp" : undefined;
     this.publishActivity(session, session.isCompacting ? "message queued during compaction" : behavior === "steer" ? "steering queued" : behavior === "followUp" ? "message queued" : "prompt accepted", "active");
     void session.prompt(text, behavior === undefined ? undefined : { streamingBehavior: behavior }).catch((error: unknown) => {
@@ -253,6 +255,28 @@ export class PiSessionService {
       this.publishStatus(session);
     });
     this.active.set(session.sessionId, active);
+  }
+
+  private maybeGenerateSessionName(session: AgentSession, firstMessage: string): void {
+    if (session.sessionName !== undefined || session.messages.length !== 0 || session.isStreaming || session.isCompacting) return;
+    const model = session.model;
+    if (model === undefined) return;
+
+    void generateShortSessionName(this.modelRegistry, model, firstMessage).then((name) => {
+      if (name === undefined || session.sessionName !== undefined) return;
+      session.setSessionName(name);
+      this.publishSessionName(session);
+    }).catch(() => {
+      // Session naming is best-effort and must not affect prompt handling.
+    });
+  }
+
+  private publishSessionName(session: AgentSession): void {
+    const event = session.sessionName === undefined
+      ? { type: "session.name", sessionId: session.sessionId } as const
+      : { type: "session.name", sessionId: session.sessionId, name: session.sessionName } as const;
+    this.events.publish(session.sessionId, event);
+    this.events.publishGlobal(event);
   }
 
   private publishHeartbeats(): void {

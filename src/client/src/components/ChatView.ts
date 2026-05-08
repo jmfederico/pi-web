@@ -1,6 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { groupChatMessages, summarizeChatGroup } from "../chatGroups";
+import type { SessionActivity, SessionStatus } from "../api";
 import type { ChatLine, ChatPart } from "./shared";
 import { chatStyles } from "./shared";
 import "./FormattedText";
@@ -29,6 +30,8 @@ export class ChatView extends LitElement {
   @property({ type: Boolean }) loadingMore = false;
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Number }) pendingMessageCount = 0;
+  @property({ attribute: false }) status?: SessionStatus;
+  @property({ attribute: false }) activity?: SessionActivity;
   @property({ attribute: false }) onLoadMore?: () => void;
   @query(".chat") private chat?: HTMLDivElement;
   @state() private pinnedToBottom = true;
@@ -64,6 +67,19 @@ export class ChatView extends LitElement {
             : this.renderMessageGroup(group.messages, group.startIndex))}
           ${this.renderSessionActivity()}
         </div>
+        ${this.renderActivityDock()}
+      </div>
+    `;
+  }
+
+  private renderActivityDock() {
+    const state = this.activityState();
+    if (state === undefined) return null;
+    const active = state !== "idle" || this.activity?.phase === "active";
+    return html`
+      <div class=${active ? "activity-dock active" : "activity-dock"} aria-live="polite">
+        <span class="dot"></span>
+        <span class="activity-text">${this.activityText(state)}</span>
       </div>
     `;
   }
@@ -77,6 +93,23 @@ export class ChatView extends LitElement {
         ${this.pendingMessageCount > 0 ? html`<small>${this.pendingMessageCount} queued ${this.pendingMessageCount === 1 ? "message" : "messages"}</small>` : null}
       </aside>
     `;
+  }
+
+  private activityState(): string | undefined {
+    const status = this.status;
+    if (status === undefined) return this.activity?.label;
+    if (status.isCompacting) return "compacting";
+    if (status.isBashRunning) return "bash";
+    if (status.isStreaming) return "running";
+    if (status.pendingMessageCount > 0) return "queued";
+    return "idle";
+  }
+
+  private activityText(state: string): string {
+    const activity = this.activity;
+    if (activity === undefined) return state;
+    if (state !== "idle" && activity.phase === "idle") return state;
+    return activity.detail !== undefined && activity.detail !== "" ? `${activity.label}: ${activity.detail}` : activity.label;
   }
 
   private renderHistoryIndicator() {

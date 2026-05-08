@@ -114,12 +114,12 @@ export class GlobalSessionSocket {
 
 function isSessionUiEvent(event: unknown): event is SessionUiEvent {
   const type = eventType(event);
-  return ["assistant.delta", "tool.start", "tool.end", "shell.start", "shell.chunk", "shell.end", "agent.start", "agent.end", "message.end", "status.update", "activity.update", "command.output", "session.error", "pi.event"].includes(type);
+  return ["assistant.delta", "tool.start", "tool.end", "shell.start", "shell.chunk", "shell.end", "agent.start", "agent.end", "message.end", "status.update", "activity.update", "command.output", "session.error", "session.name", "pi.event"].includes(type);
 }
 
 function isGlobalSessionEvent(event: unknown): event is GlobalSessionEvent {
   const type = eventType(event);
-  return type === "status.update" || type === "activity.update";
+  return type === "status.update" || type === "activity.update" || type === "session.name";
 }
 
 function eventType(event: unknown): string {

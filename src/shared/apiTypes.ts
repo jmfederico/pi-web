@@ -144,6 +144,7 @@ export type SessionUiEvent =
   | { type: "activity.update"; activity: SessionActivity }
   | { type: "command.output"; level: "info" | "success" | "error"; message: string }
   | { type: "session.error"; message: string }
+  | { type: "session.name"; sessionId: string; name?: string }
   | { type: "pi.event"; eventType: string };
 
-export type GlobalSessionEvent = Extract<SessionUiEvent, { type: "status.update" | "activity.update" }>;
+export type GlobalSessionEvent = Extract<SessionUiEvent, { type: "status.update" | "activity.update" | "session.name" }>;

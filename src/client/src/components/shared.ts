@@ -110,8 +110,13 @@ export const listStyles = css`
 export const chatStyles = css`
   :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: #e6edf3; font: 14px system-ui, sans-serif; }
   .chat-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
-  .chat { height: 100%; min-height: 0; overflow: auto; padding: 16px; box-sizing: border-box; }
+  .chat { height: 100%; min-height: 0; overflow: auto; padding: 16px 16px 64px; box-sizing: border-box; }
   .history-indicator { position: absolute; top: 10px; right: 18px; z-index: 2; display: grid; gap: 2px; max-width: min(320px, calc(100% - 36px)); border: 1px solid #30363d; border-radius: 8px; background: #0d1117dd; color: #8b949e; padding: 6px 8px; font-size: 12px; text-align: right; pointer-events: none; box-shadow: 0 8px 24px #0006; }
+  .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 3; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid #30363d; border-radius: 999px; background: #0d1117e6; color: #8b949e; padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px #0008; backdrop-filter: blur(6px); }
+  .activity-dock.active { border-color: #238636; color: #3fb950; background: #0f1b12ee; }
+  .activity-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .45; flex: 0 0 auto; }
+  .activity-dock.active .dot { animation: pulse 1s ease-in-out infinite; opacity: 1; }
   .msg { margin: 0 0 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #161b22; }
   .msg.user { border-color: #2f81f7; background: #0d2847; }
   .msg.tool { border-color: #6e5200; background: #1f1a10; color: #d29922; }
@@ -143,6 +148,7 @@ export const chatStyles = css`
   summary { cursor: pointer; color: #8b949e; }
   pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
   .shell-output { color: #e6edf3; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+  @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
 `;
 
 export const formattedTextStyles = css`
