@@ -1,4 +1,8 @@
 import { defineConfig } from "vite";
+import { effectivePiWebConfig } from "./src/config";
+
+const { config } = effectivePiWebConfig();
+const apiPort = config.port ?? 8504;
 
 export default defineConfig({
   root: "src/client",
@@ -14,15 +18,17 @@ export default defineConfig({
           if (id.includes("@codemirror/lang-") || id.includes("@lezer/")) return "vendor-editor-languages";
           if (id.includes("@codemirror") || id.includes("codemirror")) return "vendor-editor-core";
           if (id.includes("@xterm")) return "vendor-terminal";
+          return undefined;
         },
       },
     },
   },
   server: {
-    port: 5173,
+    port: 8505,
     strictPort: true,
+    ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),
     proxy: {
-      "/api": { target: "http://localhost:3000", ws: true },
+      "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
     },
   },
 });

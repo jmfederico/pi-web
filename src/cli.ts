@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { defaultPiWebConfigPath, examplePiWebConfig } from "./config.js";
 
 const serviceDir = join(homedir(), ".config", "systemd", "user");
 const sessiondServiceName = "pi-web-sessiond.service";
@@ -11,6 +13,7 @@ const webServiceName = "pi-web.service";
 interface InstallOptions {
   host: string;
   port: string;
+  config?: string;
 }
 
 function run(command: string, args: string[], options: { check?: boolean } = {}): number {
@@ -30,7 +33,7 @@ function hasCommand(command: string): boolean {
 }
 
 function parseInstallOptions(args: string[]): InstallOptions {
-  const options: InstallOptions = { host: "127.0.0.1", port: "3000" };
+  const options: InstallOptions = { host: "127.0.0.1", port: "8504" };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === undefined) continue;
@@ -48,6 +51,13 @@ function parseInstallOptions(args: string[]): InstallOptions {
       i += 1;
     } else if (arg.startsWith("--port=")) {
       options.port = arg.slice("--port=".length);
+    } else if (arg === "--config") {
+      const value = args[i + 1];
+      if (value === undefined) throw new Error("--config requires a value");
+      options.config = value;
+      i += 1;
+    } else if (arg.startsWith("--config=")) {
+      options.config = arg.slice("--config=".length);
     } else if (arg === "--user-systemd") {
       // Accepted for readability; user systemd is the only installer target for now.
     } else {
@@ -81,6 +91,7 @@ WantedBy=default.target
 }
 
 function webUnit(options: InstallOptions): string {
+  const configEnvironment = options.config === undefined ? "" : `Environment="PI_WEB_CONFIG=${systemdEscape(resolve(options.config))}"\n`;
   return `[Unit]
 Description=Pi Web server
 After=${sessiondServiceName}
@@ -88,9 +99,7 @@ Wants=${sessiondServiceName}
 
 [Service]
 Type=simple
-Environment="PI_WEB_HOST=${systemdEscape(options.host)}"
-Environment="PI_WEB_PORT=${systemdEscape(options.port)}"
-ExecStart=/usr/bin/env bash -lc ${shellSingleQuote("exec pi-web-server")}
+${configEnvironment}ExecStart=/usr/bin/env bash -lc ${shellSingleQuote("exec pi-web-server")}
 Restart=on-failure
 RestartSec=2
 
@@ -99,11 +108,22 @@ WantedBy=default.target
 `;
 }
 
+async function writeInitialConfig(options: InstallOptions): Promise<string> {
+  const configPath = options.config === undefined ? defaultPiWebConfigPath() : resolve(options.config);
+  await mkdir(dirname(configPath), { recursive: true });
+  if (!existsSync(configPath)) {
+    await writeFile(configPath, examplePiWebConfig({ host: options.host, port: Number(options.port) }));
+  }
+  return configPath;
+}
+
 async function install(args: string[]): Promise<void> {
   const options = parseInstallOptions(args);
   if (!hasCommand("systemctl")) throw new Error("systemctl was not found in a bash login shell");
   if (!hasCommand("pi-web-server")) throw new Error("pi-web-server was not found in a bash login shell. Is pi-web installed globally?");
   if (!hasCommand("pi-web-sessiond")) throw new Error("pi-web-sessiond was not found in a bash login shell. Is pi-web installed globally?");
+
+  const configPath = await writeInitialConfig(options);
 
   await mkdir(serviceDir, { recursive: true });
   await writeFile(join(serviceDir, sessiondServiceName), sessiondUnit());
@@ -114,6 +134,7 @@ async function install(args: string[]): Promise<void> {
   run("systemctl", ["--user", "enable", "--now", webServiceName], { check: true });
 
   console.log(`\nPi Web is installed and starting.`);
+  console.log(`Config: ${configPath}`);
   console.log(`Open: http://${options.host === "0.0.0.0" ? "127.0.0.1" : options.host}:${options.port}`);
   console.log("\nUseful commands:");
   console.log("  pi-web status");
@@ -170,7 +191,7 @@ function help(): void {
   console.log(`Pi Web
 
 Usage:
-  pi-web install [--host 127.0.0.1] [--port 3000]
+  pi-web install [--host 127.0.0.1] [--port 8504] [--config ~/.config/pi-web/config.json]
   pi-web uninstall
   pi-web start|stop|restart|status|logs
   pi-web doctor

@@ -101,7 +101,7 @@ This writes and starts:
 
 The generated services run through `bash -lc` so they see a shell environment similar to running `pi` from your terminal.
 
-Open <http://127.0.0.1:3000>.
+Open <http://127.0.0.1:8504>.
 
 Useful commands:
 
@@ -123,7 +123,7 @@ Advanced users may run the binaries however they prefer:
 
 ```bash
 pi-web-sessiond
-PI_WEB_PORT=3000 pi-web-server
+PI_WEB_PORT=8504 pi-web-server
 ```
 
 ## Development quick start
@@ -133,7 +133,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL, usually <http://localhost:5173>.
+Open the Vite URL, usually <http://localhost:8505>.
 
 For the recommended split development setup, run these in separate terminals:
 
@@ -150,10 +150,10 @@ You can restart `dev:web` or `dev:client` without stopping active Pi sessions.
 ```bash
 npm run build
 npm run start:sessiond
-PI_WEB_PORT=3000 npm start
+PI_WEB_PORT=8504 npm start
 ```
 
-The web server defaults to `127.0.0.1:3000`. Set `PI_WEB_HOST=0.0.0.0` only when you intentionally want to bind directly on all interfaces.
+The web server defaults to `127.0.0.1:8504`. Set `PI_WEB_HOST=0.0.0.0` only when you intentionally want to bind directly on all interfaces.
 
 The session daemon defaults to a private Unix socket at:
 
@@ -163,7 +163,7 @@ The session daemon defaults to a private Unix socket at:
 
 Environment variables:
 
-- `PI_WEB_PORT` / `PORT` — web server port. Defaults to `3000`.
+- `PI_WEB_PORT` / `PORT` — web server port. Defaults to `8504`.
 - `PI_WEB_HOST` — web server bind host. Defaults to `127.0.0.1`.
 - `PI_WEB_SESSIOND_SOCKET` — Unix socket path used by both the daemon and web process when `PI_WEB_SESSIOND_URL` is not set. Defaults to `~/.pi-web/sessiond.sock`.
 - `PI_WEB_SESSIOND_PORT` — optional TCP port for the daemon. If unset, the daemon listens on the Unix socket instead.
