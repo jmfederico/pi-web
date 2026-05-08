@@ -6,7 +6,7 @@ import { normalizeRelativePath } from "../workspaces/pathSafety.js";
 const MAX_OUTPUT = 2 * 1024 * 1024;
 
 export async function gitStatus(cwd: string): Promise<GitStatusResponse> {
-  const result = await runGit(cwd, ["status", "--porcelain=v2", "--branch", "-z"]);
+  const result = await runGit(cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]);
   if (result.code !== 0) return { isGitRepo: false, hash: hash(result.stdout + result.stderr), files: [] };
   return parseStatus(result.stdout);
 }
