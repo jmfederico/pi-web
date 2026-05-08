@@ -48,7 +48,7 @@ export const appStyles = css`
     .mobile-panel workspace-panel { flex: 1 1 auto; border-left: 0; }
   }
   status-bar { flex: 0 0 auto; }
-  chat-view { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  chat-view { flex: 1 1 auto; min-height: 0; overflow: hidden; }
   prompt-editor, chat-composer { flex: 0 0 auto; }
   button { border: 1px solid #30363d; border-radius: 8px; background: #161b22; color: #e6edf3; padding: 7px 9px; cursor: pointer; }
   .empty { margin: auto; color: #8b949e; }
@@ -102,9 +102,9 @@ export const listStyles = css`
 `;
 
 export const chatStyles = css`
-  :host { display: block; min-height: 0; color: #e6edf3; font: 14px system-ui, sans-serif; }
-  .chat-wrap { position: relative; height: 100%; min-height: 0; }
-  .chat { height: 100%; overflow: auto; padding: 16px; box-sizing: border-box; }
+  :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: #e6edf3; font: 14px system-ui, sans-serif; }
+  .chat-wrap { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .chat { height: 100%; min-height: 0; overflow: auto; padding: 16px; box-sizing: border-box; }
   .history-indicator { position: absolute; top: 10px; right: 18px; z-index: 2; display: grid; gap: 2px; max-width: min(320px, calc(100% - 36px)); border: 1px solid #30363d; border-radius: 8px; background: #0d1117dd; color: #8b949e; padding: 6px 8px; font-size: 12px; text-align: right; pointer-events: none; box-shadow: 0 8px 24px #0006; }
   .msg { margin: 0 0 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #161b22; }
   .msg.user { border-color: #2f81f7; background: #0d2847; }
