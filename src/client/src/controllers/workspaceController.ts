@@ -10,6 +10,12 @@ export class WorkspaceController {
     private readonly sessions: SessionController,
   ) {}
 
+  clearSelection(options?: { updateUrl?: boolean | undefined }) {
+    this.sessions.clearActiveSession();
+    this.setState({ selectedProject: undefined, selectedWorkspace: undefined, sessions: [], workspaces: [], fileTree: [], expandedDirs: {}, selectedFilePath: undefined, selectedFileContent: undefined, fileTreeStale: false, gitStatus: undefined, selectedDiffPath: undefined, selectedDiff: undefined, selectedStagedDiff: undefined, gitStale: false, error: "" });
+    if (options?.updateUrl !== false) this.updateUrl();
+  }
+
   async selectProject(project: Project, target?: RouteTarget) {
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, sessions: [], workspaces: [], fileTree: [], expandedDirs: {}, selectedFilePath: undefined, selectedFileContent: undefined, fileTreeStale: false, gitStatus: undefined, selectedDiffPath: undefined, selectedDiff: undefined, selectedStagedDiff: undefined, gitStale: false, error: "" });

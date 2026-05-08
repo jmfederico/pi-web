@@ -5,6 +5,7 @@ import {
   parseAborted,
   parseAccepted,
   parseArchived,
+  parseClosed,
   parseCommandResult,
   parseFileContentResponse,
   parseFileSuggestion,
@@ -25,6 +26,7 @@ import { gitDiffUrl, messageUrl } from "./urls";
 export const projectsApi = {
   projects: () => request("/api/projects", arrayOf(parseProject)),
   addProject: (path: string, name?: string, create?: boolean) => request("/api/projects", parseProject, { method: "POST", body: JSON.stringify({ path, name, create }) }),
+  closeProject: (projectId: string) => request(`/api/projects/${encodeURIComponent(projectId)}`, parseClosed, { method: "DELETE" }),
   projectDirectories: (query: string) => request(`/api/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
 };
 

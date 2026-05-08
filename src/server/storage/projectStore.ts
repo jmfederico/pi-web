@@ -61,6 +61,14 @@ export class ProjectStore {
     return (await this.list()).find((p) => p.id === id);
   }
 
+  async remove(id: string): Promise<boolean> {
+    const data = await this.read();
+    const projects = data.projects.filter((p) => p.id !== id);
+    if (projects.length === data.projects.length) return false;
+    await this.write({ projects });
+    return true;
+  }
+
   private async read(): Promise<ProjectFile> {
     try {
       const value: unknown = JSON.parse(await readFile(this.filePath, "utf8"));

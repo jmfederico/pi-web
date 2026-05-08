@@ -217,6 +217,12 @@ export function parseAccepted(value: unknown): { accepted: true } {
   return { accepted: true };
 }
 
+export function parseClosed(value: unknown): { closed: true } {
+  const record = requireRecord(value);
+  if (record["closed"] !== true) throw new Error("Expected closed response");
+  return { closed: true };
+}
+
 export function parseAborted(value: unknown): { aborted: true } {
   const record = requireRecord(value);
   if (record["aborted"] !== true) throw new Error("Expected aborted response");

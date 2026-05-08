@@ -25,4 +25,15 @@ export class ProjectController {
       this.setState({ error: String(error) });
     }
   }
+
+  async closeProject(projectId: string) {
+    try {
+      await api.closeProject(projectId);
+      const state = this.getState();
+      this.setState({ projects: state.projects.filter((p) => p.id !== projectId) });
+      if (state.selectedProject?.id === projectId) this.workspaces.clearSelection();
+    } catch (error) {
+      this.setState({ error: String(error) });
+    }
+  }
 }

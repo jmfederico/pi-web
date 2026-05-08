@@ -18,6 +18,7 @@ export class SessionList extends LitElement {
   @property({ attribute: false }) onSelect?: (session: SessionInfo) => void;
   @property({ attribute: false }) onStart?: () => void;
   @state() private openMenuSessionId: string | undefined;
+  @state() private menuStyle = "";
   @state() private archivedExpanded = false;
   private readonly onDocumentClick = (event: MouseEvent) => {
     if (event.composedPath().includes(this)) return;
@@ -58,14 +59,14 @@ export class SessionList extends LitElement {
 
   private renderSession(session: SessionInfo) {
     return html`
-      <div class="session-row ${this.selected?.id === session.id ? "selected" : ""} ${session.archived === true ? "archived" : ""}">
-        <button class="session-main" @click=${() => this.onSelect?.(session)}>
+      <div class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${session.archived === true ? "archived" : ""}">
+        <button class="action-main" @click=${() => this.onSelect?.(session)}>
           <span>${sessionLabel(session)}</span><small>${this.renderStatus(session)}${String(session.messageCount)} messages</small>
         </button>
-        <div class="session-menu">
-          <button class="session-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id); }}>⋯</button>
+        <div class="action-menu">
+          <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
           ${this.openMenuSessionId === session.id ? html`
-            <div class="session-menu-panel">
+            <div class="action-menu-panel" style=${this.menuStyle}>
               ${session.archived === true
                 ? html`<button title="Restore session" @click=${() => { this.openMenuSessionId = undefined; this.onRestore?.(session); }}>Restore</button>`
                 : html`<button title="Archive session" @click=${() => { this.openMenuSessionId = undefined; this.onArchive?.(session); }}>Archive</button>`}
@@ -76,8 +77,16 @@ export class SessionList extends LitElement {
     `;
   }
 
-  private toggleMenu(sessionId: string) {
-    this.openMenuSessionId = this.openMenuSessionId === sessionId ? undefined : sessionId;
+  private toggleMenu(sessionId: string, target: EventTarget | null) {
+    if (this.openMenuSessionId === sessionId) {
+      this.openMenuSessionId = undefined;
+      return;
+    }
+    if (target instanceof HTMLElement) {
+      const rect = target.getBoundingClientRect();
+      this.menuStyle = `top: ${String(rect.bottom + 4)}px; right: ${String(window.innerWidth - rect.right)}px;`;
+    }
+    this.openMenuSessionId = sessionId;
   }
 
   private toggleArchived() {
