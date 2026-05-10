@@ -145,14 +145,14 @@ export const chatStyles = css`
   .group-msg.system { color: #ff7b72; }
   .group-msg.bash { color: #3fb950; }
   .history-boundary { display: grid; gap: 3px; margin: 0 0 14px; color: #8b949e; font-size: 12px; text-align: center; }
-  .queued-messages { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 8px; margin: 0 0 14px; padding: 12px; border: 1px solid #6e5200; border-radius: 10px; background: #1f1a10; color: #e6edf3; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .queued-messages { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 8px; margin: 0 0 14px; padding: 12px; border: 1px solid #6e5200; border-radius: 10px; background: #1f1a10; color: #e6edf3; overflow: hidden; }
   .queued-header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
   .queued-header strong { color: #d29922; }
   .queued-header small { color: #8b949e; }
   .queued-message { display: grid; gap: 4px; padding-top: 8px; border-top: 1px solid #30363d; }
   .queued-message:first-of-type { padding-top: 0; border-top: 0; }
   .queued-kind { color: #8b949e; font-size: 12px; text-transform: uppercase; }
-  .session-activity { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 4px; margin: 0 0 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #161b22; color: #e6edf3; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .session-activity { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 4px; margin: 0 0 14px; padding: 12px; border: 1px solid #30363d; border-radius: 10px; background: #161b22; color: #e6edf3; overflow: hidden; }
   .session-activity.compacting { border-color: #a371f7; background: #21132f; }
   .session-activity.receiving { border-color: #238636; background: #0f1b12; }
   .session-activity strong { color: #d2a8ff; }
@@ -178,12 +178,12 @@ export const chatStyles = css`
     .msg-meta:focus::before, .msg-meta.expanded::before { content: ""; }
   }
   formatted-text.part { display: block; }
-  .part { max-width: 100%; min-width: 0; box-sizing: border-box; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .part { max-width: 100%; min-width: 0; box-sizing: border-box; overflow: visible; }
   .part + .part { margin-top: 10px; }
   .tool-line { color: #d29922; }
   .summary { color: #8b949e; margin-left: 6px; }
   .part:is(details) { border-top: 1px solid #30363d; padding-top: 8px; }
-  .part > formatted-text { display: block; max-width: 100%; min-width: 0; overflow: auto; -webkit-overflow-scrolling: touch; }
+  .part > formatted-text { display: block; max-width: 100%; min-width: 0; overflow: visible; }
   .skill-invocation { border: 1px solid #30363d; border-radius: 8px; background: #161b22; padding: 8px 10px; }
   .skill-invocation > summary { color: #d2a8ff; }
   .skill-invocation > small { display: block; margin: 6px 0 8px; color: #8b949e; }
@@ -203,7 +203,7 @@ export const formattedTextStyles = css`
   code { border: 1px solid #30363d; border-radius: 4px; background: #0d1117; padding: 1px 4px; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .code-block-wrapper { position: relative; }
   .code-block-wrapper pre { margin: 0; padding-right: 40px; }
-  pre { border: 1px solid #30363d; border-radius: 8px; background: #0d1117; padding: 10px; overflow: auto; }
+  pre { border: 1px solid #30363d; border-radius: 8px; background: #0d1117; padding: 10px; overflow-x: auto; overflow-y: hidden; }
   pre code { border: 0; padding: 0; background: transparent; }
   .code-copy-button { position: absolute; top: 6px; right: 6px; z-index: 1; display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: #8b949e; padding: 0; font: 14px system-ui, sans-serif; line-height: 1; cursor: pointer; }
   .code-copy-button:hover, .code-copy-button:focus { color: #e6edf3; border-color: #58a6ff; }
@@ -215,7 +215,7 @@ export const formattedTextStyles = css`
   h2 { font-size: 17px; }
   h3 { font-size: 15px; }
   h4 { font-size: 14px; }
-  table { border-collapse: collapse; display: block; overflow: auto; }
+  table { border-collapse: collapse; display: block; overflow-x: auto; overflow-y: hidden; }
   th, td { border: 1px solid #30363d; padding: 4px 8px; }
   th { background: #161b22; }
 `;
