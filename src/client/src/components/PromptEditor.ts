@@ -17,9 +17,7 @@ export class PromptEditor extends LitElement {
   @property({ attribute: false }) onSend?: (text: string, streamingBehavior?: "steer" | "followUp") => void;
   @property({ attribute: false }) onStop?: () => void;
   @property({ attribute: false }) onSelectModel?: () => void;
-  @property({ attribute: false }) onCycleModel?: (direction: "forward" | "backward") => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
-  @property({ attribute: false }) onCycleThinking?: () => void;
   @query("textarea") private textarea?: HTMLTextAreaElement;
   @state() private draft = "";
   @state() private completions: CompletionItem[] = [];
@@ -80,13 +78,8 @@ export class PromptEditor extends LitElement {
     const provider = status.model?.provider !== undefined && status.model.provider !== "" ? `${status.model.provider}/` : "";
     return html`
       <div class="compact-status" aria-label="Session status">
-        <span class="model-controls">
-          <button class="cycle-model" title="Previous model" @click=${() => this.onCycleModel?.("backward")}>‹</button>
-          <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
-          <button class="cycle-model" title="Next model" @click=${() => this.onCycleModel?.("forward")}>›</button>
-        </span>
-        <button class="thinking-cycle" title="Cycle thinking level" @click=${() => this.onCycleThinking?.()}>think ${status.thinkingLevel ?? "off"}</button>
-        <button class="thinking-select" title="Select thinking level" @click=${() => this.onSelectThinking?.()}>⌄</button>
+        <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
+        <button class="select-thinking" title="Select thinking level" @click=${() => this.onSelectThinking?.()}>think ${status.thinkingLevel ?? "off"}</button>
       </div>
     `;
   }

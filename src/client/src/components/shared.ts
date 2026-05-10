@@ -284,12 +284,11 @@ export const promptEditorStyles = css`
   footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-top: 1px solid #30363d; }
   footer.shell-mode { border-top-color: #3fb950; background: #0f1b12; }
   .editor-wrap { position: relative; min-width: 0; }
-  .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; white-space: nowrap; }
-  .compact-status { display: flex; min-width: 0; align-items: center; gap: 6px; color: #8b949e; font-size: 12px; flex: 1 1 280px; }
-  .compact-status > button, .model-controls { flex: 0 1 auto; min-width: 0; }
-  .model-controls { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
-  .compact-status button { overflow: hidden; text-overflow: ellipsis; }
-  .compact-status .model-controls button:nth-child(2) { max-width: min(36vw, 260px); }
+  .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; }
+  .compact-status { display: flex; min-width: 0; align-items: center; gap: 6px; color: #8b949e; font-size: 12px; flex: 1 1 0; }
+  .compact-status > button { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .select-model { max-width: min(42vw, 320px); }
+  .select-thinking { max-width: 110px; }
   textarea { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow-y: auto; border-radius: 8px; border: 1px solid #30363d; background: #0d1117; color: #e6edf3; padding: 8px; font: 16px/1.4 system-ui, sans-serif; }
   .shell-mode textarea { border-color: #3fb950; box-shadow: 0 0 0 1px #3fb95055; }
   .mode-hint { position: absolute; right: 8px; bottom: 8px; max-width: calc(100% - 16px); border: 1px solid #238636; border-radius: 999px; background: #0f2a16; color: #3fb950; padding: 2px 8px; font-size: 12px; pointer-events: none; }
@@ -299,14 +298,13 @@ export const promptEditorStyles = css`
     footer { gap: 8px; padding: 8px; }
     .actions { gap: 6px; }
     .compact-status { flex: 1 1 220px; gap: 4px; }
-    .compact-status .model-controls button:nth-child(2) { max-width: min(50vw, 230px); }
+    .select-model { max-width: min(58vw, 260px); }
     button { padding: 6px 8px; }
   }
   @media (max-width: 430px) {
     .compact-status { flex-basis: 170px; font-size: 11px; }
-    .cycle-model, .thinking-select { display: none; }
-    .compact-status .model-controls button:nth-child(2) { max-width: 42vw; }
-    .thinking-cycle { max-width: 70px; }
+    .select-model { max-width: 48vw; }
+    .select-thinking { max-width: 70px; }
     button { padding: 5px 7px; }
   }
 `;
