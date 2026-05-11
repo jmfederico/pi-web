@@ -42,6 +42,7 @@ describe("readWorkspaceFile", () => {
 
     await expect(readWorkspaceFile(root, undefined)).rejects.toThrow("path query parameter is required");
     await expect(readWorkspaceFile(root, "dir")).rejects.toThrow("Path is not a file");
+    await expect(readWorkspaceFile(root, "missing.txt")).rejects.toThrow("Path does not exist");
     await expect(readWorkspaceFile(root, "../secret.txt")).rejects.toThrow("Path traversal is not allowed");
     await expect(readWorkspaceFile(root, "/etc/passwd")).rejects.toThrow("Absolute paths are not allowed");
   });

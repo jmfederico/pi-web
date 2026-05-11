@@ -5,7 +5,10 @@ export async function resolveInsideWorkspace(rootPath: string, relativePath: str
   const requested = normalizeRelativePath(relativePath);
   const root = await realpath(rootPath);
   const joined = join(root, requested);
-  const target = await realpath(joined);
+  const target = await realpath(joined).catch((error: unknown) => {
+    if (isNodeErrorWithCode(error, "ENOENT")) throw new Error("Path does not exist");
+    throw error;
+  });
   ensureInside(root, target);
   return { root, target, relativePath: requested };
 }
@@ -25,6 +28,10 @@ export function normalizeRelativePath(input: string | undefined): string {
   const parts = value.split(/[\\/]+/).filter((part) => part !== "" && part !== ".");
   if (parts.some((part) => part === "..")) throw new Error("Path traversal is not allowed");
   return parts.join("/");
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 function ensureInside(root: string, target: string): void {

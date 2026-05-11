@@ -58,6 +58,7 @@ describe("listWorkspaceTree", () => {
     await writeFile(join(root, "file.txt"), "content");
 
     await expect(listWorkspaceTree(root, "file.txt")).rejects.toThrow("Path is not a directory");
+    await expect(listWorkspaceTree(root, "missing-dir")).rejects.toThrow("Path does not exist");
     await expect(listWorkspaceTree(root, "../outside")).rejects.toThrow("Path traversal is not allowed");
     await expect(listWorkspaceTree(root, "/tmp")).rejects.toThrow("Absolute paths are not allowed");
   });

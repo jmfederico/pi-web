@@ -50,11 +50,24 @@ export class FileExplorerController {
     if (project === undefined || workspace === undefined) return;
     this.setState({ selectedFilePath: path, selectedFileContent: undefined });
     try {
-      this.setState({ selectedFileContent: await api.workspaceFile(project.id, workspace.id, path), error: "" });
+      const content = await api.workspaceFile(project.id, workspace.id, path);
+      if (this.getState().selectedFilePath === path) this.setState({ selectedFileContent: content, error: "" });
     } catch (error) {
+      if (this.getState().selectedFilePath !== path) return;
+      if (isUnavailableFileError(error)) {
+        this.setState({ selectedFilePath: undefined, selectedFileContent: undefined, error: "" });
+        setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, "file", undefined, { replace: true });
+        this.updateUrl({ replace: true });
+        return;
+      }
       this.setState({ error: String(error) });
     }
   }
+}
+
+function isUnavailableFileError(error: unknown): boolean {
+  const message = String(error);
+  return message.includes("Path does not exist") || message.includes("ENOENT") || message.includes("no such file or directory");
 }
 
 function omitKey<T>(record: Record<string, T>, keyToOmit: string): Record<string, T> {
