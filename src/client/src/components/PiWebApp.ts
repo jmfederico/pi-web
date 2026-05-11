@@ -68,6 +68,10 @@ export class PiWebApp extends LitElement {
   private terminalAutoStartWorkspaceId: string | undefined;
   private readonly plugins = createPluginRegistry();
   private readonly onPopState = () => void this.withChatScrollTransition(() => this.restoreRoute(false));
+  private readonly onFocus = () => { void this.sessions.refreshSelectedSession(); };
+  private readonly onVisibilityChange = () => {
+    if (document.visibilityState === "visible") void this.sessions.refreshSelectedSession();
+  };
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (this.keyboard.handle(event, this.getActions())) {
       event.preventDefault();
@@ -78,6 +82,8 @@ export class PiWebApp extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener("popstate", this.onPopState);
+    window.addEventListener("focus", this.onFocus);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("keydown", this.onKeyDown);
     this.connectRealtime();
     void this.loadExternalPlugins();
@@ -86,6 +92,8 @@ export class PiWebApp extends LitElement {
 
   override disconnectedCallback(): void {
     window.removeEventListener("popstate", this.onPopState);
+    window.removeEventListener("focus", this.onFocus);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("keydown", this.onKeyDown);
     this.keyboard.reset();
     this.sessions.dispose();

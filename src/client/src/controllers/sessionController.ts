@@ -74,7 +74,11 @@ export class SessionController {
         return;
       }
       const buffered: SessionUiEvent[] = [];
-      this.socket.connect(session.id, (event) => buffered.push(event));
+      this.socket.connect(
+        session.id,
+        (event) => buffered.push(event),
+        () => { void this.refreshSelectedSession(session.id); },
+      );
       const [page, status] = await Promise.all([api.messages(session.id, { limit: MESSAGE_PAGE_SIZE }), api.status(session.id)]);
       if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
       const history = this.mergeAndCacheHistory(session.id, page);
@@ -275,6 +279,28 @@ export class SessionController {
       await api.abort(session.id);
     } catch (error) {
       this.setState({ error: String(error) });
+    }
+  }
+
+  async refreshSelectedSession(sessionId = this.getState().selectedSession?.id): Promise<void> {
+    const session = this.getState().selectedSession;
+    if (sessionId === undefined || session?.id !== sessionId || session.archived === true) return;
+    try {
+      this.flushPendingTranscriptEvents();
+      const [page, status] = await Promise.all([api.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }), api.status(sessionId)]);
+      if (this.getState().selectedSession?.id !== sessionId) return;
+      const history = this.mergeAndCacheHistory(sessionId, page);
+      this.setState({
+        messages: normalizeMessages(history.messages),
+        messagePageStart: history.start,
+        messagePageTotal: history.total,
+        status,
+        activity: this.getState().sessionActivities[sessionId],
+        isReceivingPartialStream: status.isStreaming,
+      });
+      this.applyStatus(status);
+    } catch (error) {
+      if (this.getState().selectedSession?.id === sessionId) this.setState({ error: String(error) });
     }
   }
 

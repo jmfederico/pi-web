@@ -10,11 +10,14 @@ export class SessionSocket {
   private reconnectTimer?: number;
   private reconnectDelay = 500;
   private shouldReconnect = false;
+  private hasOpened = false;
+  private onReconnect: (() => void) | undefined;
 
-  connect(sessionId: string, onEvent: (event: SessionUiEvent) => void): void {
+  connect(sessionId: string, onEvent: (event: SessionUiEvent) => void, onReconnect?: () => void): void {
     this.close();
     this.sessionId = sessionId;
     this.onEvent = onEvent;
+    this.onReconnect = onReconnect;
     this.shouldReconnect = true;
     this.open();
   }
@@ -30,6 +33,8 @@ export class SessionSocket {
     this.socket = undefined;
     this.sessionId = undefined;
     this.onEvent = undefined;
+    this.onReconnect = undefined;
+    this.hasOpened = false;
   }
 
   private open(): void {
@@ -38,6 +43,8 @@ export class SessionSocket {
     this.socket = socket;
     socket.onopen = () => {
       this.reconnectDelay = 500;
+      if (this.hasOpened) this.onReconnect?.();
+      this.hasOpened = true;
     };
     socket.onmessage = (message) => void this.handleMessage(message.data);
     socket.onerror = () => { socket.close(); };
