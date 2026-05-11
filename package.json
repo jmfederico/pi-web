@@ -36,7 +36,8 @@
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",
     "prepublishOnly": "npm run verify",
-    "publish:npm": "npm publish --access public"
+    "publish:npm": "npm publish --access public",
+    "prepare": "node scripts/install-git-hooks.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

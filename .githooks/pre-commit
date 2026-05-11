@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+echo "Running pre-commit checks: npm run verify"
+npm run verify

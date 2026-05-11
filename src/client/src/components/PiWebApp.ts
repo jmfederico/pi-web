@@ -282,11 +282,11 @@ export class PiWebApp extends LitElement {
       selectedStagedDiff: this.state.selectedStagedDiff,
       gitStale: this.state.gitStale,
       activeTerminalCount: this.state.activeTerminalCount,
-      onRefreshFiles: () => this.files.refreshFiles(),
-      onExpandDir: (path: string) => this.files.expandDir(path),
-      onSelectFile: (path: string) => this.files.selectFile(path),
-      onRefreshGit: () => this.git.refreshGit(),
-      onSelectDiff: (path: string) => this.git.selectDiff(path),
+      onRefreshFiles: () => { void this.files.refreshFiles(); },
+      onExpandDir: (path: string) => { void this.files.expandDir(path); },
+      onSelectFile: (path: string) => { void this.files.selectFile(path); },
+      onRefreshGit: () => { void this.git.refreshGit(); },
+      onSelectDiff: (path: string) => { void this.git.selectDiff(path); },
     };
   }
 

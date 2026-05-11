@@ -10,21 +10,26 @@ const interactiveSelector = [
   "[contenteditable='true']",
 ].join(",");
 
-export function isFromInteractiveElement(event: Event): boolean {
-  return event.composedPath().some((target) => isElementLike(target) && target.matches(interactiveSelector));
+type ComposedPathEvent = Pick<Event, "composedPath">;
+type SelectableKeyboardEvent = ComposedPathEvent & Pick<KeyboardEvent, "key" | "preventDefault">;
+
+export function isFromInteractiveElement(event: ComposedPathEvent): boolean {
+  return event.composedPath().some((target) => targetMatches(target, interactiveSelector));
 }
 
-function isElementLike(target: EventTarget): target is Element {
-  if (typeof Element !== "undefined") return target instanceof Element;
-  return typeof (target as Partial<Element>).matches === "function";
+function targetMatches(target: EventTarget, selector: string): boolean {
+  if (typeof Element !== "undefined" && target instanceof Element) return target.matches(selector);
+  if (!("matches" in target)) return false;
+  const { matches } = target;
+  return typeof matches === "function" && matches.call(target, selector) === true;
 }
 
-export function activateSelectableRow(event: MouseEvent, action: () => void): void {
+export function activateSelectableRow(event: ComposedPathEvent, action: () => void): void {
   if (isFromInteractiveElement(event)) return;
   action();
 }
 
-export function activateSelectableRowFromKeyboard(event: KeyboardEvent, action: () => void): void {
+export function activateSelectableRowFromKeyboard(event: SelectableKeyboardEvent, action: () => void): void {
   if (event.key !== "Enter" && event.key !== " ") return;
   if (isFromInteractiveElement(event)) return;
   event.preventDefault();

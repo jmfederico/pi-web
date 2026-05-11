@@ -4,21 +4,21 @@ import { activateSelectableRow, activateSelectableRowFromKeyboard } from "./sele
 describe("selectable row activation", () => {
   it("activates rows from non-interactive click targets", () => {
     const action = vi.fn();
-    activateSelectableRow(eventWithPath({ matches: () => false }), action);
+    activateSelectableRow(eventWithPath(matchTarget(() => false)), action);
     expect(action).toHaveBeenCalledOnce();
   });
 
   it("preserves contributed links and other interactive elements", () => {
     const action = vi.fn();
-    activateSelectableRow(eventWithPath({ matches: (selector: string) => selector.includes("a[href]") }), action);
+    activateSelectableRow(eventWithPath(matchTarget((selector: string) => selector.includes("a[href]"))), action);
     expect(action).not.toHaveBeenCalled();
   });
 
   it("activates rows from Enter and Space", () => {
     const enterAction = vi.fn();
     const spaceAction = vi.fn();
-    const enter = keyboardEventWithPath("Enter", { matches: () => false });
-    const space = keyboardEventWithPath(" ", { matches: () => false });
+    const enter = keyboardEventWithPath("Enter", matchTarget(() => false));
+    const space = keyboardEventWithPath(" ", matchTarget(() => false));
 
     activateSelectableRowFromKeyboard(enter, enterAction);
     activateSelectableRowFromKeyboard(space, spaceAction);
@@ -31,7 +31,7 @@ describe("selectable row activation", () => {
 
   it("does not activate rows from keyboard events inside interactive elements", () => {
     const action = vi.fn();
-    const event = keyboardEventWithPath("Enter", { matches: (selector: string) => selector.includes("button") });
+    const event = keyboardEventWithPath("Enter", matchTarget((selector: string) => selector.includes("button")));
 
     activateSelectableRowFromKeyboard(event, action);
 
@@ -40,10 +40,18 @@ describe("selectable row activation", () => {
   });
 });
 
-function eventWithPath(target: Pick<Element, "matches">): MouseEvent {
-  return { composedPath: () => [target] } as unknown as MouseEvent;
+type EventWithPath = Pick<Event, "composedPath">;
+type KeyboardEventWithPath = EventWithPath & Pick<KeyboardEvent, "key" | "preventDefault">;
+type MatchTarget = EventTarget & Pick<Element, "matches">;
+
+function matchTarget(matches: Element["matches"]): MatchTarget {
+  return Object.assign(new EventTarget(), { matches });
 }
 
-function keyboardEventWithPath(key: string, target: Pick<Element, "matches">): KeyboardEvent & { preventDefault: ReturnType<typeof vi.fn> } {
-  return { key, preventDefault: vi.fn(), composedPath: () => [target] } as unknown as KeyboardEvent & { preventDefault: ReturnType<typeof vi.fn> };
+function eventWithPath(target: MatchTarget): EventWithPath {
+  return { composedPath: () => [target] };
+}
+
+function keyboardEventWithPath(key: string, target: MatchTarget): KeyboardEventWithPath {
+  return { key, preventDefault: vi.fn<() => void>(), composedPath: () => [target] };
 }
