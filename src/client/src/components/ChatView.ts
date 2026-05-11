@@ -1,6 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { groupChatMessages, summarizeChatGroup } from "../chatGroups";
+import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
 import type { SessionActivity, SessionStatus } from "../api";
 import type { ChatLine, ChatPart } from "./shared";
 import { chatStyles } from "./shared";
@@ -11,13 +12,12 @@ interface PrependScrollAnchor {
   scrollHeight: number;
 }
 
-function isScrollPosition(value: unknown): value is { index: number; offset: number } {
+function isScrollPosition(value: unknown): value is { index?: number; key?: string; offset: number } {
   return typeof value === "object"
     && value !== null
-    && "index" in value
     && "offset" in value
-    && typeof value.index === "number"
-    && typeof value.offset === "number";
+    && typeof value.offset === "number"
+    && (("key" in value && typeof value.key === "string") || ("index" in value && typeof value.index === "number"));
 }
 
 @customElement("chat-view")
@@ -45,6 +45,7 @@ export class ChatView extends LitElement {
   private lastScrollTop = 0;
   private lastClientHeight = 0;
   private touchStartY: number | undefined;
+  private loadMoreRequested = false;
   private readonly onViewportResize = () => {
     if (this.pinnedToBottom) this.scrollToBottom();
     else this.lastClientHeight = this.chat?.clientHeight ?? 0;
@@ -73,9 +74,11 @@ export class ChatView extends LitElement {
   }
 
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has("sessionId")) return;
-    if (changed.has("messages") && this.pinnedToBottom) this.scrollToBottom();
+    if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
+    if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
+    if (!changed.has("sessionId") && changed.has("messages") && this.pinnedToBottom) this.scrollToBottom();
     this.updateLoadedScrollPercent();
+    if (changed.has("messages") || changed.has("hasMore") || changed.has("loadingMore")) this.requestLoadMoreIfNeeded();
   }
 
   override render() {
@@ -179,7 +182,13 @@ export class ChatView extends LitElement {
   private renderHistoryBoundary() {
     const range = this.historyRangeLabel();
     if (this.loadingMore) return html`<div class="history-boundary"><span>Loading earlier messages…</span>${range}</div>`;
-    if (this.hasMore) return html`<div class="history-boundary"><span>Scroll up to load earlier messages</span>${range}</div>`;
+    if (this.hasMore) return html`
+      <div class="history-boundary">
+        <button type="button" class="history-load-button" @click=${() => { this.requestLoadMore(true); }}>Load earlier messages</button>
+        <span>Scroll up to load earlier messages</span>
+        ${range}
+      </div>
+    `;
     if (this.messages.length) return html`<div class="history-boundary"><span>Beginning of session</span>${range}</div>`;
     return null;
   }
@@ -193,7 +202,7 @@ export class ChatView extends LitElement {
 
   private renderMessage(message: ChatLine, index: number) {
     return html`
-      <article class="msg ${message.role}" data-index=${index}>
+      <article class="msg ${message.role}" data-index=${index} data-anchor-key=${this.messageAnchorKey(index)}>
         ${this.renderMessageHeader(message, String(index))}
         ${message.parts.map((part) => this.renderPart(part, message))}
       </article>
@@ -203,7 +212,7 @@ export class ChatView extends LitElement {
   private renderMessageGroup(messages: ChatLine[], startIndex: number) {
     const key = this.groupKey(startIndex);
     return html`
-      <details class="msg event-group" data-index=${startIndex} ?open=${this.openGroupKeys.has(key)} @toggle=${(event: Event) => { this.onGroupToggle(key, event); }}>
+      <details class="msg event-group" data-index=${startIndex} data-anchor-key=${this.groupAnchorKey(startIndex)} ?open=${this.openGroupKeys.has(key)} @toggle=${(event: Event) => { this.onGroupToggle(key, event); }}>
         <summary>
           <b class="label">events</b>
           <span>${summarizeChatGroup(messages)}</span>
@@ -343,7 +352,7 @@ export class ChatView extends LitElement {
 
   private onScroll() {
     this.updateLoadedScrollPercent();
-    if (this.chat && this.chat.scrollTop < 64 && this.hasMore && !this.loadingMore) this.onLoadMore?.();
+    this.requestLoadMoreIfNeeded();
     this.updatePinnedToBottomFromScroll();
     if (!this.suppressScrollSave) this.scheduleScrollPositionSave();
   }
@@ -390,6 +399,28 @@ export class ChatView extends LitElement {
     const maxScroll = chat.scrollHeight - chat.clientHeight;
     const percent = maxScroll <= 0 ? 100 : Math.round((chat.scrollTop / maxScroll) * 100);
     this.loadedScrollPercent = Math.max(0, Math.min(100, percent));
+  }
+
+  private requestLoadMoreIfNeeded(): void {
+    requestAnimationFrame(() => {
+      const chat = this.chat;
+      if (!chat) return;
+      if (shouldRequestEarlierMessages({
+        hasMore: this.hasMore,
+        loadingMore: this.loadingMore || this.loadMoreRequested,
+        canRequest: this.onLoadMore !== undefined,
+        scrollTop: chat.scrollTop,
+        scrollHeight: chat.scrollHeight,
+        clientHeight: chat.clientHeight,
+      })) this.requestLoadMore();
+    });
+  }
+
+  private requestLoadMore(force = false): void {
+    if (!force && this.loadMoreRequested) return;
+    if (!this.hasMore || this.loadingMore || this.onLoadMore === undefined) return;
+    this.loadMoreRequested = true;
+    this.onLoadMore();
   }
 
   private isNearBottom(): boolean {
@@ -439,7 +470,7 @@ export class ChatView extends LitElement {
         return;
       }
 
-      const article = this.articleAt(stored.index);
+      const article = this.articleAt(stored);
       if (!article) {
         this.withSuppressedScrollSave(() => {
           chat.scrollTop = chat.scrollHeight;
@@ -470,6 +501,7 @@ export class ChatView extends LitElement {
       this.lastScrollTop = chat.scrollTop;
     });
     this.updateLoadedScrollPercent();
+    this.requestLoadMoreIfNeeded();
   }
 
   saveScrollPosition(sessionId = this.sessionId) {
@@ -487,6 +519,7 @@ export class ChatView extends LitElement {
       }
       const chatTop = chat.getBoundingClientRect().top;
       const position = {
+        key: firstVisible.dataset["anchorKey"],
         index: Number(firstVisible.dataset["index"] ?? 0),
         offset: firstVisible.getBoundingClientRect().top - chatTop,
       };
@@ -501,7 +534,7 @@ export class ChatView extends LitElement {
     this.saveScrollTimer = window.setTimeout(() => { this.saveScrollPosition(); }, 180);
   }
 
-  private readStoredScrollPosition(): { index: number; offset: number } | undefined {
+  private readStoredScrollPosition(): { index?: number; key?: string; offset: number } | undefined {
     if (this.sessionId === "") return undefined;
     try {
       const raw = localStorage.getItem(this.storageKey());
@@ -524,8 +557,11 @@ export class ChatView extends LitElement {
     });
   }
 
-  private articleAt(index: number): HTMLElement | undefined {
-    return this.articles().find((article) => Number(article.dataset["index"]) === index);
+  private articleAt(position: { index?: number; key?: string }): HTMLElement | undefined {
+    const articles = this.articles();
+    const keyed = position.key === undefined ? undefined : articles.find((article) => article.dataset["anchorKey"] === position.key);
+    if (keyed !== undefined) return keyed;
+    return articles.find((article) => Number(article.dataset["index"]) === position.index);
   }
 
   private articles(): HTMLElement[] {
@@ -552,6 +588,14 @@ export class ChatView extends LitElement {
 
   private groupKey(startIndex: number): string {
     return `${this.sessionId}:${String(startIndex)}`;
+  }
+
+  private messageAnchorKey(index: number): string {
+    return `m:${String(index)}`;
+  }
+
+  private groupAnchorKey(startIndex: number): string {
+    return `g:${String(startIndex)}`;
   }
 
   private readOpenGroupKeys(): Set<string> {
