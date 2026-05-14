@@ -6,8 +6,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliPath = join(packageRoot, "dist", "cli.js");
-const serverPath = join(packageRoot, "dist", "server", "index.js");
-const sessiondPath = join(packageRoot, "dist", "server", "sessiond.js");
 const serviceNames = ["pi-web-sessiond.service", "pi-web.service"];
 
 const subcommands = [
@@ -24,14 +22,6 @@ const subcommands = [
 ] as const;
 
 type Subcommand = (typeof subcommands)[number];
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function nodeCommand(scriptPath: string): string {
-  return `${shellSingleQuote(process.execPath)} ${shellSingleQuote(scriptPath)}`;
-}
 
 function parseArgs(args: string): string[] {
   return args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((part) => {
@@ -85,14 +75,6 @@ function isSubcommand(value: string): value is Subcommand {
   return subcommands.some((command) => command === value);
 }
 
-function installEnv(): NodeJS.ProcessEnv {
-  if (!existsSync(serverPath) || !existsSync(sessiondPath)) return {};
-  return {
-    PI_WEB_SERVER_EXEC: nodeCommand(serverPath),
-    PI_WEB_SESSIOND_EXEC: nodeCommand(sessiondPath),
-  };
-}
-
 async function boundedLogs(): Promise<{ code: number; output: string }> {
   return run("journalctl", ["--user", "-u", serviceNames[0] ?? "", "-u", serviceNames[1] ?? "", "-n", "100", "--no-pager"]);
 }
@@ -137,8 +119,7 @@ export default function piWebExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const env = subcommand === "install" ? installEnv() : {};
-      showResult(ctx, `pi-web ${subcommand}`, await runPiWeb([subcommand, ...rest], env));
+      showResult(ctx, `pi-web ${subcommand}`, await runPiWeb([subcommand, ...rest]));
     },
   });
 }
