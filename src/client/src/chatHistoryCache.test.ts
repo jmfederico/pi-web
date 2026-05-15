@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mergeChatHistory, type RawMessagePage } from "./chatHistoryCache";
 
-function page(start: number, total: number, messages: string[]): RawMessagePage {
+function page(start: number, total: number, messages: unknown[]): RawMessagePage {
   return { start, total, messages };
 }
 
@@ -36,5 +36,18 @@ describe("mergeChatHistory", () => {
     const incoming = page(8, 10, ["i", "j"]);
 
     expect(mergeChatHistory(page(0, 10, ["a", "b"]), incoming)).toEqual(incoming);
+  });
+
+  it("uses incoming history when cached history contains normalized chat lines", () => {
+    const incoming = page(0, 2, [{ role: "user", content: "fresh" }, { role: "assistant", content: "answer" }]);
+    const normalizedLine = { role: "assistant", parts: [{ type: "text", text: "duplicated display line" }] };
+
+    expect(mergeChatHistory(page(0, 2, [incoming.messages[0], normalizedLine]), incoming)).toEqual(incoming);
+  });
+
+  it("uses incoming history when cached history is longer than its raw range", () => {
+    const incoming = page(0, 2, ["fresh-a", "fresh-b"]);
+
+    expect(mergeChatHistory(page(0, 2, ["stale-a", "stale-b", "stale-c"]), incoming)).toEqual(incoming);
   });
 });

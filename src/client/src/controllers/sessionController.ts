@@ -15,6 +15,7 @@ export class SessionController {
   private catchupStreamSessionId: string | undefined;
   private pendingTranscriptEvents: SessionUiEvent[] = [];
   private pendingTranscriptFrame: number | undefined;
+  private readonly rawHistoryPages = new Map<string, RawMessagePage>();
 
   constructor(
     private readonly getState: GetState,
@@ -63,7 +64,7 @@ export class SessionController {
     this.socket.close();
     this.catchupStreamSessionId = undefined;
     this.clearPendingTranscriptEvents();
-    const cached = readChatHistoryCache(session.id);
+    const cached = this.rawHistoryPage(session.id);
     this.setState({
       selectedSession: session,
       messages: normalizeMessages(cached?.messages ?? []),
@@ -78,7 +79,7 @@ export class SessionController {
       if (session.archived === true) {
         const page = await api.messages(session.id, { limit: MESSAGE_PAGE_SIZE });
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
-        const history = this.mergeAndCacheHistory(session.id, page, this.currentHistoryPage());
+        const history = this.mergeAndCacheHistory(session.id, page, cached);
         this.setState({ messages: normalizeMessages(history.messages), messagePageStart: history.start, messagePageTotal: history.total, isLoadingEarlierMessages: false, isReceivingPartialStream: false, status: undefined, activity: undefined });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
@@ -91,7 +92,7 @@ export class SessionController {
       );
       const [page, status] = await Promise.all([api.messages(session.id, { limit: MESSAGE_PAGE_SIZE }), api.status(session.id)]);
       if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
-      const history = this.mergeAndCacheHistory(session.id, page, this.currentHistoryPage());
+      const history = this.mergeAndCacheHistory(session.id, page, cached);
       const isReceivingPartialStream = status.isStreaming;
       this.catchupStreamSessionId = isReceivingPartialStream ? session.id : undefined;
       this.setState({ messages: normalizeMessages(history.messages), messagePageStart: history.start, messagePageTotal: history.total, isLoadingEarlierMessages: false, isReceivingPartialStream, status, activity: this.getState().sessionActivities[session.id] });
@@ -110,7 +111,7 @@ export class SessionController {
     if (!session || state.isLoadingEarlierMessages || state.messagePageStart <= 0) return;
     this.setState({ isLoadingEarlierMessages: true });
     try {
-      const base = this.currentHistoryPage();
+      const base = this.rawHistoryPage(session.id);
       const page = await api.messages(session.id, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE });
       if (this.getState().selectedSession?.id !== session.id) return;
       const history = this.mergeAndCacheHistory(session.id, page, base);
@@ -298,7 +299,7 @@ export class SessionController {
     if (sessionId === undefined || session?.id !== sessionId || session.archived === true) return;
     try {
       this.flushPendingTranscriptEvents();
-      const base = this.currentHistoryPage();
+      const base = this.rawHistoryPage(sessionId);
       const [page, status] = await Promise.all([api.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }), api.status(sessionId)]);
       if (this.getState().selectedSession?.id !== sessionId) return;
       const history = this.mergeAndCacheHistory(sessionId, page, base);
@@ -324,16 +325,17 @@ export class SessionController {
     });
   }
 
-  private mergeAndCacheHistory(sessionId: string, page: RawMessagePage, base = readChatHistoryCache(sessionId)): RawMessagePage {
+  private mergeAndCacheHistory(sessionId: string, page: RawMessagePage, base = this.rawHistoryPage(sessionId)): RawMessagePage {
     const history = mergeChatHistory(base, page);
+    this.rawHistoryPages.set(sessionId, history);
     writeChatHistoryCache(sessionId, history);
     return history;
   }
 
-  private currentHistoryPage(): RawMessagePage | undefined {
-    const state = this.getState();
-    if (state.messages.length === 0 && state.messagePageTotal === 0) return undefined;
-    return { messages: state.messages, start: state.messagePageStart, total: state.messagePageTotal };
+  private rawHistoryPage(sessionId: string): RawMessagePage | undefined {
+    const cached = this.rawHistoryPages.get(sessionId) ?? readChatHistoryCache(sessionId);
+    if (cached !== undefined) this.rawHistoryPages.set(sessionId, cached);
+    return cached;
   }
 
   private applyCommandResult(result: CommandResult) {
@@ -443,7 +445,7 @@ export class SessionController {
 
   private async refreshMessages(sessionId: string) {
     try {
-      const base = this.currentHistoryPage();
+      const base = this.rawHistoryPage(sessionId);
       const page = await api.messages(sessionId, { limit: MESSAGE_PAGE_SIZE });
       if (this.getState().selectedSession?.id !== sessionId) return;
       const history = this.mergeAndCacheHistory(sessionId, page, base);

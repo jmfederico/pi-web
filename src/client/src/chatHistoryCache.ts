@@ -36,7 +36,8 @@ export function writeChatHistoryCache(sessionId: string, page: RawMessagePage): 
 }
 
 export function mergeChatHistory(existing: RawMessagePage | undefined, incoming: RawMessagePage): RawMessagePage {
-  if (existing === undefined) return incoming;
+  if (existing === undefined || !isValidMessagePage(existing)) return incoming;
+  if (!isValidMessagePage(incoming)) return existing;
   if (isCompleteReplacement(existing, incoming)) return incoming;
 
   const start = Math.min(existing.start, incoming.start);
@@ -71,14 +72,31 @@ function cacheKey(sessionId: string): string {
 }
 
 function isCachedHistory(value: unknown): value is CachedChatHistory {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("messages" in value) || !("start" in value) || !("total" in value) || !("savedAt" in value)) return false;
+  const { messages, start, total, savedAt } = value;
+  return Array.isArray(messages)
+    && typeof start === "number"
+    && typeof total === "number"
+    && typeof savedAt === "number"
+    && isValidMessagePage({ messages, start, total });
+}
+
+function isValidMessagePage(page: RawMessagePage): boolean {
+  return Number.isInteger(page.start)
+    && Number.isInteger(page.total)
+    && page.start >= 0
+    && page.total >= page.start
+    && page.messages.length <= page.total - page.start
+    && !page.messages.some(isNormalizedChatLine);
+}
+
+function isNormalizedChatLine(value: unknown): boolean {
   return typeof value === "object"
     && value !== null
-    && "messages" in value
-    && "start" in value
-    && "total" in value
-    && "savedAt" in value
-    && Array.isArray(value.messages)
-    && typeof value.start === "number"
-    && typeof value.total === "number"
-    && typeof value.savedAt === "number";
+    && "role" in value
+    && "parts" in value
+    && !("content" in value)
+    && typeof value.role === "string"
+    && Array.isArray(value.parts);
 }
