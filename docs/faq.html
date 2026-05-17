@@ -27,7 +27,7 @@
       <nav class="container nav" aria-label="Main navigation">
         <a class="brand" href="./" aria-label="Pi Web home">Pi Web</a>
         <div class="nav-links">
-          <a href="./">Home</a>
+          <a href="remote-first.html">Remote-first</a>
           <a href="install.html">Install</a>
           <a href="faq.html" aria-current="page">FAQ</a>
           <a class="github-link" href="https://github.com/jmfederico/pi-web" aria-label="Pi Web on GitHub">
@@ -70,6 +70,7 @@
             <a href="#systemd-not-found">systemctl is not available</a>
             <a href="#cannot-open">I cannot open the web UI</a>
             <a href="#public-internet">Can I expose this publicly?</a>
+            <a href="#laptop-or-server">Laptop or server?</a>
             <a href="#sessions-stop">Sessions stop unexpectedly</a>
             <a href="#logs">Where are logs?</a>
           </aside>
@@ -186,6 +187,20 @@
               </p>
             </article>
 
+            <article id="laptop-or-server" class="faq-item">
+              <h2>Should I run Pi Web on my laptop or a server?</h2>
+              <p>
+                You can run it locally, but Pi Web is most useful on a machine that stays on. A remote dev box, home
+                server, cloud VM, or workstation gives agents a stable place to keep working while your laptop becomes
+                just a client.
+              </p>
+              <p>
+                Local development can become a blocker when one device owns the tools, secrets, shells, editor, and
+                agent runtime. Remote AI-driven development unlocks persistent work: agents keep running, sessions remain
+                available, and you connect from whatever screen you have.
+              </p>
+            </article>
+
             <article id="sessions-stop" class="faq-item">
               <h2>Sessions stop unexpectedly</h2>
               <p>
@@ -224,6 +239,7 @@
         <span>Pi Web FAQ</span>
         <div class="footer-links">
           <a href="./">Home</a>
+          <a href="remote-first.html">Remote-first</a>
           <a href="install.html">Install</a>
           <a href="https://github.com/jmfederico/pi-web/issues">Issues</a>
         </div>

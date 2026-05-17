@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote-first development with Pi Web</title>
+    <meta
+      name="description"
+      content="Why Pi Web is built for remote AI-driven development with persistent agents and browser-based control."
+    />
+    <meta property="og:title" content="Remote-first development with Pi Web" />
+    <meta property="og:image" content="assets/pi-web-banner.png" />
+    <link rel="icon" href="data:," />
+    <script>
+      (() => {
+        const theme = window.localStorage.getItem("pi-web-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="container nav" aria-label="Main navigation">
+        <a class="brand" href="./" aria-label="Pi Web home">Pi Web</a>
+        <div class="nav-links">
+          <a href="remote-first.html" aria-current="page">Remote-first</a>
+          <a href="install.html">Install</a>
+          <a href="faq.html">FAQ</a>
+          <a class="github-link" href="https://github.com/jmfederico/pi-web" aria-label="Pi Web on GitHub">
+            <svg class="github-icon" viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.7 5.47 7.79.4.08.55-.18.55-.4 0-.2-.01-.85-.01-1.55-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.16-.28-.16-.68-.56-.01-.57.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.2-.08-.2-.36-1.03.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.94c.68 0 1.36.09 2 .28 1.53-1.06 2.2-.84 2.2-.84.44 1.13.16 1.96.08 2.16.51.58.82 1.31.82 2.2 0 3.14-1.87 3.83-3.65 4.04.29.26.54.76.54 1.53 0 1.1-.01 1.99-.01 2.27 0 .22.15.49.55.4A8.12 8.12 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle light and dark theme">
+            <span data-theme-icon aria-hidden="true">◐</span>
+            <span data-theme-label>Theme</span>
+          </button>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-hero">
+        <div class="container">
+          <p class="eyebrow"><span class="pulse"></span> Remote-first development</p>
+          <h1>Your laptop is a window, not the workstation.</h1>
+          <p>
+            Pi Web is built around a simple shift: development should live where the work happens, not where your
+            current keyboard happens to be.
+          </p>
+        </div>
+      </section>
+
+      <section class="section compact">
+        <div class="container doc-layout">
+          <aside class="toc" aria-label="Remote-first page contents">
+            <strong>On this page</strong>
+            <a href="#why-local-blocks">Why local can block</a>
+            <a href="#what-remote-unlocks">What remote unlocks</a>
+            <a href="#browser-control">Browser as control plane</a>
+            <a href="#human-role">The human role</a>
+            <a href="#recommended-shape">Recommended shape</a>
+          </aside>
+
+          <div class="doc-content">
+            <section id="why-local-blocks">
+              <h2>Local-only development can become the blocker</h2>
+              <p>
+                Local development made sense when one human drove every keystroke from one machine. With AI agents, the
+                work can outlive the laptop session. Agents need stable repositories, shells, tools, secrets, build
+                caches, and time to keep running.
+              </p>
+              <p>
+                When all of that is tied to a laptop, the laptop becomes the bottleneck: close the lid, change devices,
+                lose network, reboot, or run out of battery, and the work environment is interrupted.
+              </p>
+            </section>
+
+            <section id="what-remote-unlocks">
+              <h2>Remote AI-driven development unlocks persistent work</h2>
+              <p>
+                Run the environment on a machine that stays on: a dev box, home server, cloud VM, workstation, or private
+                network host. Keep agents and worktrees there. Connect from whatever screen you have.
+              </p>
+              <div class="cards">
+                <article class="card">
+                  <div class="card-icon">↻</div>
+                  <h3>Always available</h3>
+                  <p>Sessions keep existing after browser disconnects and can be resumed later.</p>
+                </article>
+                <article class="card">
+                  <div class="card-icon">▦</div>
+                  <h3>Parallel by default</h3>
+                  <p>Use worktrees and persistent sessions to let multiple agent streams progress independently.</p>
+                </article>
+                <article class="card">
+                  <div class="card-icon">⌁</div>
+                  <h3>One real environment</h3>
+                  <p>Dependencies, caches, credentials, and repository state stay where the agents run.</p>
+                </article>
+              </div>
+            </section>
+
+            <section id="browser-control">
+              <h2>The browser becomes the control plane</h2>
+              <p>
+                Your device should not have to be the editor, terminal, build server, and agent runtime. In Pi Web, the
+                browser is the cockpit: supervise sessions, redirect agents, inspect transcripts, and review progress
+                while the development environment stays remote and stable.
+              </p>
+              <p>
+                Laptop, phone, tablet, desktop: they are just windows into the same running work.
+              </p>
+            </section>
+
+            <section id="human-role">
+              <h2>The human role becomes direction, judgment, and review</h2>
+              <p>
+                Remote-first does not remove the human. It moves the human away from carrying the whole development
+                environment and toward higher-leverage work: choosing direction, setting constraints, reviewing changes,
+                and deciding what ships.
+              </p>
+            </section>
+
+            <section id="recommended-shape">
+              <h2>Recommended shape</h2>
+              <p>
+                Pi Web works locally, but it shines on a machine that stays on and is reachable through a private path:
+                SSH tunnel, VPN, private LAN, or an authenticated reverse proxy.
+              </p>
+              <div class="callout warning">
+                Use the laptop when you want convenience. Use a server or always-on workstation when you want agents to
+                keep working even when the laptop is gone.
+              </div>
+              <div class="doc-actions">
+                <a class="button primary" href="install.html">Install Pi Web</a>
+                <a class="button" href="faq.html#laptop-or-server">Laptop or server FAQ</a>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span>Pi Web · remote-first control for persistent AI agents.</span>
+        <div class="footer-links">
+          <a href="./">Home</a>
+          <a href="install.html">Install</a>
+          <a href="faq.html">FAQ</a>
+          <a href="https://github.com/jmfederico/pi-web">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="site.js"></script>
+  </body>
+</html>

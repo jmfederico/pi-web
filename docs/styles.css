@@ -49,6 +49,7 @@ body::after {
 .home-page .title-context,
 .home-page .hero .eyebrow,
 .home-page .hero-lede,
+.home-page .hero-manifesto,
 .home-page .hero-actions,
 .home-page .hero-stats,
 .home-page .terminal,
@@ -357,6 +358,16 @@ h1 {
   color: var(--muted);
   font-size: clamp(1.12rem, 2vw, 1.36rem);
   line-height: 1.62;
+}
+
+.hero-manifesto {
+  max-width: 660px;
+  margin: 18px 0 0;
+  padding-left: 18px;
+  border-left: 4px solid var(--brand-2);
+  color: var(--text);
+  font-size: 1.05rem;
+  line-height: 1.7;
 }
 
 .hero-actions,

@@ -34,7 +34,7 @@
       <nav class="container nav" aria-label="Main navigation">
         <a class="brand" href="./" aria-label="Pi Web home">Pi Web</a>
         <div class="nav-links">
-          <a href="./" aria-current="page">Home</a>
+          <a href="remote-first.html">Remote-first</a>
           <a href="install.html">Install</a>
           <a href="faq.html">FAQ</a>
           <a class="github-link" href="https://github.com/jmfederico/pi-web" aria-label="Pi Web on GitHub">
@@ -72,6 +72,10 @@
             <p class="hero-lede">
               Pi Web runs Pi Coding Agent sessions in real server-side workspaces, keeps them alive when your browser
               leaves, and gives you a fast web surface to supervise, redirect, and review the work.
+            </p>
+            <p class="hero-manifesto">
+              Local development made sense when humans drove every keystroke. Agentic development works better when the
+              environment is persistent, remote, and always available.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="#quick-install">Install in minutes</a>
@@ -112,6 +116,49 @@
               <span>Bring your own repositories.</span>
             </div>
             <img src="assets/pi-web-demo.gif" alt="Pi Web browser UI demo" />
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="section-head">
+            <p class="eyebrow"><span class="pulse"></span> Remote AI-driven development</p>
+            <h2>Your laptop is a window, not the workstation.</h2>
+            <p>
+              Local-only development can become the blocker: one device owns the tools, terminals, build cache, editor,
+              and agent runtime. Pi Web moves the working environment to a machine that stays on, so agents can keep
+              making progress while every browser becomes a control surface.
+            </p>
+          </div>
+          <div class="cards">
+            <article class="card">
+              <div class="card-icon">▣</div>
+              <h3>The workstation becomes remote</h3>
+              <p>
+                Keep repositories, dependencies, secrets, build caches, and long-running agent sessions on the machine
+                designed to run them.
+              </p>
+            </article>
+            <article class="card">
+              <div class="card-icon">⇄</div>
+              <h3>The browser becomes the control plane</h3>
+              <p>
+                Your device is replaceable. The sessions are not. Move between laptop, phone, tablet, and desktop
+                without moving the development environment.
+              </p>
+            </article>
+            <article class="card">
+              <div class="card-icon">↯</div>
+              <h3>Agents become persistent workers</h3>
+              <p>
+                Start work, leave, return later, review progress, and keep multiple streams running in parallel from one
+                stable environment.
+              </p>
+            </article>
+          </div>
+          <div class="doc-actions">
+            <a class="button" href="remote-first.html">Read the remote-first philosophy</a>
           </div>
         </div>
       </section>
@@ -205,6 +252,7 @@
       <div class="container footer-inner">
         <span>Pi Web · remote control for persistent Pi Coding Agent sessions.</span>
         <div class="footer-links">
+          <a href="remote-first.html">Remote-first</a>
           <a href="install.html">Install</a>
           <a href="faq.html">FAQ</a>
           <a href="https://www.npmjs.com/package/@jmfederico/pi-web">npm</a>
