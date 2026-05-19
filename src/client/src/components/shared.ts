@@ -57,14 +57,17 @@ export const appStyles = css`
   project-list, workspace-list { flex: 0 0 auto; max-height: 26%; overflow: auto; border-bottom: 1px solid var(--pi-border-muted); }
   session-list { flex: 1 1 auto; min-height: 0; overflow: auto; }
   main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
-  .context-bar-label { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
-  .context-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 6px; margin: 0; padding: 0; list-style: none; overflow: hidden; }
-  .context-chip { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid var(--pi-border-muted); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 4px 8px; }
+  .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: none; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+  .context-bar::before, .context-bar::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+  .context-bar::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
+  .context-bar::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
+  .context-bar.can-scroll-left::before, .context-bar.can-scroll-right::after { opacity: 1; }
+  .context-bar-label { display: none; }
+  .context-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 5px; margin: 0; padding: 0 8px; list-style: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+  .context-chip { flex: 0 0 auto; min-width: 0; display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid var(--pi-border-muted); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 4px 8px; }
   .context-chip.empty { border-style: dashed; color: var(--pi-muted); }
-  .context-kind { flex: 0 0 auto; color: var(--pi-muted); font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
-  .context-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .context-chip.empty .context-kind { color: var(--pi-dim); }
+  .context-kind { display: none; }
+  .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
   .mobile-tabs-frame { position: relative; display: none; flex: 0 0 auto; min-width: 0; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg); }
   .mobile-tabs-frame::before, .mobile-tabs-frame::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
   .mobile-tabs-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
@@ -92,16 +95,7 @@ export const appStyles = css`
     .shell { grid-template-columns: minmax(0, 1fr); }
     aside { display: none; }
     main, .shell.workspace-view > workspace-panel { grid-column: 1; }
-    .context-bar { padding: 6px 0; }
-    .context-bar::before, .context-bar::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
-    .context-bar::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
-    .context-bar::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
-    .context-bar.can-scroll-left::before, .context-bar.can-scroll-right::after { opacity: 1; }
-    .context-bar-label { display: none; }
-    .context-items { gap: 5px; padding: 0 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
-    .context-chip { flex: 0 0 auto; padding: 4px 8px; }
-    .context-kind { display: none; }
-    .context-value { overflow: visible; text-overflow: clip; }
+    .context-bar { display: flex; }
     .mobile-navigation-tab { display: block; }
     main.navigation-view chat-view, main.navigation-view prompt-editor, main.navigation-view status-bar,
     main.navigation-view .empty { display: none; }
