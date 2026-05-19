@@ -17,6 +17,7 @@ import {
   parseMessagePage,
   parseModelSelectionResponse,
   parseOAuthFlowState,
+  parsePiWebStatusResponse,
   parseProject,
   parseRestored,
   parseSessionInfo,
@@ -28,6 +29,10 @@ import {
   parseWorkspace,
 } from "./parsers";
 import { gitDiffUrl, messageUrl } from "./urls";
+
+export const piWebApi = {
+  piWebStatus: () => request("/api/pi-web/status", parsePiWebStatusResponse),
+};
 
 export const projectsApi = {
   projects: () => request("/api/projects", arrayOf(parseProject)),
@@ -94,6 +99,7 @@ export const gitApi = {
 };
 
 export const api = {
+  ...piWebApi,
   ...projectsApi,
   ...workspacesApi,
   ...sessionsApi,

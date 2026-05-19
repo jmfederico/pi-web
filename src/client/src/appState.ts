@@ -1,4 +1,4 @@
-import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, OAuthFlowState, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, OAuthFlowState, PiWebStatusResponse, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/types";
 
@@ -38,6 +38,7 @@ export interface AppState {
   selectedStagedDiff: GitDiffResponse | undefined;
   gitStale: boolean;
   activeTerminalCount: number;
+  piWebStatus: PiWebStatusResponse | undefined;
   error: string;
 }
 
@@ -85,6 +86,7 @@ export function initialAppState(): AppState {
     selectedStagedDiff: undefined,
     gitStale: false,
     activeTerminalCount: 0,
+    piWebStatus: undefined,
     error: "",
   };
 }

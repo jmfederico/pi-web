@@ -1,0 +1,9 @@
+{
+  "name": "@pi-web/status-plugin",
+  "private": true,
+  "piWeb": {
+    "plugins": [
+      { "id": "pi-web", "module": "pi-web-plugin.js" }
+    ]
+  }
+}

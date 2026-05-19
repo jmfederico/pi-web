@@ -180,6 +180,63 @@ export interface TerminalInfo {
   exitCode?: number;
 }
 
+export type PiWebServiceComponent = "web" | "sessiond";
+export type PiWebStatusSeverity = "info" | "warning" | "error";
+export type PiWebInstallationKind = "pi-package" | "npm-global" | "local" | "unknown";
+
+export interface PiWebInstallationInfo {
+  kind: PiWebInstallationKind;
+  path?: string;
+  source?: string;
+  scope?: "user" | "project";
+  npmRoot?: string;
+}
+
+export interface PiWebComponentStatus {
+  component: PiWebServiceComponent;
+  label: string;
+  runtimeVersion?: string;
+  installedVersion?: string;
+  stale: boolean;
+  available: boolean;
+  installation?: PiWebInstallationInfo;
+  error?: string;
+}
+
+export interface PiWebReleaseStatus {
+  packageName: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  checkedAt?: string;
+  skipped?: boolean;
+  error?: string;
+}
+
+export interface PiWebStatusMessage {
+  id: string;
+  severity: PiWebStatusSeverity;
+  title: string;
+  body: string;
+  command?: string;
+}
+
+export interface PiWebStatusResponse {
+  packageName: string;
+  generatedAt: string;
+  components: {
+    web: PiWebComponentStatus;
+    sessiond: PiWebComponentStatus;
+  };
+  release: PiWebReleaseStatus;
+  commands: {
+    update: string;
+    restart: string;
+    restartSystemd: string;
+    restartDev: string;
+  };
+  messages: PiWebStatusMessage[];
+}
+
 export type TerminalUiEvent =
   | { type: "terminal.created"; terminal: TerminalInfo }
   | { type: "terminal.exited"; terminal: TerminalInfo }

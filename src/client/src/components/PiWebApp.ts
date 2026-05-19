@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { terminalsApi, type Project, type RealtimeEvent, type SessionInfo, type TerminalUiEvent, type ThinkingLevel, type Workspace } from "../api";
+import { piWebApi, terminalsApi, type Project, type RealtimeEvent, type SessionInfo, type TerminalUiEvent, type ThinkingLevel, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { AuthController } from "../controllers/authController";
@@ -35,6 +35,8 @@ import "./WorkspacePanel";
 import { appStyles } from "./shared";
 
 type NavigationSection = "projects" | "workspaces" | "sessions";
+
+const PI_WEB_STATUS_REFRESH_MS = 15 * 60 * 1000;
 
 @customElement("pi-web-app")
 export class PiWebApp extends LitElement {
@@ -78,15 +80,22 @@ export class PiWebApp extends LitElement {
   private readonly activeTerminalIds = new Set<string>();
   private readonly mobileNavigationMedia = typeof window !== "undefined" && "matchMedia" in window ? window.matchMedia("(max-width: 760px)") : undefined;
   private terminalAutoStartWorkspaceId: string | undefined;
+  private piWebStatusTimer: number | undefined;
   private readonly plugins = createPluginRegistry();
   private preferredThemeId: QualifiedContributionId = readStoredThemeId() ?? DEFAULT_THEME_ID;
   @state() private activeThemeId: QualifiedContributionId = DEFAULT_THEME_ID;
   @state() private isMobileNavigationLayout = this.mobileNavigationMedia?.matches ?? false;
   @state() private expandedMobileNavigationSection: NavigationSection | "none" | undefined;
   private readonly onPopState = () => void this.withChatScrollTransition(() => this.restoreRoute(false));
-  private readonly onFocus = () => { void this.sessions.refreshSelectedSession(); };
+  private readonly onFocus = () => {
+    void this.sessions.refreshSelectedSession();
+    void this.refreshPiWebStatus();
+  };
   private readonly onVisibilityChange = () => {
-    if (document.visibilityState === "visible") void this.sessions.refreshSelectedSession();
+    if (document.visibilityState === "visible") {
+      void this.sessions.refreshSelectedSession();
+      void this.refreshPiWebStatus();
+    }
   };
   private readonly onMobileNavigationMediaChange = (event: MediaQueryListEvent) => {
     this.isMobileNavigationLayout = event.matches;
@@ -107,6 +116,8 @@ export class PiWebApp extends LitElement {
     this.mobileNavigationMedia?.addEventListener("change", this.onMobileNavigationMediaChange);
     this.applyPreferredTheme(false);
     this.connectRealtime();
+    this.piWebStatusTimer = window.setInterval(() => { void this.refreshPiWebStatus(); }, PI_WEB_STATUS_REFRESH_MS);
+    void this.refreshPiWebStatus();
     void this.loadExternalPlugins();
     void this.loadProjectsAndRestoreRoute();
   }
@@ -122,6 +133,8 @@ export class PiWebApp extends LitElement {
     this.sessions.dispose();
     this.realtime.close();
     this.git.dispose();
+    if (this.piWebStatusTimer !== undefined) window.clearInterval(this.piWebStatusTimer);
+    this.piWebStatusTimer = undefined;
     super.disconnectedCallback();
   }
 
@@ -136,6 +149,14 @@ export class PiWebApp extends LitElement {
   private async loadProjectsAndRestoreRoute() {
     await this.projects.loadProjects();
     await this.withChatScrollTransition(() => this.restoreRoute(false));
+  }
+
+  private async refreshPiWebStatus(): Promise<void> {
+    try {
+      this.setState({ piWebStatus: await piWebApi.piWebStatus() });
+    } catch (error) {
+      console.warn("Failed to refresh Pi Web status", error);
+    }
   }
 
   private async restoreRoute(updateUrl: boolean) {
@@ -268,7 +289,7 @@ export class PiWebApp extends LitElement {
 
   private renderWorkspacePanel() {
     const workspaceLabelItems = this.state.selectedWorkspace === undefined ? [] : this.plugins.getWorkspaceLabelItems(this.state, this.state.selectedWorkspace);
-    return html`<workspace-panel .workspace=${this.state.selectedWorkspace} .tool=${this.state.workspaceTool} .panels=${this.visibleWorkspacePanels()} .workspaceLabelItems=${workspaceLabelItems} .fileTree=${this.state.fileTree} .expandedDirs=${this.state.expandedDirs} .selectedFilePath=${this.state.selectedFilePath} .selectedFileContent=${this.state.selectedFileContent} .fileTreeStale=${this.state.fileTreeStale} .gitStatus=${this.state.gitStatus} .selectedDiffPath=${this.state.selectedDiffPath} .selectedDiff=${this.state.selectedDiff} .selectedStagedDiff=${this.state.selectedStagedDiff} .gitStale=${this.state.gitStale} .activeTerminalCount=${this.state.activeTerminalCount} .terminalAutoStart=${this.terminalAutoStartWorkspaceId === this.state.selectedWorkspace?.id} .onSelectTool=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }} .onRefreshFiles=${() => this.files.refreshFiles()} .onExpandDir=${(path: string) => this.files.expandDir(path)} .onSelectFile=${(path: string) => this.files.selectFile(path)} .onRefreshGit=${() => this.git.refreshGit()} .onSelectDiff=${(path: string) => this.git.selectDiff(path)}></workspace-panel>`;
+    return html`<workspace-panel .workspace=${this.state.selectedWorkspace} .appState=${this.state} .tool=${this.state.workspaceTool} .panels=${this.visibleWorkspacePanels()} .workspaceLabelItems=${workspaceLabelItems} .fileTree=${this.state.fileTree} .expandedDirs=${this.state.expandedDirs} .selectedFilePath=${this.state.selectedFilePath} .selectedFileContent=${this.state.selectedFileContent} .fileTreeStale=${this.state.fileTreeStale} .gitStatus=${this.state.gitStatus} .selectedDiffPath=${this.state.selectedDiffPath} .selectedDiff=${this.state.selectedDiff} .selectedStagedDiff=${this.state.selectedStagedDiff} .gitStale=${this.state.gitStale} .activeTerminalCount=${this.state.activeTerminalCount} .terminalAutoStart=${this.terminalAutoStartWorkspaceId === this.state.selectedWorkspace?.id} .onSelectTool=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }} .onRefreshFiles=${() => this.files.refreshFiles()} .onExpandDir=${(path: string) => this.files.expandDir(path)} .onSelectFile=${(path: string) => this.files.selectFile(path)} .onRefreshGit=${() => this.git.refreshGit()} .onSelectDiff=${(path: string) => this.git.selectDiff(path)}></workspace-panel>`;
   }
 
   private renderNavigationPanel(autoSwitchToChat: boolean) {
@@ -351,7 +372,8 @@ export class PiWebApp extends LitElement {
 
   private visibleWorkspacePanels(): QualifiedWorkspacePanelContribution[] {
     const workspace = this.state.selectedWorkspace;
-    return this.plugins.getWorkspacePanels().filter((panel) => workspace === undefined || (panel.visible?.({ workspace, state: this.state }) ?? true));
+    if (workspace === undefined) return [];
+    return this.plugins.getWorkspacePanels().filter((panel) => panel.visible?.({ workspace, state: this.state }) ?? true);
   }
 
   private renderMobilePanelTitle(panel: QualifiedWorkspacePanelContribution) {
@@ -365,6 +387,7 @@ export class PiWebApp extends LitElement {
   private createWorkspacePanelContext(workspace: Workspace): WorkspacePanelContext {
     return {
       workspace,
+      state: this.state,
       fileTree: this.state.fileTree,
       expandedDirs: this.state.expandedDirs,
       selectedFilePath: this.state.selectedFilePath,

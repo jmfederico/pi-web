@@ -14,6 +14,7 @@ import { registerWorkspaceExplorerRoutes } from "./workspaceExplorerRoutes.js";
 import { registerGitRoutes } from "./gitRoutes.js";
 import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { PiWebPluginService } from "./piWebPluginService.js";
+import { getPiWebStatus } from "./piWebStatus.js";
 
 export interface AppDependencies {
   projects?: ProjectService;
@@ -38,6 +39,8 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     if (asset === undefined) return reply.code(404).send({ error: "Plugin asset not found" });
     return reply.type(asset.contentType).send(asset.content);
   });
+
+  app.get("/api/pi-web/status", async () => getPiWebStatus());
 
   app.get("/api/projects", async () => projects.list());
 

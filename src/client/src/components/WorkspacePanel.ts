@@ -1,6 +1,7 @@
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Workspace } from "../api";
+import type { AppState } from "../appState";
 import type { QualifiedContributionId, QualifiedWorkspacePanelContribution, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
 import { workspacePanelStyles } from "./shared";
 import { renderWorkspaceLabel } from "./workspaceLabel";
@@ -8,6 +9,7 @@ import { renderWorkspaceLabel } from "./workspaceLabel";
 @customElement("workspace-panel")
 export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
+  @property({ attribute: false }) appState!: AppState;
   @property() tool: QualifiedContributionId = "core:workspace.files";
   @property({ attribute: false }) panels: QualifiedWorkspacePanelContribution[] = [];
   @property({ attribute: false }) workspaceLabelItems: WorkspaceLabelItem[] = [];
@@ -65,6 +67,7 @@ export class WorkspacePanel extends LitElement {
   private createPanelContext(workspace: Workspace): WorkspacePanelContext {
     return {
       workspace,
+      state: this.appState,
       fileTree: this.fileTree,
       expandedDirs: this.expandedDirs,
       selectedFilePath: this.selectedFilePath,

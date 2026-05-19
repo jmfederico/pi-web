@@ -140,8 +140,8 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
             <section id="example">
               <h2>Canonical example</h2>
               <p>
-                Pi Web ships a real bundled <strong>Info</strong> plugin. It is the reference example because it uses all
-                current contribution types: one action, one workspace label, and one workspace panel.
+                Pi Web ships a real bundled <strong>Info</strong> plugin. It is intentionally small while still using all
+                core contribution types: one action, one workspace label, and one workspace panel.
               </p>
               <ul>
                 <li><code>pi-web-plugins/info/package.json</code> shows the required metadata shape.</li>
@@ -151,6 +151,10 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
                 Read it on GitHub:
                 <a href="https://github.com/jmfederico/pi-web/tree/main/pi-web-plugins/info">pi-web-plugins/info</a>.
                 If you copy it, choose a new plugin id so it does not conflict with the bundled <code>info</code> plugin.
+              </p>
+              <p>
+                The bundled <code>pi-web</code> status plugin demonstrates dynamic <code>visible</code> and <code>badge</code>
+                callbacks for tabs that only appear when the host has status messages or needs extra install visibility.
               </p>
             </section>
 

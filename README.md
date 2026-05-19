@@ -101,7 +101,7 @@ Pi Web keeps its own state intentionally small:
 
 Pi Web production installs can load trusted local UI plugins without rebuilding Pi Web. Plugins are browser-side ES modules that can add action-palette actions, workspace panels, and workspace-label metadata. They do not run in the session daemon and are not sandboxed.
 
-The supported package shape is intentionally singular: `piWeb.plugins` entries with explicit `id` and `module`, plus a browser module that exports `{ apiVersion: 1, name, activate }`. The bundled `pi-web-plugins/info` plugin is the canonical real example.
+The supported package shape is intentionally singular: `piWeb.plugins` entries with explicit `id` and `module`, plus a browser module that exports `{ apiVersion: 1, name, activate }`. The bundled `pi-web-plugins/info` plugin is the canonical minimal real example, and `pi-web-plugins/pi-web` demonstrates a dynamic status panel.
 
 A useful prompt for AI agents:
 

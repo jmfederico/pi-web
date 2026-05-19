@@ -17,7 +17,7 @@ export default {
       ],
       workspaceLabels: [
         {
-          id: "workspace.path-label",
+          id: "workspace.kind-label",
           order: 100,
           items: (context) => [{ type: "text", text: context.workspace.isGitRepo ? "git" : "folder", title: context.workspace.path }],
         },
@@ -26,7 +26,7 @@ export default {
         {
           id: "workspace.info",
           title: "Info",
-          order: 100,
+          order: 1000,
           render: (context) => html`
             <section class="toolbar"><strong>Info</strong></section>
             <section class="viewer">

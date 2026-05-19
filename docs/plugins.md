@@ -63,7 +63,7 @@ After editing, check the manifest endpoint and browser-console failure cases.
 
 ## Canonical example: bundled Info plugin
 
-Pi Web ships a real bundled `info` plugin. Use it as the reference example because it exercises all current contribution types: an action, a workspace label, and a workspace panel.
+Pi Web ships a real bundled `info` plugin. Use it as the reference example because it is intentionally small while still exercising all core contribution types: an action, a workspace label, and a workspace panel.
 
 Files:
 
@@ -103,6 +103,8 @@ export default {
 ```
 
 When copying the Info plugin, choose a new plugin id so it does not conflict with the bundled `info` plugin.
+
+Pi Web also ships a `pi-web` status plugin that demonstrates dynamic `visible` and `badge` callbacks for tabs that only appear when the host has status messages or needs extra install visibility.
 
 ## Local plugin usage
 

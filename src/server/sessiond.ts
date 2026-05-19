@@ -11,6 +11,7 @@ import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { sessiondSocketPath } from "./sessiond/config.js";
 import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
+import { getPiWebComponentStatus } from "./piWebStatus.js";
 
 const app = Fastify({ logger: true });
 await app.register(fastifyWebsocket);
@@ -24,7 +25,12 @@ registerAuthRoutes(app, auth);
 registerSessionRoutes(app, sessions, eventHub);
 registerTerminalRoutes(app, terminals);
 
-app.get("/health", () => ({ ok: true, activeSessions: sessions.activeCount(), checkedAt: new Date().toISOString() }));
+app.get("/health", async () => ({
+  ok: true,
+  activeSessions: sessions.activeCount(),
+  checkedAt: new Date().toISOString(),
+  version: await getPiWebComponentStatus("sessiond"),
+}));
 
 let shuttingDown = false;
 async function shutdown(signal: NodeJS.Signals): Promise<void> {

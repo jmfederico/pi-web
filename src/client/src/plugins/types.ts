@@ -75,6 +75,7 @@ export interface WorkspacePanelVisibilityContext {
 
 export interface WorkspacePanelContext {
   workspace: Workspace;
+  state: AppState;
   fileTree: FileTreeEntry[];
   expandedDirs: Record<string, FileTreeEntry[]>;
   selectedFilePath: string | undefined;

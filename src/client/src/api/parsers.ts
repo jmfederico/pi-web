@@ -1,4 +1,4 @@
-import type { AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, MessagePage, ModelSelectionResponse, OAuthFlowState, Project, QueuedSessionMessage, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalInfo, ThinkingLevel, ThinkingLevelsResponse, Workspace } from "../../../shared/apiTypes";
+import type { AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, MessagePage, ModelSelectionResponse, OAuthFlowState, PiWebComponentStatus, PiWebInstallationInfo, PiWebReleaseStatus, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalInfo, ThinkingLevel, ThinkingLevelsResponse, Workspace } from "../../../shared/apiTypes";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -296,6 +296,91 @@ export function parseGitDiffResponse(value: unknown): GitDiffResponse {
 export function parseTerminalInfo(value: unknown): TerminalInfo {
   const record = requireRecord(value);
   return { id: requireString(record, "id"), cwd: requireString(record, "cwd"), name: requireString(record, "name"), createdAt: requireString(record, "createdAt"), exited: requireBoolean(record, "exited"), ...optionalField("exitCode", optionalNumber(record, "exitCode")) };
+}
+
+export function parsePiWebStatusResponse(value: unknown): PiWebStatusResponse {
+  const record = requireRecord(value);
+  return {
+    packageName: requireString(record, "packageName"),
+    generatedAt: requireString(record, "generatedAt"),
+    components: parsePiWebComponents(record["components"]),
+    release: parsePiWebReleaseStatus(record["release"]),
+    commands: parsePiWebCommands(record["commands"]),
+    messages: arrayOf(parsePiWebStatusMessage)(record["messages"]),
+  };
+}
+
+function parsePiWebComponents(value: unknown): PiWebStatusResponse["components"] {
+  const record = requireRecord(value);
+  return { web: parsePiWebComponentStatus(record["web"]), sessiond: parsePiWebComponentStatus(record["sessiond"]) };
+}
+
+function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus {
+  const record = requireRecord(value);
+  return {
+    component: parsePiWebServiceComponent(record["component"]),
+    label: requireString(record, "label"),
+    ...optionalField("runtimeVersion", optionalString(record, "runtimeVersion")),
+    ...optionalField("installedVersion", optionalString(record, "installedVersion")),
+    stale: requireBoolean(record, "stale"),
+    available: requireBoolean(record, "available"),
+    ...optionalField("installation", optionalPiWebInstallationInfo(record["installation"])),
+    ...optionalField("error", optionalString(record, "error")),
+  };
+}
+
+function optionalPiWebInstallationInfo(value: unknown): PiWebInstallationInfo | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  const kind = requireString(record, "kind");
+  if (kind !== "pi-package" && kind !== "npm-global" && kind !== "local" && kind !== "unknown") throw new Error("Invalid Pi Web installation kind");
+  const scope = record["scope"];
+  if (scope !== undefined && scope !== "user" && scope !== "project") throw new Error("Invalid Pi Web installation scope");
+  return {
+    kind,
+    ...optionalField("path", optionalString(record, "path")),
+    ...optionalField("source", optionalString(record, "source")),
+    ...(scope === undefined ? {} : { scope }),
+    ...optionalField("npmRoot", optionalString(record, "npmRoot")),
+  };
+}
+
+function parsePiWebReleaseStatus(value: unknown): PiWebReleaseStatus {
+  const record = requireRecord(value);
+  return {
+    packageName: requireString(record, "packageName"),
+    ...optionalField("latestVersion", optionalString(record, "latestVersion")),
+    updateAvailable: requireBoolean(record, "updateAvailable"),
+    ...optionalField("checkedAt", optionalString(record, "checkedAt")),
+    ...(record["skipped"] === true ? { skipped: true } : {}),
+    ...optionalField("error", optionalString(record, "error")),
+  };
+}
+
+function parsePiWebCommands(value: unknown): PiWebStatusResponse["commands"] {
+  const record = requireRecord(value);
+  return { update: requireString(record, "update"), restart: requireString(record, "restart"), restartSystemd: requireString(record, "restartSystemd"), restartDev: requireString(record, "restartDev") };
+}
+
+function parsePiWebStatusMessage(value: unknown): PiWebStatusMessage {
+  const record = requireRecord(value);
+  return {
+    id: requireString(record, "id"),
+    severity: parsePiWebStatusSeverity(record["severity"]),
+    title: requireString(record, "title"),
+    body: requireString(record, "body"),
+    ...optionalField("command", optionalString(record, "command")),
+  };
+}
+
+function parsePiWebServiceComponent(value: unknown): PiWebServiceComponent {
+  if (value !== "web" && value !== "sessiond") throw new Error("Invalid Pi Web service component");
+  return value;
+}
+
+function parsePiWebStatusSeverity(value: unknown): PiWebStatusSeverity {
+  if (value !== "info" && value !== "warning" && value !== "error") throw new Error("Invalid Pi Web status severity");
+  return value;
 }
 
 export function parseCommandResult(value: unknown): CommandResult {
