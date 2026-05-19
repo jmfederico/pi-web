@@ -53,7 +53,9 @@ export class WorkspaceList extends LitElement {
 
   private renderHeading() {
     if (!this.collapsible) return "Workspaces";
-    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span>${this.collapsed ? "▸" : "▾"} Workspaces</span><small>${this.workspaces.length}</small></button>`;
+    const selectedSummary = this.selected === undefined ? "No workspace selected" : `${this.selected.label}${this.selected.isMain ? " · main" : ""} · ${this.selected.path}`;
+    const selectedTitle = this.selected?.path ?? selectedSummary;
+    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Workspaces</span><small class="section-selected" title=${selectedTitle}>${selectedSummary}</small></span><small class="section-count">${this.workspaces.length}</small></button>`;
   }
 
   private renderActivity(workspace: Workspace) {

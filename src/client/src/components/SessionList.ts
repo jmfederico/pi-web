@@ -82,9 +82,11 @@ export class SessionList extends LitElement {
 
   private renderHeading(sessionCount: number) {
     if (!this.collapsible) return html`<h2>Sessions <button ?disabled=${!this.canStart} @click=${() => this.onStart?.()}>+</button></h2>`;
+    const selectedSummary = this.selected === undefined ? "No session selected" : sessionLabel(this.selected);
+    const selectedTitle = this.selected?.path ?? selectedSummary;
     return html`
       <h2>
-        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span>${this.collapsed ? "▸" : "▾"} Sessions</span><small>${sessionCount}</small></button>
+        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span><small class="section-selected" title=${selectedTitle}>${selectedSummary}</small></span><small class="section-count">${sessionCount}</small></button>
         <button ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(); }}>+</button>
       </h2>
     `;

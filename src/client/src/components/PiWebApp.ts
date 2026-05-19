@@ -45,6 +45,7 @@ export class PiWebApp extends LitElement {
   @state() private state: AppState = initialAppState();
   @query("chat-view") private chatView?: ChatView;
   @query("prompt-editor") private promptEditor?: PromptEditor;
+  @query(".context-items") private contextItems?: HTMLElement;
   @query(".mobile-tabs") private mobileTabs?: HTMLElement;
 
   private readonly sessions = new SessionController(
@@ -86,7 +87,9 @@ export class PiWebApp extends LitElement {
   private readonly realtime = new RealtimeSocket();
   private readonly activeTerminalIds = new Set<string>();
   private readonly mobileNavigationMedia = typeof window !== "undefined" && "matchMedia" in window ? window.matchMedia("(max-width: 760px)") : undefined;
+  private observedContextItems: HTMLElement | undefined;
   private observedMobileTabs: HTMLElement | undefined;
+  private contextItemsResizeObserver: ResizeObserver | undefined;
   private mobileTabsResizeObserver: ResizeObserver | undefined;
   private terminalAutoStartWorkspaceId: string | undefined;
   private piWebStatusTimer: number | undefined;
@@ -95,6 +98,8 @@ export class PiWebApp extends LitElement {
   @state() private activeThemeId: QualifiedContributionId = DEFAULT_THEME_ID;
   @state() private isMobileNavigationLayout = this.mobileNavigationMedia?.matches ?? false;
   @state() private expandedMobileNavigationSection: NavigationSection | "none" | undefined;
+  @state() private contextCanScrollLeft = false;
+  @state() private contextCanScrollRight = false;
   @state() private mobileTabsCanScrollLeft = false;
   @state() private mobileTabsCanScrollRight = false;
   private readonly onPopState = () => void this.withChatScrollTransition(() => this.restoreRoute(false));
@@ -112,7 +117,11 @@ export class PiWebApp extends LitElement {
   };
   private readonly onMobileNavigationMediaChange = (event: MediaQueryListEvent) => {
     this.isMobileNavigationLayout = event.matches;
+    this.updateContextScrollState();
     this.updateMobileTabsScrollState();
+  };
+  private readonly onContextScroll = () => {
+    this.updateContextScrollState();
   };
   private readonly onMobileTabsScroll = () => {
     this.updateMobileTabsScrollState();
@@ -153,6 +162,9 @@ export class PiWebApp extends LitElement {
     this.git.dispose();
     if (this.piWebStatusTimer !== undefined) window.clearInterval(this.piWebStatusTimer);
     this.piWebStatusTimer = undefined;
+    this.contextItemsResizeObserver?.disconnect();
+    this.contextItemsResizeObserver = undefined;
+    this.observedContextItems = undefined;
     this.mobileTabsResizeObserver?.disconnect();
     this.mobileTabsResizeObserver = undefined;
     this.observedMobileTabs = undefined;
@@ -160,12 +172,16 @@ export class PiWebApp extends LitElement {
   }
 
   override firstUpdated(): void {
+    this.observeContextItems();
     this.observeMobileTabs();
+    this.updateContextScrollState();
     this.updateMobileTabsScrollState();
   }
 
   override updated(): void {
+    this.observeContextItems();
     this.observeMobileTabs();
+    this.updateContextScrollState();
     this.updateMobileTabsScrollState();
   }
 
@@ -571,8 +587,62 @@ export class PiWebApp extends LitElement {
     void this.sessions.send(text, streamingBehavior);
   }
 
+  private renderContextBar() {
+    const project = this.state.selectedProject;
+    const workspace = this.state.selectedWorkspace;
+    const session = this.state.selectedSession;
+    const projectLabel = projectContextLabel(project);
+    const workspaceLabel = workspaceContextLabel(workspace);
+    const sessionLabel = sessionContextLabel(session);
+    return html`
+      <nav class=${this.contextBarClass()} aria-label="Current location">
+        <span class="context-bar-label">Location</span>
+        <ol class="context-items" @scroll=${this.onContextScroll}>
+          <li class=${project === undefined ? "context-chip empty" : "context-chip"} title=${projectContextTitle(project)} aria-label=${`Project: ${projectLabel}`}>
+            <span class="context-kind">Project</span>
+            <span class="context-value">${projectLabel}</span>
+          </li>
+          <li class=${workspace === undefined ? "context-chip empty" : "context-chip"} title=${workspaceContextTitle(workspace)} aria-label=${`Workspace: ${workspaceLabel}`}>
+            <span class="context-kind">Workspace</span>
+            <span class="context-value">${workspaceLabel}</span>
+          </li>
+          <li class=${session === undefined ? "context-chip empty" : "context-chip"} title=${sessionContextTitle(session)} aria-label=${`Session: ${sessionLabel}`}>
+            <span class="context-kind">Session</span>
+            <span class="context-value">${sessionLabel}</span>
+          </li>
+        </ol>
+      </nav>
+    `;
+  }
+
+  private contextBarClass(): string {
+    return `context-bar${this.contextCanScrollLeft ? " can-scroll-left" : ""}${this.contextCanScrollRight ? " can-scroll-right" : ""}`;
+  }
+
   private mobileTabsFrameClass(): string {
     return `mobile-tabs-frame${this.mobileTabsCanScrollLeft ? " can-scroll-left" : ""}${this.mobileTabsCanScrollRight ? " can-scroll-right" : ""}`;
+  }
+
+  private observeContextItems(): void {
+    const contextItems = this.contextItems;
+    if (this.observedContextItems === contextItems) return;
+    this.contextItemsResizeObserver?.disconnect();
+    this.observedContextItems = contextItems;
+    this.contextItemsResizeObserver = undefined;
+    if (contextItems === undefined || typeof ResizeObserver === "undefined") return;
+    this.contextItemsResizeObserver = new ResizeObserver(() => {
+      this.updateContextScrollState();
+    });
+    this.contextItemsResizeObserver.observe(contextItems);
+  }
+
+  private updateContextScrollState(): void {
+    const contextItems = this.contextItems;
+    const maxScrollLeft = contextItems === undefined ? 0 : Math.max(0, contextItems.scrollWidth - contextItems.clientWidth);
+    const canScrollLeft = contextItems !== undefined && contextItems.scrollLeft > 1;
+    const canScrollRight = contextItems !== undefined && maxScrollLeft - contextItems.scrollLeft > 1;
+    if (this.contextCanScrollLeft !== canScrollLeft) this.contextCanScrollLeft = canScrollLeft;
+    if (this.contextCanScrollRight !== canScrollRight) this.contextCanScrollRight = canScrollRight;
   }
 
   private observeMobileTabs(): void {
@@ -603,6 +673,7 @@ export class PiWebApp extends LitElement {
       <div class=${`shell ${state.mainView === "navigation" ? "navigation-view" : state.mainView === "chat" ? "chat-view" : "workspace-view"}`}>
         <aside>${this.isMobileNavigationLayout ? null : this.renderNavigationPanel(false)}</aside>
         <main class=${state.mainView === "chat" ? "chat-view" : state.mainView === "navigation" ? "navigation-view" : "workspace-view"}>
+          ${this.renderContextBar()}
           <div class=${this.mobileTabsFrameClass()}>
             <div class="mobile-tabs" @scroll=${this.onMobileTabsScroll}>
               <button class=${state.mainView === "navigation" ? "mobile-navigation-tab selected" : "mobile-navigation-tab"} @click=${() => { this.selectMainView("navigation"); }}>Sessions</button>
@@ -640,6 +711,32 @@ function createPluginRegistry(): PluginRegistry {
   registry.register({ id: "core", plugin: corePlugin });
   registry.register({ id: "themes", plugin: themePackPlugin });
   return registry;
+}
+
+function projectContextLabel(project: Project | undefined): string {
+  return project?.name ?? "No project";
+}
+
+function projectContextTitle(project: Project | undefined): string {
+  return project === undefined ? "No project selected" : `${project.name} — ${project.path}`;
+}
+
+function workspaceContextLabel(workspace: Workspace | undefined): string {
+  return workspace === undefined ? "No workspace" : `${workspace.label}${workspace.isMain ? " · main" : ""} · ${workspace.path}`;
+}
+
+function workspaceContextTitle(workspace: Workspace | undefined): string {
+  return workspace === undefined ? "No workspace selected" : `${workspace.label}${workspace.isMain ? " · main" : ""} — ${workspace.path}`;
+}
+
+function sessionContextLabel(session: SessionInfo | undefined): string {
+  const name = session?.name?.trim();
+  const firstMessage = session?.firstMessage.trim();
+  return name !== undefined && name !== "" ? name : firstMessage !== undefined && firstMessage !== "" ? firstMessage : session?.id.slice(0, 8) ?? "No session";
+}
+
+function sessionContextTitle(session: SessionInfo | undefined): string {
+  return session === undefined ? "No session selected" : session.path;
 }
 
 function patchChangesState(state: AppState, patch: Partial<AppState>): boolean {
