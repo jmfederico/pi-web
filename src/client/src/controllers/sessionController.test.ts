@@ -133,6 +133,38 @@ describe("SessionController", () => {
     expect(urlUpdates).toEqual([{ replace: true }]);
   });
 
+  it("stores command prompt drafts for replacement sessions before selecting them", async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+
+    let state: AppState = {
+      ...initialAppState(),
+      selectedWorkspace: workspace,
+      selectedSession: oldSession,
+      sessions: [oldSession],
+      commandDialog: { type: "select", requestId: "r1", title: "Fork from message", options: [{ value: "m1", label: "fork me" }] },
+    };
+    const urlUpdates: unknown[] = [];
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      respondToCommand: () => Promise.resolve({ type: "done", message: "Session forked", session: replacementSession, promptDraft: "fork me" }),
+      messages: () => Promise.resolve(emptyPage),
+      status: (sessionId) => Promise.resolve(status(sessionId)),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      (options) => { urlUpdates.push(options); },
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    await controller.respondToCommand("r1", "m1");
+
+    expect(state.commandDialog).toBeUndefined();
+    expect(loadDraft(replacementSession.id)).toBe("fork me");
+  });
+
   it("forgets the selected active session when archiving leaves only archived sessions", async () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const urlUpdates: ({ replace?: boolean | undefined } | undefined)[] = [];

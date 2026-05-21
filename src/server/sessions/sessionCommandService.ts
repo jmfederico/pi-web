@@ -33,7 +33,7 @@ export interface CommandSession {
 export interface CommandRuntime<TSession extends CommandSession = CommandSession> {
   cwd: string;
   session: TSession;
-  fork: (entryId: string, options?: { position?: "before" | "at" }) => Promise<{ cancelled: boolean }>;
+  fork: (entryId: string, options?: { position?: "before" | "at" }) => Promise<{ cancelled: boolean; selectedText?: string }>;
 }
 
 export interface CommandActiveSession<TSession extends CommandSession = CommandSession> {
@@ -96,7 +96,7 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
     const result = await active.runtime.fork(value);
     if (result.cancelled) return { type: "done", message: "Fork cancelled" };
-    return { type: "done", message: "Session forked", session: clientSessionFromRuntime(active.runtime) };
+    return { type: "done", message: "Session forked", session: clientSessionFromRuntime(active.runtime), ...promptDraft(result.selectedText) };
   }
 
   private nameSession(active: CommandActiveSession<TSession>, name: string): ClientCommandResult {
@@ -177,6 +177,10 @@ function sessionHasActiveWork(session: CommandSession): boolean {
 
 function forkActiveUnsupported(command: "fork" | "clone"): ClientCommandResult {
   return { type: "unsupported", message: `Cannot ${command} while the session is active. Stop current activity before ${command === "fork" ? "forking" : "cloning"}.` };
+}
+
+function promptDraft(text: string | undefined): Partial<Pick<Extract<ClientCommandResult, { type: "done" }>, "promptDraft">> {
+  return text === undefined ? {} : { promptDraft: text };
 }
 
 function formatSessionStats(session: CommandSession): string {

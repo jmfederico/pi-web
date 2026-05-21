@@ -272,7 +272,7 @@ export interface MessagePage {
 }
 
 export type CommandResult =
-  | { type: "done"; message?: string; session?: SessionInfo }
+  | { type: "done"; message?: string; session?: SessionInfo; promptDraft?: string }
   | { type: "select"; requestId: string; title: string; options: CommandOption[] }
   | { type: "unsupported"; message: string };
 

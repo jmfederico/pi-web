@@ -112,13 +112,14 @@ describe("SessionCommandService", () => {
         { entryId: "newest", text: "newest message" },
       ]),
     });
+    vi.mocked(active.runtime.fork).mockResolvedValueOnce({ cancelled: false, selectedText: "newest message" });
     const service = new SessionCommandService(() => getActive(active), vi.fn(), eventPublisher());
 
     const result = await service.run("s1", "/fork");
 
     expect(result).toMatchObject({ type: "select", title: "Fork from message", options: [{ value: "newest" }, { value: "middle" }, { value: "oldest" }] });
     if (result.type !== "select") throw new Error("Expected select result");
-    await expect(service.respond("s1", result.requestId, "newest")).resolves.toMatchObject({ type: "done", message: "Session forked", session: { id: "s1" } });
+    await expect(service.respond("s1", result.requestId, "newest")).resolves.toMatchObject({ type: "done", message: "Session forked", session: { id: "s1" }, promptDraft: "newest message" });
     expect(active.runtime.fork).toHaveBeenCalledWith("newest");
     await expect(service.respond("s1", result.requestId, "newest")).resolves.toEqual({ type: "unsupported", message: "Command request expired" });
   });

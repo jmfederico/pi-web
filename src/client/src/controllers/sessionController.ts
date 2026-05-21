@@ -1,7 +1,7 @@
 import { api as defaultApi, type CommandResult, type SessionActivity, type SessionInfo, type SessionStatus, type ThinkingLevel } from "../api";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
-import { clearDraft, moveDraft } from "../promptDraftStorage";
+import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
 import { SessionSocket, type GlobalSessionEvent, type SessionUiEvent } from "../sessionSocket";
@@ -410,6 +410,7 @@ export class SessionController {
     const message = result.type === "unsupported" ? result.message : result.message;
     if (message !== undefined && message !== "") this.setState({ messages: [...this.getState().messages, textMessage(result.type === "unsupported" ? "system" : "tool", message)] });
     if (result.type === "done" && result.session) {
+      if (result.promptDraft !== undefined) saveDraft(result.session.id, result.promptDraft);
       const current = this.getState().selectedSession;
       const sessions = [result.session, ...this.getState().sessions.filter((session) => session.id !== result.session?.id)];
       this.setState({ sessions, selectedSession: current?.id === result.session.id ? result.session : current });
