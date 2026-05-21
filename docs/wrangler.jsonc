@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "pi-web-docs",
+  "name": "pi-web",
   "compatibility_date": "2026-05-20",
   "observability": {
     "enabled": true
