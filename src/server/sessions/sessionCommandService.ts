@@ -44,7 +44,14 @@ export type GetCommandActiveSession<TSession extends CommandSession = CommandSes
 
 export interface CommandEventPublisher {
   publish(sessionId: string, event: SessionUiEvent): void;
+  publishGlobal?(event: Extract<SessionUiEvent, { type: "session.name" }>): void;
 }
+
+export interface SessionCommandNaming {
+  listSessionNames?: (cwd: string) => Promise<readonly string[]>;
+}
+
+type RelatedSessionKind = "fork" | "copy";
 
 interface PendingCommandSelect {
   sessionId: string;
@@ -62,6 +69,7 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
       onCompactionStart?: (session: TSession) => void;
       onCompactionEnd?: (session: TSession, result: "success" | "error", detail?: string) => void;
     } = {},
+    private readonly naming: SessionCommandNaming = {},
   ) {}
 
   async run(sessionId: string, text: string): Promise<ClientCommandResult> {
@@ -94,14 +102,17 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
 
     const active = await this.getActive(sessionId);
     if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
+    const relatedName = await this.nextRelatedSessionName(active, "fork");
     const result = await active.runtime.fork(value);
     if (result.cancelled) return { type: "done", message: "Fork cancelled" };
+    this.tryNameRelatedSession(active.runtime.session, relatedName);
     return { type: "done", message: "Session forked", session: clientSessionFromRuntime(active.runtime), ...promptDraft(result.selectedText) };
   }
 
   private nameSession(active: CommandActiveSession<TSession>, name: string): ClientCommandResult {
     if (name === "") return { type: "unsupported", message: "Usage: /name <session name>" };
     active.runtime.session.setSessionName(name);
+    this.publishSessionName(active.runtime.session);
     return { type: "done", message: `Session named: ${name}`, session: clientSessionFromRuntime(active.runtime) };
   }
 
@@ -129,8 +140,10 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("clone");
     const leafId = active.runtime.session.sessionManager.getLeafId();
     if (leafId === null || leafId === "") return { type: "unsupported", message: "Cannot clone: no current session entry" };
+    const relatedName = await this.nextRelatedSessionName(active, "copy");
     const result = await active.runtime.fork(leafId, { position: "at" });
     if (result.cancelled) return { type: "done", message: "Clone cancelled" };
+    this.tryNameRelatedSession(active.runtime.session, relatedName);
     return { type: "done", message: "Session cloned", session: clientSessionFromRuntime(active.runtime) };
   }
 
@@ -146,6 +159,36 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
       title: "Fork from message",
       options: [...messages].reverse().map((message) => ({ value: message.entryId, label: truncate(message.text, 140) })),
     };
+  }
+
+  private async nextRelatedSessionName(active: CommandActiveSession<TSession>, kind: RelatedSessionKind): Promise<string> {
+    const sourceTitle = relatedSessionSourceTitle(active.runtime.session);
+    const sourceName = normalizedName(active.runtime.session.sessionName);
+    let existingNames: readonly string[];
+    try {
+      existingNames = await this.naming.listSessionNames?.(active.runtime.cwd) ?? [];
+    } catch {
+      existingNames = [];
+    }
+    return uniqueRelatedSessionName(sourceTitle, kind, sourceName === undefined ? existingNames : [...existingNames, sourceName]);
+  }
+
+  private tryNameRelatedSession(session: TSession, name: string): void {
+    try {
+      session.setSessionName(name);
+      this.publishSessionName(session);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.events.publish(session.sessionId, { type: "command.output", level: "error", message: `Session created, but naming failed: ${message}` });
+    }
+  }
+
+  private publishSessionName(session: TSession): void {
+    const event = session.sessionName === undefined
+      ? { type: "session.name", sessionId: session.sessionId } as const
+      : { type: "session.name", sessionId: session.sessionId, name: session.sessionName } as const;
+    this.events.publish(session.sessionId, event);
+    this.events.publishGlobal?.(event);
   }
 
   private isRuntimeCommand(session: TSession, name: string): boolean {
@@ -169,6 +212,54 @@ function clientSessionFromRuntime(runtime: CommandRuntime): ClientSession {
     firstMessage: "",
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
   };
+}
+
+function relatedSessionSourceTitle(session: CommandSession): string {
+  const name = normalizedName(session.sessionName);
+  if (name !== undefined) return name;
+  for (const message of session.messages) {
+    const text = normalizedName(extractUserMessageText(message));
+    if (text !== undefined) return truncate(text, 80);
+  }
+  return "Untitled session";
+}
+
+function uniqueRelatedSessionName(sourceTitle: string, kind: RelatedSessionKind, existingNames: readonly string[]): string {
+  const baseName = stripRelatedSessionSuffix(sourceTitle) || "Untitled session";
+  const label = kind === "fork" ? "Fork" : "Copy";
+  const usedNames = new Set(existingNames.map(normalizedName).filter(isDefined));
+  for (let counter = 1; ; counter += 1) {
+    const candidate = `${baseName} — ${label} ${String(counter)}`;
+    if (!usedNames.has(candidate)) return candidate;
+  }
+}
+
+function stripRelatedSessionSuffix(name: string): string {
+  return name.replace(/\s+(?:—|-)\s+(?:Fork|Copy|Clone)\s+\d+$/u, "").trim();
+}
+
+function extractUserMessageText(message: unknown): string | undefined {
+  if (!isRecord(message) || message["role"] !== "user") return undefined;
+  const content = message["content"];
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  return content.map((part) => {
+    if (!isRecord(part) || part["type"] !== "text") return "";
+    return typeof part["text"] === "string" ? part["text"] : "";
+  }).join("");
+}
+
+function normalizedName(name: string | undefined): string | undefined {
+  const trimmed = name?.replace(/\s+/g, " ").trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 function sessionHasActiveWork(session: CommandSession): boolean {

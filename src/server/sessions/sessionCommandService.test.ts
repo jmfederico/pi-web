@@ -124,6 +124,49 @@ describe("SessionCommandService", () => {
     await expect(service.respond("s1", result.requestId, "newest")).resolves.toEqual({ type: "unsupported", message: "Command request expired" });
   });
 
+  it("names forked sessions from the source title with the next available counter", async () => {
+    const active = activeSession({ sessionName: "Build auth" });
+    const forked = activeSession({ sessionId: "forked", sessionName: undefined }).runtime.session;
+    vi.mocked(active.runtime.fork).mockImplementationOnce(() => {
+      active.runtime.session = forked;
+      return Promise.resolve({ cancelled: false, selectedText: "newest message" });
+    });
+    const events = eventPublisher();
+    const service = new SessionCommandService(() => getActive(active), vi.fn(), events, {}, {
+      listSessionNames: () => Promise.resolve(["Build auth", "Build auth — Fork 1"]),
+    });
+
+    const result = await service.run("s1", "/fork");
+    if (result.type !== "select") throw new Error("Expected select result");
+    await expect(service.respond("s1", result.requestId, "newest")).resolves.toMatchObject({
+      type: "done",
+      message: "Session forked",
+      session: { id: "forked", name: "Build auth — Fork 2" },
+    });
+    expect(forked.setSessionName).toHaveBeenCalledWith("Build auth — Fork 2");
+    expect(events.publish).toHaveBeenCalledWith("forked", { type: "session.name", sessionId: "forked", name: "Build auth — Fork 2" });
+  });
+
+  it("names cloned sessions as copies of the source title", async () => {
+    const active = activeSession({ sessionName: "Build auth — Fork 1" });
+    const cloned = activeSession({ sessionId: "copy", sessionName: undefined }).runtime.session;
+    vi.mocked(active.runtime.fork).mockImplementationOnce(() => {
+      active.runtime.session = cloned;
+      return Promise.resolve({ cancelled: false });
+    });
+    const service = new SessionCommandService(() => getActive(active), vi.fn(), eventPublisher(), {}, {
+      listSessionNames: () => Promise.resolve(["Build auth", "Build auth — Copy 1"]),
+    });
+
+    await expect(service.run("s1", "/clone")).resolves.toMatchObject({
+      type: "done",
+      message: "Session cloned",
+      session: { id: "copy", name: "Build auth — Copy 2" },
+    });
+    expect(active.runtime.fork).toHaveBeenCalledWith("leaf-1", { position: "at" });
+    expect(cloned.setSessionName).toHaveBeenCalledWith("Build auth — Copy 2");
+  });
+
   it("rejects fork and clone while the session has active work", async () => {
     const active = activeSession({ isStreaming: true });
     const service = new SessionCommandService(() => getActive(active), vi.fn(), eventPublisher());

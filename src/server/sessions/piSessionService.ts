@@ -204,6 +204,7 @@ export class PiSessionService {
           this.publishStatus(session);
         },
       },
+      { listSessionNames: (cwd) => this.listSessionNames(cwd) },
     );
   }
 
@@ -474,6 +475,20 @@ export class PiSessionService {
       firstMessage: "",
       ...(session.sessionName === undefined ? {} : { name: session.sessionName }),
     };
+  }
+
+  private async listSessionNames(cwd: string): Promise<string[]> {
+    const [sessions, archivedRecords] = await Promise.all([this.sessionManager.list(cwd), this.archiveStore.list()]);
+    const names = new Set<string>();
+    for (const session of sessions) addSessionName(names, session.name);
+    for (const record of archivedRecords) {
+      if (record.cwd === cwd) addSessionName(names, record.name);
+    }
+    for (const active of new Set(this.active.values())) {
+      const session = active.runtime.session;
+      if (session.sessionManager.getCwd() === cwd) addSessionName(names, session.sessionName);
+    }
+    return [...names];
   }
 
   private async closeActive(sessionId: string): Promise<void> {
@@ -749,6 +764,11 @@ function clientSessionFromArchivedRecord(record: ArchivedSessionRecord, fallback
     archived: true,
     archivedAt: record.archivedAt,
   };
+}
+
+function addSessionName(names: Set<string>, name: string | undefined): void {
+  const trimmed = name?.replace(/\s+/g, " ").trim();
+  if (trimmed !== undefined && trimmed !== "") names.add(trimmed);
 }
 
 function compareArchivedRecords(a: ArchivedSessionRecord, b: ArchivedSessionRecord): number {
