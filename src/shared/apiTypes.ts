@@ -145,9 +145,13 @@ export interface FileTreeResponse {
   truncated: boolean;
 }
 
+export type FileContentMediaType = "image";
+
 export interface FileContentResponse {
   path: string;
   language?: string;
+  mediaType?: FileContentMediaType;
+  mimeType?: string;
   encoding: "utf8";
   size: number;
   modifiedAt: string;

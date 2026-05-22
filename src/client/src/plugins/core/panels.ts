@@ -1,5 +1,7 @@
 import { html, type TemplateResult } from "lit";
-import type { FileTreeEntry, GitDiffResponse, GitStatusResponse } from "../../api";
+import type { FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse } from "../../api";
+import { workspaceImagePreviewUrl } from "../../api/urls";
+import { MAX_IMAGE_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_LABEL } from "../../../../shared/workspaceFiles";
 import type { WorkspacePanelContribution, WorkspacePanelContext } from "../types";
 
 export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
@@ -48,8 +50,9 @@ function renderFiles(context: WorkspacePanelContext): TemplateResult {
 function renderTreeEntry(context: WorkspacePanelContext, entry: FileTreeEntry, depth: number): TemplateResult {
   const children = context.expandedDirs[entry.path];
   const hasChildren = children !== undefined;
+  const selected = entry.type !== "directory" && context.selectedFilePath === entry.path;
   return html`
-    <button class="row" style=${`--depth:${String(depth)}`} @click=${() => { selectTreeEntry(context, entry); }}>
+    <button class=${selected ? "row selected" : "row"} style=${`--depth:${String(depth)}`} @click=${() => { selectTreeEntry(context, entry); }}>
       <span>${entry.type === "directory" ? (hasChildren ? "▾" : "▸") : "·"}</span>
       <span>${entry.name}</span>
     </button>
@@ -66,11 +69,29 @@ function renderFileViewer(context: WorkspacePanelContext): TemplateResult {
   const file = context.selectedFileContent;
   if (context.selectedFilePath === undefined || context.selectedFilePath === "") return html`<p class="muted">Select a file.</p>`;
   if (file === undefined) return html`<p class="muted">Loading ${context.selectedFilePath}…</p>`;
-  if (file.binary) return html`<p class="muted">Binary file: ${file.path}</p>`;
+  if (file.mediaType === "image") return renderImageViewer(context, file);
+  if (file.binary) return html`<p class="muted">Binary file: ${file.path} · ${formatFileSize(file.size)}</p>`;
   loadCodeViewer();
   return html`
     <div class="viewer-header"><strong>${file.path}</strong><small>${file.language ?? "text"}${file.truncated ? " · truncated" : ""}</small></div>
     <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+  `;
+}
+
+function renderImageViewer(context: WorkspacePanelContext, file: FileContentResponse): TemplateResult {
+  const metadata = `${file.mimeType ?? "image"} · ${formatFileSize(file.size)}`;
+  if (file.size > MAX_IMAGE_PREVIEW_BYTES) {
+    return html`
+      <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
+      <p class="muted">Image too large to preview: ${formatFileSize(file.size)} · limit ${MAX_IMAGE_PREVIEW_LABEL}</p>
+    `;
+  }
+  const src = workspaceImagePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt });
+  return html`
+    <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
+    <div class="image-preview">
+      <img src=${src} alt=${file.path} decoding="async" />
+    </div>
   `;
 }
 
@@ -148,4 +169,18 @@ function gitSummary(status: GitStatusResponse): string {
 function stateLabel(index: string, workingTree: string): string {
   const label = workingTree !== "unmodified" ? workingTree : index;
   return label.slice(0, 1).toUpperCase();
+}
+
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size < 0) return "0 B";
+  if (size < 1024) return `${String(size)} B`;
+  const kib = size / 1024;
+  if (kib < 1024) return `${formatScaledFileSize(kib)} KB`;
+  const mib = kib / 1024;
+  if (mib < 1024) return `${formatScaledFileSize(mib)} MB`;
+  return `${formatScaledFileSize(mib / 1024)} GB`;
+}
+
+function formatScaledFileSize(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
 }

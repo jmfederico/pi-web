@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
@@ -7,6 +7,7 @@ import { buildApp } from "./app.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
 import { WorkspaceService } from "./workspaces/workspaceService.js";
+import { MAX_IMAGE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
 import type { Project, Workspace } from "./types.js";
 
 let app: FastifyInstance;
@@ -108,5 +109,40 @@ describe("buildApp", () => {
         isGitWorktree: false,
       }),
     ]);
+  });
+
+  it("serves supported workspace images as previews", async () => {
+    const addResponse = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "Images", path: projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"1\" height=\"1\" /></svg>";
+    await writeFile(join(projectDir, "diagram.svg"), svg);
+    await writeFile(join(projectDir, "note.txt"), "hello");
+    await writeFile(join(projectDir, "huge.png"), "");
+    await truncate(join(projectDir, "huge.png"), MAX_IMAGE_PREVIEW_BYTES + 1);
+
+    const workspacesResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    const previewResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("diagram.svg")}` });
+
+    expect(previewResponse.statusCode).toBe(200);
+    expect(previewResponse.headers["content-type"]).toContain("image/svg+xml");
+    expect(previewResponse.headers["cache-control"]).toBe("private, max-age=3600");
+    expect(previewResponse.headers["content-security-policy"]).toContain("sandbox");
+    expect(previewResponse.headers["x-content-type-options"]).toBe("nosniff");
+    expect(previewResponse.body).toBe(svg);
+
+    const rejectedResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("note.txt")}` });
+    expect(rejectedResponse.statusCode).toBe(400);
+    expect(rejectedResponse.json()).toEqual({ error: "Image preview is not supported for this file type" });
+
+    const tooLargeResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("huge.png")}` });
+    expect(tooLargeResponse.statusCode).toBe(400);
+    expect(tooLargeResponse.json()).toEqual({ error: "Image is too large to preview (limit 10 MB)" });
   });
 });

@@ -52,7 +52,7 @@ describe("API parsers", () => {
   });
 
   it("validates file content responses", () => {
-    expect(parseFileContentResponse({
+    const textFile = {
       path: "README.md",
       language: "markdown",
       encoding: "utf8",
@@ -61,9 +61,13 @@ describe("API parsers", () => {
       content: "text",
       truncated: false,
       binary: false,
-    })).toMatchObject({ path: "README.md", language: "markdown", content: "text" });
+    };
+
+    expect(parseFileContentResponse(textFile)).toMatchObject({ path: "README.md", language: "markdown", content: "text" });
+    expect(parseFileContentResponse({ ...textFile, path: "logo.png", mediaType: "image", mimeType: "image/png", content: "", binary: true })).toMatchObject({ path: "logo.png", mediaType: "image", mimeType: "image/png" });
 
     expect(() => parseFileContentResponse({ encoding: "base64" })).toThrow("Invalid file encoding");
+    expect(() => parseFileContentResponse({ ...textFile, mediaType: "video" })).toThrow("Invalid file media type");
   });
 
   it("parses command result variants", () => {

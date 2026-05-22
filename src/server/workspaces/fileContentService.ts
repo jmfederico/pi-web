@@ -1,5 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import type { FileContentResponse } from "../../shared/apiTypes.js";
+import { imageMimeTypeForPath } from "./imagePreviewService.js";
 import { resolveInsideWorkspace } from "./pathSafety.js";
 
 const MAX_BYTES = 512 * 1024;
@@ -10,11 +11,13 @@ export async function readWorkspaceFile(rootPath: string, path: string | undefin
   const s = await stat(target);
   if (!s.isFile()) throw new Error("Path is not a file");
   const bytesToRead = Math.min(s.size, MAX_BYTES);
-  const buffer = (await readFile(target)).subarray(0, bytesToRead);
-  const binary = isProbablyBinary(buffer);
+  const buffer = await readFilePrefix(target, bytesToRead);
+  const media = mediaForPath(relativePath);
+  const binary = media.mediaType === "image" || isProbablyBinary(buffer);
   return {
     path: relativePath,
     ...languageForPath(relativePath),
+    ...media,
     encoding: "utf8",
     size: s.size,
     modifiedAt: s.mtime.toISOString(),
@@ -22,6 +25,18 @@ export async function readWorkspaceFile(rootPath: string, path: string | undefin
     truncated: s.size > MAX_BYTES,
     binary,
   };
+}
+
+async function readFilePrefix(target: string, bytesToRead: number): Promise<Buffer> {
+  if (bytesToRead === 0) return Buffer.alloc(0);
+  const buffer = Buffer.alloc(bytesToRead);
+  const handle = await open(target, "r");
+  try {
+    const result = await handle.read(buffer, 0, bytesToRead, 0);
+    return buffer.subarray(0, result.bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 function isProbablyBinary(buffer: Buffer): boolean {
@@ -49,4 +64,9 @@ function languageForPath(path: string): { language?: string } {
   };
   const language = ext === undefined ? undefined : languages[ext];
   return language === undefined ? {} : { language };
+}
+
+function mediaForPath(path: string): { mediaType?: "image"; mimeType?: string } {
+  const mimeType = imageMimeTypeForPath(path);
+  return mimeType === undefined ? {} : { mediaType: "image", mimeType };
 }

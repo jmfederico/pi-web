@@ -1,8 +1,10 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { MAX_IMAGE_PREVIEW_BYTES } from "../../shared/workspaceFiles.js";
 import { readWorkspaceFile } from "./fileContentService.js";
+import { readWorkspaceImagePreview } from "./imagePreviewService.js";
 
 const roots: string[] = [];
 
@@ -55,6 +57,31 @@ describe("readWorkspaceFile", () => {
 
     expect(file).toMatchObject({ content: "", binary: true, truncated: false });
     expect(file.size).toBe(4);
+  });
+
+  it("marks supported images as previewable", async () => {
+    const root = await tempWorkspace();
+    await writeFile(join(root, "logo.PNG"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]));
+
+    const file = await readWorkspaceFile(root, "logo.PNG");
+
+    expect(file).toMatchObject({ mediaType: "image", mimeType: "image/png", content: "", binary: true, truncated: false });
+    expect(file.size).toBe(9);
+  });
+
+  it("opens image preview streams only for supported images within the preview size limit", async () => {
+    const root = await tempWorkspace();
+    await writeFile(join(root, "diagram.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+    await writeFile(join(root, "note.txt"), "hello");
+    await writeFile(join(root, "huge.png"), "");
+    await truncate(join(root, "huge.png"), MAX_IMAGE_PREVIEW_BYTES + 1);
+
+    const preview = await readWorkspaceImagePreview(root, "diagram.svg");
+    preview.stream.destroy();
+
+    expect(preview).toMatchObject({ path: "diagram.svg", mimeType: "image/svg+xml", size: 46 });
+    await expect(readWorkspaceImagePreview(root, "note.txt")).rejects.toThrow("Image preview is not supported");
+    await expect(readWorkspaceImagePreview(root, "huge.png")).rejects.toThrow("Image is too large to preview");
   });
 
   it("truncates large text files", async () => {

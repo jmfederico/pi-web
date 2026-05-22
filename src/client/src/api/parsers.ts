@@ -258,7 +258,13 @@ export function parseFileContentResponse(value: unknown): FileContentResponse {
   const record = requireRecord(value);
   const encoding = requireString(record, "encoding");
   if (encoding !== "utf8") throw new Error("Invalid file encoding");
-  return { path: requireString(record, "path"), ...optionalField("language", optionalString(record, "language")), encoding, size: requireNumber(record, "size"), modifiedAt: requireString(record, "modifiedAt"), content: requireString(record, "content"), truncated: requireBoolean(record, "truncated"), binary: requireBoolean(record, "binary") };
+  return { path: requireString(record, "path"), ...optionalField("language", optionalString(record, "language")), ...optionalField("mediaType", optionalFileMediaType(record["mediaType"])), ...optionalField("mimeType", optionalString(record, "mimeType")), encoding, size: requireNumber(record, "size"), modifiedAt: requireString(record, "modifiedAt"), content: requireString(record, "content"), truncated: requireBoolean(record, "truncated"), binary: requireBoolean(record, "binary") };
+}
+
+function optionalFileMediaType(value: unknown): FileContentResponse["mediaType"] | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "image") throw new Error("Invalid file media type");
+  return value;
 }
 
 export function parseGitStatusResponse(value: unknown): GitStatusResponse {
