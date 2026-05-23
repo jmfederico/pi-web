@@ -21,6 +21,8 @@ function createContext(statePatch: Partial<AppState> = {}) {
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),
     refreshFiles: vi.fn(() => { calls.push("refreshFiles"); }),
     refreshGit: vi.fn(() => { calls.push("refreshGit"); }),
+    refreshAppData: vi.fn(() => { calls.push("refreshAppData"); }),
+    reloadPage: vi.fn(() => { calls.push("reloadPage"); }),
     startSession: vi.fn(() => { calls.push("startSession"); }),
     archiveSession: vi.fn(() => { calls.push("archiveSession"); }),
     stopActiveWork: vi.fn(() => { calls.push("stopActiveWork"); }),
@@ -84,6 +86,18 @@ describe("PluginRegistry", () => {
     if (action !== undefined) void action.run();
 
     expect(calls).toEqual(["refreshGit"]);
+  });
+
+  it("routes app refresh and reload actions through the runtime context", () => {
+    const registry = new PluginRegistry();
+    registry.register({ id: "core", plugin: corePlugin });
+    const { context, calls } = createContext();
+    const actions = registry.getActions(context);
+
+    void actions.find((candidate) => candidate.id === "core:app.refresh-data")?.run();
+    void actions.find((candidate) => candidate.id === "core:app.reload-page")?.run();
+
+    expect(calls).toEqual(["refreshAppData", "reloadPage"]);
   });
 
   it("exposes terminal navigation as a shortcut-backed action", () => {

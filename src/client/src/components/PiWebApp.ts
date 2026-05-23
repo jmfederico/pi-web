@@ -36,6 +36,7 @@ import "./AuthDialog";
 import "./ProjectDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
+import { actionMenuPanelStyle } from "./actionMenu";
 import { appStyles } from "./shared";
 
 type NavigationSection = "projects" | "workspaces" | "sessions";
@@ -46,6 +47,7 @@ const THEME_AUTO_ON_VALUE = "auto:on";
 const THEME_AUTO_OFF_VALUE = "auto:off";
 const THEME_OPTION_PREFIX = "theme:";
 const TERMINAL_ROUTE_NAMESPACE = queryNamespace("core:workspace.terminal");
+const REFRESH_LONG_PRESS_MS = 550;
 
 @customElement("pi-web-app")
 export class PiWebApp extends LitElement {
@@ -54,6 +56,7 @@ export class PiWebApp extends LitElement {
   @query("prompt-editor") private promptEditor?: PromptEditor;
   @query(".context-items") private contextItems?: HTMLElement | null;
   @query(".mobile-tabs") private mobileTabs?: HTMLElement | null;
+  @query(".app-refresh") private appRefresh?: HTMLElement | null;
 
   private readonly sessions = new SessionController(
     () => this.state,
@@ -106,8 +109,13 @@ export class PiWebApp extends LitElement {
   private restoringRouteTerminalId: string | undefined;
   private readonly plugins = createPluginRegistry();
   private themePreference: ThemePreference = readStoredThemePreference() ?? DEFAULT_THEME_PREFERENCE;
+  private refreshLongPressTimer: number | undefined;
+  private suppressNextRefreshClick = false;
   @state() private activeThemeId: QualifiedContributionId = CLASSIC_THEME_ID;
   @state() private isMobileNavigationLayout = this.mobileNavigationMedia?.matches ?? false;
+  @state() private isRefreshingApp = false;
+  @state() private refreshMenuOpen = false;
+  @state() private refreshMenuStyle = "";
   @state() private expandedMobileNavigationSection: NavigationSection | "none" | undefined;
   @state() private contextCanScrollLeft = false;
   @state() private contextCanScrollRight = false;
@@ -140,7 +148,20 @@ export class PiWebApp extends LitElement {
   private readonly onMobileTabsScroll = () => {
     this.updateMobileTabsScrollState();
   };
+  private readonly onDocumentClick = (event: MouseEvent) => {
+    const refresh = this.appRefreshElement();
+    if (refresh !== undefined && event.composedPath().includes(refresh)) return;
+    this.refreshMenuOpen = false;
+    this.suppressNextRefreshClick = false;
+  };
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && this.refreshMenuOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.refreshMenuOpen = false;
+      this.suppressNextRefreshClick = false;
+      return;
+    }
     if (this.keyboard.handle(event, this.getActions())) {
       event.preventDefault();
       event.stopPropagation();
@@ -151,6 +172,7 @@ export class PiWebApp extends LitElement {
     super.connectedCallback();
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("focus", this.onFocus);
+    document.addEventListener("click", this.onDocumentClick);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.mobileNavigationMedia?.addEventListener("change", this.onMobileNavigationMediaChange);
@@ -167,6 +189,7 @@ export class PiWebApp extends LitElement {
   override disconnectedCallback(): void {
     window.removeEventListener("popstate", this.onPopState);
     window.removeEventListener("focus", this.onFocus);
+    document.removeEventListener("click", this.onDocumentClick);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.mobileNavigationMedia?.removeEventListener("change", this.onMobileNavigationMediaChange);
@@ -184,6 +207,7 @@ export class PiWebApp extends LitElement {
     this.mobileTabsResizeObserver?.disconnect();
     this.mobileTabsResizeObserver = undefined;
     this.observedMobileTabs = undefined;
+    this.clearRefreshLongPressTimer();
     super.disconnectedCallback();
   }
 
@@ -228,6 +252,35 @@ export class PiWebApp extends LitElement {
     } catch (error) {
       console.warn("Failed to refresh workspace activity", error);
     }
+  }
+
+  private async refreshAppData(): Promise<void> {
+    if (this.isRefreshingApp) return;
+    this.refreshMenuOpen = false;
+    this.suppressNextRefreshClick = false;
+    this.isRefreshingApp = true;
+    try {
+      await Promise.all([
+        this.sessions.refreshSelectedSession(),
+        this.refreshPiWebStatus(),
+        this.refreshWorkspaceActivity(),
+        this.refreshCurrentWorkspaceSurface(),
+      ]);
+    } finally {
+      this.isRefreshingApp = false;
+    }
+  }
+
+  private async refreshCurrentWorkspaceSurface(): Promise<void> {
+    const workspace = this.state.selectedWorkspace;
+    const tool = this.state.mainView !== "chat" && this.state.mainView !== "navigation" ? this.state.mainView : this.state.workspaceTool;
+    if (tool === "core:workspace.files") await this.files.refreshFiles();
+    else if (tool === "core:workspace.git") await this.git.refreshGit();
+    else if (tool === "core:workspace.terminal" && workspace !== undefined) await this.refreshActiveTerminals(workspace);
+  }
+
+  private hardReloadApp(): void {
+    window.location.reload();
   }
 
   private async restoreRoute(updateUrl: boolean) {
@@ -627,6 +680,8 @@ export class PiWebApp extends LitElement {
       openTerminal: (options) => { this.openTerminal(options); },
       refreshFiles: () => this.files.refreshFiles(),
       refreshGit: () => this.git.refreshGit(),
+      refreshAppData: () => this.refreshAppData(),
+      reloadPage: () => { this.hardReloadApp(); },
       startSession: () => this.withChatScrollTransition(() => this.sessions.startSession()),
       archiveSession: () => this.sessions.archiveSession(),
       stopActiveWork: () => this.sessions.stopActiveWork(),
@@ -803,6 +858,7 @@ export class PiWebApp extends LitElement {
             <span class="context-value">${sessionLabel}</span>
           </li>
         </ol>
+        <div class="context-actions">${this.renderAppRefresh()}</div>
       </nav>
     `;
   }
@@ -869,6 +925,95 @@ export class PiWebApp extends LitElement {
     return mobileTabs instanceof HTMLElement ? mobileTabs : undefined;
   }
 
+  private appRefreshElement(): HTMLElement | undefined {
+    const appRefresh = this.appRefresh;
+    return appRefresh instanceof HTMLElement ? appRefresh : undefined;
+  }
+
+  private renderAppRefresh() {
+    const label = this.isRefreshingApp ? "Refreshing app data. Long-press for reload options." : "Refresh app data. Long-press for reload options.";
+    return html`
+      <div class="app-refresh">
+        <button
+          class=${`app-refresh-button${this.isRefreshingApp ? " refreshing" : ""}`}
+          title=${label}
+          aria-label=${label}
+          aria-haspopup="menu"
+          aria-expanded=${String(this.refreshMenuOpen)}
+          aria-busy=${String(this.isRefreshingApp)}
+          @click=${(event: MouseEvent) => { this.onRefreshClick(event); }}
+          @contextmenu=${(event: MouseEvent) => { this.onRefreshContextMenu(event); }}
+          @pointerdown=${(event: PointerEvent) => { this.onRefreshPointerDown(event); }}
+          @pointerup=${() => { this.clearRefreshLongPressTimer(); }}
+          @pointercancel=${() => { this.clearRefreshLongPressTimer(); }}
+          @pointerleave=${() => { this.clearRefreshLongPressTimer(); }}
+        >${this.renderRefreshIcon()}</button>
+      </div>
+    `;
+  }
+
+  private renderRefreshMenu() {
+    if (!this.refreshMenuOpen) return null;
+    return html`
+      <div class="app-refresh-menu" role="menu" style=${this.refreshMenuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
+        <button role="menuitem" @click=${() => { void this.refreshAppData(); }}>Refresh app data</button>
+        <button role="menuitem" @click=${() => { this.refreshMenuOpen = false; this.suppressNextRefreshClick = false; this.hardReloadApp(); }}>Full page reload</button>
+      </div>
+    `;
+  }
+
+  private renderRefreshIcon() {
+    return html`
+      <svg class="app-refresh-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M20 6v5h-5"></path>
+        <path d="M4 18v-5h5"></path>
+        <path d="M18.2 9A7 7 0 0 0 6.1 6.8L4 9"></path>
+        <path d="M5.8 15a7 7 0 0 0 12.1 2.2L20 15"></path>
+      </svg>
+    `;
+  }
+
+  private onRefreshClick(event: MouseEvent): void {
+    event.stopPropagation();
+    if (this.suppressNextRefreshClick) {
+      this.suppressNextRefreshClick = false;
+      return;
+    }
+    void this.refreshAppData();
+  }
+
+  private onRefreshPointerDown(event: PointerEvent): void {
+    if (!event.isPrimary || event.button !== 0) return;
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    this.clearRefreshLongPressTimer();
+    this.suppressNextRefreshClick = false;
+    this.refreshLongPressTimer = window.setTimeout(() => {
+      this.refreshLongPressTimer = undefined;
+      this.suppressNextRefreshClick = true;
+      this.openRefreshMenu(target);
+    }, REFRESH_LONG_PRESS_MS);
+  }
+
+  private onRefreshContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.clearRefreshLongPressTimer();
+    this.suppressNextRefreshClick = true;
+    this.openRefreshMenu(event.currentTarget);
+  }
+
+  private openRefreshMenu(target: EventTarget | null): void {
+    this.refreshMenuStyle = actionMenuPanelStyle(target);
+    this.refreshMenuOpen = true;
+  }
+
+  private clearRefreshLongPressTimer(): void {
+    if (this.refreshLongPressTimer === undefined) return;
+    window.clearTimeout(this.refreshLongPressTimer);
+    this.refreshLongPressTimer = undefined;
+  }
+
   override render() {
     const state = this.state;
     return html`
@@ -901,6 +1046,7 @@ export class PiWebApp extends LitElement {
         ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
         ${state.projectDialogOpen ? html`<project-dialog .onSubmit=${(path: string, create: boolean) => this.projects.addProject(path, create)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
+        ${this.renderRefreshMenu()}
       </div>
     `;
   }

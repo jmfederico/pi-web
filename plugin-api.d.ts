@@ -50,6 +50,8 @@ export interface PluginRuntimeContext {
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
   refreshFiles: () => void | Promise<void>;
   refreshGit: () => void | Promise<void>;
+  refreshAppData: () => void | Promise<void>;
+  reloadPage: () => void;
   startSession: () => void | Promise<void>;
   archiveSession: () => void | Promise<void>;
   stopActiveWork: () => void | Promise<void>;
