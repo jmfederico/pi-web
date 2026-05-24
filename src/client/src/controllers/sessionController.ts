@@ -5,6 +5,7 @@ import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
 import { SessionSocket, type GlobalSessionEvent, type SessionUiEvent } from "../sessionSocket";
+import { isSessionActive } from "../../../shared/activity";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
 import type { GetState, SetState, UpdateUrl } from "./types";
 
@@ -443,9 +444,13 @@ export class SessionController {
   }
 
   private applyStatus(status: SessionStatus) {
+    const state = this.getState();
+    const clearsStaleActivity = state.sessionActivities[status.sessionId]?.phase === "active" && !isSessionActive(status);
     this.setState({
-      sessionStatuses: { ...this.getState().sessionStatuses, [status.sessionId]: status },
-      status: this.getState().selectedSession?.id === status.sessionId ? status : this.getState().status,
+      sessionStatuses: { ...state.sessionStatuses, [status.sessionId]: status },
+      ...(clearsStaleActivity ? { sessionActivities: omitSessionActivity(state.sessionActivities, status.sessionId) } : {}),
+      status: state.selectedSession?.id === status.sessionId ? status : state.status,
+      activity: state.selectedSession?.id === status.sessionId && clearsStaleActivity ? undefined : state.activity,
     });
     if (this.catchupStreamSessionId === status.sessionId && !status.isStreaming) this.finishStreamCatchup(status.sessionId);
   }
@@ -534,6 +539,10 @@ export class SessionController {
       if (this.getState().selectedSession?.id === sessionId) this.setState({ error: String(error) });
     }
   }
+}
+
+function omitSessionActivity(activities: Record<string, SessionActivity>, sessionId: string): Record<string, SessionActivity> {
+  return Object.fromEntries(Object.entries(activities).filter(([id]) => id !== sessionId));
 }
 
 function isTranscriptEvent(event: SessionUiEvent): boolean {

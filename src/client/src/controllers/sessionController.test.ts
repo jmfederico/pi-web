@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { api as defaultApi, type MessagePage, type SessionInfo, type SessionStatus, type Workspace } from "../api";
+import { api as defaultApi, type MessagePage, type SessionActivity, type SessionInfo, type SessionStatus, type Workspace } from "../api";
 import { loadCachedNewSessions, markCachedNewSessionInfo, rememberCachedNewSession } from "../cachedNewSessions";
 import { initialAppState, type AppState } from "../appState";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
@@ -94,6 +94,30 @@ function status(sessionId: string): SessionStatus {
 describe("SessionController", () => {
   afterEach(() => {
     Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
+  });
+
+  it("clears stale active activity when an idle status arrives", () => {
+    const activeActivity: SessionActivity = { sessionId: oldSession.id, phase: "active", label: "running tool", at: "2026-05-15T00:00:00.000Z" };
+    let state: AppState = {
+      ...initialAppState(),
+      selectedSession: oldSession,
+      sessions: [oldSession],
+      activity: activeActivity,
+      sessionActivities: { [oldSession.id]: activeActivity },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { socket: new FakeSocket() },
+    );
+
+    controller.applyGlobalEvent({ type: "status.update", status: status(oldSession.id) });
+
+    expect(state.activity).toBeUndefined();
+    expect(state.sessionActivities[oldSession.id]).toBeUndefined();
+    expect(state.sessionStatuses[oldSession.id]).toMatchObject({ sessionId: oldSession.id, isStreaming: false });
   });
 
   it("recreates missing browser-cached new sessions and moves their draft", async () => {

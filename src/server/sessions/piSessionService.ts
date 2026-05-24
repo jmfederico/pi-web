@@ -674,10 +674,12 @@ export class PiSessionService {
     for (const active of this.active.values()) {
       const { session } = active.runtime;
       const activity = this.activities.get(session.sessionId);
-      const isActive = session.isStreaming || session.isBashRunning || session.isCompacting || session.pendingMessageCount > 0 || activity?.phase === "active";
-      if (!isActive) continue;
+      if (!sessionHasActiveWork(session)) {
+        if (activity?.phase === "active") this.publishStatus(session);
+        continue;
+      }
       this.publishStatus(session);
-      if (activity) this.publishActivity(session, activity.label, "active", activity.detail);
+      if (activity?.phase === "active") this.publishActivity(session, activity.label, "active", activity.detail);
       else this.publishActivity(session, this.activityLabelFromStatus(session), "active");
     }
   }
@@ -702,19 +704,19 @@ export class PiSessionService {
       }, 250);
       return;
     }
-    if (eventType === "turn_end") { this.publishActivity(session, "turn complete", "active"); return; }
+    if (eventType === "turn_end") { this.publishActivity(session, "turn complete", "idle"); return; }
     if (eventType === "message_start") { this.publishActivity(session, "message started", "active"); return; }
     if (eventType === "message_end") { this.publishActivity(session, "message complete", "idle"); return; }
     if (eventType === "message_update") { this.publishActivity(session, "receiving response", "active"); return; }
     if (eventType === "tool_execution_start") { this.publishActivity(session, "running tool", "active", getString(event, "toolName")); return; }
     if (eventType === "tool_execution_end") {
       const isError = getBoolean(event, "isError") === true;
-      this.publishActivity(session, isError ? "tool failed" : "tool complete", isError ? "error" : "active", getString(event, "toolName"));
+      this.publishActivity(session, isError ? "tool failed" : "tool complete", isError ? "error" : "idle", getString(event, "toolName"));
       return;
     }
     if (eventType === "bash_execution_start") { this.publishActivity(session, "running bash", "active"); return; }
-    if (eventType === "bash_execution_end") { this.publishActivity(session, "bash complete", "active"); return; }
-    this.publishActivity(session, eventType.replaceAll("_", " "), "active");
+    if (eventType === "bash_execution_end") { this.publishActivity(session, "bash complete", "idle"); return; }
+    if (sessionHasActiveWork(session)) this.publishActivity(session, eventType.replaceAll("_", " "), "active");
   }
 
   private publishActivity(session: PiAgentSession, label: string, phase: "active" | "idle" | "error", detail?: string): void {
@@ -729,9 +731,21 @@ export class PiSessionService {
 
   private publishStatus(session: PiAgentSession): void {
     const status = this.statusFromSession(session);
+    this.clearStaleActiveActivity(session);
     this.workspaceActivity?.applySessionStatus(session.sessionManager.getCwd(), status);
     this.events.publish(session.sessionId, { type: "status.update", status });
     this.events.publishGlobal({ type: "status.update", status });
+  }
+
+  private clearStaleActiveActivity(session: PiAgentSession): void {
+    const current = this.activities.get(session.sessionId);
+    if (current?.phase !== "active" || sessionHasActiveWork(session)) return;
+    const at = new Date().toISOString();
+    const stored = { phase: "idle" as const, label: "idle", at };
+    this.activities.set(session.sessionId, stored);
+    const activity = { sessionId: session.sessionId, ...stored };
+    this.events.publish(session.sessionId, { type: "activity.update", activity });
+    this.events.publishGlobal({ type: "activity.update", activity });
   }
 
   private statusFromSession(session: PiAgentSession): ClientSessionStatus {

@@ -1,5 +1,5 @@
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { PiSessionService, type PiAgentSession, type PiSessionManager, type PiSessionRuntime, type PiSessionServiceDependencies } from "./piSessionService.js";
@@ -146,6 +146,71 @@ describe("PiSessionService", () => {
     await service.dispose();
     expect(fake.calls.abort).toBe(1);
     expect(fake.calls.dispose).toBe(1);
+  });
+
+  it("clears stale active activity once a previously active session becomes idle", async () => {
+    vi.useFakeTimers();
+    let service: PiSessionService | undefined;
+    try {
+      const hub = new CapturingSessionEventHub();
+      let listener: ((event: unknown) => void) | undefined;
+      const fake = fakeRuntime("idle-session", {
+        isStreaming: true,
+        subscribe: (next) => {
+          listener = next;
+          return () => undefined;
+        },
+      });
+      service = new PiSessionService(hub, {
+        createAgentRuntime: runtimeCreator(fake.runtime),
+        sessionManager: sessionGateway([sessionRecord("idle-session")]),
+        heartbeatIntervalMs: 1_000,
+      });
+
+      await service.status("idle-session");
+      hub.globalEvents.length = 0;
+      listener?.({ type: "agent_start" });
+
+      const activityPhases = () => hub.globalEvents
+        .filter((event) => event.type === "activity.update")
+        .map((event) => event.activity.phase);
+      expect(activityPhases()).toEqual(["active"]);
+
+      fake.session.isStreaming = false;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(activityPhases()).toEqual(["active", "idle"]);
+    } finally {
+      await service?.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("publishes idle activity for SDK completion events", async () => {
+    const hub = new CapturingSessionEventHub();
+    let listener: ((event: unknown) => void) | undefined;
+    const fake = fakeRuntime("completion-session", {
+      subscribe: (next) => {
+        listener = next;
+        return () => undefined;
+      },
+    });
+    const service = new PiSessionService(hub, {
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("completion-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status("completion-session");
+    hub.globalEvents.length = 0;
+    listener?.({ type: "tool_execution_end", toolName: "read", isError: false });
+
+    expect(hub.globalEvents.filter((event) => event.type === "activity.update")).toMatchObject([
+      { activity: { sessionId: "completion-session", phase: "idle", label: "tool complete", detail: "read" } },
+    ]);
+
+    await service.dispose();
   });
 
   it("uses injected archive and session-manager gateways for listing", async () => {
