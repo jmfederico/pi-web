@@ -1,6 +1,6 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
-export type NavigationSection = "projects" | "workspaces" | "sessions";
+export type NavigationSection = "machines" | "projects" | "workspaces" | "sessions";
 export type ExpandedNavigationSection = NavigationSection | "none" | undefined;
 
 export interface NavigationSelectionState {

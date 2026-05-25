@@ -15,10 +15,13 @@ import { registerGitRoutes } from "./gitRoutes.js";
 import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { PiWebPluginService } from "./piWebPluginService.js";
 import { getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { MachineService } from "./machines/machineService.js";
+import { registerMachineRoutes } from "./machines/machineRoutes.js";
 
 export interface AppDependencies {
   projects?: ProjectService;
   workspaces?: WorkspaceService;
+  machines?: MachineService;
   piWebPlugins?: Pick<PiWebPluginService, "manifest" | "readAsset">;
   clientDist?: string | false;
   logger?: FastifyServerOptions["logger"];
@@ -31,6 +34,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const workspaces = deps.workspaces ?? new WorkspaceService();
   const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService();
+  const machines = deps.machines ?? new MachineService();
 
   app.get("/pi-web-plugins/manifest.json", async () => piWebPlugins.manifest());
 
@@ -42,6 +46,8 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   app.get("/api/pi-web/status", async () => getPiWebStatus());
   app.get("/api/pi-web/version", async () => getPiWebVersionStatus());
+
+  registerMachineRoutes(app, machines);
 
   app.get("/api/projects", async () => projects.list());
 

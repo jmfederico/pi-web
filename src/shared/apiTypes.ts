@@ -1,3 +1,27 @@
+export type MachineKind = "local" | "remote";
+export type MachineStatus = "unknown" | "online" | "offline" | "error";
+
+export interface Machine {
+  id: string;
+  name: string;
+  kind: MachineKind;
+  baseUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+  status?: MachineStatus;
+  statusMessage?: string;
+}
+
+export interface MachineHealth {
+  machineId: string;
+  ok: boolean;
+  checkedAt: string;
+  status?: MachineStatus;
+  web?: PiWebComponentStatus;
+  sessiond?: PiWebComponentStatus;
+  error?: string;
+}
+
 export interface Project {
   id: string;
   name: string;

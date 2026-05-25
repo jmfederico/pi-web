@@ -14,6 +14,8 @@ import {
   parseFileTreeResponse,
   parseGitDiffResponse,
   parseGitStatusResponse,
+  parseMachine,
+  parseMachinesResponse,
   parseMessagePage,
   parseModelSelectionResponse,
   parseOAuthFlowState,
@@ -34,6 +36,12 @@ import { gitDiffUrl, messageUrl } from "./urls";
 
 export const piWebApi = {
   piWebStatus: () => request("/api/pi-web/status", parsePiWebStatusResponse),
+};
+
+export const machinesApi = {
+  machines: () => request("/api/machines", parseMachinesResponse),
+  addMachine: (input: { name: string; baseUrl: string; token?: string }) => request("/api/machines", parseMachine, { method: "POST", body: JSON.stringify(input) }),
+  deleteMachine: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}`, (value) => value, { method: "DELETE" }),
 };
 
 export const activityApi = {
@@ -156,6 +164,7 @@ export const gitApi = {
 
 export const api = {
   ...piWebApi,
+  ...machinesApi,
   ...activityApi,
   ...projectsApi,
   ...workspacesApi,

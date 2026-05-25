@@ -33,9 +33,10 @@ function installWindow(href: string): { pushed: string[] } {
 
 describe("route helpers", () => {
   it("reads only supported route fields from the current URL", () => {
-    installWindow("http://localhost/app?project=p1&workspace=w1&session=s1&tool=git&view=files&core.workspace.files--file=src%2Fmain.ts&core.workspace.git--diff=README.md");
+    installWindow("http://localhost/app?machine=remote&project=p1&workspace=w1&session=s1&tool=git&view=files&core.workspace.files--file=src%2Fmain.ts&core.workspace.git--diff=README.md");
 
     expect(readRoute()).toEqual({
+      machineId: "remote",
       projectId: "p1",
       workspaceId: "w1",
       sessionId: "s1",
@@ -53,6 +54,7 @@ describe("route helpers", () => {
   it("writes compact URLs and preserves path/hash", () => {
     const { pushed } = installWindow("http://localhost/app?old=1#section");
     const route: AppRoute = {
+      machineId: "remote",
       projectId: "project/id",
       workspaceId: "workspace id",
       sessionId: "",
@@ -62,13 +64,13 @@ describe("route helpers", () => {
 
     writeRoute(route);
 
-    expect(pushed).toEqual(["http://localhost/app?old=1&project=project%2Fid&workspace=workspace+id&tool=core%3Aworkspace.files&view=chat#section"]);
+    expect(pushed).toEqual(["http://localhost/app?old=1&machine=remote&project=project%2Fid&workspace=workspace+id&tool=core%3Aworkspace.files&view=chat#section"]);
   });
 
   it("does not push history when the route is unchanged", () => {
     const { pushed } = installWindow("http://localhost/app?project=p1&tool=core%3Aworkspace.git");
 
-    writeRoute({ projectId: "p1", workspaceId: undefined, sessionId: undefined, tool: "core:workspace.git", view: undefined });
+    writeRoute({ machineId: undefined, projectId: "p1", workspaceId: undefined, sessionId: undefined, tool: "core:workspace.git", view: undefined });
 
     expect(pushed).toEqual([]);
   });

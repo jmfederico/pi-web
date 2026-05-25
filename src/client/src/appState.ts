@@ -1,8 +1,12 @@
-import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, OAuthFlowState, PiWebStatusResponse, Project, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, OAuthFlowState, PiWebStatusResponse, Project, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/ids";
 
 export interface AppState {
+  machines: Machine[];
+  selectedMachine: Machine | undefined;
+  isLoadingMachines: boolean;
+  machineStatuses: Record<string, MachineHealth>;
   projects: Project[];
   workspaces: Workspace[];
   sessions: SessionInfo[];
@@ -92,6 +96,10 @@ export function resetWorkspaceScopedState(): WorkspaceScopedStateReset {
 
 export function initialAppState(): AppState {
   return {
+    machines: [],
+    selectedMachine: undefined,
+    isLoadingMachines: false,
+    machineStatuses: {},
     projects: [],
     workspaces: [],
     sessions: [],

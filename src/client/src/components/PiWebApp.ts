@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { piWebApi, terminalsApi, type Project, type RealtimeEvent, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type ThinkingLevel, type Workspace } from "../api";
+import { piWebApi, terminalsApi, type Machine, type Project, type RealtimeEvent, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type ThinkingLevel, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
@@ -8,6 +8,7 @@ import { ActivityController } from "../controllers/activityController";
 import { AuthController } from "../controllers/authController";
 import { FileExplorerController } from "../controllers/fileExplorerController";
 import { GitController } from "../controllers/gitController";
+import { MachineController } from "../controllers/machineController";
 import { ProjectController } from "../controllers/projectController";
 import { SessionController } from "../controllers/sessionController";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
@@ -27,6 +28,7 @@ import { PanelCollapseController, mainViewClass } from "../appShell/panelCollaps
 import { readRoute, writeRoute, type AppRoute } from "../route";
 import { createTerminalCommandRunsRuntime } from "../runtime/terminalRuntime";
 import { isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionMetadata, workspaceDeletionRunFilter } from "../workspaceDeletion";
+import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
 import "./SessionList";
@@ -48,6 +50,7 @@ import "./appShell/AppNavigationPanel";
 import "./appShell/AppPanelEdgeControl";
 import "./appShell/AppRefreshControl";
 import { appStyles } from "./shared";
+
 
 const PI_WEB_STATUS_REFRESH_MS = 15 * 60 * 1000;
 const GLOBAL_SHORTCUT_LISTENER_OPTIONS = { capture: true } as const;
@@ -86,6 +89,12 @@ export class PiWebApp extends LitElement {
     () => this.state,
     (patch) => { this.setState(patch); },
     this.workspaces,
+  );
+  private readonly machines = new MachineController(
+    () => this.state,
+    (patch) => { this.setState(patch); },
+    () => { this.updateUrl(); },
+    this.projects,
   );
   private readonly files = new FileExplorerController(
     () => this.state,
@@ -200,6 +209,8 @@ export class PiWebApp extends LitElement {
   }
 
   private async loadProjectsAndRestoreRoute() {
+    const route = readRoute();
+    await this.machines.loadMachines(route.machineId);
     await this.projects.loadProjects();
     await this.withChatScrollTransition(() => this.restoreRoute(false));
     await this.refreshWorkspaceDeletionRuns();
@@ -318,6 +329,7 @@ export class PiWebApp extends LitElement {
 
   private updateUrl(options?: { replace?: boolean | undefined }) {
     writeRoute({
+      machineId: this.state.selectedMachine?.id,
       projectId: this.state.selectedProject?.id,
       workspaceId: this.state.selectedWorkspace?.id,
       sessionId: this.state.selectedSession?.id,
@@ -509,6 +521,14 @@ export class PiWebApp extends LitElement {
     });
     return html`
       <app-navigation-panel
+        .machines=${this.state.machines}
+        .selectedMachine=${this.state.selectedMachine}
+        .machinesCollapsed=${this.mobileNavigation.isCollapsed("machines")}
+        .onToggleMachines=${() => { this.mobileNavigation.toggle("machines"); }}
+        .onSelectMachine=${(machine: Machine) => this.withChatScrollTransition(async () => {
+          this.mobileNavigation.expand("projects");
+          await this.machines.selectMachine(machine);
+        })}
         .projects=${this.state.projects}
         .selectedProject=${this.state.selectedProject}
         .workspaceActivities=${this.state.workspaceActivities}

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
+import { MachineService } from "./machines/machineService.js";
+import { MachineStore } from "./machines/machineStore.js";
 import { WorkspaceService } from "./workspaces/workspaceService.js";
 import { MAX_IMAGE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
 import type { Project, Workspace } from "./types.js";
@@ -20,6 +22,7 @@ beforeEach(async () => {
   app = await buildApp({
     projects: new ProjectService(new ProjectStore(join(tempDir, "projects.json"))),
     workspaces: new WorkspaceService(),
+    machines: new MachineService(new MachineStore(join(tempDir, "machines.json"))),
     piWebPlugins: {
       manifest: () => Promise.resolve({ plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local" }] }),
       readAsset: (pluginId, assetPath) => Promise.resolve(pluginId === "fake" && assetPath === "plugin.js" ? { content: Buffer.from("export default {};"), contentType: "application/javascript; charset=utf-8" } : undefined),
@@ -35,6 +38,21 @@ afterEach(async () => {
 });
 
 describe("buildApp", () => {
+  it("lists synthesized local machine through the HTTP contract", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/machines" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ machines: [{ id: "local", name: "Local", kind: "local", createdAt: "1970-01-01T00:00:00.000Z", updatedAt: "1970-01-01T00:00:00.000Z" }] });
+  });
+
+  it("adds remote machines without exposing tokens", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/", token: "secret" } });
+
+    expect(addResponse.statusCode).toBe(200);
+    expect(addResponse.json()).toMatchObject({ name: "Remote", kind: "remote", baseUrl: "https://remote.example.test" });
+    expect(addResponse.json()).not.toHaveProperty("token");
+  });
+
   it("adds, lists, and closes projects through the HTTP contract", async () => {
     const addResponse = await app.inject({
       method: "POST",
