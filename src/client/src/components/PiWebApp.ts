@@ -262,6 +262,7 @@ export class PiWebApp extends LitElement {
 
   private async restoreRoute(updateUrl: boolean) {
     const route = readRoute();
+    await this.restoreRouteMachine(route, updateUrl);
     const selectedFilePath = readNamespacedString(queryNamespace("core:workspace.files"), "file");
     const selectedDiffPath = readNamespacedString(queryNamespace("core:workspace.git"), "diff");
     const selectedTerminalId = readNamespacedString(TERMINAL_ROUTE_NAMESPACE, "terminal");
@@ -289,8 +290,17 @@ export class PiWebApp extends LitElement {
     }
   }
 
+  private async restoreRouteMachine(route: AppRoute, updateUrl: boolean): Promise<void> {
+    const routeMachineId = route.machineId ?? "local";
+    if (this.state.selectedMachine?.id === routeMachineId) return;
+    const machine = this.state.machines.find((candidate) => candidate.id === routeMachineId);
+    if (machine === undefined) return;
+    await this.machines.selectMachine(machine, { updateUrl });
+  }
+
   private routeMatchesCurrentSelection(route: AppRoute): boolean {
-    return route.workspaceId !== undefined
+    return (route.machineId ?? "local") === (this.state.selectedMachine?.id ?? "local")
+      && route.workspaceId !== undefined
       && route.workspaceId !== ""
       && this.state.selectedProject?.id === route.projectId
       && this.state.selectedWorkspace?.id === route.workspaceId

@@ -6,6 +6,11 @@ export class ProjectController {
   constructor(private readonly getState: GetState, private readonly setState: SetState, private readonly workspaces: WorkspaceController) {}
 
   async loadProjects() {
+    const machine = this.getState().selectedMachine;
+    if (machine?.kind === "remote") {
+      this.setState({ projects: [], workspacesByProjectId: {}, error: "Remote project browsing is not available yet." });
+      return;
+    }
     this.setState({ error: "", isLoadingProjects: true });
     try {
       const projects = await api.projects();
@@ -20,6 +25,10 @@ export class ProjectController {
   }
 
   async addProject(path: string, create?: boolean) {
+    if (this.getState().selectedMachine?.kind === "remote") {
+      this.setState({ error: "Adding projects to remote machines is not available yet." });
+      return;
+    }
     if (path.trim() === "") return;
     try {
       const project = await api.addProject(path.trim(), undefined, create);

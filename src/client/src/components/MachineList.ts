@@ -21,12 +21,12 @@ export class MachineList extends LitElement {
           <div
             class=${`action-row ${this.selected?.id === machine.id ? "selected" : ""}`}
             tabindex="0"
-            title=${machine.baseUrl ?? machine.name}
+            title=${machine.kind === "remote" ? "Remote project browsing is not available yet" : machine.baseUrl ?? machine.name}
             @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(machine)); }}
             @keydown=${(event: KeyboardEvent) => { activateSelectableRowFromKeyboard(event, () => this.onSelect?.(machine)); }}
           >
             <div class="action-main">
-              <span class="action-name">${machine.name}</span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl}</small>
+              <span class="action-name">${machine.name}</span><small>${machine.kind === "local" ? "Local Pi Web" : `${machine.baseUrl ?? "Remote Pi Web"} · projects coming soon`}</small>
             </div>
           </div>
         `)}

@@ -19,7 +19,7 @@ export class MachineController {
     }
   }
 
-  async selectMachine(machine: Machine): Promise<void> {
+  async selectMachine(machine: Machine, options: { updateUrl?: boolean | undefined } = {}): Promise<void> {
     if (this.getState().selectedMachine?.id === machine.id) return;
     this.setState({
       selectedMachine: machine,
@@ -35,7 +35,7 @@ export class MachineController {
       activity: undefined,
       ...resetWorkspaceScopedState(),
     });
-    this.updateUrl();
+    if (options.updateUrl !== false) this.updateUrl();
     await this.projects.loadProjects();
   }
 }
