@@ -92,8 +92,8 @@ export class AuthController {
       const { providers } = await this.api.authProviders({ mode: "logout", machineId: selectedMachineId(this.getState()) });
       if (providerId !== undefined && providerId !== "") {
         const provider = providers.find((candidate) => candidate.id === providerId);
-        if (provider !== undefined) await this.logoutProvider(provider.id);
-        else this.setState({ error: `No stored credentials for ${providerId}` });
+        if (provider !== undefined && !this.rejectRemoteOAuth("logout", provider)) await this.logoutProvider(provider.id);
+        else if (provider === undefined) this.setState({ error: `No stored credentials for ${providerId}` });
         return;
       }
       this.setState({ authDialog: { step: "logout", providers } });
@@ -103,6 +103,9 @@ export class AuthController {
   }
 
   async logoutProvider(providerId: string): Promise<void> {
+    const dialog = this.getState().authDialog;
+    const provider = dialog?.step === "logout" ? dialog.providers.find((candidate) => candidate.id === providerId) : undefined;
+    if (provider !== undefined && this.rejectRemoteOAuth("logout", provider)) return;
     try {
       await this.api.logoutProvider(providerId, selectedMachineId(this.getState()));
       this.closeDialog();
@@ -179,6 +182,7 @@ export class AuthController {
   }
 
   private async startOAuth(provider: AuthProviderOption): Promise<void> {
+    if (this.rejectRemoteOAuth("login", provider)) return;
     try {
       const flow = await this.api.startOAuthLogin(provider.id, selectedMachineId(this.getState()));
       this.updateOAuthFlow(flow);
@@ -186,6 +190,14 @@ export class AuthController {
     } catch (error) {
       this.setState({ error: String(error) });
     }
+  }
+
+  private rejectRemoteOAuth(action: "login" | "logout", provider: AuthProviderOption): boolean {
+    const machine = this.getState().selectedMachine;
+    if (provider.authType !== "oauth" || machine?.kind !== "remote") return false;
+    const where = machine.baseUrl ?? "that remote PI WEB instance";
+    this.setState({ error: `OAuth ${action} for remote machines must be configured directly on ${where}.` });
+    return true;
   }
 
   private updateOAuthFlow(flow: OAuthFlowState): void {

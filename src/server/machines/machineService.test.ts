@@ -43,6 +43,11 @@ describe("MachineService", () => {
     await expect(service.add({ name: "Bad", baseUrl: "https://example.test/path?q=1" })).rejects.toThrow("query or hash");
   });
 
+  it("rejects configured machine headers that would override proxy transport semantics", async () => {
+    await expect(service.add({ name: "Bad", baseUrl: "https://example.test", headers: { Authorization: "Bearer secret" } })).rejects.toThrow("not allowed");
+    await expect(service.add({ name: "Bad", baseUrl: "https://example.test", headers: { Connection: "close" } })).rejects.toThrow("not allowed");
+  });
+
   it("does not allow local machine mutation", async () => {
     await expect(service.update("local", { name: "Other" })).rejects.toThrow("Local machine cannot be changed");
     await expect(service.remove("local")).rejects.toThrow("Local machine cannot be deleted");

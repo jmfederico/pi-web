@@ -17,6 +17,7 @@ import { PiWebPluginService } from "./piWebPluginService.js";
 import { getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
 import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
+import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 
 export interface AppDependencies {
   projects?: ProjectService;
@@ -113,6 +114,8 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   registerLocalFileSuggestionRoutes(app, "/api");
   registerLocalFileSuggestionRoutes(app, "/api/machines/local");
+
+  registerMachineProxyRoutes(app, machines);
 
   const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");
   const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));

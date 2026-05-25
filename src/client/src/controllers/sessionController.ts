@@ -2,6 +2,7 @@ import { api as defaultApi, type CommandResult, type SessionActivity, type Sessi
 import type { AppState } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
+import { machineSessionKey } from "../machineKeys";
 import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
@@ -67,7 +68,7 @@ export class SessionController {
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
     const state = this.getState();
     const cwd = state.selectedSession?.cwd ?? state.selectedWorkspace?.path;
-    if (options?.forgetRememberedSelection === true && cwd !== undefined) this.sessionSelection.forgetWorkspace(cwd);
+    if (options?.forgetRememberedSelection === true && cwd !== undefined) this.sessionSelection.forgetWorkspace(this.workspaceSelectionKey(cwd));
     this.clearActiveSession();
     if (options?.updateUrl !== false) this.updateUrl();
   }
@@ -82,9 +83,10 @@ export class SessionController {
     const workspace = this.getState().selectedWorkspace;
     if (!workspace) return;
     try {
-      const session = await this.api.startSession(workspace.path, selectedMachineId(this.getState()));
-      rememberCachedNewSession(session);
-      const cachedSession = markCachedNewSessionInfo(session);
+      const machineId = selectedMachineId(this.getState());
+      const session = await this.api.startSession(workspace.path, machineId);
+      rememberCachedNewSession(session, machineId);
+      const cachedSession = markCachedNewSessionInfo(session, machineId);
       this.setState({ sessions: [cachedSession, ...this.getState().sessions] });
       await this.selectSession(cachedSession);
     } catch (error) {
@@ -93,16 +95,17 @@ export class SessionController {
   }
 
   preferredSession(cwd: string, sessions: SessionInfo[], targetSessionId: string | undefined): SessionInfo | undefined {
-    return selectPreferredSession(sessions, { targetSessionId, latestSessionId: this.sessionSelection.latestSessionId(cwd) });
+    return selectPreferredSession(sessions, { targetSessionId, latestSessionId: this.sessionSelection.latestSessionId(this.workspaceSelectionKey(cwd)) });
   }
 
   async selectSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }) {
-    this.sessionSelection.rememberSession(session);
+    this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     const seq = ++this.selectionSeq;
     this.socket.close();
     this.catchupStreamSessionId = undefined;
     this.clearPendingTranscriptEvents();
-    const cached = this.transcripts.cachedView(session.id);
+    const transcriptKey = this.sessionCacheKey(session.id);
+    const cached = this.transcripts.cachedView(transcriptKey);
     this.setState({
       selectedSession: session,
       ...cached,
@@ -115,7 +118,7 @@ export class SessionController {
       if (session.archived === true) {
         const page = await this.api.messages(session.id, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
-        const history = this.transcripts.mergeHistory(session.id, page);
+        const history = this.transcripts.mergeHistory(transcriptKey, page);
         this.setState({ ...history, isLoadingEarlierMessages: false, isReceivingPartialStream: false, status: undefined, activity: undefined });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
@@ -129,7 +132,7 @@ export class SessionController {
       );
       const [page, status] = await Promise.all([this.api.messages(session.id, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState())), this.api.status(session.id, selectedMachineId(this.getState()))]);
       if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
-      const history = this.transcripts.mergeHistory(session.id, page);
+      const history = this.transcripts.mergeHistory(transcriptKey, page);
       const isReceivingPartialStream = status.isStreaming;
       this.catchupStreamSessionId = isReceivingPartialStream ? session.id : undefined;
       this.setState({ ...history, isLoadingEarlierMessages: false, isReceivingPartialStream, status, activity: this.getState().sessionActivities[session.id] });
@@ -155,7 +158,7 @@ export class SessionController {
     try {
       const page = await this.api.messages(session.id, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
       if (this.getState().selectedSession?.id !== session.id) return;
-      const history = this.transcripts.mergeHistory(session.id, page);
+      const history = this.transcripts.mergeHistory(this.sessionCacheKey(session.id), page);
       this.setState(history);
     } catch (error) {
       this.setState({ error: String(error) });
@@ -263,8 +266,8 @@ export class SessionController {
     void this.api.stop(session.id, selectedMachineId(this.getState())).catch(() => {
       // Best-effort cleanup for browser-cached sessions that may not exist server-side anymore.
     });
-    forgetCachedNewSession(session.id);
-    clearDraft(session.id);
+    forgetCachedNewSession(session.id, selectedMachineId(this.getState()));
+    clearDraft(this.sessionCacheKey(session.id));
     const sessions = this.getState().sessions.filter((candidate) => candidate.id !== session.id);
     this.setState({ sessions });
     if (this.getState().selectedSession?.id !== session.id) return;
@@ -381,7 +384,7 @@ export class SessionController {
       this.flushPendingTranscriptEvents();
       const [page, status] = await Promise.all([this.api.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState())), this.api.status(sessionId, selectedMachineId(this.getState()))]);
       if (this.getState().selectedSession?.id !== sessionId) return;
-      const history = this.transcripts.mergeHistory(sessionId, page);
+      const history = this.transcripts.mergeHistory(this.sessionCacheKey(sessionId), page);
       this.setState({
         ...history,
         status,
@@ -394,6 +397,14 @@ export class SessionController {
     }
   }
 
+  private sessionCacheKey(sessionId: string): string {
+    return machineSessionKey(selectedMachineId(this.getState()), sessionId);
+  }
+
+  private workspaceSelectionKey(cwd: string): string {
+    return `${selectedMachineId(this.getState())}:${cwd}`;
+  }
+
   private replaceSession(session: SessionInfo) {
     const current = this.getState().selectedSession;
     this.setState({
@@ -404,11 +415,12 @@ export class SessionController {
 
   private async recreateCachedNewSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }): Promise<void> {
     try {
-      const replacement = await this.api.startSession(session.cwd, selectedMachineId(this.getState()));
-      rememberCachedNewSession(replacement);
-      moveDraft(session.id, replacement.id);
-      forgetCachedNewSession(session.id);
-      const cachedReplacement = markCachedNewSessionInfo(replacement);
+      const machineId = selectedMachineId(this.getState());
+      const replacement = await this.api.startSession(session.cwd, machineId);
+      rememberCachedNewSession(replacement, machineId);
+      moveDraft(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
+      forgetCachedNewSession(session.id, machineId);
+      const cachedReplacement = markCachedNewSessionInfo(replacement, machineId);
       this.setState({ sessions: [cachedReplacement, ...this.getState().sessions.filter((candidate) => candidate.id !== session.id)], error: "" });
       await this.selectSession(cachedReplacement, { updateUrl: false });
       this.updateUrl(options?.updateUrl === false ? { replace: true } : undefined);
@@ -431,7 +443,7 @@ export class SessionController {
     const message = result.type === "unsupported" ? result.message : result.message;
     if (message !== undefined && message !== "") this.setState({ messages: [...this.getState().messages, textMessage(result.type === "unsupported" ? "system" : "tool", message)] });
     if (result.type === "done" && result.session) {
-      if (result.promptDraft !== undefined) saveDraft(result.session.id, result.promptDraft);
+      if (result.promptDraft !== undefined) saveDraft(this.sessionCacheKey(result.session.id), result.promptDraft);
       const current = this.getState().selectedSession;
       const sessions = [result.session, ...this.getState().sessions.filter((session) => session.id !== result.session?.id)];
       this.setState({ sessions, selectedSession: current?.id === result.session.id ? result.session : current });
@@ -538,7 +550,7 @@ export class SessionController {
     try {
       const page = await this.api.messages(sessionId, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
       if (this.getState().selectedSession?.id !== sessionId) return;
-      this.setState(this.transcripts.mergeHistory(sessionId, page));
+      this.setState(this.transcripts.mergeHistory(this.sessionCacheKey(sessionId), page));
     } catch (error) {
       if (this.getState().selectedSession?.id === sessionId) this.setState({ error: String(error) });
     }

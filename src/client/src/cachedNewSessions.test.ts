@@ -44,7 +44,7 @@ describe("cached new sessions", () => {
   it("stores and reloads new sessions with a browser-cache marker", () => {
     const storage = new MemoryStorage();
 
-    rememberCachedNewSession(baseSession, storage);
+    rememberCachedNewSession(baseSession, "local", storage);
 
     const cached = loadCachedNewSessions(storage);
     expect(cached).toHaveLength(1);
@@ -54,21 +54,30 @@ describe("cached new sessions", () => {
 
   it("merges cached sessions for the selected cwd without duplicating server sessions", () => {
     const storage = new MemoryStorage();
-    rememberCachedNewSession(baseSession, storage);
-    rememberCachedNewSession({ ...baseSession, id: "other", cwd: "/other" }, storage);
+    rememberCachedNewSession(baseSession, "local", storage);
+    rememberCachedNewSession({ ...baseSession, id: "other", cwd: "/other" }, "local", storage);
 
-    expect(mergeCachedNewSessions("/repo", [], storage).map((session) => session.id)).toEqual(["session-1"]);
-    expect(mergeCachedNewSessions("/repo", [baseSession], storage).map((session) => session.id)).toEqual(["session-1"]);
-    expect(isCachedNewSessionInfo(mergeCachedNewSessions("/repo", [baseSession], storage)[0])).toBe(false);
+    expect(mergeCachedNewSessions("/repo", [], "local", storage).map((session) => session.id)).toEqual(["session-1"]);
+    expect(mergeCachedNewSessions("/repo", [baseSession], "local", storage).map((session) => session.id)).toEqual(["session-1"]);
+    expect(isCachedNewSessionInfo(mergeCachedNewSessions("/repo", [baseSession], "local", storage)[0])).toBe(false);
     expect(loadCachedNewSessions(storage).map((session) => session.id)).toEqual(["other"]);
   });
 
   it("forgets cached sessions", () => {
     const storage = new MemoryStorage();
-    rememberCachedNewSession(baseSession, storage);
+    rememberCachedNewSession(baseSession, "local", storage);
 
-    forgetCachedNewSession("session-1", storage);
+    forgetCachedNewSession("session-1", "local", storage);
 
     expect(loadCachedNewSessions(storage)).toEqual([]);
+  });
+
+  it("keeps browser-cached sessions scoped by machine", () => {
+    const storage = new MemoryStorage();
+    rememberCachedNewSession(baseSession, "local", storage);
+    rememberCachedNewSession({ ...baseSession, id: "session-2" }, "remote", storage);
+
+    expect(mergeCachedNewSessions("/repo", [], "local", storage).map((session) => session.id)).toEqual(["session-1"]);
+    expect(mergeCachedNewSessions("/repo", [], "remote", storage).map((session) => session.id)).toEqual(["session-2"]);
   });
 });

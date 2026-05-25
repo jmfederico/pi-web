@@ -207,6 +207,7 @@ export class PiWebApp extends LitElement {
     this.state = { ...this.state, ...patch };
     this.handleActivityTransition(previous, this.state);
     this.handleWorkspaceChange(previous, this.state);
+    this.handleMachineChange(previous, this.state);
   }
 
   private async loadProjectsAndRestoreRoute() {
@@ -386,12 +387,16 @@ export class PiWebApp extends LitElement {
   private rememberSelectedTerminal(terminalId: string | undefined): void {
     const workspace = this.state.selectedWorkspace;
     if (workspace === undefined) return;
-    if (terminalId === undefined) this.terminalSelection.forgetWorkspace(workspace.path);
-    else this.terminalSelection.rememberTerminal(workspace.path, terminalId);
+    if (terminalId === undefined) this.terminalSelection.forgetWorkspace(this.terminalWorkspaceKey(workspace));
+    else this.terminalSelection.rememberTerminal(this.terminalWorkspaceKey(workspace), terminalId);
   }
 
   private writeSelectedTerminalToUrl(terminalId: string | undefined, options?: { replace?: boolean | undefined }): void {
     setNamespacedQueryKey(TERMINAL_ROUTE_NAMESPACE, "terminal", terminalId, options);
+  }
+
+  private terminalWorkspaceKey(workspace: Workspace): string {
+    return `${selectedMachineId(this.state)}:${workspace.path}`;
   }
 
   private selectMainView(view: AppState["mainView"]) {
@@ -408,7 +413,7 @@ export class PiWebApp extends LitElement {
     if (previous.selectedWorkspace?.id === next.selectedWorkspace?.id) return;
     this.terminalAutoStartWorkspaceId = undefined;
     this.activeTerminalIds.clear();
-    const selectedTerminalId = this.routeRestoreInProgress ? this.restoringRouteTerminalId : next.selectedWorkspace === undefined ? undefined : this.terminalSelection.latestTerminalId(next.selectedWorkspace.path);
+    const selectedTerminalId = this.routeRestoreInProgress ? this.restoringRouteTerminalId : next.selectedWorkspace === undefined ? undefined : this.terminalSelection.latestTerminalId(this.terminalWorkspaceKey(next.selectedWorkspace));
     this.setState({ activeTerminalCount: 0, selectedTerminalId });
     if (!this.routeRestoreInProgress) this.writeSelectedTerminalToUrl(selectedTerminalId, { replace: true });
     if (next.selectedWorkspace === undefined) return;
@@ -475,6 +480,15 @@ export class PiWebApp extends LitElement {
     }
   }
 
+  private handleMachineChange(previous: AppState, next: AppState): void {
+    if ((previous.selectedMachine?.id ?? "local") === (next.selectedMachine?.id ?? "local")) return;
+    this.sessions.clearActiveSession();
+    this.realtime.close();
+    this.connectRealtime();
+    this.activeTerminalIds.clear();
+    this.git.updatePolling();
+  }
+
   private refreshSelectedWorkspaceTool(tool: QualifiedContributionId): void {
     if (tool === "core:workspace.files") void this.files.refreshFiles();
     if (tool === "core:workspace.git") void this.git.refreshGit();
@@ -535,6 +549,7 @@ export class PiWebApp extends LitElement {
       <app-navigation-panel
         .machines=${this.state.machines}
         .selectedMachine=${this.state.selectedMachine}
+        .machineStatuses=${this.state.machineStatuses}
         .machinesCollapsed=${this.mobileNavigation.isCollapsed("machines")}
         .onToggleMachines=${() => { this.mobileNavigation.toggle("machines"); }}
         .onSelectMachine=${(machine: Machine) => this.withChatScrollTransition(async () => {
@@ -705,6 +720,10 @@ export class PiWebApp extends LitElement {
       openActionPalette: () => { this.setState({ actionPaletteOpen: true }); },
       focusPrompt: () => { this.promptEditor?.focusInput(); },
       addProject: () => { this.setState({ projectDialogOpen: true }); },
+      addMachine: () => this.addMachineFromPrompt(),
+      refreshSelectedMachine: () => this.machines.refreshMachineHealth(),
+      removeSelectedMachine: () => this.removeSelectedMachine(),
+      openSelectedMachine: () => { this.openSelectedMachine(); },
       configureAuth: () => this.auth.openLogin(),
       logoutAuth: () => this.auth.openLogout(),
       openThemePicker: () => { this.openThemeDialog(); },
@@ -824,6 +843,28 @@ export class PiWebApp extends LitElement {
       this.setState({ error: "Workspace deletion failed. See terminal output." });
       this.updateWorkspaceDeletionPolling();
     }
+  }
+
+  private async addMachineFromPrompt(): Promise<void> {
+    const name = window.prompt("Machine name", "Dev Box")?.trim();
+    if (name === undefined || name === "") return;
+    const baseUrl = window.prompt("Remote PI WEB base URL", "http://127.0.0.1:8504")?.trim();
+    if (baseUrl === undefined || baseUrl === "") return;
+    const token = window.prompt("Bearer token (optional)", "")?.trim();
+    await this.machines.addMachine({ name, baseUrl, ...(token === undefined || token === "" ? {} : { token }) });
+  }
+
+  private async removeSelectedMachine(): Promise<void> {
+    const machine = this.state.selectedMachine;
+    if (machine === undefined || machine.kind === "local") return;
+    if (!window.confirm(`Remove ${machine.name}?\n\nThis only removes it from this PI WEB gateway.`)) return;
+    await this.machines.deleteMachine(machine);
+  }
+
+  private openSelectedMachine(): void {
+    const machine = this.state.selectedMachine;
+    if (machine?.kind !== "remote" || machine.baseUrl === undefined) return;
+    window.open(machine.baseUrl, "_blank", "noopener,noreferrer");
   }
 
   private runAction(action: AppAction): void {
@@ -976,6 +1017,7 @@ export class PiWebApp extends LitElement {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
       <app-context-bar
+        .machine=${this.state.selectedMachine}
         .project=${this.state.selectedProject}
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
@@ -1021,7 +1063,7 @@ export class PiWebApp extends LitElement {
           ${state.selectedSession ? html`
             <chat-view .sessionId=${state.selectedSession.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isReceivingPartialStream=${state.isReceivingPartialStream} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .status=${state.status} .activity=${state.activity} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
             <prompt-editor .sessionId=${state.selectedSession.id} .cwd=${state.selectedWorkspace?.path} .machineId=${selectedMachineId(state)} .disabled=${state.selectedSession.archived === true} .canSteer=${state.status?.isStreaming === true} .isCompacting=${state.status?.isCompacting === true} .canStop=${state.status?.isStreaming === true || state.status?.isBashRunning === true || state.status?.isCompacting === true || (state.status?.pendingMessageCount ?? 0) > 0} .status=${state.status} .onSend=${(text: string, streamingBehavior?: "steer" | "followUp") => { this.sendPrompt(text, streamingBehavior); }} .onStop=${() => this.sessions.stopActiveWork()} .onSelectModel=${() => { void this.openModelDialog(); }} .onSelectThinking=${() => { void this.openThinkingDialog(); }}></prompt-editor>
-            <status-bar .status=${state.status} .workspace=${state.selectedWorkspace} .workspaceLabelItems=${state.selectedWorkspace === undefined ? [] : this.plugins.getWorkspaceLabelItems(state, state.selectedWorkspace)}></status-bar>
+            <status-bar .status=${state.status} .machine=${state.selectedMachine} .workspace=${state.selectedWorkspace} .workspaceLabelItems=${state.selectedWorkspace === undefined ? [] : this.plugins.getWorkspaceLabelItems(state, state.selectedWorkspace)}></status-bar>
             ${state.commandDialog !== undefined ? html`<command-picker .title=${state.commandDialog.title} .options=${state.commandDialog.options} .onPick=${(value: string) => this.sessions.respondToCommand(state.commandDialog?.requestId ?? "", value)} .onCancel=${() => { this.sessions.cancelCommand(); }}></command-picker>` : null}
             ${state.modelDialog !== undefined ? html`<command-picker title=${state.modelDialog.title} .searchable=${true} .options=${state.modelDialog.options} .selectedValue=${state.modelDialog.selectedValue} .onPick=${(value: string) => { void this.pickModel(value); }} .onCancel=${() => { this.setState({ modelDialog: undefined }); }}></command-picker>` : null}
             ${state.thinkingDialog !== undefined ? html`<command-picker title=${state.thinkingDialog.title} .options=${state.thinkingDialog.options} .selectedValue=${state.thinkingDialog.selectedValue} .onPick=${(value: string) => { void this.pickThinking(value); }} .onCancel=${() => { this.setState({ thinkingDialog: undefined }); }}></command-picker>` : null}
@@ -1046,6 +1088,7 @@ function createPluginRegistry(): PluginRegistry {
   registry.register({ id: "themes", plugin: themePackPlugin });
   return registry;
 }
+
 
 function patchChangesState(state: AppState, patch: Partial<AppState>): boolean {
   return Object.entries(patch).some(([key, value]) => Reflect.get(state, key) !== value);

@@ -34,23 +34,27 @@ PI WEB connects those two worlds. The work stays in the server-side environment 
 
 ## Core model
 
-PI WEB organizes work into three levels:
+PI WEB organizes work into four levels:
 
 ```text
-Project     a folder on the server
+Machine     a local or remote PI WEB runtime endpoint
+Project     a folder on that machine
 Workspace   a git worktree, or the project folder for non-git projects
 Session     a chat with Pi Coding Agent running inside a workspace
 ```
 
 This maps naturally to real development work:
 
-- add a project once;
+- select the local machine or another registered PI WEB runtime;
+- add a project once on the selected machine;
 - use worktrees to separate branches, features, experiments, and reviews;
 - start one or more agent sessions inside each workspace;
 - leave sessions running even when the browser disconnects or the UI restarts.
 
 ## Features
 
+- Add and list local or remote PI WEB machines from the action palette.
+- Proxy remote projects, workspaces, files, git state, sessions, and terminals through the currently opened PI WEB server.
 - Add and list server-side projects.
 - Discover git worktrees automatically with `git worktree list --porcelain`.
 - Support non-git folders as single-workspace projects.
@@ -92,10 +96,17 @@ The web process serves the API and browser UI. In development it can autoreload 
 
 PI WEB keeps its own state intentionally small:
 
+- Machines: `~/.pi-web/machines.json` stores only opt-in remote machine records; the local machine is synthesized.
 - Projects: `~/.pi-web/projects.json`
 - Workspaces: discovered from git worktrees, not stored
-- Sessions and chat history: Pi's default JSONL session storage
-- Active session runtimes and WebSockets: memory in the session daemon
+- Sessions and chat history: Pi's default JSONL session storage on the selected machine
+- Active session runtimes and WebSockets: memory in each selected machine's session daemon
+
+## Machine federation
+
+The Machines section lets one PI WEB instance act as a gateway to other PI WEB runtimes. Register a remote machine from **Actions → Add Machine** with the remote PI WEB base URL, for example a Tailscale, WireGuard, SSH tunnel, or trusted reverse-proxy URL. The browser continues talking to the local PI WEB origin; project, workspace, file, git, session, activity, and terminal HTTP/WebSocket traffic is proxied server-to-server.
+
+Remote model-provider credentials and OAuth state stay on the target machine. API-key provider configuration can be proxied, but OAuth login should be completed by opening the remote PI WEB directly. Register remote machines only when you trust the endpoint and the network path: adding a machine gives this PI WEB server permission to contact that URL with the optional bearer token you configured.
 
 ## Plugins
 
@@ -258,6 +269,7 @@ Environment variables:
 - `PI_WEB_SESSIOND_HOST` — daemon TCP bind host when `PI_WEB_SESSIOND_PORT` is set. Defaults to `127.0.0.1`.
 - `PI_WEB_SESSIOND_URL` — daemon URL used by the web process when connecting over TCP, for example `http://127.0.0.1:3001`. If you set `PI_WEB_SESSIOND_PORT`, set this for the web process too.
 - `PI_WEB_PROJECTS_FILE` — optional override for the projects storage JSON file. Defaults to `$PI_WEB_DATA_DIR/projects.json`.
+- `PI_WEB_MACHINES_FILE` — optional override for the remote machine registry JSON file. Defaults to `$PI_WEB_DATA_DIR/machines.json`.
 
 ## Development services
 

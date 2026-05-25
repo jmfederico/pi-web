@@ -1,7 +1,8 @@
 import type { AppState } from "../appState";
+import { LOCAL_MACHINE_ID } from "../machineKeys";
 
 export function selectedMachineId(state: Pick<AppState, "selectedMachine">): string {
-  return state.selectedMachine?.id ?? "local";
+  return state.selectedMachine?.id ?? LOCAL_MACHINE_ID;
 }
 
 export type GetState = () => AppState;

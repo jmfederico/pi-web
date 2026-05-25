@@ -1,6 +1,6 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { Machine, Project, SessionActivity, SessionInfo, SessionStatus, Workspace, WorkspaceActivity } from "../../api";
+import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace, WorkspaceActivity } from "../../api";
 import type { WorkspaceLabelItem } from "../../plugins/types";
 import "../MachineList";
 import "../ProjectList";
@@ -11,6 +11,7 @@ import "../SessionList";
 export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selectedMachine?: Machine;
+  @property({ attribute: false }) machineStatuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selectedProject?: Project;
   @property({ attribute: false }) workspaces: Workspace[] = [];
@@ -61,6 +62,7 @@ export class AppNavigationPanel extends LitElement {
       <machine-list
         .machines=${this.machines}
         .selected=${this.selectedMachine}
+        .statuses=${this.machineStatuses}
         .collapsible=${this.collapsible}
         .collapsed=${this.machinesCollapsed}
         .onToggleCollapsed=${() => { this.onToggleMachines?.(); }}

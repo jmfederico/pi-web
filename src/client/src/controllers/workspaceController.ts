@@ -1,6 +1,7 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
 import { resetWorkspaceScopedState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
+import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
 import type { SessionController } from "./sessionController";
 import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type WorkspaceSelectionMemory } from "./workspaceSelection";
@@ -30,7 +31,7 @@ export class WorkspaceController {
   }
 
   forgetProject(projectId: string): void {
-    this.workspaceSelection.forgetProject(projectId);
+    this.workspaceSelection.forgetProject(machineProjectKey(selectedMachineId(this.getState()), projectId));
     const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
     this.setState({ workspacesByProjectId });
   }
@@ -39,9 +40,10 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
-      const workspaces = await api.workspaces(project.id, selectedMachineId(this.getState()));
+      const machineId = selectedMachineId(this.getState());
+      const workspaces = await api.workspaces(project.id, machineId);
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
-      const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(project.id) });
+      const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
       if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
@@ -50,11 +52,12 @@ export class WorkspaceController {
   }
 
   async selectWorkspace(workspace: Workspace, target?: { sessionId?: string | undefined; updateUrl?: boolean | undefined }) {
-    this.workspaceSelection.rememberWorkspace(workspace);
+    const machineId = selectedMachineId(this.getState());
+    this.workspaceSelection.rememberWorkspace({ ...workspace, projectId: machineProjectKey(machineId, workspace.projectId) });
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     try {
-      const sessions = mergeCachedNewSessions(workspace.path, await api.sessions(workspace.path, selectedMachineId(this.getState())));
+      const sessions = mergeCachedNewSessions(workspace.path, await api.sessions(workspace.path, machineId), machineId);
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });

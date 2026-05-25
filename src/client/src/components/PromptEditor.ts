@@ -7,6 +7,7 @@ import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, type FileSuggestion, type SessionStatus, type SlashCommand } from "../api";
 import { inputModeForDraft } from "../inputModes";
+import { machineSessionKey } from "../machineKeys";
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { promptEditorStyles, type CompletionItem } from "./shared";
 import "./AutocompleteMenu";
@@ -35,10 +36,13 @@ export class PromptEditor extends LitElement {
   private readonly readOnlyCompartment = new Compartment();
 
   protected override willUpdate(changed: PropertyValues<this>) {
-    if (!changed.has("sessionId")) return;
-    const previousSessionId = changed.get("sessionId");
-    if (previousSessionId !== undefined && previousSessionId !== "") saveDraft(previousSessionId, this.draft);
-    this.draft = this.sessionId !== undefined && this.sessionId !== "" ? loadDraft(this.sessionId) : "";
+    if (!changed.has("sessionId") && !changed.has("machineId")) return;
+    const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
+    const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
+    const previousKey = draftStorageKey(previousMachineId, previousSessionId);
+    if (previousKey !== undefined) saveDraft(previousKey, this.draft);
+    const currentKey = draftStorageKey(this.machineId, this.sessionId);
+    this.draft = currentKey !== undefined ? loadDraft(currentKey) : "";
     this.completions = [];
     this.selectedIndex = 0;
   }
@@ -49,7 +53,7 @@ export class PromptEditor extends LitElement {
 
   protected override updated(changed: PropertyValues) {
     if (changed.has("disabled")) this.updateEditorDisabledState();
-    if (changed.has("draft") || changed.has("sessionId")) this.syncEditorDoc();
+    if (changed.has("draft") || changed.has("sessionId") || changed.has("machineId")) this.syncEditorDoc();
   }
 
   override disconnectedCallback(): void {
@@ -156,7 +160,8 @@ export class PromptEditor extends LitElement {
 
   private updateDraft(value: string) {
     this.draft = value;
-    if (this.sessionId !== undefined && this.sessionId !== "") saveDraft(this.sessionId, this.draft);
+    const key = draftStorageKey(this.machineId, this.sessionId);
+    if (key !== undefined) saveDraft(key, this.draft);
     void this.refreshCompletions();
   }
 
@@ -281,12 +286,19 @@ export class PromptEditor extends LitElement {
     const text = this.draft.trim();
     if (text === "" || this.disabled) return;
     this.draft = "";
-    if (this.sessionId !== undefined && this.sessionId !== "") clearDraft(this.sessionId);
+    const key = draftStorageKey(this.machineId, this.sessionId);
+    if (key !== undefined) clearDraft(key);
     this.completions = [];
     this.onSend?.(text, this.canSteer || this.isCompacting ? streamingBehavior : undefined);
   }
 
   static override styles = promptEditorStyles;
+}
+
+function draftStorageKey(machineId: unknown, sessionId: unknown): string | undefined {
+  if (typeof machineId !== "string" || machineId === "") return undefined;
+  if (typeof sessionId !== "string" || sessionId === "") return undefined;
+  return machineSessionKey(machineId, sessionId);
 }
 
 function fileInsertText(path: string, quoted: boolean, allPrefix?: "@ " | "!@"): string {

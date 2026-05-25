@@ -1,10 +1,11 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { Project, SessionInfo, Workspace } from "../../api";
+import type { Machine, Project, SessionInfo, Workspace } from "../../api";
 import type { NavigationSection } from "../../appShell/navigationState";
 
 @customElement("app-context-bar")
 export class AppContextBar extends LitElement {
+  @property({ attribute: false }) machine?: Machine;
   @property({ attribute: false }) project?: Project;
   @property({ attribute: false }) workspace?: Workspace;
   @property({ attribute: false }) session?: SessionInfo;
@@ -34,6 +35,7 @@ export class AppContextBar extends LitElement {
   }
 
   override render() {
+    const machineLabel = machineContextLabel(this.machine);
     const projectLabel = projectContextLabel(this.project);
     const workspaceLabel = workspaceContextLabel(this.workspace);
     const sessionLabel = sessionContextLabel(this.session);
@@ -41,6 +43,12 @@ export class AppContextBar extends LitElement {
       <nav class=${this.contextBarClass()} aria-label="Current location">
         <span class="context-bar-label">Location</span>
         <ol class="context-items" @scroll=${this.onContextScroll}>
+          <li class="context-item">
+            <button type="button" class=${this.machine === undefined ? "context-chip empty" : "context-chip"} title=${machineContextTitle(this.machine)} aria-label=${`Machine: ${machineLabel}. Open machine selection.`} @click=${() => { this.onOpenSection?.("machines"); }}>
+              <span class="context-kind">Machine</span>
+              <span class="context-value">${machineLabel}</span>
+            </button>
+          </li>
           <li class="context-item">
             <button type="button" class=${this.project === undefined ? "context-chip empty" : "context-chip"} title=${projectContextTitle(this.project)} aria-label=${`Project: ${projectLabel}. Open project selection.`} @click=${() => { this.onOpenSection?.("projects"); }}>
               <span class="context-kind">Project</span>
@@ -126,6 +134,14 @@ export class AppContextBar extends LitElement {
     .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
     button { cursor: pointer; }
   `;
+}
+
+function machineContextLabel(machine: Machine | undefined): string {
+  return machine === undefined ? "No machine" : `${machine.name}${machine.kind === "remote" ? " · remote" : ""}`;
+}
+
+function machineContextTitle(machine: Machine | undefined): string {
+  return machine === undefined ? "No machine selected" : machine.baseUrl ?? machine.name;
 }
 
 function projectContextLabel(project: Project | undefined): string {

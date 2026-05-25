@@ -15,6 +15,7 @@ import {
   parseGitDiffResponse,
   parseGitStatusResponse,
   parseMachine,
+  parseMachineHealth,
   parseMachinesResponse,
   parseMessagePage,
   parseModelSelectionResponse,
@@ -44,6 +45,7 @@ export const machinesApi = {
   machines: () => request("/api/machines", parseMachinesResponse),
   addMachine: (input: { name: string; baseUrl: string; token?: string }) => request("/api/machines", parseMachine, { method: "POST", body: JSON.stringify(input) }),
   deleteMachine: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}`, (value) => value, { method: "DELETE" }),
+  health: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}/health`, parseMachineHealth),
 };
 
 export const activityApi = {

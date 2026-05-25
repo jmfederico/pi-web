@@ -53,6 +53,10 @@ export interface PluginRuntimeContext {
   openActionPalette: () => void;
   focusPrompt: () => void;
   addProject: () => void | Promise<void>;
+  addMachine: () => void | Promise<void>;
+  refreshSelectedMachine: () => void | Promise<void>;
+  removeSelectedMachine: () => void | Promise<void>;
+  openSelectedMachine: () => void | Promise<void>;
   configureAuth: () => void | Promise<void>;
   logoutAuth: () => void | Promise<void>;
   openThemePicker: () => void;

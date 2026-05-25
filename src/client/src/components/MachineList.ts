@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import type { Machine } from "../api";
+import type { Machine, MachineHealth } from "../api";
 import { activateSelectableRow, activateSelectableRowFromKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
 
@@ -8,6 +8,7 @@ import { listStyles } from "./shared";
 export class MachineList extends LitElement {
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selected?: Machine;
+  @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (machine: Machine) => void;
@@ -17,19 +18,23 @@ export class MachineList extends LitElement {
     return html`
       <section>
         <h2>${this.renderHeading()}</h2>
-        ${this.collapsed ? null : this.machines.map((machine) => html`
-          <div
-            class=${`action-row ${this.selected?.id === machine.id ? "selected" : ""}`}
-            tabindex="0"
-            title=${machine.kind === "remote" ? "Remote project browsing is not available yet" : machine.baseUrl ?? machine.name}
-            @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(machine)); }}
-            @keydown=${(event: KeyboardEvent) => { activateSelectableRowFromKeyboard(event, () => this.onSelect?.(machine)); }}
-          >
-            <div class="action-main">
-              <span class="action-name">${machine.name}</span><small>${machine.kind === "local" ? "Local Pi Web" : `${machine.baseUrl ?? "Remote Pi Web"} · projects coming soon`}</small>
+        ${this.collapsed ? null : this.machines.map((machine) => {
+          const status = this.statuses[machine.id]?.status ?? machine.status ?? "unknown";
+          const statusLabel = status === "online" ? "online" : status === "offline" ? "offline" : status === "error" ? "error" : "unknown";
+          return html`
+            <div
+              class=${`action-row ${this.selected?.id === machine.id ? "selected" : ""}`}
+              tabindex="0"
+              title=${machine.baseUrl ?? machine.name}
+              @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(machine)); }}
+              @keydown=${(event: KeyboardEvent) => { activateSelectableRowFromKeyboard(event, () => this.onSelect?.(machine)); }}
+            >
+              <div class="action-main">
+                <span class="action-name">${machine.name}</span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
+              </div>
             </div>
-          </div>
-        `)}
+          `;
+        })}
       </section>
     `;
   }

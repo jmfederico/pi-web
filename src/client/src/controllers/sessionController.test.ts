@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { api as defaultApi, type MessagePage, type SessionActivity, type SessionInfo, type SessionStatus, type Workspace } from "../api";
 import { isCachedNewSessionInfo, loadCachedNewSessions, markCachedNewSessionInfo, rememberCachedNewSession } from "../cachedNewSessions";
 import { initialAppState, type AppState } from "../appState";
+import { machineSessionKey } from "../machineKeys";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { SessionController, type SessionEventSocket } from "./sessionController";
 import { InMemorySessionSelectionMemory } from "./sessionSelection";
@@ -170,7 +171,7 @@ describe("SessionController", () => {
     const storage = new MemoryStorage();
     Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
     rememberCachedNewSession(oldSession);
-    saveDraft(oldSession.id, "draft text");
+    saveDraft(sessionKey(oldSession.id), "draft text");
 
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [markCachedNewSessionInfo(oldSession)] };
     const urlUpdates: ({ replace?: boolean | undefined } | undefined)[] = [];
@@ -197,8 +198,8 @@ describe("SessionController", () => {
     expect(state.selectedSession?.id).toBe(replacementSession.id);
     expect(state.sessions.map((session) => session.id)).toEqual([replacementSession.id]);
     expect(socket.connectedSessionIds).toEqual([oldSession.id, replacementSession.id]);
-    expect(loadDraft(oldSession.id)).toBe("");
-    expect(loadDraft(replacementSession.id)).toBe("draft text");
+    expect(loadDraft(sessionKey(oldSession.id))).toBe("");
+    expect(loadDraft(sessionKey(replacementSession.id))).toBe("draft text");
     expect(loadCachedNewSessions().map((session) => session.id)).toEqual([replacementSession.id]);
     expect(urlUpdates).toEqual([{ replace: true }]);
   });
@@ -232,7 +233,7 @@ describe("SessionController", () => {
     await controller.respondToCommand("r1", "m1");
 
     expect(state.commandDialog).toBeUndefined();
-    expect(loadDraft(replacementSession.id)).toBe("fork me");
+    expect(loadDraft(sessionKey(replacementSession.id))).toBe("fork me");
   });
 
   it("forgets the selected active session when archiving leaves only archived sessions", async () => {
@@ -315,3 +316,7 @@ describe("SessionController", () => {
     expect(urlUpdates).toEqual([undefined]);
   });
 });
+
+function sessionKey(sessionId: string): string {
+  return machineSessionKey("local", sessionId);
+}

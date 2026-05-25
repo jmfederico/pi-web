@@ -2,8 +2,9 @@ import type { SessionInfo } from "./api";
 
 const storageKey = "pi-web:cached-new-sessions:v1";
 const markerProperty = "browserCachedNew";
+const defaultMachineId = "local";
 
-export type CachedNewSessionInfo = SessionInfo & { browserCachedNew: true };
+export type CachedNewSessionInfo = SessionInfo & { browserCachedNew: true; machineId: string };
 
 function browserStorage(): Storage | undefined {
   try {
@@ -13,27 +14,27 @@ function browserStorage(): Storage | undefined {
   }
 }
 
-export function rememberCachedNewSession(session: SessionInfo, storage = browserStorage()): void {
+export function rememberCachedNewSession(session: SessionInfo, machineId = defaultMachineId, storage = browserStorage()): void {
   if (session.messageCount !== 0 || session.archived === true) return;
-  const sessions = loadCachedNewSessions(storage).filter((candidate) => candidate.id !== session.id);
-  saveCachedNewSessions([markCachedNewSessionInfo(session), ...sessions], storage);
+  const sessions = loadCachedNewSessions(storage).filter((candidate) => candidate.id !== session.id || candidate.machineId !== machineId);
+  saveCachedNewSessions([markCachedNewSessionInfo(session, machineId), ...sessions], storage);
 }
 
-export function markCachedNewSessionInfo(session: SessionInfo): CachedNewSessionInfo {
-  return { ...session, browserCachedNew: true };
+export function markCachedNewSessionInfo(session: SessionInfo, machineId = defaultMachineId): CachedNewSessionInfo {
+  return { ...session, browserCachedNew: true, machineId };
 }
 
-export function forgetCachedNewSession(sessionId: string, storage = browserStorage()): void {
-  const sessions = loadCachedNewSessions(storage).filter((session) => session.id !== sessionId);
+export function forgetCachedNewSession(sessionId: string, machineId = defaultMachineId, storage = browserStorage()): void {
+  const sessions = loadCachedNewSessions(storage).filter((session) => session.id !== sessionId || session.machineId !== machineId);
   saveCachedNewSessions(sessions, storage);
 }
 
-export function mergeCachedNewSessions(cwd: string, sessions: SessionInfo[], storage = browserStorage()): SessionInfo[] {
+export function mergeCachedNewSessions(cwd: string, sessions: SessionInfo[], machineId = defaultMachineId, storage = browserStorage()): SessionInfo[] {
   const sessionIds = new Set(sessions.map((session) => session.id));
   const cachedSessions = loadCachedNewSessions(storage);
-  const retainedCachedSessions = cachedSessions.filter((session) => !sessionIds.has(session.id));
+  const retainedCachedSessions = cachedSessions.filter((session) => session.machineId !== machineId || !sessionIds.has(session.id));
   if (retainedCachedSessions.length !== cachedSessions.length) saveCachedNewSessions(retainedCachedSessions, storage);
-  const cached = retainedCachedSessions.filter((session) => session.cwd === cwd);
+  const cached = retainedCachedSessions.filter((session) => session.machineId === machineId && session.cwd === cwd);
   return [...cached, ...sessions];
 }
 
@@ -53,6 +54,7 @@ export function stripCachedNewSessionMarker(session: SessionInfo): SessionInfo {
     messageCount: session.messageCount,
     firstMessage: session.firstMessage,
     ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
+    ...("machineId" in session && typeof session.machineId === "string" ? { machineId: session.machineId } : { machineId: defaultMachineId }),
     ...(session.archived === true ? { archived: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
   };
@@ -91,6 +93,7 @@ function parseCachedSession(value: unknown): CachedNewSessionInfo[] {
   if (id === undefined || path === undefined || cwd === undefined || created === undefined || modified === undefined || firstMessage === undefined || messageCount !== 0) return [];
   const name = optionalStringField(value, "name");
   const parentSessionPath = optionalStringField(value, "parentSessionPath");
+  const machineId = optionalStringField(value, "machineId") ?? defaultMachineId;
   return [{
     id,
     path,
@@ -101,6 +104,7 @@ function parseCachedSession(value: unknown): CachedNewSessionInfo[] {
     messageCount,
     firstMessage,
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
+    machineId,
     browserCachedNew: true,
   }];
 }
