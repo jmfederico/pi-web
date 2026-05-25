@@ -25,7 +25,7 @@ describe("listWorkspaceTree", () => {
     await mkdir(join(root, "node_modules"));
     await writeFile(join(root, "b.txt"), "b");
     await writeFile(join(root, "a.txt"), "a");
-    await symlink(join(root, "a.txt"), join(root, "link.txt"));
+    const createdSymlink = await trySymlink(join(root, "a.txt"), join(root, "link.txt"));
 
     const tree = await listWorkspaceTree(root, undefined);
 
@@ -38,7 +38,7 @@ describe("listWorkspaceTree", () => {
       ["z-dir", "directory"],
       ["a.txt", "file"],
       ["b.txt", "file"],
-      ["link.txt", "symlink"],
+      ...(createdSymlink ? [["link.txt", "symlink"]] : []),
     ]);
     expect(Date.parse(tree.scannedAt)).not.toBeNaN();
   });
@@ -75,3 +75,17 @@ describe("listWorkspaceTree", () => {
     expect(tree.truncated).toBe(true);
   });
 });
+
+async function trySymlink(target: string, path: string): Promise<boolean> {
+  try {
+    await symlink(target, path);
+    return true;
+  } catch (error) {
+    if (isNodeErrorWithCode(error, "EPERM")) return false;
+    throw error;
+  }
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}

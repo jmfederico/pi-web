@@ -78,7 +78,7 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default { apiVersion: 1, name: 'Dev', activate: () => ({ contributions: {} }) };" },
     });
     await mkdir(join(tempDir, "plugins"), { recursive: true });
-    await symlink(pluginDir, join(tempDir, "plugins", "dev"), "dir");
+    await symlink(pluginDir, join(tempDir, "plugins", "dev"), process.platform === "win32" ? "junction" : "dir");
 
     const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
 
