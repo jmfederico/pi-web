@@ -2,10 +2,15 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { WebSocket, type RawData } from "ws";
 import { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
 
-export function registerSessionProxyRoutes(app: FastifyInstance, daemon = new SessionDaemonClient()): void {
+export interface SessionProxyDaemon {
+  request(method: string, path: string, body?: unknown): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+  connectWebSocket(path: string): WebSocket;
+}
+
+export function registerSessionProxyRoutes(app: FastifyInstance, daemon: SessionProxyDaemon = new SessionDaemonClient(), prefix = "/api"): void {
   const proxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply) => {
     try {
-      const upstream = await daemon.request(request.method, stripApiPrefix(request.url), request.body);
+      const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body);
       reply.code(upstream.statusCode);
       const contentType = upstream.headers["content-type"];
       if (contentType !== undefined && contentType !== "") reply.header("content-type", contentType);
@@ -16,29 +21,31 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon = new Se
     }
   };
 
-  app.get("/api/sessiond/health", (_request, reply) => proxy({ method: "GET", url: "/api/health" }, reply));
+  app.get(`${prefix}/sessiond/health`, (_request, reply) => proxy({ method: "GET", url: `${prefix}/health` }, reply));
 
-  app.get<{ Params: { sessionId: string } }>("/api/sessions/:sessionId/events", { websocket: true }, (socket, request) => {
+  app.get<{ Params: { sessionId: string } }>(`${prefix}/sessions/:sessionId/events`, { websocket: true }, (socket, request) => {
     bridgeSockets(socket, daemon.connectWebSocket(`/sessions/${request.params.sessionId}/events`));
   });
 
-  app.get("/api/sessions/events", { websocket: true }, (socket) => {
+  app.get(`${prefix}/sessions/events`, { websocket: true }, (socket) => {
     bridgeSockets(socket, daemon.connectWebSocket("/sessions/events"));
   });
 
-  app.get("/api/events", { websocket: true }, (socket) => {
+  app.get(`${prefix}/events`, { websocket: true }, (socket) => {
     bridgeSockets(socket, daemon.connectWebSocket("/events"));
   });
 
-  app.all("/api/activity", (request, reply) => proxy(request, reply));
-  app.all("/api/auth", (request, reply) => proxy(request, reply));
-  app.all("/api/auth/*", (request, reply) => proxy(request, reply));
-  app.all("/api/sessions", (request, reply) => proxy(request, reply));
-  app.all("/api/sessions/*", (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/activity`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/auth`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/sessions/*`, (request, reply) => proxy(request, reply));
 }
 
-function stripApiPrefix(url: string): string {
-  const stripped = url.startsWith("/api") ? url.slice(4) : url;
+function stripPrefix(url: string, prefix: string): string {
+  const path = url.split("?", 1)[0] ?? url;
+  const query = url.slice(path.length);
+  const stripped = path.startsWith(prefix) ? `${path.slice(prefix.length)}${query}` : url;
   return stripped === "" ? "/" : stripped;
 }
 

@@ -6,8 +6,8 @@ import { listWorkspaceTree } from "./workspaces/fileTreeService.js";
 import { readWorkspaceFile } from "./workspaces/fileContentService.js";
 import { readWorkspaceImagePreview } from "./workspaces/imagePreviewService.js";
 
-export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService): void {
-  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>("/api/projects/:projectId/workspaces/:workspaceId/tree", async (request, reply) => {
+export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService, prefix = "/api"): void {
+  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/tree`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       return await listWorkspaceTree(context.root, request.query.path);
@@ -16,7 +16,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
     }
   });
 
-  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>("/api/projects/:projectId/workspaces/:workspaceId/file", async (request, reply) => {
+  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       return await readWorkspaceFile(context.root, request.query.path);
@@ -25,7 +25,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
     }
   });
 
-  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>("/api/projects/:projectId/workspaces/:workspaceId/file/preview", async (request, reply) => {
+  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file/preview`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       const preview = await readWorkspaceImagePreview(context.root, request.query.path);

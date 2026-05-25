@@ -32,7 +32,9 @@ import {
   parseWorkspace,
   parseWorkspaceActivityResponse,
 } from "./parsers";
-import { gitDiffUrl, messageUrl } from "./urls";
+import { machineGitDiffUrl, messageUrl } from "./urls";
+
+const machinePrefix = (machineId = "local") => `/api/machines/${encodeURIComponent(machineId)}`;
 
 export const piWebApi = {
   piWebStatus: () => request("/api/pi-web/status", parsePiWebStatusResponse),
@@ -45,64 +47,64 @@ export const machinesApi = {
 };
 
 export const activityApi = {
-  workspaceActivity: () => request("/api/activity", parseWorkspaceActivityResponse),
+  workspaceActivity: (machineId = "local") => request(`${machinePrefix(machineId)}/activity`, parseWorkspaceActivityResponse),
 };
 
 export const projectsApi = {
-  projects: () => request("/api/projects", arrayOf(parseProject)),
-  addProject: (path: string, name?: string, create?: boolean) => request("/api/projects", parseProject, { method: "POST", body: JSON.stringify({ path, name, create }) }),
-  closeProject: (projectId: string) => request(`/api/projects/${encodeURIComponent(projectId)}`, parseClosed, { method: "DELETE" }),
-  projectDirectories: (query: string) => request(`/api/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
+  projects: (machineId = "local") => request(`${machinePrefix(machineId)}/projects`, arrayOf(parseProject)),
+  addProject: (path: string, name?: string, create?: boolean, machineId = "local") => request(`${machinePrefix(machineId)}/projects`, parseProject, { method: "POST", body: JSON.stringify({ path, name, create }) }),
+  closeProject: (projectId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}`, parseClosed, { method: "DELETE" }),
+  projectDirectories: (query: string, machineId = "local") => request(`${machinePrefix(machineId)}/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
 };
 
 export const workspacesApi = {
-  workspaces: (projectId: string) => request(`/api/projects/${projectId}/workspaces`, arrayOf(parseWorkspace)),
-  workspaceTree: (projectId: string, workspaceId: string, path = "") => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/tree?path=${encodeURIComponent(path)}`, parseFileTreeResponse),
-  workspaceFile: (projectId: string, workspaceId: string, path: string) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file?path=${encodeURIComponent(path)}`, parseFileContentResponse),
+  workspaces: (projectId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${projectId}/workspaces`, arrayOf(parseWorkspace)),
+  workspaceTree: (projectId: string, workspaceId: string, path = "", machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/tree?path=${encodeURIComponent(path)}`, parseFileTreeResponse),
+  workspaceFile: (projectId: string, workspaceId: string, path: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file?path=${encodeURIComponent(path)}`, parseFileContentResponse),
 };
 
 export const sessionsApi = {
-  sessions: (cwd: string) => request(`/api/sessions?cwd=${encodeURIComponent(cwd)}`, arrayOf(parseSessionInfo)),
-  startSession: (cwd: string) => request("/api/sessions", parseSessionInfo, { method: "POST", body: JSON.stringify({ cwd }) }),
-  messages: (sessionId: string, options?: { limit?: number; before?: number }) => request(messageUrl(sessionId, options), parseMessagePage),
-  status: (sessionId: string) => request(`/api/sessions/${sessionId}/status`, parseSessionStatus),
-  models: (sessionId: string) => request(`/api/sessions/${sessionId}/models`, parseModelSelectionResponse),
-  setModel: (sessionId: string, provider: string, modelId: string) => request(`/api/sessions/${sessionId}/model`, parseSessionStatus, { method: "POST", body: JSON.stringify({ provider, modelId }) }),
-  cycleModel: (sessionId: string, direction: "forward" | "backward") => request(`/api/sessions/${sessionId}/model/cycle`, parseSessionStatus, { method: "POST", body: JSON.stringify({ direction }) }),
-  thinkingLevels: (sessionId: string) => request(`/api/sessions/${sessionId}/thinking-levels`, parseThinkingLevelsResponse),
-  setThinkingLevel: (sessionId: string, level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh") => request(`/api/sessions/${sessionId}/thinking-level`, parseSessionStatus, { method: "POST", body: JSON.stringify({ level }) }),
-  cycleThinkingLevel: (sessionId: string) => request(`/api/sessions/${sessionId}/thinking-level/cycle`, parseSessionStatus, { method: "POST" }),
-  commands: (sessionId: string) => request(`/api/sessions/${sessionId}/commands`, arrayOf(parseSlashCommand)),
-  prompt: (sessionId: string, text: string, streamingBehavior?: "steer" | "followUp") => request(`/api/sessions/${sessionId}/prompt`, parseAccepted, { method: "POST", body: JSON.stringify(streamingBehavior === undefined ? { text } : { text, streamingBehavior }) }),
-  shell: (sessionId: string, text: string) => request(`/api/sessions/${sessionId}/shell`, parseAccepted, { method: "POST", body: JSON.stringify({ text }) }),
-  runCommand: (sessionId: string, text: string) => request(`/api/sessions/${sessionId}/commands/run`, parseCommandResult, { method: "POST", body: JSON.stringify({ text }) }),
-  respondToCommand: (sessionId: string, requestId: string, value: string) => request(`/api/sessions/${sessionId}/commands/respond`, parseCommandResult, { method: "POST", body: JSON.stringify({ requestId, value }) }),
-  abort: (sessionId: string) => request(`/api/sessions/${sessionId}/abort`, parseAborted, { method: "POST" }),
-  stop: (sessionId: string) => request(`/api/sessions/${sessionId}/stop`, parseStopped, { method: "POST" }),
-  archive: (sessionId: string) => request(`/api/sessions/${sessionId}/archive`, parseArchived, { method: "POST" }),
-  archiveWithDescendants: (sessionId: string) => request(`/api/sessions/${sessionId}/archive-tree`, parseArchived, { method: "POST" }),
-  restore: (sessionId: string) => request(`/api/sessions/${sessionId}/restore`, parseRestored, { method: "POST" }),
-  detachParent: (sessionId: string) => request(`/api/sessions/${sessionId}/detach-parent`, parseDetached, { method: "POST" }),
-  authProviders: (options?: { mode?: "login" | "logout"; authType?: "oauth" | "api_key" }) => {
+  sessions: (cwd: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions?cwd=${encodeURIComponent(cwd)}`, arrayOf(parseSessionInfo)),
+  startSession: (cwd: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions`, parseSessionInfo, { method: "POST", body: JSON.stringify({ cwd }) }),
+  messages: (sessionId: string, options?: { limit?: number; before?: number }, machineId = "local") => request(messageUrl(sessionId, options, machineId), parseMessagePage),
+  status: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/status`, parseSessionStatus),
+  models: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/models`, parseModelSelectionResponse),
+  setModel: (sessionId: string, provider: string, modelId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/model`, parseSessionStatus, { method: "POST", body: JSON.stringify({ provider, modelId }) }),
+  cycleModel: (sessionId: string, direction: "forward" | "backward", machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/model/cycle`, parseSessionStatus, { method: "POST", body: JSON.stringify({ direction }) }),
+  thinkingLevels: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/thinking-levels`, parseThinkingLevelsResponse),
+  setThinkingLevel: (sessionId: string, level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh", machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/thinking-level`, parseSessionStatus, { method: "POST", body: JSON.stringify({ level }) }),
+  cycleThinkingLevel: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/thinking-level/cycle`, parseSessionStatus, { method: "POST" }),
+  commands: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/commands`, arrayOf(parseSlashCommand)),
+  prompt: (sessionId: string, text: string, streamingBehavior?: "steer" | "followUp", machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/prompt`, parseAccepted, { method: "POST", body: JSON.stringify(streamingBehavior === undefined ? { text } : { text, streamingBehavior }) }),
+  shell: (sessionId: string, text: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/shell`, parseAccepted, { method: "POST", body: JSON.stringify({ text }) }),
+  runCommand: (sessionId: string, text: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/commands/run`, parseCommandResult, { method: "POST", body: JSON.stringify({ text }) }),
+  respondToCommand: (sessionId: string, requestId: string, value: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/commands/respond`, parseCommandResult, { method: "POST", body: JSON.stringify({ requestId, value }) }),
+  abort: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/abort`, parseAborted, { method: "POST" }),
+  stop: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/stop`, parseStopped, { method: "POST" }),
+  archive: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/archive`, parseArchived, { method: "POST" }),
+  archiveWithDescendants: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/archive-tree`, parseArchived, { method: "POST" }),
+  restore: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/restore`, parseRestored, { method: "POST" }),
+  detachParent: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/detach-parent`, parseDetached, { method: "POST" }),
+  authProviders: (options?: { mode?: "login" | "logout"; authType?: "oauth" | "api_key"; machineId?: string }) => {
     const params = new URLSearchParams();
     if (options?.mode !== undefined) params.set("mode", options.mode);
     if (options?.authType !== undefined) params.set("authType", options.authType);
     const query = params.toString();
-    return request(`/api/auth/providers${query === "" ? "" : `?${query}`}`, parseAuthProvidersResponse);
+    return request(`${machinePrefix(options?.machineId)}/auth/providers${query === "" ? "" : `?${query}`}`, parseAuthProvidersResponse);
   },
-  saveApiKey: (providerId: string, key: string) => request("/api/auth/api-key", parseAccepted, { method: "POST", body: JSON.stringify({ providerId, key }) }),
-  logoutProvider: (providerId: string) => request("/api/auth/logout", parseAccepted, { method: "POST", body: JSON.stringify({ providerId }) }),
-  startOAuthLogin: (providerId: string) => request("/api/auth/oauth", parseOAuthFlowState, { method: "POST", body: JSON.stringify({ providerId }) }),
-  oauthFlow: (flowId: string) => request(`/api/auth/oauth/${encodeURIComponent(flowId)}`, parseOAuthFlowState),
-  respondOAuthFlow: (flowId: string, requestId: string, value: string) => request(`/api/auth/oauth/${encodeURIComponent(flowId)}/respond`, parseOAuthFlowState, { method: "POST", body: JSON.stringify({ requestId, value }) }),
-  cancelOAuthFlow: (flowId: string) => request(`/api/auth/oauth/${encodeURIComponent(flowId)}/cancel`, parseOAuthFlowState, { method: "POST" }),
+  saveApiKey: (providerId: string, key: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/api-key`, parseAccepted, { method: "POST", body: JSON.stringify({ providerId, key }) }),
+  logoutProvider: (providerId: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/logout`, parseAccepted, { method: "POST", body: JSON.stringify({ providerId }) }),
+  startOAuthLogin: (providerId: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/oauth`, parseOAuthFlowState, { method: "POST", body: JSON.stringify({ providerId }) }),
+  oauthFlow: (flowId: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/oauth/${encodeURIComponent(flowId)}`, parseOAuthFlowState),
+  respondOAuthFlow: (flowId: string, requestId: string, value: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/oauth/${encodeURIComponent(flowId)}/respond`, parseOAuthFlowState, { method: "POST", body: JSON.stringify({ requestId, value }) }),
+  cancelOAuthFlow: (flowId: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/oauth/${encodeURIComponent(flowId)}/cancel`, parseOAuthFlowState, { method: "POST" }),
 };
 
 export const terminalsApi = {
-  terminals: (projectId: string, workspaceId: string) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, arrayOf(parseTerminalInfo)),
-  startTerminal: (projectId: string, workspaceId: string, options?: { name?: string; cols?: number; rows?: number }) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, parseTerminalInfo, { method: "POST", body: JSON.stringify(options ?? {}) }),
-  closeTerminal: (projectId: string, workspaceId: string, terminalId: string) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}`, parseClosed, { method: "DELETE" }),
-  continueTerminal: (projectId: string, workspaceId: string, terminalId: string) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}/continue`, parseTerminalInfo, { method: "POST" }),
+  terminals: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, arrayOf(parseTerminalInfo)),
+  startTerminal: (projectId: string, workspaceId: string, options?: { name?: string; cols?: number; rows?: number }, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, parseTerminalInfo, { method: "POST", body: JSON.stringify(options ?? {}) }),
+  closeTerminal: (projectId: string, workspaceId: string, terminalId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}`, parseClosed, { method: "DELETE" }),
+  continueTerminal: (projectId: string, workspaceId: string, terminalId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}/continue`, parseTerminalInfo, { method: "POST" }),
   runTerminalCommand: (origin: string, input: RunTerminalCommandInput) => request(`/api/projects/${encodeURIComponent(input.workspace.projectId)}/workspaces/${encodeURIComponent(input.workspace.id)}/terminal-command-runs`, parseTerminalCommandRun, { method: "POST", body: JSON.stringify({ origin, title: input.title, command: input.command, metadata: input.metadata ?? {} }) }),
   listCommandRuns: (filter?: TerminalCommandRunFilter) => request(`/api/terminal-command-runs${terminalCommandRunFilterQuery(filter)}`, arrayOf(parseTerminalCommandRun)),
   getCommandRun: (runId: string) => getOptionalTerminalCommandRun(runId),
@@ -145,6 +147,7 @@ export interface FileSuggestionQueryOptions {
   kind?: FileSuggestion["kind"] | undefined;
   mode?: "file" | "path" | undefined;
   scope?: "tracked" | "all" | undefined;
+  machineId?: string | undefined;
 }
 
 export const filesApi = {
@@ -153,13 +156,13 @@ export const filesApi = {
     if (options.kind !== undefined) params.set("kind", options.kind);
     if (options.mode !== undefined) params.set("mode", options.mode);
     if (options.scope !== undefined) params.set("scope", options.scope);
-    return request(`/api/files?${params.toString()}`, arrayOf(parseFileSuggestion));
+    return request(`${machinePrefix(options.machineId)}/files?${params.toString()}`, arrayOf(parseFileSuggestion));
   },
 };
 
 export const gitApi = {
-  gitStatus: (projectId: string, workspaceId: string) => request(`/api/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/status`, parseGitStatusResponse),
-  gitDiff: (projectId: string, workspaceId: string, options?: { path?: string; staged?: boolean }) => request(gitDiffUrl(projectId, workspaceId, options), parseGitDiffResponse),
+  gitStatus: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/status`, parseGitStatusResponse),
+  gitDiff: (projectId: string, workspaceId: string, options?: { path?: string; staged?: boolean }, machineId = "local") => request(machineGitDiffUrl(machineId, projectId, workspaceId, options), parseGitDiffResponse),
 };
 
 export const api = {

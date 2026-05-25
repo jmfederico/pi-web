@@ -16,6 +16,7 @@ export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
   @property() sessionId?: string;
   @property() cwd?: string;
+  @property() machineId = "local";
   @property({ type: Boolean }) canSteer = false;
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
@@ -168,7 +169,7 @@ export class PromptEditor extends LitElement {
       return;
     }
     if (trigger.kind === "command" && this.sessionId !== undefined && this.sessionId !== "") {
-      const commands = await api.commands(this.sessionId).catch(emptySlashCommands);
+      const commands = await api.commands(this.sessionId, this.machineId).catch(emptySlashCommands);
       if (version !== this.requestVersion) return;
       this.completions = commands
         .filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()))
@@ -182,7 +183,7 @@ export class PromptEditor extends LitElement {
           ...(command.description === undefined ? {} : { description: command.description }),
         }));
     } else if (trigger.kind === "file" && this.cwd !== undefined && this.cwd !== "") {
-      const files = await api.files(this.cwd, trigger.query, { scope: trigger.fileScope }).catch(emptyFileSuggestions);
+      const files = await api.files(this.cwd, trigger.query, { kind: trigger.fileKind, mode: trigger.fileMode, scope: trigger.fileScope, machineId: this.machineId }).catch(emptyFileSuggestions);
       if (version !== this.requestVersion) return;
       this.completions = files
         .slice(0, 12)

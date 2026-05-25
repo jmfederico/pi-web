@@ -86,7 +86,7 @@ function renderImageViewer(context: WorkspacePanelContext, file: FileContentResp
       <p class="muted">Image too large to preview: ${formatFileSize(file.size)} · limit ${MAX_IMAGE_PREVIEW_LABEL}</p>
     `;
   }
-  const src = workspaceImagePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt });
+  const src = workspaceImagePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.state.selectedMachine?.id ?? "local" });
   return html`
     <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
     <div class="image-preview">
@@ -97,7 +97,7 @@ function renderImageViewer(context: WorkspacePanelContext, file: FileContentResp
 
 function renderTerminal(context: WorkspacePanelContext): TemplateResult {
   loadTerminalPanel();
-  return html`<terminal-panel .workspace=${context.workspace} .selectedTerminalId=${context.selectedTerminalId} .autoStart=${context.terminalAutoStart} .onSelectTerminal=${context.onSelectTerminal}></terminal-panel>`;
+  return html`<terminal-panel .workspace=${context.workspace} .machineId=${context.state.selectedMachine?.id ?? "local"} .selectedTerminalId=${context.selectedTerminalId} .autoStart=${context.terminalAutoStart} .onSelectTerminal=${context.onSelectTerminal}></terminal-panel>`;
 }
 
 function renderGit(context: WorkspacePanelContext): TemplateResult {

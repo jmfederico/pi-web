@@ -654,56 +654,316 @@ Acceptance:
 
 ### Phase 2: Machine-scoped local aliases
 
-Deliverable: machine-scoped APIs work for `local`.
+Deliverable: machine-scoped APIs work for the synthesized `local` machine, and the browser uses those endpoints for normal local operation. Remote machine rows may still be listed, but remote project/session control remains unavailable until Phase 3/4.
 
-Tasks:
+Implementation strategy:
 
-- Add `/api/machines/local/projects` etc. wrappers for local services.
-- Add `/api/machines/local/sessions...` proxy wrappers to local sessiond.
-- Add `/api/machines/local/events` WebSocket wrappers.
-- Update client API/controllers to use machine-scoped endpoints.
-- Keep compatibility aliases.
+- Prefer extracting existing route registration functions to accept a path prefix when this is low-risk.
+- If extraction would be broad, add small wrapper route modules first and refactor later.
+- Keep every existing non-machine-scoped route as a compatibility alias for `local`.
+- Migrate client calls in route-family slices so regressions are easy to isolate:
+  1. projects, project directories, workspaces;
+  2. files, file previews, git;
+  3. sessions, auth providers, activity HTTP;
+  4. local WebSockets and terminals if they are not deferred to Phase 4.
+
+Local service route mapping:
+
+```text
+GET    /api/machines/local/projects
+  -> ProjectService.list()
+POST   /api/machines/local/projects
+  -> ProjectService.add()
+DELETE /api/machines/local/projects/:projectId
+  -> ProjectService.close()
+
+GET    /api/machines/local/project-directories?q=...
+  -> listDirectorySuggestions()
+
+GET    /api/machines/local/projects/:projectId/workspaces
+  -> WorkspaceService.list(project)
+
+GET    /api/machines/local/projects/:projectId/workspaces/:workspaceId/tree?path=...
+  -> listWorkspaceTree()
+GET    /api/machines/local/projects/:projectId/workspaces/:workspaceId/file?path=...
+  -> readWorkspaceFile()
+GET    /api/machines/local/projects/:projectId/workspaces/:workspaceId/file/preview?path=...
+  -> readWorkspaceImagePreview() streaming response
+
+GET    /api/machines/local/projects/:projectId/workspaces/:workspaceId/git/status
+  -> current git status route behavior
+GET    /api/machines/local/projects/:projectId/workspaces/:workspaceId/git/diff?path=...&staged=true
+  -> current git diff route behavior
+
+GET    /api/machines/local/files?cwd=...&q=...&kind=...&mode=...
+  -> listFileSuggestions() / listPathSuggestions()
+```
+
+Local session daemon route mapping:
+
+```text
+GET/POST/etc /api/machines/local/activity
+  -> local sessiond /activity
+GET/POST/etc /api/machines/local/auth
+  -> local sessiond /auth
+GET/POST/etc /api/machines/local/auth/*
+  -> local sessiond /auth/*
+GET/POST/etc /api/machines/local/sessions
+  -> local sessiond /sessions
+GET/POST/etc /api/machines/local/sessions/*
+  -> local sessiond /sessions/*
+```
+
+Local WebSocket mapping:
+
+```text
+WS /api/machines/local/events
+  -> local sessiond /events
+WS /api/machines/local/sessions/events
+  -> local sessiond /sessions/events
+WS /api/machines/local/sessions/:sessionId/events
+  -> local sessiond /sessions/:sessionId/events
+WS /api/machines/local/projects/:projectId/workspaces/:workspaceId/terminals/:terminalId/socket?cols=...&rows=...
+  -> existing local terminal socket behavior with query preserved
+```
+
+Client API changes:
+
+```ts
+const machinePrefix = (machineId: string) => `/api/machines/${encodeURIComponent(machineId)}`;
+
+projects(machineId)
+addProject(machineId, path, name, create)
+closeProject(machineId, projectId)
+projectDirectories(machineId, query)
+workspaces(machineId, projectId)
+workspaceTree(machineId, projectId, workspaceId, path)
+workspaceFile(machineId, projectId, workspaceId, path)
+workspaceFilePreview(machineId, projectId, workspaceId, path)
+gitStatus(machineId, projectId, workspaceId)
+gitDiff(machineId, projectId, workspaceId, options)
+files(machineId, cwd, query, kind, mode)
+sessions(machineId, cwd)
+...
+```
+
+Controller rules:
+
+- Controllers must derive `machineId` from `selectedMachine?.id ?? "local"`.
+- While only local aliases are implemented, remote machines should remain non-operational in the project/session controllers and show clear “remote control coming soon” copy.
+- Route restoration must restore machine selection before project/workspace/session selection.
+- Cache keys introduced in this phase should be machine-scoped if they can outlive the selected-machine view.
 
 Acceptance:
 
-- Browser uses `/api/machines/local/...` for normal operation.
-- Compatibility aliases still pass tests.
+- Browser network panel shows `/api/machines/local/...` for local project/workspace/session activity.
+- Current compatibility routes such as `/api/projects` and `/api/sessions` still pass tests.
+- Existing URLs without `machine` continue to restore local projects/workspaces/sessions.
+- `?machine=local` is accepted but normal URL writes omit it.
+- Selecting any remote row does not show local projects or local sessions under the remote machine.
 
 ### Phase 3: Remote HTTP proxy
 
-Deliverable: remote machines can list projects/workspaces/sessions and perform non-WebSocket actions.
+Deliverable: remote machines can list projects/workspaces/sessions and perform non-WebSocket actions through the local Pi Web gateway.
 
-Tasks:
+Remote proxy route allowlist:
 
-- Add remote `MachineClient`.
-- Add `GET /api/machines/:id/health`.
-- Proxy machine-scoped HTTP routes for remote machines to remote compatibility routes.
-- Add token/header support for gateway-to-remote authentication.
-- Keep OAuth provider login/logout flows remote-direct unless callback origin behavior is explicitly implemented.
-- Add UI for add/remove remote machines.
+```text
+GET    /api/machines/:id/projects
+POST   /api/machines/:id/projects
+DELETE /api/machines/:id/projects/:projectId
+GET    /api/machines/:id/project-directories?q=...
+GET    /api/machines/:id/projects/:projectId/workspaces
+GET    /api/machines/:id/projects/:projectId/workspaces/:workspaceId/tree?path=...
+GET    /api/machines/:id/projects/:projectId/workspaces/:workspaceId/file?path=...
+GET    /api/machines/:id/projects/:projectId/workspaces/:workspaceId/file/preview?path=...
+GET    /api/machines/:id/projects/:projectId/workspaces/:workspaceId/git/status
+GET    /api/machines/:id/projects/:projectId/workspaces/:workspaceId/git/diff?path=...&staged=true
+GET    /api/machines/:id/files?cwd=...&q=...&kind=...&mode=...
+GET    /api/machines/:id/activity
+GET    /api/machines/:id/sessions?cwd=...
+POST   /api/machines/:id/sessions
+GET    /api/machines/:id/sessions/:sessionId/messages
+GET    /api/machines/:id/sessions/:sessionId/status
+GET    /api/machines/:id/sessions/:sessionId/models
+POST   /api/machines/:id/sessions/:sessionId/model
+POST   /api/machines/:id/sessions/:sessionId/model/cycle
+GET    /api/machines/:id/sessions/:sessionId/thinking-levels
+POST   /api/machines/:id/sessions/:sessionId/thinking-level
+POST   /api/machines/:id/sessions/:sessionId/thinking-level/cycle
+GET    /api/machines/:id/sessions/:sessionId/commands
+POST   /api/machines/:id/sessions/:sessionId/prompt
+POST   /api/machines/:id/sessions/:sessionId/shell
+POST   /api/machines/:id/sessions/:sessionId/commands/run
+POST   /api/machines/:id/sessions/:sessionId/commands/respond
+POST   /api/machines/:id/sessions/:sessionId/abort
+POST   /api/machines/:id/sessions/:sessionId/stop
+POST   /api/machines/:id/sessions/:sessionId/archive
+POST   /api/machines/:id/sessions/:sessionId/archive-tree
+POST   /api/machines/:id/sessions/:sessionId/restore
+POST   /api/machines/:id/sessions/:sessionId/detach-parent
+GET    /api/machines/:id/auth/providers
+POST   /api/machines/:id/auth/api-key
+POST   /api/machines/:id/auth/logout        // API-key/logout only if safe for selected provider
+```
+
+Do not add a catch-all remote proxy in the first remote phase. Any route not explicitly allowlisted should return `404` or `501` with a clear message.
+
+Remote path mapping:
+
+```text
+/api/machines/:id/<compat-path>?query
+  -> <machine.baseUrl>/api/<compat-path>?query
+```
+
+Rules:
+
+- Preserve query strings exactly after the machine prefix is stripped.
+- Forward JSON request bodies with `content-type: application/json` unless the original route needs a different explicit content type.
+- Stream file preview responses; do not coerce previews into JSON strings.
+- Use the same request body limits as the local Fastify API.
+- Use bounded timeouts for normal HTTP proxy requests, and shorter timeouts for health checks.
+
+Remote auth/header policy:
+
+- `token` means `Authorization: Bearer <token>` by default.
+- `headers` are additional gateway-to-remote headers.
+- Never forward browser cookies, browser `Authorization`, or other browser credentials to a remote machine by default.
+- Reject or ignore configured header names that affect transport/proxy semantics:
+  - `host`
+  - `connection`
+  - `upgrade`
+  - `transfer-encoding`
+  - `content-length`
+  - `keep-alive`
+  - `proxy-authenticate`
+  - `proxy-authorization`
+  - `te`
+  - `trailer`
+- If both `token` and `headers.authorization` are provided, reject the machine config or require one explicit winner. Prefer rejecting ambiguity.
+- Never disable TLS verification by default.
+- Do not follow redirects for proxied API requests in v1.
+
+Remote response header policy:
+
+- Preserve safe response headers where useful:
+  - `content-type`
+  - `content-length`
+  - `cache-control`
+  - `last-modified`
+  - `etag`
+- Strip hop-by-hop and credential-bearing headers:
+  - `connection`
+  - `transfer-encoding`
+  - `upgrade`
+  - `keep-alive`
+  - `proxy-authenticate`
+  - `proxy-authorization`
+  - `set-cookie`
+- Normalize remote failures to JSON gateway errors for JSON endpoints.
+
+Error response contract:
+
+```json
+{
+  "error": "Remote machine unavailable",
+  "machineId": "devbox",
+  "statusCode": 502,
+  "detail": "connect ECONNREFUSED 100.64.0.2:8504"
+}
+```
+
+Guidance:
+
+- Remote DNS/connect/TLS failure: `502`.
+- Remote timeout: `504`.
+- Unknown machine: `404`.
+- Route known but not implemented remotely/gateway-side: preserve remote `404` when it came from remote, use gateway `501` when the gateway intentionally does not support it.
+- Avoid leaking configured tokens/headers in errors or logs.
+
+Health endpoint contract:
+
+```text
+GET /api/machines/:id/health
+```
+
+- `local` health combines existing Pi Web status and sessiond health where practical.
+- Remote health calls `<baseUrl>/api/pi-web/status` with a short timeout.
+- If the remote is old and lacks `/api/pi-web/status`, fall back to a lightweight `GET /api/projects` or root request only if that fallback is deliberate and tested.
+- Responses should include `checkedAt`, `ok`, `status`, and optional component statuses.
+- Cache health in memory for a short TTL so selecting machines does not block on repeated offline checks.
+
+Remote auth provider policy:
+
+- Gateway-to-remote machine credentials are separate from model-provider credentials.
+- API-key provider flows may be proxied after basic remote HTTP proxying works.
+- OAuth login/logout remains remote-direct in Phase 3. UI should show “Open remote Pi Web to configure OAuth” rather than proxying callback-sensitive flows.
 
 Acceptance:
 
 - Register another running Pi Web by URL.
-- List remote projects/workspaces/sessions.
-- Start session and send prompt via proxied HTTP.
+- Health shows online/offline without blocking the UI.
+- List remote projects/workspaces/sessions through machine-scoped endpoints.
+- Start a remote session and send a prompt via proxied HTTP.
+- Remote file tree/file content/git status work.
+- Remote file previews stream with correct content type.
+- Remote unreachable returns `502`; timeout returns `504`; token/header values never appear in responses or logs.
+- Existing local and compatibility routes still pass tests.
 
 ### Phase 4: Remote WebSocket proxy
 
-Deliverable: remote live sessions and terminals work.
+Deliverable: remote live sessions and terminals work through the local Pi Web gateway.
 
-Tasks:
+Remote WebSocket route mapping:
 
-- Proxy session event WebSockets to remote Pi Web.
-- Proxy global events/activity WebSocket for selected machine.
-- Proxy terminal socket WebSockets.
-- Make `SessionSocket`, `RealtimeSocket`, and `terminalSocket` machine-scoped.
+```text
+WS /api/machines/:id/events
+  -> <remote ws base>/api/events
+WS /api/machines/:id/sessions/events
+  -> <remote ws base>/api/sessions/events
+WS /api/machines/:id/sessions/:sessionId/events
+  -> <remote ws base>/api/sessions/:sessionId/events
+WS /api/machines/:id/projects/:projectId/workspaces/:workspaceId/terminals/:terminalId/socket?cols=...&rows=...
+  -> <remote ws base>/api/projects/:projectId/workspaces/:workspaceId/terminals/:terminalId/socket?cols=...&rows=...
+```
+
+Rules:
+
+- Convert remote `http:` base URLs to `ws:` and `https:` base URLs to `wss:`.
+- Preserve query strings exactly, especially terminal `cols` and `rows`.
+- Attach the same gateway-to-remote credentials as HTTP proxying where WebSocket libraries support headers.
+- Do not forward browser cookies or browser credentials.
+- If upstream connect fails, close the browser WebSocket with a clear close code/reason where possible and log a sanitized gateway error.
+- Forward upstream close codes/reasons to the browser when safe.
+- Forward browser close to upstream and upstream close to browser.
+- Buffer browser messages only while the upstream socket is connecting, with a small max buffer. Drop/close on overflow rather than unbounded buffering.
+- Reuse or extend `src/server/webSocketBridge.ts` so buffering/close/error behavior is consistent.
+- Add heartbeat/ping behavior only if tests or real remote tunnels show idle sockets are dropped; do not introduce timers without cleanup.
+
+Client socket API changes:
+
+```ts
+sessionEvents(machineId: string, sessionId: string): WebSocket
+globalSessionEvents(machineId: string): WebSocket
+realtimeEvents(machineId: string): WebSocket
+terminalSocket(machineId: string, projectId: string, workspaceId: string, terminalId: string, initialSize?: TerminalSize): WebSocket
+```
+
+Controller/socket ownership rules:
+
+- `SessionSocket` reconnects using the selected machine ID.
+- `RealtimeSocket` reconnects when selected machine changes.
+- Terminal sockets are scoped to the selected machine and are closed when switching machines/workspaces.
+- Activity/status maps use machine-scoped cache keys if data from multiple machines can coexist.
 
 Acceptance:
 
 - Remote assistant streaming appears live.
 - Remote status/activity updates appear.
-- Remote terminals work.
+- Remote terminals work, including initial size query parameters.
+- Closing the browser tab/session closes upstream WebSockets.
+- Offline remote WebSocket attempts fail visibly without crashing the app.
+- Local WebSockets and compatibility aliases still pass tests.
 
 ### Phase 5: UX polish and docs
 

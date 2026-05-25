@@ -22,6 +22,7 @@ const COMMAND_RUN_POLL_INTERVAL_MS = 1000;
 @customElement("terminal-panel")
 export class TerminalPanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
+  @property() machineId = "local";
   @property({ attribute: false }) selectedTerminalId: string | undefined;
   @property({ type: Boolean }) autoStart = false;
   @property({ attribute: false }) onSelectTerminal: (terminalId: string | undefined, options?: { replace?: boolean | undefined }) => void = () => undefined;
@@ -141,7 +142,7 @@ export class TerminalPanel extends LitElement {
       if (workspace === undefined) return;
       const shouldAutoStart = this.consumeAutoStart();
       const [terminals, commandRuns] = await Promise.all([
-        terminalsApi.terminals(workspace.projectId, workspace.id),
+        terminalsApi.terminals(workspace.projectId, workspace.id, this.machineId),
         terminalsApi.listCommandRuns({ projectId: workspace.projectId, workspaceId: workspace.id }),
       ]);
       this.terminals = terminals;
@@ -198,7 +199,7 @@ export class TerminalPanel extends LitElement {
     this.error = undefined;
     try {
       const size = this.measureTerminalSize() ?? DEFAULT_TERMINAL_SIZE;
-      const terminal = await terminalsApi.startTerminal(this.workspace.projectId, this.workspace.id, size);
+      const terminal = await terminalsApi.startTerminal(this.workspace.projectId, this.workspace.id, size, this.machineId);
       this.terminals = [...this.terminals, terminal];
       this.selectTerminal(terminal.id);
     } catch (error) {
@@ -210,7 +211,7 @@ export class TerminalPanel extends LitElement {
     event.stopPropagation();
     try {
       if (this.workspace === undefined) return;
-      await terminalsApi.closeTerminal(this.workspace.projectId, this.workspace.id, id);
+      await terminalsApi.closeTerminal(this.workspace.projectId, this.workspace.id, id, this.machineId);
       const next = this.terminals.filter((terminal) => terminal.id !== id);
       this.terminals = next;
       if (this.selectedId === id || this.selectedTerminalId === id) {
@@ -320,7 +321,7 @@ export class TerminalPanel extends LitElement {
   }
 
   private connectSocket(projectId: string, workspaceId: string, terminalId: string, terminal: Terminal, initialSize: TerminalSize | undefined): void {
-    const socket = terminalSocket(projectId, workspaceId, terminalId, initialSize);
+    const socket = terminalSocket(projectId, workspaceId, terminalId, initialSize, this.machineId);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     socket.addEventListener("open", () => { this.fitAndNotify(); });

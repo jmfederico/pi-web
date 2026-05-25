@@ -1,6 +1,6 @@
 import { api } from "../api";
 import { queryNamespace, setNamespacedQueryKey } from "../namespacedQueryArgs";
-import type { GetState, SetState, UpdateUrl } from "./types";
+import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
 
 const GIT_ROUTE_NAMESPACE = queryNamespace("core:workspace.git");
 
@@ -19,7 +19,7 @@ export class GitController {
     const workspace = this.getState().selectedWorkspace;
     if (project === undefined || workspace === undefined) return;
     try {
-      const status = await api.gitStatus(project.id, workspace.id);
+      const status = await api.gitStatus(project.id, workspace.id, selectedMachineId(this.getState()));
       this.setState({ gitStatus: status, gitStale: false, error: "" });
       const selectedDiffPath = this.getState().selectedDiffPath;
       if (selectedDiffPath !== undefined) {
@@ -52,8 +52,8 @@ export class GitController {
     if (project === undefined || workspace === undefined) return;
     try {
       const [selectedDiff, selectedStagedDiff] = await Promise.all([
-        api.gitDiff(project.id, workspace.id, { path }),
-        api.gitDiff(project.id, workspace.id, { path, staged: true }),
+        api.gitDiff(project.id, workspace.id, { path }, selectedMachineId(this.getState())),
+        api.gitDiff(project.id, workspace.id, { path, staged: true }, selectedMachineId(this.getState())),
       ]);
       this.setState({ selectedDiff, selectedStagedDiff, error: "" });
     } catch (error) {

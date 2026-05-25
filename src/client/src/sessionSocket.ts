@@ -12,9 +12,11 @@ export class SessionSocket {
   private shouldReconnect = false;
   private hasOpened = false;
   private onReconnect: (() => void) | undefined;
+  private machineId = "local";
 
-  connect(sessionId: string, onEvent: (event: SessionUiEvent) => void, onReconnect?: () => void): void {
+  connect(sessionId: string, onEvent: (event: SessionUiEvent) => void, onReconnect?: () => void, machineId = "local"): void {
     this.close();
+    this.machineId = machineId;
     this.sessionId = sessionId;
     this.onEvent = onEvent;
     this.onReconnect = onReconnect;
@@ -35,11 +37,12 @@ export class SessionSocket {
     this.onEvent = undefined;
     this.onReconnect = undefined;
     this.hasOpened = false;
+    this.machineId = "local";
   }
 
   private open(): void {
     if (this.sessionId === undefined || this.sessionId === "" || !this.shouldReconnect) return;
-    const socket = sessionEvents(this.sessionId);
+    const socket = sessionEvents(this.sessionId, this.machineId);
     this.socket = socket;
     socket.onopen = () => {
       this.reconnectDelay = 500;
@@ -75,9 +78,11 @@ export class RealtimeSocket {
   private reconnectTimer?: number;
   private reconnectDelay = 500;
   private shouldReconnect = false;
+  private machineId = "local";
 
-  connect(onEvent: (event: RealtimeEvent) => void, onOpen?: () => void): void {
+  connect(onEvent: (event: RealtimeEvent) => void, onOpen?: () => void, machineId = "local"): void {
     this.close();
+    this.machineId = machineId;
     this.onEvent = onEvent;
     this.onOpen = onOpen;
     this.shouldReconnect = true;
@@ -91,11 +96,12 @@ export class RealtimeSocket {
     this.socket = undefined;
     this.onEvent = undefined;
     this.onOpen = undefined;
+    this.machineId = "local";
   }
 
   private open(): void {
     if (!this.shouldReconnect) return;
-    const socket = realtimeEvents();
+    const socket = realtimeEvents(this.machineId);
     this.socket = socket;
     socket.onopen = () => {
       this.reconnectDelay = 500;
@@ -129,9 +135,11 @@ export class GlobalSessionSocket {
   private reconnectTimer?: number;
   private reconnectDelay = 500;
   private shouldReconnect = false;
+  private machineId = "local";
 
-  connect(onEvent: (event: GlobalSessionEvent) => void): void {
+  connect(onEvent: (event: GlobalSessionEvent) => void, machineId = "local"): void {
     this.close();
+    this.machineId = machineId;
     this.onEvent = onEvent;
     this.shouldReconnect = true;
     this.open();
@@ -143,11 +151,12 @@ export class GlobalSessionSocket {
     closeSocketQuietly(this.socket);
     this.socket = undefined;
     this.onEvent = undefined;
+    this.machineId = "local";
   }
 
   private open(): void {
     if (!this.shouldReconnect) return;
-    const socket = globalSessionEvents();
+    const socket = globalSessionEvents(this.machineId);
     this.socket = socket;
     socket.onopen = () => {
       this.reconnectDelay = 500;

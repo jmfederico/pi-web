@@ -1,6 +1,6 @@
 import { activityApi as defaultApi, type WorkspaceActivity, type WorkspaceActivityResponse } from "../api";
 import { isWorkspaceActivityActive } from "../../../shared/activity";
-import type { GetState, SetState } from "./types";
+import { selectedMachineId, type GetState, type SetState } from "./types";
 
 export interface ActivityControllerDependencies {
   api?: Pick<typeof defaultApi, "workspaceActivity">;
@@ -14,7 +14,7 @@ export class ActivityController {
   }
 
   async refresh(): Promise<void> {
-    const snapshot = await this.api.workspaceActivity();
+    const snapshot = await this.api.workspaceActivity(selectedMachineId(this.getState()));
     this.setState({ workspaceActivities: indexWorkspaceActivities(snapshot) });
   }
 

@@ -7,6 +7,7 @@ import { css } from "lit";
 export class ProjectDialog extends LitElement {
   @property({ attribute: false }) onSubmit?: (path: string, create: boolean) => void;
   @property({ attribute: false }) onCancel?: () => void;
+  @property() machineId = "local";
   @state() private path = "";
   @state() private createMissing = true;
   @state() private suggestions: FileSuggestion[] = [];
@@ -29,7 +30,7 @@ export class ProjectDialog extends LitElement {
     const requestId = ++this.requestId;
     this.loading = true;
     try {
-      const suggestions = await api.projectDirectories(this.path);
+      const suggestions = await api.projectDirectories(this.path, this.machineId);
       if (requestId !== this.requestId) return;
       this.suggestions = suggestions;
       this.selected = Math.min(this.selected, Math.max(0, suggestions.length - 1));

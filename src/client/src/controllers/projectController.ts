@@ -1,5 +1,5 @@
 import { api } from "../api";
-import type { GetState, SetState } from "./types";
+import { selectedMachineId, type GetState, type SetState } from "./types";
 import type { WorkspaceController } from "./workspaceController";
 
 export class ProjectController {
@@ -13,7 +13,7 @@ export class ProjectController {
     }
     this.setState({ error: "", isLoadingProjects: true });
     try {
-      const projects = await api.projects();
+      const projects = await api.projects(selectedMachineId(this.getState()));
       const projectIds = new Set(projects.map((project) => project.id));
       const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([projectId]) => projectIds.has(projectId)));
       this.setState({ projects, workspacesByProjectId });
@@ -31,7 +31,7 @@ export class ProjectController {
     }
     if (path.trim() === "") return;
     try {
-      const project = await api.addProject(path.trim(), undefined, create);
+      const project = await api.addProject(path.trim(), undefined, create, selectedMachineId(this.getState()));
       const projects = this.getState().projects;
       this.setState({ projects: [...projects.filter((p) => p.id !== project.id), project], projectDialogOpen: false });
       await this.workspaces.selectProject(project);
@@ -42,7 +42,7 @@ export class ProjectController {
 
   async closeProject(projectId: string) {
     try {
-      await api.closeProject(projectId);
+      await api.closeProject(projectId, selectedMachineId(this.getState()));
       this.workspaces.forgetProject(projectId);
       const state = this.getState();
       this.setState({ projects: state.projects.filter((p) => p.id !== projectId) });

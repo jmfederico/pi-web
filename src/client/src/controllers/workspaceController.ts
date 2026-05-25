@@ -1,7 +1,7 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
 import { resetWorkspaceScopedState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
-import type { GetState, RouteTarget, SetState, UpdateUrl } from "./types";
+import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
 import type { SessionController } from "./sessionController";
 import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type WorkspaceSelectionMemory } from "./workspaceSelection";
 
@@ -39,7 +39,7 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
-      const workspaces = await this.api.workspaces(project.id);
+      const workspaces = await api.workspaces(project.id, selectedMachineId(this.getState()));
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(project.id) });
       if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
@@ -54,7 +54,7 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     try {
-      const sessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path));
+      const sessions = mergeCachedNewSessions(workspace.path, await api.sessions(workspace.path, selectedMachineId(this.getState())));
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });

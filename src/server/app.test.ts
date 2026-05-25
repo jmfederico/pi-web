@@ -77,6 +77,31 @@ describe("buildApp", () => {
     expect(emptyListResponse.json<Project[]>()).toEqual([]);
   });
 
+  it("serves local session proxy routes through machine-scoped aliases", async () => {
+    const response = await app.inject({ method: "GET", url: `/api/machines/local/sessions?cwd=${encodeURIComponent(projectDir)}` });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toHaveProperty("error");
+  });
+
+  it("serves local projects and workspaces through machine-scoped aliases", async () => {
+    const addResponse = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/projects",
+      payload: { name: "Machine Local", path: projectDir, create: true },
+    });
+    expect(addResponse.statusCode).toBe(200);
+    const project = addResponse.json<Project>();
+
+    const listResponse = await app.inject({ method: "GET", url: "/api/machines/local/projects" });
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json<Project[]>()).toEqual([project]);
+
+    const workspacesResponse = await app.inject({ method: "GET", url: `/api/machines/local/projects/${project.id}/workspaces` });
+    expect(workspacesResponse.statusCode).toBe(200);
+    expect(workspacesResponse.json<Workspace[]>()).toEqual([expect.objectContaining({ projectId: project.id, path: projectDir })]);
+  });
+
   it("serves the PI WEB plugin manifest and plugin assets", async () => {
     const manifestResponse = await app.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });
     expect(manifestResponse.statusCode).toBe(200);

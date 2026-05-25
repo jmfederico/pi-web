@@ -1,6 +1,6 @@
 import { api } from "../api";
 import { queryNamespace, setNamespacedQueryKey } from "../namespacedQueryArgs";
-import type { GetState, SetState, UpdateUrl } from "./types";
+import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
 
 const FILES_ROUTE_NAMESPACE = queryNamespace("core:workspace.files");
 
@@ -12,9 +12,10 @@ export class FileExplorerController {
     const workspace = this.getState().selectedWorkspace;
     if (project === undefined || workspace === undefined) return;
     try {
-      const root = await api.workspaceTree(project.id, workspace.id);
+      const machineId = selectedMachineId(this.getState());
+      const root = await api.workspaceTree(project.id, workspace.id, "", machineId);
       const expanded = { ...this.getState().expandedDirs };
-      await Promise.all(Object.keys(expanded).map(async (path) => { expanded[path] = (await api.workspaceTree(project.id, workspace.id, path)).entries; }));
+      await Promise.all(Object.keys(expanded).map(async (path) => { expanded[path] = (await api.workspaceTree(project.id, workspace.id, path, machineId)).entries; }));
       this.setState({ fileTree: root.entries, expandedDirs: expanded, fileTreeStale: false, error: "" });
     } catch (error) {
       this.setState({ error: String(error) });
@@ -30,7 +31,7 @@ export class FileExplorerController {
       return;
     }
     try {
-      const response = await api.workspaceTree(project.id, workspace.id, path);
+      const response = await api.workspaceTree(project.id, workspace.id, path, selectedMachineId(this.getState()));
       this.setState({ expandedDirs: { ...this.getState().expandedDirs, [path]: response.entries }, error: "" });
     } catch (error) {
       this.setState({ error: String(error) });
@@ -50,7 +51,7 @@ export class FileExplorerController {
     if (project === undefined || workspace === undefined) return;
     this.setState({ selectedFilePath: path, selectedFileContent: undefined });
     try {
-      const content = await api.workspaceFile(project.id, workspace.id, path);
+      const content = await api.workspaceFile(project.id, workspace.id, path, selectedMachineId(this.getState()));
       if (this.getState().selectedFilePath === path) this.setState({ selectedFileContent: content, error: "" });
     } catch (error) {
       if (this.getState().selectedFilePath !== path) return;

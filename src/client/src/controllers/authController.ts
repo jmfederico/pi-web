@@ -1,5 +1,5 @@
 import { api as defaultApi, type AuthProviderOption, type AuthType, type OAuthFlowState, type SessionStatus } from "../api";
-import type { GetState, SetState } from "./types";
+import { selectedMachineId, type GetState, type SetState } from "./types";
 
 export interface AuthControllerDependencies {
   api?: typeof defaultApi;
@@ -43,7 +43,7 @@ export class AuthController {
 
   async chooseLoginMethod(authType: AuthType): Promise<void> {
     try {
-      const { providers } = await this.api.authProviders({ mode: "login", authType });
+      const { providers } = await this.api.authProviders({ mode: "login", authType, machineId: selectedMachineId(this.getState()) });
       this.setState({ authDialog: { step: "providers", mode: "login", authType, providers } });
     } catch (error) {
       this.setState({ error: String(error) });
@@ -79,7 +79,7 @@ export class AuthController {
     delete clean.error;
     this.setState({ authDialog: { ...clean, saving: true } });
     try {
-      await this.api.saveApiKey(dialog.provider.id, key);
+      await this.api.saveApiKey(dialog.provider.id, key, selectedMachineId(this.getState()));
       this.closeDialog();
       void this.refreshStatus();
     } catch (error) {
@@ -89,7 +89,7 @@ export class AuthController {
 
   async openLogout(providerId?: string): Promise<void> {
     try {
-      const { providers } = await this.api.authProviders({ mode: "logout" });
+      const { providers } = await this.api.authProviders({ mode: "logout", machineId: selectedMachineId(this.getState()) });
       if (providerId !== undefined && providerId !== "") {
         const provider = providers.find((candidate) => candidate.id === providerId);
         if (provider !== undefined) await this.logoutProvider(provider.id);
@@ -104,7 +104,7 @@ export class AuthController {
 
   async logoutProvider(providerId: string): Promise<void> {
     try {
-      await this.api.logoutProvider(providerId);
+      await this.api.logoutProvider(providerId, selectedMachineId(this.getState()));
       this.closeDialog();
       void this.refreshStatus();
     } catch (error) {
@@ -130,7 +130,7 @@ export class AuthController {
     delete clean.error;
     this.setState({ authDialog: { ...clean, responding: true } });
     try {
-      const flow = await this.api.respondOAuthFlow(dialog.flow.flowId, request.requestId, responseValue);
+      const flow = await this.api.respondOAuthFlow(dialog.flow.flowId, request.requestId, responseValue, selectedMachineId(this.getState()));
       this.updateOAuthFlow(flow);
     } catch (error) {
       this.setState({ authDialog: { ...dialog, responding: false, error: String(error) } });
@@ -145,7 +145,7 @@ export class AuthController {
     }
     this.stopPolling();
     try {
-      await this.api.cancelOAuthFlow(dialog.flow.flowId);
+      await this.api.cancelOAuthFlow(dialog.flow.flowId, selectedMachineId(this.getState()));
     } catch {
       // Best-effort cancel. The dialog closes either way.
     }
@@ -159,7 +159,7 @@ export class AuthController {
 
   private async openLoginProvider(providerId: string): Promise<void> {
     try {
-      const { providers } = await this.api.authProviders({ mode: "login" });
+      const { providers } = await this.api.authProviders({ mode: "login", machineId: selectedMachineId(this.getState()) });
       const exact = providers.filter((provider) => provider.id === providerId);
       if (exact.length === 0) {
         this.setState({ error: `Auth provider not found: ${providerId}` });
@@ -180,7 +180,7 @@ export class AuthController {
 
   private async startOAuth(provider: AuthProviderOption): Promise<void> {
     try {
-      const flow = await this.api.startOAuthLogin(provider.id);
+      const flow = await this.api.startOAuthLogin(provider.id, selectedMachineId(this.getState()));
       this.updateOAuthFlow(flow);
       this.startPolling(flow.flowId);
     } catch (error) {
@@ -224,7 +224,7 @@ export class AuthController {
       return;
     }
     try {
-      this.updateOAuthFlow(await this.api.oauthFlow(flowId));
+      this.updateOAuthFlow(await this.api.oauthFlow(flowId, selectedMachineId(this.getState())));
     } catch (error) {
       this.stopPolling();
       this.setState({ authDialog: { ...dialog, error: String(error) } });
@@ -235,7 +235,7 @@ export class AuthController {
     const sessionId = this.sessionId();
     if (sessionId === undefined) return;
     try {
-      this.applyStatus(await this.api.status(sessionId));
+      this.applyStatus(await this.api.status(sessionId, selectedMachineId(this.getState())));
     } catch {
       // Status refresh is opportunistic after login completes.
     }
