@@ -213,8 +213,10 @@ export class PiWebApp extends LitElement {
   private async loadProjectsAndRestoreRoute() {
     const route = readRoute();
     await this.machines.loadMachines(route.machineId);
+    const effectiveRoute = this.routeForSelectedMachine(route);
+    if (effectiveRoute !== route) this.replaceRouteAndClearWorkspaceQuery(effectiveRoute);
     await this.projects.loadProjects();
-    await this.withChatScrollTransition(() => this.restoreRoute(false));
+    await this.withChatScrollTransition(() => this.restoreRouteFor(effectiveRoute, false));
     await this.refreshWorkspaceDeletionRuns();
   }
 
@@ -263,11 +265,14 @@ export class PiWebApp extends LitElement {
   }
 
   private async restoreRoute(updateUrl: boolean) {
-    const route = readRoute();
+    await this.restoreRouteFor(readRoute(), updateUrl);
+  }
+
+  private async restoreRouteFor(route: AppRoute, updateUrl: boolean) {
     await this.restoreRouteMachine(route, updateUrl);
-    const selectedFilePath = readNamespacedString(queryNamespace("core:workspace.files"), "file");
-    const selectedDiffPath = readNamespacedString(queryNamespace("core:workspace.git"), "diff");
-    const selectedTerminalId = readNamespacedString(TERMINAL_ROUTE_NAMESPACE, "terminal");
+    const selectedFilePath = route.projectId === undefined ? undefined : readNamespacedString(queryNamespace("core:workspace.files"), "file");
+    const selectedDiffPath = route.projectId === undefined ? undefined : readNamespacedString(queryNamespace("core:workspace.git"), "diff");
+    const selectedTerminalId = route.projectId === undefined ? undefined : readNamespacedString(TERMINAL_ROUTE_NAMESPACE, "terminal");
     this.routeRestoreInProgress = true;
     this.restoringRouteTerminalId = selectedTerminalId;
     try {
@@ -290,6 +295,19 @@ export class PiWebApp extends LitElement {
       this.routeRestoreInProgress = false;
       this.restoringRouteTerminalId = undefined;
     }
+  }
+
+  private routeForSelectedMachine(route: AppRoute): AppRoute {
+    const currentMachineId = this.state.selectedMachine?.id ?? "local";
+    if ((route.machineId ?? "local") === currentMachineId) return route;
+    return { machineId: currentMachineId, projectId: undefined, workspaceId: undefined, sessionId: undefined, tool: undefined, view: undefined };
+  }
+
+  private replaceRouteAndClearWorkspaceQuery(route: AppRoute): void {
+    writeRoute(route, { replace: true });
+    setNamespacedQueryKey(queryNamespace("core:workspace.files"), "file", undefined, { replace: true });
+    setNamespacedQueryKey(queryNamespace("core:workspace.git"), "diff", undefined, { replace: true });
+    setNamespacedQueryKey(TERMINAL_ROUTE_NAMESPACE, "terminal", undefined, { replace: true });
   }
 
   private async restoreRouteMachine(route: AppRoute, updateUrl: boolean): Promise<void> {

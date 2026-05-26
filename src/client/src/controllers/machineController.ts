@@ -1,16 +1,16 @@
-import { api, type Machine } from "../api";
+import { api, type Machine, type MachineHealth } from "../api";
 import { resetWorkspaceScopedState } from "../appState";
 import type { GetState, SetState, UpdateUrl } from "./types";
 import type { ProjectController } from "./projectController";
 
 export class MachineController {
-  constructor(private readonly getState: GetState, private readonly setState: SetState, private readonly updateUrl: UpdateUrl, private readonly projects: ProjectController) {}
+  constructor(private readonly getState: GetState, private readonly setState: SetState, private readonly updateUrl: UpdateUrl, private readonly projects: Pick<ProjectController, "loadProjects">) {}
 
   async loadMachines(routeMachineId?: string): Promise<void> {
     this.setState({ error: "", isLoadingMachines: true });
     try {
       const machines = await api.machines();
-      const selectedMachine = machines.find((machine) => machine.id === (routeMachineId ?? "local")) ?? machines.find((machine) => machine.id === "local") ?? machines[0];
+      const selectedMachine = await this.selectInitialMachine(machines, routeMachineId);
       this.setState({ machines, selectedMachine });
       void this.refreshMachineHealthFor(machines);
     } catch (error) {
@@ -80,6 +80,39 @@ export class MachineController {
     } catch (error) {
       this.setState({ error: String(error) });
     }
+  }
+
+  private async selectInitialMachine(machines: Machine[], routeMachineId?: string): Promise<Machine | undefined> {
+    const requestedMachine = machines.find((machine) => machine.id === (routeMachineId ?? "local"));
+    if (requestedMachine?.kind !== "remote") return requestedMachine ?? this.localMachine(machines);
+
+    const health = await this.safeRemoteHealth(requestedMachine);
+    if (health.ok) return requestedMachine;
+
+    const local = this.localMachine(machines);
+    this.setState({
+      error: `${requestedMachine.name} is offline; showing ${local?.name ?? "another machine"} instead.`,
+      machineStatuses: { ...this.getState().machineStatuses, [health.machineId]: health },
+    });
+    return local ?? requestedMachine;
+  }
+
+  private async safeRemoteHealth(machine: Machine): Promise<MachineHealth> {
+    try {
+      return await api.health(machine.id);
+    } catch (error) {
+      return {
+        machineId: machine.id,
+        ok: false,
+        checkedAt: new Date().toISOString(),
+        status: "offline",
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  private localMachine(machines: Machine[]): Machine | undefined {
+    return machines.find((machine) => machine.id === "local") ?? machines[0];
   }
 
   private async refreshMachineHealthFor(machines: Machine[]): Promise<void> {
