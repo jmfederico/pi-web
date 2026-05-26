@@ -41,7 +41,7 @@ export class WorkspaceController {
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
       const machineId = selectedMachineId(this.getState());
-      const workspaces = await api.workspaces(project.id, machineId);
+      const workspaces = await this.api.workspaces(project.id, machineId);
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
       if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
@@ -57,7 +57,7 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     try {
-      const sessions = mergeCachedNewSessions(workspace.path, await api.sessions(workspace.path, machineId), machineId);
+      const sessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path, machineId), machineId);
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
@@ -70,7 +70,7 @@ export class WorkspaceController {
   async refreshProjectWorkspaces(projectId: string): Promise<Workspace[]> {
     const project = this.getState().projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) throw new Error("Project not found");
-    const workspaces = await this.api.workspaces(project.id);
+    const workspaces = await this.api.workspaces(project.id, selectedMachineId(this.getState()));
     this.applyProjectWorkspaces(project.id, workspaces);
     return workspaces;
   }
