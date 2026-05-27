@@ -19,7 +19,6 @@ export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) panels: QualifiedWorkspacePanelContribution[] = [];
   @property({ attribute: false }) workspaceLabelItems: WorkspaceLabelItem[] = [];
   @property({ type: Boolean }) hideToolTabs = false;
-  @property({ type: Boolean }) collapsed = false;
   @property({ attribute: false }) onSelectTool: (tool: QualifiedContributionId) => void = () => undefined;
   @property({ attribute: false }) onToggleCollapse: () => void = () => undefined;
   @query(".workspace-header-strip") private workspaceHeaderStrip?: HTMLElement | null;

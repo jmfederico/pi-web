@@ -511,7 +511,7 @@ export class PiWebApp extends LitElement {
     const panelContext = workspace === undefined ? undefined : this.createWorkspacePanelContext(workspace);
     const workspaceLabelItems = workspace === undefined ? [] : this.plugins.getWorkspaceLabelItems(this.state, workspace);
     const emptyState = workspace === undefined ? this.workspacePanelEmptyState() : undefined;
-    return html`<workspace-panel .workspace=${workspace} .panelContext=${panelContext} .emptyState=${emptyState} .tool=${this.state.workspaceTool} .panels=${this.visibleWorkspacePanels()} .workspaceLabelItems=${workspaceLabelItems} .collapsed=${this.state.workspacePanelCollapsed} .onSelectTool=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }} .onToggleCollapse=${() => { this.toggleWorkspacePanelCollapse(); }}></workspace-panel>`;
+    return html`<workspace-panel .workspace=${workspace} .panelContext=${panelContext} .emptyState=${emptyState} .tool=${this.state.workspaceTool} .panels=${this.visibleWorkspacePanels()} .workspaceLabelItems=${workspaceLabelItems} .onSelectTool=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }} .onToggleCollapse=${() => { this.toggleWorkspacePanelCollapse(); }}></workspace-panel>`;
   }
 
   private toggleWorkspacePanelCollapse(): void {
