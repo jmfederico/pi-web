@@ -110,6 +110,7 @@ export interface OAuthFlowState {
   providerName: string;
   status: "running" | "complete" | "error" | "cancelled";
   auth?: { url: string; instructions?: string };
+  deviceCode?: { userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number };
   prompt?: { requestId: string; message: string; placeholder?: string; allowEmpty?: boolean; kind: "prompt" | "manual" };
   select?: { requestId: string; message: string; options: CommandOption[] };
   progress: string[];

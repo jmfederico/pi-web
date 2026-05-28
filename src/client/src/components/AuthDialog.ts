@@ -92,6 +92,11 @@ export class AuthDialog extends LitElement {
           <p>Open this authorization link:</p>
           <p><a href=${flow.auth.url} target="_blank" rel="noreferrer">${flow.auth.url}</a></p>
           ${flow.auth.instructions !== undefined ? html`<p class="warning">${flow.auth.instructions}</p>` : null}
+        ` : flow.deviceCode !== undefined ? html`
+          <p>Open this device login page:</p>
+          <p><a href=${flow.deviceCode.verificationUri} target="_blank" rel="noreferrer">${flow.deviceCode.verificationUri}</a></p>
+          <p>Enter code <code>${flow.deviceCode.userCode}</code></p>
+          ${flow.deviceCode.expiresInSeconds !== undefined ? html`<p class="warning">Code expires in ${flow.deviceCode.expiresInSeconds} seconds.</p>` : null}
         ` : html`<p>Starting login flow…</p>`}
         ${flow.progress.length > 0 ? html`<ul class="progress">${flow.progress.map((line) => html`<li>${line}</li>`)}</ul>` : null}
         ${prompt !== undefined ? html`

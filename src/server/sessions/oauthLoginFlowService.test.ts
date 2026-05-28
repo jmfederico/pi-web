@@ -38,6 +38,22 @@ describe("OAuthLoginFlowService", () => {
     service.dispose();
   });
 
+  it("records device-code login instructions", () => {
+    const service = new OAuthLoginFlowService();
+    const state = service.start({
+      providerId: "test-provider",
+      providerName: "Test Provider",
+      authStorage: fakeAuthStorage((_providerId, callbacks) => {
+        callbacks.onDeviceCode({ userCode: "ABCD-EFGH", verificationUri: "https://example.test/device", intervalSeconds: 5, expiresInSeconds: 900 });
+        return Promise.resolve();
+      }),
+    });
+
+    expect(state.deviceCode).toEqual({ userCode: "ABCD-EFGH", verificationUri: "https://example.test/device", intervalSeconds: 5, expiresInSeconds: 900 });
+    expect(state.auth).toBeUndefined();
+    service.dispose();
+  });
+
   it("round-trips select responses", async () => {
     let selectedValue: string | undefined;
     const service = new OAuthLoginFlowService();
@@ -45,9 +61,7 @@ describe("OAuthLoginFlowService", () => {
       providerId: "test-provider",
       providerName: "Test Provider",
       authStorage: fakeAuthStorage(async (_providerId, callbacks) => {
-        const select = callbacks.onSelect;
-        if (select === undefined) throw new Error("Expected select callback");
-        selectedValue = await select({
+        selectedValue = await callbacks.onSelect({
           message: "Choose account",
           options: [{ id: "work", label: "Work" }, { id: "personal", label: "Personal" }],
         });

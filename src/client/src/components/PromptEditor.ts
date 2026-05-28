@@ -188,7 +188,7 @@ export class PromptEditor extends LitElement {
           ...(command.description === undefined ? {} : { description: command.description }),
         }));
     } else if (trigger.kind === "file" && this.cwd !== undefined && this.cwd !== "") {
-      const files = await api.files(this.cwd, trigger.query, { kind: trigger.fileKind, mode: trigger.fileMode, scope: trigger.fileScope, machineId: this.machineId }).catch(emptyFileSuggestions);
+      const files = await api.files(this.cwd, trigger.query, { scope: trigger.fileScope, machineId: this.machineId }).catch(emptyFileSuggestions);
       if (version !== this.requestVersion) return;
       this.completions = files
         .slice(0, 12)

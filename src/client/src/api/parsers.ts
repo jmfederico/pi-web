@@ -248,6 +248,7 @@ export function parseOAuthFlowState(value: unknown): OAuthFlowState {
     })(record["progress"]),
     ...optionalField("error", optionalString(record, "error")),
     ...optionalField("auth", optionalOAuthAuth(record["auth"])),
+    ...optionalField("deviceCode", optionalOAuthDeviceCode(record["deviceCode"])),
     ...optionalField("prompt", optionalOAuthPrompt(record["prompt"])),
     ...optionalField("select", optionalOAuthSelect(record["select"])),
   };
@@ -263,6 +264,17 @@ function optionalOAuthAuth(value: unknown): OAuthFlowState["auth"] | undefined {
   if (value === undefined) return undefined;
   const record = requireRecord(value);
   return { url: requireString(record, "url"), ...optionalField("instructions", optionalString(record, "instructions")) };
+}
+
+function optionalOAuthDeviceCode(value: unknown): OAuthFlowState["deviceCode"] | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  return {
+    userCode: requireString(record, "userCode"),
+    verificationUri: requireString(record, "verificationUri"),
+    ...optionalField("intervalSeconds", optionalNumber(record, "intervalSeconds")),
+    ...optionalField("expiresInSeconds", optionalNumber(record, "expiresInSeconds")),
+  };
 }
 
 function optionalOAuthPrompt(value: unknown): OAuthFlowState["prompt"] | undefined {

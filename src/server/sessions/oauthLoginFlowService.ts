@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { OAuthLoginCallbacks, OAuthSelectPrompt, OAuthPrompt } from "@earendil-works/pi-ai";
+import type { OAuthDeviceCodeInfo, OAuthLoginCallbacks, OAuthSelectPrompt, OAuthPrompt } from "@earendil-works/pi-ai";
 import type { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { CommandOption, OAuthFlowState } from "../../shared/apiTypes.js";
 
@@ -70,7 +70,15 @@ export class OAuthLoginFlowService {
       signal: abort.signal,
       onAuth: (info) => {
         if (!this.isCurrentRunning(record)) return;
-        this.updateState(record, { ...record.state, auth: info });
+        const state = { ...record.state };
+        delete state.deviceCode;
+        this.updateState(record, { ...state, auth: info });
+      },
+      onDeviceCode: (info) => {
+        if (!this.isCurrentRunning(record)) return;
+        const state = { ...record.state };
+        delete state.auth;
+        this.updateState(record, { ...state, deviceCode: toFlowDeviceCode(info) });
       },
       onPrompt: (prompt) => this.waitForPrompt(record, prompt, "prompt"),
       onManualCodeInput: () => this.waitForPrompt(record, { message: "Paste the callback URL or authorization code", allowEmpty: false }, "manual"),
@@ -239,6 +247,15 @@ export class OAuthLoginFlowService {
   }
 }
 
+function toFlowDeviceCode(info: OAuthDeviceCodeInfo): NonNullable<OAuthFlowState["deviceCode"]> {
+  return {
+    userCode: info.userCode,
+    verificationUri: info.verificationUri,
+    ...(info.intervalSeconds === undefined ? {} : { intervalSeconds: info.intervalSeconds }),
+    ...(info.expiresInSeconds === undefined ? {} : { expiresInSeconds: info.expiresInSeconds }),
+  };
+}
+
 function withoutInteraction(state: OAuthFlowState): OAuthFlowState {
   const rest = { ...state };
   delete rest.prompt;
@@ -251,6 +268,7 @@ function cloneState(state: OAuthFlowState): OAuthFlowState {
     ...state,
     progress: [...state.progress],
     ...(state.auth === undefined ? {} : { auth: { ...state.auth } }),
+    ...(state.deviceCode === undefined ? {} : { deviceCode: { ...state.deviceCode } }),
     ...(state.prompt === undefined ? {} : { prompt: { ...state.prompt } }),
     ...(state.select === undefined ? {} : { select: { ...state.select, options: state.select.options.map((option) => ({ ...option })) } }),
   };
