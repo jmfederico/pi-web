@@ -43,11 +43,11 @@ describe("terminal runtime", () => {
       listCommandRuns: vi.fn(),
       getCommandRun: vi.fn(),
     };
-    const runtime = createTerminalCommandRunsRuntime("actions", { api, openTerminal });
+    const runtime = createTerminalCommandRunsRuntime("actions", { api, getMachineId: () => "remote-1", openTerminal });
 
     const handle = await runtime.runCommand({ workspace, title: "Build", command: "npm run build", open: true });
 
-    expect(api.runTerminalCommand).toHaveBeenCalledWith("actions", { workspace, title: "Build", command: "npm run build", open: true });
+    expect(api.runTerminalCommand).toHaveBeenCalledWith("actions", { workspace, title: "Build", command: "npm run build", open: true }, "remote-1");
     expect(openTerminal).toHaveBeenCalledWith(workspace, { terminalId: "t1" });
     await expect(handle.completed).resolves.toEqual(succeededRun);
   });
@@ -71,6 +71,6 @@ describe("terminal runtime", () => {
     await vi.advanceTimersByTimeAsync(25);
 
     await expect(handle.completed).resolves.toEqual(succeededRun);
-    expect(api.getCommandRun).toHaveBeenCalledWith("run1");
+    expect(api.getCommandRun).toHaveBeenCalledWith("run1", "local");
   });
 });

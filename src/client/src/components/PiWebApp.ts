@@ -213,9 +213,11 @@ export class PiWebApp extends LitElement {
   private async loadProjectsAndRestoreRoute() {
     const route = readRoute();
     await this.machines.loadMachines(route.machineId);
+    const machineFallbackMessage = this.state.error;
     const effectiveRoute = this.routeForSelectedMachine(route);
     if (effectiveRoute !== route) this.replaceRouteAndClearWorkspaceQuery(effectiveRoute);
     await this.projects.loadProjects();
+    if (machineFallbackMessage !== "" && this.state.error === "") this.setState({ error: machineFallbackMessage });
     await this.withChatScrollTransition(() => this.restoreRouteFor(effectiveRoute, false));
     await this.refreshWorkspaceDeletionRuns();
   }
@@ -385,6 +387,7 @@ export class PiWebApp extends LitElement {
     const existing = this.terminalCommandRunRuntimes.get(origin);
     if (existing !== undefined) return existing;
     const runtime = createTerminalCommandRunsRuntime(origin, {
+      getMachineId: () => selectedMachineId(this.state),
       openTerminal: (workspace, options) => { void this.openRuntimeTerminal(workspace, options); },
     });
     this.terminalCommandRunRuntimes.set(origin, runtime);

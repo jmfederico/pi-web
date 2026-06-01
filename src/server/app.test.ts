@@ -121,6 +121,32 @@ describe("buildApp", () => {
     expect(request).toHaveBeenCalledWith("GET", "/api/projects?active=true", undefined);
   });
 
+  it("proxies remote terminal command routes through the selected machine", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn(() => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ ok: true })]),
+    }));
+    remoteClient = fakeRemoteClient({ request });
+
+    const commandRunResponse = await app.inject({
+      method: "POST",
+      url: `/api/machines/${remote.id}/projects/p1/workspaces/w1/terminal-command-runs`,
+      payload: { origin: "core", title: "Build", command: "npm run build", metadata: {} },
+    });
+    const listRunsResponse = await app.inject({ method: "GET", url: `/api/machines/${remote.id}/terminal-command-runs?projectId=p1` });
+    const continueResponse = await app.inject({ method: "POST", url: `/api/machines/${remote.id}/projects/p1/workspaces/w1/terminals/t1/continue` });
+
+    expect(commandRunResponse.statusCode).toBe(200);
+    expect(listRunsResponse.statusCode).toBe(200);
+    expect(continueResponse.statusCode).toBe(200);
+    expect(request).toHaveBeenNthCalledWith(1, "POST", "/api/projects/p1/workspaces/w1/terminal-command-runs", { origin: "core", title: "Build", command: "npm run build", metadata: {} });
+    expect(request).toHaveBeenNthCalledWith(2, "GET", "/api/terminal-command-runs?projectId=p1", undefined);
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/api/projects/p1/workspaces/w1/terminals/t1/continue", undefined);
+  });
+
   it("forwards remote JSON request bodies and normalizes remote timeouts", async () => {
     const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

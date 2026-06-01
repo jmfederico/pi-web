@@ -7,6 +7,7 @@ type ClearTimer = (id: TimerId) => void;
 
 export interface TerminalCommandRunsRuntimeDependencies {
   api?: Pick<typeof defaultApi, "runTerminalCommand" | "listCommandRuns" | "getCommandRun">;
+  getMachineId?: () => string;
   openTerminal: (workspace: Workspace | undefined, options?: { terminalId?: string | undefined }) => void | Promise<void>;
   pollIntervalMs?: number;
   setTimeout?: SetTimer;
@@ -19,20 +20,24 @@ export function createTerminalCommandRunsRuntime(origin: string, deps: TerminalC
   const setTimer = deps.setTimeout ?? defaultSetTimeout();
   const clearTimer = deps.clearTimeout ?? defaultClearTimeout();
 
+  const currentMachineId = () => deps.getMachineId?.() ?? "local";
+
   return {
     async runCommand(input: RunTerminalCommandInput) {
-      const run = await api.runTerminalCommand(origin, input);
+      const machineId = currentMachineId();
+      const run = await api.runTerminalCommand(origin, input, machineId);
       if (input.open === true) void deps.openTerminal(input.workspace, { terminalId: run.terminalId });
-      return { run, completed: waitForCommandRunCompletion(run, api, pollIntervalMs, setTimer, clearTimer) };
+      return { run, completed: waitForCommandRunCompletion(run, machineId, api, pollIntervalMs, setTimer, clearTimer) };
     },
-    listCommandRuns: (filter?: TerminalCommandRunFilter) => api.listCommandRuns(filter),
-    getCommandRun: (runId: string) => api.getCommandRun(runId),
+    listCommandRuns: (filter?: TerminalCommandRunFilter) => api.listCommandRuns(filter, currentMachineId()),
+    getCommandRun: (runId: string) => api.getCommandRun(runId, currentMachineId()),
     open: (options?: { terminalId?: string | undefined }) => { void deps.openTerminal(undefined, options); },
   };
 }
 
 function waitForCommandRunCompletion(
   initialRun: TerminalCommandRun,
+  machineId: string,
   api: Pick<typeof defaultApi, "getCommandRun">,
   pollIntervalMs: number,
   setTimer: SetTimer,
@@ -58,7 +63,7 @@ function waitForCommandRunCompletion(
     };
 
     const poll = () => {
-      void api.getCommandRun(initialRun.id).then((run) => {
+      void api.getCommandRun(initialRun.id, machineId).then((run) => {
         if (run !== undefined && isTerminalCommandRunFinal(run)) {
           finish(run);
           return;
