@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { access, copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { constants, createReadStream, createWriteStream } from "node:fs";
+import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { pipeline } from "node:stream/promises";
 
 export interface ArchiveSessionInput {
   sessionId: string;
@@ -153,7 +154,7 @@ async function copySessionFileToArchive(source: string, archivePath: string): Pr
   if (source === archivePath) return;
   await mkdir(dirname(archivePath), { recursive: true });
   if (await pathExists(archivePath)) return;
-  await copyFile(source, archivePath);
+  await streamCopyFile(source, archivePath);
 }
 
 async function removeActiveSessionFile(source: string, archivePath: string): Promise<void> {
@@ -173,9 +174,31 @@ async function moveFile(source: string, destination: string): Promise<void> {
     await rename(source, destination);
   } catch (error: unknown) {
     if (!isNodeErrorWithCode(error, "EXDEV")) throw error;
-    await copyFile(source, destination);
+    await streamCopyFile(source, destination);
     await unlink(source);
   }
+}
+
+/**
+ * Copy a file using streams (read + write) rather than `fs.copyFile`.
+ *
+ * `fs.copyFile` invokes Linux's `copy_file_range(2)` syscall, which fails
+ * with EPERM on some filesystems — notably virtiofs (used by Kata
+ * Containers) when the underlying export is NFS, and certain NFS server
+ * configurations directly. Node only falls back to read+write on
+ * EOPNOTSUPP/EXDEV, not EPERM, so the operation surfaces to the caller.
+ *
+ * Using a pipeline of createReadStream → createWriteStream forces the
+ * userspace read+write path that works across these filesystems. The
+ * trade-off is throughput on local fast disks (slightly slower than the
+ * kernel-level copy), but archive operations move small JSONL files so
+ * the impact is negligible.
+ *
+ * Background: https://github.com/jmfederico/pi-web/issues/... (filed
+ * alongside this PR).
+ */
+async function streamCopyFile(source: string, destination: string): Promise<void> {
+  await pipeline(createReadStream(source), createWriteStream(destination));
 }
 
 async function pathExists(path: string): Promise<boolean> {
