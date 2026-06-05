@@ -34,7 +34,6 @@ import { readSettingsSection, writeSettingsSection, type SettingsSection } from 
 import { applyShortcutPreferences } from "../shortcutPreferences";
 import { createTerminalCommandRunsRuntime } from "../runtime/terminalRuntime";
 import { isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionRunFilter } from "../workspaceDeletion";
-import { machineActivityIndicator } from "../workspaceActivity";
 import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
@@ -1326,8 +1325,8 @@ export class PiWebApp extends LitElement {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
       <app-context-bar
+        .machines=${this.state.machines}
         .machine=${this.state.selectedMachine}
-        .machineActivityKind=${selectedMachineActivityIndicator(this.state)}
         .project=${this.state.selectedProject}
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
@@ -1430,14 +1429,6 @@ function shouldRefreshMachineActivity(machine: Machine, health: MachineHealth | 
   if (machine.kind === "local") return true;
   const status = health?.status ?? machine.status;
   return status === undefined || status === "unknown" || status === "online";
-}
-
-function selectedMachineActivityIndicator(state: AppState) {
-  const machineId = selectedMachineId(state);
-  const machine = state.selectedMachine;
-  const status = state.machineStatuses[machineId]?.status ?? machine?.status;
-  if (status === "offline" || status === "error") return undefined;
-  return machineActivityIndicator(state.machineActivities[machineId]);
 }
 
 function patchChangesState(state: AppState, patch: Partial<AppState>): boolean {

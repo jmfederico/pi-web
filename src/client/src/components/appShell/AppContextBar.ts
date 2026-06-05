@@ -2,12 +2,11 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Machine, Project, SessionInfo, Workspace } from "../../api";
 import type { NavigationSection } from "../../appShell/navigationState";
-import { renderActivityIndicator, type ActivityIndicatorKind } from "../activityBadge";
 
 @customElement("app-context-bar")
 export class AppContextBar extends LitElement {
+  @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) machine?: Machine;
-  @property({ attribute: false }) machineActivityKind?: ActivityIndicatorKind;
   @property({ attribute: false }) project?: Project;
   @property({ attribute: false }) workspace?: Workspace;
   @property({ attribute: false }) session?: SessionInfo;
@@ -38,6 +37,7 @@ export class AppContextBar extends LitElement {
   }
 
   override render() {
+    const showMachineContext = shouldShowMachineContext(this.machines);
     const machineLabel = machineContextLabel(this.machine);
     const projectLabel = projectContextLabel(this.project);
     const workspaceLabel = workspaceContextLabel(this.workspace);
@@ -46,13 +46,14 @@ export class AppContextBar extends LitElement {
       <nav class=${this.contextBarClass()} aria-label="Current location">
         <span class="context-bar-label">Location</span>
         <ol class="context-items" @scroll=${this.onContextScroll}>
-          <li class="context-item">
-            <button type="button" class=${this.machine === undefined ? "context-chip empty" : "context-chip"} title=${machineContextTitle(this.machine)} aria-label=${`Machine: ${machineLabel}. Open machine selection.`} @click=${() => { this.onOpenSection?.("machines"); }}>
-              <span class="context-kind">Machine</span>
-              ${this.renderMachineActivity()}
-              <span class="context-value">${machineLabel}</span>
-            </button>
-          </li>
+          ${showMachineContext ? html`
+            <li class="context-item">
+              <button type="button" class=${this.machine === undefined ? "context-chip empty" : "context-chip"} title=${machineContextTitle(this.machine)} aria-label=${`Machine: ${machineLabel}. Open machine selection.`} @click=${() => { this.onOpenSection?.("machines"); }}>
+                <span class="context-kind">Machine</span>
+                <span class="context-value">${machineLabel}</span>
+              </button>
+            </li>
+          ` : null}
           <li class="context-item">
             <button type="button" class=${this.project === undefined ? "context-chip empty" : "context-chip"} title=${projectContextTitle(this.project)} aria-label=${`Project: ${projectLabel}. Open project selection.`} @click=${() => { this.onOpenSection?.("projects"); }}>
               <span class="context-kind">Project</span>
@@ -75,10 +76,6 @@ export class AppContextBar extends LitElement {
         ${this.hasContextActions() ? html`<div class="context-actions">${this.renderActionsButton()}${this.refreshControl}</div>` : null}
       </nav>
     `;
-  }
-
-  private renderMachineActivity() {
-    return renderActivityIndicator(this.machineActivityKind, this.machineActivityKind === "terminal" ? "Machine terminal active" : "Machine active");
   }
 
   private renderActionsButton() {
@@ -159,14 +156,14 @@ export class AppContextBar extends LitElement {
     .context-chip:hover { background: var(--pi-surface-hover); }
     .context-chip:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
     .context-chip.empty { border-style: dashed; color: var(--pi-muted); }
-    .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; margin-right: 0; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; vertical-align: 1px; }
-    .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
-    .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
     .context-kind { display: none; }
     .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
     button { cursor: pointer; }
-    @keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .55; } 50% { transform: scale(1.2); opacity: 1; } }
   `;
+}
+
+export function shouldShowMachineContext(machines: readonly Machine[]): boolean {
+  return machines.length > 1;
 }
 
 function machineContextLabel(machine: Machine | undefined): string {
