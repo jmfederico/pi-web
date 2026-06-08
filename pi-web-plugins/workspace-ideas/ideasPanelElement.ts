@@ -248,10 +248,16 @@ class PiWebIdeasPanel extends HTMLElement {
   }
 
   private async fixGitignore(context: WorkspacePanelContext): Promise<void> {
-    const content = await readOptionalTextFile(context, gitignorePath);
-    await writeWorkspaceFile(context, gitignorePath, appendPiWebGitignoreEntry(content));
-    this.gitignore = { kind: "ignored" };
-    this.status = { kind: "success", message: `${ideasDirectoryPath}/ added to ${gitignorePath}.` };
+    try {
+      const content = await readOptionalTextFile(context, gitignorePath);
+      await writeWorkspaceFile(context, gitignorePath, appendPiWebGitignoreEntry(content));
+      await this.loadGitignoreState(context);
+      this.status = this.gitignore.kind === "ignored"
+        ? { kind: "success", message: `${ideasDirectoryPath}/ added to ${gitignorePath}.` }
+        : { kind: "error", message: `${gitignorePath} was written but ${ideasDirectoryPath}/ is still not ignored.` };
+    } catch (error) {
+      this.status = { kind: "error", message: `Failed to update ${gitignorePath}: ${errorMessage(error) ?? String(error)}` };
+    }
     this.changed(context);
   }
 
