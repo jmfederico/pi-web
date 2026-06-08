@@ -53,7 +53,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       const slug = ideaId.toLowerCase().replace(/[^a-z0-9.-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 48) || "idea";
       const target = await uniqueWorktreePath(context.project.path, slug);
       const branch = `pi-web-idea/${basename(target)}`;
-      await execFileAsync("git", ["-C", context.project.path, "worktree", "add", "-b", branch, target], { env: sanitizedGitEnv() });
+      await execFileAsync("git", ["-C", context.root, "worktree", "add", "-b", branch, target, "HEAD"], { env: sanitizedGitEnv() });
       const created = (await workspaces.list(context.project)).find((workspace) => workspace.path === target);
       if (created === undefined) throw new Error("Created workspace was not discovered");
       return created;
