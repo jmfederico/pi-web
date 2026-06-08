@@ -52,8 +52,11 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onSelectSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchiveSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchiveSessionWithDescendants?: (session: SessionInfo) => void | Promise<void>;
+  @property({ attribute: false }) onArchiveSessions?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onRestoreSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onDeleteCachedNewSession?: (session: SessionInfo) => void | Promise<void>;
+  @property({ attribute: false }) onDeleteArchivedSession?: (session: SessionInfo) => void | Promise<void>;
+  @property({ attribute: false }) onDeleteArchivedSessions?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onDetachParentSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchivedCollapsed?: () => void | Promise<void>;
   @property({ attribute: false }) onSelectMachine?: (machine: Machine) => void | Promise<void>;
@@ -156,8 +159,11 @@ export class AppNavigationPanel extends LitElement {
         .onSelect=${(session: SessionInfo) => this.onSelectSession?.(session)}
         .onArchive=${(session: SessionInfo) => this.onArchiveSession?.(session)}
         .onArchiveWithDescendants=${(session: SessionInfo) => this.onArchiveSessionWithDescendants?.(session)}
+        .onArchiveMany=${(sessions: SessionInfo[]) => this.onArchiveSessions?.(sessions)}
         .onRestore=${(session: SessionInfo) => this.onRestoreSession?.(session)}
         .onDelete=${(session: SessionInfo) => this.onDeleteCachedNewSession?.(session)}
+        .onDeleteArchived=${(session: SessionInfo) => this.onDeleteArchivedSession?.(session)}
+        .onDeleteArchivedMany=${(sessions: SessionInfo[]) => this.onDeleteArchivedSessions?.(sessions)}
         .onDetachParent=${(session: SessionInfo) => this.onDetachParentSession?.(session)}
         .onFocusPreviousSection=${() => { this.focusPreviousFrom("sessions"); }}
         .onFocusNextSection=${() => { this.focusNextFrom("sessions"); }}

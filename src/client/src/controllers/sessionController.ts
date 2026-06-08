@@ -261,6 +261,52 @@ export class SessionController {
     }
   }
 
+  async archiveSessions(sessions: readonly SessionInfo[]): Promise<void> {
+    const candidates = uniqueSessionsById(sessions).filter((session) => session.archived !== true && !isCachedNewSessionInfo(session));
+    if (candidates.length === 0) return;
+
+    const machineId = selectedMachineId(this.getState());
+    const results = await Promise.allSettled(candidates.map(async (session) => {
+      await this.api.archive(session.id, machineId);
+      return session.id;
+    }));
+    const archivedIds = fulfilledValues(results);
+    if (archivedIds.length > 0) {
+      const state = this.getState();
+      const nextSessions = markSessionsArchived(state.sessions, archivedIds, new Date().toISOString());
+      const selectionChange = selectionAfterArchivingSessions(nextSessions, state.selectedSession?.id, archivedIds);
+      this.setState({ sessions: nextSessions });
+
+      if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
+      else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
+    }
+    this.applyBulkSessionError("Archive", results);
+  }
+
+  async deleteArchivedSessions(sessions: readonly SessionInfo[]): Promise<void> {
+    const candidates = uniqueSessionsById(sessions).filter((session) => session.archived === true);
+    if (candidates.length === 0) return;
+
+    const machineId = selectedMachineId(this.getState());
+    const results = await Promise.allSettled(candidates.map(async (session) => {
+      await this.api.deleteArchived(session.id, machineId);
+      return session.id;
+    }));
+    const deletedIds = fulfilledValues(results);
+    if (deletedIds.length > 0) {
+      const deletedIdSet = new Set(deletedIds);
+      const state = this.getState();
+      const nextSessions = state.sessions.filter((session) => !deletedIdSet.has(session.id));
+      this.setState({ sessions: nextSessions });
+      if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
+        const next = nextSessions.find((session) => session.archived !== true) ?? nextSessions[0];
+        if (next !== undefined) await this.selectSession(next);
+        else this.deselectSession({ forgetRememberedSelection: true });
+      }
+    }
+    this.applyBulkSessionError("Delete", results);
+  }
+
   async deleteCachedNewSession(session = this.getState().selectedSession) {
     if (!isCachedNewSessionInfo(session)) return;
     void this.api.stop(session.id, selectedMachineId(this.getState())).catch(() => {
@@ -395,6 +441,12 @@ export class SessionController {
     } catch (error) {
       if (this.getState().selectedSession?.id === sessionId) this.setState({ error: String(error) });
     }
+  }
+
+  private applyBulkSessionError(action: string, results: readonly PromiseSettledResult<string>[]): void {
+    const failures = rejectedReasons(results);
+    if (failures.length === 0) return;
+    this.setState({ error: `${action} failed for ${String(failures.length)} session${failures.length === 1 ? "" : "s"}: ${failures.join("; ")}` });
   }
 
   private sessionCacheKey(sessionId: string): string {
@@ -559,6 +611,37 @@ export class SessionController {
 
 function omitSessionActivity(activities: Record<string, SessionActivity>, sessionId: string): Record<string, SessionActivity> {
   return Object.fromEntries(Object.entries(activities).filter(([id]) => id !== sessionId));
+}
+
+function uniqueSessionsById(sessions: readonly SessionInfo[]): SessionInfo[] {
+  const seen = new Set<string>();
+  const unique: SessionInfo[] = [];
+  for (const session of sessions) {
+    if (seen.has(session.id)) continue;
+    seen.add(session.id);
+    unique.push(session);
+  }
+  return unique;
+}
+
+function fulfilledValues<T>(results: readonly PromiseSettledResult<T>[]): T[] {
+  return results.filter(isFulfilled).map((result) => result.value);
+}
+
+function rejectedReasons(results: readonly PromiseSettledResult<unknown>[]): string[] {
+  return results.filter(isRejected).map((result) => errorMessage(result.reason));
+}
+
+function isFulfilled<T>(result: PromiseSettledResult<T>): result is PromiseFulfilledResult<T> {
+  return result.status === "fulfilled";
+}
+
+function isRejected<T>(result: PromiseSettledResult<T>): result is PromiseRejectedResult {
+  return result.status === "rejected";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function sessionMessageCountPatch(state: AppState, sessionId: string, messageCount: number | undefined): Pick<Partial<AppState>, "sessions" | "selectedSession"> {

@@ -52,7 +52,7 @@ function parsePromptStreamingBehavior(value: unknown): QueuedPromptKind | undefi
   throw new Error('Prompt streamingBehavior must be "steer" or "followUp"');
 }
 
-type SessionArchiveRepository = Pick<SessionArchiveStore, "list" | "get" | "archive" | "restore" | "isArchived">;
+type SessionArchiveRepository = Pick<SessionArchiveStore, "list" | "get" | "archive" | "restore" | "isArchived"> & { deleteArchived?: (sessionId: string) => Promise<void> };
 interface PiSessionListEntry {
   id: string;
   path: string;
@@ -489,6 +489,16 @@ export class PiSessionService {
     await this.archiveStore.restore(sessionId);
   }
 
+  async deleteArchived(sessionId: string): Promise<void> {
+    const record = await this.archiveStore.get(sessionId);
+    if (record === undefined) throw new Error("Archived session not found");
+    if (this.archiveStore.deleteArchived === undefined) throw new Error("Archive store does not support deletion");
+
+    await this.closeActive(record.sessionId);
+    if (record.archivePath === undefined) await this.ensureArchivedRecordMoved(record);
+    await this.archiveStore.deleteArchived(record.sessionId);
+  }
+
   async detachParent(sessionId: string): Promise<void> {
     const session = await this.getOrOpen(sessionId);
     const sessionFile = session.sessionFile;
@@ -528,6 +538,12 @@ export class PiSessionService {
     } catch {
       return record;
     }
+  }
+
+  private async ensureArchivedRecordMoved(record: ArchivedSessionRecord): Promise<ArchivedSessionRecord> {
+    const session = (await this.sessionManager.list(record.cwd)).find((candidate) => candidate.id === record.sessionId);
+    if (session === undefined) return record;
+    return this.archiveStore.archive(archiveInputFromListEntry(session));
   }
 
   private async archiveInputForSession(session: PiAgentSession): Promise<ArchiveSessionInput> {

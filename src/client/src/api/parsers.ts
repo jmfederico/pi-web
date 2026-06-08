@@ -638,6 +638,12 @@ export function parseRestored(value: unknown): { restored: true } {
   return { restored: true };
 }
 
+export function parseDeleted(value: unknown): { deleted: true } {
+  const record = requireRecord(value);
+  if (record["deleted"] !== true) throw new Error("Expected deleted response");
+  return { deleted: true };
+}
+
 export function parseDetached(value: unknown): { detached: true } {
   const record = requireRecord(value);
   if (record["detached"] !== true) throw new Error("Expected detached response");

@@ -88,6 +88,18 @@ export class SessionArchiveStore {
     });
   }
 
+  async deleteArchived(sessionId: string): Promise<void> {
+    await this.exclusive(async () => {
+      const data = await this.read();
+      const record = data.sessions.find((session) => session.sessionId === sessionId);
+      if (record === undefined) return;
+
+      if (record.archivePath !== undefined && await pathExists(record.archivePath)) await unlink(record.archivePath);
+      const sessions = data.sessions.filter((session) => session.sessionId !== sessionId);
+      await this.write({ sessions });
+    });
+  }
+
   async isArchived(sessionId: string): Promise<boolean> {
     return (await this.get(sessionId)) !== undefined;
   }

@@ -318,6 +318,33 @@ describe("PiSessionService", () => {
     await service.dispose();
   });
 
+  it("permanently deletes archived sessions through the archive store", async () => {
+    const deletedSessionIds: string[] = [];
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      archiveStore: {
+        list: () => Promise.resolve([]),
+        get: (sessionId) => Promise.resolve(sessionId === "archived" || "archived".startsWith(sessionId)
+          ? { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" }
+          : undefined),
+        archive: () => { throw new Error("archive should not be called for records that already have archive files"); },
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(false),
+        deleteArchived: (sessionId) => {
+          deletedSessionIds.push(sessionId);
+          return Promise.resolve();
+        },
+      },
+      sessionManager: sessionGateway([sessionRecord("active")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await expect(service.deleteArchived("arch")).resolves.toBeUndefined();
+    await expect(service.deleteArchived("active")).rejects.toThrow("Archived session not found");
+
+    expect(deletedSessionIds).toEqual(["archived"]);
+    await service.dispose();
+  });
+
   it("reconciles workspace activity when listing only archived sessions", async () => {
     const reconciliations: { cwd: string; sessionIds: string[] }[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {

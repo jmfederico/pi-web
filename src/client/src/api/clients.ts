@@ -8,6 +8,7 @@ import {
   parseAuthProvidersResponse,
   parseClosed,
   parseCommandResult,
+  parseDeleted,
   parseDetached,
   parseFileContentResponse,
   parseFileSuggestion,
@@ -98,6 +99,7 @@ export const sessionsApi = {
   archive: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/archive`, parseArchived, { method: "POST" }),
   archiveWithDescendants: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/archive-tree`, parseArchived, { method: "POST" }),
   restore: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/restore`, parseRestored, { method: "POST" }),
+  deleteArchived: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}`, parseDeleted, { method: "DELETE" }),
   detachParent: (sessionId: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions/${sessionId}/detach-parent`, parseDetached, { method: "POST" }),
   authProviders: (options?: { mode?: "login" | "logout"; authType?: "oauth" | "api_key"; machineId?: string }) => {
     const params = new URLSearchParams();

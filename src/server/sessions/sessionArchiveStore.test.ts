@@ -44,6 +44,33 @@ describe("SessionArchiveStore", () => {
     expect(await exists(record.archivePath)).toBe(false);
     await expect(store.list()).resolves.toEqual([]);
   });
+
+  it("permanently deletes archived session files and records", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-delete-"));
+    tempRoots.push(root);
+    const activeDir = join(root, "active");
+    await mkdir(activeDir, { recursive: true });
+    const sourcePath = join(activeDir, "2026-01-01_s1.jsonl");
+    await writeFile(sourcePath, "session contents\n", "utf8");
+
+    const store = new SessionArchiveStore(join(root, "archived-sessions.json"), join(root, "archived-files"));
+    const record = await store.archive({
+      sessionId: "s1",
+      cwd: "/workspace",
+      path: sourcePath,
+      created: "2026-01-01T00:00:00.000Z",
+      modified: "2026-01-01T00:01:00.000Z",
+      messageCount: 2,
+      firstMessage: "hello",
+    });
+
+    if (record.archivePath === undefined) throw new Error("Expected archive path");
+    await store.deleteArchived("s1");
+
+    expect(await exists(sourcePath)).toBe(false);
+    expect(await exists(record.archivePath)).toBe(false);
+    await expect(store.list()).resolves.toEqual([]);
+  });
 });
 
 async function exists(path: string): Promise<boolean> {

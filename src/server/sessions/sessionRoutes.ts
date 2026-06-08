@@ -164,6 +164,15 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: PiSessionS
     }
   });
 
+  app.delete<{ Params: { sessionId: string } }>(`${prefix}/sessions/:sessionId`, async (request, reply) => {
+    try {
+      await sessions.deleteArchived(request.params.sessionId);
+      return { deleted: true };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
   app.post<{ Params: { sessionId: string } }>(`${prefix}/sessions/:sessionId/detach-parent`, async (request, reply) => {
     try {
       await sessions.detachParent(request.params.sessionId);
