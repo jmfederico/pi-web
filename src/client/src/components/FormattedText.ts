@@ -9,7 +9,7 @@ export class FormattedText extends LitElement {
   @property() text = "";
 
   override render() {
-    return html`<div class="formatted" @click=${this.onFormattedClick} @copy=${this.onFormattedCopy}>${unsafeHTML(toSafeMarkdownHtml(this.text))}</div>`;
+    return html`<div class="formatted" @click=${this.onFormattedClick}>${unsafeHTML(toSafeMarkdownHtml(this.text))}</div>`;
   }
 
   override updated(): void {
@@ -48,13 +48,6 @@ export class FormattedText extends LitElement {
     void this.copyCode(code.textContent, button);
   };
 
-  private readonly onFormattedCopy = (event: ClipboardEvent): void => {
-    if (event.clipboardData === null || !hasSelectedText(currentSelection(this))) return;
-    event.clipboardData.setData("text/plain", this.text);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
   private async copyCode(text: string, button: HTMLButtonElement): Promise<void> {
     const ok = await writeClipboard(text);
     this.setCopyButtonState(button, ok ? "copied" : "failed");
@@ -72,20 +65,6 @@ export class FormattedText extends LitElement {
   }
 
   static override styles = formattedTextStyles;
-}
-
-function currentSelection(element: Element): Selection | null {
-  const root = element.getRootNode();
-  if (typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot && hasRootSelection(root)) return root.getSelection();
-  return element.ownerDocument.getSelection();
-}
-
-function hasRootSelection(root: Node): root is Node & { getSelection: () => Selection | null } {
-  return "getSelection" in root && typeof root.getSelection === "function";
-}
-
-function hasSelectedText(selection: Selection | null): boolean {
-  return selection !== null && !selection.isCollapsed && selection.toString() !== "";
 }
 
 async function writeClipboard(text: string): Promise<boolean> {
