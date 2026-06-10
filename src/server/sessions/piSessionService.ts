@@ -89,6 +89,17 @@ export interface PiSessionManagerGateway {
   open(path: string): PiSessionManager;
 }
 
+interface PiExtensionError {
+  extensionPath: string;
+  event: string;
+  error: string;
+  stack?: string;
+}
+
+interface PiExtensionBindings {
+  onError?: (error: PiExtensionError) => void;
+}
+
 export interface PiAgentSession {
   modelRegistry: ModelRegistryInstance;
   sessionManager: PiSessionManager;
@@ -107,6 +118,7 @@ export interface PiAgentSession {
   promptTemplates: readonly { name: string; description?: string }[];
   resourceLoader: { getSkills(): { skills: readonly { name: string; description?: string }[] } };
   subscribe(listener: (event: unknown) => void): () => void;
+  bindExtensions(bindings: PiExtensionBindings): Promise<void>;
   compact(instructions?: string): Promise<{ summary: string; tokensBefore: number }>;
   getUserMessagesForForking(): readonly { entryId: string; text: string }[];
   getSessionStats(): { sessionId: string; totalMessages: number; userMessages: number; assistantMessages: number; toolCalls: number; tokens: ClientSessionStatus["tokens"]; cost: number };
@@ -642,15 +654,26 @@ export class PiSessionService {
 
   private async create(sessionManager: PiSessionManager, cwd: string): Promise<ActiveSession<PiSessionRuntime>> {
     const runtime = await this.createAgentRuntime(this.createRuntime, { cwd, agentDir: this.agentDir, sessionManager });
+    await this.bindSessionExtensions(runtime.session);
     const active: ActiveSession<PiSessionRuntime> = { runtime, unsubscribe: noop };
     this.bindRuntime(active);
-    runtime.setRebindSession(() => {
+    runtime.setRebindSession(async (session) => {
+      await this.bindSessionExtensions(session);
       this.bindRuntime(active);
-      return Promise.resolve();
     });
     this.active.set(runtime.session.sessionId, active);
     this.publishStatus(runtime.session);
     return active;
+  }
+
+  private async bindSessionExtensions(session: PiAgentSession): Promise<void> {
+    await session.bindExtensions({
+      onError: (error) => {
+        const message = `${error.extensionPath}: ${error.error}`;
+        this.publishActivity(session, "extension error", "error", message);
+        this.events.publish(session.sessionId, { type: "session.error", message });
+      },
+    });
   }
 
   private bindRuntime(active: ActiveSession<PiSessionRuntime>): void {

@@ -45,8 +45,9 @@ function sessionRecord(id: string, cwd = "/workspace") {
 
 function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession> = {}) {
   const promptCalls: { text: string; options: unknown }[] = [];
+  const bindExtensionCalls: unknown[] = [];
   const listeners: ((event: unknown) => void)[] = [];
-  const calls = { abort: 0, clearQueue: 0, dispose: 0, prompt: promptCalls };
+  const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, prompt: promptCalls };
   const session: TestSession = {
     sessionId,
     sessionFile: `/tmp/${sessionId}.jsonl`,
@@ -70,6 +71,10 @@ function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession> = {}) 
         const index = listeners.indexOf(listener);
         if (index !== -1) listeners.splice(index, 1);
       };
+    },
+    bindExtensions: (bindings: unknown) => {
+      calls.bindExtensions.push(bindings);
+      return Promise.resolve();
     },
     getSessionStats: () => ({ sessionId, totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 }),
     getContextUsage: () => undefined,
@@ -146,6 +151,7 @@ describe("PiSessionService", () => {
     const session = await service.start("/workspace");
 
     expect(createCalls).toBe(1);
+    expect(fake.calls.bindExtensions).toHaveLength(1);
     expect(session).toMatchObject({ id: "session-1", cwd: "/workspace", messageCount: 0 });
     expect(service.activeCount()).toBe(1);
     expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === "session-1")).toBe(true);
@@ -153,6 +159,59 @@ describe("PiSessionService", () => {
     await service.dispose();
     expect(fake.calls.abort).toBe(1);
     expect(fake.calls.dispose).toBe(1);
+  });
+
+  it("binds extensions again when the SDK runtime replaces the active session", async () => {
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("session-1");
+    const replacement = fakeRuntime("session-2");
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    fake.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    const service = new PiSessionService(hub, {
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    Object.defineProperty(fake.runtime, "session", { configurable: true, value: replacement.session });
+    await rebindSession?.(replacement.session);
+
+    expect(fake.calls.bindExtensions).toHaveLength(1);
+    expect(replacement.calls.bindExtensions).toHaveLength(1);
+    expect(service.activeCount()).toBe(1);
+    expect(await service.status("session-2")).toMatchObject({ sessionId: "session-2" });
+
+    await service.dispose();
+  });
+
+  it("publishes extension errors reported while binding session extensions", async () => {
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("extension-session", {
+      bindExtensions: (bindings) => {
+        bindings.onError?.({ extensionPath: "pi-mcp-adapter", event: "session_start", error: "MCP failed" });
+        return Promise.resolve();
+      },
+    });
+    const service = new PiSessionService(hub, {
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+
+    expect(hub.sessionEvents).toContainEqual({
+      sessionId: "extension-session",
+      event: { type: "session.error", message: "pi-mcp-adapter: MCP failed" },
+    });
+    const extensionErrorActivity = hub.globalEvents.find((event) => event.type === "activity.update" && event.activity.sessionId === "extension-session");
+    expect(extensionErrorActivity).toMatchObject({
+      type: "activity.update",
+      activity: { sessionId: "extension-session", phase: "error", label: "extension error", detail: "pi-mcp-adapter: MCP failed" },
+    });
+
+    await service.dispose();
   });
 
   it("clears stale active activity once a previously active session becomes idle", async () => {
