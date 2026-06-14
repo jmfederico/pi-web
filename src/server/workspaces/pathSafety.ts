@@ -30,11 +30,11 @@ export function normalizeRelativePath(input: string | undefined): string {
   return parts.join("/");
 }
 
-function isNodeErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+export function isNodeErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
-function ensureInside(root: string, target: string): void {
+export function ensureInside(root: string, target: string): void {
   const rel = relative(root, target);
   if (rel === "") return;
   if (rel.startsWith("..") || isAbsolute(rel)) throw new Error("Path escapes workspace");

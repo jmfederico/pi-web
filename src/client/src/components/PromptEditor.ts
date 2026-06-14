@@ -27,6 +27,9 @@ interface PendingAttachment {
   size: number;
 }
 
+type PluginPasteHandler = (event: ClipboardEvent) => boolean;
+type PluginKeydownHandler = (event: KeyboardEvent) => boolean;
+
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
@@ -56,6 +59,10 @@ export class PromptEditor extends LitElement {
   private editor: EditorView | undefined;
   private readonly editableCompartment = new Compartment();
   private readonly readOnlyCompartment = new Compartment();
+  private readonly pluginHandlersCompartment = new Compartment();
+  private nextHandlerId = 0;
+  private readonly pasteHandlers = new Map<number, PluginPasteHandler>();
+  private readonly keydownHandlers = new Map<number, PluginKeydownHandler>();
 
   protected override willUpdate(changed: PropertyValues<this>) {
     if (!changed.has("sessionId") && !changed.has("machineId")) return;
@@ -79,6 +86,8 @@ export class PromptEditor extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.pasteHandlers.clear();
+    this.keydownHandlers.clear();
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -112,6 +121,57 @@ export class PromptEditor extends LitElement {
 
   focusInput() {
     this.editor?.focus();
+  }
+
+  /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
+  get view(): EditorView | undefined {
+    return this.editor;
+  }
+
+  /** Register a plugin event handler. Returns a numeric ID for later removal. */
+  addPluginHandler(...args: ["paste", PluginPasteHandler] | ["keydown", PluginKeydownHandler]): number {
+    const [type, handler] = args;
+    const id = this.nextHandlerId++;
+    if (type === "paste") {
+      this.pasteHandlers.set(id, handler);
+    } else {
+      this.keydownHandlers.set(id, handler);
+    }
+    this.reconfigurePluginHandlers();
+    return id;
+  }
+
+  /** Remove a previously registered plugin event handler by ID. */
+  removePluginHandler(id: number): void {
+    this.pasteHandlers.delete(id);
+    this.keydownHandlers.delete(id);
+    this.reconfigurePluginHandlers();
+  }
+
+  private reconfigurePluginHandlers(): void {
+    const extension = this.buildPluginHandlersExtension();
+    this.editor?.dispatch({
+      effects: this.pluginHandlersCompartment.reconfigure(extension),
+    });
+  }
+
+  private buildPluginHandlersExtension() {
+    const pasteHandlers = [...this.pasteHandlers.values()];
+    const keydownHandlers = [...this.keydownHandlers.values()];
+    return EditorView.domEventHandlers({
+      paste(event) {
+        for (const handler of pasteHandlers) {
+          if (handler(event)) return true;
+        }
+        return false;
+      },
+      keydown(event) {
+        for (const handler of keydownHandlers) {
+          if (handler(event)) return true;
+        }
+        return false;
+      },
+    });
   }
 
   private renderCompactStatus() {
@@ -223,6 +283,7 @@ export class PromptEditor extends LitElement {
           placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files"),
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
+          this.pluginHandlersCompartment.of(this.buildPluginHandlersExtension()),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) this.updateDraft(update.state.doc.toString());
           }),

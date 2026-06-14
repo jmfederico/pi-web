@@ -44,6 +44,7 @@
     "prepublishOnly": "npm run verify",
     "publish:npm": "npm publish --access public",
     "prepare": "node scripts/install-git-hooks.mjs",
+    "postinstall": "node scripts/postinstall.mjs",
     "changeset": "changeset",
     "release:version": "changeset version",
     "changelog:status": "changeset status"

@@ -22,7 +22,7 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default { apiVersion: 1, name: 'Info', activate: () => ({ contributions: {} }) };" },
     });
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     await expect(service.manifest()).resolves.toEqual({
       plugins: [expect.objectContaining({ id: "info", source: "test", scope: "local", machineSpecific: false })],
@@ -41,7 +41,7 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default {};" },
     });
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     await expect(service.manifest()).resolves.toMatchObject({ plugins: [{ id: "updates", machineSpecific: true }] });
     await expect(service.plugins()).resolves.toMatchObject({ plugins: [{ id: "updates", machineSpecific: true, enabled: true }] });
@@ -74,7 +74,7 @@ describe("PiWebPluginService", () => {
       files: { "dist/pi-web-plugin.js": "export default { apiVersion: 1, name: 'Source Dev', activate: () => ({ contributions: {} }) };" },
     });
 
-    const service = new PiWebPluginService({ cwd: tempDir, packageProvider: false });
+    const service = new PiWebPluginService({ cwd: tempDir, packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     const manifest = await service.manifest();
     expect(manifest.plugins).toEqual(expect.arrayContaining([
@@ -92,7 +92,7 @@ describe("PiWebPluginService", () => {
     await mkdir(join(tempDir, "plugins"), { recursive: true });
     await symlink(pluginDir, join(tempDir, "plugins", "dev"), process.platform === "win32" ? "junction" : "dir");
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     const manifest = await service.manifest();
     expect(manifest.plugins).toHaveLength(1);
@@ -135,7 +135,7 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default {};" },
     });
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     const manifest = await service.manifest();
     expect(manifest.plugins.map((plugin) => plugin.id)).toEqual(["duplicate"]);
@@ -167,7 +167,7 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default {};" },
     });
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     const manifest = await service.manifest();
     expect(manifest.plugins.map((plugin) => plugin.id)).toEqual(["valid"]);
@@ -181,7 +181,7 @@ describe("PiWebPluginService", () => {
     });
     await writeFile(join(tempDir, "plugins", "escape.js"), "nope");
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, configProvider: () => ({ plugins: {} }) });
 
     const manifest = await service.manifest();
     expect(manifest.plugins).toHaveLength(1);

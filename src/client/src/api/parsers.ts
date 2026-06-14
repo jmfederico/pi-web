@@ -1,4 +1,4 @@
-import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, OAuthFlowState, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
+import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileResponse, OAuthFlowState, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
 import { isPiWebCapability } from "../../../shared/capabilities";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -334,6 +334,34 @@ export function parseFileContentResponse(value: unknown): FileContentResponse {
   const encoding = requireString(record, "encoding");
   if (encoding !== "utf8") throw new Error("Invalid file encoding");
   return { path: requireString(record, "path"), ...optionalField("language", optionalString(record, "language")), ...optionalField("mediaType", optionalFileMediaType(record["mediaType"])), ...optionalField("mimeType", optionalString(record, "mimeType")), encoding, size: requireNumber(record, "size"), modifiedAt: requireString(record, "modifiedAt"), content: requireString(record, "content"), truncated: requireBoolean(record, "truncated"), binary: requireBoolean(record, "binary") };
+}
+
+export function parseWriteWorkspaceFileResponse(value: unknown): WriteWorkspaceFileResponse {
+  const record = requireRecord(value);
+  return {
+    path: requireString(record, "path"),
+    size: requireNumber(record, "size"),
+    modifiedAt: requireString(record, "modifiedAt"),
+    created: requireBoolean(record, "created"),
+  };
+}
+
+export function parseDeleteWorkspaceFileResponse(value: unknown): DeleteWorkspaceFileResponse {
+  const record = requireRecord(value);
+  return {
+    path: requireString(record, "path"),
+    existed: requireBoolean(record, "existed"),
+  };
+}
+
+export function parseMoveWorkspaceFileResponse(value: unknown): MoveWorkspaceFileResponse {
+  const record = requireRecord(value);
+  return {
+    fromPath: requireString(record, "fromPath"),
+    toPath: requireString(record, "toPath"),
+    size: requireNumber(record, "size"),
+    modifiedAt: requireString(record, "modifiedAt"),
+  };
 }
 
 function optionalFileMediaType(value: unknown): FileContentResponse["mediaType"] | undefined {

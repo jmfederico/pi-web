@@ -147,6 +147,69 @@ describe("machine-scoped terminal command-run API", () => {
   });
 });
 
+describe("workspace file write API", () => {
+  it("sends text content with Content-Type text/plain", async () => {
+    const fetchMock = stubJsonFetch({ path: "hello.txt", size: 11, modifiedAt: "2026-06-10T00:00:00.000Z", created: true });
+
+    await workspacesApi.writeWorkspaceFile("p 1", "w/1", "hello.txt", "hello world");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("/api/machines/local/projects/p%201/workspaces/w%2F1/file?path=hello.txt");
+    expect(init?.method).toBe("PUT");
+    expect(new Headers(init?.headers).get("content-type")).toBe("text/plain");
+  });
+
+  it("sends binary content with Content-Type application/octet-stream", async () => {
+    const fetchMock = stubJsonFetch({ path: "image.png", size: 4, modifiedAt: "2026-06-10T00:00:00.000Z", created: true });
+    const binary = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+    await workspacesApi.writeWorkspaceFile("p 1", "w/1", "image.png", binary);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("/api/machines/local/projects/p%201/workspaces/w%2F1/file?path=image.png");
+    expect(init?.method).toBe("PUT");
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/octet-stream");
+  });
+
+  it("sends createDirs and overwrite query parameters", async () => {
+    const fetchMock = stubJsonFetch({ path: "config/new.json", size: 10, modifiedAt: "2026-06-10T00:00:00.000Z", created: true });
+
+    await workspacesApi.writeWorkspaceFile("p 1", "w/1", "config/new.json", "{\"a\":1}", { createDirs: false, overwrite: false });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url] = fetchCall(fetchMock, 0);
+    expect(url).toContain("createDirs=false");
+    expect(url).toContain("overwrite=false");
+  });
+
+  it("parses WriteWorkspaceFileResponse correctly", async () => {
+    const fetchMock = stubJsonFetch({ path: "output/result.txt", size: 42, modifiedAt: "2026-06-10T12:00:00.000Z", created: true });
+
+    const result = await workspacesApi.writeWorkspaceFile("p 1", "w/1", "output/result.txt", "content");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    expect(result).toEqual({
+      path: "output/result.txt",
+      size: 42,
+      modifiedAt: "2026-06-10T12:00:00.000Z",
+      created: true,
+    });
+  });
+
+  it("routes through machine prefix for remote machines", async () => {
+    const fetchMock = stubJsonFetch({ path: "file.txt", size: 5, modifiedAt: "2026-06-10T00:00:00.000Z", created: false });
+
+    await workspacesApi.writeWorkspaceFile("p 1", "w/1", "file.txt", "data", undefined, "remote a");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url] = fetchCall(fetchMock, 0);
+    expect(url).toContain("/api/machines/remote%20a/");
+  });
+});
+
 type FetchLike = (url: string | URL | Request, init?: RequestInit) => Promise<Response>;
 type FetchMock = ReturnType<typeof vi.fn<FetchLike>>;
 

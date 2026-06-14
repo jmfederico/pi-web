@@ -10,3 +10,7 @@ dist/
 
 # Local runtime attachment uploads (created by the chat composer "save to folder" mode).
 .pi-web/
+
+# Local paste upload directory and temporary working docs.
+.pi-paste/
+docs/tmp/

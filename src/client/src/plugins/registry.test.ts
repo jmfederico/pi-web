@@ -1,6 +1,6 @@
 import { html } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { FileContentResponse, SessionInfo, SessionStatus, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, MoveWorkspaceFileResponse, SessionInfo, SessionStatus, WriteWorkspaceFileResponse, Workspace } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
@@ -14,6 +14,19 @@ function createContext(statePatch: Partial<AppState> = {}) {
   const calls: string[] = [];
   const context: PluginRuntimeContext = {
     state: { ...initialAppState(), ...statePatch },
+    prompt: {
+      insertText: vi.fn(),
+      getText: vi.fn(() => ""),
+      getSelection: vi.fn(() => null),
+      onPaste: vi.fn(() => vi.fn()),
+      onKeyDown: vi.fn(() => vi.fn()),
+      focus: vi.fn(() => { calls.push("prompt.focus"); }),
+    },
+    attachments: {
+      insertFileReference: vi.fn(),
+      getAttachedFiles: vi.fn(() => []),
+      removeFileReference: vi.fn(),
+    },
     piWebUnstable: {
       terminalCommandRuns: {
         runCommand: vi.fn(),
@@ -335,7 +348,7 @@ describe("PluginRegistry", () => {
       context.host.requestRender();
       return [{ type: "text", text: context.machine.id }];
     });
-    const context = createWorkspaceLabelContext("remote-1", workspace, { files: { readFile }, host: { requestRender } });
+    const context = createWorkspaceLabelContext("remote-1", workspace, { files: { readFile, writeFile: vi.fn<WorkspaceFiles["writeFile"]>(() => Promise.resolve(testWriteFileResponse())), deleteFile: vi.fn<WorkspaceFiles["deleteFile"]>(() => Promise.resolve(testDeleteFileResponse())), moveFile: vi.fn<WorkspaceFiles["moveFile"]>(() => Promise.resolve(testMoveFileResponse())) }, host: { requestRender } });
 
     registry.register({
       id: "example",
@@ -545,7 +558,7 @@ function testWorkspace(patch: Partial<Workspace> = {}): Workspace {
 }
 
 function createWorkspaceLabelContext(machineId: string, workspace = testWorkspace(), helpers: Partial<Pick<WorkspaceLabelContext, "files" | "host">> = {}): WorkspaceLabelContext {
-  const files: WorkspaceFiles = helpers.files ?? { readFile: vi.fn<WorkspaceFiles["readFile"]>(() => Promise.resolve(testFileContent())) };
+  const files: WorkspaceFiles = helpers.files ?? { readFile: vi.fn<WorkspaceFiles["readFile"]>(() => Promise.resolve(testFileContent())), writeFile: vi.fn<WorkspaceFiles["writeFile"]>(() => Promise.resolve(testWriteFileResponse())), deleteFile: vi.fn<WorkspaceFiles["deleteFile"]>(() => Promise.resolve(testDeleteFileResponse())), moveFile: vi.fn<WorkspaceFiles["moveFile"]>(() => Promise.resolve(testMoveFileResponse())) };
   const host: WorkspaceHost = helpers.host ?? { requestRender: vi.fn<WorkspaceHost["requestRender"]>() };
   return {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
@@ -562,7 +575,7 @@ function createWorkspacePanelContext(machineId: string): WorkspacePanelContext {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
-    files: { readFile: vi.fn() },
+    files: { readFile: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
     terminal: { open: vi.fn(), runCommand: vi.fn() },
     host: { requestRender: vi.fn() },
     fileTree: [],
@@ -610,6 +623,31 @@ function testStatus(patch: Partial<SessionStatus> = {}): SessionStatus {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
     ...patch,
+  };
+}
+
+function testWriteFileResponse(path = "README.md"): WriteWorkspaceFileResponse {
+  return {
+    path,
+    size: 0,
+    modifiedAt: "2026-05-20T00:00:00.000Z",
+    created: true,
+  };
+}
+
+function testDeleteFileResponse(path = "README.md"): DeleteWorkspaceFileResponse {
+  return {
+    path,
+    existed: true,
+  };
+}
+
+function testMoveFileResponse(fromPath = "old.txt", toPath = "new.txt"): MoveWorkspaceFileResponse {
+  return {
+    fromPath,
+    toPath,
+    size: 0,
+    modifiedAt: "2026-05-20T00:00:00.000Z",
   };
 }
 
