@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
-import type { FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, Workspace } from "../api";
+import type { FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, RunTerminalCommandInput, SessionInfo, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, Workspace } from "../api";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
@@ -50,6 +50,7 @@ export interface PluginMachine {
 
 export interface WorkspaceFiles {
   readFile(path: string): Promise<FileContentResponse>;
+  writeFile(path: string, content: string): Promise<void>;
 }
 
 export interface WorkspaceHost {
@@ -69,6 +70,14 @@ export type WorkspaceTerminalCommandInput = Omit<RunTerminalCommandInput, "works
 export interface WorkspacePanelTerminal {
   open(options?: { terminalId?: string | undefined }): void;
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
+}
+
+export interface WorkspacePanelSessionInfo extends SessionInfo {
+  workspaceId?: string;
+}
+
+export interface WorkspacePanelSessions {
+  startWithPrompt(prompt: string, options?: { newWorkspace?: boolean | undefined; ideaId?: string | undefined }): Promise<WorkspacePanelSessionInfo>;
 }
 
 export interface PiWebUnstableRuntimeContext {
@@ -129,6 +138,7 @@ export interface QualifiedPluginAction extends AppAction {
 
 export interface WorkspacePanelContext extends WorkspaceContext {
   terminal: WorkspacePanelTerminal;
+  sessions: WorkspacePanelSessions;
   /**
    * @deprecated Runtime-only compatibility alias for pre-v2 plugins. Use `terminal.open()` instead.
    * This is intentionally not part of the public `@jmfederico/pi-web/plugin-api` declarations.

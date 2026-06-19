@@ -335,7 +335,7 @@ describe("PluginRegistry", () => {
       context.host.requestRender();
       return [{ type: "text", text: context.machine.id }];
     });
-    const context = createWorkspaceLabelContext("remote-1", workspace, { files: { readFile }, host: { requestRender } });
+    const context = createWorkspaceLabelContext("remote-1", workspace, { files: { readFile, writeFile: vi.fn() }, host: { requestRender } });
 
     registry.register({
       id: "example",
@@ -545,7 +545,7 @@ function testWorkspace(patch: Partial<Workspace> = {}): Workspace {
 }
 
 function createWorkspaceLabelContext(machineId: string, workspace = testWorkspace(), helpers: Partial<Pick<WorkspaceLabelContext, "files" | "host">> = {}): WorkspaceLabelContext {
-  const files: WorkspaceFiles = helpers.files ?? { readFile: vi.fn<WorkspaceFiles["readFile"]>(() => Promise.resolve(testFileContent())) };
+  const files: WorkspaceFiles = helpers.files ?? { readFile: vi.fn<WorkspaceFiles["readFile"]>(() => Promise.resolve(testFileContent())), writeFile: vi.fn() };
   const host: WorkspaceHost = helpers.host ?? { requestRender: vi.fn<WorkspaceHost["requestRender"]>() };
   return {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
@@ -562,8 +562,9 @@ function createWorkspacePanelContext(machineId: string): WorkspacePanelContext {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
-    files: { readFile: vi.fn() },
+    files: { readFile: vi.fn(), writeFile: vi.fn() },
     terminal: { open: vi.fn(), runCommand: vi.fn() },
+    sessions: { startWithPrompt: vi.fn() },
     host: { requestRender: vi.fn() },
     fileTree: [],
     expandedDirs: {},

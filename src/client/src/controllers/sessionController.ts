@@ -1,4 +1,5 @@
 import { api as defaultApi, type CommandResult, type PromptAttachment, type SessionActivity, type SessionInfo, type SessionRef, type SessionStatus } from "../api";
+import type { WorkspacePanelSessionInfo } from "../plugins/types";
 import type { AppState } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
@@ -102,6 +103,28 @@ export class SessionController {
     } catch (error) {
       this.setState({ error: String(error) });
     }
+  }
+
+  async startWorkspaceSessionWithPrompt(cwd: string, prompt: string, machineId = selectedMachineId(this.getState()), options?: { newWorkspace?: boolean | undefined; ideaId?: string | undefined }): Promise<WorkspacePanelSessionInfo> {
+    let sessionCwd = cwd;
+    let createdWorkspaceId: string | undefined;
+    if (options?.newWorkspace === true) {
+      const workspace = this.getState().selectedWorkspace;
+      if (workspace !== undefined) {
+        const ideaWorkspace = await this.api.createIdeaWorkspace(workspace.projectId, workspace.id, options.ideaId ?? "idea", machineId);
+        sessionCwd = ideaWorkspace.path;
+        createdWorkspaceId = ideaWorkspace.id;
+        this.setState({ workspaces: [ideaWorkspace, ...this.getState().workspaces.filter((candidate) => candidate.id !== ideaWorkspace.id)] });
+      }
+    }
+    const session = await this.api.startSession(sessionCwd, machineId);
+    const currentModel = this.getState().status?.model;
+    if (currentModel?.provider !== undefined && currentModel.id !== undefined) {
+      await this.api.setModel(session.id, currentModel.provider, currentModel.id, machineId);
+    }
+    this.setState({ sessions: [session, ...this.getState().sessions.filter((candidate) => candidate.id !== session.id)] });
+    await this.api.prompt(session.id, prompt, undefined, machineId);
+    return createdWorkspaceId === undefined ? session : { ...session, workspaceId: createdWorkspaceId };
   }
 
   preferredSession(cwd: string, sessions: SessionInfo[], targetSessionId: string | undefined): SessionInfo | undefined {

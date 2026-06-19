@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { FileContentResponse, MachineKind, PiWebStatusResponse, TerminalCommandRunHandle } from "./shared/apiTypes.js";
+import type { FileContentResponse, MachineKind, PiWebStatusResponse, SessionInfo, TerminalCommandRunHandle } from "./shared/apiTypes.js";
 
 export type {
   FileContentMediaType,
@@ -16,6 +16,7 @@ export type {
   PiWebStatusResponse,
   PiWebStatusSeverity,
   PiWebVersionResponse,
+  SessionInfo,
   TerminalCommandRun,
   TerminalCommandRunFilter,
   TerminalCommandRunHandle,
@@ -110,6 +111,7 @@ export interface Workspace {
 
 export interface WorkspaceFiles {
   readFile(path: string): Promise<FileContentResponse>;
+  writeFile(path: string, content: string): Promise<void>;
 }
 
 export type WorkspacePanelFiles = WorkspaceFiles;
@@ -140,8 +142,17 @@ export interface WorkspacePanelTerminal {
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
 }
 
+export interface WorkspacePanelSessionInfo extends SessionInfo {
+  workspaceId?: string;
+}
+
+export interface WorkspacePanelSessions {
+  startWithPrompt(prompt: string, options?: { newWorkspace?: boolean | undefined; ideaId?: string | undefined }): Promise<WorkspacePanelSessionInfo>;
+}
+
 export interface WorkspacePanelContext extends WorkspaceContext {
   terminal: WorkspacePanelTerminal;
+  sessions: WorkspacePanelSessions;
 }
 
 export type WorkspacePanelIcon = TemplateResult;

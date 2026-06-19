@@ -1198,6 +1198,7 @@ export class PiWebApp extends LitElement {
   private createWorkspaceFiles(workspace: Workspace, machineId: string): WorkspaceFiles {
     return {
       readFile: (path: string) => workspacesApi.workspaceFile(workspace.projectId, workspace.id, path, machineId),
+      writeFile: async (path: string, content: string) => { await workspacesApi.writeWorkspaceFile(workspace.projectId, workspace.id, path, content, machineId); },
     };
   }
 
@@ -1220,6 +1221,9 @@ export class PiWebApp extends LitElement {
         terminal: {
           open: (options) => { void this.openRuntimeTerminal(machineId, workspace, options); },
           runCommand: (input) => terminalCommandRuns.runCommand({ ...input, workspace }),
+        },
+        sessions: {
+          startWithPrompt: (prompt, options) => this.sessions.startWorkspaceSessionWithPrompt(workspace.path, prompt, machineId, options),
         },
         openTerminal: (options) => { void this.openRuntimeTerminal(machineId, workspace, options); },
         host: this.createWorkspaceHost(),
