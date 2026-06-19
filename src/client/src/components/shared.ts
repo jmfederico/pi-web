@@ -24,7 +24,7 @@ export type ChatPart =
   | { type: "image"; mimeType: string; data: string }
   | { type: "thinking"; text: string }
   | { type: "skillInvocation"; name: string; location: string; content: string }
-  | { type: "skillRead"; name: string; path: string }
+  | { type: "skillRead"; name: string; path: string; toolCallId?: string }
   | { type: "toolCall"; toolCallId?: string; toolName: string; summary: string; args?: unknown }
   | ToolExecutionPart
   | { type: "toolResult"; toolCallId?: string; toolName: string; text: string; isError: boolean; content?: unknown; details?: unknown }

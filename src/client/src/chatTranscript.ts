@@ -35,8 +35,8 @@ function applyFinalMessage(messages: ChatLine[], rawMessage: unknown): ChatLine[
 }
 
 function applyFinalLine(messages: ChatLine[], displayEnded: ChatLine): ChatLine[] {
-  const skillReadIndex = findMatchingSkillRead(messages, displayEnded);
-  if (skillReadIndex >= 0) return [...messages.slice(0, skillReadIndex), displayEnded, ...messages.slice(skillReadIndex + 1)];
+  const skillReadIndexes = findMatchingSkillReadIndexes(messages, displayEnded);
+  if (skillReadIndexes.length > 0) return replaceSkillReadLines(messages, skillReadIndexes, displayEnded);
   const last = messages.at(-1);
   if (last?.role !== displayEnded.role) return [...messages, displayEnded];
   if (displayEnded.role === "assistant" || sameMessageText(last, displayEnded)) return [...messages.slice(0, -1), displayEnded];
@@ -58,7 +58,9 @@ function parseSkillReadPath(path: string | undefined): { name: string; path: str
 
 function appendToolExecutionStart(messages: ChatLine[], event: Extract<SessionUiEvent, { type: "tool.start" }>): ChatLine[] {
   const skillRead = event.toolName === "read" ? parseSkillReadPath(getString(event.args, "path")) : undefined;
-  if (skillRead !== undefined) return appendLine(messages, { role: "skill", parts: [{ type: "skillRead", ...skillRead }] });
+  if (skillRead !== undefined) {
+    return appendLine(messages, { role: "skill", parts: [{ type: "skillRead", ...skillRead, ...(event.toolCallId === "" ? {} : { toolCallId: event.toolCallId }) }] });
+  }
 
   const part: ToolExecutionPart = {
     type: "toolExecution",
@@ -151,16 +153,51 @@ function stringifyToolContent(content: unknown): string {
   return "";
 }
 
-function findMatchingSkillRead(messages: ChatLine[], ended: ChatLine): number {
+function findMatchingSkillReadIndexes(messages: ChatLine[], ended: ChatLine): number[] {
   const endedReads = skillReads(ended);
-  if (endedReads.length === 0) return -1;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message?.role !== "skill") continue;
-    const reads = skillReads(message);
-    if (sameSkillReads(reads, endedReads)) return index;
+  if (endedReads.length === 0) return [];
+
+  const matchedIndexes: number[] = [];
+  let readEnd = endedReads.length;
+  const lowerBound = lastUserBoundaryIndex(messages) + 1;
+
+  for (let index = messages.length - 1; index >= lowerBound; index--) {
+    const reads = skillReads(messages[index]);
+    if (reads.length === 0) continue;
+    const readStart = readEnd - reads.length;
+    if (readStart < 0) continue;
+    if (!sameSkillReads(reads, endedReads.slice(readStart, readEnd))) continue;
+    matchedIndexes.unshift(index);
+    readEnd = readStart;
+    if (readEnd === 0) return matchedIndexes;
   }
-  return -1;
+
+  return [];
+}
+
+function replaceSkillReadLines(messages: ChatLine[], indexes: number[], replacement: ChatLine): ChatLine[] {
+  const replacementIndexes = indexesWithAdjacentAssistantFragment(messages, indexes, replacement);
+  const insertIndex = replacementIndexes[0];
+  if (insertIndex === undefined) return messages;
+  const replaced = new Set(replacementIndexes);
+  const next: ChatLine[] = [];
+  for (let index = 0; index < messages.length; index++) {
+    if (index === insertIndex) next.push(replacement);
+    const message = messages[index];
+    if (message !== undefined && !replaced.has(index)) next.push(message);
+  }
+  return next;
+}
+
+function indexesWithAdjacentAssistantFragment(messages: ChatLine[], indexes: number[], replacement: ChatLine): number[] {
+  const firstIndex = indexes[0];
+  if (replacement.role !== "assistant" || firstIndex === undefined) return indexes;
+  const previousIndex = firstIndex - 1;
+  return isStreamedAssistantFragment(messages[previousIndex]) ? [previousIndex, ...indexes] : indexes;
+}
+
+function isStreamedAssistantFragment(message: ChatLine | undefined): boolean {
+  return message?.role === "assistant" && message.parts.length > 0 && message.parts.every((part) => part.type === "text" || part.type === "thinking");
 }
 
 function skillReads(message: ChatLine | undefined): SkillRead[] {
@@ -176,6 +213,7 @@ function sameSkillReads(left: SkillRead[], right: SkillRead[]): boolean {
 
 function sameSkillRead(left: SkillRead, right: SkillRead | undefined): boolean {
   if (right === undefined) return false;
+  if (left.toolCallId !== undefined && right.toolCallId !== undefined) return left.toolCallId === right.toolCallId;
   return normalizeSkillPath(left.path) === normalizeSkillPath(right.path) || left.name === right.name;
 }
 
@@ -201,9 +239,30 @@ function appendNewMessage(messages: ChatLine[], rawMessage: unknown): ChatLine[]
 
 function appendLine(messages: ChatLine[], line: ChatLine): ChatLine[] {
   const last = messages.at(-1);
-  if (line.role === "skill" && sameSkillReads(skillReads(last), skillReads(line))) return messages;
+  if (isDuplicateSkillLine(messages, line)) return messages;
   if (last?.role === line.role && line.role !== "skill") return [...messages.slice(0, -1), { ...last, parts: [...last.parts, ...line.parts] }];
   return [...messages, line];
+}
+
+function isDuplicateSkillLine(messages: ChatLine[], line: ChatLine): boolean {
+  const reads = skillReads(line);
+  if (line.role !== "skill" || reads.length === 0) return false;
+  const lowerBound = lastUserBoundaryIndex(messages) + 1;
+  return reads.every((read) => hasMatchingSkillRead(messages, read, lowerBound));
+}
+
+function hasMatchingSkillRead(messages: ChatLine[], read: SkillRead, lowerBound: number): boolean {
+  for (let index = messages.length - 1; index >= lowerBound; index--) {
+    if (skillReads(messages[index]).some((candidate) => sameSkillRead(candidate, read))) return true;
+  }
+  return false;
+}
+
+function lastUserBoundaryIndex(messages: ChatLine[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === "user") return index;
+  }
+  return -1;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

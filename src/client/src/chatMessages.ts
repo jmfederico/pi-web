@@ -162,9 +162,9 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
     if (type === "toolCall") {
       const toolName = getString(part, "name") ?? "tool";
       const args = getProperty(part, "arguments");
-      const skillRead = toolName === "read" ? parseSkillReadPath(getString(args, "path")) : undefined;
-      if (skillRead !== undefined) return [{ type: "skillRead", ...skillRead }];
       const toolCallId = getString(part, "id");
+      const skillRead = toolName === "read" ? parseSkillReadPath(getString(args, "path")) : undefined;
+      if (skillRead !== undefined) return [{ type: "skillRead", ...skillRead, ...(toolCallId === undefined ? {} : { toolCallId }) }];
       return [{ type: "toolCall", ...(toolCallId === undefined ? {} : { toolCallId }), toolName, summary: summarizeArgs(args), ...(args === undefined ? {} : { args }) }];
     }
     if (type === "image") {
