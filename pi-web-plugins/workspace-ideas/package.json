@@ -1,9 +1,0 @@
-{
-  "name": "@pi-web/workspace-ideas-plugin",
-  "private": true,
-  "piWeb": {
-    "plugins": [
-      { "id": "workspace-ideas", "module": "pi-web-plugin.js" }
-    ]
-  }
-}

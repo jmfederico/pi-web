@@ -1,8 +1,9 @@
 node_modules/
+dist/
 .env
 .DS_Store
-coverage/
-dist/
+*.log
+.playwright-cli/
 
 # Local plugin development sandboxes. Symlink these into ~/.pi-web/plugins/<plugin-id>.
 /dev-plugins/
