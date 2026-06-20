@@ -179,6 +179,18 @@ One-line install is also available for users who prefer it:
 curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh
 ```
 
+### Docker local-build runtime
+
+A Docker runtime is available for trusted local/server installs without using prebuilt images:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
+```
+
+It builds a local image from npm, runs split `sessiond` and `web` services, binds the browser UI to `127.0.0.1:8504` by default, and uses the same command as the update path. The Docker setup intentionally mounts the Docker socket and selected host paths; treat it as root-equivalent host access, do not expose it directly to the public internet, and use an SSH tunnel, VPN, or authenticated reverse proxy for remote access.
+
+See the [Docker guide](https://github.com/jmfederico/pi-web/blob/main/docker/README.md) for trust warnings, version pinning, host command examples, and development Compose usage.
+
 PI WEB is also published as a Pi package. Installing it through Pi exposes a `/pi-web` command inside Pi:
 
 ```bash
@@ -233,6 +245,17 @@ pi-web install --dev
 `pi-web install --dev` writes the session daemon plus a UI development service using the native user-service backend. `pi-web uninstall` removes both production and development service files; no uninstall flags are needed.
 
 `dev:web` also watches bundled plugin TypeScript and rebuilds the browser-loaded plugin JavaScript under `dist/pi-web-plugins/`. You can restart `dev:web` or `dev:client` without stopping active Pi sessions.
+
+Docker development from the checkout is available too:
+
+```bash
+export PI_WEB_UID=$(id -u)
+export PI_WEB_GID=$(id -g)
+export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+docker compose -f docker/compose.dev.yml up --build
+```
+
+Open <http://127.0.0.1:8505>. The Docker dev setup keeps `sessiond` separate from the autoreloading web/API/client service. See the [Docker guide](https://github.com/jmfederico/pi-web/blob/main/docker/README.md#development-docker-setup).
 
 ## Production-style run from a checkout
 
