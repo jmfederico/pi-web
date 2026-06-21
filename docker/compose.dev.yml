@@ -3,6 +3,11 @@ name: pi-web-dev
 x-pi-web-dev-build: &pi-web-dev-build
   context: ..
   dockerfile: docker/Dockerfile.dev
+  args:
+    OPENSUSE_IMAGE: ${PI_WEB_OPENSUSE_IMAGE:-opensuse/tumbleweed}
+    NODEJS_MAJOR: ${PI_WEB_NODEJS_MAJOR:-22}
+    NODEJS_REPO: ${PI_WEB_NODEJS_REPO:-auto}
+    PI_WEB_EXTRA_ZYPPER_PACKAGES: ${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
 
 x-pi-web-dev-environment: &pi-web-dev-environment
   HOME: /data/home

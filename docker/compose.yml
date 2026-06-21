@@ -4,6 +4,10 @@ x-pi-web-build: &pi-web-build
   context: .
   dockerfile: Dockerfile
   args:
+    OPENSUSE_IMAGE: ${PI_WEB_OPENSUSE_IMAGE:-opensuse/tumbleweed}
+    NODEJS_MAJOR: ${PI_WEB_NODEJS_MAJOR:-22}
+    NODEJS_REPO: ${PI_WEB_NODEJS_REPO:-auto}
+    PI_WEB_EXTRA_ZYPPER_PACKAGES: ${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
     PI_WEB_VERSION: ${PI_WEB_VERSION:-latest}
     PI_VERSION: ${PI_VERSION:-latest}
     CACHE_BUST: ${CACHE_BUST:-local}

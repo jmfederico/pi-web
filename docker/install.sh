@@ -28,6 +28,12 @@ Options:
   --pi-web-version VER    npm @jmfederico/pi-web version pin (default: latest)
   --pi-version VER        npm @earendil-works/pi-coding-agent version pin
                           (default: latest)
+  --opensuse-image IMAGE  openSUSE base image (default: opensuse/tumbleweed)
+  --nodejs-major MAJOR    Node.js major version package to install (default: 22)
+  --nodejs-repo REPO      Node.js zypper repository URL, auto, or disabled
+                          (default: auto)
+  --extra-zypper-packages LIST
+                          extra openSUSE packages to install during image build
   --asset-dir DIR         Copy Docker assets from a local docker/ directory
   --asset-ref REF         Fetch Docker assets from a Git ref (default: main)
   --skip-compose          Write assets/.env but skip build and service recreate
@@ -70,6 +76,26 @@ while [ "$#" -gt 0 ]; do
     --pi-version)
       [ "$#" -ge 2 ] || die "--pi-version requires a value"
       PI_VERSION=$2
+      shift 2
+      ;;
+    --opensuse-image)
+      [ "$#" -ge 2 ] || die "--opensuse-image requires a value"
+      PI_WEB_OPENSUSE_IMAGE=$2
+      shift 2
+      ;;
+    --nodejs-major)
+      [ "$#" -ge 2 ] || die "--nodejs-major requires a value"
+      PI_WEB_NODEJS_MAJOR=$2
+      shift 2
+      ;;
+    --nodejs-repo)
+      [ "$#" -ge 2 ] || die "--nodejs-repo requires a value"
+      PI_WEB_NODEJS_REPO=$2
+      shift 2
+      ;;
+    --extra-zypper-packages)
+      [ "$#" -ge 2 ] || die "--extra-zypper-packages requires a value"
+      PI_WEB_EXTRA_ZYPPER_PACKAGES=$2
       shift 2
       ;;
     --asset-dir)
@@ -191,6 +217,12 @@ require_non_empty() {
   [ -n "$value" ] || die "$name must not be empty"
 }
 
+dotenv_quote() {
+  value=$1
+  [ -n "$value" ] || return 0
+  printf '"%s"' "$(printf '%s' "$value" | sed 's/[\\"]/\\&/g')"
+}
+
 detect_docker_gid() {
   if [ -S /var/run/docker.sock ]; then
     if gid=$(stat -c '%g' /var/run/docker.sock 2>/dev/null); then
@@ -305,6 +337,7 @@ write_asset compose.yml 0644
 write_asset .dockerignore 0644
 write_asset install.sh 0755
 write_asset bin/hostexec 0755
+write_asset bin/install-opensuse-base 0755
 
 custom_image_hooks_dir=$install_dir/custom-image.d
 mkdir -p "$custom_image_hooks_dir" || die "could not create custom image hooks directory: $custom_image_hooks_dir"
@@ -323,6 +356,10 @@ pi_web_bind_addr=$(value_from_env_or_existing_or_default PI_WEB_BIND_ADDR 127.0.
 pi_web_port=$(value_from_env_or_existing_or_default PI_WEB_PORT 8504)
 pi_web_version=$(value_from_env_or_existing_or_default PI_WEB_VERSION latest)
 pi_version=$(value_from_env_or_existing_or_default PI_VERSION latest)
+pi_web_opensuse_image=$(value_from_env_or_existing_or_default PI_WEB_OPENSUSE_IMAGE opensuse/tumbleweed)
+pi_web_nodejs_major=$(value_from_env_or_existing_or_default PI_WEB_NODEJS_MAJOR 22)
+pi_web_nodejs_repo=$(value_from_env_or_existing_or_default PI_WEB_NODEJS_REPO auto)
+pi_web_extra_zypper_packages=$(value_from_env_or_existing_or_default PI_WEB_EXTRA_ZYPPER_PACKAGES "")
 pi_web_image=$(value_from_env_or_existing_or_default PI_WEB_IMAGE pi-web:local)
 hostexec_image=$(value_from_env_or_existing_or_default HOSTEXEC_IMAGE alpine:3.22)
 pi_web_max_upload_bytes=$(value_from_env_or_existing_or_default PI_WEB_MAX_UPLOAD_BYTES 67108864)
@@ -335,9 +372,14 @@ require_non_empty PI_WEB_BIND_ADDR "$pi_web_bind_addr"
 require_non_empty PI_WEB_PORT "$pi_web_port"
 require_non_empty PI_WEB_VERSION "$pi_web_version"
 require_non_empty PI_VERSION "$pi_version"
+require_non_empty PI_WEB_OPENSUSE_IMAGE "$pi_web_opensuse_image"
+require_non_empty PI_WEB_NODEJS_MAJOR "$pi_web_nodejs_major"
+require_non_empty PI_WEB_NODEJS_REPO "$pi_web_nodejs_repo"
 require_non_empty PI_WEB_IMAGE "$pi_web_image"
 require_non_empty HOSTEXEC_IMAGE "$hostexec_image"
 require_non_empty PI_WEB_MAX_UPLOAD_BYTES "$pi_web_max_upload_bytes"
+
+pi_web_extra_zypper_packages_env=$(dotenv_quote "$pi_web_extra_zypper_packages")
 
 umask 077
 temp_env=$env_file.$$
@@ -359,6 +401,12 @@ PI_WEB_PORT=$pi_web_port
 # npm version pins. Use latest for quick updates, or set concrete versions.
 PI_WEB_VERSION=$pi_web_version
 PI_VERSION=$pi_version
+
+# openSUSE/Node.js image build inputs.
+PI_WEB_OPENSUSE_IMAGE=$pi_web_opensuse_image
+PI_WEB_NODEJS_MAJOR=$pi_web_nodejs_major
+PI_WEB_NODEJS_REPO=$pi_web_nodejs_repo
+PI_WEB_EXTRA_ZYPPER_PACKAGES=$pi_web_extra_zypper_packages_env
 
 # Runtime image names and limits.
 PI_WEB_IMAGE=$pi_web_image

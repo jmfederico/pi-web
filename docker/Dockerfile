@@ -1,21 +1,31 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=22-bookworm-slim
+ARG OPENSUSE_IMAGE=opensuse/tumbleweed
 ARG DOCKER_CLI_VERSION=29-cli
 
 FROM docker:${DOCKER_CLI_VERSION} AS docker-cli
 
-FROM node:${NODE_VERSION} AS package
+FROM ${OPENSUSE_IMAGE} AS base
+
+ARG NODEJS_MAJOR=22
+ARG NODEJS_REPO=auto
+ARG PI_WEB_EXTRA_ZYPPER_PACKAGES=""
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
+  SHELL=/bin/bash \
+  TERM=xterm-256color
+
+COPY bin/install-opensuse-base /usr/local/sbin/install-pi-web-opensuse-base
+RUN chmod 0755 /usr/local/sbin/install-pi-web-opensuse-base \
+  && install-pi-web-opensuse-base
+
+FROM base AS package
 
 ARG PI_WEB_VERSION=latest
 ARG PI_VERSION=latest
 ARG CACHE_BUST=local
-
-ENV NPM_CONFIG_UPDATE_NOTIFIER=false
-
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates g++ make python3 \
-  && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
   echo "PI WEB Docker build cache bust: ${CACHE_BUST}"; \
@@ -24,7 +34,7 @@ RUN set -eux; \
     "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
   npm cache clean --force
 
-FROM node:${NODE_VERSION} AS runtime
+FROM base AS runtime
 
 ENV NODE_ENV=production \
   NPM_CONFIG_UPDATE_NOTIFIER=false \
@@ -39,18 +49,11 @@ ENV NODE_ENV=production \
   SHELL=/bin/bash \
   TERM=xterm-256color
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    git \
-    openssh-client \
-    procps \
-    tini \
-  && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /data/home /data/config /data/pi-web /data/pi-agent /workspace \
-  && chown -R node:node /data /workspace
+COPY --from=package /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=package /usr/local/bin /usr/local/bin
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY bin/hostexec /usr/local/bin/hostexec
+RUN chmod 0755 /usr/local/bin/hostexec
 
 COPY custom-image.d/ /tmp/pi-web-custom-image.d/
 RUN bash -euxo pipefail -c '\
@@ -59,13 +62,10 @@ RUN bash -euxo pipefail -c '\
     echo "Running PI WEB custom image hook: ${script}"; \
     bash "${script}"; \
   done; \
-  rm -rf /tmp/pi-web-custom-image.d /var/lib/apt/lists/* \
+  rm -rf /tmp/pi-web-custom-image.d; \
+  zypper clean --all; \
+  rm -rf /var/cache/zypp/* \
 '
-
-COPY --from=package /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=package /usr/local/bin /usr/local/bin
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --chmod=0755 bin/hostexec /usr/local/bin/hostexec
 
 WORKDIR /workspace
 USER node

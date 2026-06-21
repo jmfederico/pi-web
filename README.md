@@ -187,9 +187,9 @@ A Docker runtime is available for trusted local/server installs without using pr
 curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
 ```
 
-It builds a local image from npm, runs split `sessiond` and `web` services, binds the browser UI to `127.0.0.1:8504` by default, and uses the same command as the update path. The Docker setup intentionally mounts the Docker socket and selected host paths; treat it as root-equivalent host access, do not expose it directly to the public internet, and use an SSH tunnel, VPN, or authenticated reverse proxy for remote access.
+It builds an openSUSE Tumbleweed based local image from npm with Node.js 22, npx, Corepack, and common development/agent tooling, runs split `sessiond` and `web` services, binds the browser UI to `127.0.0.1:8504` by default, and uses the same command as the update path. The Docker setup intentionally mounts the Docker socket and selected host paths; treat it as root-equivalent host access, do not expose it directly to the public internet, and use an SSH tunnel, VPN, or authenticated reverse proxy for remote access.
 
-See the [Docker guide](https://github.com/jmfederico/pi-web/blob/main/docker/README.md) for trust warnings, version pinning, custom image hooks for optional CLIs, host command examples, and development Compose usage.
+See the [Docker guide](https://github.com/jmfederico/pi-web/blob/main/docker/README.md) for trust warnings, version pinning, openSUSE package customization, custom image hooks for optional CLIs, host command examples, and development Compose usage.
 
 PI WEB is also published as a Pi package. Installing it through Pi exposes a `/pi-web` command inside Pi:
 

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+nodejs_major=${NODEJS_MAJOR:-22}
+nodejs_repo=${NODEJS_REPO:-auto}
+extra_zypper_packages=${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
+
+nodejs_repo_flavor() {
+  local rpm_arch
+  rpm_arch=$(rpm --eval '%{_target_cpu}')
+
+  case "$rpm_arch" in
+    aarch64|armv6hl|armv7hl)
+      printf '%s\n' openSUSE_Factory_ARM
+      ;;
+    ppc64le)
+      printf '%s\n' openSUSE_Factory_PowerPC
+      ;;
+    riscv64)
+      printf '%s\n' openSUSE_Factory_RISCV
+      ;;
+    s390x)
+      printf '%s\n' openSUSE_Factory_zSystems
+      ;;
+    *)
+      printf '%s\n' openSUSE_Tumbleweed
+      ;;
+  esac
+}
+
+add_nodejs_repo() {
+  local repo_url
+
+  case "$nodejs_repo" in
+    ""|disabled|none)
+      return 0
+      ;;
+    auto)
+      repo_url="https://download.opensuse.org/repositories/devel:/languages:/nodejs/$(nodejs_repo_flavor)/"
+      ;;
+    *)
+      repo_url=$nodejs_repo
+      ;;
+  esac
+
+  zypper --non-interactive removerepo pi-web-nodejs >/dev/null 2>&1 || true
+  zypper --non-interactive addrepo --refresh "$repo_url" pi-web-nodejs
+}
+
+# The codec repository is not needed for this image and can make noninteractive
+# refreshes noisy or brittle when its signing key rolls independently.
+zypper --non-interactive modifyrepo --disable repo-openh264 >/dev/null 2>&1 || true
+
+add_nodejs_repo
+zypper --gpg-auto-import-keys --non-interactive refresh
+
+packages=(
+  "nodejs${nodejs_major}"
+  "npm${nodejs_major}"
+  "corepack${nodejs_major}"
+  "nodejs${nodejs_major}-devel"
+  bash
+  ca-certificates
+  curl
+  wget
+  git
+  git-lfs
+  gh
+  openssh-clients
+  procps
+  tini
+  shadow
+  gcc-c++
+  make
+  python3
+  python3-devel
+  python3-pip
+  python3-virtualenv
+  jq
+  ripgrep
+  fd
+  fzf
+  bat
+  ShellCheck
+  less
+  file
+  which
+  tar
+  gzip
+  xz
+  unzip
+  zip
+  zstd
+  findutils
+  grep
+  sed
+  gawk
+  patch
+  diffutils
+  util-linux
+  hostname
+  iproute2
+  bind-utils
+  rsync
+)
+
+extra_packages=()
+if [ -n "$extra_zypper_packages" ]; then
+  # Intentionally split a whitespace-delimited package list supplied as a Docker
+  # build arg, e.g. PI_WEB_EXTRA_ZYPPER_PACKAGES="go rustup kubernetes-client".
+  # shellcheck disable=SC2206
+  extra_packages=($extra_zypper_packages)
+fi
+
+zypper --non-interactive install --no-recommends "${packages[@]}" "${extra_packages[@]}"
+
+node --version
+npm --version
+npx --version
+python3 --version
+git --version
+
+if ! getent group node >/dev/null 2>&1; then
+  groupadd --gid 1000 node
+fi
+
+if ! id node >/dev/null 2>&1; then
+  useradd --uid 1000 --gid node --create-home --home-dir /home/node --shell /bin/bash node
+fi
+
+mkdir -p /data/home /data/config /data/npm-cache /data/pi-web /data/pi-agent /workspace
+chown -R node:node /data /workspace /home/node
+
+zypper clean --all
+rm -rf /var/cache/zypp/*

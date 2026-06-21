@@ -97,10 +97,27 @@ Common environment variables written to `.env`:
 | `PI_WEB_BIND_ADDR`, `PI_WEB_PORT` | host bind address and port |
 | `PI_WEB_VERSION` | npm version/range for `@jmfederico/pi-web` |
 | `PI_VERSION` | npm version/range for `@earendil-works/pi-coding-agent` |
+| `PI_WEB_OPENSUSE_IMAGE` | openSUSE base image used for the runtime build |
+| `PI_WEB_NODEJS_MAJOR` | Node.js major package to install, defaulting to `22` |
+| `PI_WEB_NODEJS_REPO` | Node.js zypper repository URL, `auto`, or `disabled` |
+| `PI_WEB_EXTRA_ZYPPER_PACKAGES` | extra openSUSE packages installed during the image build |
 | `PI_WEB_IMAGE` | local image tag to build and run |
 | `HOSTEXEC_IMAGE` | helper image used by `hostexec` |
 
-Host-derived IDs are refreshed on rerun unless you explicitly override them. User-facing values such as data directory, bind address, port, image names, upload limit, and version pins are preserved from an existing `.env` unless you pass a flag or environment override.
+Host-derived IDs are refreshed on rerun unless you explicitly override them. User-facing values such as data directory, bind address, port, image names, upload limit, base image, Node.js settings, extra packages, and version pins are preserved from an existing `.env` unless you pass a flag or environment override.
+
+### Base image and tooling
+
+The Docker runtime and development images are openSUSE Tumbleweed based by default. They install Node.js 22, npm, `npx`, and Corepack through zypper, using the openSUSE Node.js build service repository when needed for the selected architecture. The image also includes common agent/development tools such as Git/Git LFS, GitHub CLI, OpenSSH, Python with pip/virtualenv and headers, native build tooling, `jq`, `ripgrep`, `fd`, `fzf`, `bat`, ShellCheck, archive tools, network utilities, and the Docker CLI.
+
+Install extra distro packages without writing a hook by setting a whitespace-delimited package list:
+
+```bash
+PI_WEB_EXTRA_ZYPPER_PACKAGES="go rustup kubernetes-client" \
+  curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
+```
+
+You can also pass installer flags such as `--opensuse-image`, `--nodejs-major`, `--nodejs-repo`, and `--extra-zypper-packages`, or edit the generated `.env` and rerun the installer.
 
 ### Custom image hooks
 
@@ -110,13 +127,20 @@ The runtime image can be extended without changing PI WEB's Dockerfile. Put loca
 ~/.local/share/pi-web-docker/custom-image.d/
 ```
 
-The installer preserves that directory, includes the `*.sh` files in the Docker build context, and runs each script as `root` during the image build in lexical order. Use this for optional tools such as `gh`, `glab`, `kubectl`, or cloud CLIs that you do not want in the default image.
+The installer preserves that directory, includes the `*.sh` files in the Docker build context, and runs each script as `root` during the image build in lexical order. Use this for optional tools such as `glab`, `kubectl`, cloud CLIs, or language toolchains that you do not want in the default image.
 
 Example:
 
 ```bash
 mkdir -p ~/.local/share/pi-web-docker/custom-image.d
-$EDITOR ~/.local/share/pi-web-docker/custom-image.d/10-github-cli.sh
+cat >~/.local/share/pi-web-docker/custom-image.d/10-extra-tools.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+zypper --gpg-auto-import-keys --non-interactive refresh
+zypper --non-interactive install --no-recommends glab kubernetes-client
+zypper clean --all
+EOF
+chmod +x ~/.local/share/pi-web-docker/custom-image.d/10-extra-tools.sh
 curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
 ```
 

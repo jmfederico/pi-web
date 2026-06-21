@@ -3,6 +3,7 @@
 !Dockerfile
 !bin/
 !bin/hostexec
+!bin/install-opensuse-base
 !custom-image.d/
 !custom-image.d/.gitkeep
 !custom-image.d/*.sh
