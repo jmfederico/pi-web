@@ -210,6 +210,23 @@ describe("buildApp", () => {
     expect(request).toHaveBeenCalledWith("POST", "/api/projects/p1/workspaces/w1/terminal-command-runs", createBody);
   });
 
+  it("proxies remote session reloads through the selected machine", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn(() => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ reloaded: true })]),
+    }));
+    remoteClient = fakeRemoteClient({ request });
+
+    const response = await app.inject({ method: "POST", url: `/api/machines/${remote.id}/sessions/s1/reload`, payload: { cwd: "/repo" } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ reloaded: true });
+    expect(request).toHaveBeenCalledWith("POST", "/api/sessions/s1/reload", { cwd: "/repo" });
+  });
+
   it("forwards remote JSON request bodies and normalizes remote timeouts", async () => {
     const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

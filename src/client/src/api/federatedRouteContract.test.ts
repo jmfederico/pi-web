@@ -61,6 +61,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.archiveWithDescendants(session, machineId)),
       ignoreParseFailure(sessionsApi.restore(session, machineId)),
       ignoreParseFailure(sessionsApi.deleteArchived(session, machineId)),
+      ignoreParseFailure(sessionsApi.reloadSession(session, machineId)),
       ignoreParseFailure(sessionsApi.detachParent(session, machineId)),
       ignoreParseFailure(sessionsApi.authProviders({ mode: "login", authType: "oauth", machineId })),
       ignoreParseFailure(sessionsApi.saveApiKey("openai", "key", machineId)),
