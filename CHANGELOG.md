@@ -1,5 +1,11 @@
 # @jmfederico/pi-web
 
+## 1.202606.6
+
+### Patch Changes
+
+- c479a0d: Fix the session daemon startup when PI WEB runs with compatible Pi packages that moved legacy provider registry exports to the Pi AI compatibility entrypoint.
+
 ## 1.202606.5
 
 ### Patch Changes
