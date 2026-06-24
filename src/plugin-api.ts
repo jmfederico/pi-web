@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { FileContentResponse, MachineKind, PiWebStatusResponse, TerminalCommandRunHandle } from "./shared/apiTypes.js";
+import type { FileContentResponse, MachineKind, PiWebStatusResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse } from "./shared/apiTypes.js";
 
 export type {
   FileContentMediaType,
@@ -20,6 +20,11 @@ export type {
   TerminalCommandRunFilter,
   TerminalCommandRunHandle,
   TerminalCommandRunStatus,
+  WriteWorkspaceFileOptions,
+  WriteWorkspaceFileResponse,
+  DeleteWorkspaceFileResponse,
+  MoveWorkspaceFileOptions,
+  MoveWorkspaceFileResponse,
 } from "./shared/apiTypes.js";
 
 export type PluginId = string;
@@ -67,8 +72,20 @@ export interface PluginRuntimeState {
   piWebStatus?: PiWebStatusResponse;
 }
 
+export interface PluginPromptEditor {
+  /** Insert text at the current cursor position. Replaces any selection.
+   *  If the editor is not focused, focuses it first.
+   *  No-op if the editor is not mounted. */
+  insertText(text: string): void;
+  /** Get the current prompt text content. Returns "" if the editor is not mounted. */
+  getText(): string;
+  /** Get the current selection range, or null if no selection or editor not mounted. */
+  getSelection(): { start: number; end: number; text: string } | null;
+}
+
 export interface PluginRuntimeContext {
   state: PluginRuntimeState;
+  prompt: PluginPromptEditor;
   openActionPalette: () => void;
   focusPrompt: () => void;
   addProject: () => void | Promise<void>;
@@ -109,7 +126,17 @@ export interface Workspace {
 }
 
 export interface WorkspaceFiles {
+  /** Read a file from the workspace. Works for local and federated machines. */
   readFile(path: string): Promise<FileContentResponse>;
+  /** Write content to a workspace file. Creates intermediate directories by default.
+   *  Works for local and federated machines. Auto-refreshes the file explorer after success. */
+  writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
+  /** Delete a file from the workspace. Idempotent — returns { existed: false } if file doesn't exist.
+   *  Deletes the entry itself (for symlinks, removes the symlink not the target). */
+  deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
+  /** Move or rename a file within the workspace. Unix mv semantics.
+   *  Default overwrite: false (safer than writeFile). Auto-refreshes the file explorer after success. */
+  moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
 }
 
 export type WorkspacePanelFiles = WorkspaceFiles;
@@ -141,6 +168,7 @@ export interface WorkspacePanelTerminal {
 }
 
 export interface WorkspacePanelContext extends WorkspaceContext {
+  prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
 }
 

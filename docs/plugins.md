@@ -439,6 +439,7 @@ interface PluginRuntimeContext {
     selectedSession?: unknown;
     piWebStatus?: PiWebStatusResponse;
   };
+  prompt: PluginPromptEditor;
   openActionPalette: () => void;
   focusPrompt: () => void;
   addProject: () => void | Promise<void>;
@@ -463,6 +464,29 @@ Notes:
 - `selectWorkspaceTool()` expects a qualified panel id such as `my-plugin:workspace.info`.
 - `openTerminal()` switches to the built-in terminal panel. Pass `{ terminalId }` to deep-link to a specific terminal.
 - Only fields documented here and declared in `plugin-api.d.ts` are stable public plugin API. Anything else is experimental: it may become public API later, change shape, or disappear.
+
+### Prompt editor API
+
+The `prompt` helper on `PluginRuntimeContext` and `WorkspacePanelContext` provides stable access to the chat prompt editor:
+
+| Method | Description |
+| --- | --- |
+| `insertText(text)` | Insert text at cursor position. When text is selected, replaces the selection. Focuses the editor first if not focused. |
+| `getText()` | Returns the full prompt text. |
+| `getSelection()` | Returns `{ start, end, text }` if text is selected, or `null`. |
+
+Usage:
+
+```js
+// Insert text at the cursor (e.g. a file mention)
+context.prompt.insertText("@file.txt");
+
+// Read the current prompt and selection
+const text = context.prompt.getText();
+const selection = context.prompt.getSelection(); // { start, end, text } | null
+```
+
+Use `focusPrompt()` on `PluginRuntimeContext` to move focus to the prompt editor. Workspace panels can call `context.prompt.insertText()` from explicit user interactions such as button clicks; panel contexts target the currently selected session's mounted prompt editor.
 
 #### Keyboard shortcuts
 
@@ -521,7 +545,11 @@ interface WorkspacePanelContext {
   state?: PluginRuntimeState;
   files: {
     readFile(path: string): Promise<FileContentResponse>;
+    writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
+    deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
+    moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
   };
+  prompt: PluginPromptEditor;
   terminal: {
     open(options?: { terminalId?: string }): void;
     runCommand(input: {
@@ -539,7 +567,7 @@ interface WorkspacePanelContext {
 
 `icon` is optional and is used in the compact mobile tab bar. Prefer an SVG rendered with the `svg` helper from `PluginActivationContext`; use `currentColor` so PI WEB themes can style it. If `icon` is omitted, mobile tabs fall back to initials from the panel title, or to the full title when initials collide.
 
-`machine`, `workspace`, `files`, `terminal`, and `host` are documented as stable for panel callbacks. Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate panel callbacks such as `badge`, `visible`, or `render`.
+`machine`, `workspace`, `files`, `prompt`, `terminal`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files) and [Writing workspace files](#writing-workspace-files). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate panel callbacks such as `badge`, `visible`, or `render`.
 
 For compatibility, PI WEB still provides the old `context.openTerminal()` workspace-panel helper at runtime. It is deprecated, intentionally omitted from the public TypeScript declarations, and planned for removal in v2. Existing JavaScript plugins keep working, while typed plugins should migrate to `context.terminal.open()`.
 
@@ -607,6 +635,9 @@ interface WorkspaceLabelContext {
   state?: PluginRuntimeState;
   files: {
     readFile(path: string): Promise<FileContentResponse>;
+    writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
+    deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
+    moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
   };
   host: {
     requestRender(): void;
@@ -614,7 +645,7 @@ interface WorkspaceLabelContext {
 }
 ```
 
-`machine`, `workspace`, `files`, and `host` are documented as stable for label callbacks. Include `machine.id` in any label caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
+`machine`, `workspace`, `files`, and `host` are documented as stable for label callbacks. The `files` helper supports `readFile`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files) and [Writing workspace files](#writing-workspace-files). Include `machine.id` in any label caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
 
 Items are sorted by `order` and then id. Return an empty array to render nothing. Keep callbacks synchronous and lightweight; start async work from the callback, return cached items, then call `host.requestRender()` when the cache changes.
 
@@ -753,6 +784,96 @@ workspaceLabels: [
 
 The file response includes fields such as `path`, `content`, `truncated`, and `binary`. Be careful with sensitive files such as `.env`: plugins are trusted browser code, and file contents are exposed to the plugin.
 
+## Writing, deleting, and moving workspace files
+
+Workspace panels and workspace labels can write, delete, and move files through the documented `files` helper. Like `readFile`, PI WEB binds these helpers to the callback's machine and workspace, so they work the same for local and federated machines.
+
+### Writing files
+
+```js
+workspacePanels: [
+  {
+    id: "workspace.generate",
+    title: "Generate",
+    render: ({ files }) => html`
+      <button @click=${async () => {
+        const result = await files.writeFile("output/result.txt", "Generated content\n");
+        console.log("Wrote", result.path, result.size, "bytes");
+      }}>Generate</button>
+    `,
+  },
+]
+```
+
+### Binary writes
+
+Pass a `Uint8Array` for binary content such as images:
+
+```js
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+await files.writeFile("screenshots/thumb.png", png);
+```
+
+### Options
+
+`files.writeFile` accepts an optional third argument:
+
+- `createDirs` (default `true`): create intermediate directories, like `mkdir -p`.
+- `overwrite` (default `true`): overwrite existing files. Set to `false` to throw if the file already exists.
+
+```js
+// Create only — throw if the file already exists
+await files.writeFile("config/new-config.json", jsonContent, { overwrite: false });
+```
+
+### Deleting files
+
+`files.deleteFile` removes a workspace file. It is idempotent: deleting a file that does not exist returns `{ existed: false }` instead of throwing.
+
+```js
+const result = await files.deleteFile("temp/cache.json");
+console.log(result.existed ? "File deleted" : "File did not exist");
+```
+
+### Moving files
+
+`files.moveFile` renames or moves a file within the workspace, like `mv`. The default is safe: it will not overwrite an existing target file.
+
+```js
+// Rename a file
+await files.moveFile("old-name.txt", "new-name.txt");
+
+// Move into a subdirectory (creates intermediate dirs by default)
+await files.moveFile("file.txt", "archive/file.txt");
+
+// Overwrite an existing target
+await files.moveFile("incoming.txt", "current.txt", { overwrite: true });
+
+// Move without creating intermediate directories
+await files.moveFile("file.txt", "deep/nested/file.txt", { createDirs: false }); // throws if dirs don't exist
+```
+
+`files.moveFile` accepts an optional third argument:
+
+- `createDirs` (default `true`): create intermediate directories for the target path.
+- `overwrite` (default `false`): overwrite the target file if it exists. The default is safer than `writeFile` because moving is a more destructive operation.
+
+### Error handling
+
+All file mutations share the same safety layer:
+
+- `overwrite: false` on `writeFile` or existing target on `moveFile` (default) throws if the file already exists.
+- Path traversal (e.g., `../../etc/passwd`) is blocked by the workspace safety layer.
+- Writing to or moving to a path that is a directory returns an error.
+- Deleting a directory returns an error.
+- Intermediate directory creation with `createDirs: false` fails if the parent directory does not exist.
+
+After any mutation (`writeFile`, `deleteFile`, or `moveFile`), the File Explorer updates automatically. No explicit `refreshFiles()` call is needed from plugin code. For label and badge updates, call `context.host.requestRender()` if the UI should reflect the change.
+
+### Security
+
+Plugins are trusted browser code. File writes go through the same path safety validation as reads — paths are resolved and checked to stay inside the workspace root.
+
 ## Running workspace terminal commands
 
 Workspace panels can start terminal commands through the documented `terminal` helper. Commands run in the current workspace on the panel's machine.
@@ -801,7 +922,7 @@ If you are an AI agent building or editing a PI WEB plugin, follow this checklis
 9. Add workspace panels for larger workspace UI.
 10. Add workspace labels for compact inline metadata.
 11. Return arrays from workspace label `items()`; return an empty array to render nothing.
-12. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, and `state.piWebStatus`.
+12. Use documented context helpers first: `files`, `terminal`, `host.requestRender`, `workspace`, `machine`, `state.selectedWorkspace`, `state.selectedSession`, `state.piWebStatus`, and `prompt`.
 13. Do not fetch PI WEB `/api/...` endpoints directly unless you intentionally accept private API churn; prefer documented helpers.
 14. Treat plugins as trusted code and avoid reading or displaying secrets unless intentional.
 15. After local edits, tell the user to hard reload the browser and check the console for plugin errors.

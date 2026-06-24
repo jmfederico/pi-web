@@ -315,6 +315,35 @@ export interface FileContentResponse {
   binary: boolean;
 }
 
+export interface WriteWorkspaceFileOptions {
+  createDirs?: boolean;     // default: true — mkdir -p equivalent
+  overwrite?: boolean;      // default: true — throw if false and file exists
+}
+
+export interface WriteWorkspaceFileResponse {
+  path: string;
+  size: number;
+  modifiedAt: string;
+  created: boolean;  // true if file was created, false if overwritten
+}
+
+export interface DeleteWorkspaceFileResponse {
+  path: string;
+  existed: boolean;  // true if file existed and was deleted, false if file did not exist
+}
+
+export interface MoveWorkspaceFileOptions {
+  createDirs?: boolean;   // default: true — mkdir -p equivalent for target parent directory
+  overwrite?: boolean;    // default: false — throw if target exists (safer default than writeFile)
+}
+
+export interface MoveWorkspaceFileResponse {
+  fromPath: string;
+  toPath: string;
+  size: number;
+  modifiedAt: string;
+}
+
 export type GitFileState = "unmodified" | "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked" | "ignored" | "conflicted";
 
 export interface GitStatusFile {

@@ -117,6 +117,11 @@ export class PromptEditor extends LitElement {
     this.editor?.focus();
   }
 
+  /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
+  get view(): EditorView | undefined {
+    return this.editor;
+  }
+
   private renderCompactStatus() {
     const status = this.status;
     if (status === undefined) return null;

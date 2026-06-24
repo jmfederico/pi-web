@@ -1,8 +1,6 @@
-import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { AuthProviderOption, AuthProviderStatus, AuthType } from "../../shared/apiTypes.js";
 
 const OAUTH_ONLY_PROVIDERS = new Set(["github-copilot", "openai-codex"]);
-const BUILT_IN_MODEL_PROVIDERS = new Set(getBuiltinProviders());
 
 export interface AuthProviderModelRegistry {
   authStorage: {
@@ -54,11 +52,10 @@ export function getLogoutProviderOptions(modelRegistry: AuthProviderModelRegistr
   return filterAndSort(options);
 }
 
-export function isApiKeyLoginProvider(providerId: string, oauthProviderIds: ReadonlySet<string>, builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS): boolean {
+export function isApiKeyLoginProvider(providerId: string, oauthProviderIds: ReadonlySet<string>): boolean {
   if (OAUTH_ONLY_PROVIDERS.has(providerId)) return false;
   if (providerId === "anthropic") return true;
   if (oauthProviderIds.has(providerId)) return false;
-  if (builtInProviderIds.has(providerId)) return true;
   return true;
 }
 

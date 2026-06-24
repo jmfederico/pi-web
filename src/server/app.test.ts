@@ -557,6 +557,235 @@ describe("buildApp", () => {
     expect(deniedResponse.statusCode).toBe(400);
     expect(deniedResponse.json()).toEqual({ error: "Path is outside allowed paths" });
   });
+
+  it("writes workspace files through the HTTP contract", async () => {
+    const addResponse = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "WriteTest", path: projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    const workspacesResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    const writeTextResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("hello.txt")}`,
+      payload: "hello world",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(writeTextResponse.statusCode).toBe(200);
+    expect(writeTextResponse.json()).toMatchObject({ path: "hello.txt", created: true });
+    expect(typeof writeTextResponse.json<{ size: unknown }>().size).toBe("number");
+
+    const readResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("hello.txt")}` });
+    expect(readResponse.json<{ content: unknown }>().content).toBe("hello world");
+
+    const writeBinaryResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("image.png")}`,
+      payload: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      headers: { "content-type": "application/octet-stream" },
+    });
+    expect(writeBinaryResponse.statusCode).toBe(200);
+    expect(writeBinaryResponse.json()).toMatchObject({ path: "image.png", created: true });
+
+    const writeDeepResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("deep/nested/dir/file.txt")}`,
+      payload: "deep content",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(writeDeepResponse.statusCode).toBe(200);
+
+    const readDeepResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("deep/nested/dir/file.txt")}` });
+    expect(readDeepResponse.json<{ content: unknown }>().content).toBe("deep content");
+
+    const overwriteResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("hello.txt")}`,
+      payload: "updated",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(overwriteResponse.json()).toMatchObject({ path: "hello.txt", created: false });
+
+    const noOverwriteResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("hello.txt")}&overwrite=false`,
+      payload: "should fail",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(noOverwriteResponse.statusCode).toBe(400);
+    expect(noOverwriteResponse.json<{ error: string }>().error).toContain("File already exists");
+
+    const traversalResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("../../etc/passwd")}`,
+      payload: "evil",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(traversalResponse.statusCode).toBe(400);
+    expect(traversalResponse.json<{ error: string }>().error).toContain("Path traversal");
+
+    const noPathResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file`,
+      payload: "no path",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(noPathResponse.statusCode).toBe(400);
+    expect(noPathResponse.json<{ error: string }>().error).toContain("path query parameter is required");
+
+    const noDirsResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("nonexistent/parent/file.txt")}&createDirs=false`,
+      payload: "should fail",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(noDirsResponse.statusCode).toBe(400);
+
+    await mkdir(join(projectDir, "subdir"), { recursive: true });
+    const dirWriteResponse = await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("subdir")}`,
+      payload: "should fail",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(dirWriteResponse.statusCode).toBe(400);
+  });
+
+  it("deletes workspace files through the HTTP contract", async () => {
+    const addResponse = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "DeleteTest", path: projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    const workspacesResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("to-delete.txt")}`,
+      payload: "delete me",
+      headers: { "content-type": "text/plain" },
+    });
+
+    const deleteResponse = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("to-delete.txt")}`,
+    });
+    expect(deleteResponse.statusCode).toBe(200);
+    expect(deleteResponse.json()).toMatchObject({ path: "to-delete.txt", existed: true });
+
+    const deleteMissingResponse = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("missing.txt")}`,
+    });
+    expect(deleteMissingResponse.statusCode).toBe(200);
+    expect(deleteMissingResponse.json()).toMatchObject({ path: "missing.txt", existed: false });
+
+    const traversalResponse = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("../../etc/passwd")}`,
+    });
+    expect(traversalResponse.statusCode).toBe(400);
+    expect(traversalResponse.json<{ error: string }>().error).toContain("Path traversal");
+
+    const noPathResponse = await app.inject({
+      method: "DELETE",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file`,
+    });
+    expect(noPathResponse.statusCode).toBe(400);
+    expect(noPathResponse.json<{ error: string }>().error).toContain("path query parameter is required");
+  });
+
+  it("moves workspace files through the HTTP contract", async () => {
+    const addResponse = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "MoveTest", path: projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    const workspacesResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("original.txt")}`,
+      payload: "move me",
+      headers: { "content-type": "text/plain" },
+    });
+
+    const moveResponse = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/move?fromPath=${encodeURIComponent("original.txt")}&toPath=${encodeURIComponent("moved.txt")}`,
+    });
+    expect(moveResponse.statusCode).toBe(200);
+    expect(moveResponse.json()).toMatchObject({ fromPath: "original.txt", toPath: "moved.txt" });
+    expect(typeof moveResponse.json<{ size: unknown }>().size).toBe("number");
+
+    const readSourceResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("original.txt")}` });
+    expect(readSourceResponse.statusCode).toBe(400);
+
+    const readTargetResponse = await app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("moved.txt")}` });
+    expect(readTargetResponse.statusCode).toBe(200);
+    expect(readTargetResponse.json<{ content: unknown }>().content).toBe("move me");
+
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("source2.txt")}`,
+      payload: "source",
+      headers: { "content-type": "text/plain" },
+    });
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("target2.txt")}`,
+      payload: "target",
+      headers: { "content-type": "text/plain" },
+    });
+
+    const overwriteResponse = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/move?fromPath=${encodeURIComponent("source2.txt")}&toPath=${encodeURIComponent("target2.txt")}&overwrite=true`,
+    });
+    expect(overwriteResponse.statusCode).toBe(200);
+
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("source3.txt")}`,
+      payload: "s",
+      headers: { "content-type": "text/plain" },
+    });
+    await app.inject({
+      method: "PUT",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file?path=${encodeURIComponent("target3.txt")}`,
+      payload: "t",
+      headers: { "content-type": "text/plain" },
+    });
+    const noOverwriteResponse = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/move?fromPath=${encodeURIComponent("source3.txt")}&toPath=${encodeURIComponent("target3.txt")}`,
+    });
+    expect(noOverwriteResponse.statusCode).toBe(400);
+    expect(noOverwriteResponse.json<{ error: string }>().error).toContain("File already exists");
+
+    const traversalFromResponse = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/move?fromPath=${encodeURIComponent("../../etc/passwd")}&toPath=${encodeURIComponent("safe.txt")}`,
+    });
+    expect(traversalFromResponse.statusCode).toBe(400);
+
+    const noParamsResponse = await app.inject({
+      method: "POST",
+      url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/move`,
+    });
+    expect(noParamsResponse.statusCode).toBe(400);
+    expect(noParamsResponse.json<{ error: string }>().error).toContain("fromPath query parameter is required");
+  });
 });
 
 interface CapturedSessionDaemonRequest {

@@ -1,13 +1,27 @@
-import { getApiProvider, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai/compat";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 const SESSION_NAME_TIMEOUT_MS = 10_000;
 const SESSION_NAME_MAX_INPUT_CHARS = 4_000;
 const SESSION_NAME_MAX_LENGTH = 60;
 const FALLBACK_SESSION_NAME_MAX_WORDS = 6;
+const PI_AI_COMPAT_MODULE = ["@earendil-works/pi-ai", "compat"].join("/");
+
+interface SessionNameApiProvider {
+  streamSimple(model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+}
+
+interface PiAiProviderRegistryModule {
+  getApiProvider?: (api: Api) => SessionNameApiProvider | undefined;
+}
+
+type ModuleImporter = (specifier: string) => Promise<unknown>;
+
+let piAiProviderRegistryModulePromise: Promise<PiAiProviderRegistryModule> | undefined;
 
 export async function generateShortSessionName<TApi extends Api>(modelRegistry: ModelRegistry, model: Model<TApi>, firstMessage: string): Promise<string | undefined> {
-  const provider = getApiProvider(model.api);
+  const providerRegistry = await getPiAiProviderRegistryModule();
+  const provider = providerRegistry.getApiProvider?.(model.api);
   if (provider === undefined) return undefined;
 
   const auth = await modelRegistry.getApiKeyAndHeaders(model);
@@ -65,6 +79,42 @@ export function cleanSessionName(value: string): string | undefined {
     .slice(0, SESSION_NAME_MAX_LENGTH)
     .trim();
   return title === "" ? undefined : title;
+}
+
+async function getPiAiProviderRegistryModule(importer: ModuleImporter = (specifier) => import(specifier)): Promise<PiAiProviderRegistryModule> {
+  piAiProviderRegistryModulePromise ??= loadPiAiProviderRegistryModule(importer);
+  return piAiProviderRegistryModulePromise;
+}
+
+async function loadPiAiProviderRegistryModule(importer: ModuleImporter): Promise<PiAiProviderRegistryModule> {
+  const compatModule = await importOptionalPiAiModule(PI_AI_COMPAT_MODULE, importer);
+  if (hasGetApiProvider(compatModule)) return compatModule;
+
+  const rootModule = await importer("@earendil-works/pi-ai");
+  if (hasGetApiProvider(rootModule)) return rootModule;
+  return {};
+}
+
+async function importOptionalPiAiModule(specifier: string, importer: ModuleImporter): Promise<unknown> {
+  try {
+    return await importer(specifier);
+  } catch (error) {
+    if (isModuleUnavailableError(error)) return undefined;
+    throw error;
+  }
+}
+
+function hasGetApiProvider(moduleValue: unknown): moduleValue is PiAiProviderRegistryModule {
+  return typeof moduleValue === "object"
+    && moduleValue !== null
+    && "getApiProvider" in moduleValue
+    && typeof moduleValue.getApiProvider === "function";
+}
+
+function isModuleUnavailableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = "code" in error ? error.code : undefined;
+  return code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED";
 }
 
 function textFromAssistant(message: AssistantMessage): string {

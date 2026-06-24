@@ -20,7 +20,7 @@ import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspace
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
 import { RealtimeSocket } from "../sessionSocket";
-import type { PiWebPluginRegistration, PluginMachine, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
+import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
@@ -1216,6 +1216,21 @@ export class PiWebApp extends LitElement {
   private createWorkspaceFiles(workspace: Workspace, machineId: string): WorkspaceFiles {
     return {
       readFile: (path: string) => workspacesApi.workspaceFile(workspace.projectId, workspace.id, path, machineId),
+      writeFile: async (path, content, options) => {
+        const result = await workspacesApi.writeWorkspaceFile(workspace.projectId, workspace.id, path, content, options, machineId);
+        void this.files.refreshFiles();
+        return result;
+      },
+      deleteFile: async (path) => {
+        const result = await workspacesApi.deleteWorkspaceFile(workspace.projectId, workspace.id, path, machineId);
+        void this.files.refreshFiles();
+        return result;
+      },
+      moveFile: async (fromPath, toPath, options) => {
+        const result = await workspacesApi.moveWorkspaceFile(workspace.projectId, workspace.id, fromPath, toPath, options, machineId);
+        void this.files.refreshFiles();
+        return result;
+      },
     };
   }
 
@@ -1235,6 +1250,7 @@ export class PiWebApp extends LitElement {
         workspace,
         state: this.state,
         files: this.createWorkspaceFiles(workspace, machineId),
+        prompt: this.createPromptEditor(),
         terminal: {
           open: (options) => { void this.openRuntimeTerminal(machineId, workspace, options); },
           runCommand: (input) => terminalCommandRuns.runCommand({ ...input, workspace }),
@@ -1387,9 +1403,35 @@ export class PiWebApp extends LitElement {
     }
   }
 
+  private createPromptEditor(): PluginPromptEditor {
+    return {
+      insertText: (text: string) => {
+        const editor = this.promptEditor?.view;
+        if (!editor) return;
+        if (!editor.hasFocus) editor.focus();
+        const sel = editor.state.selection.main;
+        editor.dispatch({
+          changes: { from: sel.from, to: sel.to, insert: text },
+          selection: { anchor: sel.from + text.length },
+        });
+      },
+      getText: () => {
+        return this.promptEditor?.view?.state.doc.toString() ?? "";
+      },
+      getSelection: () => {
+        const editor = this.promptEditor?.view;
+        if (!editor) return null;
+        const sel = editor.state.selection.main;
+        if (sel.empty) return null;
+        return { start: sel.from, end: sel.to, text: editor.state.sliceDoc(sel.from, sel.to) };
+      },
+    };
+  }
+
   private createPluginRuntimeContext(): PluginRuntimeContext {
     const createContext = (origin: string): PluginRuntimeContext => installPluginRuntimeScope({
       state: this.state,
+      prompt: this.createPromptEditor(),
       piWebUnstable: {
         terminalCommandRuns: this.terminalCommandRunsForOrigin(origin),
         openSettings: (section) => { this.openSettings(section); },

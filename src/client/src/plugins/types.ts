@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
-import type { FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
@@ -50,6 +50,9 @@ export interface PluginMachine {
 
 export interface WorkspaceFiles {
   readFile(path: string): Promise<FileContentResponse>;
+  writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
+  deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
+  moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
 }
 
 export interface WorkspaceHost {
@@ -83,8 +86,15 @@ export interface TerminalCommandRunsInternalRuntime {
   open(options?: { terminalId?: string | undefined }): void;
 }
 
+export interface PluginPromptEditor {
+  insertText(text: string): void;
+  getText(): string;
+  getSelection(): { start: number; end: number; text: string } | null;
+}
+
 export interface PluginRuntimeContext {
   state: AppState;
+  prompt: PluginPromptEditor;
   piWebUnstable?: PiWebUnstableRuntimeContext;
   openActionPalette: () => void;
   focusPrompt: () => void;
@@ -128,6 +138,7 @@ export interface QualifiedPluginAction extends AppAction {
 }
 
 export interface WorkspacePanelContext extends WorkspaceContext {
+  prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
   /**
    * @deprecated Runtime-only compatibility alias for pre-v2 plugins. Use `terminal.open()` instead.
