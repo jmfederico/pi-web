@@ -1,4 +1,4 @@
-import { getApiProvider, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { getApiProvider, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai/compat";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 
 const SESSION_NAME_TIMEOUT_MS = 10_000;
