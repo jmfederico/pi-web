@@ -146,17 +146,21 @@ function renderDiffViewer(context: WorkspacePanelContext): TemplateResult {
 }
 
 function renderDiffSection(diff: GitDiffResponse): TemplateResult {
-  loadCodeViewer();
+  loadUnifiedDiffViewer();
   return html`
     <section class="diff-section">
       <div class="viewer-header"><strong>${diff.path ?? "diff"}</strong><small>${diff.staged ? "staged" : "unstaged"}${diff.truncated ? " · truncated" : ""}</small></div>
-      <code-viewer .content=${diff.diff} .language=${"diff"}></code-viewer>
+      <unified-diff-viewer .diff=${diff.diff}></unified-diff-viewer>
     </section>
   `;
 }
 
 function loadCodeViewer(): void {
   void import("../../components/CodeViewer");
+}
+
+function loadUnifiedDiffViewer(): void {
+  void import("../../components/UnifiedDiffViewer");
 }
 
 function loadTerminalPanel(): void {
