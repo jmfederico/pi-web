@@ -2,10 +2,10 @@ import type { FastifyInstance } from "fastify";
 import type { SessionBulkMutationRequest, SessionBulkMutationRef, SessionCleanupRequest } from "../../shared/apiTypes.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
-import type { PiSessionRef, PiSessionService } from "./piSessionService.js";
+import type { SessionRouteLookup, SessionRouteService } from "./sessionService.js";
 import { normalizeSessionCleanupRequest } from "./sessionCleanup.js";
 
-type SessionLookup = string | PiSessionRef;
+type SessionLookup = SessionRouteLookup;
 
 interface SessionQuery {
   cwd?: string;
@@ -29,7 +29,7 @@ interface AttachmentsRequestBody {
   folder?: unknown;
 }
 
-export function registerSessionRoutes(app: FastifyInstance, sessions: PiSessionService, eventHub: SessionEventHub, prefix = ""): void {
+export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRouteService, eventHub: SessionEventHub, prefix = ""): void {
   app.get<{ Querystring: SessionQuery }>(`${prefix}/sessions`, async (request, reply) => {
     if (request.query.cwd === undefined || request.query.cwd === "") return reply.code(400).send({ error: "cwd query parameter is required" });
     try {
@@ -220,9 +220,9 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: PiSessionS
     }
   });
 
-  app.post<{ Params: { sessionId: string }; Body: { cwd?: unknown } | undefined }>(`${prefix}/sessions/:sessionId/stop`, (request, reply) => {
+  app.post<{ Params: { sessionId: string }; Body: { cwd?: unknown } | undefined }>(`${prefix}/sessions/:sessionId/stop`, async (request, reply) => {
     try {
-      sessions.stop(sessionLookupFromBody(request.params.sessionId, optionalRecord(request.body)));
+      await sessions.stop(sessionLookupFromBody(request.params.sessionId, optionalRecord(request.body)));
       return { stopped: true };
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
