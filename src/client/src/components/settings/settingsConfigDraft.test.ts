@@ -43,6 +43,7 @@ describe("settings config drafts", () => {
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
+      agent: { command: "custom-agent", dir: "/tmp/custom-agent" },
     })).toEqual({
       host: "gateway.local",
       port: 9000,
@@ -54,6 +55,7 @@ describe("settings config drafts", () => {
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
+      agent: { command: "custom-agent", dir: "/tmp/custom-agent" },
     });
 
     expect(gatewayServerConfigFromDraft({

@@ -1,6 +1,6 @@
 # PI WEB configuration reference
 
-PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, plugin enablement, file-explorer path access, manual upload defaults, upload limits, and session-daemon tools.
+PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, plugin enablement, file-explorer path access, manual upload defaults, upload limits, agent runtime selection, and session-daemon tools.
 
 This file is the markdown reference for agents and package consumers. The website page is <https://pi-web.dev/config>.
 
@@ -27,13 +27,13 @@ defaults → global config file → environment overrides
 
 Supported project-local settings are then applied for that project's workspaces. For upload defaults, `<project>/.pi-web/config.json` overrides the global value.
 
-Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_SPAWN_SESSIONS`, and `PI_WEB_SUBSESSIONS`.
+Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_AGENT_COMMAND`, `PI_WEB_AGENT_DIR`, `PI_WEB_AGENT_SESSION_DIR`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `OMP_CODING_AGENT_DIR`, `OMP_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, and `PI_WEB_SUBSESSIONS`.
 
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions`: restart the session daemon on that machine.
+- `agent.command` / `agent.dir` / `spawnSessions` / `subsessions`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `plugins`: reload the browser tab after changing PI WEB plugin enablement.
@@ -53,6 +53,10 @@ Process restarts depend on the key:
     "defaultFolder": ".pi-web/uploads"
   },
   "maxUploadBytes": 67108864,
+  "agent": {
+    "command": "omp",
+    "dir": "~/.omp/agent"
+  },
   "spawnSessions": true,
   "subsessions": false,
   "plugins": {
@@ -91,7 +95,7 @@ Plugins may own separate project files, such as `.pi-web/tasks.json` for the bui
 
 ## Configuration matrix
 
-Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `spawnSessions`, `subsessions`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine registry/tokens stay local.
+Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `agent`, `spawnSessions`, `subsessions`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine registry/tokens stay local.
 
 | Config | JSON key | Env var | Scope | Project-local behavior | Applies / restart |
 | --- | --- | --- | --- | --- | --- |
@@ -102,6 +106,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | External filesystem roots | `pathAccess.allowedPaths` | — | Global + project | **Merges**: global roots first, then project roots; duplicates removed | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | — | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
+| Agent CLI command | `agent.command` | `PI_WEB_AGENT_COMMAND` | Global/session daemon | Not supported locally | Restart session daemon on that machine; affects doctor/status/update checks |
+| Agent state directory | `agent.dir` | `PI_WEB_AGENT_DIR`, `PI_CODING_AGENT_DIR`, `OMP_CODING_AGENT_DIR` | Global/session daemon | Not supported locally | Restart session daemon on that machine; affects auth, models, settings, and sessions |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions (beta) | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Plugin enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global | Not core local config; plugins may read their own project files | Reload browser tab |
@@ -116,8 +122,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Web-to-daemon URL | — | `PI_WEB_SESSIOND_URL` | Web/API env | Not supported locally | Restart web/API |
 | Projects storage file | — | `PI_WEB_PROJECTS_FILE` | Web/API + session daemon env | Not supported locally | Restart services; advanced state override |
 | Remote machines storage file | — | `PI_WEB_MACHINES_FILE` | Web/API env | Not supported locally | Restart web/API; advanced state override |
-| Pi session storage directory | — | `PI_CODING_AGENT_SESSION_DIR` | Pi/session daemon env | Not supported locally | Restart session daemon; follows Pi session priority |
-| Pi agent config directory | — | `PI_CODING_AGENT_DIR` | Pi/Web/API/session daemon env | Not supported locally | Restart services |
+| Agent session storage directory | — | `PI_WEB_AGENT_SESSION_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `OMP_CODING_AGENT_SESSION_DIR` | Session daemon env | Not supported locally | Restart session daemon; env-only session storage override |
+| Agent config directory | — | `PI_WEB_AGENT_DIR`, `PI_CODING_AGENT_DIR`, `OMP_CODING_AGENT_DIR` | Web/API + session daemon env | Not supported locally | Restart services |
 | Skip update checks | — | `PI_WEB_SKIP_VERSION_CHECK`, `PI_WEB_OFFLINE`, `PI_SKIP_VERSION_CHECK`, `PI_OFFLINE` | Web/API env | Not supported locally | Restart web/API after env changes |
 
 ## Key details
@@ -164,6 +170,27 @@ Manual uploads use the workspace file-write path: paths stay workspace-relative,
 For machine federation, Settings saves the global upload default on the selected machine. Current remote PI WEB servers also return `workspace.effectiveConfig.uploads.defaultFolder` on the existing workspace-list response. Older remote servers can omit that optional field without breaking clients; the Files panel falls back to the global/default upload folder.
 
 The per-request size limit is still controlled by `maxUploadBytes` / `PI_WEB_MAX_UPLOAD_BYTES` on the machine serving the upload.
+
+### Agent runtime selection
+
+`agent.command` controls which Pi-compatible CLI PI WEB checks in doctor/status/update flows. It defaults to `pi`; set it to `omp` when this machine should use Oh My Pi.
+
+`agent.dir` controls which compatible agent state directory PI WEB reads for auth providers, model settings, settings, and session metadata. It defaults to the selected agent's conventional directory (`~/.pi/agent` for `pi`, `~/.omp/agent` for `omp`).
+
+```json
+{
+  "agent": {
+    "command": "omp",
+    "dir": "~/.omp/agent"
+  }
+}
+```
+
+Environment variables take precedence over the config file. `PI_WEB_AGENT_COMMAND` selects the command, `PI_WEB_AGENT_DIR` sets the state directory for any command, and command-specific variables such as `OMP_CODING_AGENT_DIR` are honored when the selected command is `omp`.
+
+Session directory overrides are environment-only. Set `PI_WEB_AGENT_SESSION_DIR` or the selected command's session variable (for example `OMP_CODING_AGENT_SESSION_DIR`) when you need to override session storage separately from `agent.dir`.
+
+Restart the session daemon after changing agent settings. The web/API process can display the new config immediately, but active session runtime ownership is intentionally long-lived.
 
 ### Session daemon tools
 

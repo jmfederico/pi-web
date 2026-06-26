@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { effectivePiWebConfig, loadPiWebConfig, parseUploadsConfig, savePiWebConfig, type LoadOptions, type PiWebConfig } from "../config.js";
+import { effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, parseUploadsConfig, savePiWebConfig, type LoadOptions, type PiWebConfig } from "../config.js";
 import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
 
@@ -15,6 +15,7 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "maxUploadBytes",
   "spawnSessions",
   "subsessions",
+  "agent",
 ] as const satisfies readonly (keyof PiWebConfigValues)[];
 
 const SELECTED_MACHINE_CONFIG_KEY_SET = new Set<string>(SELECTED_MACHINE_CONFIG_KEYS);
@@ -38,7 +39,7 @@ export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConf
     exists: loaded.exists,
     config: loaded.config,
     effectiveConfig: effective.config,
-    envOverrides: piWebConfigEnvOverrides(env),
+    envOverrides: piWebConfigEnvOverrides(env, loaded.config),
   };
 }
 
@@ -130,6 +131,7 @@ function parseConfigRequest(value: unknown): PiWebConfig {
   const maxUploadBytes = value["maxUploadBytes"];
   const spawnSessions = value["spawnSessions"];
   const subsessions = value["subsessions"];
+  const agent = value["agent"];
   if (host !== undefined) {
     if (typeof host !== "string") throw new Error("PI WEB config host must be a string");
     config.host = host;
@@ -152,6 +154,7 @@ function parseConfigRequest(value: unknown): PiWebConfig {
     if (typeof subsessions !== "boolean") throw new Error("PI WEB config subsessions must be a boolean");
     config.subsessions = subsessions;
   }
+  if (agent !== undefined) config.agent = parseAgentRequest(agent);
   return config;
 }
 
@@ -163,6 +166,7 @@ function pickSelectedMachineConfig(config: PiWebConfigValues): PiWebConfig {
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+    ...(config.agent !== undefined ? { agent: config.agent } : {}),
   };
 }
 
@@ -212,6 +216,30 @@ function parseMaxUploadBytesRequest(value: unknown): number {
   return value;
 }
 
+function parseAgentRequest(value: unknown): NonNullable<PiWebConfig["agent"]> {
+  if (!isRecord(value)) throw new Error("PI WEB config agent must be an object");
+  const command = value["command"];
+  const dir = value["dir"];
+  return {
+    ...(command === undefined ? {} : { command: parseAgentCommandRequest(command) }),
+    ...(dir === undefined ? {} : { dir: parseAgentDirRequest(dir) }),
+  };
+}
+
+function parseAgentCommandRequest(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error("PI WEB config agent.command must be a non-empty string");
+  const command = value.trim();
+  if (/[\s;&|`$<>]/u.test(command)) throw new Error("PI WEB config agent.command must be a single command name or path without shell metacharacters");
+  return command;
+}
+
+function parseAgentDirRequest(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error("PI WEB config agent.dir must be a non-empty string");
+  const dir = value.trim();
+  if (!isAbsoluteOrHomePath(dir)) throw new Error("PI WEB config agent.dir must be an absolute path or start with ~");
+  return dir;
+}
+
 function parsePluginsRequest(value: unknown): NonNullable<PiWebConfig["plugins"]> {
   if (!isRecord(value) || Array.isArray(value)) throw new Error("PI WEB config plugins must be an object");
   return Object.fromEntries(Object.entries(value).map(([pluginId, config]) => {
@@ -233,6 +261,9 @@ function parsePiWebConfigEnvOverridesResponse(value: unknown, source: string): P
     allowedHosts: requireResponseBoolean(record, "allowedHosts", source),
     spawnSessions: requireResponseBoolean(record, "spawnSessions", source),
     subsessions: requireResponseBoolean(record, "subsessions", source),
+    agentCommand: requireResponseBoolean(record, "agentCommand", source),
+    agentDir: requireResponseBoolean(record, "agentDir", source),
+    agentSessionDir: requireResponseBoolean(record, "agentSessionDir", source),
   };
 }
 
@@ -253,13 +284,17 @@ function requireResponseBoolean(record: Record<string, unknown>, key: string, so
   return value;
 }
 
-function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): PiWebConfigEnvOverrides {
+function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv, config: PiWebConfig = {}): PiWebConfigEnvOverrides {
+  const agent = effectiveAgentConfig(env, config);
   return {
     host: isEnvSet(env["PI_WEB_HOST"]),
     port: isEnvSet(env["PI_WEB_PORT"]) || isEnvSet(env["PORT"]),
     allowedHosts: isEnvSet(env["PI_WEB_ALLOWED_HOSTS"]),
     spawnSessions: isEnvSet(env["PI_WEB_SPAWN_SESSIONS"]),
     subsessions: isEnvSet(env["PI_WEB_SUBSESSIONS"]),
+    agentCommand: isEnvSet(env["PI_WEB_AGENT_COMMAND"]),
+    agentDir: hasAgentDirEnvOverride(env, agent.command),
+    agentSessionDir: hasAgentSessionDirEnvOverride(env, agent.command),
   };
 }
 
@@ -273,6 +308,10 @@ function isConfigValidationError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAbsoluteOrHomePath(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("~\\") || value.startsWith("/") || value.startsWith("\\") || /^[A-Za-z]:[\\/]/u.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

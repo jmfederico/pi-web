@@ -2,9 +2,9 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
-import type { PiWebComponentStatus } from "../shared/apiTypes.js";
+import type { PiWebComponentStatus, PiWebRuntimeComponent } from "../shared/apiTypes.js";
 import { PI_WEB_CAPABILITIES } from "../shared/capabilities.js";
 
 const originalSkipVersionCheck = process.env["PI_WEB_SKIP_VERSION_CHECK"];
@@ -69,6 +69,26 @@ describe("PI WEB status", () => {
     expect(runtime.capabilities).toEqual(expect.arrayContaining([PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings]));
   });
 
+  it("detects session daemon package installs from the configured agent dir for runtime responses", async () => {
+    const agentDir = await tempHome();
+    try {
+      await installConfiguredPiWebPackage(agentDir);
+      const daemon = daemonWithRuntime({
+        component: "sessiond",
+        label: "Session daemon",
+        runtimeVersion: "1.202605.7",
+        available: true,
+        capabilities: [],
+      });
+
+      const status = await getPiWebVersionStatus(daemon, { agentCommand: "custom-agent", agentDir });
+
+      expect(status.components.sessiond.installation).toMatchObject({ kind: "pi-package", source: process.cwd(), scope: "user" });
+    } finally {
+      await rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports stale session daemon versions as messages", async () => {
     process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
     disableDockerRuntimeEnv();
@@ -88,6 +108,19 @@ describe("PI WEB status", () => {
     expect(status.components.sessiond.stale).toBe(true);
     expect(status.components.sessiond.installation).toMatchObject({ kind: "pi-package", source: "npm:@jmfederico/pi-web", scope: "user" });
     expect(status.messages.map((message) => message.id)).toContain("sessiond-stale");
+  });
+
+  it("shell-quotes pi-package agent update commands", async () => {
+    const updateCommand = await updateCommandFor(
+      { kind: "pi-package", source: "npm:@jmfederico/pi-web", scope: "user", path: "/tmp/pi-web" },
+      "pi-web restart",
+      {
+        agentCommand: "/tmp/agent's/custom-agent",
+        hasCommand: (command) => Promise.resolve(command === "/tmp/agent's/custom-agent"),
+      },
+    );
+
+    expect(updateCommand).toBe("'/tmp/agent'\\''s/custom-agent' update 'npm:@jmfederico/pi-web' && pi-web restart");
   });
 
   it.skipIf(process.platform !== "linux")("suggests native systemd commands for local development services", async () => {
@@ -202,6 +235,16 @@ function daemonWithComponent(component: PiWebComponentStatus): SessionDaemonClie
   return daemon;
 }
 
+function daemonWithRuntime(component: PiWebRuntimeComponent): SessionDaemonClient {
+  const daemon = new SessionDaemonClient();
+  vi.spyOn(daemon, "request").mockResolvedValue({
+    statusCode: 200,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(component),
+  });
+  return daemon;
+}
+
 function staleLocalSessiond(): PiWebComponentStatus {
   return {
     component: "sessiond",
@@ -228,6 +271,10 @@ async function installExecutable(dir: string, name: string): Promise<void> {
   const path = join(dir, name);
   await writeFile(path, "#!/usr/bin/env sh\nexit 0\n");
   await chmod(path, 0o755);
+}
+
+async function installConfiguredPiWebPackage(agentDir: string): Promise<void> {
+  await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [process.cwd()] }, null, 2)}\n`, "utf8");
 }
 
 function disableDockerRuntimeEnv(): void {

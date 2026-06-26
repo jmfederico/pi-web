@@ -41,6 +41,7 @@ describe("config routes", () => {
       allowedHosts: true,
       spawnSessions: true,
       subsessions: true,
+      agent: { command: "custom-agent", dir: "/tmp/custom-agent" },
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
       plugins: { info: { enabled: false, settings: { note: "hidden" } } },
       pathAccess: { allowedPaths: ["/tmp"] },
@@ -217,6 +218,6 @@ function responseFor(config: PiWebConfigValues, exists: boolean): PiWebConfigRes
     exists,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false },
   };
 }

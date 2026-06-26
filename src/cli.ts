@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
+import { defaultPiWebConfigPath, defaultPiWebDataDir, effectiveAgentConfig, effectivePiWebConfig, examplePiWebConfig } from "./config.js";
 import { packageVersion, printPiWebVersionReport } from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
 
@@ -178,7 +178,7 @@ function runQuiet(command: string, args: string[]): number {
 }
 
 function hasCommand(command: string): boolean {
-  return capture("/usr/bin/env", ["sh", "-c", `command -v ${command}`]).status === 0;
+  return capture("/usr/bin/env", ["sh", "-c", `command -v ${shellQuote(command)}`]).status === 0;
 }
 
 function isLingerEnabled(): boolean | undefined {
@@ -898,16 +898,21 @@ function systemdUserServiceShellCommand(command: string, cwd?: string): string[]
   ];
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function commandCheck(command: string): string {
-  return `command -v ${command}`;
+  return `command -v ${shellQuote(command)}`;
 }
 
 export function commandWithVersionCheck(command: string): string {
   const found = commandCheck(command);
+  const commandWord = shellQuote(command);
   if (detectServiceShell().name === "fish") {
-    return `${found} && begin; ${command} --version 2>&1 || true; end`;
+    return `${found} && begin; ${commandWord} --version 2>&1 || true; end`;
   }
-  return `${found} && (${command} --version 2>&1 || true)`;
+  return `${found} && (${commandWord} --version 2>&1 || true)`;
 }
 
 function nodeVersionCheck(): string {
@@ -917,14 +922,19 @@ function nodeVersionCheck(): string {
   ].join(" && ");
 }
 
+export function agentCommandForChecks(env: NodeJS.ProcessEnv = process.env): string {
+  return effectiveAgentConfig(env, effectivePiWebConfig({ env }).config).command;
+}
+
 function doctorChecks(): Check[] {
   const shell = serviceShellLabel();
   const backend = currentServiceBackend();
+  const agentCommand = agentCommandForChecks();
   if (backend === undefined) {
     return [
       [`${shell} can find node >= 22`, serviceShellCommand(nodeVersionCheck())],
       [`${shell} can find npm`, serviceShellCommand(commandWithVersionCheck("npm"))],
-      [`${shell} can find pi`, serviceShellCommand(commandWithVersionCheck("pi"))],
+      [`${shell} can find ${agentCommand}`, serviceShellCommand(commandWithVersionCheck(agentCommand))],
     ];
   }
 
@@ -932,12 +942,12 @@ function doctorChecks(): Check[] {
     ...backendAvailabilityChecks(backend),
     ...baseShellChecks(backend),
     [`${shell} can find npm`, serviceShellCommand(commandWithVersionCheck("npm"))],
-    [`${shell} can find pi`, serviceShellCommand(commandWithVersionCheck("pi"))],
+    [`${shell} can find ${agentCommand}`, serviceShellCommand(commandWithVersionCheck(agentCommand))],
   ];
   const executables = resolveServiceExecutables(backend);
   checks.push(...executables.web.checks, ...executables.sessiond.checks);
   if (backend.kind === "systemd") {
-    checks.push([`systemd user ${shell} can find pi`, systemdUserServiceShellCommand(commandWithVersionCheck("pi"))]);
+    checks.push([`systemd user ${shell} can find ${agentCommand}`, systemdUserServiceShellCommand(commandWithVersionCheck(agentCommand))]);
   }
   return checks;
 }

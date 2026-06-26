@@ -81,7 +81,7 @@
           <p>
             PI WEB configuration covers the machine-local and project-local settings you usually need: bind address,
             trusted development-host settings, UI preferences, PI WEB plugin enablement, file-explorer path access,
-            manual upload defaults, upload limits, and session-daemon tools.
+            manual upload defaults, upload limits, agent runtime selection, and session-daemon tools.
           </p>
         </div>
       </section>
@@ -97,6 +97,7 @@
             <a href="#keys">Config matrix</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
+            <a href="#agent-runtime">Agent runtime</a>
             <a href="#session-tools">Session tools</a>
             <a href="#completion-tools">Completion tools</a>
           </aside>
@@ -145,13 +146,16 @@
               </p>
               <p>
                 Environment overrides include <code>PI_WEB_HOST</code>, <code>PI_WEB_PORT</code> / <code>PORT</code>,
-                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_SPAWN_SESSIONS</code>,
-                and <code>PI_WEB_SUBSESSIONS</code>.
+                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_AGENT_COMMAND</code>,
+                <code>PI_WEB_AGENT_DIR</code>, <code>PI_WEB_AGENT_SESSION_DIR</code>, <code>PI_CODING_AGENT_DIR</code>,
+                <code>PI_CODING_AGENT_SESSION_DIR</code>, <code>OMP_CODING_AGENT_DIR</code>,
+                <code>OMP_CODING_AGENT_SESSION_DIR</code>, <code>PI_WEB_SPAWN_SESSIONS</code>, and
+                <code>PI_WEB_SUBSESSIONS</code>.
               </p>
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
-                <li><code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
+                <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
@@ -184,6 +188,10 @@
     "defaultFolder": ".pi-web/uploads"
   },
   "maxUploadBytes": 67108864,
+  "agent": {
+    "command": "omp",
+    "dir": "~/.omp/agent"
+  },
   "spawnSessions": true,
   "subsessions": false,
   "plugins": {
@@ -243,8 +251,8 @@
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
-                <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, and <code>plugins</code>)
-                are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
+                <code>maxUploadBytes</code>, <code>agent</code>, <code>spawnSessions</code>, <code>subsessions</code>,
+                and <code>plugins</code>) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
                 registry/tokens stay local.
               </p>
               <div class="table-scroll" role="region" aria-label="PI WEB configuration matrix" tabindex="0">
@@ -308,6 +316,22 @@
                       <td>Global</td>
                       <td>Not supported locally</td>
                       <td>Restart web/API and session daemon on that machine</td>
+                    </tr>
+                    <tr>
+                      <td>Agent CLI command</td>
+                      <td><code>agent.command</code></td>
+                      <td><code>PI_WEB_AGENT_COMMAND</code></td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine; affects doctor/status/update checks</td>
+                    </tr>
+                    <tr>
+                      <td>Agent state directory</td>
+                      <td><code>agent.dir</code></td>
+                      <td><code>PI_WEB_AGENT_DIR</code>, <code>PI_CODING_AGENT_DIR</code>, <code>OMP_CODING_AGENT_DIR</code></td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine; affects auth, models, settings, and sessions</td>
                     </tr>
                     <tr>
                       <td>Agent can spawn sessions</td>
@@ -415,18 +439,18 @@
                       <td>Restart web/API; advanced state override</td>
                     </tr>
                     <tr>
-                      <td>Pi session storage directory</td>
+                      <td>Agent session storage directory</td>
                       <td>—</td>
-                      <td><code>PI_CODING_AGENT_SESSION_DIR</code></td>
-                      <td>Pi/session daemon env</td>
+                      <td><code>PI_WEB_AGENT_SESSION_DIR</code>, <code>PI_CODING_AGENT_SESSION_DIR</code>, <code>OMP_CODING_AGENT_SESSION_DIR</code></td>
+                      <td>Session daemon env</td>
                       <td>Not supported locally</td>
-                      <td>Restart session daemon; follows Pi session priority</td>
+                      <td>Restart session daemon; env-only session storage override</td>
                     </tr>
                     <tr>
-                      <td>Pi agent config directory</td>
+                      <td>Agent config directory</td>
                       <td>—</td>
-                      <td><code>PI_CODING_AGENT_DIR</code></td>
-                      <td>Pi/Web/API/session daemon env</td>
+                      <td><code>PI_WEB_AGENT_DIR</code>, <code>PI_CODING_AGENT_DIR</code>, <code>OMP_CODING_AGENT_DIR</code></td>
+                      <td>Web/API + session daemon env</td>
                       <td>Not supported locally</td>
                       <td>Restart services</td>
                     </tr>
@@ -494,6 +518,40 @@
                 PI WEB servers also return workspace-effective upload defaults on workspace responses; older remote
                 servers may omit them and the browser falls back to the global/default upload folder.
               </p>
+            </section>
+
+            <section id="agent-runtime">
+              <h2>Agent runtime</h2>
+              <p>
+                <code>agent.command</code> controls which Pi-compatible CLI PI WEB checks in doctor/status/update flows.
+                It defaults to <code>pi</code>; set it to another compatible command when this machine should use a Pi-compatible fork.
+              </p>
+              <p>
+                <code>agent.dir</code> controls which compatible agent state directory PI WEB reads for auth providers,
+                model settings, settings, and session metadata. It defaults to the selected agent's conventional
+                directory (<code>~/.pi/agent</code> for <code>pi</code>; set an explicit path for compatible forks).
+              </p>
+              <div class="code-card">
+                <pre><code>{
+  "agent": {
+    "command": "pi",
+    "dir": "~/.pi/agent"
+  }
+}</code></pre>
+              </div>
+              <p>
+                Environment variables take precedence over the config file. <code>PI_WEB_AGENT_COMMAND</code> selects the
+                command, <code>PI_WEB_AGENT_DIR</code> sets the state directory for any command, and command-specific
+                variables are honored for compatible runtimes.
+              </p>
+              <p>
+                Session directory overrides are environment-only. Set <code>PI_WEB_AGENT_SESSION_DIR</code> or the selected
+                command's session variable when you need to override session storage separately from <code>agent.dir</code>.
+              </p>
+              <div class="callout warning">
+                Restart the session daemon after changing agent settings. The web/API process can display the new config
+                immediately, but active session runtime ownership is intentionally long-lived.
+              </div>
             </section>
 
             <section id="session-tools">

@@ -19,15 +19,18 @@ export interface SessionDirResolution {
 export interface SessionDirResolverOptions {
   agentDir?: string;
   env?: NodeJS.ProcessEnv;
+  sessionDirEnvKeys?: readonly string[];
 }
 
 export class SessionDirResolver {
   private readonly agentDir: string;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly sessionDirEnvKeys: readonly string[];
 
   constructor(options: SessionDirResolverOptions = {}) {
     this.agentDir = options.agentDir ?? getAgentDir();
     this.env = options.env ?? process.env;
+    this.sessionDirEnvKeys = options.sessionDirEnvKeys ?? [PI_SESSION_DIR_ENV];
   }
 
   defaultSessionsRoot(): string {
@@ -35,15 +38,15 @@ export class SessionDirResolver {
   }
 
   globalEnvSessionDir(): string | undefined {
-    const envSessionDir = this.env[PI_SESSION_DIR_ENV];
-    if (envSessionDir === undefined || envSessionDir === "") return undefined;
+    const envSessionDir = this.envSessionDir();
+    if (envSessionDir === undefined) return undefined;
     const expanded = expandTildePath(envSessionDir);
     return isAbsolute(expanded) ? expanded : undefined;
   }
 
   resolve(cwd: string): SessionDirResolution {
-    const envSessionDir = this.env[PI_SESSION_DIR_ENV];
-    if (envSessionDir !== undefined && envSessionDir !== "") {
+    const envSessionDir = this.envSessionDir();
+    if (envSessionDir !== undefined) {
       return { source: "env", sessionDir: resolveConfiguredPath(envSessionDir, cwd), usesConfiguredSessionDir: true };
     }
 
@@ -53,6 +56,10 @@ export class SessionDirResolver {
     }
 
     return { source: "pi-default", sessionDir: defaultPiSessionDir(cwd, this.agentDir), usesConfiguredSessionDir: false };
+  }
+
+  private envSessionDir(): string | undefined {
+    return this.sessionDirEnvKeys.map((key) => this.env[key]).find((value) => value !== undefined && value !== "");
   }
 }
 

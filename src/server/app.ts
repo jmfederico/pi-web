@@ -24,6 +24,7 @@ import { createDefaultPiPackageService, type PiPackageService } from "./piPackag
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
 import { createPiWebStatusCache } from "./piWebStatusCache.js";
 import { getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { effectiveAgentConfig, effectivePiWebConfig } from "../config.js";
 import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
@@ -124,11 +125,12 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const workspaces = deps.workspaces ?? new WorkspaceService();
-  const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService();
-  const piPackages = deps.piPackages ?? createDefaultPiPackageService();
+  const agent = effectiveAgentConfig(process.env, effectivePiWebConfig().config);
+  const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService({ agentDir: agent.dir });
+  const piPackages = deps.piPackages ?? createDefaultPiPackageService(process.cwd(), agent.dir);
   const configService = deps.config ?? createFilePiWebConfigService();
   const sessionDaemon = deps.sessionDaemon ?? new SessionDaemonClient();
-  const piWebStatusCache = createPiWebStatusCache(() => getPiWebStatus(sessionDaemon), {
+  const piWebStatusCache = createPiWebStatusCache(() => getPiWebStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir }), {
     onError: (error) => { app.log.warn({ err: error }, "failed to refresh PI WEB status cache"); },
   });
   const machines = deps.machines ?? new MachineService(undefined, {
@@ -146,7 +148,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   });
 
   app.get("/api/pi-web/status", async () => piWebStatusCache.get());
-  app.get("/api/pi-web/version", async () => getPiWebVersionStatus(sessionDaemon));
+  app.get("/api/pi-web/version", async () => getPiWebVersionStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir }));
   app.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
   app.get("/api/plugins", async () => piWebPlugins.plugins());
   app.get("/api/machines/local/plugins", async () => piWebPlugins.plugins());
