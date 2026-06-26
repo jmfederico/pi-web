@@ -30,6 +30,7 @@ export function configFromDraft(draft: ConfigDraft, baseConfig: PiWebConfigValue
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
+    ...(baseConfig.agent === undefined ? {} : { agent: baseConfig.agent }),
   };
   const host = draft.host.trim();
   const port = draft.port.trim();

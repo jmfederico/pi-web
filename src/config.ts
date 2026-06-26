@@ -35,6 +35,42 @@ export const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 export const DEFAULT_UPLOADS_FOLDER = ".pi-web/uploads";
 
+export const DEFAULT_AGENT_COMMAND = "pi";
+export const PI_WEB_AGENT_COMMAND_ENV = "PI_WEB_AGENT_COMMAND";
+export const PI_WEB_AGENT_DIR_ENV = "PI_WEB_AGENT_DIR";
+export const PI_WEB_AGENT_SESSION_DIR_ENV = "PI_WEB_AGENT_SESSION_DIR";
+export const PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+export const PI_CODING_AGENT_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+
+export interface EffectivePiWebAgentConfig {
+  command: string;
+  dir: string;
+  sessionDirEnvKeys: string[];
+}
+
+export function effectiveAgentConfig(env: NodeJS.ProcessEnv = process.env, config: Pick<PiWebConfig, "agent"> = {}, cwd = process.cwd()): EffectivePiWebAgentConfig {
+  const command = parseAgentCommand(env[PI_WEB_AGENT_COMMAND_ENV] ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment");
+  const commandDirEnv = commandAgentDirEnv(command);
+  const configuredDir = env[PI_WEB_AGENT_DIR_ENV] ?? env[commandDirEnv] ?? config.agent?.dir ?? defaultAgentDirForCommand(command, env);
+  return {
+    command,
+    dir: resolveAgentDirPath(configuredDir, env, cwd, "agent.dir", "environment"),
+    sessionDirEnvKeys: agentSessionDirEnvKeys(command),
+  };
+}
+
+export function agentSessionDirEnvKeys(command = DEFAULT_AGENT_COMMAND): string[] {
+  return uniqueStrings([PI_WEB_AGENT_SESSION_DIR_ENV, commandSessionDirEnv(command), PI_CODING_AGENT_SESSION_DIR_ENV]);
+}
+
+export function hasAgentDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
+  return isEnvSet(env[PI_WEB_AGENT_DIR_ENV]) || isEnvSet(env[commandAgentDirEnv(command)]);
+}
+
+export function hasAgentSessionDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
+  return agentSessionDirEnvKeys(command).some((key) => isEnvSet(env[key]));
+}
+
 export function effectiveUploadsConfig(config: Pick<PiWebConfig, "uploads"> = {}): NonNullable<PiWebConfig["uploads"]> {
   return { defaultFolder: config.uploads?.defaultFolder ?? DEFAULT_UPLOADS_FOLDER };
 }
@@ -79,7 +115,7 @@ export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConf
   const port = env["PI_WEB_PORT"] ?? env["PORT"];
   const allowedHosts = env["PI_WEB_ALLOWED_HOSTS"];
   const maxUpload = env["PI_WEB_MAX_UPLOAD_BYTES"];
-
+  const agent = effectiveAgentConfig(env, loaded.config, options.cwd ?? process.cwd());
   return {
     ...loaded,
     config: {
@@ -94,6 +130,7 @@ export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConf
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
       // Beta capability, resolved off by default.
       subsessions: subsessionsEnabled(env, loaded.config),
+      agent: { command: agent.command, dir: agent.dir },
     },
   };
 }
@@ -113,6 +150,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["maxUploadBytes"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
+  delete existing["agent"];
   const merged = { ...existing, ...piWebConfigRecord(normalized) };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
@@ -138,6 +176,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+    ...(config.agent !== undefined ? { agent: config.agent } : {}),
   };
 }
 
@@ -153,6 +192,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
+    ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
 }
 
@@ -201,6 +241,35 @@ export function subsessionsEnabled(env: NodeJS.ProcessEnv = process.env, config:
 function parseString(value: unknown, key: string, path: string): string {
   if (typeof value !== "string" || value === "") throw new Error(`PI WEB config ${key} must be a non-empty string: ${path}`);
   return value;
+}
+
+function parseAgentConfig(value: unknown, path: string): NonNullable<PiWebConfig["agent"]> {
+  if (!isRecord(value)) throw new Error(`PI WEB config agent must be an object: ${path}`);
+  const command = value["command"];
+  const dir = value["dir"];
+  return {
+    ...(command !== undefined ? { command: parseAgentCommand(command, "agent.command", path) } : {}),
+    ...(dir !== undefined ? { dir: parseAgentDir(dir, "agent.dir", path) } : {}),
+  };
+}
+
+function parseAgentCommand(value: unknown, key: string, path: string): string {
+  const command = parseString(value, key, path).trim();
+  if (command === "") throw new Error(`PI WEB config ${key} must be a non-empty string: ${path}`);
+  if (/[\s;&|`$<>]/u.test(command)) throw new Error(`PI WEB config ${key} must be a single command name or path without shell metacharacters: ${path}`);
+  return command;
+}
+
+function parseAgentDir(value: unknown, key: string, path: string): string {
+  const dir = parseString(value, key, path);
+  if (!isAbsoluteOrHomePath(dir)) throw new Error(`PI WEB config ${key} must be an absolute path or start with ~: ${path}`);
+  return dir;
+}
+
+function resolveAgentDirPath(value: string, env: NodeJS.ProcessEnv, cwd: string, key: string, path: string): string {
+  const parsed = parseAgentDir(value, key, path);
+  const expanded = expandHomePath(parsed, env);
+  return isAbsoluteLike(expanded) ? expanded : resolve(cwd, expanded);
 }
 
 function parsePort(value: unknown, key: string, path = "environment"): number {
@@ -252,6 +321,49 @@ function parseWorkspaceRelativeFolder(value: unknown, key: string, path: string)
   return parts.join("/");
 }
 
+
+function isAbsoluteOrHomePath(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("~\\") || isAbsoluteLike(value);
+}
+
+function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
+  const home = env["HOME"] !== undefined && env["HOME"] !== "" ? env["HOME"] : homedir();
+  if (value === "~") return home;
+  if (value.startsWith("~/") || value.startsWith("~\\")) return join(home, value.slice(2));
+  return value;
+}
+
+function defaultAgentDirForCommand(command: string, env: NodeJS.ProcessEnv): string {
+  return expandHomePath(isOmpCommand(command) ? "~/.omp/agent" : "~/.pi/agent", env);
+}
+
+function commandAgentDirEnv(command: string): string {
+  const prefix = agentEnvPrefix(command);
+  return prefix === "PI" ? PI_CODING_AGENT_DIR_ENV : `${prefix}_CODING_AGENT_DIR`;
+}
+
+function commandSessionDirEnv(command: string): string {
+  return `${agentEnvPrefix(command)}_CODING_AGENT_SESSION_DIR`;
+}
+
+function agentEnvPrefix(command: string): string {
+  const name = command.split(/[\\/]/u).at(-1) ?? command;
+  const normalized = name.replace(/(?:\.[cm]?js|\.exe)$/iu, "").replace(/[^A-Za-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").toUpperCase();
+  return normalized === "" ? "PI" : normalized;
+}
+
+function isOmpCommand(command: string): boolean {
+  const name = command.split(/[\\/]/u).at(-1)?.toLowerCase();
+  return name === "omp" || name === "omp.exe";
+}
+
+function isEnvSet(value: string | undefined): boolean {
+  return value !== undefined && value !== "";
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
 function isAbsoluteLike(value: string): boolean {
   const withForwardSlashes = value.replace(/\\/g, "/");
   return isAbsolute(value) || withForwardSlashes.startsWith("/") || /^[A-Za-z]:\//.test(withForwardSlashes);

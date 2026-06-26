@@ -37,11 +37,11 @@ describe("config routes", () => {
     const response = await app.inject({
       method: "PUT",
       url: "/api/config",
-      payload: { config: { host: "0.0.0.0", port: 9000, allowedHosts: true, spawnSessions: true, subsessions: true, shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { note: "hidden" } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "uploads\\manual" }, maxUploadBytes: 1234 } },
+      payload: { config: { host: "0.0.0.0", port: 9000, allowedHosts: true, spawnSessions: true, subsessions: true, agent: { command: "omp", dir: "~/.omp/agent" }, shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { note: "hidden" } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "uploads\\manual" }, maxUploadBytes: 1234 } },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(savedConfig).toEqual({ host: "0.0.0.0", port: 9000, allowedHosts: true, spawnSessions: true, subsessions: true, shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { note: "hidden" } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "uploads/manual" }, maxUploadBytes: 1234 });
+    expect(savedConfig).toEqual({ host: "0.0.0.0", port: 9000, allowedHosts: true, spawnSessions: true, subsessions: true, agent: { command: "omp", dir: "~/.omp/agent" }, shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { note: "hidden" } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "uploads/manual" }, maxUploadBytes: 1234 });
     expect(response.json<PiWebConfigResponse>().config).toEqual(savedConfig);
   });
 
@@ -100,6 +100,6 @@ function responseFor(config: PiWebConfigValues, exists: boolean): PiWebConfigRes
     exists,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false },
   };
 }

@@ -20,7 +20,7 @@ describe("settings config drafts", () => {
       allowedHostsMode: "list",
       allowedHostsText: "example.local, 192.168.1.20\n",
       allowedPathsText: "/tmp\n~/SDKs\n",
-    }, { shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false } }, pathAccess: { allowedPaths: ["/old"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234 })).toEqual({
+    }, { shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false } }, pathAccess: { allowedPaths: ["/old"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "omp", dir: "~/.omp/agent" } })).toEqual({
       host: "127.0.0.1",
       port: 9000,
       allowedHosts: ["example.local", "192.168.1.20"],
@@ -29,6 +29,7 @@ describe("settings config drafts", () => {
       pathAccess: { allowedPaths: ["/tmp", "~/SDKs"] },
       uploads: { defaultFolder: "manual/uploads" },
       maxUploadBytes: 1234,
+      agent: { command: "omp", dir: "~/.omp/agent" },
     });
   });
 

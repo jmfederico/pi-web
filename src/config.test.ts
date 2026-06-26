@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, effectiveAgentConfig, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -47,6 +47,51 @@ describe("PI WEB config persistence", () => {
   it("persists and reads maxUploadBytes", () => {
     savePiWebConfig({ maxUploadBytes: 1234 }, testOptions());
     expect(loadPiWebConfig(testOptions()).config.maxUploadBytes).toBe(1234);
+  });
+
+  it("persists and reads custom agent runtime settings", () => {
+    savePiWebConfig({ agent: { command: "omp", dir: "~/.omp/agent" } }, testOptions());
+
+    expect(loadPiWebConfig(testOptions()).config.agent).toEqual({ command: "omp", dir: "~/.omp/agent" });
+  });
+
+  it("resolves OMP agent defaults from the configured command", () => {
+    expect(effectiveAgentConfig({ HOME: join(tempDir, ".home") }, { agent: { command: "omp" } })).toMatchObject({
+      command: "omp",
+      dir: join(tempDir, ".home", ".omp", "agent"),
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
+    });
+  });
+
+  it("lets PI WEB agent environment overrides take precedence", () => {
+    expect(effectiveAgentConfig({
+      PI_WEB_AGENT_COMMAND: "omp",
+      PI_WEB_AGENT_DIR: join(tempDir, "env-agent"),
+    }, { agent: { command: "pi", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "omp",
+      dir: join(tempDir, "env-agent"),
+    });
+  });
+
+  it("lets command-specific agent environment directories override config", () => {
+    expect(effectiveAgentConfig({
+      HOME: join(tempDir, ".home"),
+      OMP_CODING_AGENT_DIR: join(tempDir, "omp-env-agent"),
+    }, { agent: { command: "omp", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "omp",
+      dir: join(tempDir, "omp-env-agent"),
+    });
+  });
+
+  it("normalizes omp.exe to OMP environment keys", () => {
+    expect(effectiveAgentConfig({
+      HOME: join(tempDir, ".home"),
+      OMP_CODING_AGENT_DIR: join(tempDir, "omp-exe-env-agent"),
+    }, { agent: { command: "omp.exe", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "omp.exe",
+      dir: join(tempDir, "omp-exe-env-agent"),
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
+    });
   });
 
   it("exposes the default upload folder in the effective config", () => {
