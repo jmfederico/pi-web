@@ -15,7 +15,7 @@ import type { SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
 import { PI_WEB_CAPABILITIES } from "../shared/capabilities.js";
 import { machineScopedPluginId } from "../shared/machinePluginIds.js";
 import { MAX_IMAGE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
-import type { PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
+import type { PiWebConfigResponse, PiWebConfigValues, PiWebStatusResponse } from "../shared/apiTypes.js";
 import type { Project, Workspace } from "./types.js";
 
 let app: FastifyInstance;
@@ -556,6 +556,35 @@ describe("buildApp", () => {
     ]);
   });
 
+  it("uses the latest configured agent dir for PI WEB status after config writes", async () => {
+    const originalSkipVersionCheck = process.env["PI_WEB_SKIP_VERSION_CHECK"];
+    process.env["PI_WEB_SKIP_VERSION_CHECK"] = "1";
+    try {
+      const initialAgentDir = join(tempDir, "initial-agent");
+      const updatedAgentDir = join(tempDir, "updated-agent");
+      piWebConfig = { agent: { command: "pi", dir: initialAgentDir } };
+      await mkdir(initialAgentDir, { recursive: true });
+      await installConfiguredPiWebPackage(updatedAgentDir);
+
+      const initialStatus = await app.inject({ method: "GET", url: "/api/pi-web/status" });
+      expect(initialStatus.statusCode).toBe(200);
+
+      const updateResponse = await app.inject({
+        method: "PUT",
+        url: "/api/config",
+        payload: { config: { agent: { command: "pi", dir: updatedAgentDir } } },
+      });
+      expect(updateResponse.statusCode).toBe(200);
+
+      const refreshedStatus = await app.inject({ method: "GET", url: "/api/pi-web/status" });
+
+      expect(refreshedStatus.statusCode).toBe(200);
+      expect(refreshedStatus.json<PiWebStatusResponse>().components.web.installation).toMatchObject({ kind: "pi-package", source: process.cwd(), scope: "user" });
+    } finally {
+      restoreEnv("PI_WEB_SKIP_VERSION_CHECK", originalSkipVersionCheck);
+    }
+  });
+
   it("serves supported workspace images as previews", async () => {
     const addResponse = await app.inject({
       method: "POST",
@@ -918,6 +947,16 @@ function fakeSessionDaemon(): SessionProxyDaemon {
     },
     connectWebSocket: () => { throw new Error("WebSocket not configured for test"); },
   };
+}
+
+async function installConfiguredPiWebPackage(agentDir: string): Promise<void> {
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [process.cwd()] }, null, 2)}\n`, "utf8");
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
+  else process.env[key] = value;
 }
 
 function fakeRemoteClient(overrides: Partial<MachineClient>): MachineClient {

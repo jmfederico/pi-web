@@ -66,6 +66,27 @@ describe("PiWebPluginService", () => {
     expect(manifest.plugins[0]?.module).toMatch(/^\/pi-web-plugins\/review\/dist\/review\.js\?v=\d+$/u);
   });
 
+  it("uses the current config provider for Pi package plugin discovery", async () => {
+    const packageDir = join(tempDir, "pkg");
+    const initialAgentDir = join(tempDir, "initial-agent");
+    const updatedAgentDir = join(tempDir, "updated-agent");
+    let currentConfig = { agent: { dir: initialAgentDir } };
+    await writePlugin(packageDir, {
+      packageJson: { piWeb: { plugins: [{ id: "agent-package", module: "dist/plugin.js" }] } },
+      files: { "dist/plugin.js": "export default {};" },
+    });
+    await mkdir(initialAgentDir, { recursive: true });
+    await mkdir(updatedAgentDir, { recursive: true });
+    await writeFile(join(updatedAgentDir, "settings.json"), `${JSON.stringify({ packages: [packageDir] }, null, 2)}\n`, "utf8");
+    const service = new PiWebPluginService({ roots: [], cwd: tempDir, configProvider: () => currentConfig });
+
+    await expect(service.manifest()).resolves.toEqual({ plugins: [] });
+
+    currentConfig = { agent: { dir: updatedAgentDir } };
+
+    await expect(service.manifest()).resolves.toMatchObject({ plugins: [{ id: "agent-package", source: packageDir, scope: "user" }] });
+  });
+
   it("discovers source checkout plugin packages without symlinks", async () => {
     await mkdir(join(tempDir, "src", "server"), { recursive: true });
     await writeFile(join(tempDir, "src", "server", "index.ts"), "export {};\n");

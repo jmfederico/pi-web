@@ -49,26 +49,25 @@ export interface EffectivePiWebAgentConfig {
 }
 
 export function effectiveAgentConfig(env: NodeJS.ProcessEnv = process.env, config: Pick<PiWebConfig, "agent"> = {}, cwd = process.cwd()): EffectivePiWebAgentConfig {
-  const command = parseAgentCommand(env[PI_WEB_AGENT_COMMAND_ENV] ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment");
-  const commandDirEnv = commandAgentDirEnv(command);
-  const configuredDir = env[PI_WEB_AGENT_DIR_ENV] ?? env[commandDirEnv] ?? config.agent?.dir ?? defaultAgentDirForCommand(command, env);
+  const command = parseAgentCommand(envValue(env, PI_WEB_AGENT_COMMAND_ENV) ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment");
+  const configuredDir = envValue(env, PI_WEB_AGENT_DIR_ENV) ?? envValue(env, PI_CODING_AGENT_DIR_ENV) ?? config.agent?.dir ?? defaultAgentDir(env);
   return {
     command,
     dir: resolveAgentDirPath(configuredDir, env, cwd, "agent.dir", "environment"),
-    sessionDirEnvKeys: agentSessionDirEnvKeys(command),
+    sessionDirEnvKeys: agentSessionDirEnvKeys(),
   };
 }
 
-export function agentSessionDirEnvKeys(command = DEFAULT_AGENT_COMMAND): string[] {
-  return uniqueStrings([PI_WEB_AGENT_SESSION_DIR_ENV, commandSessionDirEnv(command), PI_CODING_AGENT_SESSION_DIR_ENV]);
+export function agentSessionDirEnvKeys(): string[] {
+  return uniqueStrings([PI_WEB_AGENT_SESSION_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV]);
 }
 
-export function hasAgentDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
-  return isEnvSet(env[PI_WEB_AGENT_DIR_ENV]) || isEnvSet(env[commandAgentDirEnv(command)]);
+export function hasAgentDirEnvOverride(env: NodeJS.ProcessEnv): boolean {
+  return isEnvSet(env[PI_WEB_AGENT_DIR_ENV]) || isEnvSet(env[PI_CODING_AGENT_DIR_ENV]);
 }
 
-export function hasAgentSessionDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
-  return agentSessionDirEnvKeys(command).some((key) => isEnvSet(env[key]));
+export function hasAgentSessionDirEnvOverride(env: NodeJS.ProcessEnv): boolean {
+  return agentSessionDirEnvKeys().some((key) => isEnvSet(env[key]));
 }
 
 export function effectiveUploadsConfig(config: Pick<PiWebConfig, "uploads"> = {}): NonNullable<PiWebConfig["uploads"]> {
@@ -109,7 +108,10 @@ export function loadPiWebConfig(options: LoadOptions = {}): LoadedPiWebConfig {
 }
 
 export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConfig {
-  const loaded = loadPiWebConfig(options);
+  return resolveEffectivePiWebConfig(loadPiWebConfig(options), options);
+}
+
+export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: LoadOptions = {}): LoadedPiWebConfig {
   const env = options.env ?? process.env;
   const host = env["PI_WEB_HOST"];
   const port = env["PI_WEB_PORT"] ?? env["PORT"];
@@ -333,28 +335,13 @@ function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
   return value;
 }
 
-function defaultAgentDirForCommand(command: string, env: NodeJS.ProcessEnv): string {
-  return expandHomePath(isOmpCommand(command) ? "~/.omp/agent" : "~/.pi/agent", env);
+function defaultAgentDir(env: NodeJS.ProcessEnv): string {
+  return expandHomePath("~/.pi/agent", env);
 }
 
-function commandAgentDirEnv(command: string): string {
-  const prefix = agentEnvPrefix(command);
-  return prefix === "PI" ? PI_CODING_AGENT_DIR_ENV : `${prefix}_CODING_AGENT_DIR`;
-}
-
-function commandSessionDirEnv(command: string): string {
-  return `${agentEnvPrefix(command)}_CODING_AGENT_SESSION_DIR`;
-}
-
-function agentEnvPrefix(command: string): string {
-  const name = command.split(/[\\/]/u).at(-1) ?? command;
-  const normalized = name.replace(/(?:\.[cm]?js|\.exe)$/iu, "").replace(/[^A-Za-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").toUpperCase();
-  return normalized === "" ? "PI" : normalized;
-}
-
-function isOmpCommand(command: string): boolean {
-  const name = command.split(/[\\/]/u).at(-1)?.toLowerCase();
-  return name === "omp" || name === "omp.exe";
+function envValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key];
+  return value !== undefined && value !== "" ? value : undefined;
 }
 
 function isEnvSet(value: string | undefined): boolean {

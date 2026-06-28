@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, parseUploadsConfig, savePiWebConfig, type LoadOptions, type PiWebConfig } from "../config.js";
+import { hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, parseUploadsConfig, resolveEffectivePiWebConfig, savePiWebConfig, type LoadOptions, type PiWebConfig } from "../config.js";
 import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
 
@@ -20,14 +20,14 @@ export function createFilePiWebConfigService(options: LoadOptions = {}): PiWebCo
 
 export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConfigResponse {
   const loaded = loadPiWebConfig(options);
-  const effective = effectivePiWebConfig(options);
+  const effective = resolveEffectivePiWebConfig(loaded, options);
   const env = options.env ?? process.env;
   return {
     path: loaded.path,
     exists: loaded.exists,
     config: loaded.config,
     effectiveConfig: effective.config,
-    envOverrides: piWebConfigEnvOverrides(env, loaded.config),
+    envOverrides: piWebConfigEnvOverrides(env),
   };
 }
 
@@ -167,8 +167,7 @@ function parsePluginsRequest(value: unknown): NonNullable<PiWebConfig["plugins"]
   }));
 }
 
-function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv, config: PiWebConfig = {}): PiWebConfigEnvOverrides {
-  const agent = effectiveAgentConfig(env, config);
+function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): PiWebConfigEnvOverrides {
   return {
     host: isEnvSet(env["PI_WEB_HOST"]),
     port: isEnvSet(env["PI_WEB_PORT"]) || isEnvSet(env["PORT"]),
@@ -176,8 +175,8 @@ function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv, config: PiWebConfig = {
     spawnSessions: isEnvSet(env["PI_WEB_SPAWN_SESSIONS"]),
     subsessions: isEnvSet(env["PI_WEB_SUBSESSIONS"]),
     agentCommand: isEnvSet(env["PI_WEB_AGENT_COMMAND"]),
-    agentDir: hasAgentDirEnvOverride(env, agent.command),
-    agentSessionDir: hasAgentSessionDirEnvOverride(env, agent.command),
+    agentDir: hasAgentDirEnvOverride(env),
+    agentSessionDir: hasAgentSessionDirEnvOverride(env),
   };
 }
 

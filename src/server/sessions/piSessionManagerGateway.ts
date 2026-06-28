@@ -2,11 +2,10 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { getAgentDir, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { agentSessionDirEnvKeys, effectiveAgentConfig } from "../../config.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { PiSessionListEntry, PiSessionManager, PiSessionManagerGateway } from "./piSessionService.js";
-
-export const PI_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
 
 type SessionDirSource = "env" | "settings" | "pi-default";
 
@@ -28,9 +27,9 @@ export class SessionDirResolver {
   private readonly sessionDirEnvKeys: readonly string[];
 
   constructor(options: SessionDirResolverOptions = {}) {
-    this.agentDir = options.agentDir ?? getAgentDir();
+    this.agentDir = options.agentDir ?? effectiveAgentConfig().dir;
     this.env = options.env ?? process.env;
-    this.sessionDirEnvKeys = options.sessionDirEnvKeys ?? [PI_SESSION_DIR_ENV];
+    this.sessionDirEnvKeys = options.sessionDirEnvKeys ?? agentSessionDirEnvKeys();
   }
 
   defaultSessionsRoot(): string {
@@ -131,11 +130,11 @@ function uniqueSessionsByPath(sessions: readonly PiSessionListEntry[]): PiSessio
   return [...byPath.values()].sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
-export function defaultPiSessionsRoot(agentDir = getAgentDir()): string {
+export function defaultPiSessionsRoot(agentDir = effectiveAgentConfig().dir): string {
   return join(agentDir, "sessions");
 }
 
-export function defaultPiSessionDir(cwd: string, agentDir = getAgentDir()): string {
+export function defaultPiSessionDir(cwd: string, agentDir = effectiveAgentConfig().dir): string {
   return sessionDirInDefaultPiStore(defaultPiSessionsRoot(agentDir), cwd);
 }
 

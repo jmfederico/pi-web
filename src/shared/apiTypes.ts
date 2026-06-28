@@ -89,7 +89,7 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
-  /** Agent runtime state used by the session daemon (Pi by default; OMP compatible). */
+  /** Agent runtime command/state used by PI WEB and the session daemon (Pi by default). */
   agent?: PiWebAgentConfig;
 }
 

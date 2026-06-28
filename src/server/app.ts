@@ -20,9 +20,9 @@ import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { registerWorkspaceDeletionRoutes } from "./workspaces/workspaceDeletionRoutes.js";
 import { createFilePiWebConfigService, registerConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
 import { PiWebPluginService } from "./piWebPluginService.js";
-import { createPiWebStatusCache } from "./piWebStatusCache.js";
+import { createPiWebStatusCache, type PiWebStatusCache } from "./piWebStatusCache.js";
 import { getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
-import { effectiveAgentConfig, effectivePiWebConfig } from "../config.js";
+import { effectiveAgentConfig, type EffectivePiWebAgentConfig } from "../config.js";
 import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
@@ -116,17 +116,42 @@ function registerLocalFileSuggestionRoutes(app: FastifyInstance, projects: Proje
   });
 }
 
+async function readEffectiveConfig(config: Pick<PiWebConfigService, "read">) {
+  return (await config.read()).effectiveConfig;
+}
+
+async function readEffectiveAgentConfig(config: Pick<PiWebConfigService, "read">): Promise<EffectivePiWebAgentConfig> {
+  return effectiveAgentConfig(process.env, await readEffectiveConfig(config));
+}
+
+function invalidatePiWebStatusOnWrite(config: PiWebConfigService, statusCache: Pick<PiWebStatusCache, "invalidate">): PiWebConfigService {
+  return {
+    read: () => config.read(),
+    write: async (nextConfig) => {
+      const response = await config.write(nextConfig);
+      statusCache.invalidate();
+      return response;
+    },
+  };
+}
+
 export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: deps.logger ?? true, ...(deps.bodyLimit === undefined ? {} : { bodyLimit: deps.bodyLimit }) });
   await app.register(fastifyWebsocket);
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const workspaces = deps.workspaces ?? new WorkspaceService();
-  const agent = effectiveAgentConfig(process.env, effectivePiWebConfig().config);
-  const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService({ agentDir: agent.dir });
   const configService = deps.config ?? createFilePiWebConfigService();
+  const readConfig = () => readEffectiveConfig(configService);
+  const readAgentConfig = () => readEffectiveAgentConfig(configService);
+  const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService({
+    configProvider: readConfig,
+  });
   const sessionDaemon = deps.sessionDaemon ?? new SessionDaemonClient();
-  const piWebStatusCache = createPiWebStatusCache(() => getPiWebStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir }), {
+  const piWebStatusCache = createPiWebStatusCache(async () => {
+    const agent = await readAgentConfig();
+    return getPiWebStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir });
+  }, {
     onError: (error) => { app.log.warn({ err: error }, "failed to refresh PI WEB status cache"); },
   });
   const machines = deps.machines ?? new MachineService(undefined, {
@@ -144,10 +169,13 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   });
 
   app.get("/api/pi-web/status", async () => piWebStatusCache.get());
-  app.get("/api/pi-web/version", async () => getPiWebVersionStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir }));
+  app.get("/api/pi-web/version", async () => {
+    const agent = await readAgentConfig();
+    return getPiWebVersionStatus(sessionDaemon, { agentCommand: agent.command, agentDir: agent.dir });
+  });
   app.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
   app.get("/api/plugins", async () => piWebPlugins.plugins());
-  registerConfigRoutes(app, configService);
+  registerConfigRoutes(app, invalidatePiWebStatusOnWrite(configService, piWebStatusCache));
 
   registerMachineRoutes(app, machines);
   registerMachinePluginProxyRoutes(app, machines);

@@ -7,7 +7,6 @@ import {
   createAgentSessionServices,
   createEditToolDefinition,
   defineTool,
-  getAgentDir,
   ModelRegistry,
   SessionManager,
   type CreateAgentSessionRuntimeFactory,
@@ -25,6 +24,7 @@ import { createModelRegistryForAgentDir, type AuthChange } from "./authService.j
 import { fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
+import { effectiveAgentConfig } from "../../config.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 import { parsePromptAttachments } from "../../shared/promptAttachments.js";
 import type { SavedPromptAttachment } from "../../shared/apiTypes.js";
@@ -338,7 +338,7 @@ export class PiSessionService implements SessionRouteService {
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies = {}) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
-    this.agentDir = deps.agentDir ?? getAgentDir();
+    this.agentDir = deps.agentDir ?? effectiveAgentConfig().dir;
     this.sessionManager = deps.sessionManager ?? createPiSessionManagerGateway({ agentDir: this.agentDir });
     this.modelRegistry = deps.modelRegistry ?? createModelRegistryForAgentDir(this.agentDir);
     this.spawnTargets = deps.spawnTargets;

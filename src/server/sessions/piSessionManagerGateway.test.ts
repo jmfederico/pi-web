@@ -60,12 +60,12 @@ describe("SessionDirResolver", () => {
     expect(resolver.resolve(cwd)).toMatchObject({ source: "env", sessionDir: envDir, usesConfiguredSessionDir: true });
   });
 
-  it("uses OMP sessionDir environment overrides before settings", async () => {
-    const envDir = join(tempDir, "omp-env-sessions");
+  it("uses PI WEB sessionDir environment overrides before settings", async () => {
+    const envDir = join(tempDir, "pi-web-env-sessions");
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ sessionDir: join(tempDir, "settings-sessions") }, null, 2)}\n`, "utf8");
 
-    const resolver = new SessionDirResolver({ agentDir, env: { OMP_CODING_AGENT_SESSION_DIR: envDir }, sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"] });
+    const resolver = new SessionDirResolver({ agentDir, env: { PI_WEB_AGENT_SESSION_DIR: envDir } });
 
     expect(resolver.resolve(cwd)).toMatchObject({ source: "env", sessionDir: envDir, usesConfiguredSessionDir: true });
   });
@@ -92,14 +92,13 @@ describe("Pi session manager gateway", () => {
     await expect(gateway.listAll()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "default-session", cwd }), expect.objectContaining({ id: "env-session", cwd })]));
   });
 
-  it("includes command-specific env session directories in global listing", async () => {
-    for (const envKey of ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR"]) {
+  it("includes generic env session directories in global listing", async () => {
+    for (const envKey of ["PI_WEB_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"]) {
       const envSessionDir = join(tempDir, `${envKey.toLowerCase()}-sessions`);
       await writeSessionFile(envSessionDir, `${envKey.toLowerCase()}-session`, cwd);
       const gateway = createPiSessionManagerGateway({
         agentDir,
         env: { [envKey]: envSessionDir },
-        sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
       });
 
       if (gateway.listAll === undefined) throw new Error("Expected legacy listing support");

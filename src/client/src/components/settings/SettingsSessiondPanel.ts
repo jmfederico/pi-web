@@ -54,7 +54,7 @@ export class SettingsSessiondPanel extends LitElement {
             ?disabled=${this.loading || this.saving || agentCommandOverridden}
             @change=${(event: Event) => { void this.saveAgentField("command", event); }}
           >
-          <small>Use <code>omp</code> to make doctor/update checks target Oh My Pi. The embedded session runtime remains PI WEB's SDK path, so this does not dynamically load a different agent implementation.</small>
+          <small>Set an alternate Pi-compatible CLI when doctor/update checks should target a different command. The embedded session runtime remains PI WEB's SDK path, so this does not dynamically load a different agent implementation.</small>
         </div>
         <div class="field">
           <span class="field-heading">
@@ -67,11 +67,11 @@ export class SettingsSessiondPanel extends LitElement {
             autocomplete="off"
             spellcheck="false"
             .value=${config?.config.agent?.dir ?? ""}
-            placeholder="~/.pi/agent or ~/.omp/agent"
+            placeholder="~/.pi/agent or ~/agent-profiles/work"
             ?disabled=${this.loading || this.saving || agentDirOverridden}
             @change=${(event: Event) => { void this.saveAgentField("dir", event); }}
           >
-          <small>Choose which compatible auth, models, settings, and sessions PI WEB reads. For OMP, set this to <code>~/.omp/agent</code>, then restart the session daemon.</small>
+          <small>Choose which compatible auth, models, settings, and sessions PI WEB reads. Set a separate directory for isolated agent profiles, then restart the session daemon.</small>
         </div>
         <div class="field">
           <span class="field-heading">

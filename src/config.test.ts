@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, effectiveAgentConfig, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentSessionDirEnvKeys, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -55,43 +55,61 @@ describe("PI WEB config persistence", () => {
     expect(loadPiWebConfig(testOptions()).config.agent).toEqual({ command: "omp", dir: "~/.omp/agent" });
   });
 
-  it("resolves OMP agent defaults from the configured command", () => {
+  it("keeps the Pi agent directory default for alternate commands", () => {
     expect(effectiveAgentConfig({ HOME: join(tempDir, ".home") }, { agent: { command: "omp" } })).toMatchObject({
       command: "omp",
-      dir: join(tempDir, ".home", ".omp", "agent"),
-      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
+      dir: join(tempDir, ".home", ".pi", "agent"),
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
     });
   });
 
-  it("lets PI WEB agent environment overrides take precedence", () => {
+  it("resolves explicit alternate agent command and state directory settings", () => {
+    expect(effectiveAgentConfig({ HOME: join(tempDir, ".home") }, { agent: { command: "omp", dir: "~/.omp/agent" } })).toMatchObject({
+      command: "omp",
+      dir: join(tempDir, ".home", ".omp", "agent"),
+    });
+  });
+
+  it("ignores empty agent environment overrides", () => {
+    const env = {
+      HOME: join(tempDir, ".home"),
+      PI_WEB_AGENT_COMMAND: "",
+      PI_WEB_AGENT_DIR: "",
+      PI_WEB_AGENT_SESSION_DIR: "",
+      PI_CODING_AGENT_DIR: "",
+      PI_CODING_AGENT_SESSION_DIR: "",
+    };
+
+    expect(effectiveAgentConfig(env, { agent: { command: "omp", dir: "~/.omp/agent" } })).toMatchObject({
+      command: "omp",
+      dir: join(tempDir, ".home", ".omp", "agent"),
+    });
+    expect(hasAgentDirEnvOverride(env)).toBe(false);
+    expect(hasAgentSessionDirEnvOverride(env)).toBe(false);
+  });
+
+  it("uses generic agent directory env precedence and Pi compatibility fallback", () => {
     expect(effectiveAgentConfig({
       PI_WEB_AGENT_COMMAND: "omp",
-      PI_WEB_AGENT_DIR: join(tempDir, "env-agent"),
+      PI_WEB_AGENT_DIR: join(tempDir, "web-env-agent"),
+      PI_CODING_AGENT_DIR: join(tempDir, "pi-env-agent"),
     }, { agent: { command: "pi", dir: join(tempDir, "config-agent") } })).toMatchObject({
       command: "omp",
-      dir: join(tempDir, "env-agent"),
+      dir: join(tempDir, "web-env-agent"),
+    });
+
+    expect(effectiveAgentConfig({
+      PI_CODING_AGENT_DIR: join(tempDir, "pi-env-agent"),
+    }, { agent: { dir: join(tempDir, "config-agent") } })).toMatchObject({
+      dir: join(tempDir, "pi-env-agent"),
     });
   });
 
-  it("lets command-specific agent environment directories override config", () => {
-    expect(effectiveAgentConfig({
-      HOME: join(tempDir, ".home"),
-      OMP_CODING_AGENT_DIR: join(tempDir, "omp-env-agent"),
-    }, { agent: { command: "omp", dir: join(tempDir, "config-agent") } })).toMatchObject({
-      command: "omp",
-      dir: join(tempDir, "omp-env-agent"),
-    });
-  });
+  it("does not generate command-specific session directory env keys", () => {
+    const keys = ["PI_WEB_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"];
 
-  it("normalizes omp.exe to OMP environment keys", () => {
-    expect(effectiveAgentConfig({
-      HOME: join(tempDir, ".home"),
-      OMP_CODING_AGENT_DIR: join(tempDir, "omp-exe-env-agent"),
-    }, { agent: { command: "omp.exe", dir: join(tempDir, "config-agent") } })).toMatchObject({
-      command: "omp.exe",
-      dir: join(tempDir, "omp-exe-env-agent"),
-      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
-    });
+    expect(agentSessionDirEnvKeys()).toEqual(keys);
+    expect(effectiveAgentConfig({ HOME: join(tempDir, ".home"), PI_WEB_AGENT_COMMAND: "omp" }).sessionDirEnvKeys).toEqual(keys);
   });
 
   it("exposes the default upload folder in the effective config", () => {
