@@ -81,7 +81,7 @@ describe("PI WEB status", () => {
         capabilities: [],
       });
 
-      const status = await getPiWebVersionStatus(daemon, { agentCommand: "custom-agent", agentDir });
+      const status = await getPiWebVersionStatus(daemon, { agentCommand: "acme-agent", agentDir });
 
       expect(status.components.sessiond.installation).toMatchObject({ kind: "pi-package", source: process.cwd(), scope: "user" });
     } finally {
@@ -115,12 +115,12 @@ describe("PI WEB status", () => {
       { kind: "pi-package", source: "npm:@jmfederico/pi-web", scope: "user", path: "/tmp/pi-web" },
       "pi-web restart",
       {
-        agentCommand: "/tmp/agent's/custom-agent",
-        hasCommand: (command) => Promise.resolve(command === "/tmp/agent's/custom-agent"),
+        agentCommand: "/tmp/agent's/acme-agent",
+        hasCommand: (command) => Promise.resolve(command === "/tmp/agent's/acme-agent"),
       },
     );
 
-    expect(updateCommand).toBe("'/tmp/agent'\\''s/custom-agent' update 'npm:@jmfederico/pi-web' && pi-web restart");
+    expect(updateCommand).toBe("'/tmp/agent'\\''s/acme-agent' update 'npm:@jmfederico/pi-web' && pi-web restart");
   });
 
   it.skipIf(process.platform !== "linux")("suggests native systemd commands for local development services", async () => {

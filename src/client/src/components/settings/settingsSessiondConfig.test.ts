@@ -18,7 +18,7 @@ describe("session daemon settings config helpers", () => {
       spawnSessions: false,
       subsessions: false,
     });
-    const selectedMachine = configResponse({ spawnSessions: true, subsessions: true }, { spawnSessions: true, subsessions: false });
+    const selectedMachine = configResponse({ spawnSessions: true, subsessions: true, agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } }, { spawnSessions: true, subsessions: false, agentCommand: true, agentDir: true, agentSessionDir: true });
 
     expect(mergeSelectedMachineSessiondConfig(gateway, selectedMachine)).toEqual({
       ...gateway,
@@ -30,6 +30,7 @@ describe("session daemon settings config helpers", () => {
         plugins: { info: { enabled: true } },
         spawnSessions: true,
         subsessions: true,
+        agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       },
       effectiveConfig: {
         host: "127.0.0.1",
@@ -39,11 +40,15 @@ describe("session daemon settings config helpers", () => {
         plugins: { info: { enabled: true } },
         spawnSessions: true,
         subsessions: true,
+        agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       },
       envOverrides: {
         host: false,
         port: false,
         allowedHosts: false,
+        agentCommand: true,
+        agentDir: true,
+        agentSessionDir: true,
         spawnSessions: true,
         subsessions: false,
       },
@@ -57,6 +62,6 @@ function configResponse(config: PiWebConfigValues, overrides: Partial<PiWebConfi
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, ...overrides },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false, ...overrides },
   };
 }

@@ -5,6 +5,20 @@ import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import { spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
 
+export function agentConfigPatchForField(currentAgent: PiWebConfigValues["agent"] | undefined, field: "command" | "dir", rawValue: string): PiWebConfigValues {
+  const value = rawValue.trim();
+  const nextAgent: NonNullable<PiWebConfigValues["agent"]> = { ...(currentAgent ?? {}) };
+  if (field === "command") {
+    if (value === "") delete nextAgent.command;
+    else nextAgent.command = value;
+  } else if (value === "") {
+    delete nextAgent.dir;
+  } else {
+    nextAgent.dir = value;
+  }
+  return { agent: nextAgent };
+}
+
 @customElement("settings-sessiond-panel")
 export class SettingsSessiondPanel extends LitElement {
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
@@ -131,7 +145,7 @@ export class SettingsSessiondPanel extends LitElement {
       notices.push({
         type: "warning",
         title: `Restart required on ${this.targetLabel}`,
-        content: html`run <code>pi-web restart</code> on that machine (or restart its session daemon service) after changing these settings.`,
+        content: html`run <code>pi-web restart</code> on that machine after changing these settings. If restarting services manually, restart both web/API and session daemon after changing the agent command or state directory.`,
       });
     }
     return notices;
@@ -143,24 +157,7 @@ export class SettingsSessiondPanel extends LitElement {
 
   private async saveAgentField(field: "command" | "dir", event: Event): Promise<void> {
     if (!(event.target instanceof HTMLInputElement)) return;
-    const value = event.target.value.trim();
-    const baseConfig = this.configResponse?.config ?? {};
-    const nextConfig: PiWebConfigValues = { ...baseConfig };
-    const nextAgent: NonNullable<PiWebConfigValues["agent"]> = { ...(baseConfig.agent ?? {}) };
-    if (field === "command") {
-      if (value === "") delete nextAgent.command;
-      else nextAgent.command = value;
-    } else if (value === "") {
-      delete nextAgent.dir;
-    } else {
-      nextAgent.dir = value;
-    }
-    if (nextAgent.command === undefined && nextAgent.dir === undefined) {
-      delete nextConfig.agent;
-    } else {
-      nextConfig.agent = nextAgent;
-    }
-    await this.onSave?.(nextConfig);
+    await this.onSave?.(agentConfigPatchForField(this.configResponse?.config.agent, field, event.target.value));
   }
 
   private async toggleSpawnSessions(event: Event): Promise<void> {
@@ -207,5 +204,5 @@ export class SettingsSessiondPanel extends LitElement {
 }
 
 function sessiondDescription(targetLabel: string): string {
-  return `These settings affect the long-lived session runtime on ${targetLabel}. Changes are saved immediately but only take effect after the session daemon on that machine restarts.`;
+  return `These settings affect the long-lived session runtime on ${targetLabel}. Changes are saved immediately; agent command and state-directory changes also affect web/API diagnostics and package routes.`;
 }

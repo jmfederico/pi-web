@@ -17,6 +17,9 @@ export function mergeSelectedMachineSessiondConfig(base: PiWebConfigResponse, se
       ...base.envOverrides,
       spawnSessions: selectedMachine.envOverrides.spawnSessions,
       subsessions: selectedMachine.envOverrides.subsessions,
+      agentCommand: selectedMachine.envOverrides.agentCommand,
+      agentDir: selectedMachine.envOverrides.agentDir,
+      agentSessionDir: selectedMachine.envOverrides.agentSessionDir,
     },
   };
 }

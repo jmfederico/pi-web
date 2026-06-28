@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TemplateResult } from "lit";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../../api";
-import { SettingsSessiondPanel } from "./SettingsSessiondPanel";
+import { agentConfigPatchForField, SettingsSessiondPanel } from "./SettingsSessiondPanel";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 
 describe("settings-sessiond-panel layout", () => {
@@ -54,6 +54,15 @@ describe("settings-sessiond-panel layout", () => {
     expect(rendered).not.toContain("Restart required on");
     expect(rendered).not.toContain("Allow agents to start sessions");
     expect(rendered).not.toContain("Effective after environment overrides");
+  });
+
+  it("builds agent field edits as narrow config patches", () => {
+    expect(agentConfigPatchForField(
+      { command: "pi", dir: "/opt/pi-agent/state" },
+      "command",
+      " acme-agent ",
+    )).toEqual({ agent: { command: "acme-agent", dir: "/opt/pi-agent/state" } });
+    expect(agentConfigPatchForField({ command: "pi" }, "command", "")).toEqual({ agent: {} });
   });
 });
 
@@ -108,6 +117,7 @@ function countOccurrences(content: string, needle: string): number {
   return content.split(needle).length - 1;
 }
 
+
 function templateStrings(template: TemplateResult): readonly string[] {
   const strings = Reflect.get(template, "strings");
   if (!isStringArray(strings)) throw new Error("TemplateResult strings were unavailable");
@@ -138,6 +148,6 @@ function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false },
   };
 }

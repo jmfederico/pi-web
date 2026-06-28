@@ -7,14 +7,14 @@ describe("API parsers", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "omp", dir: "~/.omp/agent" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "omp", dir: "/Users/dev/.omp/agent" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "acme-agent", dir: "/Users/dev/acme-agent-state" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: true, agentSessionDir: false },
     })).toEqual({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "omp", dir: "~/.omp/agent" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "omp", dir: "/Users/dev/.omp/agent" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "acme-agent", dir: "/Users/dev/acme-agent-state" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: true, agentSessionDir: false },
     });
   });

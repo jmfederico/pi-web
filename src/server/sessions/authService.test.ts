@@ -79,9 +79,9 @@ describe("AuthService", () => {
     const agentDir = await tempAgentDir();
     const auth = new AuthService({ agentDir });
 
-    auth.saveApiKey("anthropic", "sk-custom");
+    auth.saveApiKey("anthropic", "sk-configured-agent");
 
-    await expect(readFile(join(agentDir, "auth.json"), "utf8")).resolves.toContain("sk-custom");
+    await expect(readFile(join(agentDir, "auth.json"), "utf8")).resolves.toContain("sk-configured-agent");
     auth.dispose();
   });
 });

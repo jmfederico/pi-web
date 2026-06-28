@@ -1,6 +1,9 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
+import { createFilePiWebConfigService, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 
 let app: FastifyInstance;
@@ -41,7 +44,7 @@ describe("config routes", () => {
       allowedHosts: true,
       spawnSessions: true,
       subsessions: true,
-      agent: { command: "custom-agent", dir: "/tmp/custom-agent" },
+      agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
       plugins: { info: { enabled: false, settings: { note: "hidden" } } },
       pathAccess: { allowedPaths: ["/tmp"] },
@@ -130,6 +133,7 @@ describe("config routes", () => {
     const selectedMachinePatch: PiWebConfigValues = {
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads\\manual" },
+      agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       spawnSessions: true,
     };
 
@@ -143,6 +147,7 @@ describe("config routes", () => {
       ...fullConfig(),
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads/manual" },
+      agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       spawnSessions: true,
     };
     expect(response.statusCode).toBe(200);
@@ -153,6 +158,7 @@ describe("config routes", () => {
       pathAccess: { allowedPaths: ["/srv/repos"] },
       uploads: { defaultFolder: "uploads/manual" },
       maxUploadBytes: 1024,
+      agent: { command: "acme-agent", dir: "/opt/acme-agent/state" },
       spawnSessions: true,
       subsessions: false,
     });
@@ -184,6 +190,21 @@ describe("config routes", () => {
     expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config spawnSessions must be a boolean");
     expect(service.write).not.toHaveBeenCalled();
   });
+
+  it("validates file-backed agent config before saving", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-config-route-test-"));
+    const configPath = join(dir, "config.json");
+    const existing = `${JSON.stringify({ host: "127.0.0.1" })}\n`;
+    try {
+      await writeFile(configPath, existing, "utf8");
+      const fileService = createFilePiWebConfigService({ env: { PI_WEB_CONFIG: configPath, HOME: join(dir, "home") } });
+
+      expect(() => fileService.write({ agent: { command: "acme-agent" } })).toThrow("PI WEB config agent.dir");
+      await expect(readFile(configPath, "utf8")).resolves.toBe(existing);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 function fullConfig(): PiWebConfigValues {
@@ -196,6 +217,7 @@ function fullConfig(): PiWebConfigValues {
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
     maxUploadBytes: 1024,
+    agent: { command: "pi", dir: "/opt/pi-agent/state" },
     spawnSessions: false,
     subsessions: false,
   };
@@ -207,6 +229,7 @@ function selectedMachineConfig(): PiWebConfigValues {
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
     maxUploadBytes: 1024,
+    agent: { command: "pi", dir: "/opt/pi-agent/state" },
     spawnSessions: false,
     subsessions: false,
   };

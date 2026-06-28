@@ -46,7 +46,7 @@ describe("commandWithVersionCheck", () => {
 
   it("shell-quotes command words", () => {
     process.env["SHELL"] = "/bin/bash";
-    expect(commandWithVersionCheck("/tmp/agent's/omp")).toBe("command -v '/tmp/agent'\\''s/omp' && ('/tmp/agent'\\''s/omp' --version 2>&1 || true)");
+    expect(commandWithVersionCheck("/tmp/agent's/acme-agent")).toBe("command -v '/tmp/agent'\\''s/acme-agent' && ('/tmp/agent'\\''s/acme-agent' --version 2>&1 || true)");
   });
 });
 
@@ -55,11 +55,11 @@ describe("agentCommandForChecks", () => {
     const dir = mkdtempSync(join(tmpdir(), "pi-web-cli-test-"));
     try {
       const configPath = join(dir, "config.json");
-      writeFileSync(configPath, `${JSON.stringify({ agent: { command: "omp" } })}\n`);
+      writeFileSync(configPath, `${JSON.stringify({ agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } })}\n`);
       process.env["PI_WEB_CONFIG"] = configPath;
       delete process.env["PI_WEB_AGENT_COMMAND"];
 
-      expect(agentCommandForChecks()).toBe("omp");
+      expect(agentCommandForChecks()).toBe("acme-agent");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
