@@ -50,47 +50,63 @@ describe("PI WEB config persistence", () => {
   });
 
   it("persists and reads custom agent runtime settings", () => {
-    savePiWebConfig({ agent: { command: "omp", dir: "~/.omp/agent" } }, testOptions());
+    savePiWebConfig({ agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } }, testOptions());
 
-    expect(loadPiWebConfig(testOptions()).config.agent).toEqual({ command: "omp", dir: "~/.omp/agent" });
+    expect(loadPiWebConfig(testOptions()).config.agent).toEqual({ command: "acme-agent", dir: "/opt/acme-agent/state" });
   });
 
-  it("resolves OMP agent defaults from the configured command", () => {
-    expect(effectiveAgentConfig({ HOME: join(tempDir, ".home") }, { agent: { command: "omp" } })).toMatchObject({
-      command: "omp",
-      dir: join(tempDir, ".home", ".omp", "agent"),
-      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
+  it("defaults to Pi agent state only for Pi commands and launchers", () => {
+    expect(effectiveAgentConfig({ HOME: join(tempDir, ".home") }, { agent: { command: "/tmp/pi.cmd" } })).toMatchObject({
+      command: "/tmp/pi.cmd",
+      dir: join(tempDir, ".home", ".pi", "agent"),
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
     });
+  });
+
+  it("requires an explicit agent directory for non-Pi commands", () => {
+    expect(() => effectiveAgentConfig({}, { agent: { command: "acme-agent" } })).toThrow("PI WEB config agent.dir, PI_WEB_AGENT_DIR, or ACME_AGENT_CODING_AGENT_DIR is required when agent.command is \"acme-agent\"");
+    expect(() => effectiveAgentConfig({}, { agent: { command: "_pi" } })).toThrow("PI WEB config agent.dir, PI_WEB_AGENT_DIR, or _PI_CODING_AGENT_DIR is required when agent.command is \"_pi\"");
   });
 
   it("lets PI WEB agent environment overrides take precedence", () => {
     expect(effectiveAgentConfig({
-      PI_WEB_AGENT_COMMAND: "omp",
+      PI_WEB_AGENT_COMMAND: "acme-agent",
       PI_WEB_AGENT_DIR: join(tempDir, "env-agent"),
     }, { agent: { command: "pi", dir: join(tempDir, "config-agent") } })).toMatchObject({
-      command: "omp",
+      command: "acme-agent",
       dir: join(tempDir, "env-agent"),
+    });
+  });
+
+  it("ignores blank agent environment overrides", () => {
+    expect(effectiveAgentConfig({
+      PI_WEB_AGENT_COMMAND: "",
+      PI_WEB_AGENT_DIR: "",
+      ACME_AGENT_CODING_AGENT_DIR: "",
+    }, { agent: { command: "acme-agent", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "acme-agent",
+      dir: join(tempDir, "config-agent"),
     });
   });
 
   it("lets command-specific agent environment directories override config", () => {
     expect(effectiveAgentConfig({
       HOME: join(tempDir, ".home"),
-      OMP_CODING_AGENT_DIR: join(tempDir, "omp-env-agent"),
-    }, { agent: { command: "omp", dir: join(tempDir, "config-agent") } })).toMatchObject({
-      command: "omp",
-      dir: join(tempDir, "omp-env-agent"),
+      ACME_AGENT_CODING_AGENT_DIR: join(tempDir, "acme-env-agent"),
+    }, { agent: { command: "acme-agent", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "acme-agent",
+      dir: join(tempDir, "acme-env-agent"),
     });
   });
 
-  it("normalizes omp.exe to OMP environment keys", () => {
+  it("normalizes executable names to command-specific environment keys", () => {
     expect(effectiveAgentConfig({
       HOME: join(tempDir, ".home"),
-      OMP_CODING_AGENT_DIR: join(tempDir, "omp-exe-env-agent"),
-    }, { agent: { command: "omp.exe", dir: join(tempDir, "config-agent") } })).toMatchObject({
-      command: "omp.exe",
-      dir: join(tempDir, "omp-exe-env-agent"),
-      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "OMP_CODING_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"],
+      ACME_AGENT_CODING_AGENT_DIR: join(tempDir, "acme-exe-env-agent"),
+    }, { agent: { command: "acme-agent.cmd", dir: join(tempDir, "config-agent") } })).toMatchObject({
+      command: "acme-agent.cmd",
+      dir: join(tempDir, "acme-exe-env-agent"),
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR", "ACME_AGENT_CODING_AGENT_SESSION_DIR"],
     });
   });
 

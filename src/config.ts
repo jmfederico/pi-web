@@ -49,9 +49,9 @@ export interface EffectivePiWebAgentConfig {
 }
 
 export function effectiveAgentConfig(env: NodeJS.ProcessEnv = process.env, config: Pick<PiWebConfig, "agent"> = {}, cwd = process.cwd()): EffectivePiWebAgentConfig {
-  const command = parseAgentCommand(env[PI_WEB_AGENT_COMMAND_ENV] ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment");
+  const command = parseAgentCommand(envValue(env, PI_WEB_AGENT_COMMAND_ENV) ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment");
   const commandDirEnv = commandAgentDirEnv(command);
-  const configuredDir = env[PI_WEB_AGENT_DIR_ENV] ?? env[commandDirEnv] ?? config.agent?.dir ?? defaultAgentDirForCommand(command, env);
+  const configuredDir = envValue(env, PI_WEB_AGENT_DIR_ENV) ?? envValue(env, commandDirEnv) ?? config.agent?.dir ?? defaultAgentDirForCommand(command, env, commandDirEnv);
   return {
     command,
     dir: resolveAgentDirPath(configuredDir, env, cwd, "agent.dir", "environment"),
@@ -60,7 +60,9 @@ export function effectiveAgentConfig(env: NodeJS.ProcessEnv = process.env, confi
 }
 
 export function agentSessionDirEnvKeys(command = DEFAULT_AGENT_COMMAND): string[] {
-  return uniqueStrings([PI_WEB_AGENT_SESSION_DIR_ENV, commandSessionDirEnv(command), PI_CODING_AGENT_SESSION_DIR_ENV]);
+  const keys = [PI_WEB_AGENT_SESSION_DIR_ENV, commandSessionDirEnv(command)];
+  if (isPiCommand(command)) keys.push(PI_CODING_AGENT_SESSION_DIR_ENV);
+  return uniqueStrings(keys);
 }
 
 export function hasAgentDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
@@ -139,6 +141,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   const env = options.env ?? process.env;
   const path = piWebConfigPath(env, options.cwd ?? process.cwd());
   const normalized = parsePiWebConfig(piWebConfigRecord(config), path);
+  effectiveAgentConfig(env, normalized, options.cwd ?? process.cwd());
   const existing = readExistingConfigObject(path);
   delete existing["host"];
   delete existing["port"];
@@ -333,28 +336,35 @@ function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
   return value;
 }
 
-function defaultAgentDirForCommand(command: string, env: NodeJS.ProcessEnv): string {
-  return expandHomePath(isOmpCommand(command) ? "~/.omp/agent" : "~/.pi/agent", env);
+function defaultAgentDirForCommand(command: string, env: NodeJS.ProcessEnv, commandDirEnv: string): string {
+  if (isPiCommand(command)) return expandHomePath("~/.pi/agent", env);
+  throw new Error(`PI WEB config agent.dir, ${PI_WEB_AGENT_DIR_ENV}, or ${commandDirEnv} is required when agent.command is ${JSON.stringify(command)}`);
 }
 
 function commandAgentDirEnv(command: string): string {
-  const prefix = agentEnvPrefix(command);
-  return prefix === "PI" ? PI_CODING_AGENT_DIR_ENV : `${prefix}_CODING_AGENT_DIR`;
+  if (isPiCommand(command)) return PI_CODING_AGENT_DIR_ENV;
+  return `${agentEnvPrefix(command)}_CODING_AGENT_DIR`;
 }
 
 function commandSessionDirEnv(command: string): string {
-  return `${agentEnvPrefix(command)}_CODING_AGENT_SESSION_DIR`;
+  return `${isPiCommand(command) ? "PI" : agentEnvPrefix(command)}_CODING_AGENT_SESSION_DIR`;
 }
 
 function agentEnvPrefix(command: string): string {
   const name = command.split(/[\\/]/u).at(-1) ?? command;
-  const normalized = name.replace(/(?:\.[cm]?js|\.exe)$/iu, "").replace(/[^A-Za-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "").toUpperCase();
-  return normalized === "" ? "PI" : normalized;
+  const normalized = name.replace(/(?:\.[cm]?js|\.exe|\.cmd)$/iu, "").replace(/[^A-Za-z0-9]+/gu, "_").toUpperCase();
+  return normalized === "" ? "AGENT" : normalized;
 }
 
-function isOmpCommand(command: string): boolean {
-  const name = command.split(/[\\/]/u).at(-1)?.toLowerCase();
-  return name === "omp" || name === "omp.exe";
+function isPiCommand(command: string): boolean {
+  const name = command.split(/[\\/]/u).at(-1)?.toLowerCase() ?? command.toLowerCase();
+  return name.replace(/(?:\.[cm]?js|\.exe|\.cmd)$/iu, "") === "pi";
+}
+
+
+function envValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key];
+  return value === undefined || value === "" ? undefined : value;
 }
 
 function isEnvSet(value: string | undefined): boolean {

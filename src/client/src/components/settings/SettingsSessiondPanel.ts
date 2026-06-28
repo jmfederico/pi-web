@@ -54,7 +54,7 @@ export class SettingsSessiondPanel extends LitElement {
             ?disabled=${this.loading || this.saving || agentCommandOverridden}
             @change=${(event: Event) => { void this.saveAgentField("command", event); }}
           >
-          <small>Use <code>omp</code> to make doctor/update checks target Oh My Pi. The embedded session runtime remains PI WEB's SDK path, so this does not dynamically load a different agent implementation.</small>
+          <small>Use a Pi-compatible CLI command for doctor/status/update checks. PI WEB's embedded session runtime still uses the bundled SDK path, so this does not load a different agent implementation.</small>
         </div>
         <div class="field">
           <span class="field-heading">
@@ -67,11 +67,11 @@ export class SettingsSessiondPanel extends LitElement {
             autocomplete="off"
             spellcheck="false"
             .value=${config?.config.agent?.dir ?? ""}
-            placeholder="~/.pi/agent or ~/.omp/agent"
+            placeholder="~/.pi/agent or /path/to/fork/agent"
             ?disabled=${this.loading || this.saving || agentDirOverridden}
             @change=${(event: Event) => { void this.saveAgentField("dir", event); }}
           >
-          <small>Choose which compatible auth, models, settings, and sessions PI WEB reads. For OMP, set this to <code>~/.omp/agent</code>, then restart the session daemon.</small>
+          <small>Choose which compatible auth, models, settings, and sessions PI WEB reads. Non-<code>pi</code> commands require an explicit state directory, then a session daemon restart.</small>
         </div>
         <div class="field">
           <span class="field-heading">
@@ -110,7 +110,7 @@ export class SettingsSessiondPanel extends LitElement {
           <h3>Effective after environment overrides</h3>
           <dl>
             <div><dt>Agent command</dt><dd>${effectiveAgent?.command ?? html`<span class="muted">pi default</span>`}</dd></div>
-            <div><dt>Agent state</dt><dd>${effectiveAgent?.dir ?? html`<span class="muted">Pi default</span>`}</dd></div>
+            <div><dt>Agent state</dt><dd>${effectiveAgent?.dir ?? html`<span class="muted">~/.pi/agent default</span>`}</dd></div>
             <div><dt>Spawn sessions</dt><dd>${effectiveSpawn ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
             <div><dt>Subsessions</dt><dd>${effectiveSubsessions ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
           </dl>
