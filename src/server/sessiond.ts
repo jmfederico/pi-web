@@ -9,6 +9,7 @@ import { SessionEventHub } from "./realtime/sessionEventHub.js";
 import { AuthService } from "./sessions/authService.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
+import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { ProjectService } from "./projects/projectService.js";
@@ -19,24 +20,27 @@ import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { effectivePiWebConfig, maxUploadBytes, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
+import { effectiveAgentConfig, effectivePiWebConfig, maxUploadBytes, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
 
 const { config } = effectivePiWebConfig();
+const agent = effectiveAgentConfig(process.env, config);
 const app = Fastify({ logger: true, bodyLimit: maxUploadBytes(process.env, config) });
 await app.register(fastifyWebsocket);
 
 const eventHub = new SessionEventHub();
 const workspaceActivity = new WorkspaceActivityService(eventHub);
-const auth = new AuthService();
+const auth = new AuthService({ agentDir: agent.dir });
 const spawnTargets = spawnSessionsEnabled(process.env, config)
   ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
   : undefined;
 const sessions = new PiSessionService(eventHub, {
   modelRegistry: auth.modelRegistry,
+  agentDir: agent.dir,
   workspaceActivity,
   logger: app.log,
   ...(spawnTargets === undefined ? {} : { spawnTargets }),
   subsessionsEnabled: spawnTargets !== undefined && subsessionsEnabled(process.env, config),
+  sessionManager: createPiSessionManagerGateway({ agentDir: agent.dir, sessionDirEnvKeys: agent.sessionDirEnvKeys }),
 });
 auth.subscribe((change) => { sessions.applyAuthChange(change); });
 const terminals = new TerminalService(eventHub, workspaceActivity);
