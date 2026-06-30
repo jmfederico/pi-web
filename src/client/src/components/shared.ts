@@ -158,7 +158,12 @@ export const workspacePanelStyles = css`
   .workspace-header-scroll-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .workspace-header-scroll-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .workspace-header-scroll-frame.can-scroll-left::before, .workspace-header-scroll-frame.can-scroll-right::after { opacity: 1; }
-  .workspace-header-strip { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .workspace-header-strip { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .workspace-tabs { flex: 0 0 auto; }
+  .overflow-tab-select { flex: 0 0 auto; min-width: 0; }
+  .overflow-tab-select span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+  .overflow-tab-select select { max-width: 180px; border: 1px solid var(--pi-border); border-radius: 7px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 26px 5px 8px; font: inherit; cursor: pointer; }
+  .overflow-tab-select select:focus { outline: 2px solid color-mix(in srgb, var(--pi-accent) 45%, transparent); outline-offset: 1px; }
   .tabs { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; }
   .tabs button { flex: 0 0 auto; white-space: nowrap; }
   .tabs button.icon-tab { min-width: 34px; }

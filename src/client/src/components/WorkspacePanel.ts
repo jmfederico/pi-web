@@ -11,6 +11,9 @@ export interface WorkspacePanelEmptyState {
 
 type WorkspacePanelBadge = string | number | TemplateResult | undefined;
 
+const visiblePanelTabLimit = 5;
+const pinnedWorkspaceTabsStorageKey = "pi-web.workspacePanel.pinnedTabs";
+
 @customElement("workspace-panel")
 export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
@@ -23,6 +26,7 @@ export class WorkspacePanel extends LitElement {
   @query(".workspace-header-strip") private workspaceHeaderStrip?: HTMLElement | null;
   @state() private workspaceHeaderCanScrollLeft = false;
   @state() private workspaceHeaderCanScrollRight = false;
+  @state() private pinnedPanelIds: readonly QualifiedContributionId[] = loadPinnedPanelIds();
 
   private observedWorkspaceHeaderStrip: HTMLElement | undefined;
   private workspaceHeaderResizeObserver: ResizeObserver | undefined;
@@ -60,23 +64,30 @@ export class WorkspacePanel extends LitElement {
     });
     const visiblePanels = this.panels;
     const selectedPanel = visiblePanels.find((panel) => panel.id === this.tool) ?? visiblePanels[0];
+    const visibleTabPanels = this.visibleTabPanels(visiblePanels);
+    const visibleTabPanelIds = new Set(visibleTabPanels.map((panel) => panel.id));
+    const overflowPanels = visiblePanels.filter((panel) => !visibleTabPanelIds.has(panel.id));
+    const selectedOverflowPanel = overflowPanels.some((panel) => panel.id === selectedPanel?.id) ? selectedPanel : undefined;
     return html`
       ${this.hideToolTabs ? null : html`
         <header>
           <div class=${this.workspaceHeaderFrameClass()}>
             <div class="workspace-header-strip" @scroll=${this.onWorkspaceHeaderScroll}>
-              <div class="tabs">
-                ${visiblePanels.map((panel) => {
-                  const selected = selectedPanel?.id === panel.id;
-                  const badge = panel.badge?.(context);
-                  const ariaLabel = this.panelTabAriaLabel(panel, badge);
-                  return html`
-                    <button class=${this.panelTabClass(panel, selected)} title=${ariaLabel} aria-label=${ariaLabel} aria-pressed=${String(selected)} @click=${() => { this.onSelectTool(panel.id); }}>
-                      ${this.renderPanelTabContent(panel, badge)}
-                    </button>
-                  `;
-                })}
-              </div>
+              <nav class="tabs workspace-tabs" aria-label="Workspace tabs">
+                ${visibleTabPanels.map((panel) => this.renderPanelTab(panel, context, selectedPanel?.id === panel.id))}
+              </nav>
+              ${overflowPanels.length === 0 ? null : html`
+                <label class="overflow-tab-select">
+                  <span>More workspace tabs</span>
+                  <select aria-label="More workspace tabs" .value=${selectedOverflowPanel?.id ?? ""} @change=${this.onOverflowToolSelectChange}>
+                    <option value="" disabled>${selectedOverflowPanel === undefined ? `More (${String(overflowPanels.length)})` : this.panelOptionLabel(selectedOverflowPanel, selectedOverflowPanel.badge?.(context))}</option>
+                    ${overflowPanels.map((panel) => {
+                      const badge = panel.badge?.(context);
+                      return html`<option value=${panel.id}>${this.panelOptionLabel(panel, badge)}</option>`;
+                    })}
+                  </select>
+                </label>
+              `}
             </div>
           </div>
         </header>
@@ -90,6 +101,49 @@ export class WorkspacePanel extends LitElement {
         </div>
       `}
     `;
+  }
+
+  private onOverflowToolSelectChange = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) return;
+    const tool = qualifiedContributionId(target.value);
+    if (tool === undefined) return;
+    this.pinPanel(tool);
+    this.onSelectTool(tool);
+  };
+
+  private renderPanelTab(panel: QualifiedWorkspacePanelContribution, context: WorkspacePanelContext, selected: boolean): TemplateResult {
+    const badge = panel.badge?.(context);
+    const ariaLabel = this.panelTabAriaLabel(panel, badge);
+    return html`
+      <button class=${this.panelTabClass(panel, selected)} title=${ariaLabel} aria-label=${ariaLabel} aria-pressed=${String(selected)} @click=${() => { this.onSelectTool(panel.id); }}>
+        ${this.renderPanelTabContent(panel, badge)}
+      </button>
+    `;
+  }
+
+  private visibleTabPanels(panels: QualifiedWorkspacePanelContribution[]): QualifiedWorkspacePanelContribution[] {
+    const byId = new Map(panels.map((panel) => [panel.id, panel]));
+    const chosen: QualifiedWorkspacePanelContribution[] = [];
+    const seen = new Set<QualifiedContributionId>();
+    const add = (panel: QualifiedWorkspacePanelContribution | undefined): void => {
+      if (panel === undefined || seen.has(panel.id) || chosen.length >= visiblePanelTabLimit) return;
+      chosen.push(panel);
+      seen.add(panel.id);
+    };
+    for (const id of this.pinnedPanelIds) add(byId.get(id));
+    for (const panel of panels) add(panel);
+    return chosen;
+  }
+
+  private pinPanel(panelId: QualifiedContributionId): void {
+    const currentPinned = this.visibleTabPanels(this.panels).map((panel) => panel.id);
+    if (currentPinned.includes(panelId)) return;
+    const nextPinned = currentPinned.length < visiblePanelTabLimit
+      ? [...currentPinned, panelId]
+      : [...currentPinned.slice(0, visiblePanelTabLimit - 1), panelId];
+    this.pinnedPanelIds = nextPinned;
+    savePinnedPanelIds(nextPinned);
   }
 
   private panelTabClass(panel: QualifiedWorkspacePanelContribution, selected: boolean): string {
@@ -111,6 +165,12 @@ export class WorkspacePanel extends LitElement {
       <span class="tab-label">${panel.title}</span>
       ${this.isEmptyBadge(badge) ? null : html`<span class="tab-badge">${badge}</span>`}
     `;
+  }
+
+  private panelOptionLabel(panel: QualifiedWorkspacePanelContribution, badge: WorkspacePanelBadge): string {
+    if (typeof badge !== "string" && typeof badge !== "number") return panel.title;
+    const trimmedBadge = String(badge).trim();
+    return trimmedBadge === "" ? panel.title : `${panel.title} (${trimmedBadge})`;
   }
 
   private isEmptyBadge(badge: WorkspacePanelBadge): boolean {
@@ -158,4 +218,34 @@ export class WorkspacePanel extends LitElement {
   }
 
   static override styles = workspacePanelStyles;
+}
+
+function qualifiedContributionId(value: string): QualifiedContributionId | undefined {
+  const separator = value.indexOf(":");
+  if (separator <= 0 || separator >= value.length - 1) return undefined;
+  const pluginId = value.slice(0, separator);
+  const localId = value.slice(separator + 1);
+  return `${pluginId}:${localId}`;
+}
+
+function loadPinnedPanelIds(): QualifiedContributionId[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(pinnedWorkspaceTabsStorageKey);
+    if (raw === null) return [];
+    const value: unknown = JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((item) => typeof item === "string" ? qualifiedContributionId(item) ?? [] : []);
+  } catch {
+    return [];
+  }
+}
+
+function savePinnedPanelIds(panelIds: readonly QualifiedContributionId[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(pinnedWorkspaceTabsStorageKey, JSON.stringify(panelIds));
+  } catch {
+    // Ignore storage failures; tabs still update for this render cycle.
+  }
 }
