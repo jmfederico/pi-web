@@ -17,36 +17,53 @@ export interface PiPackageService {
 }
 
 export class DefaultPiPackageService implements PiPackageService {
+  private mutationQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly manager: PiPackageManagerPort) {}
 
   list(): Promise<PiPackagesResponse> {
     return Promise.resolve({ packages: this.listPackages() });
   }
 
-  async install(source: string): Promise<PiPackageMutationResponse> {
-    await this.manager.installAndPersist(source);
-    await this.flushSettings();
-    return this.mutationResponse("install", { source });
-  }
-
-  async remove(source: string, scope: PiPackageScope = "user"): Promise<PiPackageMutationResponse> {
-    const removed = scope === "project"
-      ? await this.manager.removeAndPersist(source, { local: true })
-      : await this.manager.removeAndPersist(source);
-    await this.flushSettings();
-    return this.mutationResponse("remove", { source, scope, removed });
-  }
-
-  async update(source?: string): Promise<PiPackageMutationResponse> {
-    if (source === undefined) {
-      await this.manager.update();
+  install(source: string): Promise<PiPackageMutationResponse> {
+    return this.enqueueMutation(async () => {
+      await this.manager.installAndPersist(source);
       await this.flushSettings();
-      return this.mutationResponse("update", {});
-    }
+      return this.mutationResponse("install", { source });
+    });
+  }
 
-    await this.manager.update(source);
-    await this.flushSettings();
-    return this.mutationResponse("update", { source });
+  remove(source: string, scope: PiPackageScope = "user"): Promise<PiPackageMutationResponse> {
+    return this.enqueueMutation(async () => {
+      const removed = scope === "project"
+        ? await this.manager.removeAndPersist(source, { local: true })
+        : await this.manager.removeAndPersist(source);
+      await this.flushSettings();
+      return this.mutationResponse("remove", { source, scope, removed });
+    });
+  }
+
+  update(source?: string): Promise<PiPackageMutationResponse> {
+    return this.enqueueMutation(async () => {
+      if (source === undefined) {
+        await this.manager.update();
+        await this.flushSettings();
+        return this.mutationResponse("update", {});
+      }
+
+      await this.manager.update(source);
+      await this.flushSettings();
+      return this.mutationResponse("update", { source });
+    });
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const queuedMutation = this.mutationQueue.then(operation);
+    this.mutationQueue = queuedMutation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queuedMutation;
   }
 
   private mutationResponse(action: PiPackageMutationAction, metadata: Omit<PiPackageMutationResponse, "action" | "packages">): PiPackageMutationResponse {

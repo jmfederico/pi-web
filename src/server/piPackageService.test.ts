@@ -11,6 +11,16 @@ function fakeManager(packages: PiPackageInfo[] = []) {
   return { manager, listConfiguredPackages, installAndPersist, removeAndPersist, update };
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("DefaultPiPackageService", () => {
   it("lists configured Pi packages with source, scope, filtered status, and installed path", async () => {
     const fake = fakeManager([
@@ -57,5 +67,137 @@ describe("DefaultPiPackageService", () => {
 
     expect(fake.update).toHaveBeenNthCalledWith(1);
     expect(fake.update).toHaveBeenNthCalledWith(2, "npm:@acme/tools");
+  });
+
+  it("serializes package mutations in call order and lists after each mutation before starting the next", async () => {
+    const firstMutation = deferred();
+    const events: string[] = [];
+    let packages: PiPackageInfo[] = [{ source: "npm:@acme/old-tools", scope: "user", filtered: false }];
+    const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => {
+      events.push(`list:${packages.map((configuredPackage) => configuredPackage.source).join(",")}`);
+      return packages;
+    });
+    const installAndPersist = vi.fn<PiPackageManagerPort["installAndPersist"]>(async (source) => {
+      events.push(`install:start:${source}`);
+      await firstMutation.promise;
+      packages = [{ source, scope: "user", filtered: false }];
+      events.push(`install:finish:${source}`);
+    });
+    const removeAndPersist = vi.fn<PiPackageManagerPort["removeAndPersist"]>((source) => {
+      events.push(`remove:start:${source}`);
+      packages = [];
+      events.push(`remove:finish:${source}`);
+      return Promise.resolve(true);
+    });
+    const update = vi.fn<PiPackageManagerPort["update"]>(() => Promise.resolve());
+    const flush = vi.fn<NonNullable<PiPackageManagerPort["flush"]>>(() => {
+      events.push("flush");
+      return Promise.resolve();
+    });
+    const manager: PiPackageManagerPort = { listConfiguredPackages, installAndPersist, removeAndPersist, update, flush };
+    const service = new DefaultPiPackageService(manager);
+
+    const installPromise = service.install("npm:@acme/new-tools");
+    const removePromise = service.remove("npm:@acme/new-tools");
+
+    await Promise.resolve();
+    expect(installAndPersist).toHaveBeenCalledOnce();
+    expect(removeAndPersist).not.toHaveBeenCalled();
+    expect(events).toEqual(["install:start:npm:@acme/new-tools"]);
+
+    firstMutation.resolve();
+    await expect(Promise.all([installPromise, removePromise])).resolves.toEqual([
+      { action: "install", source: "npm:@acme/new-tools", packages: [{ source: "npm:@acme/new-tools", scope: "user", filtered: false }] },
+      { action: "remove", source: "npm:@acme/new-tools", scope: "user", removed: true, packages: [] },
+    ]);
+    expect(events).toEqual([
+      "install:start:npm:@acme/new-tools",
+      "install:finish:npm:@acme/new-tools",
+      "flush",
+      "list:npm:@acme/new-tools",
+      "remove:start:npm:@acme/new-tools",
+      "remove:finish:npm:@acme/new-tools",
+      "flush",
+      "list:",
+    ]);
+  });
+
+  it("does not queue list requests behind an in-flight mutation", async () => {
+    const mutation = deferred();
+    const events: string[] = [];
+    let packages: PiPackageInfo[] = [{ source: "npm:@acme/old-tools", scope: "user", filtered: false }];
+    const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => {
+      events.push("list");
+      return packages;
+    });
+    const installAndPersist = vi.fn<PiPackageManagerPort["installAndPersist"]>(async (source) => {
+      events.push(`install:start:${source}`);
+      await mutation.promise;
+      packages = [{ source, scope: "user", filtered: false }];
+      events.push(`install:finish:${source}`);
+    });
+    const removeAndPersist = vi.fn<PiPackageManagerPort["removeAndPersist"]>(() => Promise.resolve(true));
+    const update = vi.fn<PiPackageManagerPort["update"]>(() => Promise.resolve());
+    const manager: PiPackageManagerPort = { listConfiguredPackages, installAndPersist, removeAndPersist, update };
+    const service = new DefaultPiPackageService(manager);
+
+    const installPromise = service.install("npm:@acme/new-tools");
+    await Promise.resolve();
+
+    await expect(service.list()).resolves.toEqual({ packages: [{ source: "npm:@acme/old-tools", scope: "user", filtered: false }] });
+    expect(events).toEqual(["install:start:npm:@acme/new-tools", "list"]);
+
+    mutation.resolve();
+    await expect(installPromise).resolves.toEqual({
+      action: "install",
+      source: "npm:@acme/new-tools",
+      packages: [{ source: "npm:@acme/new-tools", scope: "user", filtered: false }],
+    });
+  });
+
+  it("releases the mutation queue after a mutation fails", async () => {
+    const failingMutation = deferred();
+    const events: string[] = [];
+    const packages: PiPackageInfo[] = [{ source: "npm:@acme/tools", scope: "user", filtered: false }];
+    const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => {
+      events.push("list");
+      return packages;
+    });
+    const installAndPersist = vi.fn<PiPackageManagerPort["installAndPersist"]>(async (source) => {
+      events.push(`install:start:${source}`);
+      await failingMutation.promise;
+    });
+    const removeAndPersist = vi.fn<PiPackageManagerPort["removeAndPersist"]>(() => Promise.resolve(true));
+    const update = vi.fn<PiPackageManagerPort["update"]>((source) => {
+      events.push(`update:start:${source ?? "all"}`);
+      return Promise.resolve();
+    });
+    const flush = vi.fn<NonNullable<PiPackageManagerPort["flush"]>>(() => {
+      events.push("flush");
+      return Promise.resolve();
+    });
+    const manager: PiPackageManagerPort = { listConfiguredPackages, installAndPersist, removeAndPersist, update, flush };
+    const service = new DefaultPiPackageService(manager);
+
+    const installPromise = service.install("npm:@acme/fails");
+    const updatePromise = service.update("npm:@acme/tools");
+
+    await Promise.resolve();
+    expect(update).not.toHaveBeenCalled();
+    expect(events).toEqual(["install:start:npm:@acme/fails"]);
+
+    failingMutation.reject(new Error("install failed"));
+    await expect(installPromise).rejects.toThrow("install failed");
+    await expect(updatePromise).resolves.toEqual({
+      action: "update",
+      source: "npm:@acme/tools",
+      packages: [{ source: "npm:@acme/tools", scope: "user", filtered: false }],
+    });
+    expect(events).toEqual([
+      "install:start:npm:@acme/fails",
+      "update:start:npm:@acme/tools",
+      "flush",
+      "list",
+    ]);
   });
 });
