@@ -121,19 +121,24 @@ export const pluginsApi = {
   plugins: () => request("/api/plugins", parsePiWebPluginsResponse),
 };
 
+function piPackageUrl(endpoint = "", machineId?: string): string {
+  const baseUrl = machineId === undefined ? "/api/pi-packages" : `${machinePrefix(machineId)}/pi-packages`;
+  return endpoint === "" ? baseUrl : `${baseUrl}/${endpoint}`;
+}
+
 export const piPackagesApi = {
-  packages: () => request("/api/pi-packages", parsePiPackagesResponse),
-  install: (source: string) => {
+  packages: (machineId?: string) => request(piPackageUrl("", machineId), parsePiPackagesResponse),
+  install: (source: string, machineId?: string) => {
     const body: PiPackageInstallRequest = { source };
-    return request("/api/pi-packages/install", parsePiPackageMutationResponse, { method: "POST", body: JSON.stringify(body) });
+    return request(piPackageUrl("install", machineId), parsePiPackageMutationResponse, { method: "POST", body: JSON.stringify(body) });
   },
-  remove: (source: string, scope?: PiPackageScope) => {
+  remove: (source: string, scope?: PiPackageScope, machineId?: string) => {
     const body: PiPackageRemoveRequest = scope === undefined ? { source } : { source, scope };
-    return request("/api/pi-packages/remove", parsePiPackageMutationResponse, { method: "POST", body: JSON.stringify(body) });
+    return request(piPackageUrl("remove", machineId), parsePiPackageMutationResponse, { method: "POST", body: JSON.stringify(body) });
   },
-  update: (source?: string) => {
+  update: (source?: string, machineId?: string) => {
     const body: PiPackageUpdateRequest | undefined = source === undefined ? undefined : { source };
-    return request("/api/pi-packages/update", parsePiPackageMutationResponse, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return request(piPackageUrl("update", machineId), parsePiPackageMutationResponse, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   },
 };
 

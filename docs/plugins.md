@@ -21,7 +21,9 @@ They do **not** run in the session daemon, do not get a server-side hook API, an
 
 Use **Settings → Pi packages** to view configured Pi packages or install/remove/update a package. Enter only the package source, such as `npm:@scope/package`, a git/URL source, or a local path. PI WEB uses Pi's default package location, equivalent to `pi install <source>`, and does not ask for an install location.
 
-Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A routine session daemon restart is not required.
+When machine federation is enabled, **Settings → Pi packages** targets the currently selected machine. The panel labels whether changes will run on the local/gateway machine or on a selected remote PI WEB machine. If an older or unavailable remote PI WEB server does not expose package-management routes, PI WEB reports the package management operation as unsupported or unavailable instead of silently falling back to the gateway.
+
+Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. This plugin enablement surface is for the PI WEB gateway you opened; to change remote plugin enablement, open that remote machine directly or edit its PI WEB config on that machine. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A routine session daemon restart is not required.
 
 ## Trust model
 
@@ -169,7 +171,7 @@ If a remote plugin constructs absolute asset URLs, it should use the `pluginId` 
 
 Open **Settings → PI WEB plugins** to review discovered bundled, local, dev, and Pi package plugins for the PI WEB gateway you opened. PI WEB can disable any discovered gateway plugin before the browser imports it. Core app contributions such as the built-in command palette, base workspace tools, and themes are not managed through this plugin list.
 
-This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide plugins or other Pi resources, use **Settings → Pi packages**.
+This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide plugins or other Pi resources, use **Settings → Pi packages**. In a federated setup, the Pi packages panel targets the selected machine; the PI WEB plugins panel still controls gateway plugin enablement.
 
 Plugin preferences are stored under the top-level `plugins` config key in the PI WEB config file:
 

@@ -1,13 +1,14 @@
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { PiPackageInfo, PiPackageScope, PiPackagesResponse } from "../../api";
-import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageOperationState } from "./piPackageSettings";
+import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageOperationState, type PiPackageTargetContext } from "./piPackageSettings";
 
 @customElement("settings-packages-panel")
 export class SettingsPackagesPanel extends LitElement {
   @property({ attribute: false }) packagesResponse: PiPackagesResponse | undefined;
   @property({ type: Boolean }) loading = false;
   @property({ attribute: false }) operation: PiPackageOperationState | undefined;
+  @property({ attribute: false }) targetMachine: PiPackageTargetContext | undefined;
   @property() error = "";
   @property() operationMessage = "";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
@@ -19,13 +20,15 @@ export class SettingsPackagesPanel extends LitElement {
 
   override render(): TemplateResult {
     const packages = this.packagesResponse?.packages ?? [];
+    const target = this.packageTarget;
+    const targetLabel = piPackageTargetLabel(target);
     return html`
       <div class="section-heading">
         <div>
           <h2>Pi packages</h2>
-          <p>Install, remove, and update packages managed by Pi. Pi packages can provide extensions, skills, prompt templates, themes, context/system prompt files, and PI WEB browser plugins.</p>
+          <p>Managing Pi packages on <strong>${targetLabel}</strong>. Install, remove, and update packages managed by Pi on the selected machine. Pi packages can provide extensions, skills, prompt templates, themes, context/system prompt files, and PI WEB browser plugins.</p>
         </div>
-        <button class="secondary" ?disabled=${this.loading || this.isOperating} @click=${() => { void this.onReload?.(); }}>Reload</button>
+        <button class="secondary" title=${`Reload Pi packages from ${targetLabel}`} ?disabled=${this.loading || this.isOperating} @click=${() => { void this.onReload?.(); }}>Reload</button>
       </div>
       <div class="trust-warning"><strong>Trusted code warning:</strong> Pi packages and PI WEB plugins can run with your user permissions. Install packages and enable plugins only from sources you trust.</div>
       ${this.renderMessages()}
@@ -36,9 +39,9 @@ export class SettingsPackagesPanel extends LitElement {
           <button type="submit" ?disabled=${this.isOperating}>${isPiPackageOperationPending(this.operation, "install") ? "Installing…" : "Install"}</button>
         </div>
         ${this.validationMessage === "" ? null : html`<div class="field-error">${this.validationMessage}</div>`}
-        <small>Installs use Pi's default package location, equivalent to <code>pi install &lt;source&gt;</code>. PI WEB does not ask you to choose an install location.</small>
+        <small>Installs run on ${targetLabel} and use Pi's default package location, equivalent to <code>pi install &lt;source&gt;</code>. PI WEB does not ask you to choose an install location.</small>
       </form>
-      ${this.renderPackageList(packages)}
+      ${this.renderPackageList(packages, target)}
     `;
   }
 
@@ -48,21 +51,22 @@ export class SettingsPackagesPanel extends LitElement {
     return null;
   }
 
-  private renderPackageList(packages: PiPackageInfo[]): TemplateResult {
+  private renderPackageList(packages: PiPackageInfo[], target: PiPackageTargetContext): TemplateResult {
     const updateAllReason = updateAllPiPackagesDisabledReason(packages);
+    const targetLabel = piPackageTargetLabel(target);
     return html`
       <section class="package-section" aria-label="Configured Pi packages">
         <div class="package-toolbar">
           <div>
             <h3>Configured Pi packages</h3>
-            <p>This list comes from Pi's package manager settings visible to this PI WEB process.</p>
+            <p>This list comes from Pi's package manager settings on ${targetLabel}.</p>
           </div>
           <button class="secondary" title=${updateAllReason ?? "Update all user-scope Pi packages"} ?disabled=${this.isOperating || updateAllReason !== undefined} @click=${() => { void this.updatePackage(); }}>
             ${isPiPackageOperationPending(this.operation, "update-all") ? "Updating…" : "Update all"}
           </button>
         </div>
         ${updateAllReason === undefined ? null : html`<div class="action-note">${updateAllReason}</div>`}
-        ${this.loading && packages.length === 0 ? html`<div class="loading-card">Loading Pi packages…</div>` : packages.length === 0 ? html`<div class="loading-card">No Pi packages configured in Pi settings yet.</div>` : html`
+        ${this.loading && packages.length === 0 ? html`<div class="loading-card">Loading Pi packages from ${targetLabel}…</div>` : packages.length === 0 ? html`<div class="loading-card">No Pi packages configured in Pi settings on ${targetLabel} yet.</div>` : html`
           <div class="package-list">
             ${packages.map((packageInfo) => this.renderPackage(packageInfo))}
           </div>
@@ -128,6 +132,10 @@ export class SettingsPackagesPanel extends LitElement {
     } catch {
       // The parent owns network error presentation so package errors are consistent across Settings.
     }
+  }
+
+  private get packageTarget(): PiPackageTargetContext {
+    return this.targetMachine ?? piPackageTargetContext(undefined);
   }
 
   private get isOperating(): boolean {

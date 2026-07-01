@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { PiPackageInfo } from "../../api";
-import { canUpdateAllPiPackages, isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageMutationFollowUpMessage, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason } from "./piPackageSettings";
+import { canUpdateAllPiPackages, friendlyPiPackageErrorMessage, isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageMutationFollowUpMessage, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, shouldRefreshGatewayPluginsAfterPiPackageMutation, updateAllPiPackagesDisabledReason, type PiPackageTargetContext } from "./piPackageSettings";
 
 const userPackage: PiPackageInfo = { source: "npm:@acme/tools", scope: "user", filtered: false, installedPath: "/home/test/.pi/packages/tools" };
 const projectPackage: PiPackageInfo = { source: "../project-tools", scope: "project", filtered: true };
+const localTarget: PiPackageTargetContext = { id: "local", name: "local", kind: "local" };
+const remoteTarget: PiPackageTargetContext = { id: "remote-a", name: "Lab Mac", kind: "remote" };
 
 describe("Pi package settings helpers", () => {
   it("normalizes and validates install sources without adding location choices", () => {
@@ -34,6 +36,14 @@ describe("Pi package settings helpers", () => {
     expect(isPiPackageOperationPending({ kind: "update-all" }, "update-all")).toBe(true);
   });
 
+  it("labels package targets and gateway plugin refresh scope", () => {
+    expect(piPackageTargetContext(undefined)).toEqual(localTarget);
+    expect(piPackageTargetLabel(localTarget)).toBe("local (local gateway)");
+    expect(piPackageTargetLabel(remoteTarget)).toBe("Lab Mac (remote machine)");
+    expect(shouldRefreshGatewayPluginsAfterPiPackageMutation(localTarget)).toBe(true);
+    expect(shouldRefreshGatewayPluginsAfterPiPackageMutation(remoteTarget)).toBe(false);
+  });
+
   it("describes the browser and session reload follow-up without requiring sessiond restarts", () => {
     const message = piPackageMutationFollowUpMessage("install");
 
@@ -42,5 +52,20 @@ describe("Pi package settings helpers", () => {
     expect(message).toContain("Reload the browser page separately for PI WEB browser plugin changes");
     expect(message).not.toContain("session daemon");
     expect(message).not.toContain("sessiond");
+  });
+
+  it("scopes remote package mutation follow-up copy to the selected machine", () => {
+    const message = piPackageMutationFollowUpMessage("update", remoteTarget);
+
+    expect(message).toContain("Pi package updated on Lab Mac");
+    expect(message).toContain("each idle PI WEB session on Lab Mac");
+    expect(message).toContain("PI WEB browser plugin changes served by Lab Mac");
+  });
+
+  it("turns older remote route failures into package-management compatibility guidance", () => {
+    expect(friendlyPiPackageErrorMessage("Not Found", remoteTarget)).toBe("Pi package management is not available on Lab Mac. Update and restart Pi-Web on that machine, then try again.");
+    expect(friendlyPiPackageErrorMessage("Remote machine unavailable", remoteTarget)).toBe("Could not reach Lab Mac for Pi package management. Check the machine connection and try again.");
+    expect(friendlyPiPackageErrorMessage("Remote machine timeout", remoteTarget)).toContain("may still be running remotely");
+    expect(friendlyPiPackageErrorMessage("Not Found", localTarget)).toBe("Not Found");
   });
 });

@@ -14,6 +14,7 @@ import { WorkspaceService } from "./workspaces/workspaceService.js";
 import type { PiPackageService } from "./piPackageService.js";
 import type { SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
 import { PI_WEB_CAPABILITIES } from "../shared/capabilities.js";
+import { PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS } from "../shared/federatedRoutes.js";
 import { machineScopedPluginId } from "../shared/machinePluginIds.js";
 import { MAX_IMAGE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
 import type { PiPackageInfo, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
@@ -157,6 +158,28 @@ describe("buildApp", () => {
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.json()).toEqual([{ id: "p1", name: "Remote Project", path: "/repo", createdAt: "now" }]);
     expect(request).toHaveBeenCalledWith("GET", "/api/projects?active=true", undefined);
+  });
+
+  it("proxies remote Pi package routes and gives package mutations a longer timeout", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((method, path, body) => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ method, path, body })]),
+    }));
+    remoteClient = fakeRemoteClient({ request });
+
+    const listResponse = await app.inject({ method: "GET", url: `/api/machines/${remote.id}/pi-packages` });
+    const installBody = { source: "npm:@acme/new-tools" };
+    const installResponse = await app.inject({ method: "POST", url: `/api/machines/${remote.id}/pi-packages/install`, payload: installBody });
+
+    expect(listResponse.statusCode).toBe(200);
+    expect(listResponse.json()).toEqual({ method: "GET", path: "/api/pi-packages" });
+    expect(installResponse.statusCode).toBe(200);
+    expect(installResponse.json()).toEqual({ method: "POST", path: "/api/pi-packages/install", body: installBody });
+    expect(request).toHaveBeenNthCalledWith(1, "GET", "/api/pi-packages", undefined);
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/api/pi-packages/install", installBody, { timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS });
   });
 
   it("proxies remote workspace effective upload config through the existing federated workspace route", async () => {
@@ -401,7 +424,15 @@ describe("buildApp", () => {
     const installResponse = await app.inject({ method: "POST", url: "/api/pi-packages/install", payload: { source: "npm:@acme/new-tools" } });
     expect(installResponse.statusCode).toBe(200);
     expect(installResponse.json()).toMatchObject({ action: "install", source: "npm:@acme/new-tools" });
-    expect(piPackageRequests).toEqual([{ action: "list" }, { action: "install", source: "npm:@acme/new-tools" }]);
+
+    const localAliasResponse = await app.inject({ method: "POST", url: "/api/machines/local/pi-packages/remove", payload: { source: "npm:@acme/tools", scope: "user" } });
+    expect(localAliasResponse.statusCode).toBe(200);
+    expect(localAliasResponse.json()).toMatchObject({ action: "remove", source: "npm:@acme/tools", scope: "user" });
+    expect(piPackageRequests).toEqual([
+      { action: "list" },
+      { action: "install", source: "npm:@acme/new-tools" },
+      { action: "remove", source: "npm:@acme/tools", scope: "user" },
+    ]);
   });
 
   it("serves the PI WEB plugin manifest and plugin assets", async () => {

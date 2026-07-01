@@ -61,7 +61,7 @@ describe("machine-scoped runtime API", () => {
 });
 
 describe("Pi package API", () => {
-  it("uses the local Pi package-management routes for list and mutations", async () => {
+  it("preserves the legacy local Pi package-management routes by default", async () => {
     const packages = [{ source: "npm:@acme/tools", scope: "user", filtered: false, installedPath: "/home/test/.pi/packages/tools" }];
     const fetchMock = stubSequenceFetch([
       jsonResponse({ packages }),
@@ -88,6 +88,34 @@ describe("Pi package API", () => {
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ source: "npm:@acme/new-tools" });
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 2)[1]))).toEqual({ source: "../project-tools", scope: "project" });
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 3)[1]))).toEqual({ source: "npm:@acme/tools" });
+    expect(fetchCall(fetchMock, 4)[1]?.body).toBeUndefined();
+  });
+
+  it("uses machine-scoped Pi package-management routes when a machine id is provided", async () => {
+    const packages = [{ source: "npm:@acme/tools", scope: "user", filtered: false, installedPath: "/home/test/.pi/packages/tools" }];
+    const fetchMock = stubSequenceFetch([
+      jsonResponse({ packages }),
+      jsonResponse({ packages }),
+      jsonResponse({ action: "install", source: "npm:@acme/new-tools", packages }),
+      jsonResponse({ action: "remove", source: "../project-tools", removed: true, packages }),
+      jsonResponse({ action: "update", packages }),
+    ]);
+
+    await expect(piPackagesApi.packages("local")).resolves.toEqual({ packages });
+    await expect(piPackagesApi.packages("remote a")).resolves.toEqual({ packages });
+    await piPackagesApi.install("npm:@acme/new-tools", "remote a");
+    await piPackagesApi.remove("../project-tools", undefined, "remote a");
+    await piPackagesApi.update(undefined, "remote a");
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/machines/local/pi-packages",
+      "/api/machines/remote%20a/pi-packages",
+      "/api/machines/remote%20a/pi-packages/install",
+      "/api/machines/remote%20a/pi-packages/remove",
+      "/api/machines/remote%20a/pi-packages/update",
+    ]);
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 2)[1]))).toEqual({ source: "npm:@acme/new-tools" });
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 3)[1]))).toEqual({ source: "../project-tools" });
     expect(fetchCall(fetchMock, 4)[1]?.body).toBeUndefined();
   });
 });

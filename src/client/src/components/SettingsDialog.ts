@@ -1,19 +1,20 @@
-import { css, html, LitElement, type TemplateResult } from "lit";
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
-import { configApi, piPackagesApi, pluginsApi, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
+import { configApi, piPackagesApi, pluginsApi, type Machine, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
 import type { SettingsSection } from "../settingsRoute";
 import "./settings/SettingsGeneralPanel";
 import "./settings/SettingsSessiondPanel";
 import "./settings/SettingsPackagesPanel";
 import "./settings/SettingsPluginsPanel";
 import "./settings/SettingsShortcutsPanel";
-import { piPackageMutationFollowUpMessage, type PiPackageOperationState } from "./settings/piPackageSettings";
+import { friendlyPiPackageErrorMessage, piPackageMutationFollowUpMessage, piPackageTargetContext, piPackageTargetLabel, shouldRefreshGatewayPluginsAfterPiPackageMutation, type PiPackageOperationState, type PiPackageTargetContext } from "./settings/piPackageSettings";
 
 @customElement("settings-dialog")
 export class SettingsDialog extends LitElement {
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
+  @property({ attribute: false }) machine: Machine | undefined;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
   @property({ attribute: false }) onClose?: () => void;
   @property({ attribute: false }) onConfigSaved?: (config: PiWebConfigValues) => void;
@@ -24,9 +25,13 @@ export class SettingsDialog extends LitElement {
   @state() private saving = false;
   @state() private packageOperation: PiPackageOperationState | undefined;
   @state() private error = "";
+  @state() private packageError = "";
   @state() private savedMessage = "";
   @state() private packageMessage = "";
   private savedMessageTimer: number | undefined;
+  private loadRequestSeq = 0;
+  private packageMutationSeq = 0;
+  private lastRequestedPackageTargetId: string | undefined;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -37,6 +42,15 @@ export class SettingsDialog extends LitElement {
     if (this.savedMessageTimer !== undefined) window.clearTimeout(this.savedMessageTimer);
     this.savedMessageTimer = undefined;
     super.disconnectedCallback();
+  }
+
+  protected override updated(changed: PropertyValues<this>): void {
+    if (!changed.has("machine")) return;
+    const previousTarget = piPackageTargetContext(changed.get("machine"));
+    const currentTarget = this.packageTarget();
+    if (previousTarget.id === currentTarget.id) return;
+    this.resetPackageStateForTargetChange();
+    if (this.isConnected && this.lastRequestedPackageTargetId !== currentTarget.id) void this.loadConfig();
   }
 
   override render(): TemplateResult {
@@ -52,13 +66,14 @@ export class SettingsDialog extends LitElement {
           </header>
           <div class="settings-body">
             <nav class="settings-nav" aria-label="Settings sections">
-              ${this.renderNavButton("general", "General", "Server config")}
-              ${this.renderNavButton("sessiond", "Session daemon", "Runtime settings")}
-              ${this.renderNavButton("packages", "Pi packages", "Install and manage")}
-              ${this.renderNavButton("plugins", "PI WEB plugins", "Enable and disable")}
-              ${this.renderNavButton("shortcuts", "Keyboard", "Shortcuts")}
+              ${this.renderNavButton("general", "General", "Gateway config")}
+              ${this.renderNavButton("sessiond", "Session daemon", "Gateway runtime")}
+              ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
+              ${this.renderNavButton("plugins", "PI WEB plugins", "Gateway plugins")}
+              ${this.renderNavButton("shortcuts", "Keyboard", "Gateway shortcuts")}
             </nav>
             <main class="settings-content">
+              ${this.renderScopeNote()}
               ${this.renderActiveSection()}
             </main>
           </div>
@@ -99,9 +114,10 @@ export class SettingsDialog extends LitElement {
       return html`
         <settings-packages-panel
           .packagesResponse=${this.packagesResponse}
+          .targetMachine=${this.packageTarget()}
           .loading=${this.loading}
           .operation=${this.packageOperation}
-          .error=${this.error}
+          .error=${this.packageError}
           .operationMessage=${this.packageMessage}
           .onReload=${() => this.loadConfig()}
           .onInstallPackage=${(source: string) => this.installPiPackage(source)}
@@ -147,22 +163,53 @@ export class SettingsDialog extends LitElement {
     `;
   }
 
+  private renderScopeNote(): TemplateResult {
+    return html`
+      <div class="scope-note" role="note">
+        <strong>This tab edits:</strong> ${this.settingsScopeMessage()}
+      </div>
+    `;
+  }
+
+  private settingsScopeMessage(): string {
+    if (this.section === "packages") return `Selected machine packages: ${piPackageTargetLabel(this.packageTarget())}.`;
+    if (this.section === "sessiond") return "Local gateway session-daemon config.";
+    if (this.section === "plugins") return "Local gateway PI WEB plugin enablement.";
+    if (this.section === "shortcuts") return "Local gateway keyboard shortcuts.";
+    return "Local gateway config.";
+  }
+
   private navigate(section: SettingsSection): void {
     this.onNavigate?.(section);
   }
 
   private async loadConfig(): Promise<void> {
+    const target = this.packageTarget();
+    const requestSeq = ++this.loadRequestSeq;
+    this.lastRequestedPackageTargetId = target.id;
     this.loading = true;
     this.error = "";
+    this.packageError = "";
     try {
-      const [config, plugins, packages] = await Promise.all([configApi.config(), pluginsApi.plugins(), piPackagesApi.packages()]);
-      this.configResponse = config;
-      this.pluginsResponse = plugins;
-      this.packagesResponse = packages;
-    } catch (error) {
-      this.error = `Failed to load settings: ${errorMessage(error)}`;
+      const [config, plugins, packages] = await Promise.allSettled([configApi.config(), pluginsApi.plugins(), piPackagesApi.packages(target.id)]);
+      if (!this.isCurrentLoad(requestSeq, target)) return;
+
+      const errors: string[] = [];
+      if (config.status === "fulfilled") this.configResponse = config.value;
+      else errors.push(`config: ${errorMessage(config.reason)}`);
+
+      if (plugins.status === "fulfilled") this.pluginsResponse = plugins.value;
+      else errors.push(`PI WEB plugins: ${errorMessage(plugins.reason)}`);
+
+      if (packages.status === "fulfilled") this.packagesResponse = packages.value;
+      else {
+        this.packagesResponse = undefined;
+        this.packageError = `Failed to load Pi packages from ${piPackageTargetLabel(target)}: ${friendlyPiPackageErrorMessage(errorMessage(packages.reason), target)}`;
+      }
+
+      if (errors.length > 0) this.error = `Failed to load settings: ${errors.join("; ")}`;
     } finally {
-      this.loading = false;
+      if (this.isCurrentLoad(requestSeq, target)) this.loading = false;
     }
   }
 
@@ -177,7 +224,8 @@ export class SettingsDialog extends LitElement {
         [pluginId]: { ...currentPluginConfig, enabled },
       },
     });
-    await this.refreshPlugins();
+    const pluginRefreshError = await this.refreshPlugins();
+    if (pluginRefreshError !== undefined) this.error = pluginRefreshError;
   }
 
   private async saveConfig(config: PiWebConfigValues): Promise<void> {
@@ -186,6 +234,7 @@ export class SettingsDialog extends LitElement {
     this.error = "";
     this.savedMessage = "";
     this.packageMessage = "";
+    this.packageError = "";
     try {
       const response = await configApi.saveConfig(config);
       this.configResponse = response;
@@ -199,44 +248,81 @@ export class SettingsDialog extends LitElement {
   }
 
   private async installPiPackage(source: string): Promise<void> {
-    await this.runPiPackageMutation({ kind: "install", source }, "install Pi package", () => piPackagesApi.install(source));
+    const target = this.packageTarget();
+    await this.runPiPackageMutation({ kind: "install", source }, "install Pi package", target, () => piPackagesApi.install(source, target.id));
   }
 
   private async removePiPackage(source: string, scope: PiPackageScope): Promise<void> {
-    await this.runPiPackageMutation({ kind: "remove", source }, "remove Pi package", () => piPackagesApi.remove(source, scope));
+    const target = this.packageTarget();
+    await this.runPiPackageMutation({ kind: "remove", source }, "remove Pi package", target, () => piPackagesApi.remove(source, scope, target.id));
   }
 
   private async updatePiPackage(source?: string): Promise<void> {
-    await this.runPiPackageMutation(source === undefined ? { kind: "update-all" } : { kind: "update", source }, "update Pi packages", () => piPackagesApi.update(source));
+    const target = this.packageTarget();
+    await this.runPiPackageMutation(source === undefined ? { kind: "update-all" } : { kind: "update", source }, "update Pi packages", target, () => piPackagesApi.update(source, target.id));
   }
 
-  private async runPiPackageMutation(operation: PiPackageOperationState, label: string, mutate: () => Promise<PiPackageMutationResponse>): Promise<void> {
+  private async runPiPackageMutation(operation: PiPackageOperationState, label: string, target: PiPackageTargetContext, mutate: () => Promise<PiPackageMutationResponse>): Promise<void> {
     if (this.saving) throw new Error("A settings operation is already running.");
+    const requestSeq = ++this.packageMutationSeq;
     this.saving = true;
     this.packageOperation = operation;
     this.error = "";
+    this.packageError = "";
     this.savedMessage = "";
     this.packageMessage = "";
     try {
       const response = await mutate();
+      if (!this.isCurrentPackageMutation(requestSeq, target)) return;
       this.packagesResponse = { packages: response.packages };
-      await this.refreshPlugins();
-      this.packageMessage = piPackageMutationFollowUpMessage(response.action);
+      const pluginRefreshError = shouldRefreshGatewayPluginsAfterPiPackageMutation(target) ? await this.refreshPlugins() : undefined;
+      if (!this.isCurrentPackageMutation(requestSeq, target)) return;
+      if (pluginRefreshError !== undefined) this.packageError = pluginRefreshError;
+      this.packageMessage = piPackageMutationFollowUpMessage(response.action, target);
     } catch (error) {
-      this.error = `Failed to ${label}: ${errorMessage(error)}`;
+      if (this.isCurrentPackageMutation(requestSeq, target)) this.packageError = `Failed to ${label} on ${piPackageTargetLabel(target)}: ${friendlyPiPackageErrorMessage(errorMessage(error), target)}`;
       throw error;
     } finally {
-      this.packageOperation = undefined;
-      this.saving = false;
+      if (this.packageMutationSeq === requestSeq) {
+        this.packageOperation = undefined;
+        this.saving = false;
+      }
     }
   }
 
-  private async refreshPlugins(): Promise<void> {
+  private async refreshPlugins(): Promise<string | undefined> {
     try {
       this.pluginsResponse = await pluginsApi.plugins();
+      return undefined;
     } catch (error) {
-      this.error = `Failed to refresh PI WEB plugins: ${errorMessage(error)}`;
+      return `Failed to refresh PI WEB plugins: ${errorMessage(error)}`;
     }
+  }
+
+  private packageTarget(): PiPackageTargetContext {
+    return piPackageTargetContext(this.machine);
+  }
+
+  private isCurrentLoad(requestSeq: number, target: PiPackageTargetContext): boolean {
+    return requestSeq === this.loadRequestSeq && this.isCurrentPackageTarget(target);
+  }
+
+  private isCurrentPackageMutation(requestSeq: number, target: PiPackageTargetContext): boolean {
+    return requestSeq === this.packageMutationSeq && this.isCurrentPackageTarget(target);
+  }
+
+  private isCurrentPackageTarget(target: PiPackageTargetContext): boolean {
+    return this.packageTarget().id === target.id;
+  }
+
+  private resetPackageStateForTargetChange(): void {
+    const hadPackageOperation = this.packageOperation !== undefined;
+    this.packageMutationSeq += 1;
+    this.packageOperation = undefined;
+    this.packageMessage = "";
+    this.packageError = "";
+    this.packagesResponse = undefined;
+    if (hadPackageOperation) this.saving = false;
   }
 
   private showSavedMessage(): void {
@@ -272,6 +358,7 @@ export class SettingsDialog extends LitElement {
     .settings-nav button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
     .settings-nav small { color: var(--pi-muted); }
     .settings-content { min-width: 0; min-height: 0; overflow: auto; padding: 18px; }
+    .scope-note { margin-bottom: 14px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); color: var(--pi-text); padding: 10px 12px; line-height: 1.45; }
 
     @media (max-width: 760px) {
       .backdrop { padding: 0; place-items: stretch; }

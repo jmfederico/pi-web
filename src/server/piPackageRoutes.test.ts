@@ -29,6 +29,23 @@ describe("registerPiPackageRoutes", () => {
     expect(serviceMocks.list).toHaveBeenCalledOnce();
   });
 
+  it("registers package routes under a custom API prefix", async () => {
+    const prefixedApp = Fastify({ logger: false });
+    const prefixedMocks = fakePiPackageService();
+    registerPiPackageRoutes(prefixedApp, prefixedMocks.service, "/api/machines/local");
+    await prefixedApp.ready();
+
+    try {
+      const response = await prefixedApp.inject({ method: "GET", url: "/api/machines/local/pi-packages" });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ packages: [{ source: "npm:@acme/tools", scope: "user", filtered: false, installedPath: "/home/test/.pi/packages/tools" }] });
+      expect(prefixedMocks.list).toHaveBeenCalledOnce();
+    } finally {
+      await prefixedApp.close();
+    }
+  });
+
   it("installs a trimmed Pi package source without accepting a scope", async () => {
     const response = await app.inject({ method: "POST", url: "/api/pi-packages/install", payload: { source: "  npm:@acme/new-tools  " } });
     const scopedResponse = await app.inject({ method: "POST", url: "/api/pi-packages/install", payload: { source: "npm:@acme/new-tools", scope: "project" } });

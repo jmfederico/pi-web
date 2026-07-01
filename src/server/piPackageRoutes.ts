@@ -4,8 +4,10 @@ import { createDefaultPiPackageService, type PiPackageService } from "./piPackag
 
 class PiPackageRequestValidationError extends Error {}
 
-export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackageService = createDefaultPiPackageService()): void {
-  app.get("/api/pi-packages", async (_request, reply) => {
+export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackageService = createDefaultPiPackageService(), prefix = "/api"): void {
+  const routePrefix = normalizeRoutePrefix(prefix);
+
+  app.get(`${routePrefix}/pi-packages`, async (_request, reply) => {
     try {
       return await service.list();
     } catch (error) {
@@ -13,7 +15,7 @@ export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackage
     }
   });
 
-  app.post<{ Body: unknown }>("/api/pi-packages/install", async (request, reply) => {
+  app.post<{ Body: unknown }>(`${routePrefix}/pi-packages/install`, async (request, reply) => {
     try {
       return await service.install(parseRequiredSourceRequest(request.body));
     } catch (error) {
@@ -21,7 +23,7 @@ export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackage
     }
   });
 
-  app.post<{ Body: unknown }>("/api/pi-packages/remove", async (request, reply) => {
+  app.post<{ Body: unknown }>(`${routePrefix}/pi-packages/remove`, async (request, reply) => {
     try {
       const body = requireRequestObject(request.body);
       return await service.remove(parseRequiredSource(body["source"]), parseOptionalScope(body["scope"]));
@@ -30,7 +32,7 @@ export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackage
     }
   });
 
-  app.post<{ Body: unknown }>("/api/pi-packages/update", async (request, reply) => {
+  app.post<{ Body: unknown }>(`${routePrefix}/pi-packages/update`, async (request, reply) => {
     try {
       const source = parseOptionalUpdateSource(request.body);
       return source === undefined ? await service.update() : await service.update(source);
@@ -38,6 +40,11 @@ export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackage
       return sendPiPackageError(reply, error);
     }
   });
+}
+
+function normalizeRoutePrefix(prefix: string): string {
+  const normalized = prefix.replace(/\/+$/u, "");
+  return normalized === "" ? "/api" : normalized;
 }
 
 function parseRequiredSourceRequest(body: unknown): string {

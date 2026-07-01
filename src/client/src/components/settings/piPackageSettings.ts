@@ -1,10 +1,29 @@
-import type { PiPackageInfo, PiPackageMutationAction } from "../../api";
+import type { Machine, MachineKind, PiPackageInfo, PiPackageMutationAction } from "../../api";
 
 export type PiPackageOperationKind = PiPackageMutationAction | "update-all";
 
 export interface PiPackageOperationState {
   kind: PiPackageOperationKind;
   source?: string;
+}
+
+export interface PiPackageTargetContext {
+  id: string;
+  name: string;
+  kind: MachineKind;
+}
+
+export function piPackageTargetContext(machine: Pick<Machine, "id" | "name" | "kind"> | undefined): PiPackageTargetContext {
+  if (machine !== undefined) return { id: machine.id, name: machine.name, kind: machine.kind };
+  return { id: "local", name: "local", kind: "local" };
+}
+
+export function piPackageTargetLabel(target: PiPackageTargetContext): string {
+  return target.kind === "local" ? `${target.name} (local gateway)` : `${target.name} (remote machine)`;
+}
+
+export function shouldRefreshGatewayPluginsAfterPiPackageMutation(target: PiPackageTargetContext): boolean {
+  return target.kind === "local";
 }
 
 export function normalizePiPackageSource(source: string): string {
@@ -52,7 +71,31 @@ export function isPiPackageOperationPending(operation: PiPackageOperationState |
   return source === undefined || operation.source === source;
 }
 
-export function piPackageMutationFollowUpMessage(action: PiPackageMutationAction): string {
+export function piPackageMutationFollowUpMessage(action: PiPackageMutationAction, target = piPackageTargetContext(undefined)): string {
   const verb = action === "install" ? "installed" : action === "remove" ? "removed" : "updated";
-  return `Pi package ${verb}. Type /reload in each idle PI WEB session to rediscover Pi runtime resources: extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for PI WEB browser plugin changes.`;
+  const targetSuffix = target.kind === "local" ? "" : ` on ${target.name}`;
+  const sessionScope = target.kind === "local" ? "each idle PI WEB session" : `each idle PI WEB session on ${target.name}`;
+  const pluginScope = target.kind === "local" ? "PI WEB browser plugin changes" : `PI WEB browser plugin changes served by ${target.name}`;
+  return `Pi package ${verb}${targetSuffix}. Type /reload in ${sessionScope} to rediscover Pi runtime resources: extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for ${pluginScope}.`;
+}
+
+export function friendlyPiPackageErrorMessage(message: string, target: PiPackageTargetContext): string {
+  const normalized = message.trim();
+  if (target.kind !== "remote") return normalized;
+  if (isUnsupportedRemotePiPackageRouteMessage(normalized)) {
+    return `Pi package management is not available on ${target.name}. Update and restart Pi-Web on that machine, then try again.`;
+  }
+  if (normalized === "Remote machine timeout") {
+    return `Timed out while contacting ${target.name} for Pi package management. The package operation may still be running remotely; reload the package list before retrying.`;
+  }
+  if (normalized === "Remote machine unavailable") {
+    return `Could not reach ${target.name} for Pi package management. Check the machine connection and try again.`;
+  }
+  return normalized;
+}
+
+function isUnsupportedRemotePiPackageRouteMessage(message: string): boolean {
+  return message === "Not Found"
+    || /route\s+(GET|POST):?\/api\/pi-packages\b.*not found/iu.test(message)
+    || /cannot\s+(GET|POST)\s+.*\/api\/pi-packages\b/iu.test(message);
 }
