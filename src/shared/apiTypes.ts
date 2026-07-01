@@ -8,6 +8,7 @@ export const PI_WEB_CAPABILITIES = {
   sessionsReload: "sessions.reload",
   promptAttachments: "prompt.attachments",
   workspaceFileSuggestions: "workspace.fileSuggestions",
+  piPackagesManage: "piPackages.manage",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];

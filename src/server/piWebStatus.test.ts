@@ -2,9 +2,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { comparePackageVersions, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import type { PiWebComponentStatus } from "../shared/apiTypes.js";
+import { PI_WEB_CAPABILITIES } from "../shared/capabilities.js";
 
 const originalSkipVersionCheck = process.env["PI_WEB_SKIP_VERSION_CHECK"];
 const originalHome = process.env["HOME"];
@@ -38,6 +39,23 @@ describe("PI WEB status", () => {
     expect(status.components.web.component).toBe("web");
     expect(status.components.sessiond.runtimeVersion).toBe("1.202605.7");
     expect(status).not.toHaveProperty("release");
+  });
+
+  it("reports Pi package management as a web runtime capability", async () => {
+    const daemon = daemonWithComponent({
+      component: "sessiond",
+      label: "Session daemon",
+      runtimeVersion: "1.202605.7",
+      installedVersion: "1.202605.8",
+      stale: true,
+      available: true,
+    });
+
+    const runtime = await getPiWebRuntime(daemon);
+
+    expect(runtime.components.web.capabilities).toContain(PI_WEB_CAPABILITIES.piPackagesManage);
+    expect(runtime.components.sessiond.capabilities).not.toContain(PI_WEB_CAPABILITIES.piPackagesManage);
+    expect(runtime.capabilities).toContain(PI_WEB_CAPABILITIES.piPackagesManage);
   });
 
   it("reports stale session daemon versions as messages", async () => {

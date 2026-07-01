@@ -1,5 +1,5 @@
 import type { Machine, MachineHealth, MachineRuntime, PiWebComponentStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebStatusResponse } from "../../shared/apiTypes.js";
-import { isPiWebCapability } from "../../shared/capabilities.js";
+import { parsePiWebRuntimeResponse } from "../../shared/piWebStatusParsing.js";
 import { getPiWebRuntime } from "../piWebStatus.js";
 import { DEFAULT_REMOTE_HEALTH_TIMEOUT_MS, RemoteMachineClient, type MachineClient, validateConfiguredMachineHeaders } from "./machineClient.js";
 import { MachineStore, type StoredMachine } from "./machineStore.js";
@@ -151,7 +151,8 @@ export class MachineService {
     const checkedAt = this.now().toISOString();
     try {
       const response = await this.clientFor(machine).requestJson("GET", "/api/pi-web/runtime", undefined, { timeoutMs: DEFAULT_REMOTE_HEALTH_TIMEOUT_MS });
-      if (response.statusCode >= 200 && response.statusCode < 300 && isPiWebRuntimeResponse(response.body)) return machineRuntime(id, checkedAt, response.body);
+      const runtime = parsePiWebRuntimeResponse(response.body);
+      if (response.statusCode >= 200 && response.statusCode < 300 && runtime !== undefined) return machineRuntime(id, checkedAt, runtime);
       return { machineId: id, ok: false, checkedAt, error: `Remote runtime returned HTTP ${String(response.statusCode)}` };
     } catch (error) {
       return { machineId: id, ok: false, checkedAt, error: errorMessage(error) };
@@ -241,16 +242,6 @@ function isPiWebStatusResponse(value: unknown): value is PiWebStatusResponse {
   return isPiWebComponentStatus(components["web"]) && isPiWebComponentStatus(components["sessiond"]);
 }
 
-function isPiWebRuntimeResponse(value: unknown): value is PiWebRuntimeResponse {
-  if (!isRecord(value)) return false;
-  const packageName = value["packageName"];
-  const generatedAt = value["generatedAt"];
-  const components = value["components"];
-  const capabilities = value["capabilities"];
-  if (typeof packageName !== "string" || typeof generatedAt !== "string" || !isRecord(components) || !isPiWebCapabilityArray(capabilities)) return false;
-  return isPiWebRuntimeComponent(components["web"]) && isPiWebRuntimeComponent(components["sessiond"]);
-}
-
 function isPiWebComponentStatus(value: unknown): value is PiWebComponentStatus {
   if (!isRecord(value)) return false;
   const component = value["component"];
@@ -258,19 +249,6 @@ function isPiWebComponentStatus(value: unknown): value is PiWebComponentStatus {
     && typeof value["label"] === "string"
     && typeof value["stale"] === "boolean"
     && typeof value["available"] === "boolean";
-}
-
-function isPiWebRuntimeComponent(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const component = value["component"];
-  return (component === "web" || component === "sessiond")
-    && typeof value["label"] === "string"
-    && typeof value["available"] === "boolean"
-    && isPiWebCapabilityArray(value["capabilities"]);
-}
-
-function isPiWebCapabilityArray(value: unknown): boolean {
-  return Array.isArray(value) && value.every(isPiWebCapability);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

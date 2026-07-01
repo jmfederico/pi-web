@@ -1,5 +1,5 @@
-import type { PiWebCapability, PiWebComponentStatus, PiWebInstallationInfo, PiWebRuntimeComponent, PiWebVersionResponse } from "./apiTypes.js";
-import { isPiWebCapability } from "./capabilities.js";
+import type { PiWebComponentStatus, PiWebInstallationInfo, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebVersionResponse } from "./apiTypes.js";
+import { parseKnownPiWebCapabilities } from "./capabilities.js";
 
 export function parsePiWebVersionResponse(value: unknown): PiWebVersionResponse | undefined {
   if (!isRecord(value)) return undefined;
@@ -13,13 +13,26 @@ export function parsePiWebVersionResponse(value: unknown): PiWebVersionResponse 
   return { packageName, generatedAt, components: { web, sessiond } };
 }
 
+export function parsePiWebRuntimeResponse(value: unknown): PiWebRuntimeResponse | undefined {
+  if (!isRecord(value)) return undefined;
+  const packageName = value["packageName"];
+  const generatedAt = value["generatedAt"];
+  const components = value["components"];
+  const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
+  if (typeof packageName !== "string" || packageName === "" || typeof generatedAt !== "string" || generatedAt === "" || !isRecord(components) || capabilities === undefined) return undefined;
+  const web = parsePiWebRuntimeComponent(components["web"]);
+  const sessiond = parsePiWebRuntimeComponent(components["sessiond"]);
+  if (web === undefined || sessiond === undefined) return undefined;
+  return { packageName, generatedAt, components: { web, sessiond }, capabilities };
+}
+
 export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponent | undefined {
   if (!isRecord(value)) return undefined;
   const component = value["component"];
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
   const available = value["available"];
-  const capabilities = parsePiWebCapabilities(value["capabilities"]);
+  const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
   const error = value["error"];
   if (component !== "web" && component !== "sessiond") return undefined;
   if (typeof label !== "string" || label === "" || typeof available !== "boolean" || capabilities === undefined) return undefined;
@@ -55,11 +68,6 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
     ...(installation === undefined ? {} : { installation }),
     ...(typeof error === "string" ? { error } : {}),
   };
-}
-
-function parsePiWebCapabilities(value: unknown): PiWebCapability[] | undefined {
-  if (!Array.isArray(value) || !value.every(isPiWebCapability)) return undefined;
-  return value;
 }
 
 export function parsePiWebInstallationInfo(value: unknown): PiWebInstallationInfo | undefined {

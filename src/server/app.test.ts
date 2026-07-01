@@ -127,10 +127,10 @@ describe("buildApp", () => {
         packageName: "@jmfederico/pi-web",
         generatedAt: "2026-05-25T00:00:00.000Z",
         components: {
-          web: { component: "web", label: "Remote Web", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived] },
+          web: { component: "web", label: "Remote Web", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived, PI_WEB_CAPABILITIES.piPackagesManage, "future.capability"] },
           sessiond: { component: "sessiond", label: "Remote Sessiond", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived] },
         },
-        capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived],
+        capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived, PI_WEB_CAPABILITIES.piPackagesManage, "future.capability"],
       },
     }));
     remoteClient = fakeRemoteClient({ requestJson });
@@ -138,7 +138,7 @@ describe("buildApp", () => {
     const runtime = await app.inject({ method: "GET", url: `/api/machines/${remote.id}/runtime` });
 
     expect(runtime.statusCode).toBe(200);
-    expect(runtime.json()).toMatchObject({ machineId: remote.id, ok: true, capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived] });
+    expect(runtime.json()).toMatchObject({ machineId: remote.id, ok: true, capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived, PI_WEB_CAPABILITIES.piPackagesManage] });
     expect(requestJson).toHaveBeenCalledWith("GET", "/api/pi-web/runtime", undefined, { timeoutMs: 3000 });
   });
 
