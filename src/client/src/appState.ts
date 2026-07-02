@@ -20,6 +20,8 @@ export interface AppState {
   isReceivingPartialStream: boolean;
   /** Sessions with a prompt upload in flight, keyed by sessionId (client-owned). */
   sendingPrompts: Record<string, true>;
+  /** Client-initiated session creation requests waiting for the server. */
+  startingSessionCount: number;
   isLoadingProjects: boolean;
   isLoadingWorkspaces: boolean;
   selectedProject: Project | undefined;
@@ -72,6 +74,7 @@ export type AuthDialogState =
 
 export type WorkspaceScopedStateReset = Pick<AppState,
   | "sessions"
+  | "startingSessionCount"
   | "fileTree"
   | "expandedDirs"
   | "selectedFilePath"
@@ -89,6 +92,7 @@ export type WorkspaceScopedStateReset = Pick<AppState,
 export function resetWorkspaceScopedState(): WorkspaceScopedStateReset {
   return {
     sessions: [],
+    startingSessionCount: 0,
     fileTree: [],
     expandedDirs: {},
     selectedFilePath: undefined,
@@ -121,6 +125,7 @@ export function initialAppState(): AppState {
     isLoadingEarlierMessages: false,
     isReceivingPartialStream: false,
     sendingPrompts: {},
+    startingSessionCount: 0,
     isLoadingProjects: false,
     isLoadingWorkspaces: false,
     selectedProject: undefined,

@@ -1119,6 +1119,7 @@ export class PiWebApp extends LitElement {
         .sessionActivities=${this.state.sessionActivities}
         .sendingPrompts=${this.state.sendingPrompts}
         .selectedSession=${this.state.selectedSession}
+        .startingSessionCount=${this.state.startingSessionCount}
         .canStartSession=${!!this.state.selectedWorkspace}
         .canDeleteArchivedSessions=${this.canDeleteArchivedSessions()}
         .canReloadSessions=${this.canReloadSessions()}

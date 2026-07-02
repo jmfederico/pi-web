@@ -29,6 +29,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) activities: Record<string, SessionActivity> = {};
   @property({ attribute: false }) sending: Record<string, true> = {};
   @property({ attribute: false }) selected?: SessionInfo;
+  @property({ type: Number }) startingCount = 0;
   @property({ type: Boolean }) canStart = false;
   @property({ type: Boolean }) canDeleteArchived = false;
   @property({ type: Boolean }) canReload = false;
@@ -109,6 +110,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         ${this.collapsed ? null : html`
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
+            ${this.startingCount > 0 ? this.renderStartingSession() : null}
             ${currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
             ${archivedRows.length > 0 ? html`
               ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
@@ -130,7 +132,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           Sessions
           ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderCleanupButton()}
-          <button ?disabled=${!this.canStart} @click=${() => this.onStart?.()}>+</button>
+          ${this.renderStartButton()}
         </h2>
       `;
     }
@@ -142,7 +144,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         ${this.renderCurrentSelectionButton(currentSessions)}
         <small class="section-count">${sessionCount}</small>
         ${this.renderCleanupButton()}
-        <button ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(); }}>+</button>
+        ${this.renderStartButton()}
       </h2>
     `;
   }
@@ -155,6 +157,23 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderCleanupButton() {
     return html`<button class="cleanup-entry" title=${this.canCleanup ? "Preview session cleanup" : this.cleanupUnavailableMessage} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onCleanup?.(); }}>Clean up</button>`;
+  }
+
+  private renderStartButton() {
+    const title = this.startingCount > 0 ? "Start another session" : "Start a new session";
+    return html`<button class="start-session-button" title=${title} aria-label=${title} ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(); }}>+</button>`;
+  }
+
+  private renderStartingSession() {
+    const plural = this.startingCount !== 1;
+    return html`
+      <div class="pending-session-row starting-session" role="status" aria-live="polite">
+        <div class="action-main">
+          <span class="action-name"><span class="activity-indicator sending" aria-hidden="true"></span>${plural ? `Starting ${String(this.startingCount)} sessions…` : "Starting session…"}</span>
+          <small>Waiting for ${plural ? "new sessions" : "the new session"} to be created</small>
+        </div>
+      </div>
+    `;
   }
 
   private renderArchivedHeading(archivedSessions: SessionInfo[]) {
@@ -381,6 +400,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     h2 { min-height: 30px; }
     h2 > .section-count { flex: 0 0 auto; display: inline; color: var(--pi-muted); font-size: inherit; }
     .bulk-select-entry { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; font-size: 13px; line-height: 1; text-transform: none; }
+    .start-session-button { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 9px; }
     .cleanup-entry { flex: 0 0 auto; padding: 5px 7px; font-size: 12px; text-transform: none; }
     .bulk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; }
     .bulk-row button { padding: 5px 7px; font-size: 12px; }
@@ -391,6 +411,10 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     button.danger, .action-menu-panel button.danger { color: var(--pi-danger); }
     button.danger:hover, .action-menu-panel button.danger:hover { background: color-mix(in srgb, var(--pi-danger) 14%, transparent); }
     .action-row.bulk-selected .action-main { border-color: var(--pi-accent); box-shadow: inset 3px 0 0 var(--pi-accent); }
+    .pending-session-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); margin: 6px 0; cursor: default; }
+    .pending-session-row.starting-session .action-main { border-radius: 8px; border-style: dashed; color: var(--pi-muted); }
+    .pending-session-row.starting-session .action-name { display: flex; align-items: center; gap: 6px; max-height: none; -webkit-line-clamp: 1; }
+    .pending-session-row.starting-session .activity-indicator { flex: 0 0 auto; margin: 0; }
     .action-main.selecting { padding-left: calc(32px + var(--depth, 0) * 16px); }
     .session-checkbox { position: absolute; top: 9px; left: calc(8px + var(--depth, 0) * 16px); z-index: 2; margin: 0; }
   `];

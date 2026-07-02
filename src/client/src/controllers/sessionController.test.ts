@@ -103,6 +103,23 @@ const replacementSession: SessionInfo = {
 
 const emptyPage: MessagePage = { messages: [], start: 0, total: 0 };
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolveDeferred: ((value: T) => void) | undefined;
+  let rejectDeferred: ((error: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveDeferred = resolve;
+    rejectDeferred = reject;
+  });
+  if (resolveDeferred === undefined || rejectDeferred === undefined) throw new Error("Deferred promise was not initialized");
+  return { promise, resolve: resolveDeferred, reject: rejectDeferred };
+}
+
 function status(sessionId: string): SessionStatus {
   return {
     sessionId,
@@ -332,6 +349,103 @@ describe("SessionController", () => {
 
     expect(state.sessions.map((session) => session.id)).toEqual(["started-session"]);
     expect(isCachedNewSessionInfo(state.sessions[0])).toBe(true);
+  });
+
+  it("tracks multiple pending session starts without blocking another start", async () => {
+    const firstStarted: SessionInfo = { ...oldSession, id: "started-session-1", path: "/tmp/started-session-1.jsonl" };
+    const secondStarted: SessionInfo = { ...oldSession, id: "started-session-2", path: "/tmp/started-session-2.jsonl" };
+    const startResolvers: ((session: SessionInfo) => void)[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      startSession: () => new Promise<SessionInfo>((resolve) => { startResolvers.push(resolve); }),
+      messages: () => Promise.resolve(emptyPage),
+      status: (session) => Promise.resolve(status(sessionLookupId(session))),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    const firstStart = controller.startSession();
+    const secondStart = controller.startSession();
+
+    expect(startResolvers).toHaveLength(2);
+    expect(state.startingSessionCount).toBe(2);
+    expect(state.sessions).toEqual([]);
+
+    startResolvers[0]?.(firstStarted);
+    await firstStart;
+
+    expect(state.startingSessionCount).toBe(1);
+    expect(state.sessions.map((session) => session.id)).toEqual(["started-session-1"]);
+
+    startResolvers[1]?.(secondStarted);
+    await secondStart;
+
+    expect(state.startingSessionCount).toBe(0);
+    expect(state.sessions.map((session) => session.id)).toEqual(["started-session-2", "started-session-1"]);
+    expect(state.selectedSession?.id).toBe("started-session-2");
+  });
+
+  it("removes a resolved session start from the pending count when inserting its row", async () => {
+    const firstStarted: SessionInfo = { ...oldSession, id: "started-session-1", path: "/tmp/started-session-1.jsonl" };
+    const secondStarted: SessionInfo = { ...oldSession, id: "started-session-2", path: "/tmp/started-session-2.jsonl" };
+    const startResolvers: ((session: SessionInfo) => void)[] = [];
+    const messageRequests = new Map<string, Deferred<MessagePage>>();
+    const statusRequests = new Map<string, Deferred<SessionStatus>>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      startSession: () => new Promise<SessionInfo>((resolve) => { startResolvers.push(resolve); }),
+      messages: (session) => {
+        const request = deferred<MessagePage>();
+        messageRequests.set(sessionLookupId(session), request);
+        return request.promise;
+      },
+      status: (session) => {
+        const request = deferred<SessionStatus>();
+        statusRequests.set(sessionLookupId(session), request);
+        return request.promise;
+      },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    const firstStart = controller.startSession();
+    const secondStart = controller.startSession();
+    expect(startResolvers).toHaveLength(2);
+    expect(state.startingSessionCount).toBe(2);
+
+    startResolvers[0]?.(firstStarted);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["started-session-1"]);
+    expect(state.startingSessionCount).toBe(1);
+
+    messageRequests.get(firstStarted.id)?.resolve(emptyPage);
+    statusRequests.get(firstStarted.id)?.resolve(status(firstStarted.id));
+    await firstStart;
+
+    startResolvers[1]?.(secondStarted);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(["started-session-2", "started-session-1"]);
+    expect(state.startingSessionCount).toBe(0);
+
+    messageRequests.get(secondStarted.id)?.resolve(emptyPage);
+    statusRequests.get(secondStarted.id)?.resolve(status(secondStarted.id));
+    await secondStart;
   });
 
   it("toggles the per-session sending state around an inline attachment send and forwards attachments", async () => {

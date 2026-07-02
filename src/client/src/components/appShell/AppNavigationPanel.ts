@@ -39,6 +39,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ type: Boolean }) projectsCollapsed = false;
   @property({ type: Boolean }) workspacesCollapsed = false;
   @property({ type: Boolean }) sessionsCollapsed = false;
+  @property({ type: Number }) startingSessionCount = 0;
   @property({ type: Boolean }) canStartSession = false;
   @property({ type: Boolean }) canDeleteArchivedSessions = false;
   @property({ type: Boolean }) canReloadSessions = false;
@@ -159,6 +160,7 @@ export class AppNavigationPanel extends LitElement {
         .activities=${this.sessionActivities}
         .sending=${this.sendingPrompts}
         .selected=${this.selectedSession}
+        .startingCount=${this.startingSessionCount}
         .canStart=${this.canStartSession}
         .canDeleteArchived=${this.canDeleteArchivedSessions}
         .canReload=${this.canReloadSessions}

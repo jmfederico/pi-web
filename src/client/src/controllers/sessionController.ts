@@ -98,18 +98,37 @@ export class SessionController {
   async startSession() {
     const workspace = this.getState().selectedWorkspace;
     if (!workspace) return;
+    const machineId = selectedMachineId(this.getState());
+    const isCurrentWorkspace = () => selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id;
+    this.setState({ startingSessionCount: this.getState().startingSessionCount + 1, error: "" });
+    let shouldDecrementStartingCount = true;
     try {
-      const machineId = selectedMachineId(this.getState());
       const session = await this.api.startSession(workspace.path, machineId);
       rememberCachedNewSession(session, machineId);
       const cachedSession = markCachedNewSessionInfo(session, machineId);
+      if (!isCurrentWorkspace()) return;
+      const state = this.getState();
       // Drop any entry the session.created broadcast may have inserted for this
       // same session before the HTTP response resolved, so the cached marker
-      // (and its delete action) wins instead of leaving a duplicate badge.
-      this.setState({ sessions: [cachedSession, ...this.getState().sessions.filter((candidate) => candidate.id !== cachedSession.id)] });
+      // (and its delete action) wins instead of leaving a duplicate badge. The
+      // pending count for this completed request is consumed in the same patch
+      // so the list never renders both the real session and its placeholder.
+      this.setState({
+        sessions: [cachedSession, ...state.sessions.filter((candidate) => candidate.id !== cachedSession.id)],
+        startingSessionCount: decrementStartingSessionCount(state.startingSessionCount),
+      });
+      shouldDecrementStartingCount = false;
       await this.selectSession(cachedSession);
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (!isCurrentWorkspace()) return;
+      if (!shouldDecrementStartingCount) {
+        this.setState({ error: String(error) });
+        return;
+      }
+      this.setState({ error: String(error), startingSessionCount: decrementStartingSessionCount(this.getState().startingSessionCount) });
+      shouldDecrementStartingCount = false;
+    } finally {
+      if (shouldDecrementStartingCount && isCurrentWorkspace()) this.setState({ startingSessionCount: decrementStartingSessionCount(this.getState().startingSessionCount) });
     }
   }
 
@@ -852,6 +871,10 @@ export class SessionController {
 
 function omitSessionActivity(activities: Record<string, SessionActivity>, sessionId: string): Record<string, SessionActivity> {
   return omitKey(activities, sessionId);
+}
+
+function decrementStartingSessionCount(count: number): number {
+  return Math.max(0, count - 1);
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
