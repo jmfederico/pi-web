@@ -4,6 +4,11 @@ import type { ToolExecutionPart } from "./shared";
 
 const MAX_COLLAPSED_DIFF_LINES = 180;
 
+interface ToolTarget {
+  label: "Command" | "File" | "Input";
+  text: string;
+}
+
 @customElement("tool-execution-view")
 export class ToolExecutionView extends LitElement {
   @property({ attribute: false }) execution: ToolExecutionPart | undefined;
@@ -15,7 +20,6 @@ export class ToolExecutionView extends LitElement {
     const execution = this.execution;
     if (execution === undefined) return null;
 
-    const edit = execution.toolName === "edit";
     const path = pathFromArgs(execution.args);
     const actualDiff = diffFromDetails(execution.details);
     const preview = execution.preview;
@@ -24,6 +28,7 @@ export class ToolExecutionView extends LitElement {
     const previewMismatch = actualDiff !== undefined && preview?.diff !== undefined && actualDiff !== preview.diff;
     const errorText = execution.status === "error" ? execution.resultText : preview?.error;
     const bodyText = visibleDiff === undefined ? execution.resultText : undefined;
+    const target = toolTarget(execution, path);
 
     return html`
       <section class=${`tool-card ${execution.status}`}>
@@ -31,7 +36,7 @@ export class ToolExecutionView extends LitElement {
           <div class="tool-title">
             <span class="status-icon" aria-hidden="true">${statusIcon(execution.status)}</span>
             <strong>${execution.toolName}</strong>
-            ${path === undefined ? html`<span class="summary">${execution.summary}</span>` : html`<span class="path">${path}</span>`}
+            ${this.renderHeaderTarget(target)}
           </div>
           <div class="tool-meta">
             ${editCountLabel(execution) === undefined ? null : html`<span>${editCountLabel(execution)}</span>`}
@@ -42,23 +47,44 @@ export class ToolExecutionView extends LitElement {
 
         ${previewMismatch ? html`<p class="notice">Applied diff differs from the preview.</p>` : null}
         ${errorText === undefined || errorText === "" ? null : html`<pre class="error-text">${errorText}</pre>`}
-        ${visibleDiff === undefined ? this.renderTextBody(bodyText, execution.status === "error") : this.renderDiffBody(visibleDiff, actualDiff === undefined ? "Preview diff" : "Applied diff")}
-        ${!edit && visibleDiff === undefined && (bodyText === undefined || bodyText === "") ? html`<p class="muted">${execution.summary}</p>` : null}
+        ${visibleDiff === undefined ? this.renderTextBody(bodyText, execution.status === "error", target) : this.renderDiffBody(visibleDiff, actualDiff === undefined ? "Preview diff" : "Applied diff", target)}
       </section>
     `;
   }
 
-  private renderTextBody(text: string | undefined, open: boolean) {
-    if (text === undefined || text === "") return null;
+  private renderHeaderTarget(target: ToolTarget | undefined) {
+    if (target === undefined) return null;
+    const className = target.label === "File" ? "path" : "summary";
+    return html`<span class=${className} title=${target.text} aria-label=${`${target.label}: ${target.text}`}>${target.text}</span>`;
+  }
+
+  private renderExpandedTarget(target: ToolTarget | undefined) {
+    if (target === undefined) return null;
+    return html`
+      <div class="detail-target">
+        <span class="detail-label">${target.label}</span>
+        <pre class="detail-target-value">${target.text}</pre>
+      </div>
+    `;
+  }
+
+  private renderTextBody(text: string | undefined, open: boolean, target: ToolTarget | undefined) {
+    if ((text === undefined || text === "") && target === undefined) return null;
     return html`
       <details class="text-body" ?open=${open}>
-        <summary>Result</summary>
-        <pre>${text}</pre>
+        <summary>Details</summary>
+        ${this.renderExpandedTarget(target)}
+        ${text === undefined || text === "" ? null : html`
+          <div class="detail-result">
+            <span class="detail-label">Result</span>
+            <pre>${text}</pre>
+          </div>
+        `}
       </details>
     `;
   }
 
-  private renderDiffBody(diff: string, label: string) {
+  private renderDiffBody(diff: string, label: string, target: ToolTarget | undefined) {
     const lines = diff.split("\n");
     const truncated = !this.showFullDiff && lines.length > MAX_COLLAPSED_DIFF_LINES;
     const visibleLines = truncated ? lines.slice(0, MAX_COLLAPSED_DIFF_LINES) : lines;
@@ -68,6 +94,7 @@ export class ToolExecutionView extends LitElement {
           <span>${label}</span>
           <small>${String(lines.length)} ${lines.length === 1 ? "line" : "lines"}</small>
         </summary>
+        ${this.renderExpandedTarget(target)}
         <div class="diff-toolbar">
           <span>${truncated ? `Showing ${String(visibleLines.length)} of ${String(lines.length)} lines` : "Full diff"}</span>
           <button type="button" @click=${() => { void this.copyDiff(diff); }}>${this.copied ? "Copied" : "Copy diff"}</button>
@@ -104,10 +131,10 @@ export class ToolExecutionView extends LitElement {
     .tool-card.success { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
     .tool-card.error { border-color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); }
     .tool-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
-    .tool-title { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
+    .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
     .status-icon { flex: 0 0 auto; color: var(--pi-muted); }
-    strong { color: var(--pi-text); }
-    .path, .summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    strong { flex: 0 0 auto; color: var(--pi-text); }
+    .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
     .summary { color: var(--pi-muted); font-family: inherit; }
     .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 8px; color: var(--pi-muted); font-size: 12px; }
     .diff-stats { display: inline-flex; gap: 3px; }
@@ -118,7 +145,11 @@ export class ToolExecutionView extends LitElement {
     .muted { margin: 0; color: var(--pi-muted); }
     .error-text { margin: 0; border: 1px solid var(--pi-danger); border-radius: 7px; background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); color: var(--pi-danger); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .text-body { border-top: 1px solid var(--pi-border-muted); padding-top: 6px; }
-    .text-body pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pi-text); }
+    .detail-target, .detail-result { display: grid; gap: 4px; margin-top: 8px; min-width: 0; }
+    .detail-label { color: var(--pi-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .text-body pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pi-text); }
+    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; border: 1px solid var(--pi-border-muted); border-radius: 7px; background: var(--pi-bg); padding: 8px; white-space: pre; overflow-wrap: normal; direction: ltr; text-align: left; unicode-bidi: isolate; }
+    .detail-target-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pi-accent); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
     .diff-details { min-width: 0; max-width: 100%; border-top: 1px solid var(--pi-border-muted); padding-top: 6px; }
     .diff-details > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; color: var(--pi-muted); cursor: pointer; }
     .diff-details > summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -138,6 +169,14 @@ export class ToolExecutionView extends LitElement {
     .diff .removed { background: color-mix(in srgb, var(--pi-danger) 12%, transparent); }
     .show-more { justify-self: start; }
   `;
+}
+
+function toolTarget(execution: ToolExecutionPart, path: string | undefined): ToolTarget | undefined {
+  if (path !== undefined && path !== "") return { label: "File", text: path };
+  const command = getString(execution.args, "command");
+  if (command !== undefined && command !== "") return { label: "Command", text: command };
+  if (execution.summary !== "") return { label: "Input", text: execution.summary };
+  return undefined;
 }
 
 function pathFromArgs(args: unknown): string | undefined {
