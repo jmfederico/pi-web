@@ -30,6 +30,10 @@ afterEach(async () => {
 });
 
 describe("Docker command assets", () => {
+  // The Docker control shell scripts intentionally support Linux and macOS hosts.
+  // Keep Windows CI on static/syntax coverage instead of executing POSIX host-path and socket flows there.
+  const dockerCommandIt = it.skipIf(process.platform === "win32");
+
   it("keeps shell entrypoints syntactically valid", async () => {
     await Promise.all([
       execUtf8("sh", ["-n", dockerEntrypoint], process.env),
@@ -78,7 +82,7 @@ describe("Docker command assets", () => {
     expect(devCompose).toContain("COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-pi-web-dev}");
   });
 
-  it("runs status through Docker Compose in the foreground", async () => {
+  dockerCommandIt("runs status through Docker Compose in the foreground", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
 
@@ -91,7 +95,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("run -d");
   });
 
-  it("runs production host lifecycle commands through the generated runtime env", async () => {
+  dockerCommandIt("runs production host lifecycle commands through the generated runtime env", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
     const env = runtimeHostEnv(fakeDocker, installDir);
@@ -113,7 +117,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("run -d");
   });
 
-  it("ignores ambient Compose project names for runtime lifecycle commands", async () => {
+  dockerCommandIt("ignores ambient Compose project names for runtime lifecycle commands", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
 
@@ -127,7 +131,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("--project-name ambient-project");
   });
 
-  it("runs development commands through generated env while preserving host user ids", async () => {
+  dockerCommandIt("runs development commands through generated env while preserving host user ids", async () => {
     const devRoot = await createDevRepoFixture();
     const fakeDocker = await installFakeDocker();
     await installFakeUname(fakeDocker.binDir, "Darwin");
@@ -181,7 +185,7 @@ describe("Docker command assets", () => {
     expect(log).toContain(`compose --project-name pi-web-dev --env-file ${generatedEnvPath} -f ${devRoot}/docker/compose.dev.yml -f ${devRoot}/.pi-web/docker-compose-dev.host.generated.yml ps`);
   });
 
-  it("rejects development commands as root unless explicitly allowed", async () => {
+  dockerCommandIt("rejects development commands as root unless explicitly allowed", async () => {
     const fakeDocker = await installFakeDocker();
     await installFakeId(fakeDocker.binDir, 0, 0);
 
@@ -194,7 +198,7 @@ describe("Docker command assets", () => {
     expect(result.stderr).toContain("refusing to run Docker development mode as root");
   });
 
-  it("passes the root override through to the development compose helper", async () => {
+  dockerCommandIt("passes the root override through to the development compose helper", async () => {
     const fakeDocker = await installFakeDocker();
     await installFakeId(fakeDocker.binDir, 0, 0);
     const helperLog = join(tempDir, "dev-helper.log");
@@ -209,7 +213,7 @@ describe("Docker command assets", () => {
     expect(await readFile(helperLog, "utf8")).toBe("allow=1 args=ps\n");
   });
 
-  it("starts development detached helpers as the generated dev user", async () => {
+  dockerCommandIt("starts development detached helpers as the generated dev user", async () => {
     const devRoot = await createDevGeneratedEnv({ uid: 1234, gid: 2345, dockerGid: 3456 });
     const fakeDocker = await installFakeDocker();
     await installFakeId(fakeDocker.binDir, 1234, 2345);
@@ -230,7 +234,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("--user 0:0");
   });
 
-  it("rejects inside-container commands whose explicit mode does not match the container mode", async () => {
+  dockerCommandIt("rejects inside-container commands whose explicit mode does not match the container mode", async () => {
     const result = await runDockerCommandAllowFailure(["restart-sessiond"], {
       ...cleanProcessEnv(),
       PI_WEB_DOCKER_RUNTIME: "1",
@@ -241,13 +245,13 @@ describe("Docker command assets", () => {
     expect(result.stderr).toContain("this PI WEB Docker container is in dev mode");
   });
 
-  it("routes production install to the bootstrap installer", async () => {
+  dockerCommandIt("routes production install to the bootstrap installer", async () => {
     const result = await runDockerCommand(["install", "--help"], cleanProcessEnv());
 
     expect(result.stdout).toContain("Usage: docker/install.sh [options]");
   });
 
-  it("explains source checkout runtime-mode mistakes", async () => {
+  dockerCommandIt("explains source checkout runtime-mode mistakes", async () => {
     const fakeDocker = await installFakeDocker();
 
     const result = await runDockerCommandAllowFailure(["start"], {
@@ -264,7 +268,7 @@ describe("Docker command assets", () => {
     expect(result.stderr).toContain("PI_WEB_DOCKER_INSTALL_DIR");
   });
 
-  it("starts restart-sessiond in a detached Docker helper", async () => {
+  dockerCommandIt("starts restart-sessiond in a detached Docker helper", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
 
@@ -296,7 +300,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("compose -f compose.yml -f compose.override.yml restart sessiond");
   });
 
-  it("executes the detached restart-sessiond action through Compose", async () => {
+  dockerCommandIt("executes the detached restart-sessiond action through Compose", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
 
@@ -307,7 +311,7 @@ describe("Docker command assets", () => {
     expect(log).not.toContain("run -d");
   });
 
-  it("executes the detached runtime update action through Compose without nesting helpers", async () => {
+  dockerCommandIt("executes the detached runtime update action through Compose without nesting helpers", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
 
