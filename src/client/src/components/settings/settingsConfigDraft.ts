@@ -1,36 +1,51 @@
 import type { PiWebConfigValues } from "../../api";
 
-export interface ConfigDraft {
+export interface GatewayServerConfigDraft {
   host: string;
   port: string;
   allowedHostsMode: "list" | "all";
   allowedHostsText: string;
+}
+
+export interface MachineAccessConfigDraft {
+  allowedPathsText: string;
+  uploadDefaultFolder: string;
+}
+
+export interface ConfigDraft extends GatewayServerConfigDraft {
   allowedPathsText: string;
 }
 
-export function emptyConfigDraft(): ConfigDraft {
-  return { host: "", port: "", allowedHostsMode: "list", allowedHostsText: "", allowedPathsText: "" };
+export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
+  return { host: "", port: "", allowedHostsMode: "list", allowedHostsText: "" };
 }
 
-export function draftFromConfig(config: PiWebConfigValues): ConfigDraft {
+export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
+  return { allowedPathsText: "", uploadDefaultFolder: "" };
+}
+
+export function gatewayServerDraftFromConfig(config: PiWebConfigValues): GatewayServerConfigDraft {
   return {
     host: config.host ?? "",
     port: config.port === undefined ? "" : String(config.port),
     allowedHostsMode: config.allowedHosts === true ? "all" : "list",
     allowedHostsText: Array.isArray(config.allowedHosts) ? config.allowedHosts.join("\n") : "",
-    allowedPathsText: config.pathAccess?.allowedPaths?.join("\n") ?? "",
   };
 }
 
-export function configFromDraft(draft: ConfigDraft, baseConfig: PiWebConfigValues = {}): PiWebConfigValues {
-  const config: PiWebConfigValues = {
-    ...(baseConfig.shortcuts === undefined ? {} : { shortcuts: baseConfig.shortcuts }),
-    ...(baseConfig.plugins === undefined ? {} : { plugins: baseConfig.plugins }),
-    ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
-    ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
-    ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
-    ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
+export function machineAccessDraftFromConfig(config: PiWebConfigValues): MachineAccessConfigDraft {
+  return {
+    allowedPathsText: config.pathAccess?.allowedPaths?.join("\n") ?? "",
+    uploadDefaultFolder: config.uploads?.defaultFolder ?? "",
   };
+}
+
+export function draftFromConfig(config: PiWebConfigValues): ConfigDraft {
+  return { ...gatewayServerDraftFromConfig(config), allowedPathsText: machineAccessDraftFromConfig(config).allowedPathsText };
+}
+
+export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, baseConfig: PiWebConfigValues = {}): PiWebConfigValues {
+  const config = preservedGatewayConfigRemainder(baseConfig);
   const host = draft.host.trim();
   const port = draft.port.trim();
   if (host !== "") config.host = host;
@@ -40,9 +55,36 @@ export function configFromDraft(draft: ConfigDraft, baseConfig: PiWebConfigValue
     config.port = parsed;
   }
   config.allowedHosts = draft.allowedHostsMode === "all" ? true : parseAllowedHostsText(draft.allowedHostsText);
+  return config;
+}
+
+export function machineAccessConfigPatchFromDraft(draft: MachineAccessConfigDraft): PiWebConfigValues {
+  const allowedPaths = parseAllowedPathsText(draft.allowedPathsText);
+  const uploadDefaultFolder = normalizeWorkspaceRelativeFolder(draft.uploadDefaultFolder);
+  return {
+    pathAccess: { allowedPaths },
+    uploads: uploadDefaultFolder === "" ? {} : { defaultFolder: uploadDefaultFolder },
+  };
+}
+
+export function configFromDraft(draft: ConfigDraft, baseConfig: PiWebConfigValues = {}): PiWebConfigValues {
+  const config = gatewayServerConfigFromDraft(draft, baseConfig);
   const allowedPaths = parseAllowedPathsText(draft.allowedPathsText);
   if (allowedPaths.length > 0) config.pathAccess = { allowedPaths };
+  else delete config.pathAccess;
   return config;
+}
+
+function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebConfigValues {
+  return {
+    ...(baseConfig.shortcuts === undefined ? {} : { shortcuts: baseConfig.shortcuts }),
+    ...(baseConfig.plugins === undefined ? {} : { plugins: baseConfig.plugins }),
+    ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
+    ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
+    ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
+    ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
+    ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
+  };
 }
 
 function parseAllowedHostsText(value: string): string[] {
@@ -56,6 +98,21 @@ function parseAllowedPathsText(value: string): string[] {
   return paths;
 }
 
+function normalizeWorkspaceRelativeFolder(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") return "";
+  if (isAbsoluteLike(trimmed)) throw new Error("Upload default folder must be workspace-relative.");
+  const parts = trimmed.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
+  if (parts.length === 0) return "";
+  if (parts.some((part) => part === "..")) throw new Error("Upload default folder must not contain path traversal.");
+  return parts.join("/");
+}
+
 function isAbsoluteishAllowedPath(path: string): boolean {
   return path === "~" || path.startsWith("~/") || path.startsWith("~\\") || path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/u.test(path);
+}
+
+function isAbsoluteLike(value: string): boolean {
+  const withForwardSlashes = value.replace(/\\/g, "/");
+  return withForwardSlashes.startsWith("/") || /^[A-Za-z]:\//u.test(withForwardSlashes);
 }

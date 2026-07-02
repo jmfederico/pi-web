@@ -23,7 +23,7 @@ Use **Settings → Pi packages** to view configured Pi packages or install/remov
 
 When machine federation is enabled, **Settings → Pi packages** targets the currently selected machine. The panel labels whether changes will run on the local/gateway machine or on a selected remote PI WEB machine. If an older or unavailable remote PI WEB server does not expose package-management routes, PI WEB reports the package management operation as unsupported or unavailable instead of silently falling back to the gateway.
 
-Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. This plugin enablement surface is for the PI WEB gateway you opened; to change remote plugin enablement, open that remote machine directly or edit its PI WEB config on that machine. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A routine session daemon restart is not required.
+Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. In a federated setup, this plugin enablement surface targets the currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB server does not advertise selected-machine settings support, PI WEB reports the plugin settings as unsupported or unavailable instead of silently falling back to the gateway. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A routine session daemon restart is not required.
 
 ## Trust model
 
@@ -152,7 +152,7 @@ When [machine federation](https://pi-web.dev/machines) is enabled, PI WEB also l
 - remote theme contributions are ignored for now because themes are app-wide;
 - mixed PI WEB versions across federated machines are best-effort and not guaranteed compatible.
 
-Remote plugin enablement is controlled by the remote machine's PI WEB plugin config. To edit or disable a remote machine plugin, open that machine directly or update its config file.
+Remote plugin enablement is controlled by the remote machine's PI WEB plugin config. To edit or disable a remote machine plugin, select that machine and use **Settings → PI WEB plugins** when the remote server exposes selected-machine settings, or open that machine directly/update its config file.
 
 Plugin package metadata may set `machineSpecific: true` when the plugin's meaning is tied to the selected PI WEB machine:
 
@@ -169,9 +169,9 @@ If a remote plugin constructs absolute asset URLs, it should use the `pluginId` 
 
 ## Manage PI WEB plugins
 
-Open **Settings → PI WEB plugins** to review discovered bundled, local, dev, and Pi package plugins for the PI WEB gateway you opened. PI WEB can disable any discovered gateway plugin before the browser imports it. Core app contributions such as the built-in command palette, base workspace tools, and themes are not managed through this plugin list.
+Open **Settings → PI WEB plugins** to review discovered bundled, local, dev, and Pi package plugins for the selected PI WEB machine. When the local machine is selected, this is the gateway plugin list; when a remote machine is selected, the list comes from that remote PI WEB server and includes disabled discovered plugins it exposes. PI WEB can disable any discovered selected-machine plugin before the browser imports it. Core app contributions such as the built-in command palette, base workspace tools, and themes are not managed through this plugin list.
 
-This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide plugins or other Pi resources, use **Settings → Pi packages**. In a federated setup, the Pi packages panel targets the selected machine; the PI WEB plugins panel still controls gateway plugin enablement.
+This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide plugins or other Pi resources, use **Settings → Pi packages**. In a federated setup, both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement still writes the PI WEB `plugins` config key rather than changing Pi package-manager settings.
 
 Plugin preferences are stored under the top-level `plugins` config key in the PI WEB config file:
 

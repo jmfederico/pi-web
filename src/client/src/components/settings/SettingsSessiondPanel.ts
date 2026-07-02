@@ -1,6 +1,7 @@
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../../api";
+import { spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
 
 @customElement("settings-sessiond-panel")
 export class SettingsSessiondPanel extends LitElement {
@@ -9,6 +10,7 @@ export class SettingsSessiondPanel extends LitElement {
   @property({ type: Boolean }) saving = false;
   @property() error = "";
   @property() savedMessage = "";
+  @property() targetLabel = "local (local gateway)";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
   @property({ attribute: false }) onSave?: (config: PiWebConfigValues) => void | Promise<void>;
 
@@ -25,16 +27,16 @@ export class SettingsSessiondPanel extends LitElement {
       <div class="section-heading">
         <div>
           <h2>Session daemon</h2>
-          <p>These settings affect the long-lived session runtime. Changes are saved to the config file immediately but only take effect after the session daemon restarts.</p>
+          <p>These settings affect the long-lived session runtime on ${this.targetLabel}. Changes are saved immediately but only take effect after the session daemon on that machine restarts.</p>
         </div>
         <button class="secondary" ?disabled=${this.loading} @click=${() => { void this.onReload?.(); }}>Reload</button>
       </div>
       ${this.renderMessages()}
-      <div class="restart-note" role="note">Restart required: run <code>pi-web restart</code> (or restart the session daemon service) after changing these settings.</div>
-      ${config === undefined && this.loading ? html`<div class="loading-card">Loading configuration…</div>` : html`
+      <div class="restart-note" role="note">Restart required on ${this.targetLabel}: run <code>pi-web restart</code> on that machine (or restart its session daemon service) after changing these settings.</div>
+      ${config === undefined ? html`<div class="loading-card">${this.loading ? "Loading configuration…" : "Configuration is unavailable. Reload to try again."}</div>` : html`
         <div class="config-path-card">
           <span>Config file</span>
-          <code>${config?.path ?? "Unknown"}</code>
+          <code>${config.path}</code>
         </div>
         <div class="field">
           <span class="field-heading">
@@ -88,14 +90,12 @@ export class SettingsSessiondPanel extends LitElement {
 
   private async toggleSpawnSessions(event: Event): Promise<void> {
     const enabled = event.target instanceof HTMLInputElement && event.target.checked;
-    const baseConfig = this.configResponse?.config ?? {};
-    await this.onSave?.({ ...baseConfig, spawnSessions: enabled });
+    await this.onSave?.(spawnSessionsConfigPatch(enabled));
   }
 
   private async toggleSubsessions(event: Event): Promise<void> {
     const enabled = event.target instanceof HTMLInputElement && event.target.checked;
-    const baseConfig = this.configResponse?.config ?? {};
-    await this.onSave?.({ ...baseConfig, subsessions: enabled });
+    await this.onSave?.(subsessionsConfigPatch(enabled));
   }
 
   static override styles = css`

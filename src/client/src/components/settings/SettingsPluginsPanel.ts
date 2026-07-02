@@ -10,6 +10,7 @@ export class SettingsPluginsPanel extends LitElement {
   @property({ type: Boolean }) saving = false;
   @property() error = "";
   @property() savedMessage = "";
+  @property() targetLabel = "local (local gateway)";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
   @property({ attribute: false }) onTogglePlugin?: (pluginId: string, enabled: boolean) => void | Promise<void>;
 
@@ -19,14 +20,15 @@ export class SettingsPluginsPanel extends LitElement {
       <div class="section-heading">
         <div>
           <h2>PI WEB plugins</h2>
-          <p>Enable or disable discovered PI WEB browser plugins. This is separate from installing Pi packages. Changes apply after reloading the browser tab; already-loaded plugin code is not unloaded from the current page.</p>
+          <p>Enable or disable discovered PI WEB browser plugins on <strong>${this.targetLabel}</strong>. This is separate from installing Pi packages. Reload the browser tab to apply plugin runtime changes.</p>
         </div>
         <button class="secondary" ?disabled=${this.loading} @click=${() => { void this.onReload?.(); }}>Reload</button>
       </div>
       ${this.renderMessages()}
       <div class="trust-warning"><strong>Trusted code warning:</strong> PI WEB plugins and Pi packages can run with your user permissions. Enable plugins only from sources you trust.</div>
-      <div class="plugin-note">Config key: <code>plugins</code>. Plugins are enabled unless their entry sets <code>enabled</code> to <code>false</code>.</div>
-      ${this.loading && plugins.length === 0 ? html`<div class="loading-card">Loading PI WEB plugins…</div>` : plugins.length === 0 ? html`<div class="loading-card">No PI WEB browser plugins discovered.</div>` : html`
+      <div class="plugin-note">Config key on ${this.targetLabel}: <code>plugins</code>. Plugins are enabled unless their entry sets <code>enabled</code> to <code>false</code>.</div>
+      ${this.configResponse === undefined && !this.loading ? html`<div class="loading-card">Configuration is unavailable. Reload to try again before changing plugin enablement.</div>` : null}
+      ${this.loading && plugins.length === 0 ? html`<div class="loading-card">Loading PI WEB plugins…</div>` : plugins.length === 0 ? html`<div class="loading-card">No PI WEB browser plugins discovered on ${this.targetLabel}.</div>` : html`
         <div class="plugin-list">
           ${plugins.map((plugin) => this.renderPlugin(plugin))}
         </div>
@@ -51,7 +53,7 @@ export class SettingsPluginsPanel extends LitElement {
           <small>${configuredState}</small>
         </div>
         <label class="toggle">
-          <input type="checkbox" .checked=${plugin.enabled} ?disabled=${this.saving} @change=${(event: Event) => { void this.togglePlugin(plugin, event); }}>
+          <input type="checkbox" .checked=${plugin.enabled} ?disabled=${this.saving || this.configResponse === undefined} @change=${(event: Event) => { void this.togglePlugin(plugin, event); }}>
           <span>${plugin.enabled ? "Enabled" : "Disabled"}</span>
         </label>
       </article>

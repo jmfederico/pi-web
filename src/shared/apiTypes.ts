@@ -9,6 +9,7 @@ export const PI_WEB_CAPABILITIES = {
   promptAttachments: "prompt.attachments",
   workspaceFileSuggestions: "workspace.fileSuggestions",
   piPackagesManage: "piPackages.manage",
+  selectedMachineSettings: "settings.selectedMachine",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];

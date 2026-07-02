@@ -8,6 +8,17 @@ export interface PiWebConfigService {
   write: (config: PiWebConfigValues) => PiWebConfigResponse | Promise<PiWebConfigResponse>;
 }
 
+export const SELECTED_MACHINE_CONFIG_KEYS = [
+  "plugins",
+  "pathAccess",
+  "uploads",
+  "maxUploadBytes",
+  "spawnSessions",
+  "subsessions",
+] as const satisfies readonly (keyof PiWebConfigValues)[];
+
+const SELECTED_MACHINE_CONFIG_KEY_SET = new Set<string>(SELECTED_MACHINE_CONFIG_KEYS);
+
 export function createFilePiWebConfigService(options: LoadOptions = {}): PiWebConfigService {
   return {
     read: () => currentPiWebConfigResponse(options),
@@ -50,6 +61,62 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
   });
 }
 
+export function registerLocalMachineConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService()): void {
+  app.get("/api/machines/local/config", async (_request, reply) => {
+    try {
+      return selectedMachineConfigResponse(await service.read());
+    } catch (error) {
+      return reply.code(500).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.put<{ Body: { config?: unknown } | undefined }>("/api/machines/local/config", async (request, reply) => {
+    try {
+      const current = await service.read();
+      const patch = parseSelectedMachineConfigRequest(request.body?.config);
+      return selectedMachineConfigResponse(await service.write(mergeSelectedMachineConfig(current.config, patch)));
+    } catch (error) {
+      const status = isConfigValidationError(error) ? 400 : 500;
+      return reply.code(status).send({ error: errorMessage(error) });
+    }
+  });
+}
+
+export function parseSelectedMachineConfigRequest(value: unknown): PiWebConfig {
+  if (!isRecord(value)) throw new Error("PI WEB selected-machine config update must include a config object");
+  for (const key of Object.keys(value)) {
+    if (!SELECTED_MACHINE_CONFIG_KEY_SET.has(key)) throw new Error(`PI WEB selected-machine config key is not allowed: ${key}`);
+  }
+  try {
+    return pickSelectedMachineConfig(parseConfigRequest(value));
+  } catch (error) {
+    throw new Error(selectedMachineConfigErrorMessage(error), { cause: error });
+  }
+}
+
+export function mergeSelectedMachineConfig(current: PiWebConfigValues, patch: PiWebConfigValues): PiWebConfig {
+  return { ...current, ...pickSelectedMachineConfig(patch) };
+}
+
+export function selectedMachineConfigResponse(response: PiWebConfigResponse): PiWebConfigResponse {
+  return {
+    ...response,
+    config: pickSelectedMachineConfig(response.config),
+    effectiveConfig: pickSelectedMachineConfig(response.effectiveConfig),
+  };
+}
+
+export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB config response"): PiWebConfigResponse {
+  const record = requireResponseRecord(value, source);
+  return {
+    path: requireResponseString(record, "path", source),
+    exists: requireResponseBoolean(record, "exists", source),
+    config: parseConfigRequest(record["config"]),
+    effectiveConfig: parseConfigRequest(record["effectiveConfig"]),
+    envOverrides: parsePiWebConfigEnvOverridesResponse(record["envOverrides"], source),
+  };
+}
+
 function parseConfigRequest(value: unknown): PiWebConfig {
   if (!isRecord(value)) throw new Error("PI WEB config update must include a config object");
   const config: PiWebConfig = {};
@@ -86,6 +153,23 @@ function parseConfigRequest(value: unknown): PiWebConfig {
     config.subsessions = subsessions;
   }
   return config;
+}
+
+function pickSelectedMachineConfig(config: PiWebConfigValues): PiWebConfig {
+  return {
+    ...(config.plugins !== undefined ? { plugins: config.plugins } : {}),
+    ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
+    ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
+    ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
+    ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
+    ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+  };
+}
+
+function selectedMachineConfigErrorMessage(error: unknown): string {
+  const message = errorMessage(error);
+  if (message.startsWith("PI WEB config ")) return `PI WEB selected-machine config ${message.slice("PI WEB config ".length)}`;
+  return `PI WEB selected-machine config ${message}`;
 }
 
 function parseAllowedHostsRequest(value: unknown): string[] | true {
@@ -141,6 +225,34 @@ function parsePluginsRequest(value: unknown): NonNullable<PiWebConfig["plugins"]
   }));
 }
 
+function parsePiWebConfigEnvOverridesResponse(value: unknown, source: string): PiWebConfigEnvOverrides {
+  const record = requireResponseRecord(value, `${source} envOverrides`);
+  return {
+    host: requireResponseBoolean(record, "host", source),
+    port: requireResponseBoolean(record, "port", source),
+    allowedHosts: requireResponseBoolean(record, "allowedHosts", source),
+    spawnSessions: requireResponseBoolean(record, "spawnSessions", source),
+    subsessions: requireResponseBoolean(record, "subsessions", source),
+  };
+}
+
+function requireResponseRecord(value: unknown, source: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`${source} must be an object`);
+  return value;
+}
+
+function requireResponseString(record: Record<string, unknown>, key: string, source: string): string {
+  const value = record[key];
+  if (typeof value !== "string") throw new Error(`${source} field must be a string: ${key}`);
+  return value;
+}
+
+function requireResponseBoolean(record: Record<string, unknown>, key: string, source: string): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") throw new Error(`${source} field must be a boolean: ${key}`);
+  return value;
+}
+
 function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): PiWebConfigEnvOverrides {
   return {
     host: isEnvSet(env["PI_WEB_HOST"]),
@@ -156,7 +268,7 @@ function isEnvSet(value: string | undefined): boolean {
 }
 
 function isConfigValidationError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith("PI WEB config");
+  return error instanceof Error && (error.message.startsWith("PI WEB config") || error.message.startsWith("PI WEB selected-machine config"));
 }
 
 function errorMessage(error: unknown): string {

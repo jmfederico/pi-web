@@ -97,9 +97,9 @@ Read more: [Remote-first development](https://pi-web.dev/remote-first)
 
 ## Machines and fleets
 
-PI WEB can register other PI WEB runtimes as remote machines. One browser-facing PI WEB instance can proxy projects, files, git state, sessions, terminals, activity, and Pi package management from trusted remote machines.
+PI WEB can register other PI WEB runtimes as remote machines. One browser-facing PI WEB instance can proxy projects, files, git state, sessions, terminals, activity, Pi package management, and selected-machine settings from trusted remote machines.
 
-When a remote machine is selected, **Settings → Pi packages** installs, removes, and updates packages on that selected machine. Other Settings sections such as PI WEB plugin enablement and gateway configuration stay gateway-local unless they say otherwise.
+When a remote machine is selected, Settings tabs label their target. Pi packages, PI WEB plugin enablement, session daemon toggles, external file access, and upload defaults target the selected machine. Gateway/server settings such as host, port, allowed hosts, registered machines/tokens, and keyboard shortcuts stay local to the gateway/browser.
 
 Read more: [Fleet and machines guide](https://pi-web.dev/machines)
 
@@ -107,7 +107,7 @@ Read more: [Fleet and machines guide](https://pi-web.dev/machines)
 
 PI WEB supports trusted browser-side PI WEB plugins that can add actions, workspace panels, and workspace metadata.
 
-Pi packages are managed separately through Pi's package manager or **Settings → Pi packages**. In a federated setup, the Pi packages panel targets the selected machine and labels where installs, updates, or removals will run. Use **Settings → PI WEB plugins** only to enable or disable discovered browser plugins for the gateway you opened.
+Pi packages are managed separately through Pi's package manager or **Settings → Pi packages**. In a federated setup, the Pi packages panel targets the selected machine and labels where installs, updates, or removals will run. Use **Settings → PI WEB plugins** to enable or disable discovered browser plugins on the selected machine.
 
 After installing, updating, or removing a Pi package, type `/reload` in each idle PI WEB session on that machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for newly discovered or changed PI WEB plugins.
 
@@ -128,7 +128,7 @@ Project-local PI WEB config lives at:
 <project>/.pi-web/config.json
 ```
 
-Common configuration includes host/port, path access, uploads, PI WEB plugin enablement, shortcuts, and session daemon options.
+Common configuration includes host/port, path access, uploads, PI WEB plugin enablement, shortcuts, and session daemon options. In Settings, machine-affecting config targets the selected machine; gateway host/port/allowed-hosts, remote machine registration, tokens, and keyboard shortcuts stay local.
 
 Read more: [Configuration reference](https://pi-web.dev/config)
 

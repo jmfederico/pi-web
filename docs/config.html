@@ -110,15 +110,20 @@
                 <li><strong>Project config:</strong> <code>&lt;project&gt;/.pi-web/config.json</code> for commit-able project settings.</li>
               </ul>
               <p>
-                Each PI WEB machine has its own config. When using Fleet/machine federation, edit a remote machine's
-                config by opening that machine directly or changing files on that machine.
+                Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected
+                machine for config that affects work running there: session daemon tools, PI WEB plugin enablement,
+                external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
+                keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts. Remote servers
+                that do not advertise selected-machine settings support report those settings as unavailable instead of
+                silently falling back to the gateway.
               </p>
               <p>
                 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the
                 target machine and are managed by Pi (<code>pi install</code>, <code>pi remove</code>, <code>pi update</code>) or
                 <strong>Settings → Pi packages</strong>. In a federated setup, <strong>Settings → Pi packages</strong>
-                targets the currently selected machine; the PI WEB <code>plugins</code> config key only enables or
-                disables discovered PI WEB browser plugins for the gateway you opened.
+                targets the currently selected machine. The PI WEB <code>plugins</code> config key only enables or
+                disables discovered PI WEB browser plugins on the machine whose config you are editing; it does not
+                install, remove, or update Pi packages.
               </p>
               <p>
                 If you installed services with a custom config path, rerun
@@ -144,9 +149,9 @@
                 and <code>PI_WEB_SUBSESSIONS</code>.
               </p>
               <ul>
-                <li><code>host</code> / <code>port</code>: restart the web/API service or process.</li>
-                <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon.</li>
-                <li><code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon.</li>
+                <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
+                <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
+                <li><code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
@@ -160,8 +165,9 @@
               <p>
                 <code>pi-web install</code> creates the initial file. You can also save PI WEB config settings from
                 <strong>Settings → General</strong>, <strong>Settings → PI WEB plugins</strong>,
-                <strong>Settings → Keyboard</strong>, and <strong>Settings → Session daemon</strong>. Pi package operations
-                live separately under <strong>Settings → Pi packages</strong>.
+                <strong>Settings → Keyboard</strong>, and <strong>Settings → Session daemon</strong>. Machine-affecting
+                Settings fields target the selected machine; gateway host/port/allowed-hosts and keyboard shortcuts stay
+                local. Pi package operations live separately under <strong>Settings → Pi packages</strong>.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -235,7 +241,11 @@
               <p>
                 Use this table as the quick reference for where a setting can live, which environment variable overrides
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
-                <code>—</code> are runtime-only environment variables, not config-file keys.
+                <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
+                machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
+                <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, and <code>plugins</code>)
+                are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
+                registry/tokens stay local.
               </p>
               <div class="table-scroll" role="region" aria-label="PI WEB configuration matrix" tabindex="0">
                 <table class="config-matrix">
@@ -297,7 +307,7 @@
                       <td><code>PI_WEB_MAX_UPLOAD_BYTES</code></td>
                       <td>Global</td>
                       <td>Not supported locally</td>
-                      <td>Restart web/API and session daemon</td>
+                      <td>Restart web/API and session daemon on that machine</td>
                     </tr>
                     <tr>
                       <td>Agent can spawn sessions</td>
@@ -305,7 +315,7 @@
                       <td><code>PI_WEB_SPAWN_SESSIONS</code></td>
                       <td>Global/session daemon</td>
                       <td>Not supported locally</td>
-                      <td>Restart session daemon</td>
+                      <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
                       <td>Tracked subsessions (beta)</td>
@@ -313,7 +323,7 @@
                       <td><code>PI_WEB_SUBSESSIONS</code></td>
                       <td>Global/session daemon</td>
                       <td>Not supported locally; also requires <code>spawnSessions</code></td>
-                      <td>Restart session daemon</td>
+                      <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
                       <td>PI WEB plugin enablement/settings</td>
@@ -451,6 +461,10 @@
                 <code>realpath</code>, requires roots to be existing directories, and rejects symlink escapes outside the
                 allowed roots.
               </p>
+              <p>
+                In <strong>Settings → General</strong>, external filesystem roots are saved on the selected machine.
+                Gateway host, port, and allowed-hosts fields stay on the gateway config.
+              </p>
               <div class="callout warning">
                 This is not a sandbox for the underlying Pi Coding Agent or your OS user. It only controls PI WEB UI/API
                 file exposure outside a workspace. Add only roots you trust PI WEB to list and read through the browser UI.
@@ -475,6 +489,11 @@
                 enabled by default, and overwrite is disabled by default. Browser-owned XHR progress is shown per
                 batch/file, and conflicts or errors stay visible in the upload progress UI.
               </p>
+              <p>
+                For machine federation, Settings saves the global upload default on the selected machine. Current remote
+                PI WEB servers also return workspace-effective upload defaults on workspace responses; older remote
+                servers may omit them and the browser falls back to the global/default upload folder.
+              </p>
             </section>
 
             <section id="session-tools">
@@ -496,6 +515,10 @@
               <p>
                 Tracked subsessions let an agent delegate work to child sessions, get notified when children stop
                 working, and inspect their transcripts. Restart the session daemon after changing this setting.
+              </p>
+              <p>
+                In <strong>Settings → Session daemon</strong>, these keys are saved on the selected machine. Restart the
+                session daemon on that machine after changing them.
               </p>
               <p>Environment override: <code>PI_WEB_SUBSESSIONS=0|1|true|false</code>.</p>
             </section>

@@ -8,8 +8,12 @@ import "./settings/SettingsSessiondPanel";
 import "./settings/SettingsPackagesPanel";
 import "./settings/SettingsPluginsPanel";
 import "./settings/SettingsShortcutsPanel";
-import { friendlyPiPackageErrorMessage, isPiPackageManagementUnsupported, piPackageManagementSupport, piPackageManagementSupportKey, piPackageMutationFollowUpMessage, piPackageTargetContext, piPackageTargetLabel, shouldRefreshGatewayPluginsAfterPiPackageMutation, type PiPackageManagementSupport, type PiPackageOperationState, type PiPackageTargetContext } from "./settings/piPackageSettings";
+import { friendlyPiPackageErrorMessage, isPiPackageManagementUnsupported, piPackageManagementSupport, piPackageManagementSupportKey, piPackageMutationFollowUpMessage, piPackageTargetLabel, shouldRefreshGatewayPluginsAfterPiPackageMutation, type PiPackageManagementSupport, type PiPackageOperationState, type PiPackageTargetContext } from "./settings/piPackageSettings";
 import { loadGatewaySettingsData, loadPiPackagesData } from "./settings/settingsDataLoading";
+import { mergeSelectedMachineAccessConfig } from "./settings/settingsMachineAccessConfig";
+import { friendlySelectedMachineSettingsErrorMessage, isSelectedMachineSettingsUnsupported, selectedMachineSettingsSupport, selectedMachineSettingsSupportKey, settingsMachineTarget, settingsMachineTargetLabel, type SelectedMachineSettingsSupport, type SettingsMachineTarget } from "./settings/settingsMachineTarget";
+import { mergeSelectedMachinePluginConfig, pluginEnabledConfigPatch } from "./settings/settingsPluginConfig";
+import { mergeSelectedMachineSessiondConfig } from "./settings/settingsSessiondConfig";
 
 @customElement("settings-dialog")
 export class SettingsDialog extends LitElement {
@@ -21,24 +25,40 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) onClose?: () => void;
   @property({ attribute: false }) onConfigSaved?: (config: PiWebConfigValues) => void;
   @state() private configResponse: PiWebConfigResponse | undefined;
+  @state() private accessConfigResponse: PiWebConfigResponse | undefined;
+  @state() private sessiondConfigResponse: PiWebConfigResponse | undefined;
   @state() private pluginsResponse: PiWebPluginsResponse | undefined;
+  @state() private selectedPluginConfigResponse: PiWebConfigResponse | undefined;
+  @state() private selectedPluginsResponse: PiWebPluginsResponse | undefined;
   @state() private packagesResponse: PiPackagesResponse | undefined;
   @state() private loading = true;
+  @state() private accessLoading = true;
+  @state() private sessiondLoading = true;
+  @state() private pluginLoading = true;
   @state() private packageLoading = true;
   @state() private saving = false;
   @state() private packageOperation: PiPackageOperationState | undefined;
   @state() private error = "";
+  @state() private accessError = "";
+  @state() private sessiondError = "";
+  @state() private pluginError = "";
   @state() private packageError = "";
   @state() private savedMessage = "";
   @state() private packageMessage = "";
   private savedMessageTimer: number | undefined;
   private loadRequestSeq = 0;
+  private accessLoadRequestSeq = 0;
+  private sessiondLoadRequestSeq = 0;
+  private pluginLoadRequestSeq = 0;
   private packageLoadRequestSeq = 0;
   private packageMutationSeq = 0;
 
   override connectedCallback(): void {
     super.connectedCallback();
     void this.loadConfig();
+    void this.loadAccessConfigForTarget();
+    void this.loadSessiondConfigForTarget();
+    void this.loadPluginsForTarget();
     void this.loadPackagesForTarget();
   }
 
@@ -49,10 +69,16 @@ export class SettingsDialog extends LitElement {
   }
 
   protected override updated(changed: PropertyValues<this>): void {
-    const currentTarget = this.packageTarget();
+    const currentTarget = this.settingsTarget();
     if (changed.has("machine")) {
-      const previousTarget = piPackageTargetContext(changed.get("machine"));
+      const previousTarget = settingsMachineTarget(changed.get("machine"));
       if (previousTarget.id !== currentTarget.id) {
+        this.resetAccessStateForTargetChange();
+        if (this.isConnected) void this.loadAccessConfigForTarget(currentTarget);
+        this.resetSessiondStateForTargetChange();
+        if (this.isConnected) void this.loadSessiondConfigForTarget(currentTarget);
+        this.resetPluginStateForTargetChange();
+        if (this.isConnected) void this.loadPluginsForTarget(currentTarget);
         this.resetPackageStateForTargetChange();
         if (this.isConnected) void this.loadPackagesForTarget(currentTarget);
         return;
@@ -60,6 +86,14 @@ export class SettingsDialog extends LitElement {
     }
 
     if (!changed.has("machineRuntime")) return;
+    if (this.selectedMachineSettingsSupportNeedsReload(changed.get("machineRuntime"), currentTarget)) {
+      this.resetAccessStateForTargetChange();
+      if (this.isConnected) void this.loadAccessConfigForTarget(currentTarget);
+      this.resetSessiondStateForTargetChange();
+      if (this.isConnected) void this.loadSessiondConfigForTarget(currentTarget);
+      this.resetPluginStateForTargetChange();
+      if (this.isConnected) void this.loadPluginsForTarget(currentTarget);
+    }
     if (!this.packageManagementSupportNeedsReload(changed.get("machineRuntime"), currentTarget)) return;
     this.resetPackageStateForTargetChange();
     if (this.isConnected) void this.loadPackagesForTarget(currentTarget);
@@ -78,10 +112,10 @@ export class SettingsDialog extends LitElement {
           </header>
           <div class="settings-body">
             <nav class="settings-nav" aria-label="Settings sections">
-              ${this.renderNavButton("general", "General", "Gateway config")}
-              ${this.renderNavButton("sessiond", "Session daemon", "Gateway runtime")}
+              ${this.renderNavButton("general", "General", "Gateway + selected machine")}
+              ${this.renderNavButton("sessiond", "Session daemon", "Selected machine")}
               ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
-              ${this.renderNavButton("plugins", "PI WEB plugins", "Gateway plugins")}
+              ${this.renderNavButton("plugins", "PI WEB plugins", "Selected machine")}
               ${this.renderNavButton("shortcuts", "Keyboard", "Gateway shortcuts")}
             </nav>
             <main class="settings-content">
@@ -98,13 +132,14 @@ export class SettingsDialog extends LitElement {
     if (this.section === "sessiond") {
       return html`
         <settings-sessiond-panel
-          .configResponse=${this.configResponse}
-          .loading=${this.loading}
+          .configResponse=${this.sessiondConfigResponse}
+          .loading=${this.sessiondLoading}
           .saving=${this.saving}
-          .error=${this.error}
+          .error=${this.sessiondError}
           .savedMessage=${this.savedMessage}
-          .onReload=${() => this.loadConfig()}
-          .onSave=${(config: PiWebConfigValues) => this.saveConfig(config)}
+          .targetLabel=${settingsMachineTargetLabel(this.settingsTarget())}
+          .onReload=${() => this.loadSessiondConfigForTarget()}
+          .onSave=${(config: PiWebConfigValues) => this.saveSessiondConfig(config)}
         ></settings-sessiond-panel>
       `;
     }
@@ -142,13 +177,14 @@ export class SettingsDialog extends LitElement {
     if (this.section === "plugins") {
       return html`
         <settings-plugins-panel
-          .configResponse=${this.configResponse}
-          .pluginsResponse=${this.pluginsResponse}
-          .loading=${this.loading}
+          .configResponse=${this.selectedPluginConfigResponse}
+          .pluginsResponse=${this.selectedPluginsResponse}
+          .loading=${this.pluginLoading}
           .saving=${this.saving}
-          .error=${this.error}
+          .error=${this.pluginError}
           .savedMessage=${this.savedMessage}
-          .onReload=${() => this.loadConfig()}
+          .targetLabel=${settingsMachineTargetLabel(this.settingsTarget())}
+          .onReload=${() => this.loadPluginsForTarget()}
           .onTogglePlugin=${(pluginId: string, enabled: boolean) => this.togglePlugin(pluginId, enabled)}
         ></settings-plugins-panel>
       `;
@@ -156,12 +192,18 @@ export class SettingsDialog extends LitElement {
     return html`
       <settings-general-panel
         .configResponse=${this.configResponse}
+        .machineConfigResponse=${this.accessConfigResponse}
         .loading=${this.loading}
+        .machineLoading=${this.accessLoading}
         .saving=${this.saving}
         .error=${this.error}
+        .machineError=${this.accessError}
         .savedMessage=${this.savedMessage}
+        .targetLabel=${settingsMachineTargetLabel(this.settingsTarget())}
         .onReload=${() => this.loadConfig()}
+        .onReloadMachine=${() => this.loadAccessConfigForTarget()}
         .onSave=${(config: PiWebConfigValues) => this.saveConfig(config)}
+        .onSaveMachineConfig=${(config: PiWebConfigValues) => this.saveMachineAccessConfig(config)}
       ></settings-general-panel>
     `;
   }
@@ -186,10 +228,10 @@ export class SettingsDialog extends LitElement {
 
   private settingsScopeMessage(): string {
     if (this.section === "packages") return `Selected machine packages: ${piPackageTargetLabel(this.packageTarget())}.`;
-    if (this.section === "sessiond") return "Local gateway session-daemon config.";
-    if (this.section === "plugins") return "Local gateway PI WEB plugin enablement.";
+    if (this.section === "sessiond") return `Selected machine session-daemon config: ${settingsMachineTargetLabel(this.settingsTarget())}.`;
+    if (this.section === "plugins") return `Selected machine PI WEB plugin enablement: ${settingsMachineTargetLabel(this.settingsTarget())}.`;
     if (this.section === "shortcuts") return "Local gateway keyboard shortcuts.";
-    return "Local gateway config.";
+    return `Gateway server config and selected machine file/upload config: ${settingsMachineTargetLabel(this.settingsTarget())}.`;
   }
 
   private navigate(section: SettingsSection): void {
@@ -215,6 +257,83 @@ export class SettingsDialog extends LitElement {
     }
   }
 
+  private async loadAccessConfigForTarget(target = this.settingsTarget()): Promise<void> {
+    const requestSeq = ++this.accessLoadRequestSeq;
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.accessConfigResponse = undefined;
+      this.accessLoading = false;
+      this.accessError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    this.accessLoading = true;
+    this.accessError = "";
+    try {
+      const response = await configApi.config(target.id);
+      if (!this.isCurrentAccessLoad(requestSeq, target)) return;
+      this.accessConfigResponse = response;
+    } catch (error) {
+      if (this.isCurrentAccessLoad(requestSeq, target)) {
+        this.accessError = `Failed to load file access/upload config from ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+      }
+    } finally {
+      if (this.isCurrentAccessLoad(requestSeq, target)) this.accessLoading = false;
+    }
+  }
+
+  private async loadSessiondConfigForTarget(target = this.settingsTarget()): Promise<void> {
+    const requestSeq = ++this.sessiondLoadRequestSeq;
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.sessiondConfigResponse = undefined;
+      this.sessiondLoading = false;
+      this.sessiondError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    this.sessiondLoading = true;
+    this.sessiondError = "";
+    try {
+      const response = await configApi.config(target.id);
+      if (!this.isCurrentSessiondLoad(requestSeq, target)) return;
+      this.sessiondConfigResponse = response;
+    } catch (error) {
+      if (this.isCurrentSessiondLoad(requestSeq, target)) {
+        this.sessiondError = `Failed to load session-daemon config from ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+      }
+    } finally {
+      if (this.isCurrentSessiondLoad(requestSeq, target)) this.sessiondLoading = false;
+    }
+  }
+
+  private async loadPluginsForTarget(target = this.settingsTarget()): Promise<void> {
+    const requestSeq = ++this.pluginLoadRequestSeq;
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.selectedPluginConfigResponse = undefined;
+      this.selectedPluginsResponse = undefined;
+      this.pluginLoading = false;
+      this.pluginError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    this.pluginLoading = true;
+    this.pluginError = "";
+    try {
+      const [config, plugins] = await Promise.allSettled([configApi.config(target.id), pluginsApi.plugins(target.id)]);
+      if (!this.isCurrentPluginLoad(requestSeq, target)) return;
+
+      const errors: string[] = [];
+      if (config.status === "fulfilled") this.selectedPluginConfigResponse = config.value;
+      else errors.push(`config: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(config.reason), target)}`);
+
+      if (plugins.status === "fulfilled") this.selectedPluginsResponse = plugins.value;
+      else errors.push(`PI WEB plugins: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(plugins.reason), target)}`);
+
+      this.pluginError = errors.length === 0 ? "" : `Failed to load PI WEB plugin settings from ${settingsMachineTargetLabel(target)}: ${errors.join("; ")}`;
+    } finally {
+      if (this.isCurrentPluginLoad(requestSeq, target)) this.pluginLoading = false;
+    }
+  }
+
   private async loadPackagesForTarget(target = this.packageTarget()): Promise<void> {
     const requestSeq = ++this.packageLoadRequestSeq;
     this.packageLoading = true;
@@ -232,18 +351,40 @@ export class SettingsDialog extends LitElement {
   }
 
   private async togglePlugin(pluginId: string, enabled: boolean): Promise<void> {
-    const baseConfig = this.configResponse?.config ?? {};
-    const currentPlugins = baseConfig.plugins ?? {};
-    const currentPluginConfig = currentPlugins[pluginId] ?? {};
-    await this.saveConfig({
-      ...baseConfig,
-      plugins: {
-        ...currentPlugins,
-        [pluginId]: { ...currentPluginConfig, enabled },
-      },
-    });
-    const pluginRefreshError = await this.refreshPlugins();
-    if (pluginRefreshError !== undefined) this.error = pluginRefreshError;
+    if (this.saving) return;
+    const target = this.settingsTarget();
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.pluginError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    if (this.selectedPluginConfigResponse === undefined) {
+      this.pluginError = `Plugin config is not loaded for ${settingsMachineTargetLabel(target)}. Reload before changing plugin enablement.`;
+      return;
+    }
+    const patch = pluginEnabledConfigPatch(this.selectedPluginConfigResponse.config, pluginId, enabled);
+    this.saving = true;
+    this.pluginError = "";
+    this.savedMessage = "";
+    try {
+      const response = await configApi.saveConfig(patch, target.id);
+      if (!this.isCurrentSettingsTarget(target)) return;
+      this.selectedPluginConfigResponse = response;
+      if (target.kind === "local" && this.configResponse !== undefined) {
+        this.configResponse = mergeSelectedMachinePluginConfig(this.configResponse, response);
+        this.onConfigSaved?.(this.configResponse.effectiveConfig);
+      }
+      const pluginRefreshError = await this.refreshPluginsForTarget(target);
+      if (!this.isCurrentSettingsTarget(target)) return;
+      if (pluginRefreshError !== undefined) this.pluginError = pluginRefreshError;
+      this.showSavedMessage();
+    } catch (error) {
+      if (this.isCurrentSettingsTarget(target)) {
+        this.pluginError = `Failed to save PI WEB plugin config on ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+      }
+    } finally {
+      this.saving = false;
+    }
   }
 
   private async saveConfig(config: PiWebConfigValues): Promise<void> {
@@ -258,6 +399,61 @@ export class SettingsDialog extends LitElement {
       this.showSavedMessage();
     } catch (error) {
       this.error = `Failed to save config: ${errorMessage(error)}`;
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  private async saveMachineAccessConfig(config: PiWebConfigValues): Promise<void> {
+    if (this.saving) return;
+    const target = this.settingsTarget();
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.accessError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    this.saving = true;
+    this.accessError = "";
+    this.savedMessage = "";
+    try {
+      const response = await configApi.saveConfig(config, target.id);
+      if (!this.isCurrentSettingsTarget(target)) return;
+      this.accessConfigResponse = response;
+      if (target.kind === "local" && this.configResponse !== undefined) {
+        this.configResponse = mergeSelectedMachineAccessConfig(this.configResponse, response);
+        this.onConfigSaved?.(this.configResponse.effectiveConfig);
+      }
+      this.showSavedMessage();
+    } catch (error) {
+      if (this.isCurrentSettingsTarget(target)) {
+        this.accessError = `Failed to save file access/upload config on ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+      }
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  private async saveSessiondConfig(config: PiWebConfigValues): Promise<void> {
+    if (this.saving) return;
+    const target = this.settingsTarget();
+    const support = this.selectedMachineSettingsSupport(target);
+    if (isSelectedMachineSettingsUnsupported(support)) {
+      this.sessiondError = support.message ?? `Selected-machine settings are not available on ${settingsMachineTargetLabel(target)}.`;
+      return;
+    }
+    this.saving = true;
+    this.sessiondError = "";
+    this.savedMessage = "";
+    try {
+      const response = await configApi.saveConfig(config, target.id);
+      if (!this.isCurrentSettingsTarget(target)) return;
+      this.sessiondConfigResponse = response;
+      if (target.kind === "local" && this.configResponse !== undefined) this.configResponse = mergeSelectedMachineSessiondConfig(this.configResponse, response);
+      this.showSavedMessage();
+    } catch (error) {
+      if (this.isCurrentSettingsTarget(target)) {
+        this.sessiondError = `Failed to save session-daemon config on ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+      }
     } finally {
       this.saving = false;
     }
@@ -296,7 +492,7 @@ export class SettingsDialog extends LitElement {
       const response = await mutate();
       if (!this.isCurrentPackageMutation(requestSeq, target)) return;
       this.packagesResponse = { packages: response.packages };
-      const pluginRefreshError = shouldRefreshGatewayPluginsAfterPiPackageMutation(target) ? await this.refreshPlugins() : undefined;
+      const pluginRefreshError = shouldRefreshGatewayPluginsAfterPiPackageMutation(target) ? await this.refreshGatewayPlugins() : undefined;
       if (!this.isCurrentPackageMutation(requestSeq, target)) return;
       if (pluginRefreshError !== undefined) this.packageError = pluginRefreshError;
       this.packageMessage = piPackageMutationFollowUpMessage(response.action, target);
@@ -311,17 +507,41 @@ export class SettingsDialog extends LitElement {
     }
   }
 
-  private async refreshPlugins(): Promise<string | undefined> {
+  private async refreshGatewayPlugins(): Promise<string | undefined> {
     try {
       this.pluginsResponse = await pluginsApi.plugins();
       return undefined;
     } catch (error) {
-      return `Failed to refresh PI WEB plugins: ${errorMessage(error)}`;
+      return `Failed to refresh gateway PI WEB plugins: ${errorMessage(error)}`;
     }
   }
 
+  private async refreshPluginsForTarget(target: SettingsMachineTarget): Promise<string | undefined> {
+    try {
+      const response = await pluginsApi.plugins(target.id);
+      if (this.isCurrentSettingsTarget(target)) this.selectedPluginsResponse = response;
+      return undefined;
+    } catch (error) {
+      return `Config saved, but failed to refresh PI WEB plugins from ${settingsMachineTargetLabel(target)}: ${friendlySelectedMachineSettingsErrorMessage(errorMessage(error), target)}`;
+    }
+  }
+
+  private settingsTarget(): SettingsMachineTarget {
+    return settingsMachineTarget(this.machine);
+  }
+
   private packageTarget(): PiPackageTargetContext {
-    return piPackageTargetContext(this.machine);
+    return this.settingsTarget();
+  }
+
+  private selectedMachineSettingsSupport(target = this.settingsTarget()): SelectedMachineSettingsSupport {
+    return selectedMachineSettingsSupport(target, this.machineRuntime);
+  }
+
+  private selectedMachineSettingsSupportNeedsReload(previousRuntime: MachineRuntime | undefined, target: SettingsMachineTarget): boolean {
+    const previousSupport = selectedMachineSettingsSupport(target, previousRuntime);
+    const currentSupport = this.selectedMachineSettingsSupport(target);
+    return selectedMachineSettingsSupportKey(previousSupport) !== selectedMachineSettingsSupportKey(currentSupport);
   }
 
   private packageManagementSupport(target = this.packageTarget()): PiPackageManagementSupport {
@@ -339,6 +559,18 @@ export class SettingsDialog extends LitElement {
     return requestSeq === this.loadRequestSeq;
   }
 
+  private isCurrentAccessLoad(requestSeq: number, target: SettingsMachineTarget): boolean {
+    return requestSeq === this.accessLoadRequestSeq && this.isCurrentSettingsTarget(target);
+  }
+
+  private isCurrentSessiondLoad(requestSeq: number, target: SettingsMachineTarget): boolean {
+    return requestSeq === this.sessiondLoadRequestSeq && this.isCurrentSettingsTarget(target);
+  }
+
+  private isCurrentPluginLoad(requestSeq: number, target: SettingsMachineTarget): boolean {
+    return requestSeq === this.pluginLoadRequestSeq && this.isCurrentSettingsTarget(target);
+  }
+
   private isCurrentPackageLoad(requestSeq: number, target: PiPackageTargetContext): boolean {
     return requestSeq === this.packageLoadRequestSeq && this.isCurrentPackageTarget(target);
   }
@@ -349,6 +581,35 @@ export class SettingsDialog extends LitElement {
 
   private isCurrentPackageTarget(target: PiPackageTargetContext): boolean {
     return this.packageTarget().id === target.id;
+  }
+
+  private isCurrentSettingsTarget(target: SettingsMachineTarget): boolean {
+    return this.settingsTarget().id === target.id;
+  }
+
+  private resetAccessStateForTargetChange(): void {
+    this.accessLoadRequestSeq += 1;
+    this.accessLoading = false;
+    this.accessError = "";
+    this.accessConfigResponse = undefined;
+    this.savedMessage = "";
+  }
+
+  private resetSessiondStateForTargetChange(): void {
+    this.sessiondLoadRequestSeq += 1;
+    this.sessiondLoading = false;
+    this.sessiondError = "";
+    this.sessiondConfigResponse = undefined;
+    this.savedMessage = "";
+  }
+
+  private resetPluginStateForTargetChange(): void {
+    this.pluginLoadRequestSeq += 1;
+    this.pluginLoading = false;
+    this.pluginError = "";
+    this.selectedPluginConfigResponse = undefined;
+    this.selectedPluginsResponse = undefined;
+    this.savedMessage = "";
   }
 
   private resetPackageStateForTargetChange(): void {

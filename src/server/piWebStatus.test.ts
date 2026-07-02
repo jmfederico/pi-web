@@ -41,7 +41,7 @@ describe("PI WEB status", () => {
     expect(status).not.toHaveProperty("release");
   });
 
-  it("reports Pi package management as a web runtime capability", async () => {
+  it("reports web-only capabilities from the web runtime", async () => {
     const daemon = daemonWithComponent({
       component: "sessiond",
       label: "Session daemon",
@@ -53,9 +53,10 @@ describe("PI WEB status", () => {
 
     const runtime = await getPiWebRuntime(daemon);
 
-    expect(runtime.components.web.capabilities).toContain(PI_WEB_CAPABILITIES.piPackagesManage);
+    expect(runtime.components.web.capabilities).toEqual(expect.arrayContaining([PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings]));
     expect(runtime.components.sessiond.capabilities).not.toContain(PI_WEB_CAPABILITIES.piPackagesManage);
-    expect(runtime.capabilities).toContain(PI_WEB_CAPABILITIES.piPackagesManage);
+    expect(runtime.components.sessiond.capabilities).not.toContain(PI_WEB_CAPABILITIES.selectedMachineSettings);
+    expect(runtime.capabilities).toEqual(expect.arrayContaining([PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings]));
   });
 
   it("reports stale session daemon versions as messages", async () => {

@@ -160,6 +160,81 @@ describe("buildApp", () => {
     expect(request).toHaveBeenCalledWith("GET", "/api/projects?active=true", undefined);
   });
 
+  it("filters remote selected-machine config reads to machine-safe keys", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const requestJson = vi.fn<MachineClient["requestJson"]>(() => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json", "set-cookie": "secret=1" },
+      body: piWebConfigResponse(fullPiWebConfig()),
+    }));
+    remoteClient = fakeRemoteClient({ requestJson });
+
+    const response = await app.inject({ method: "GET", url: `/api/machines/${remote.id}/config` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.json<PiWebConfigResponse>()).toEqual({
+      ...piWebConfigResponse(fullPiWebConfig()),
+      config: selectedMachinePiWebConfig(),
+      effectiveConfig: selectedMachinePiWebConfig(),
+    });
+    expect(requestJson).toHaveBeenCalledWith("GET", "/api/config");
+  });
+
+  it("merges remote selected-machine config updates into the target machine config", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const requestJson = vi.fn<MachineClient["requestJson"]>((method, _path, body) => {
+      if (method === "GET") return Promise.resolve({ statusCode: 200, headers: { "content-type": "application/json" }, body: piWebConfigResponse(fullPiWebConfig()) });
+      return Promise.resolve({ statusCode: 200, headers: { "content-type": "application/json" }, body: piWebConfigResponse(configFromMachineConfigWriteBody(body)) });
+    });
+    remoteClient = fakeRemoteClient({ requestJson });
+
+    const response = await app.inject({
+      method: "PUT",
+      url: `/api/machines/${remote.id}/config`,
+      payload: { config: { plugins: { info: { enabled: false } }, pathAccess: { allowedPaths: ["/srv/remote"] }, uploads: { defaultFolder: "remote\\uploads" }, maxUploadBytes: 4096, spawnSessions: true } },
+    });
+
+    const expectedMerged: PiWebConfigValues = {
+      ...fullPiWebConfig(),
+      plugins: { info: { enabled: false } },
+      pathAccess: { allowedPaths: ["/srv/remote"] },
+      uploads: { defaultFolder: "remote/uploads" },
+      maxUploadBytes: 4096,
+      spawnSessions: true,
+    };
+    expect(response.statusCode).toBe(200);
+    expect(requestJson).toHaveBeenNthCalledWith(1, "GET", "/api/config");
+    expect(requestJson).toHaveBeenNthCalledWith(2, "PUT", "/api/config", { config: expectedMerged });
+    expect(response.json<PiWebConfigResponse>().config).toEqual({
+      plugins: { info: { enabled: false } },
+      pathAccess: { allowedPaths: ["/srv/remote"] },
+      uploads: { defaultFolder: "remote/uploads" },
+      maxUploadBytes: 4096,
+      spawnSessions: true,
+      subsessions: false,
+    });
+  });
+
+  it("rejects unsafe remote selected-machine config keys before proxying", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const requestJson = vi.fn<MachineClient["requestJson"]>();
+    remoteClient = fakeRemoteClient({ requestJson });
+
+    const response = await app.inject({
+      method: "PUT",
+      url: `/api/machines/${remote.id}/config`,
+      payload: { config: { host: "0.0.0.0", allowedHosts: true, shortcuts: { "core:view.chat": "mod+1" }, spawnSessions: true } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config key is not allowed: host");
+    expect(requestJson).not.toHaveBeenCalled();
+  });
+
   it("proxies remote Pi package routes and gives package mutations a longer timeout", async () => {
     const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();
@@ -444,6 +519,10 @@ describe("buildApp", () => {
     expect(pluginsResponse.statusCode).toBe(200);
     expect(pluginsResponse.json()).toEqual({ plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local", machineSpecific: false, enabled: true }] });
 
+    const localMachinePluginsResponse = await app.inject({ method: "GET", url: "/api/machines/local/plugins" });
+    expect(localMachinePluginsResponse.statusCode).toBe(200);
+    expect(localMachinePluginsResponse.json()).toEqual({ plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local", machineSpecific: false, enabled: true }] });
+
     const assetResponse = await app.inject({ method: "GET", url: "/pi-web-plugins/fake/plugin.js?v=1" });
     expect(assetResponse.statusCode).toBe(200);
     expect(assetResponse.headers["content-type"]).toContain("application/javascript");
@@ -451,6 +530,24 @@ describe("buildApp", () => {
 
     const missingResponse = await app.inject({ method: "GET", url: "/pi-web-plugins/fake/missing.js" });
     expect(missingResponse.statusCode).toBe(404);
+  });
+
+  it("proxies remote machine plugin lists for settings", async () => {
+    const addResponse = await app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn(() => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json", "set-cookie": "secret=1" },
+      body: Readable.from([JSON.stringify({ plugins: [{ id: "remote-tools", module: "/pi-web-plugins/remote-tools/plugin.js", source: "local", scope: "local", machineSpecific: false, enabled: false }] })]),
+    }));
+    remoteClient = fakeRemoteClient({ request });
+
+    const response = await app.inject({ method: "GET", url: `/api/machines/${remote.id}/plugins` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["set-cookie"]).toBeUndefined();
+    expect(response.json()).toEqual({ plugins: [{ id: "remote-tools", module: "/pi-web-plugins/remote-tools/plugin.js", source: "local", scope: "local", machineSpecific: false, enabled: false }] });
+    expect(request).toHaveBeenCalledWith("GET", "/api/plugins", undefined);
   });
 
   it("rewrites and proxies remote machine plugin manifests and assets", async () => {
@@ -947,6 +1044,32 @@ function fakeConfigService() {
   };
 }
 
+function fullPiWebConfig(): PiWebConfigValues {
+  return {
+    host: "127.0.0.1",
+    port: 8504,
+    allowedHosts: ["gateway.example.test"],
+    shortcuts: { "core:view.chat": "mod+1" },
+    plugins: { info: { enabled: true, settings: { note: "remote" } } },
+    pathAccess: { allowedPaths: ["/srv/repos"] },
+    uploads: { defaultFolder: "uploads" },
+    maxUploadBytes: 1024,
+    spawnSessions: false,
+    subsessions: false,
+  };
+}
+
+function selectedMachinePiWebConfig(): PiWebConfigValues {
+  return {
+    plugins: { info: { enabled: true, settings: { note: "remote" } } },
+    pathAccess: { allowedPaths: ["/srv/repos"] },
+    uploads: { defaultFolder: "uploads" },
+    maxUploadBytes: 1024,
+    spawnSessions: false,
+    subsessions: false,
+  };
+}
+
 function piWebConfigResponse(config: PiWebConfigValues): PiWebConfigResponse {
   return {
     path: join(tempDir, "config.json"),
@@ -955,6 +1078,24 @@ function piWebConfigResponse(config: PiWebConfigValues): PiWebConfigResponse {
     effectiveConfig: config,
     envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
   };
+}
+
+interface MachineConfigWriteBody {
+  config: PiWebConfigValues;
+}
+
+function configFromMachineConfigWriteBody(body: unknown): PiWebConfigValues {
+  if (!isMachineConfigWriteBody(body)) throw new Error("Expected machine config write body");
+  return body.config;
+}
+
+function isMachineConfigWriteBody(value: unknown): value is MachineConfigWriteBody {
+  if (!isRecord(value)) return false;
+  return isRecord(value["config"]);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function fakePiPackageService(): PiPackageService {

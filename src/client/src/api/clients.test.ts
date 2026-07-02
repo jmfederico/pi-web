@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import type { TerminalCommandRun, Workspace } from "../../../shared/apiTypes";
-import { filesApi, machinesApi, piPackagesApi, piWebApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import type { PiWebConfigValues, TerminalCommandRun, Workspace } from "../../../shared/apiTypes";
+import { configApi, filesApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
 
 const workspace: Workspace = {
   id: "w/1",
@@ -57,6 +57,48 @@ describe("machine-scoped runtime API", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchCall(fetchMock, 0)[0]).toBe("/api/machines/remote%20a/runtime");
+  });
+});
+
+describe("settings config and plugin APIs", () => {
+  it("preserves gateway config and plugin routes by default", async () => {
+    const fetchMock = stubSequenceFetch([
+      jsonResponse(piWebConfigResponse({ host: "127.0.0.1" })),
+      jsonResponse(piWebConfigResponse({ spawnSessions: true })),
+      jsonResponse(piWebPluginsResponse()),
+    ]);
+
+    await expect(configApi.config()).resolves.toMatchObject({ config: { host: "127.0.0.1" } });
+    await expect(configApi.saveConfig({ spawnSessions: true })).resolves.toMatchObject({ config: { spawnSessions: true } });
+    await expect(pluginsApi.plugins()).resolves.toEqual(piWebPluginsResponse());
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/config",
+      "/api/config",
+      "/api/plugins",
+    ]);
+    expect(fetchCall(fetchMock, 1)[1]?.method).toBe("PUT");
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ config: { spawnSessions: true } });
+  });
+
+  it("uses machine-scoped config and plugin routes when a machine id is provided", async () => {
+    const fetchMock = stubSequenceFetch([
+      jsonResponse(piWebConfigResponse({ spawnSessions: false })),
+      jsonResponse(piWebConfigResponse({ spawnSessions: true })),
+      jsonResponse(piWebPluginsResponse()),
+    ]);
+
+    await expect(configApi.config("remote a")).resolves.toMatchObject({ config: { spawnSessions: false } });
+    await expect(configApi.saveConfig({ spawnSessions: true }, "remote a")).resolves.toMatchObject({ config: { spawnSessions: true } });
+    await expect(pluginsApi.plugins("remote a")).resolves.toEqual(piWebPluginsResponse());
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/machines/remote%20a/config",
+      "/api/machines/remote%20a/config",
+      "/api/machines/remote%20a/plugins",
+    ]);
+    expect(fetchCall(fetchMock, 1)[1]?.method).toBe("PUT");
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ config: { spawnSessions: true } });
   });
 });
 
@@ -356,6 +398,20 @@ function fetchCall(fetchMock: FetchMock, index: number): Parameters<FetchLike> {
 function requestBody(init: RequestInit | undefined): string {
   if (typeof init?.body !== "string") throw new Error("Expected string request body");
   return init.body;
+}
+
+function piWebConfigResponse(config: PiWebConfigValues) {
+  return {
+    path: "/tmp/pi-web/config.json",
+    exists: true,
+    config,
+    effectiveConfig: config,
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
+  };
+}
+
+function piWebPluginsResponse() {
+  return { plugins: [{ id: "info", module: "/pi-web-plugins/info/plugin.js", source: "test", scope: "local", machineSpecific: false, enabled: true }] };
 }
 
 function jsonResponse(value: unknown): Response {

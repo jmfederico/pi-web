@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { WebSocket } from "ws";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, type FederatedHttpRouteSpec } from "../../shared/federatedRoutes.js";
+import { mergeSelectedMachineConfig, parsePiWebConfigResponseBody, parseSelectedMachineConfigRequest, selectedMachineConfigResponse } from "../configRoutes.js";
 import { bridgeSockets } from "../webSocketBridge.js";
-import { RemoteMachineRequestError, type MachineRequestOptions } from "./machineClient.js";
+import { RemoteMachineRequestError, type MachineClient, type MachineJsonResponse, type MachineRequestOptions } from "./machineClient.js";
 import { MachineService } from "./machineService.js";
 
 export const REMOTE_HTTP_ROUTES = FEDERATED_HTTP_ROUTES;
@@ -45,17 +46,60 @@ async function proxyHttpRequest(machines: MachineService, spec: FederatedHttpRou
   }
 
   try {
+    const remotePath = remoteApiPath(machineId, requestUrl);
+    if (spec.path === "/config") return await proxySelectedMachineConfigRequest(client, machineId, method, remotePath, body, reply);
+
     const requestOptions = proxyRequestOptions(spec, body, contentType);
     const upstream = requestOptions === undefined
-      ? await client.request(method, remoteApiPath(machineId, requestUrl), body)
-      : await client.request(method, remoteApiPath(machineId, requestUrl), body, requestOptions);
+      ? await client.request(method, remotePath, body)
+      : await client.request(method, remotePath, body, requestOptions);
     reply.code(upstream.statusCode);
     applySafeHeaders(reply, upstream.headers);
     if (upstream.body === undefined) return await reply.send();
     return await reply.send(upstream.body);
   } catch (error) {
+    if (isSelectedMachineConfigRequestError(error)) return reply.code(400).send({ error: errorMessage(error) });
     return sendGatewayError(reply, machineId, error);
   }
+}
+
+async function proxySelectedMachineConfigRequest(client: MachineClient, machineId: string, method: string, remotePath: string, body: unknown, reply: FastifyReply): Promise<FastifyReply> {
+  if (method === "GET") {
+    return sendSelectedMachineConfigResponse(reply, await client.requestJson("GET", remotePath), machineId);
+  }
+
+  if (method === "PUT") {
+    const patch = parseSelectedMachineConfigRequest(configPayload(body));
+    const currentResponse = await client.requestJson("GET", remotePath);
+    if (!isSuccessfulStatus(currentResponse.statusCode)) return sendUpstreamJsonResponse(reply, currentResponse, machineId);
+
+    const current = parsePiWebConfigResponseBody(currentResponse.body, "Remote machine config response");
+    const merged = mergeSelectedMachineConfig(current.config, patch);
+    return sendSelectedMachineConfigResponse(reply, await client.requestJson("PUT", remotePath, { config: merged }), machineId);
+  }
+
+  return reply.code(405).send({ error: "Method not allowed" });
+}
+
+function configPayload(body: unknown): unknown {
+  return isRecord(body) ? body["config"] : undefined;
+}
+
+function sendSelectedMachineConfigResponse(reply: FastifyReply, upstream: MachineJsonResponse, machineId: string): FastifyReply {
+  if (!isSuccessfulStatus(upstream.statusCode)) return sendUpstreamJsonResponse(reply, upstream, machineId);
+  reply.code(upstream.statusCode);
+  applySafeHeaders(reply, upstream.headers);
+  return reply.send(selectedMachineConfigResponse(parsePiWebConfigResponseBody(upstream.body, "Remote machine config response")));
+}
+
+function sendUpstreamJsonResponse(reply: FastifyReply, upstream: MachineJsonResponse, machineId: string): FastifyReply {
+  reply.code(upstream.statusCode);
+  applySafeHeaders(reply, upstream.headers);
+  return reply.send(upstream.body ?? { error: "Remote machine config request failed", machineId, statusCode: upstream.statusCode });
+}
+
+function isSuccessfulStatus(statusCode: number): boolean {
+  return statusCode >= 200 && statusCode < 300;
 }
 
 async function proxyWebSocket(machines: MachineService, machineId: string, requestUrl: string, socket: WebSocket): Promise<void> {
@@ -110,6 +154,18 @@ function applySafeHeaders(reply: FastifyReply, headers: Record<string, string | 
   }
 }
 
+function isSelectedMachineConfigRequestError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("PI WEB selected-machine config");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function sendGatewayError(reply: FastifyReply, machineId: string, error: unknown): FastifyReply {
   const statusCode = error instanceof RemoteMachineRequestError ? error.statusCode : 502;
   const label = statusCode === 504 ? "Remote machine timeout" : "Remote machine unavailable";
@@ -117,6 +173,6 @@ function sendGatewayError(reply: FastifyReply, machineId: string, error: unknown
     error: label,
     machineId,
     statusCode,
-    detail: error instanceof Error ? error.message : String(error),
+    detail: errorMessage(error),
   });
 }

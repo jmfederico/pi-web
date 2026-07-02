@@ -112,13 +112,21 @@ export const machinesApi = {
   runtime: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}/runtime`, parseMachineRuntime),
 };
 
+function configUrl(machineId?: string): string {
+  return machineId === undefined ? "/api/config" : `${machinePrefix(machineId)}/config`;
+}
+
+function pluginsUrl(machineId?: string): string {
+  return machineId === undefined ? "/api/plugins" : `${machinePrefix(machineId)}/plugins`;
+}
+
 export const configApi = {
-  config: () => request("/api/config", parsePiWebConfigResponse),
-  saveConfig: (config: PiWebConfigValues) => request("/api/config", parsePiWebConfigResponse, { method: "PUT", body: JSON.stringify({ config }) }),
+  config: (machineId?: string) => request(configUrl(machineId), parsePiWebConfigResponse),
+  saveConfig: (config: PiWebConfigValues, machineId?: string) => request(configUrl(machineId), parsePiWebConfigResponse, { method: "PUT", body: JSON.stringify({ config }) }),
 };
 
 export const pluginsApi = {
-  plugins: () => request("/api/plugins", parsePiWebPluginsResponse),
+  plugins: (machineId?: string) => request(pluginsUrl(machineId), parsePiWebPluginsResponse),
 };
 
 function piPackageUrl(endpoint = "", machineId?: string): string {

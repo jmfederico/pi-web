@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
+import { registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 
 let app: FastifyInstance;
@@ -18,6 +18,7 @@ beforeEach(async () => {
   };
   app = Fastify({ logger: false });
   registerConfigRoutes(app, service);
+  registerLocalMachineConfigRoutes(app, service);
   await app.ready();
 });
 
@@ -92,7 +93,101 @@ describe("config routes", () => {
     expect(response.json()).toHaveProperty("error");
     expect(service.write).not.toHaveBeenCalled();
   });
+
+  it("filters local machine config reads to selected-machine-safe keys", async () => {
+    savedConfig = fullConfig();
+
+    const response = await app.inject({ method: "GET", url: "/api/machines/local/config" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<PiWebConfigResponse>()).toEqual({
+      ...responseFor(savedConfig, true),
+      config: selectedMachineConfig(),
+      effectiveConfig: selectedMachineConfig(),
+    });
+  });
+
+  it("merges local selected-machine config updates without dropping gateway-only keys", async () => {
+    savedConfig = fullConfig();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/machines/local/config",
+      payload: { config: { plugins: { info: { enabled: false } }, uploads: { defaultFolder: "uploads\\manual" }, spawnSessions: true } },
+    });
+
+    const expectedConfig: PiWebConfigValues = {
+      ...fullConfig(),
+      plugins: { info: { enabled: false } },
+      uploads: { defaultFolder: "uploads/manual" },
+      spawnSessions: true,
+    };
+    expect(response.statusCode).toBe(200);
+    expect(savedConfig).toEqual(expectedConfig);
+    expect(service.write).toHaveBeenCalledWith(expectedConfig);
+    expect(response.json<PiWebConfigResponse>().config).toEqual({
+      plugins: { info: { enabled: false } },
+      pathAccess: { allowedPaths: ["/srv/repos"] },
+      uploads: { defaultFolder: "uploads/manual" },
+      maxUploadBytes: 1024,
+      spawnSessions: true,
+      subsessions: false,
+    });
+  });
+
+  it("rejects unsafe local selected-machine config keys before writing", async () => {
+    savedConfig = fullConfig();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/machines/local/config",
+      payload: { config: { host: "0.0.0.0", spawnSessions: true } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config key is not allowed: host");
+    expect(savedConfig).toEqual(fullConfig());
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid local selected-machine config values before writing", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/machines/local/config",
+      payload: { config: { spawnSessions: "yes" } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config spawnSessions must be a boolean");
+    expect(service.write).not.toHaveBeenCalled();
+  });
 });
+
+function fullConfig(): PiWebConfigValues {
+  return {
+    host: "127.0.0.1",
+    port: 8504,
+    allowedHosts: ["gateway.example.test"],
+    shortcuts: { "core:view.chat": "mod+1" },
+    plugins: { info: { enabled: true, settings: { note: "visible" } } },
+    pathAccess: { allowedPaths: ["/srv/repos"] },
+    uploads: { defaultFolder: "uploads" },
+    maxUploadBytes: 1024,
+    spawnSessions: false,
+    subsessions: false,
+  };
+}
+
+function selectedMachineConfig(): PiWebConfigValues {
+  return {
+    plugins: { info: { enabled: true, settings: { note: "visible" } } },
+    pathAccess: { allowedPaths: ["/srv/repos"] },
+    uploads: { defaultFolder: "uploads" },
+    maxUploadBytes: 1024,
+    spawnSessions: false,
+    subsessions: false,
+  };
+}
 
 function responseFor(config: PiWebConfigValues, exists: boolean): PiWebConfigResponse {
   return {
