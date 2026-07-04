@@ -4,6 +4,7 @@ import {
   WorkspaceUploadBatchError,
   WorkspaceUploadCancelledError,
   type FileContentResponse,
+  type FileTreeEntry,
   type FileTreeResponse,
   type Machine,
   type Project,
@@ -13,6 +14,9 @@ import {
 } from "../api";
 import { FileExplorerController, type FileExplorerControllerDependencies } from "./fileExplorerController";
 
+type FileExplorerApi = NonNullable<FileExplorerControllerDependencies["api"]>;
+type WorkspaceTree = FileExplorerApi["workspaceTree"];
+type WorkspaceFile = FileExplorerApi["workspaceFile"];
 type UploadWorkspaceFiles = NonNullable<FileExplorerControllerDependencies["uploadWorkspaceFiles"]>;
 type UploadWorkspaceFilesOptions = NonNullable<Parameters<UploadWorkspaceFiles>[3]>;
 
@@ -47,6 +51,56 @@ const workspace: Workspace = {
   isGitRepo: true,
   isGitWorktree: false,
 };
+
+describe("FileExplorerController file tree workflows", () => {
+  it("refreshes the root and already-expanded directories for the selected machine", async () => {
+    const rootEntries = [directoryEntry("src"), fileEntry("README.md")];
+    const refreshedSrcEntries = [fileEntry("src/index.ts")];
+    const refreshedDocsEntries = [fileEntry("docs/guide.md")];
+    const workspaceTree = vi.fn<WorkspaceTree>((_projectId, _workspaceId, path = "") => Promise.resolve(treeResponse(path, {
+      "": rootEntries,
+      src: refreshedSrcEntries,
+      docs: refreshedDocsEntries,
+    }[path] ?? [])));
+    const harness = createHarness({ api: createApi({ workspaceTree }) }, {
+      expandedDirs: {
+        src: [fileEntry("src/stale.ts")],
+        docs: [fileEntry("docs/stale.md")],
+      },
+      fileTreeStale: true,
+      error: "stale failure",
+    });
+
+    await harness.controller.refreshFiles();
+
+    expect(workspaceTree).toHaveBeenCalledTimes(3);
+    expect(workspaceTree).toHaveBeenCalledWith("project-1", "workspace-1", "", "remote-1");
+    expect(workspaceTree).toHaveBeenCalledWith("project-1", "workspace-1", "src", "remote-1");
+    expect(workspaceTree).toHaveBeenCalledWith("project-1", "workspace-1", "docs", "remote-1");
+    expect(harness.state.fileTree).toEqual(rootEntries);
+    expect(harness.state.expandedDirs).toEqual({ src: refreshedSrcEntries, docs: refreshedDocsEntries });
+    expect(harness.state.fileTreeStale).toBe(false);
+    expect(harness.state.error).toBe("");
+  });
+
+  it("expands a directory then collapses it locally without refetching", async () => {
+    const srcEntries = [fileEntry("src/index.ts")];
+    const workspaceTree = vi.fn<WorkspaceTree>((_projectId, _workspaceId, path = "") => Promise.resolve(treeResponse(path, srcEntries)));
+    const harness = createHarness({ api: createApi({ workspaceTree }) });
+
+    await harness.controller.expandDir("src");
+
+    expect(workspaceTree).toHaveBeenCalledWith("project-1", "workspace-1", "src", "remote-1");
+    expect(harness.state.expandedDirs).toEqual({ src: srcEntries });
+    expect(harness.state.error).toBe("");
+
+    workspaceTree.mockClear();
+    await harness.controller.expandDir("src");
+
+    expect(workspaceTree).not.toHaveBeenCalled();
+    expect(harness.state.expandedDirs).toEqual({});
+  });
+});
 
 describe("FileExplorerController workspace uploads", () => {
   it("tracks upload progress, completes from final responses, refreshes files, and selects the first uploaded file", async () => {
@@ -227,18 +281,16 @@ describe("FileExplorerController workspace uploads", () => {
   });
 });
 
-function createHarness(deps: FileExplorerControllerDependencies = {}) {
+function createHarness(deps: FileExplorerControllerDependencies = {}, statePatch: Partial<AppState> = {}) {
   installWindow("http://localhost/app");
   let state: AppState = {
     ...initialAppState(),
     selectedMachine: machine,
     selectedProject: project,
     selectedWorkspace: workspace,
+    ...statePatch,
   };
-  const api: NonNullable<FileExplorerControllerDependencies["api"]> = deps.api ?? {
-    workspaceTree: vi.fn<NonNullable<FileExplorerControllerDependencies["api"]>["workspaceTree"]>((_projectId, _workspaceId, path = "") => Promise.resolve(treeResponse(path))),
-    workspaceFile: vi.fn<NonNullable<FileExplorerControllerDependencies["api"]>["workspaceFile"]>((_projectId, _workspaceId, path) => Promise.resolve(fileResponse(path))),
-  };
+  const api = deps.api ?? createApi();
   const updateUrl = vi.fn();
   let batchSequence = 0;
   const controller = new FileExplorerController(
@@ -308,8 +360,24 @@ function sequenceNow(...values: string[]): () => string {
   return () => values[index++] ?? values.at(-1) ?? "now";
 }
 
-function treeResponse(path: string): FileTreeResponse {
-  return { path, entries: [], scannedAt: "2026-06-25T00:00:00.000Z", truncated: false };
+function createApi(overrides: Partial<FileExplorerApi> = {}): FileExplorerApi {
+  return {
+    workspaceTree: vi.fn<WorkspaceTree>((_projectId, _workspaceId, path = "") => Promise.resolve(treeResponse(path))),
+    workspaceFile: vi.fn<WorkspaceFile>((_projectId, _workspaceId, path) => Promise.resolve(fileResponse(path))),
+    ...overrides,
+  };
+}
+
+function treeResponse(path: string, entries: FileTreeEntry[] = []): FileTreeResponse {
+  return { path, entries, scannedAt: "2026-06-25T00:00:00.000Z", truncated: false };
+}
+
+function directoryEntry(path: string): FileTreeEntry {
+  return { name: path.split("/").at(-1) ?? path, path, type: "directory" };
+}
+
+function fileEntry(path: string): FileTreeEntry {
+  return { name: path.split("/").at(-1) ?? path, path, type: "file", size: 2 };
 }
 
 function fileResponse(path: string): FileContentResponse {
