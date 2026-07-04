@@ -20,6 +20,15 @@ const remoteMachine: Machine = {
   updatedAt: "2026-05-26T00:00:00.000Z",
 };
 
+const addedMachine: Machine = {
+  id: "remote-2",
+  name: "New Remote",
+  kind: "remote",
+  baseUrl: "https://new-remote.example.test",
+  createdAt: "2026-05-27T00:00:00.000Z",
+  updatedAt: "2026-05-27T00:00:00.000Z",
+};
+
 const offlineHealth: MachineHealth = {
   machineId: remoteMachine.id,
   ok: false,
@@ -31,6 +40,85 @@ const offlineHealth: MachineHealth = {
 describe("MachineController", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("selects a newly added machine and clears stale workspace state", async () => {
+    const project = { id: "p1", name: "Project", path: "/repo", createdAt: "now" };
+    const workspace = { id: "w1", projectId: project.id, path: "/repo", label: "main", isMain: true, isGitRepo: true, isGitWorktree: false };
+    const session = { id: "s1", cwd: "/repo", path: "/repo/.pi/sessions/s1.json", created: "now", modified: "now", messageCount: 1, firstMessage: "hello" };
+    let state: AppState = {
+      ...initialAppState(),
+      machines: [localMachine, remoteMachine],
+      selectedMachine: localMachine,
+      projects: [project],
+      workspaces: [workspace],
+      sessions: [session],
+      selectedProject: project,
+      selectedWorkspace: workspace,
+      selectedSession: session,
+      fileTree: [{ name: "index.ts", path: "src/index.ts", type: "file" }],
+      selectedFilePath: "src/index.ts",
+      gitStatus: { isGitRepo: true, hash: "abc123", branch: "main", files: [{ path: "src/index.ts", index: "modified", workingTree: "modified" }] },
+      activeTerminalCount: 2,
+      error: "stale error",
+    };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const updateUrl = vi.fn();
+    const projects = { loadProjects: vi.fn() };
+    const input = { name: "New Remote", baseUrl: "https://new-remote.example.test", token: "secret-token" };
+
+    const addMachine = vi.spyOn(api, "addMachine").mockResolvedValue(addedMachine);
+    const health = vi.spyOn(api, "health").mockResolvedValue({ machineId: addedMachine.id, ok: true, checkedAt: "2026-05-27T00:00:01.000Z", status: "online" });
+    const runtime = vi.spyOn(api, "runtime").mockResolvedValue({ machineId: addedMachine.id, ok: true, checkedAt: "2026-05-27T00:00:02.000Z" });
+
+    const controller = new MachineController(() => state, setState, updateUrl, projects);
+
+    const machine = await controller.addMachine(input);
+
+    expect(machine).toEqual(addedMachine);
+    expect(addMachine).toHaveBeenCalledWith(input);
+    expect(state.machines).toEqual([localMachine, remoteMachine, addedMachine]);
+    expect(state.selectedMachine).toEqual(addedMachine);
+    expect(state.projects).toEqual([]);
+    expect(state.workspaces).toEqual([]);
+    expect(state.sessions).toEqual([]);
+    expect(state.selectedProject).toBeUndefined();
+    expect(state.selectedWorkspace).toBeUndefined();
+    expect(state.selectedSession).toBeUndefined();
+    expect(state.fileTree).toEqual([]);
+    expect(state.selectedFilePath).toBeUndefined();
+    expect(state.gitStatus).toBeUndefined();
+    expect(state.activeTerminalCount).toBe(0);
+    expect(state.error).toBe("");
+    expect(projects.loadProjects).toHaveBeenCalledOnce();
+    expect(updateUrl).toHaveBeenCalledOnce();
+    expect(health).toHaveBeenCalledWith(addedMachine.id);
+    expect(runtime).toHaveBeenCalledWith(addedMachine.id);
+  });
+
+  it("preserves the current machine state when adding a machine fails", async () => {
+    let state: AppState = { ...initialAppState(), machines: [localMachine], selectedMachine: localMachine };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const updateUrl = vi.fn();
+    const projects = { loadProjects: vi.fn() };
+    const input = { name: "New Remote", baseUrl: "https://new-remote.example.test" };
+
+    vi.spyOn(api, "addMachine").mockRejectedValue(new Error("Remote rejected"));
+    const health = vi.spyOn(api, "health");
+    const runtime = vi.spyOn(api, "runtime");
+
+    const controller = new MachineController(() => state, setState, updateUrl, projects);
+
+    const machine = await controller.addMachine(input);
+
+    expect(machine).toBeUndefined();
+    expect(state.machines).toEqual([localMachine]);
+    expect(state.selectedMachine).toEqual(localMachine);
+    expect(state.error).toBe("Error: Remote rejected");
+    expect(projects.loadProjects).not.toHaveBeenCalled();
+    expect(updateUrl).not.toHaveBeenCalled();
+    expect(health).not.toHaveBeenCalled();
+    expect(runtime).not.toHaveBeenCalled();
   });
 
   it("keeps the routed remote machine selected while its health is offline", async () => {
