@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { RealtimeEvent, TerminalInfo } from "../../shared/apiTypes.js";
+import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
+import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { TerminalService } from "./terminalService";
 
 // TerminalService spawns a POSIX shell (/bin/bash with -lc and commands like
@@ -90,7 +93,92 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
       service.dispose();
     }
   });
+
+  it("publishes terminal lifecycle events and workspace activity updates", async () => {
+    const events = new RecordingEventHub();
+    const workspaceActivity = createWorkspaceActivityRecorder();
+    const service = new TerminalService(events, workspaceActivity);
+    const cwd = process.cwd();
+    try {
+      const run = service.runCommand({
+        origin: "core",
+        projectId: "p1",
+        workspaceId: "w1",
+        cwd,
+        title: "Lifecycle command",
+        command: "true",
+      });
+      const runningTerminal = requireTerminal(service, run.terminalId);
+
+      expect(workspaceActivity.updated).toEqual([{ id: run.terminalId, cwd, exited: false }]);
+      expect(events.events).toEqual([{ type: "terminal.created", terminal: runningTerminal }]);
+
+      await terminalExit(service, run.terminalId);
+      const exitedTerminal = requireTerminal(service, run.terminalId);
+
+      expect(workspaceActivity.updated).toEqual([
+        { id: run.terminalId, cwd, exited: false },
+        { id: run.terminalId, cwd, exited: true },
+      ]);
+      expect(events.events).toEqual([
+        { type: "terminal.created", terminal: runningTerminal },
+        { type: "terminal.exited", terminal: exitedTerminal },
+      ]);
+
+      service.close(run.terminalId);
+
+      expect(workspaceActivity.removed).toEqual([{ terminalId: run.terminalId, cwd }]);
+      expect(events.events).toEqual([
+        { type: "terminal.created", terminal: runningTerminal },
+        { type: "terminal.exited", terminal: exitedTerminal },
+        { type: "terminal.closed", terminalId: run.terminalId, cwd },
+      ]);
+    } finally {
+      service.dispose();
+    }
+  });
 });
+
+class RecordingEventHub extends SessionEventHub {
+  readonly events: RealtimeEvent[] = [];
+
+  override publishRealtime(event: RealtimeEvent): void {
+    this.events.push(event);
+  }
+}
+
+interface WorkspaceActivityRecorder extends Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal"> {
+  readonly updated: TerminalActivityUpdate[];
+  readonly removed: TerminalActivityRemoval[];
+}
+
+type TerminalActivityUpdate = Pick<TerminalInfo, "id" | "cwd" | "exited">;
+
+interface TerminalActivityRemoval {
+  terminalId: string;
+  cwd: string | undefined;
+}
+
+function createWorkspaceActivityRecorder(): WorkspaceActivityRecorder {
+  const updated: TerminalActivityUpdate[] = [];
+  const removed: TerminalActivityRemoval[] = [];
+  return {
+    updated,
+    removed,
+    updateTerminal: (terminal) => {
+      updated.push({ id: terminal.id, cwd: terminal.cwd, exited: terminal.exited });
+    },
+    removeTerminal: (terminalId, cwd) => {
+      removed.push({ terminalId, cwd });
+    },
+  };
+}
+
+function requireTerminal(service: TerminalService, terminalId: string): TerminalInfo {
+  const terminal = service.get(terminalId);
+  if (terminal === undefined) throw new Error(`Expected terminal ${terminalId} to exist`);
+  return terminal;
+}
 
 function terminalReplay(service: TerminalService, terminalId: string): Promise<string> {
   let output = "";
