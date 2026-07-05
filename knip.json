@@ -18,7 +18,7 @@
       "ignoreExportsUsedInFile": true
     },
     "packages/tunnel-connector": {
-      "entry": ["src/**/*.test.ts"],
+      "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": ["src/**/*.ts"],
       "paths": {
         "@jmfederico/pi-web-tunnel-frp-engine": [
@@ -28,7 +28,7 @@
       "ignoreExportsUsedInFile": true
     },
     "packages/tunnel-frp-engine": {
-      "entry": ["src/**/*.test.ts"],
+      "entry": ["src/index.ts", "src/**/*.test.ts"],
       "project": ["src/**/*.ts"],
       "ignoreExportsUsedInFile": true
     }

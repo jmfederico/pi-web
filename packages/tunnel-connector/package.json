@@ -12,13 +12,11 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "development": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./cli": {
       "types": "./dist/cli.d.ts",
-      "development": "./src/cli.ts",
       "import": "./dist/cli.js",
       "default": "./dist/cli.js"
     }
