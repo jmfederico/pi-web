@@ -11,6 +11,14 @@ The connector stays optional. Users who never open or enable Safe Tunnel do not 
 - The bridge shells out to the connector for `status`, `login`, `start`, and `stop`.
 - Connector secrets live in the connector config, normally `~/.config/pi-web-tunnel/config.json`; PI WEB only reads redacted config/runtime state.
 
+## Connector config and local target
+
+`pi-web-tunnel login` and `pi-web-tunnel register-machine` persist the local PI WEB target as `localPiWebUrl` in the connector config. The default is `http://127.0.0.1:8504`; use `--local-pi-web-url http://127.0.0.1:<port>` when PI WEB is running on another local port.
+
+`pi-web-tunnel start` fetches the hosted tunnel configuration, then applies the connector-owned `localPiWebUrl` to the frp `localIP`/`localPort` before writing `frpc.toml`. This lets source-tree and packaged PI WEB instances expose non-default local ports without storing a per-machine local URL in the hosted service.
+
+The connector's foreground start/stop behavior and future user-service install design are documented in [safe-tunnel-connector-service.md](safe-tunnel-connector-service.md).
+
 ## Connector command defaults
 
 Packaged/production PI WEB checks for `pi-web-tunnel` on `PATH` first. If it is unavailable, the Safe Tunnel bridge reports the connector as installable and waits until the user starts a Safe Tunnel operation before installing anything. Users who never open/use Safe Tunnel do not install the connector package.
