@@ -82,6 +82,37 @@ describe("Docker command assets", () => {
     expect(devCompose).toContain("COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-pi-web-dev}");
   });
 
+  dockerCommandIt("fetches remote installer assets without clobbering the write target", async () => {
+    const installDir = join(tempDir, "remote-runtime");
+    const fakeDocker = await installFakeDocker();
+    await installFakeCurl(fakeDocker.binDir);
+    await installFakeUname(fakeDocker.binDir, "Darwin");
+    const home = join(tempDir, "home");
+    const socketPath = join(home, ".docker", "run", "docker.sock");
+
+    await withUnixSocket(socketPath, async () => {
+      await execUtf8("sh", [
+        join(repoRoot, "docker", "install.sh"),
+        "--install-dir", installDir,
+        "--data-dir", join(installDir, "data"),
+        "--asset-ref", "test-assets",
+        "--skip-compose",
+      ], {
+        ...cleanProcessEnv(),
+        PATH: `${fakeDocker.binDir}:${process.env["PATH"] ?? ""}`,
+        HOME: home,
+        FAKE_DOCKER_LOG: fakeDocker.logPath,
+        PI_WEB_DOCKER_ASSET_BASE: "https://assets.example.test/docker",
+      });
+    });
+
+    expect(await readFile(join(installDir, "Dockerfile"), "utf8")).toContain("COPY pi-web-docker /usr/local/bin/pi-web-docker");
+    expect(await readFile(join(installDir, "pi-web-docker"), "utf8")).toContain("Usage: pi-web-docker");
+    const env = await readFile(join(installDir, ".env"), "utf8");
+    expect(env).toContain(`PI_WEB_DOCKER_INSTALL_DIR=${installDir}`);
+    expect(env).toContain("PI_WEB_DOCKER_REF=test-assets");
+  });
+
   dockerCommandIt("runs status through Docker Compose in the foreground", async () => {
     const installDir = await createRuntimeInstall();
     const fakeDocker = await installFakeDocker();
@@ -490,6 +521,43 @@ exit 9
 `, "utf8");
   await chmod(dockerPath, 0o755);
   return { binDir, logPath };
+}
+
+async function installFakeCurl(binDir: string): Promise<void> {
+  const curlPath = join(binDir, "curl");
+  await writeFile(curlPath, `#!/usr/bin/env sh
+set -eu
+asset_root=${shellSingleQuote(join(repoRoot, "docker"))}
+output=
+url=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      shift
+      output=\${1:-}
+      ;;
+    -*)
+      ;;
+    *)
+      url=$1
+      ;;
+  esac
+  if [ "$#" -gt 0 ]; then
+    shift
+  fi
+done
+[ -n "$url" ] || { printf '%s\n' "fake curl missing URL" >&2; exit 2; }
+[ -n "$output" ] || { printf '%s\n' "fake curl missing -o output" >&2; exit 2; }
+case "$url" in
+  */docker/*) rel=\${url##*/docker/} ;;
+  *) printf 'unexpected fake curl url: %s\n' "$url" >&2; exit 2 ;;
+esac
+src=$asset_root/$rel
+[ -f "$src" ] || { printf 'missing fake curl asset: %s\n' "$src" >&2; exit 2; }
+mkdir -p "$(dirname "$output")"
+cp "$src" "$output"
+`, "utf8");
+  await chmod(curlPath, 0o755);
 }
 
 async function installFakeUname(binDir: string, osName: string): Promise<void> {
