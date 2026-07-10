@@ -25,7 +25,6 @@
     "types": [
       "node"
     ],
-    "baseUrl": ".",
     "paths": {
       "@jmfederico/pi-web/plugin-api": [
         "./src/plugin-api.ts"

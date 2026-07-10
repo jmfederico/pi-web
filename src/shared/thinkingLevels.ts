@@ -13,7 +13,7 @@ export type { ThinkingLevel };
  * either breaks, update this list and give the new level a label/description
  * where thinking levels are presented.
  */
-export const KNOWN_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ThinkingLevel[];
+export const KNOWN_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];
 
 export function isKnownThinkingLevel(value: string): value is ThinkingLevel {
   return KNOWN_THINKING_LEVELS.some((level) => level === value);

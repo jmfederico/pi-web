@@ -64,9 +64,10 @@ describe("selectable row activation", () => {
 
 type EventWithPath = Pick<Event, "composedPath">;
 type KeyboardEventWithPath = EventWithPath & Pick<KeyboardEvent, "key" | "preventDefault" | "stopPropagation">;
-type MatchTarget = EventTarget & Pick<Element, "matches">;
+type MatchTarget = EventTarget & { matches: (selector: string) => boolean };
+type MatchPredicate = (selector: string) => boolean;
 
-function matchTarget(matches: Element["matches"]): MatchTarget {
+function matchTarget(matches: MatchPredicate): MatchTarget {
   return Object.assign(new EventTarget(), { matches });
 }
 

@@ -54,8 +54,11 @@ function sessionRef(id: string, cwd = "/workspace") {
   return { id, cwd };
 }
 
+const TEST_MODEL_PROVIDER = "anthropic";
+const TEST_MODEL_ID = "claude-sonnet-4-5-20250929";
+
 function testModel(): NonNullable<PiAgentSession["model"]> {
-  const model = ModelRegistry.inMemory(AuthStorage.inMemory()).find("anthropic", "claude-3-5-sonnet-20241022");
+  const model = ModelRegistry.inMemory(AuthStorage.inMemory()).find(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
   if (model === undefined) throw new Error("test model not found");
   return model;
 }
@@ -1142,7 +1145,7 @@ describe("PiSessionService", () => {
     const hub = new CapturingSessionEventHub();
     const authStorage = AuthStorage.inMemory({ anthropic: { type: "api_key", key: "sk-test" } });
     const modelRegistry = ModelRegistry.inMemory(authStorage);
-    const model = modelRegistry.find("anthropic", "claude-3-5-sonnet-20241022");
+    const model = modelRegistry.find(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
     if (model === undefined) throw new Error("Expected Anthropic model fixture");
     const fake = fakeRuntime("auth-session", { model, modelRegistry });
 
@@ -1161,7 +1164,7 @@ describe("PiSessionService", () => {
     service.applyAuthChange({ removedProviderId: "anthropic" });
     service.applyAuthChange({ removedProviderId: "anthropic" });
 
-    const warningCount = () => hub.sessionEvents.filter(({ event }) => event.type === "command.output" && event.level === "error" && event.message.includes("anthropic/claude-3-5-sonnet-20241022")).length;
+    const warningCount = () => hub.sessionEvents.filter(({ event }) => event.type === "command.output" && event.level === "error" && event.message.includes(`${TEST_MODEL_PROVIDER}/${TEST_MODEL_ID}`)).length;
     expect(warningCount()).toBe(1);
     expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === "auth-session")).toBe(true);
 

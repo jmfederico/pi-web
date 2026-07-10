@@ -30,14 +30,14 @@ describe("thinkingLevels", () => {
     const known = KNOWN_THINKING_LEVELS;
 
     it("derives bar count from the available set (excluding the off level)", () => {
-      // 6 known levels => 5 bars.
-      expect(thinkingGauge("off", known).total).toBe(5);
+      // 7 known levels => 6 bars.
+      expect(thinkingGauge("off", known).total).toBe(6);
       expect(thinkingGauge("off", ["off", "low", "high"]).total).toBe(2);
     });
 
     it("treats the first level as no thinking (0 filled)", () => {
-      expect(thinkingGauge("off", known)).toEqual({ total: 5, filled: 0 });
-      expect(thinkingGauge(undefined, known)).toEqual({ total: 5, filled: 0 });
+      expect(thinkingGauge("off", known)).toEqual({ total: 6, filled: 0 });
+      expect(thinkingGauge(undefined, known)).toEqual({ total: 6, filled: 0 });
     });
 
     it("fills up to the current level's rank", () => {
@@ -46,6 +46,7 @@ describe("thinkingLevels", () => {
       expect(thinkingGauge("medium", known).filled).toBe(3);
       expect(thinkingGauge("high", known).filled).toBe(4);
       expect(thinkingGauge("xhigh", known).filled).toBe(5);
+      expect(thinkingGauge("max", known).filled).toBe(6);
     });
 
     it("adapts to a runtime-provided set of a different size", () => {
@@ -56,8 +57,8 @@ describe("thinkingLevels", () => {
     });
 
     it("falls back to the known set when no usable available set is given", () => {
-      expect(thinkingGauge("high", [])).toEqual({ total: 5, filled: 4 });
-      expect(thinkingGauge("high", ["only-one"])).toEqual({ total: 5, filled: 4 });
+      expect(thinkingGauge("high", [])).toEqual({ total: 6, filled: 4 });
+      expect(thinkingGauge("high", ["only-one"])).toEqual({ total: 6, filled: 4 });
     });
 
     it("fills 0 for an unknown current level instead of throwing", () => {
