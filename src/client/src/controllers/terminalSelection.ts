@@ -1,5 +1,5 @@
 import type { TerminalInfo } from "../api";
-import { browserSessionStorage, parseStoredString, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
+import { browserLocalStorage, parseStoredString, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
 
 export interface TerminalSelectionMemory {
   latestTerminalId(cwd: string): string | undefined;
@@ -35,7 +35,7 @@ const terminalSelectionStorageKey = "pi-web:terminal-selection:v1";
 export class SessionStorageTerminalSelectionMemory implements TerminalSelectionMemory {
   private readonly terminalIdsByCwd: PersistentValueMap<string>;
 
-  constructor(storage: KeyValueStorage | undefined = browserSessionStorage()) {
+  constructor(storage: KeyValueStorage | undefined = browserLocalStorage()) {
     this.terminalIdsByCwd = new PersistentValueMap(terminalSelectionStorageKey, parseStoredString, storage);
   }
 

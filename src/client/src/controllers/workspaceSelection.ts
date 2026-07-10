@@ -1,5 +1,5 @@
 import type { Workspace } from "../api";
-import { browserSessionStorage, parseStoredString, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
+import { browserLocalStorage, parseStoredString, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
 
 export interface WorkspaceSelectionMemory {
   latestWorkspaceId(projectId: string): string | undefined;
@@ -28,7 +28,7 @@ const workspaceSelectionStorageKey = "pi-web:workspace-selection:v1";
 export class SessionStorageWorkspaceSelectionMemory implements WorkspaceSelectionMemory {
   private readonly workspaceIdsByProject: PersistentValueMap<string>;
 
-  constructor(storage: KeyValueStorage | undefined = browserSessionStorage()) {
+  constructor(storage: KeyValueStorage | undefined = browserLocalStorage()) {
     this.workspaceIdsByProject = new PersistentValueMap(workspaceSelectionStorageKey, parseStoredString, storage);
   }
 

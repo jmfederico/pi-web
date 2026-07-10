@@ -1,4 +1,4 @@
-import { browserSessionStorage, type KeyValueStorage } from "./sessionStorageMemory";
+import { browserLocalStorage, type KeyValueStorage } from "./sessionStorageMemory";
 
 export interface RecentSessionEntry {
   sessionId: string;
@@ -70,7 +70,7 @@ export class RecentSessionsStore {
 
   constructor(
     maxEntries: number = DEFAULT_MAX_ENTRIES,
-    private readonly storage: KeyValueStorage | undefined = browserSessionStorage(),
+    private readonly storage: KeyValueStorage | undefined = browserLocalStorage(),
   ) {
     this.maxEntries = maxEntries;
     this.entries = loadRecentEntries(storage);

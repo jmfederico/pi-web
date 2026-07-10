@@ -1,7 +1,7 @@
 import type { AppState } from "../appState";
 import { LOCAL_MACHINE_ID } from "../machineKeys";
 import type { AppRoute } from "../route";
-import { browserSessionStorage, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
+import { browserLocalStorage, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
 
 export interface WorkspaceRouteSurface {
   selectedFilePath?: string | undefined;
@@ -47,7 +47,7 @@ const machineNavigationStorageKey = "pi-web:machine-navigation:v1";
 export class SessionStorageMachineNavigationMemory implements MachineNavigationMemory {
   private readonly snapshotsByMachine: PersistentValueMap<MachineNavigationSnapshot>;
 
-  constructor(storage: KeyValueStorage | undefined = browserSessionStorage()) {
+  constructor(storage: KeyValueStorage | undefined = browserLocalStorage()) {
     this.snapshotsByMachine = new PersistentValueMap(machineNavigationStorageKey, parseMachineNavigationSnapshot, storage);
   }
 

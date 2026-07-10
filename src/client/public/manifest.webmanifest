@@ -1,12 +1,18 @@
 {
+  "id": "/",
   "name": "PI WEB",
   "short_name": "PI WEB",
   "description": "Remote web UI and browser control plane for persistent Pi Coding Agent sessions.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "any",
   "background_color": "#0d1117",
   "theme_color": "#0d1117",
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
   "icons": [
     {
       "src": "/pwa-icon-192.png",
@@ -20,5 +26,32 @@
       "type": "image/png",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "shortcuts": [
+    {
+      "name": "New session",
+      "short_name": "New session",
+      "url": "/?shortcut=new",
+      "icons": [
+        { "src": "/pwa-icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    },
+    {
+      "name": "Continue last session",
+      "short_name": "Continue",
+      "url": "/?shortcut=continue-last",
+      "icons": [
+        { "src": "/pwa-icon-192.png", "sizes": "192x192", "type": "image/png" }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "share_title",
+      "text": "share_text",
+      "url": "share_url"
+    }
+  }
 }

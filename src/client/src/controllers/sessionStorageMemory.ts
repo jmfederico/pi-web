@@ -19,6 +19,17 @@ export function browserSessionStorage(): KeyValueStorage | undefined {
   }
 }
 
+// Backs state that must survive the OS killing a backgrounded/closed PWA
+// process (unlike sessionStorage, which is scoped to the tab's lifetime) —
+// e.g. "which session was I last on" for shortcuts and launch_handler.
+export function browserLocalStorage(): KeyValueStorage | undefined {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
 export class PersistentValueMap<T> {
   private readonly values = new Map<string, T>();
 

@@ -37,6 +37,9 @@ import { PanelCollapseController, mainViewClass } from "../appShell/panelCollaps
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
 import { readRoute, writeRoute, type AppRoute } from "../route";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
+import { clearAppIntentParams, formatSharedText, parseAppIntent, type AppIntent } from "../appIntent";
+import { installLaunchQueueConsumer } from "../launchQueue";
+import { clearAppBadge } from "../appBadge";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
 import { createTerminalCommandRunsRuntime } from "../runtime/terminalRuntime";
 import { isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionRunFilter } from "../workspaceDeletion";
@@ -179,6 +182,7 @@ export class PiWebApp extends LitElement {
   private remoteRouteRestoreTimer: number | undefined;
   private remoteRouteRestoreAttempt = 0;
   private remoteRouteRestoreInProgress = false;
+  private pendingSharedText: string | undefined;
   private readonly plugins = createPluginRegistry();
   private readonly loadedMachinePluginIds = new Set<string>();
   private readonly machinePluginLoadPromises = new Map<string, Promise<void>>();
@@ -205,6 +209,7 @@ export class PiWebApp extends LitElement {
     void this.refreshMachineActivities();
     void this.refreshWorkspaceDeletionRuns();
     this.retryPendingRemoteRouteRestoreSoon();
+    clearAppBadge();
   };
   private readonly onVisibilityChange = () => {
     if (document.visibilityState === "visible") {
@@ -214,6 +219,7 @@ export class PiWebApp extends LitElement {
       void this.refreshMachineActivities();
       void this.refreshWorkspaceDeletionRuns();
       this.retryPendingRemoteRouteRestoreSoon();
+      clearAppBadge();
     }
   };
   private readonly onSystemLightThemeChange = () => {
@@ -235,6 +241,14 @@ export class PiWebApp extends LitElement {
     this.toggleAttribute("pwa-display-mode", this.appShell.isPwaDisplayMode);
   }
 
+  protected override updated(): void {
+    if (this.pendingSharedText === undefined || this.state.selectedSession === undefined) return;
+    const editor = this.promptEditor;
+    if (editor === undefined) return;
+    editor.appendText(this.pendingSharedText);
+    this.pendingSharedText = undefined;
+  }
+
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener("popstate", this.onPopState);
@@ -250,7 +264,12 @@ export class PiWebApp extends LitElement {
     void this.refreshWorkspaceActivity();
     void this.loadClientConfig();
     void this.ensureGatewayPluginsLoaded();
-    void this.loadProjectsAndRestoreRoute().finally(() => { this.schedulePiWebStatusRefresh(); });
+    installLaunchQueueConsumer((url) => { void this.applyAppIntent(parseAppIntent(url.searchParams)); });
+    clearAppBadge();
+    void this.loadProjectsAndRestoreRoute().finally(() => {
+      this.schedulePiWebStatusRefresh();
+      this.consumeBootAppIntent();
+    });
   }
 
   override disconnectedCallback(): void {
@@ -738,6 +757,41 @@ export class PiWebApp extends LitElement {
 
   private shouldPreserveUnrestoredMachineNavigation(snapshot: MachineNavigationSnapshot): boolean {
     return snapshot.projectId !== undefined && this.state.selectedProject?.id !== snapshot.projectId && this.state.error !== "";
+  }
+
+  /** Consumes ?shortcut=/share_* query params carried in by the initial page load (manifest shortcut or share_target tap that opened a fresh window). */
+  private consumeBootAppIntent(): void {
+    const intent = parseAppIntent(new URLSearchParams(window.location.search));
+    if (intent === undefined) return;
+    clearAppIntentParams();
+    void this.applyAppIntent(intent);
+  }
+
+  private async applyAppIntent(intent: AppIntent | undefined): Promise<void> {
+    if (intent === undefined) return;
+    if (intent.kind === "share") {
+      this.applySharedText(formatSharedText(intent));
+      return;
+    }
+    // "new-session" and "continue-last-session" both restore the last-known
+    // workspace/project for the current machine; "new-session" additionally
+    // drops the remembered sessionId so the composer starts empty.
+    const machineId = selectedMachineId(this.state);
+    const snapshot = this.machineNavigation.latest(machineId) ?? emptyMachineNavigationSnapshot(machineId);
+    const targetSnapshot = intent.kind === "new-session" ? { ...snapshot, sessionId: undefined } : snapshot;
+    await this.restoreRouteFor(routeFromMachineNavigationSnapshot(targetSnapshot), true, targetSnapshot.surface, targetSnapshot.view);
+  }
+
+  private applySharedText(text: string): void {
+    if (text === "") return;
+    if (this.state.selectedSession !== undefined && this.promptEditor !== undefined) {
+      this.promptEditor.appendText(text);
+      this.promptEditor.focusInput();
+      return;
+    }
+    // No session in view yet (e.g. share landed on a cold, unselected boot) —
+    // hand it to the composer once a session becomes selected, via updated().
+    this.pendingSharedText = text;
   }
 
   private openWorkspaceTool(tool: QualifiedContributionId) {

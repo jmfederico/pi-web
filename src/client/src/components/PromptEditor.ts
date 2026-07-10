@@ -132,6 +132,14 @@ export class PromptEditor extends LitElement {
     this.editor?.focus();
   }
 
+  /** Appends text to the draft (e.g. content handed off via the share_target manifest entry). */
+  appendText(text: string) {
+    if (text === "") return;
+    this.draft = this.draft === "" ? text : `${this.draft}\n${text}`;
+    this.currentInputMode = inputModeForDraft(this.draft);
+    this.syncEditorDoc();
+  }
+
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
   get view(): EditorView | undefined {
     return this.editor;
