@@ -85,7 +85,7 @@ const piWebLightTokens = {
   "--pi-border": "#c9bca8",
   "--pi-border-muted": "#d8cdbc",
   "--pi-text": "#15131b",
-  "--pi-text-secondary": "#15131b",
+  "--pi-text-secondary": "#5f586a",
   "--pi-text-bright": "#15131b",
   "--pi-muted": "#5f586a",
   "--pi-dim": "#766f7e",
