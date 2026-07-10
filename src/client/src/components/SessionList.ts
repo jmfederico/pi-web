@@ -58,6 +58,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onDetachParent?: (session: SessionInfo) => void;
   @property({ attribute: false }) onReload?: (session: SessionInfo) => void;
   @property({ attribute: false }) onCleanup?: () => void;
+  @property({ type: Boolean }) recentOnly = false;
+  @property({ attribute: false }) recentSessionIds: string[] = [];
+  @property({ attribute: false }) unreadSessionIds: readonly string[] = [];
 
   @state() private openMenuSessionId: string | undefined;
   @state() private menuStyle = "";
@@ -102,10 +105,28 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   override render() {
-    const currentRows = sessionRowsForCurrentTree(this.sessions);
-    const currentRowIds = new Set(currentRows.map((row) => row.session.id));
-    const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
-    const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
+    const unreadIdSet = new Set(this.unreadSessionIds);
+    const allCurrentRows = sessionRowsForCurrentTree(this.sessions);
+    let currentRows: SessionRow[];
+    let archivedRows: SessionRow[];
+    let currentSelectableSessions: SessionInfo[];
+
+    if (this.recentOnly && this.recentSessionIds.length > 0) {
+      const recentIdSet = new Set(this.recentSessionIds);
+      const recentRows = allCurrentRows.filter((row) => recentIdSet.has(row.session.id));
+      // Preserve order from recentSessionIds.
+      const orderMap = new Map(this.recentSessionIds.map((id, index) => [id, index]));
+      recentRows.sort((a, b) => (orderMap.get(a.session.id) ?? Infinity) - (orderMap.get(b.session.id) ?? Infinity));
+      currentRows = recentRows;
+      currentSelectableSessions = [];
+      archivedRows = [];
+    } else {
+      currentRows = allCurrentRows;
+      const currentRowIds = new Set(currentRows.map((row) => row.session.id));
+      currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
+      archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
+    }
+
     const descendantCounts = unarchivedDescendantCounts(this.sessions);
     return html`
       <section>
@@ -114,12 +135,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
             ${this.startingCount > 0 ? this.renderStartingSession() : null}
-            ${currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
+            ${currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current", unreadIdSet))}
             ${archivedRows.length > 0 ? html`
               ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
               ${this.archivedExpanded ? html`
                 ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session))}
-                ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived"))}
+                ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived", unreadIdSet))}
               ` : null}
             ` : null}
           </div>
@@ -129,10 +150,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderHeading(sessionCount: number, currentSessions: SessionInfo[]) {
+    const headingLabel = this.recentOnly ? "Recent" : "Sessions";
     if (!this.collapsible) {
       return html`
         <h2>
-          Sessions
+          ${headingLabel}
           ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderCleanupButton()}
           ${this.renderStartButton()}
@@ -143,7 +165,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const selectedTitle = this.selected?.path ?? selectedSummary;
     return html`
       <h2>
-        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
+        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${headingLabel}</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
         ${this.renderCurrentSelectionButton(currentSessions)}
         <small class="section-count">${sessionCount}</small>
         ${this.renderCleanupButton()}
@@ -226,7 +248,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     `;
   }
 
-  private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope) {
+  private renderSession(row: SessionRow, descendantCount: number, scope: SessionSelectionScope, unreadIdSet?: ReadonlySet<string>) {
     const { session } = row;
     const cappedDepth = Math.min(row.depth, 2);
     const canBulkSelect = sessionSelectionScope(session) === scope;
@@ -251,7 +273,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
-          ${this.renderActivity(session)}
+          ${this.renderActivity(session, unreadIdSet)}
         </div>
         <div class="action-menu">
           <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
@@ -410,9 +432,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return { authoritative: this.authoritativeSessionPersistence };
   }
 
-  private renderActivity(session: SessionInfo) {
-    const kind = sessionRowActivityKind(session, this.statuses[session.id], this.activities[session.id], this.sending[session.id] === true);
-    return renderActionActivityIndicator(kind, kind === "sending" ? "Sending message" : "Session active");
+  private renderActivity(session: SessionInfo, unreadIdSet?: ReadonlySet<string>) {
+    const hasUnread = unreadIdSet?.has(session.id);
+    const kind = sessionRowActivityKind(session, this.statuses[session.id], this.activities[session.id], this.sending[session.id] === true, hasUnread);
+    const label = kind === "sending" ? "Sending message" : kind === "unread" ? "Unread messages" : "Session active";
+    return renderActionActivityIndicator(kind, label);
   }
 
   static override styles = [listStyles, css`
@@ -486,10 +510,13 @@ export function sessionRowActivityKind(
   status: SessionStatus | undefined,
   activity: SessionActivity | undefined,
   sending: boolean,
+  hasUnread?: boolean,
 ): ActivityIndicatorKind | undefined {
   if (isCachedNewSessionInfo(session) || session.archived === true) return undefined;
   if (sending) return "sending";
-  return isSessionActive(status, activity) ? "session" : undefined;
+  if (isSessionActive(status, activity)) return "session";
+  if (hasUnread === true) return "unread";
+  return undefined;
 }
 
 export function sessionRowsForCurrentTree(sessions: SessionInfo[]): SessionRow[] {

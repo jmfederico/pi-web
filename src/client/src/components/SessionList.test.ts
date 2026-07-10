@@ -24,6 +24,23 @@ describe("sessionRowActivityKind", () => {
     expect(sessionRowActivityKind({ ...session("s"), archived: true }, idle, undefined, true)).toBeUndefined();
     expect(sessionRowActivityKind(markCachedNewSessionInfo(session("s")), idle, undefined, true)).toBeUndefined();
   });
+
+  it("reports 'unread' for finished sessions with unread messages", () => {
+    expect(sessionRowActivityKind(session("s"), idle, undefined, false, true)).toBe("unread");
+  });
+
+  it("does not report 'unread' when the session is still active (session takes precedence)", () => {
+    expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, false, true)).toBe("session");
+  });
+
+  it("does not report 'unread' when sending takes precedence", () => {
+    expect(sessionRowActivityKind(session("s"), idle, undefined, true, true)).toBe("sending");
+  });
+
+  it("returns undefined for finished sessions without unread", () => {
+    expect(sessionRowActivityKind(session("s"), idle, undefined, false, false)).toBeUndefined();
+    expect(sessionRowActivityKind(session("s"), idle, undefined, false)).toBeUndefined();
+  });
 });
 
 describe("session action eligibility", () => {

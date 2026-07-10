@@ -13,6 +13,8 @@ import { isSessionActive } from "../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
+import { RecentSessionsStore } from "./recentSessions";
+import { UnreadTracker } from "./unreadTracker";
 import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
 
 const MESSAGE_PAGE_SIZE = 100;
@@ -28,6 +30,8 @@ export interface SessionControllerDependencies {
   api?: typeof defaultApi;
   socket?: SessionEventSocket;
   transcripts?: ChatTranscriptStore;
+  recentSessions?: RecentSessionsStore | undefined;
+  unreadTracker?: UnreadTracker | undefined;
 }
 
 interface BulkSessionMutationResult {
@@ -64,6 +68,8 @@ export class SessionController {
   private readonly socket: SessionEventSocket;
   private readonly api: typeof defaultApi;
   private readonly transcripts: ChatTranscriptStore;
+  private readonly recentSessions: RecentSessionsStore | undefined;
+  private readonly unreadTracker: UnreadTracker | undefined;
   private selectionSeq = 0;
   private catchupStreamSessionId: string | undefined;
   private pendingTranscriptEvents: SessionUiEvent[] = [];
@@ -85,6 +91,8 @@ export class SessionController {
     this.socket = deps.socket ?? new SessionSocket();
     this.api = deps.api ?? defaultApi;
     this.transcripts = deps.transcripts ?? new ChatTranscriptStore();
+    this.recentSessions = deps.recentSessions;
+    this.unreadTracker = deps.unreadTracker;
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -92,6 +100,14 @@ export class SessionController {
     else if (event.type === "activity.update") this.queueActivityUpdate(event.activity);
     else if (event.type === "session.created") this.applyCreatedSession(event.session);
     else this.applySessionName(event.sessionId, event.name);
+  }
+
+  get recentSessionsStore(): RecentSessionsStore | undefined {
+    return this.recentSessions;
+  }
+
+  get unreadTrackerStore(): UnreadTracker | undefined {
+    return this.unreadTracker;
   }
 
   dispose() {
@@ -150,6 +166,8 @@ export class SessionController {
       return;
     }
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
+    this.recentSessions?.recordAccess(this.workspaceSelectionKey(session.cwd), session.id);
+    this.unreadTracker?.markAsRead(session.id, session.messageCount);
     const seq = ++this.selectionSeq;
     this.socket.close();
     this.catchupStreamSessionId = undefined;
@@ -420,6 +438,13 @@ export class SessionController {
     this.applyStatus(status);
   }
 
+  private cleanupSessionTracking(sessionIds: readonly string[], cwd: string): void {
+    for (const sessionId of sessionIds) {
+      this.recentSessions?.removeSession(cwd, sessionId);
+      this.unreadTracker?.clearForSession(sessionId);
+    }
+  }
+
   async archiveSession(session = this.getState().selectedSession) {
     if (!session) return;
     const status = this.statusForSession(session);
@@ -434,6 +459,7 @@ export class SessionController {
       const state = this.getState();
       const sessions = markSessionArchived(state.sessions, session.id, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSession(sessions, state.selectedSession?.id, session.id);
+      this.cleanupSessionTracking([session.id], this.workspaceSelectionKey(session.cwd));
       this.setState({ sessions });
 
       if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
@@ -451,6 +477,7 @@ export class SessionController {
       const state = this.getState();
       const sessions = markSessionsArchived(state.sessions, archivedIds, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSessions(sessions, state.selectedSession?.id, archivedIds);
+      this.cleanupSessionTracking(archivedIds, this.workspaceSelectionKey(session.cwd));
       this.setState({ sessions });
 
       if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
@@ -472,6 +499,10 @@ export class SessionController {
         const state = this.getState();
         const nextSessions = markSessionsArchived(state.sessions, archivedIds, generatedAt ?? new Date().toISOString());
         const selectionChange = selectionAfterArchivingSessions(nextSessions, state.selectedSession?.id, archivedIds);
+        const firstCandidate = candidates[0];
+        if (firstCandidate === undefined) return;
+        const cwd = this.workspaceSelectionKey(firstCandidate.cwd);
+        this.cleanupSessionTracking(archivedIds, cwd);
         this.setState({ sessions: nextSessions });
 
         if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
@@ -500,6 +531,10 @@ export class SessionController {
       if (deletedIds.length > 0) {
         const deletedIdSet = new Set(deletedIds);
         const state = this.getState();
+        const firstCandidate = candidates[0];
+        if (firstCandidate === undefined) return;
+        const cwd = this.workspaceSelectionKey(firstCandidate.cwd);
+        this.cleanupSessionTracking(deletedIds, cwd);
         const nextSessions = state.sessions.filter((session) => !deletedIdSet.has(session.id));
         this.setState({ sessions: nextSessions });
         if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
@@ -610,6 +645,7 @@ export class SessionController {
     }
     forgetCachedNewSession(session.id, selectedMachineId(this.getState()));
     clearDraft(this.sessionCacheKey(session.id));
+    this.cleanupSessionTracking([session.id], this.workspaceSelectionKey(session.cwd));
     const state = this.getState();
     const sessions = state.sessions.filter((candidate) => candidate.id !== session.id);
     this.setState({

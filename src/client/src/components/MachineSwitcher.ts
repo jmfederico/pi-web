@@ -279,10 +279,11 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .machine-status.online { color: var(--pi-success); }
     .machine-status.offline, .machine-status.error { color: var(--pi-danger); }
     .machine-chevron { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
-    .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; }
-    .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
+    .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-accent); animation: pulse 1s ease-in-out infinite; }
+    .activity-indicator.session { border-radius: 50%; background: var(--pi-accent); }
     .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
     .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
+    .activity-indicator.unread { border-radius: 50%; background: var(--pi-success); animation: none; }
     .machine-switcher-menu { position: fixed; z-index: 10000; box-sizing: border-box; min-width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); box-shadow: 0 8px 24px var(--pi-shadow); }
     .machine-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px; align-items: stretch; margin: 2px 0; }
     .machine-option.no-actions { grid-template-columns: minmax(0, 1fr); }

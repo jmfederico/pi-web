@@ -16,6 +16,8 @@ import { SessionController } from "../controllers/sessionController";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
 import { SessionStorageSessionSelectionMemory } from "../controllers/sessionSelection";
+import { RecentSessionsStore } from "../controllers/recentSessions";
+import { UnreadTracker } from "../controllers/unreadTracker";
 import { SessionStorageTerminalSelectionMemory } from "../controllers/terminalSelection";
 import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspaceSelection";
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
@@ -100,11 +102,15 @@ export class PiWebApp extends LitElement {
   @query("#navigation-panel") private navigationPanelFrame?: HTMLElement;
   @query("#workspace-panel") private workspacePanelFrame?: HTMLElement;
 
+  private readonly recentSessions = new RecentSessionsStore();
+  private readonly unreadTracker = new UnreadTracker();
+
   private readonly sessions = new SessionController(
     () => this.state,
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
     new SessionStorageSessionSelectionMemory(),
+    { recentSessions: this.recentSessions, unreadTracker: this.unreadTracker },
   );
   private readonly activity = new ActivityController(
     () => this.state,
@@ -1171,6 +1177,16 @@ export class PiWebApp extends LitElement {
   }
 
   private renderNavigationPanel() {
+    const isMobile = this.appShell.isMobileNavigationLayout;
+    const machineId = selectedMachineId(this.state);
+    const workspaceCwd = this.state.selectedWorkspace?.path;
+    const recentSessionIds = isMobile && workspaceCwd !== undefined
+      ? this.recentSessions.getRecent(`${machineId}:${workspaceCwd}`).map((entry) => entry.sessionId)
+      : [];
+    const unreadSessionIds = this.state.sessions
+      .filter((s) => this.unreadTracker.hasUnread(s.id, s.messageCount))
+      .map((s) => s.id);
+
     return html`
       <app-navigation-panel
         .machines=${this.state.machines}
@@ -1203,6 +1219,9 @@ export class PiWebApp extends LitElement {
         .cleanupUnavailableMessage=${this.sessionCleanupUnavailableMessage()}
         .collapsible=${true}
         .compact=${this.appShell.isMobileNavigationLayout}
+        .recentOnly=${isMobile}
+        .recentSessionIds=${recentSessionIds}
+        .unreadSessionIds=${unreadSessionIds}
         .projectsCollapsed=${this.navigationSections.isCollapsed("projects")}
         .workspacesCollapsed=${this.navigationSections.isCollapsed("workspaces")}
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
