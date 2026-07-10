@@ -1,6 +1,6 @@
 import { LitElement, html, css, type TemplateResult, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { QuestionnaireQuestion, QuestionnaireOption, QuestionnaireAnswer, AskUserQuestionResult } from "../api";
+import type { QuestionnaireQuestion, QuestionnaireAnswer, AskUserQuestionResult } from "../api";
 
 interface DisplayOption {
   label: string;
@@ -80,7 +80,7 @@ export class QuestionnaireDialog extends LitElement {
     const q = this.currentQuestion;
     if (!q) return;
 
-    if (option.isChat) {
+    if (option.isChat === true) {
       const answer: QuestionAnswerDraft = {
         questionIndex: this.currentTab,
         question: q.question,
@@ -94,7 +94,7 @@ export class QuestionnaireDialog extends LitElement {
       return;
     }
 
-    if (option.isCustom) {
+    if (option.isCustom === true) {
       this.showCustomInput = true;
       this.customInput = "";
       return;
@@ -186,8 +186,8 @@ export class QuestionnaireDialog extends LitElement {
     if (this.questions.length === 0) return html``;
 
     return html`
-      <div class="backdrop" @click=${() => this.cancel()}>
-        <section class="dialog" @click=${(e: Event) => e.stopPropagation()}>
+      <div class="backdrop" @click=${() => { this.cancel(); }}>
+        <section class="dialog" @click=${(e: Event) => { e.stopPropagation(); }}>
           ${this.renderHeader()}
           ${this.isMultiQuestion ? this.renderTabBar() : null}
           ${this.showCustomInput ? this.renderCustomInput() : this.isSubmitTab ? this.renderSubmitTab() : this.renderQuestionTab()}
@@ -197,7 +197,7 @@ export class QuestionnaireDialog extends LitElement {
   }
 
   private renderHeader(): TemplateResult {
-    return html`<header><strong>Questionnaire</strong><button @click=${() => this.cancel()}>×</button></header>`;
+    return html`<header><strong>Questionnaire</strong><button @click=${() => { this.cancel(); }}>×</button></header>`;
   }
 
   private renderTabBar(): TemplateResult {
@@ -236,8 +236,8 @@ export class QuestionnaireDialog extends LitElement {
                 ? selectedLabels.has(opt.label)
                 : currentAnswer?.answer === opt.label;
               return html`
-                <button class="option ${isSelected ? "selected" : ""} ${opt.isChat ? "chat" : ""} ${opt.isCustom ? "custom" : ""}"
-                  @click=${() => this.selectOption(opt)}>
+                <button class="option ${isSelected ? "selected" : ""} ${opt.isChat === true ? "chat" : ""} ${opt.isCustom === true ? "custom" : ""}"
+                  @click=${() => { this.selectOption(opt); }}>
                   <span class="option-label">${q.multiSelect ? (isSelected ? "☑" : "☐") + " " : ""}${opt.label}</span>
                   ${opt.description ? html`<span class="option-desc">${opt.description}</span>` : null}
                 </button>
@@ -258,8 +258,8 @@ export class QuestionnaireDialog extends LitElement {
   private renderPreview(): TemplateResult {
     const q = this.currentQuestion;
     if (!q) return html``;
-    const optionWithPreview = q.options.find((o) => o.preview !== undefined && o.preview.length > 0);
-    if (!optionWithPreview?.preview) return html``;
+    const optionWithPreview = q.options.find((o) => o.preview !== undefined && o.preview !== "");
+    if (optionWithPreview?.preview === undefined || optionWithPreview.preview === "") return html``;
     return html`
       <div class="preview-panel">
         <div class="preview-content"><pre>${optionWithPreview.preview}</pre></div>
@@ -274,7 +274,10 @@ export class QuestionnaireDialog extends LitElement {
         <textarea
           class="custom-input"
           .value=${this.customInput}
-          @input=${(e: Event) => { this.customInput = (e.target as HTMLTextAreaElement).value; }}
+          @input=${(e: Event) => { 
+            const target = e.target;
+            if (target instanceof HTMLTextAreaElement) this.customInput = target.value;
+          }}
           @keydown=${(e: KeyboardEvent) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -310,8 +313,8 @@ export class QuestionnaireDialog extends LitElement {
           })}
         </div>
         <div class="submit-actions">
-          <button class="submit-btn" ?disabled=${!this.allAnswered} @click=${() => this.submit()}>✓ Submit</button>
-          <button class="cancel-btn" @click=${() => this.cancel()}>Cancel</button>
+          <button class="submit-btn" ?disabled=${!this.allAnswered} @click=${() => { this.submit(); }}>✓ Submit</button>
+          <button class="cancel-btn" @click=${() => { this.cancel(); }}>Cancel</button>
         </div>
       </div>
     `;

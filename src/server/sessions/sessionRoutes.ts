@@ -216,12 +216,15 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: PiSessionS
     try {
       const body = optionalRecord(request.body);
       const requestId = requireString(body, "requestId");
+      const rawAnswers = body["answers"];
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      const answers: AskUserQuestionResult["answers"] = Array.isArray(rawAnswers) ? rawAnswers as AskUserQuestionResult["answers"] : [];
       const result: AskUserQuestionResult = {
-        answers: Array.isArray(body["answers"]) ? body["answers"] as AskUserQuestionResult["answers"] : [],
+        answers,
         cancelled: body["cancelled"] === true,
       };
       if (!sessions.respondToQuestionnaire(requestId, result)) {
-        return reply.code(404).send({ error: "Questionnaire request not found or already resolved" });
+        return await reply.code(404).send({ error: "Questionnaire request not found or already resolved" });
       }
       return { ok: true };
     } catch (error) {
