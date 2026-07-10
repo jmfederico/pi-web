@@ -42,9 +42,12 @@ import {
   parseSessionStatus,
   parseSlashCommand,
   parseStopped,
+  parseSubscribed,
   parseTerminalCommandRun,
   parseTerminalInfo,
   parseThinkingLevelsResponse,
+  parseUnsubscribed,
+  parseVapidPublicKeyResponse,
   parseWriteWorkspaceFileResponse,
   parseWorkspace,
   parseWorkspaceActivityResponse,
@@ -152,6 +155,17 @@ export const piPackagesApi = {
 
 export const activityApi = {
   workspaceActivity: (machineId = "local") => request(`${machinePrefix(machineId)}/activity`, parseWorkspaceActivityResponse),
+};
+
+export interface PushSubscriptionRequest {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+export const pushApi = {
+  vapidPublicKey: () => request("/api/push/vapid-public-key", parseVapidPublicKeyResponse),
+  subscribe: (subscription: PushSubscriptionRequest) => request("/api/push/subscribe", parseSubscribed, { method: "POST", body: JSON.stringify(subscription) }),
+  unsubscribe: (endpoint: string) => request("/api/push/unsubscribe", parseUnsubscribed, { method: "DELETE", body: JSON.stringify({ endpoint }) }),
 };
 
 export const projectsApi = {

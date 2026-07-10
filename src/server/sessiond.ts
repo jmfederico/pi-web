@@ -20,6 +20,8 @@ import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { effectivePiWebConfig, maxUploadBytes, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
+import { PushService } from "./push/pushService.js";
+import { PushSubscriptionStore } from "./push/pushSubscriptionStore.js";
 
 const { config } = effectivePiWebConfig();
 const app = Fastify({ logger: true, bodyLimit: maxUploadBytes(process.env, config) });
@@ -31,10 +33,13 @@ const auth = new AuthService();
 const spawnTargets = spawnSessionsEnabled(process.env, config)
   ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
   : undefined;
+const pushStore = new PushSubscriptionStore();
+const pushService = new PushService(config, pushStore, { logger: app.log });
 const sessions = new PiSessionService(eventHub, {
   modelRegistry: auth.modelRegistry,
   workspaceActivity,
   logger: app.log,
+  pushNotifier: pushService,
   ...(spawnTargets === undefined ? {} : { spawnTargets }),
   subsessionsEnabled: spawnTargets !== undefined && subsessionsEnabled(process.env, config),
 });

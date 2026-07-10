@@ -86,6 +86,12 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
+  /** VAPID public key for Web Push notifications (generated via `npx web-push generate-vapid-keys`). */
+  vapidPublicKey?: string;
+  /** VAPID private key for Web Push notifications. Keep secret. */
+  vapidPrivateKey?: string;
+  /** Email for VAPID contact (required by push services; shown if something goes wrong). */
+  vapidContact?: string;
 }
 
 export type PiWebPluginScope = "bundled" | "local" | "user" | "project";

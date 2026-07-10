@@ -72,6 +72,23 @@ describe("PI WEB config persistence", () => {
 
     expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config uploads.defaultFolder must not contain path traversal");
   });
+
+  it("persists and reads VAPID web push keys", () => {
+    savePiWebConfig({ vapidPublicKey: "pub", vapidPrivateKey: "priv", vapidContact: "mailto:test@example.com" }, testOptions());
+    expect(loadPiWebConfig(testOptions()).config).toEqual({ vapidPublicKey: "pub", vapidPrivateKey: "priv", vapidContact: "mailto:test@example.com" });
+  });
+
+  it("lets env vars override configured VAPID keys in the effective config", () => {
+    savePiWebConfig({ vapidPublicKey: "file-pub", vapidPrivateKey: "file-priv", vapidContact: "mailto:file@example.com" }, testOptions());
+    const env = { ...testOptions().env, PI_WEB_VAPID_PUBLIC_KEY: "env-pub" };
+    expect(effectivePiWebConfig({ env }).config).toMatchObject({ vapidPublicKey: "env-pub", vapidPrivateKey: "file-priv", vapidContact: "mailto:file@example.com" });
+  });
+
+  it("rejects an empty VAPID public key", async () => {
+    await writeFile(configPath, `${JSON.stringify({ vapidPublicKey: "" }, null, 2)}\n`, "utf8");
+
+    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config vapidPublicKey must be a non-empty string");
+  });
 });
 
 describe("maxUploadBytes", () => {

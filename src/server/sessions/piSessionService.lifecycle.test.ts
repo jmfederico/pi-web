@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
-import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, type RuntimeCreator } from "./piSessionService.testSupport.js";
+import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, type RuntimeCreator } from "./piSessionService.testSupport.js";
+import type { SpawnTargetDecision } from "./spawnTargetResolver.js";
 
 describe("PiSessionService lifecycle, listing, and reload", () => {
   it("starts sessions through an injected runtime creator", async () => {
@@ -382,5 +383,90 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     expect(reconciliations).toEqual([{ cwd: "/workspace", sessionIds: [] }]);
 
     await service.dispose();
+  });
+
+  describe("push notifications on agent_end", () => {
+    it("sends a push notification when an agent finishes", async () => {
+      const fake = fakeRuntime("push-session", { sessionName: "My Session" });
+      const send = vi.fn().mockResolvedValue(undefined);
+      const pushNotifier = { isEnabled: () => true, send };
+      const service = new PiSessionService(new CapturingSessionEventHub(), {
+        createAgentRuntime: runtimeCreator(fake.runtime),
+        sessionManager: sessionGateway([sessionRecord("push-session")]),
+        heartbeatIntervalMs: 60_000,
+        pushNotifier,
+      });
+
+      await service.status(sessionRef("push-session"));
+      fake.emit({ type: "agent_end" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith({
+        title: "\"My Session\" finished",
+        body: "The agent has completed its work.",
+        tag: "agent-end:push-session",
+        url: "/",
+        sessionId: "push-session",
+        machineId: "local",
+      });
+      await service.dispose();
+    });
+
+    it("does not send a push notification when the push notifier is disabled", async () => {
+      const fake = fakeRuntime("push-disabled-session");
+      const send = vi.fn();
+      const pushNotifier = { isEnabled: () => false, send };
+      const service = new PiSessionService(new CapturingSessionEventHub(), {
+        createAgentRuntime: runtimeCreator(fake.runtime),
+        sessionManager: sessionGateway([sessionRecord("push-disabled-session")]),
+        heartbeatIntervalMs: 60_000,
+        pushNotifier,
+      });
+
+      await service.status(sessionRef("push-disabled-session"));
+      fake.emit({ type: "agent_end" });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      expect(send).not.toHaveBeenCalled();
+      await service.dispose();
+    });
+
+    it("does not send a push notification for a tracked subsession completion", async () => {
+      const parent = fakeRuntime("parent-1", { sessionFile: "/tmp/parent-1.jsonl" });
+      const child = fakeRuntime("child-1", { sessionFile: "/tmp/child-1.jsonl", sessionManager: fakeSessionManager("/workspace-feature") });
+      const created = [parent.runtime, child.runtime];
+      let index = 0;
+      const createAgentRuntime: RuntimeCreator = async () => {
+        await Promise.resolve();
+        const runtime = created[Math.min(index, created.length - 1)] ?? child.runtime;
+        index += 1;
+        return runtime;
+      };
+      const send = vi.fn();
+      const pushNotifier = { isEnabled: () => true, send };
+      const decision: SpawnTargetDecision = { allowed: true, cwd: "/workspace-feature" };
+      const service = new PiSessionService(new CapturingSessionEventHub(), {
+        createAgentRuntime,
+        sessionManager: sessionGateway([]),
+        archiveStore: emptyArchiveStore(),
+        spawnTargets: { resolveSpawnTarget: () => Promise.resolve(decision) },
+        subsessionsEnabled: true,
+        heartbeatIntervalMs: 60_000,
+        pushNotifier,
+      });
+
+      await service.start("/workspace");
+      await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go", cwd: "/workspace-feature" });
+
+      child.session.isStreaming = true;
+      child.emit({ type: "agent_start" });
+      child.session.isStreaming = false;
+      child.emit({ type: "agent_end" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(send).not.toHaveBeenCalled();
+      await service.dispose();
+    });
   });
 });

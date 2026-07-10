@@ -38,6 +38,7 @@ import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type S
 import { buildTranscriptView } from "./subsessionTranscript.js";
 import { planSessionCleanup, summarizeSessionCleanupExecution, type NormalizedSessionCleanupRequest, type SessionCleanupPlan } from "./sessionCleanup.js";
 import type { SpawnTargetDecision, SpawnTargetResolver } from "./spawnTargetResolver.js";
+import type { PushService } from "../push/pushService.js";
 
 /**
  * Minimal structured-logging seam, shaped like Fastify's logger so sessiond can
@@ -362,6 +363,8 @@ export interface PiSessionServiceDependencies {
   logger?: PiSessionLogger;
   /** Clock seam for cleanup planning tests. */
   now?: () => Date;
+  /** Best-effort OS push notification on agent completion. Never throws. */
+  pushNotifier?: Pick<PushService, "isEnabled" | "send">;
 }
 
 export class PiSessionService {
@@ -396,6 +399,7 @@ export class PiSessionService {
   private readonly spawnTargets: SpawnTargetResolver | undefined;
   private readonly logger: PiSessionLogger;
   private readonly now: () => Date;
+  private readonly pushNotifier: Pick<PushService, "isEnabled" | "send"> | undefined;
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies = {}) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
@@ -405,6 +409,7 @@ export class PiSessionService {
     this.spawnTargets = deps.spawnTargets;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
+    this.pushNotifier = deps.pushNotifier;
     // Subsessions are a beta capability gated behind their own flag, and they
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
@@ -1814,6 +1819,7 @@ export class PiSessionService {
         this.publishActivity(session, "idle", "idle");
         this.publishStatus(session);
       }, 250);
+      this.notifyPushOnAgentEnd(session);
       return;
     }
     if (eventType === "turn_end") { this.publishActivity(session, "turn complete", "idle"); return; }
@@ -1829,6 +1835,23 @@ export class PiSessionService {
     if (eventType === "bash_execution_start") { this.publishActivity(session, "running bash", "active"); return; }
     if (eventType === "bash_execution_end") { this.publishActivity(session, "bash complete", "idle"); return; }
     if (this.hasActiveWork(session)) this.publishActivity(session, eventType.replaceAll("_", " "), "active");
+  }
+
+  private notifyPushOnAgentEnd(session: PiAgentSession): void {
+    if (this.pushNotifier?.isEnabled() !== true) return;
+    // Tracked subsessions are internal subagent runs, not user-facing work —
+    // don't spam a push for every spawn_subsession completion.
+    if (this.subsessionParents.has(session.sessionId)) return;
+
+    const name = session.sessionName;
+    void this.pushNotifier.send({
+      title: name !== undefined ? `"${name}" finished` : "Agent finished",
+      body: "The agent has completed its work.",
+      tag: `agent-end:${session.sessionId}`,
+      url: "/",
+      sessionId: session.sessionId,
+      machineId: "local",
+    });
   }
 
   private publishActivity(session: PiAgentSession, label: string, phase: "active" | "idle" | "error", detail?: string): void {

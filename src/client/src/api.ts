@@ -1,4 +1,5 @@
-export { activityApi, api, configApi, filesApi, gitApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./api/clients";
+export { activityApi, api, configApi, filesApi, gitApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, pushApi, sessionsApi, terminalsApi, workspacesApi } from "./api/clients";
+export type { PushSubscriptionRequest } from "./api/clients";
 export { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./api/sockets";
 export { DEFAULT_WORKSPACE_UPLOADS_FOLDER, effectiveWorkspaceUploadFolder, uploadWorkspaceFile, uploadWorkspaceFiles, workspaceEffectiveUploadFolder, workspaceUploadPath, WorkspaceUploadBatchError, WorkspaceUploadCancelledError } from "./api/workspaceUploads";
 export type { UploadWorkspaceFileOptions, UploadWorkspaceFilesOptions, WorkspaceFileUploadProgress, WorkspaceUploadBatchFileProgress, WorkspaceUploadBatchProgress, WorkspaceUploadFileFailure, WorkspaceUploadFileInput, WorkspaceUploadFolderConfig, WorkspaceUploadTask, WorkspaceUploadXhr, WorkspaceUploadXhrFactory } from "./api/workspaceUploads";

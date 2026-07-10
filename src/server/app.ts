@@ -19,6 +19,8 @@ import { registerGitRoutes } from "./gitRoutes.js";
 import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { registerWorkspaceDeletionRoutes } from "./workspaces/workspaceDeletionRoutes.js";
 import { createFilePiWebConfigService, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
+import { registerPushRoutes } from "./push/pushRoutes.js";
+import { PushSubscriptionStore } from "./push/pushSubscriptionStore.js";
 import { PiWebPluginService } from "./piWebPluginService.js";
 import { createDefaultPiPackageService, type PiPackageService } from "./piPackageService.js";
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
@@ -28,6 +30,7 @@ import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
+import { effectivePiWebConfig } from "../config.js";
 import type { Project, Workspace } from "./types.js";
 
 export interface AppDependencies {
@@ -38,6 +41,7 @@ export interface AppDependencies {
   piWebPlugins?: Pick<PiWebPluginService, "manifest" | "plugins" | "readAsset">;
   piPackages?: PiPackageService;
   config?: PiWebConfigService;
+  pushStore?: Pick<PushSubscriptionStore, "add" | "remove">;
   clientDist?: string | false;
   logger?: FastifyServerOptions["logger"];
   /** Maximum accepted HTTP request body size in bytes. */
@@ -154,6 +158,10 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   registerPiPackageRoutes(app, piPackages, "/api/machines/local");
   registerConfigRoutes(app, configService);
   registerLocalMachineConfigRoutes(app, configService);
+
+  const pushStore = deps.pushStore ?? new PushSubscriptionStore();
+  const vapidPublicKey = effectivePiWebConfig().config.vapidPublicKey;
+  registerPushRoutes(app, pushStore, () => vapidPublicKey);
 
   registerMachineRoutes(app, machines);
   registerMachinePluginProxyRoutes(app, machines);

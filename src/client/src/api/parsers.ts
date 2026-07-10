@@ -904,6 +904,23 @@ export function parseDeleted(value: unknown): { deleted: true } {
   return { deleted: true };
 }
 
+export function parseSubscribed(value: unknown): { subscribed: true } {
+  const record = requireRecord(value);
+  if (record["subscribed"] !== true) throw new Error("Expected subscribed response");
+  return { subscribed: true };
+}
+
+export function parseUnsubscribed(value: unknown): { unsubscribed: true } {
+  const record = requireRecord(value);
+  if (record["unsubscribed"] !== true) throw new Error("Expected unsubscribed response");
+  return { unsubscribed: true };
+}
+
+export function parseVapidPublicKeyResponse(value: unknown): { publicKey: string } {
+  const record = requireRecord(value);
+  return { publicKey: requireString(record, "publicKey") };
+}
+
 export function parseDetached(value: unknown): { detached: true } {
   const record = requireRecord(value);
   if (record["detached"] !== true) throw new Error("Expected detached response");

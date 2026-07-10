@@ -7,6 +7,7 @@ import { isSessionActive } from "../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
 import { ActivityController } from "../controllers/activityController";
 import { AuthController } from "../controllers/authController";
+import { PushController } from "../controllers/pushController";
 import { FileExplorerController } from "../controllers/fileExplorerController";
 import { GitController } from "../controllers/gitController";
 import { MachineController } from "../controllers/machineController";
@@ -108,6 +109,7 @@ export class PiWebApp extends LitElement {
     () => this.state,
     (patch) => { this.setState(patch); },
   );
+  private readonly push = new PushController(this);
   private readonly auth = new AuthController(
     () => this.state,
     (patch) => { this.setState(patch); },
