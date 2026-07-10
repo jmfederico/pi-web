@@ -238,6 +238,7 @@ export class PiWebApp extends LitElement {
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.addEventListener("change", this.onSystemLightThemeChange);
+    navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
     this.applyPreferredTheme(false);
     this.connectRealtime();
     this.piWebStatusTimer = window.setInterval(() => { this.schedulePiWebStatusRefresh(); }, PI_WEB_STATUS_REFRESH_MS);
@@ -254,6 +255,7 @@ export class PiWebApp extends LitElement {
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.removeEventListener("change", this.onSystemLightThemeChange);
+    navigator.serviceWorker.removeEventListener("message", this.onServiceWorkerMessage);
     this.keyboard.reset();
     this.auth.dispose();
     this.sessions.dispose();
@@ -404,8 +406,16 @@ export class PiWebApp extends LitElement {
         selectedTerminalId: routeSurface.selectedTerminalId,
       });
       if (route.projectId === undefined || route.projectId === "") {
-        if (updateUrl) this.updateUrl();
-        return;
+        // When arriving from a push notification, the URL may carry a
+        // workspace filesystem path (cwd) instead of a project id.
+        // Resolve it to a registered project so we can restore the session.
+        const resolved = await this.resolveProjectByWorkspacePath(route.workspaceId);
+        if (resolved !== undefined) {
+          route = { ...route, projectId: resolved.project.id, workspaceId: resolved.workspace.id };
+        } else {
+          if (updateUrl) this.updateUrl();
+          return;
+        }
       }
       if (this.routeMatchesCurrentSelection(route)) {
         if (routeSurface.selectedTerminalId !== undefined) this.rememberSelectedTerminal(routeSurface.selectedTerminalId);
@@ -458,6 +468,59 @@ export class PiWebApp extends LitElement {
     setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, "file", undefined, { replace: true });
     setNamespacedQueryKey(GIT_ROUTE_NAMESPACE, "diff", undefined, { replace: true });
     setNamespacedQueryKey(TERMINAL_ROUTE_NAMESPACE, "terminal", undefined, { replace: true });
+  }
+
+  private readonly onServiceWorkerMessage = (event: MessageEvent) => {
+    const data: unknown = event.data;
+    if (typeof data !== "object" || data === null) return;
+    if (!("type" in data) || data.type !== "pi-web:navigate-session") return;
+    const sessionId: unknown = "sessionId" in data ? data.sessionId : undefined;
+    const cwd: unknown = "cwd" in data ? data.cwd : undefined;
+    if (typeof sessionId !== "string" || sessionId === "") return;
+    void this.navigateToPushSession(
+      sessionId,
+      typeof cwd === "string" && cwd !== "" ? cwd : undefined,
+    );
+  };
+
+  private async navigateToPushSession(sessionId: string, cwd: string | undefined): Promise<void> {
+    // Already viewing this session — nothing to do.
+    if (this.state.selectedSession?.id === sessionId) return;
+    if (cwd !== undefined && cwd !== "") {
+      const resolved = await this.resolveProjectByWorkspacePath(cwd);
+      if (resolved) {
+        await this.workspaces.selectProject(resolved.project, { workspaceId: resolved.workspace.id, sessionId });
+        return;
+      }
+    }
+    // Fallback: update URL so a subsequent reload restores the session.
+    writeRoute({ ...readRoute(), sessionId });
+  }
+
+  /**
+   * Resolve a workspace filesystem path to a registered project and workspace.
+   * Returns the matching project/workspace pair, or undefined if no match is found.
+   */
+  private async resolveProjectByWorkspacePath(pathHint: string | undefined): Promise<{ project: Project; workspace: Workspace } | undefined> {
+    if (pathHint === undefined || pathHint === "") return undefined;
+    const machineId = this.state.selectedMachine?.id ?? "local";
+
+    for (const project of this.state.projects) {
+      // Try cached workspaces first.
+      const cached = this.state.workspacesByProjectId[project.id];
+      const workspaces = cached ?? (await workspacesApi.workspaces(project.id, machineId).catch(() => undefined));
+      if (!workspaces) continue;
+
+      // Cache for future lookups.
+      if (!cached) {
+        this.setState({ workspacesByProjectId: { ...this.state.workspacesByProjectId, [project.id]: workspaces } });
+      }
+
+      const workspace = workspaces.find((w: Workspace) => w.path === pathHint);
+      if (workspace) return { project, workspace };
+    }
+
+    return undefined;
   }
 
   private shouldDeferRemoteRouteRestore(route: AppRoute, routeMachineHealth = this.state.machineStatuses[route.machineId ?? "local"]): boolean {

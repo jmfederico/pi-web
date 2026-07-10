@@ -1851,6 +1851,7 @@ export class PiSessionService {
       url: "/",
       sessionId: session.sessionId,
       machineId: "local",
+      cwd: session.sessionManager.getCwd(),
     });
   }
 

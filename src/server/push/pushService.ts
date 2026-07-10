@@ -21,6 +21,7 @@ export interface PushNotificationPayload {
   url: string;
   sessionId: string;
   machineId: string;
+  cwd?: string;
 }
 
 export interface PushServiceLogger {
