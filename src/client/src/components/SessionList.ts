@@ -272,7 +272,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
-          <span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
+          <span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span>${this.renderSessionMetaPrefix(session, status, activity) ? html`<small>${this.renderSessionMetaPrefix(session, status, activity)}</small>` : null}
           ${this.renderActivity(session, unreadIdSet)}
         </div>
         <div class="action-menu">
@@ -420,11 +420,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderSessionMetaPrefix(session: SessionInfo, status: SessionStatus | undefined, activity: SessionActivity | undefined) {
     if (isTransientNewSessionInfo(session, status, this.sessionPersistenceOptions())) {
-      if (activity?.phase === "active") return "creating · ";
-      if (activity?.phase === "error") return "error · ";
-      return "new · ";
+      if (activity?.phase === "active") return "creating";
+      if (activity?.phase === "error") return "error";
+      return "new";
     }
-    if (session.archived === true) return "read-only · ";
+    if (session.archived === true) return "read-only";
     return "";
   }
 
