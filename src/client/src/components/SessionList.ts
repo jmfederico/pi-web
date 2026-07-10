@@ -36,6 +36,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ type: Boolean }) canDeleteArchived = false;
   @property({ type: Boolean }) canReload = false;
   @property({ type: Boolean }) canCleanup = false;
+  @property({ type: Boolean }) authoritativeSessionPersistence = false;
   @property({ type: String }) archivedDeleteUnavailableMessage = "Update and restart Pi-Web on this machine to delete archived sessions.";
   @property({ type: String }) cleanupUnavailableMessage = "Update and restart Pi-Web on this machine to clean up sessions.";
   @property({ type: Boolean, reflect: true }) collapsible = false;
@@ -193,7 +194,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (visibleSessions.length === 0 || !this.selectionScopes.has("current")) return null;
 
     const selectedSessions = this.selectedSessions("current");
-    const archivableSessions = selectedSessions.filter((session) => isArchivableSessionInfo(session, this.statuses[session.id]));
+    const archivableSessions = selectedSessions.filter((session) => isArchivableSessionInfo(session, this.statuses[session.id], this.sessionPersistenceOptions()));
     const allVisibleSelected = visibleSessions.length > 0 && visibleSessions.every((session) => this.selectedSessionIds.has(session.id));
     const visibleSelectedCount = visibleSessions.filter((session) => this.selectedSessionIds.has(session.id)).length;
     return html`
@@ -234,8 +235,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const bulkSelected = showsCheckbox && this.selectedSessionIds.has(session.id);
     const status = this.statuses[session.id];
     const activity = this.activities[session.id];
-    const canArchive = isArchivableSessionInfo(session, status);
-    const canDeleteTransient = isTransientNewSessionInfo(session, status);
+    const persistenceOptions = this.sessionPersistenceOptions();
+    const canArchive = isArchivableSessionInfo(session, status, persistenceOptions);
+    const canDeleteTransient = isTransientNewSessionInfo(session, status, persistenceOptions);
     const canReloadSession = canArchive && this.canReload;
     return html`
       <div
@@ -315,7 +317,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private archiveSelectedCurrent(): void {
-    const sessions = this.selectedSessions("current").filter((session) => isArchivableSessionInfo(session, this.statuses[session.id]));
+    const sessions = this.selectedSessions("current").filter((session) => isArchivableSessionInfo(session, this.statuses[session.id], this.sessionPersistenceOptions()));
     this.selectedSessionIds = removeSessionIds(this.selectedSessionIds, sessions.map((session) => session.id));
     void this.onArchiveMany?.(sessions);
   }
@@ -395,13 +397,17 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderSessionMetaPrefix(session: SessionInfo, status: SessionStatus | undefined, activity: SessionActivity | undefined) {
-    if (isTransientNewSessionInfo(session, status)) {
+    if (isTransientNewSessionInfo(session, status, this.sessionPersistenceOptions())) {
       if (activity?.phase === "active") return "creating · ";
       if (activity?.phase === "error") return "error · ";
       return "new · ";
     }
     if (session.archived === true) return "read-only · ";
     return "";
+  }
+
+  private sessionPersistenceOptions() {
+    return { authoritative: this.authoritativeSessionPersistence };
   }
 
   private renderActivity(session: SessionInfo) {

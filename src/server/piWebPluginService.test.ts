@@ -67,7 +67,10 @@ describe("PiWebPluginService", () => {
     const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
 
     const manifest = await service.manifest();
-    expect(manifest.plugins[0]?.module).toMatch(/^\/pi-web-plugins\/updates\/pi-web-plugin\.js\?v=\d+&piWebDockerMode=dev$/u);
+    const moduleUrl = new URL(manifest.plugins[0]?.module ?? "", "http://pi-web.test");
+    expect(moduleUrl.pathname).toBe("/pi-web-plugins/updates/pi-web-plugin.js");
+    expect(moduleUrl.searchParams.get("v")).toMatch(/^\d+$/u);
+    expect(moduleUrl.searchParams.get("piWebDockerMode")).toBe("dev");
   });
 
   it("discovers Pi package plugins through an injected package provider", async () => {

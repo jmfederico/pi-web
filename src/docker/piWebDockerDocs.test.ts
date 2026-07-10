@@ -37,10 +37,8 @@ describe("pi-web-docker documentation", () => {
       readRepoFile("docker/pi-web-docker"),
     ]);
 
-    for (const command of PI_WEB_DOCKER_USER_COMMANDS) {
-      expect(dockerReadme).toContain(`| \`${command}\` |`);
-      expect(dockerEntrypoint).toContain(command);
-    }
+    expect(readDockerCommandMatrix(dockerReadme)).toEqual([...PI_WEB_DOCKER_USER_COMMANDS]);
+    expect(readEntrypointCommandCases(dockerEntrypoint)).toEqual(new Set(PI_WEB_DOCKER_USER_COMMANDS));
 
     expect(dockerReadme).toContain("`pi-web-docker --dev status`");
     expect(dockerReadme).toContain("`./docker/pi-web-docker --dev start`");
@@ -48,6 +46,32 @@ describe("pi-web-docker documentation", () => {
     expect(dockerReadme).not.toContain("docker/scripts/docker-compose-dev");
   });
 });
+
+function readDockerCommandMatrix(dockerReadme: string): string[] {
+  const normalizedReadme = normalizeLineEndings(dockerReadme);
+  const commandMatrixSection = normalizedReadme.split("### Command matrix\n")[1]?.split("\n### Installer options")[0] ?? "";
+  return Array.from(commandMatrixSection.matchAll(/^\| `([^`]+)` \|/gm), (match) => {
+    const command = match[1];
+    if (command === undefined) throw new Error("Docker command matrix row did not include a command");
+    return command;
+  });
+}
+
+function readEntrypointCommandCases(dockerEntrypoint: string): Set<string> {
+  const normalizedEntrypoint = normalizeLineEndings(dockerEntrypoint);
+  const commandCaseBlock = normalizedEntrypoint.slice(normalizedEntrypoint.indexOf('case "$command_name" in'));
+  const commandCases = new Set<string>();
+  for (const line of commandCaseBlock.split("\n")) {
+    const match = /^ {2}([a-z][a-z-]*(?:\|[a-z][a-z-]*)*)(?:\|__run-detached)?\)$/.exec(line);
+    if (match?.[1] === undefined) continue;
+    for (const command of match[1].split("|")) commandCases.add(command);
+  }
+  return commandCases;
+}
+
+function normalizeLineEndings(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
+}
 
 async function readRepoFile(relativePath: string): Promise<string> {
   return await readFile(join(repoRoot, relativePath), "utf8");

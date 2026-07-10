@@ -11,8 +11,9 @@ const interactiveSelector = [
 ].join(",");
 
 type ComposedPathEvent = Pick<Event, "composedPath">;
-type SelectableKeyboardEvent = ComposedPathEvent & Pick<KeyboardEvent, "key" | "preventDefault">;
-type SelectableNavigationKeyboardEvent = SelectableKeyboardEvent & Partial<Pick<KeyboardEvent, "currentTarget" | "stopPropagation">>;
+type SelectableNavigationKeyboardEvent = ComposedPathEvent
+  & Pick<KeyboardEvent, "key" | "preventDefault">
+  & Partial<Pick<KeyboardEvent, "currentTarget" | "stopPropagation">>;
 
 export interface SelectableRowKeyboardOptions {
   activate: () => void;
@@ -34,13 +35,6 @@ function targetMatches(target: EventTarget, selector: string): boolean {
 
 export function activateSelectableRow(event: ComposedPathEvent, action: () => void): void {
   if (isFromInteractiveElement(event)) return;
-  action();
-}
-
-export function activateSelectableRowFromKeyboard(event: SelectableKeyboardEvent, action: () => void): void {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  if (isFromInteractiveElement(event)) return;
-  event.preventDefault();
   action();
 }
 

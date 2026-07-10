@@ -158,6 +158,22 @@ describe("FileExplorerController workspace uploads", () => {
     });
   });
 
+  it("clears an in-flight upload by cancelling the request and removing the batch", async () => {
+    const upload = controllableUpload({ rejectOnCancel: true });
+    const harness = createHarness({ uploadWorkspaceFiles: upload.fn });
+    const run = harness.controller.startWorkspaceUpload([new File(["aa"], "a.txt")], { destinationFolder: "uploads" });
+
+    expect(run?.batchId).toBe("batch-1");
+    expect(harness.state.workspaceUploadBatches["batch-1"]?.status).toBe("uploading");
+
+    harness.controller.clearWorkspaceUpload(run?.batchId ?? "missing");
+    await run?.done;
+
+    expect(upload.cancel).toHaveBeenCalledTimes(1);
+    expect(harness.state.workspaceUploadBatches).toEqual({});
+    expect(harness.state.error).toBe("");
+  });
+
   it("keeps per-file errors accurate and refreshes after partial batch success", async () => {
     const upload = controllableUpload();
     const harness = createHarness({ uploadWorkspaceFiles: upload.fn, now: sequenceNow("start", "fail") });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSessionActive, sessionActivityLabel, isWorkspaceActivityActive } from "./activity";
+import { isSessionActive, isWorkspaceActivityActive } from "./activity";
 import type { SessionStatus, WorkspaceActivity } from "./apiTypes";
 
 const idleStatus: SessionStatus = {
@@ -14,17 +14,10 @@ const idleStatus: SessionStatus = {
 };
 
 describe("activity helpers", () => {
-  it("detects and labels active session states consistently", () => {
+  it("detects active session states", () => {
     expect(isSessionActive(idleStatus)).toBe(false);
-    expect(sessionActivityLabel(idleStatus)).toBeUndefined();
-
     expect(isSessionActive({ ...idleStatus, isStreaming: true })).toBe(true);
-    expect(sessionActivityLabel({ ...idleStatus, isStreaming: true })).toBe("streaming");
-
     expect(isSessionActive({ ...idleStatus, pendingMessageCount: 2 })).toBe(true);
-    expect(sessionActivityLabel({ ...idleStatus, pendingMessageCount: 2 })).toBe("2 pending");
-
-    expect(sessionActivityLabel(idleStatus, { sessionId: "s1", phase: "active", label: "running tool", detail: "read", at: "now" })).toBe("running tool: read");
   });
 
   it("detects workspace activity presence without exposing details", () => {

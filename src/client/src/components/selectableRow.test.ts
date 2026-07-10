@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { activateSelectableRow, activateSelectableRowFromKeyboard, handleSelectableRowKeyboard } from "./selectableRow";
+import { activateSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 
 describe("selectable row activation", () => {
   it("activates rows from non-interactive click targets", () => {
@@ -20,8 +20,8 @@ describe("selectable row activation", () => {
     const enter = keyboardEventWithPath("Enter", matchTarget(() => false));
     const space = keyboardEventWithPath(" ", matchTarget(() => false));
 
-    activateSelectableRowFromKeyboard(enter, enterAction);
-    activateSelectableRowFromKeyboard(space, spaceAction);
+    expect(handleSelectableRowKeyboard(enter, { activate: enterAction })).toBe(true);
+    expect(handleSelectableRowKeyboard(space, { activate: spaceAction })).toBe(true);
 
     expect(enterAction).toHaveBeenCalledOnce();
     expect(spaceAction).toHaveBeenCalledOnce();
@@ -33,7 +33,7 @@ describe("selectable row activation", () => {
     const action = vi.fn();
     const event = keyboardEventWithPath("Enter", matchTarget((selector: string) => selector.includes("button")));
 
-    activateSelectableRowFromKeyboard(event, action);
+    expect(handleSelectableRowKeyboard(event, { activate: action })).toBe(false);
 
     expect(action).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();

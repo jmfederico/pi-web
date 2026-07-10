@@ -76,6 +76,17 @@ describe("recommendedCommand", () => {
     expect(result).toEqual({ label: "Restart everything", command: "pi-web restart" });
   });
 
+  it("recommends restart when the session daemon is stale", () => {
+    const result = recommendedCommand(status({
+      components: {
+        web: component(),
+        sessiond: component({ component: "sessiond", label: "Session daemon", stale: true }),
+      },
+      commands: { restart: "pi-web restart" },
+    }));
+    expect(result).toEqual({ label: "Restart everything", command: "pi-web restart" });
+  });
+
   it("returns nothing when everything is current and available", () => {
     expect(recommendedCommand(status({ commands: { restart: "pi-web restart" } }))).toBeUndefined();
   });
@@ -233,12 +244,26 @@ describe("fallbackDockerStatus", () => {
     const fallback = fallbackDockerStatus({ dockerMode: "dev" }, "generated");
     expect(fallback?.generatedAt).toBe("generated");
     expect(fallback?.components.web.installation).toEqual({ kind: "docker", dockerMode: "dev" });
-    expect(fallback?.commands).toMatchObject({
+    expect(fallback?.commands).toEqual({
       update: "pi-web-docker --dev update",
       restart: "pi-web-docker --dev restart",
+      restartWeb: "pi-web-docker --dev restart-web",
+      restartSessiond: "pi-web-docker --dev restart-sessiond",
       status: "pi-web-docker --dev status",
     });
     expect(fallback?.messages[0]?.id).toBe("docker-status-compatibility");
+  });
+
+  it("creates Docker runtime commands without the development prefix", () => {
+    const fallback = fallbackDockerStatus({ dockerMode: "runtime" });
+    expect(fallback?.components.sessiond.installation).toEqual({ kind: "docker", dockerMode: "runtime" });
+    expect(fallback?.commands).toEqual({
+      update: "pi-web-docker update",
+      restart: "pi-web-docker restart",
+      restartWeb: "pi-web-docker restart-web",
+      restartSessiond: "pi-web-docker restart-sessiond",
+      status: "pi-web-docker status",
+    });
   });
 
   it("does not create a fallback without a Docker runtime hint", () => {

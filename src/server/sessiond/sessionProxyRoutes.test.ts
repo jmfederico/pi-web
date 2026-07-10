@@ -36,6 +36,40 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "POST", path: "/auth/api-key", body: { providerId: "p", key: "k" } }]);
   });
 
+  it("forwards sessiond health and runtime aliases to daemon endpoints", async () => {
+    const healthResponse = await app.inject({ method: "GET", url: "/api/machines/local/sessiond/health" });
+    const runtimeResponse = await app.inject({ method: "GET", url: "/api/machines/local/sessiond/runtime" });
+
+    expect(healthResponse.statusCode).toBe(200);
+    expect(healthResponse.json()).toEqual({ ok: true });
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(runtimeResponse.json()).toEqual({ ok: true });
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/health", body: undefined },
+      { method: "GET", path: "/runtime", body: undefined },
+    ]);
+  });
+
+  it("forwards empty upstream responses without parsing a body", async () => {
+    daemon.respondWith({ statusCode: 204, headers: {}, body: "" });
+
+    const response = await app.inject({ method: "DELETE", url: "/api/machines/local/sessions/session-1" });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.body).toBe("");
+    expect(daemon.requests).toEqual([{ method: "DELETE", path: "/sessions/session-1", body: undefined }]);
+  });
+
+  it("returns a 502 response when the daemon request fails", async () => {
+    daemon.failWith(new Error("connection refused"));
+
+    const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions" });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({ error: "Session daemon unavailable: connection refused" });
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions", body: undefined }]);
+  });
+
   it("preserves cwd query context when forwarding session event websockets", async () => {
     await app.listen({ host: "127.0.0.1", port: 0 });
     const socket = new WebSocket(`${serverUrl(app)}/api/machines/local/sessions/session-1/events?cwd=${encodeURIComponent("/repo")}`);
@@ -49,9 +83,16 @@ describe("machine-scoped session proxy routes", () => {
   });
 });
 
+interface FakeSessionDaemonResponse {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
 class FakeSessionDaemon {
   readonly requests: { method: string; path: string; body: unknown }[] = [];
   readonly websocketPaths: string[] = [];
+  private readonly queuedResponses: (FakeSessionDaemonResponse | Error)[] = [];
   private readonly sockets = new Set<WebSocket>();
 
   private constructor(private readonly upstream: WebSocketServer) {
@@ -67,9 +108,19 @@ class FakeSessionDaemon {
     return new FakeSessionDaemon(upstream);
   }
 
-  request(method: string, path: string, body?: unknown): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  respondWith(response: FakeSessionDaemonResponse): void {
+    this.queuedResponses.push(response);
+  }
+
+  failWith(error: Error): void {
+    this.queuedResponses.push(error);
+  }
+
+  request(method: string, path: string, body?: unknown): Promise<FakeSessionDaemonResponse> {
     this.requests.push({ method, path, body });
-    return Promise.resolve({ statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) });
+    const queuedResponse = this.queuedResponses.shift();
+    if (queuedResponse instanceof Error) return Promise.reject(queuedResponse);
+    return Promise.resolve(queuedResponse ?? { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) });
   }
 
   connectWebSocket(path: string): WebSocket {

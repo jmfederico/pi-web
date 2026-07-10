@@ -44,6 +44,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ type: Boolean }) canDeleteArchivedSessions = false;
   @property({ type: Boolean }) canReloadSessions = false;
   @property({ type: Boolean }) canCleanupSessions = false;
+  @property({ type: Boolean }) authoritativeSessionPersistence = false;
   @property({ type: String }) archivedDeleteUnavailableMessage = "Update and restart Pi-Web on this machine to delete archived sessions.";
   @property({ type: String }) cleanupUnavailableMessage = "Update and restart Pi-Web on this machine to clean up sessions.";
   @property({ attribute: false }) onShowActions?: () => void;
@@ -165,6 +166,7 @@ export class AppNavigationPanel extends LitElement {
         .canDeleteArchived=${this.canDeleteArchivedSessions}
         .canReload=${this.canReloadSessions}
         .canCleanup=${this.canCleanupSessions}
+        .authoritativeSessionPersistence=${this.authoritativeSessionPersistence}
         .archivedDeleteUnavailableMessage=${this.archivedDeleteUnavailableMessage}
         .cleanupUnavailableMessage=${this.cleanupUnavailableMessage}
         .collapsible=${this.collapsible}

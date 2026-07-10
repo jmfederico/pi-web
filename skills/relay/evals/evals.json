@@ -6,17 +6,17 @@
       "id": 0,
       "name": "plan-a-relay",
       "prompt": "I want to migrate all our REST endpoints to the new validation layer — there are around 40 of them across src/server/routes. I won't be able to babysit this. Set it up as a relay so an agent can grind through it across sessions and only pull me in when it actually needs me.",
-      "expected_output": "Produces a relay packet (default .pi-web/relays/<name>/) with charter.md, status.md, and log.md. The charter has all required slots present: relay identity/root, goal/finish-line, sizing, task selection policy, handover, intervention signal, and reading discipline. The initial status is a compact baton with current position, first task or task-selection pointer, relevant context, progress documentation expectations, and known blockers. The agent asks the user to make sizing, task selection, reading discipline, and the intervention signal concrete rather than inventing strict rules. It does not prescribe what a 'good' leg size or cadence is. It may dispatch the first leg only after the packet is agreed.",
+      "expected_output": "Produces a relay packet (default .pi-web/relays/<name>/) with charter.md, status.md, and log.md. The charter has all required slots present: relay identity/root, goal/finish-line, sizing, task selection policy, handover, intervention signal, and reading discipline. The handover guidance says the spawn prompt starts with the relay name and leg number before pointing at charter.md and status.md. The initial status is a compact baton with current position, leg tracking for the last completed leg and next leg to run, first task or task-selection pointer, relevant context, progress documentation expectations, and known blockers. The agent asks the user to make sizing, task selection, reading discipline, and the intervention signal concrete rather than inventing strict rules. It does not prescribe what a 'good' leg size or cadence is. It may dispatch the first leg only after the packet is agreed.",
       "files": [],
       "assertions": [
         { "name": "packet-created", "text": "A relay packet is created with charter.md, status.md, and log.md under the relay location (default .pi-web/relays/<name>/ unless specified).", "type": "script" },
         { "name": "goal-slot-present", "text": "The charter defines a concrete, achievable finish line / goal.", "type": "judgment" },
         { "name": "sizing-slot-present", "text": "The charter states how much work is one leg (sizing), rather than leaving it undefined.", "type": "judgment" },
         { "name": "task-selection-slot-present", "text": "The charter states how a runner chooses the next task when status.md does not name one explicitly.", "type": "judgment" },
-        { "name": "handover-slot-present", "text": "The charter states the handover mechanism, including that the next runner reads charter.md and status.md.", "type": "judgment" },
+        { "name": "handover-slot-present", "text": "The charter states the handover mechanism, including that the handoff prompt starts with the relay name and next leg number and that the next runner reads charter.md and status.md.", "type": "judgment" },
         { "name": "intervention-slot-present", "text": "The charter defines an intervention signal: when/how a runner stops and gets the human.", "type": "judgment" },
         { "name": "reading-discipline-present", "text": "The charter states the reading discipline, including not reading log.md end-to-end by default.", "type": "judgment" },
-        { "name": "status-seeded", "text": "status.md is seeded as a compact baton with current position, first task or task-selection pointer, relevant context, documentation expectations, and known blockers.", "type": "judgment" },
+        { "name": "status-seeded", "text": "status.md is seeded as a compact baton with current position, leg tracking for the last completed leg and next leg to run, first task or task-selection pointer, relevant context, documentation expectations, and known blockers.", "type": "judgment" },
         { "name": "asks-not-prescribes", "text": "For sizing, task selection, reading discipline, and the intervention signal, the agent asks the user to make them concrete instead of imposing its own strict rules/cadence.", "type": "judgment" },
         { "name": "no-premature-spawn", "text": "The agent does not spawn the first leg before the relay packet is agreed with the user.", "type": "script" }
       ]
@@ -25,7 +25,7 @@
       "id": 1,
       "name": "run-one-leg-and-hand-off",
       "prompt": "You're working under the Relay framework. Read .pi-web/relays/<sandbox>/charter.md and .pi-web/relays/<sandbox>/status.md, continue the plan, then dispatch the next agent.",
-      "expected_output": "Loads the relay skill (handoff prompt names the framework). Orients by reading charter.md and status.md, not the full log. Re-anchors to the goal, chooses the next task from status.md or the charter's task-selection policy, does exactly ONE well-sized leg per the charter's sizing, updates status.md as a compact baton, appends a concise log.md entry, makes work durable (saves files, commits if the charter calls for it), then calls spawn_session exactly once with a handoff prompt that names Relay and points at charter.md and status.md. Does not do extra legs, does not spawn more than once, and does not tell the next runner to read log.md end-to-end.",
+      "expected_output": "Loads the relay skill (handoff prompt names the framework). Orients by reading charter.md and status.md, not the full log. Re-anchors to the goal, chooses the next task from status.md or the charter's task-selection policy, does exactly ONE well-sized leg per the charter's sizing, updates status.md as a compact baton, appends a concise log.md entry, makes work durable (saves files, commits if the charter calls for it), then calls spawn_session exactly once with a handoff prompt that starts with the relay name and next leg number, names Relay, and points at charter.md and status.md. Does not do extra legs, does not spawn more than once, and does not tell the next runner to read log.md end-to-end.",
       "files": [],
       "assertions": [
         { "name": "skill-loads-from-handoff", "text": "The agent recognizes it is in a relay and loads/consults the relay skill from the handoff prompt.", "type": "judgment" },
@@ -37,7 +37,7 @@
         { "name": "log-appended", "text": "A concise log.md entry is appended recording what was done, decisions, artifacts changed, status updates made, and any blocker.", "type": "script" },
         { "name": "work-durable-before-handoff", "text": "Work is saved (and committed if the charter requires it) before spawn_session is called.", "type": "script" },
         { "name": "spawn-exactly-once", "text": "spawn_session is called exactly once.", "type": "script" },
-        { "name": "handoff-names-relay-and-status", "text": "The spawn prompt names the Relay framework and points the next runner at charter.md and status.md, not the full log, so the skill loads downstream with bounded context.", "type": "judgment" }
+        { "name": "handoff-names-relay-leg-and-status", "text": "The spawn prompt starts with the relay name and next leg number, names the Relay framework, and points the next runner at charter.md and status.md, not the full log, so the skill loads downstream with bounded context and PI-WEB can generate a distinguishable session name.", "type": "judgment" }
       ]
     },
     {

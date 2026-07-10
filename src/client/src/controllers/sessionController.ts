@@ -8,7 +8,7 @@ import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
 import { fileCompletionInsertText } from "../promptCompletions";
 import { SessionSocket, type GlobalSessionEvent, type SessionUiEvent } from "../sessionSocket";
-import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
+import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../sessionPersistence";
 import { isSessionActive } from "../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
@@ -389,11 +389,12 @@ export class SessionController {
   async archiveSession(session = this.getState().selectedSession) {
     if (!session) return;
     const status = this.statusForSession(session);
-    if (isTransientNewSessionInfo(session, status)) {
+    const persistenceOptions = this.sessionPersistenceOptions();
+    if (isTransientNewSessionInfo(session, status, persistenceOptions)) {
       await this.deleteCachedNewSession(session);
       return;
     }
-    if (!isArchivableSessionInfo(session, status)) return;
+    if (!isArchivableSessionInfo(session, status, persistenceOptions)) return;
     try {
       await this.api.archive(session, selectedMachineId(this.getState()));
       const state = this.getState();
@@ -409,7 +410,7 @@ export class SessionController {
   }
 
   async archiveSessionWithDescendants(session = this.getState().selectedSession) {
-    if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session))) return;
+    if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session), this.sessionPersistenceOptions())) return;
     try {
       const response = await this.api.archiveWithDescendants(session, selectedMachineId(this.getState()));
       const archivedIds = response.sessionIds !== undefined && response.sessionIds.length > 0 ? response.sessionIds : [session.id];
@@ -426,7 +427,8 @@ export class SessionController {
   }
 
   async archiveSessions(sessions: readonly SessionInfo[]): Promise<void> {
-    const candidates = uniqueSessionsById(sessions).filter((session) => isArchivableSessionInfo(session, this.statusForSession(session)));
+    const persistenceOptions = this.sessionPersistenceOptions();
+    const candidates = uniqueSessionsById(sessions).filter((session) => isArchivableSessionInfo(session, this.statusForSession(session), persistenceOptions));
     if (candidates.length === 0) return;
 
     try {
@@ -453,7 +455,9 @@ export class SessionController {
 
     const machineId = selectedMachineId(this.getState());
     const runtime = this.getState().machineRuntimes[machineId];
-    if (runtime?.ok !== true || !supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsDeleteArchived)) {
+    // Preserve legacy federated deletes when capability discovery is unavailable;
+    // only a positive runtime response without support should block the action.
+    if (runtime?.ok === true && !supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsDeleteArchived)) {
       this.setState({ error: "Deleting archived sessions requires an updated Pi-Web runtime on this machine." });
       return;
     }
@@ -559,7 +563,7 @@ export class SessionController {
   }
 
   async deleteCachedNewSession(session = this.getState().selectedSession) {
-    if (session === undefined || !isTransientNewSessionInfo(session, this.statusForSession(session))) return;
+    if (session === undefined || !isTransientNewSessionInfo(session, this.statusForSession(session), this.sessionPersistenceOptions())) return;
     const pendingStart = isClientPendingStartSessionInfo(session) ? this.pendingSessionStarts.get(session.id) : undefined;
     if (pendingStart !== undefined) {
       pendingStart.discarded = true;
@@ -605,7 +609,7 @@ export class SessionController {
   }
 
   async reloadSession(session = this.getState().selectedSession) {
-    if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session))) return;
+    if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session), this.sessionPersistenceOptions())) return;
     const machineId = selectedMachineId(this.getState());
     const runtime = this.getState().machineRuntimes[machineId];
     if (runtime?.ok !== true || !supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsReload)) {
@@ -755,6 +759,11 @@ export class SessionController {
     const state = this.getState();
     if (state.status?.sessionId === session.id && state.selectedSession?.id === session.id) return state.status;
     return state.sessionStatuses[session.id];
+  }
+
+  private sessionPersistenceOptions() {
+    const state = this.getState();
+    return sessionPersistenceOptionsForRuntime(state.machineRuntimes[selectedMachineId(state)]);
   }
 
   private workspaceSelectionKey(cwd: string): string {

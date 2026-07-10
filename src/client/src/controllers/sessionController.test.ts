@@ -1124,6 +1124,31 @@ describe("SessionController", () => {
     expect(urlUpdates).toEqual([undefined]);
   });
 
+  it("archives legacy sessions when persistence support is not advertised", async () => {
+    const legacySession = { ...oldSession };
+    const archivedIds: string[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: legacySession, sessions: [legacySession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      archive: (session) => {
+        archivedIds.push(sessionLookupId(session));
+        return Promise.resolve({ archived: true });
+      },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      new InMemorySessionSelectionMemory(),
+      { api, socket: new FakeSocket() },
+    );
+
+    await controller.archiveSession(legacySession);
+
+    expect(archivedIds).toEqual([legacySession.id]);
+    expect(state.sessions[0]).toMatchObject({ id: legacySession.id, archived: true });
+  });
+
   it("archives selected session descendants and selects the next active session", async () => {
     const persistedSession = { ...oldSession, persisted: true };
     const childSession = { ...oldSession, id: "child-session", path: "/tmp/child-session.jsonl", parentSessionPath: persistedSession.path, persisted: true };
@@ -1388,10 +1413,10 @@ describe("SessionController", () => {
     expect(state.sessionActivities[oldSession.id]).toBeUndefined();
   });
 
-  it("does not delete archived sessions when the selected machine runtime does not support it", async () => {
+  it("does not delete archived sessions when the selected machine runtime reports no support", async () => {
     const archivedSession = { ...oldSession, archived: true, archivedAt: "later" };
     const deletedIds: string[] = [];
-    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [archivedSession] };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [archivedSession], machineRuntimes: { local: { machineId: "local", ok: true, checkedAt: "now", capabilities: [] } } };
     const api: typeof defaultApi = {
       ...defaultApi,
       deleteArchived: (session) => {
@@ -1412,6 +1437,32 @@ describe("SessionController", () => {
     expect(deletedIds).toEqual([]);
     expect(state.sessions).toEqual([archivedSession]);
     expect(state.error).toContain("requires an updated Pi-Web runtime");
+  });
+
+  it("allows legacy archived-session deletion when runtime support is unknown", async () => {
+    const archivedSession = { ...oldSession, archived: true, archivedAt: "later" };
+    const deletedIds: string[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: archivedSession, sessions: [archivedSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      deleteArchived: (session) => {
+        deletedIds.push(sessionLookupId(session));
+        return Promise.resolve({ deleted: true });
+      },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      new InMemorySessionSelectionMemory(),
+      { api, socket: new FakeSocket() },
+    );
+
+    await controller.deleteArchivedSessions([archivedSession]);
+
+    expect(deletedIds).toEqual([archivedSession.id]);
+    expect(state.sessions).toEqual([]);
+    expect(state.error).toBe("");
   });
 
   it("reloads the selected session from disk, discards the cached transcript, and re-fetches history", async () => {
@@ -1496,14 +1547,14 @@ describe("SessionController", () => {
     expect(state.error).toContain("Reloading sessions from disk requires an updated Pi-Web runtime");
   });
 
-  it("does not reload sessions from disk without a persisted server signal", async () => {
+  it("does not reload sessions from disk without a persisted server signal when persistence is authoritative", async () => {
     const reloadCalls: string[] = [];
     let state: AppState = {
       ...initialAppState(),
       selectedWorkspace: workspace,
       selectedSession: oldSession,
       sessions: [oldSession],
-      machineRuntimes: { local: { machineId: "local", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.sessionsReload] } },
+      machineRuntimes: { local: { machineId: "local", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.sessionsReload, PI_WEB_CAPABILITIES.sessionsPersistedState] } },
     };
     const api: typeof defaultApi = {
       ...defaultApi,

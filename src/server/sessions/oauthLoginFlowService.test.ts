@@ -12,6 +12,7 @@ afterEach(() => {
 describe("OAuthLoginFlowService", () => {
   it("round-trips prompt responses and completes the flow", async () => {
     let promptValue: string | undefined;
+    const onComplete = vi.fn();
     const service = new OAuthLoginFlowService();
     const state = service.start({
       providerId: "test-provider",
@@ -22,6 +23,7 @@ describe("OAuthLoginFlowService", () => {
         promptValue = await callbacks.onPrompt({ message: "Paste code", placeholder: "code" });
         callbacks.onProgress?.(`Got ${promptValue}`);
       }),
+      onComplete,
     });
 
     const prompt = state.prompt;
@@ -35,6 +37,7 @@ describe("OAuthLoginFlowService", () => {
 
     expect(promptValue).toBe("abc123");
     expect(service.get(state.flowId)).toMatchObject({ status: "complete", progress: ["Waiting for code", "Got abc123", "Login complete"] });
+    expect(onComplete).toHaveBeenCalledOnce();
     service.dispose();
   });
 
@@ -111,6 +114,30 @@ describe("OAuthLoginFlowService", () => {
     await expect(promptRejected.promise).resolves.toMatchObject({ message: "Login cancelled" });
     expect(service.get(state.flowId).status).toBe("cancelled");
     service.dispose();
+  });
+
+  it("rejects pending prompts when disposed", async () => {
+    const promptRejected = deferred<Error>();
+    const service = new OAuthLoginFlowService();
+    const state = service.start({
+      providerId: "test-provider",
+      providerName: "Test Provider",
+      authStorage: fakeAuthStorage(async (_providerId, callbacks) => {
+        try {
+          await callbacks.onPrompt({ message: "Paste code" });
+        } catch (error) {
+          promptRejected.resolve(toError(error));
+          throw error;
+        }
+      }),
+    });
+
+    expect(state.prompt).toBeDefined();
+
+    service.dispose();
+
+    await expect(promptRejected.promise).resolves.toMatchObject({ message: "Login cancelled" });
+    expect(() => { service.get(state.flowId); }).toThrow("OAuth login flow not found");
   });
 
   it("rejects stale or duplicate responses", () => {

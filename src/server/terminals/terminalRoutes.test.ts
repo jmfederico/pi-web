@@ -43,7 +43,7 @@ describe("terminal routes", () => {
     expect(terminals.events).toEqual([`close-cwd:${requestCwd}`]);
   });
 
-  it("routes command-run create, filter, cancel, and terminal continue requests", async () => {
+  it("routes command-run create, get, filter, cancel, and terminal continue requests", async () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/terminal-command-runs",
@@ -51,7 +51,16 @@ describe("terminal routes", () => {
     });
 
     expect(createResponse.statusCode).toBe(200);
-    expect(createResponse.json<TerminalCommandRun>()).toMatchObject({ id: "run1", terminalId: "t-run", status: "running" });
+    const createdRun = createResponse.json<TerminalCommandRun>();
+    expect(createdRun).toMatchObject({ id: "run1", terminalId: "t-run", status: "running" });
+
+    const getResponse = await app.inject({ method: "GET", url: "/terminal-command-runs/run1" });
+    expect(getResponse.statusCode).toBe(200);
+    expect(getResponse.json<TerminalCommandRun>()).toEqual(createdRun);
+
+    const missingGetResponse = await app.inject({ method: "GET", url: "/terminal-command-runs/missing" });
+    expect(missingGetResponse.statusCode).toBe(404);
+    expect(missingGetResponse.json()).toEqual({ error: "Terminal command run not found" });
 
     const listResponse = await app.inject({ method: "GET", url: `/terminal-command-runs?projectId=p1&statuses=running&metadata=${encodeURIComponent(JSON.stringify({ "pi.operation": "test" }))}` });
 
@@ -66,6 +75,22 @@ describe("terminal routes", () => {
     const continueResponse = await app.inject({ method: "POST", url: "/terminals/t-run/continue" });
     expect(continueResponse.statusCode).toBe(200);
     expect(terminals.events).toContain("continue:t-run");
+  });
+
+  it("rejects invalid command-run filter and metadata queries", async () => {
+    const invalidStatusResponse = await app.inject({ method: "GET", url: "/terminal-command-runs?statuses=running,stuck" });
+    expect(invalidStatusResponse.statusCode).toBe(400);
+    expect(invalidStatusResponse.json()).toEqual({ error: "Invalid command run status: stuck" });
+
+    const arrayMetadataResponse = await app.inject({ method: "GET", url: `/terminal-command-runs?metadata=${encodeURIComponent(JSON.stringify(["not", "an", "object"]))}` });
+    expect(arrayMetadataResponse.statusCode).toBe(400);
+    expect(arrayMetadataResponse.json()).toEqual({ error: "metadata filter must be an object" });
+
+    const nonStringMetadataResponse = await app.inject({ method: "GET", url: `/terminal-command-runs?metadata=${encodeURIComponent(JSON.stringify({ "pi.operation": 42 }))}` });
+    expect(nonStringMetadataResponse.statusCode).toBe(400);
+    expect(nonStringMetadataResponse.json()).toEqual({ error: "metadata filter value must be a string: pi.operation" });
+
+    expect(terminals.filters).toEqual([]);
   });
 });
 

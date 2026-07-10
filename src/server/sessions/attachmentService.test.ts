@@ -1,13 +1,21 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_ATTACHMENT_FOLDER, saveAttachmentsToWorkspace } from "./attachmentService.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { formatDimensionNote, resizeImage, type ResizedImage } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_ATTACHMENT_FOLDER, attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
+
+vi.mock("@earendil-works/pi-coding-agent", () => ({
+  formatDimensionNote: vi.fn(),
+  resizeImage: vi.fn(),
+}));
 
 let workspace: string;
 let externalDirectories: string[] = [];
 
 beforeEach(async () => {
+  vi.mocked(formatDimensionNote).mockReset();
+  vi.mocked(resizeImage).mockReset();
   workspace = await mkdtemp(join(tmpdir(), "pi-web-attachments-"));
   externalDirectories = [];
 });
@@ -21,6 +29,63 @@ afterEach(async () => {
 
 const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
 const pngBase64 = pngBytes.toString("base64");
+
+function resizedImage(overrides: Partial<ResizedImage> = {}): ResizedImage {
+  return {
+    data: "resized-data",
+    mimeType: "image/png",
+    originalWidth: 2400,
+    originalHeight: 1200,
+    width: 1200,
+    height: 600,
+    wasResized: true,
+    ...overrides,
+  };
+}
+
+describe("attachmentsToInlineImages", () => {
+  it("resizes images, drops unresizable images, and preserves dimension notes", async () => {
+    const firstInput = Buffer.from("first image");
+    const droppedInput = Buffer.from("too large");
+    const thirdInput = Buffer.from("third image");
+    const firstResized = resizedImage({ data: "first-resized", mimeType: "image/webp" });
+    const thirdResized = resizedImage({
+      data: "third-resized",
+      mimeType: "image/jpeg",
+      originalWidth: 640,
+      originalHeight: 480,
+      width: 640,
+      height: 480,
+      wasResized: false,
+    });
+
+    vi.mocked(resizeImage)
+      .mockResolvedValueOnce(firstResized)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(thirdResized);
+    vi.mocked(formatDimensionNote)
+      .mockReturnValueOnce("[Image dimensions changed.]")
+      .mockReturnValueOnce(undefined);
+
+    await expect(attachmentsToInlineImages([
+      { kind: "image", mimeType: "image/png", data: firstInput.toString("base64"), name: "first.png" },
+      { kind: "image", mimeType: "image/png", data: droppedInput.toString("base64"), name: "huge.png" },
+      { kind: "image", mimeType: "image/jpeg", data: thirdInput.toString("base64"), name: "photo.jpg" },
+    ])).resolves.toEqual([
+      {
+        image: { type: "image", data: "first-resized", mimeType: "image/webp" },
+        dimensionNote: "[Image dimensions changed.]",
+      },
+      { image: { type: "image", data: "third-resized", mimeType: "image/jpeg" } },
+    ]);
+
+    expect(resizeImage).toHaveBeenNthCalledWith(1, firstInput, "image/png");
+    expect(resizeImage).toHaveBeenNthCalledWith(2, droppedInput, "image/png");
+    expect(resizeImage).toHaveBeenNthCalledWith(3, thirdInput, "image/jpeg");
+    expect(formatDimensionNote).toHaveBeenNthCalledWith(1, firstResized);
+    expect(formatDimensionNote).toHaveBeenNthCalledWith(2, thirdResized);
+  });
+});
 
 describe("saveAttachmentsToWorkspace", () => {
   it("writes attachments into the default folder and returns relative paths", async () => {

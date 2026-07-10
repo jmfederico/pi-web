@@ -1,11 +1,13 @@
 ---
 name: code-quality-architecture
-description: Project code quality and architecture expectations for implementation, refactoring, planning, and code review. Use this skill whenever writing, modifying, reviewing, or planning code in this repository, especially when making architecture choices, introducing modules/services/components, managing side effects, dependencies, state, boundaries, or tests. Favor composable, contained, intention-revealing, separated, dependency-injected, testable code while respecting the idioms of the framework or library in use.
+description: Project code quality and architecture expectations for implementation, refactoring, planning, and code review. Use this skill whenever writing, modifying, reviewing, or planning production code or architecture in this repository, especially when making architecture choices, introducing modules/services/components, managing side effects, dependencies, state, or boundaries. Favor composable, contained, intention-revealing, separated, dependency-injected, testable code while respecting the idioms of the framework or library in use.
 ---
 
 # Code quality and architecture expectations
 
 Use this skill as a design lens, not as a framework tutorial. The goal is to shape code so future agents and humans can understand it, change it safely, and test it without needing to reverse-engineer hidden coupling.
+
+For test-specific strategy, test helper conventions, and UI test harness choices, use the `testing-guide` skill. This skill still treats testability as a production-code design concern.
 
 Respect the project's existing conventions and the framework/library idioms already in use. If a dependency expects a particular pattern, such as inheritance, decorators, lifecycle hooks, or a registration API, use that pattern deliberately and keep the surrounding project code as simple and composable as possible.
 

@@ -11,6 +11,12 @@ If you make changes that affect `src/server/sessiond.ts`, session runtime owners
 
 Changes to the web/API/UI side generally only require the `pi-web-ui-dev.service` autoreload/restart path.
 
+## Testing guidance
+
+Project-specific testing rules live in `.agents/skills/testing-guide/SKILL.md`.
+
+Use that skill whenever writing, modifying, reviewing, or planning tests, closing coverage gaps, triaging test failures, or creating test helpers/harnesses. Keep detailed testing conventions there rather than growing this top-level orientation file.
+
 ## Configuration conventions
 
 - `$PI_WEB_DATA_DIR` (`~/.pi-web` by default) contains PI WEB-managed state such as `projects.json` and `machines.json`; do not treat it as the user-editable config API.

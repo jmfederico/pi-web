@@ -231,12 +231,14 @@ dotenv_quote() {
 }
 
 fetch_url() {
-  url=$1
-  target=$2
+  # POSIX sh function variables are global, so keep these names distinct
+  # from caller state such as write_asset's target path.
+  fetch_url_source=$1
+  fetch_url_output=$2
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$target"
+    curl -fsSL "$fetch_url_source" -o "$fetch_url_output"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$target" "$url"
+    wget -qO "$fetch_url_output" "$fetch_url_source"
   else
     die "curl or wget is required to fetch Docker assets"
   fi

@@ -20,6 +20,7 @@ import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspace
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
+import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
 import { RealtimeSocket } from "../sessionSocket";
 import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
@@ -1016,7 +1017,10 @@ export class PiWebApp extends LitElement {
 
   private canDeleteArchivedSessions(): boolean {
     const runtime = this.selectedMachineRuntime();
-    return runtime?.ok === true && supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsDeleteArchived);
+    // COMPAT-CAP sessions.deleteArchived: older federated machines may support
+    // the legacy DELETE route without advertising runtime capabilities. Only
+    // block when capability discovery succeeds and reports no support.
+    return runtime?.ok !== true || supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsDeleteArchived);
   }
 
   private canReloadSessions(): boolean {
@@ -1027,6 +1031,10 @@ export class PiWebApp extends LitElement {
   private canCleanupSessions(): boolean {
     const runtime = this.selectedMachineRuntime();
     return runtime?.ok === true && supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsCleanup);
+  }
+
+  private hasAuthoritativeSessionPersistence(): boolean {
+    return runtimeHasAuthoritativeSessionPersistence(this.selectedMachineRuntime());
   }
 
   private supportsWorkspaceFileSuggestions(machineId = selectedMachineId(this.state)): boolean {
@@ -1124,6 +1132,7 @@ export class PiWebApp extends LitElement {
         .canDeleteArchivedSessions=${this.canDeleteArchivedSessions()}
         .canReloadSessions=${this.canReloadSessions()}
         .canCleanupSessions=${this.canCleanupSessions()}
+        .authoritativeSessionPersistence=${this.hasAuthoritativeSessionPersistence()}
         .archivedDeleteUnavailableMessage=${this.archivedDeleteUnavailableMessage()}
         .cleanupUnavailableMessage=${this.sessionCleanupUnavailableMessage()}
         .collapsible=${true}

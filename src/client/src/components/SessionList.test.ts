@@ -27,11 +27,17 @@ describe("sessionRowActivityKind", () => {
 });
 
 describe("session action eligibility", () => {
-  it("requires a persisted server signal before archiving", () => {
-    expect(isArchivableSessionInfo(session("persisted", { persisted: true }))).toBe(true);
-    expect(isArchivableSessionInfo(session("unknown"))).toBe(false);
-    expect(isArchivableSessionInfo(session("transient", { persisted: false }))).toBe(false);
-    expect(isArchivableSessionInfo({ ...session("archived", { persisted: true }), archived: true, archivedAt: "2026-06-09T00:00:00.000Z" })).toBe(false);
+  it("requires a persisted server signal before archiving when persistence is authoritative", () => {
+    const authoritative = { authoritative: true };
+    expect(isArchivableSessionInfo(session("persisted", { persisted: true }), undefined, authoritative)).toBe(true);
+    expect(isArchivableSessionInfo(session("unknown"), undefined, authoritative)).toBe(false);
+    expect(isArchivableSessionInfo(session("transient", { persisted: false }), undefined, authoritative)).toBe(false);
+    expect(isArchivableSessionInfo({ ...session("archived", { persisted: true }), archived: true, archivedAt: "2026-06-09T00:00:00.000Z" }, undefined, authoritative)).toBe(false);
+  });
+
+  it("preserves legacy archiving when persistence support is not advertised", () => {
+    expect(isArchivableSessionInfo(session("legacy"))).toBe(true);
+    expect(isTransientNewSessionInfo(session("legacy"))).toBe(false);
   });
 
   it("allows deleting transient non-archived sessions from server or browser-cached signals", () => {

@@ -380,4 +380,16 @@ describe("moveWorkspaceFile", () => {
     expect(source.content).toBe("data");
     await expect(readFile(join(outsideDir, "evil.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
+
+  it("prevents moving a source symlink that escapes the workspace", async () => {
+    const root = await tempWorkspace();
+    const outsideDir = await mkdtemp(join(tmpdir(), "pi-web-move-source-outside-"));
+    roots.push(outsideDir);
+    await writeFile(join(outsideDir, "secret.txt"), "secret");
+    await symlink(join(outsideDir, "secret.txt"), join(root, "source-link.txt"));
+
+    await expect(moveWorkspaceFile(root, "source-link.txt", "moved.txt")).rejects.toThrow("Path escapes workspace");
+    await expect(readWorkspaceFile(root, "moved.txt")).rejects.toThrow("Path does not exist");
+    await expect(readFile(join(outsideDir, "secret.txt"), "utf8")).resolves.toBe("secret");
+  });
 });

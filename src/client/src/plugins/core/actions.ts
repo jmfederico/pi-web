@@ -2,7 +2,7 @@ import { isSessionActive } from "../../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability, type PiWebCapability } from "../../../../shared/capabilities";
 import type { AppState } from "../../appState";
 import { selectedMachineId } from "../../controllers/types";
-import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../../sessionPersistence";
+import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../../sessionPersistence";
 import { isWorkspaceDeletionPending } from "../../workspaceDeletion";
 import type { PluginAction } from "../types";
 
@@ -217,23 +217,27 @@ function hasDeletableWorkspace(context: { state: AppState }): boolean {
 }
 
 function hasArchivableSession(context: { state: AppState }): boolean {
-  return isArchivableSessionInfo(context.state.selectedSession, context.state.status);
+  return isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state));
 }
 
 function hasTransientNewSession(context: { state: AppState }): boolean {
-  return isTransientNewSessionInfo(context.state.selectedSession, context.state.status);
+  return isTransientNewSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state));
 }
 
 function hasReloadableSession(context: { state: AppState }): boolean {
-  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status)) return false;
+  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state))) return false;
   if (reloadSessionDisabledReason(context) !== undefined) return false;
   return !isSessionActive(context.state.status, context.state.activity);
 }
 
 function reloadSessionDisabledReason(context: { state: AppState }): string | undefined {
-  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status)) return undefined;
+  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state))) return undefined;
   if (isSessionActive(context.state.status, context.state.activity)) return undefined;
   return missingCapabilityReason(context.state, PI_WEB_CAPABILITIES.sessionsReload, "reload sessions from disk");
+}
+
+function sessionPersistenceOptions(state: AppState) {
+  return sessionPersistenceOptionsForRuntime(state.machineRuntimes[selectedMachineId(state)]);
 }
 
 function missingCapabilityReason(state: AppState, capability: PiWebCapability, action: string): string | undefined {

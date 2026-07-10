@@ -2,6 +2,9 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PiWebRuntimeResponse } from "../../shared/apiTypes.js";
+import { PI_WEB_CAPABILITIES } from "../../shared/capabilities.js";
+import type { MachineClient } from "./machineClient.js";
 import { MachineService } from "./machineService.js";
 import { MachineStore, machineStorePath } from "./machineStore.js";
 
@@ -97,6 +100,90 @@ describe("MachineService", () => {
     });
   });
 
+  it("fetches and caches remote runtime through the configured client", async () => {
+    const body = remoteRuntimeBody();
+    const requestJson = vi.fn<MachineClient["requestJson"]>(() => Promise.resolve({ statusCode: 200, headers: {}, body }));
+    const factoryMachines: unknown[] = [];
+    const remoteService = new MachineService(new MachineStore(storePath), {
+      remoteClientFactory: (machine) => {
+        factoryMachines.push(machine);
+        return fakeRemoteClient({ requestJson });
+      },
+      now: () => new Date("2026-05-25T00:00:00.000Z"),
+      runtimeCacheTtlMs: 10_000,
+    });
+    const machine = await remoteService.add({
+      name: " Remote ",
+      baseUrl: "https://remote.example.test/",
+      token: "secret",
+      headers: { "X-Pi-Web-Test": "yes" },
+    });
+
+    const first = await remoteService.runtime(machine.id);
+    const second = await remoteService.runtime(machine.id);
+
+    expect(first).toEqual({
+      machineId: machine.id,
+      ok: true,
+      checkedAt: "2026-05-25T00:00:00.000Z",
+      packageName: body.packageName,
+      generatedAt: body.generatedAt,
+      components: body.components,
+      capabilities: body.capabilities,
+    });
+    expect(second).toEqual(first);
+    expect(requestJson).toHaveBeenCalledTimes(1);
+    expect(requestJson).toHaveBeenCalledWith("GET", "/api/pi-web/runtime", undefined, { timeoutMs: 3000 });
+    expect(factoryMachines).toEqual([
+      expect.objectContaining({
+        id: machine.id,
+        name: "Remote",
+        baseUrl: "https://remote.example.test",
+        token: "secret",
+        headers: { "X-Pi-Web-Test": "yes" },
+      }),
+    ]);
+  });
+
+  it("caches remote runtime errors and clears them after remote updates", async () => {
+    let now = new Date("2026-05-25T00:00:00.000Z");
+    const body = remoteRuntimeBody();
+    const requestJson = vi.fn<MachineClient["requestJson"]>()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ statusCode: 200, headers: {}, body });
+    const remoteService = new MachineService(new MachineStore(storePath), {
+      remoteClientFactory: () => fakeRemoteClient({ requestJson }),
+      now: () => now,
+      runtimeCacheTtlMs: 10_000,
+    });
+    const machine = await remoteService.add({ name: "Remote", baseUrl: "https://remote.example.test" });
+
+    const errorRuntime = await remoteService.runtime(machine.id);
+    now = new Date("2026-05-25T00:00:01.000Z");
+    const cachedErrorRuntime = await remoteService.runtime(machine.id);
+    await remoteService.update(machine.id, { name: "Remote Updated" });
+    now = new Date("2026-05-25T00:00:02.000Z");
+    const refreshedRuntime = await remoteService.runtime(machine.id);
+
+    expect(errorRuntime).toEqual({
+      machineId: machine.id,
+      ok: false,
+      checkedAt: "2026-05-25T00:00:00.000Z",
+      error: "network down",
+    });
+    expect(cachedErrorRuntime).toEqual(errorRuntime);
+    expect(refreshedRuntime).toEqual({
+      machineId: machine.id,
+      ok: true,
+      checkedAt: "2026-05-25T00:00:02.000Z",
+      packageName: body.packageName,
+      generatedAt: body.generatedAt,
+      components: body.components,
+      capabilities: body.capabilities,
+    });
+    expect(requestJson).toHaveBeenCalledTimes(2);
+  });
+
   it("does not allow local machine mutation", async () => {
     await expect(service.update("local", { name: "Other" })).rejects.toThrow("Local machine cannot be changed");
     await expect(service.remove("local")).rejects.toThrow("Local machine cannot be deleted");
@@ -111,4 +198,37 @@ describe("MachineService", () => {
 async function expectOwnerOnlyMachineStore(path: string): Promise<void> {
   if (process.platform === "win32") return;
   expect((await stat(path)).mode & 0o777).toBe(0o600);
+}
+
+function remoteRuntimeBody(): PiWebRuntimeResponse {
+  return {
+    packageName: "@jmfederico/pi-web",
+    generatedAt: "2026-05-25T00:00:00.000Z",
+    components: {
+      web: {
+        component: "web",
+        label: "Remote Web",
+        runtimeVersion: "1.0.0",
+        available: true,
+        capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived, PI_WEB_CAPABILITIES.piPackagesManage],
+      },
+      sessiond: {
+        component: "sessiond",
+        label: "Remote Session daemon",
+        runtimeVersion: "1.0.0",
+        available: true,
+        capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived],
+      },
+    },
+    capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived, PI_WEB_CAPABILITIES.piPackagesManage],
+  };
+}
+
+function fakeRemoteClient(overrides: Partial<MachineClient>): MachineClient {
+  return {
+    request: () => { throw new Error("HTTP request not configured for test"); },
+    requestJson: () => { throw new Error("JSON request not configured for test"); },
+    connectWebSocket: () => { throw new Error("WebSocket not configured for test"); },
+    ...overrides,
+  };
 }

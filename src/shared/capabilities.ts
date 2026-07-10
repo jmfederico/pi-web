@@ -11,6 +11,7 @@ export const WEB_RUNTIME_CAPABILITIES = [
   PI_WEB_CAPABILITIES.sessionsBulkMutations,
   PI_WEB_CAPABILITIES.sessionsCleanup,
   PI_WEB_CAPABILITIES.sessionsReload,
+  PI_WEB_CAPABILITIES.sessionsPersistedState,
   PI_WEB_CAPABILITIES.promptAttachments,
   PI_WEB_CAPABILITIES.workspaceFileSuggestions,
   PI_WEB_CAPABILITIES.piPackagesManage,
@@ -22,6 +23,7 @@ export const SESSIOND_RUNTIME_CAPABILITIES = [
   PI_WEB_CAPABILITIES.sessionsBulkMutations,
   PI_WEB_CAPABILITIES.sessionsCleanup,
   PI_WEB_CAPABILITIES.sessionsReload,
+  PI_WEB_CAPABILITIES.sessionsPersistedState,
   PI_WEB_CAPABILITIES.promptAttachments,
 ] as const satisfies readonly PiWebCapability[];
 
@@ -30,6 +32,7 @@ const EFFECTIVE_CAPABILITY_REQUIREMENTS = {
   [PI_WEB_CAPABILITIES.sessionsBulkMutations]: ["web", "sessiond"],
   [PI_WEB_CAPABILITIES.sessionsCleanup]: ["web", "sessiond"],
   [PI_WEB_CAPABILITIES.sessionsReload]: ["web", "sessiond"],
+  [PI_WEB_CAPABILITIES.sessionsPersistedState]: ["web", "sessiond"],
   [PI_WEB_CAPABILITIES.promptAttachments]: ["web", "sessiond"],
   [PI_WEB_CAPABILITIES.workspaceFileSuggestions]: ["web"],
   [PI_WEB_CAPABILITIES.piPackagesManage]: ["web"],

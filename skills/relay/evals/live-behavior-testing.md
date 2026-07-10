@@ -75,7 +75,10 @@ So when testing or running a relay whose packet lives outside the repo, keep `cw
 spawn_session cwd: <project-root>
 
 Prompt:
-You are continuing Relay "sandbox".
+Relay "sandbox" leg 2 begins now.
+
+You are the next runner in this Relay method chain.
+
 Read:
 - /tmp/pi-web-relay-live-evals/.../sandbox/.pi-web/relays/sandbox/charter.md
 - /tmp/pi-web-relay-live-evals/.../sandbox/.pi-web/relays/sandbox/status.md
