@@ -1,6 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { CommandOption } from "../api";
+import { fuzzySearch } from "../utils/fuzzySearch";
 import { scrollWhenSelected } from "./scrollWhenSelected";
 import { commandPickerStyles } from "./shared";
 
@@ -58,9 +59,9 @@ export class CommandPicker extends LitElement {
   }
 
   private filteredOptions(): CommandOption[] {
-    const query = this.query.trim().toLowerCase();
+    const query = this.query.trim();
     if (query === "") return this.options;
-    return this.options.filter((option) => `${option.label} ${option.description ?? ""} ${option.value}`.toLowerCase().includes(query));
+    return fuzzySearch(query, this.options.map((o) => ({ text: `${o.label} ${o.description ?? ""} ${o.value}`, item: o }))).map((r) => r.item);
   }
 
   private handleKeyDown(event: KeyboardEvent) {

@@ -1,6 +1,7 @@
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
+import { fuzzySearch } from "../utils/fuzzySearch";
 import { formatShortcut } from "../keyboardShortcuts";
 import { scrollWhenSelected } from "./scrollWhenSelected";
 import { actionPaletteStyles } from "./shared";
@@ -91,12 +92,11 @@ export class ActionPalette extends LitElement {
 }
 
 export function filterActionPaletteActions(actions: readonly AppAction[], queryText: string): AppAction[] {
-  const query = queryText.trim().toLowerCase();
-  return actions
-    .filter((action) => action.enabled !== false || action.disabledReason !== undefined)
-    .filter((action) => {
-      if (query === "") return true;
-      const haystack = [action.title, action.description ?? "", action.disabledReason ?? "", action.group ?? "", action.shortcut ?? ""].join(" ").toLowerCase();
-      return haystack.includes(query);
-    });
+  const query = queryText.trim();
+  const eligible = actions.filter((action) => action.enabled !== false || action.disabledReason !== undefined);
+  if (query === "") return [...eligible];
+  return fuzzySearch(query, eligible.map((a) => ({
+    text: [a.title, a.description ?? "", a.disabledReason ?? "", a.group ?? "", a.shortcut ?? ""].join(" "),
+    item: a,
+  }))).map((r) => r.item);
 }
