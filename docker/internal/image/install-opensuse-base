@@ -53,6 +53,13 @@ add_nodejs_repo() {
 # refreshes noisy or brittle when its signing key rolls independently.
 zypper --non-interactive modifyrepo --disable repo-openh264 >/dev/null 2>&1 || true
 
+# Some Tumbleweed snapshots include the FIPS base pattern. This image does not
+# enforce FIPS mode, and the pattern can turn normal package installs into
+# interactive crypto-policy solver choices while repository metadata is in flux.
+if rpm -q patterns-base-fips >/dev/null 2>&1; then
+  zypper --non-interactive remove patterns-base-fips
+fi
+
 add_nodejs_repo
 zypper --gpg-auto-import-keys --non-interactive refresh
 
