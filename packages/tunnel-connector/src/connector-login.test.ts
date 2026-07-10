@@ -114,6 +114,8 @@ function createLoginResult(): ConnectorLoginResult {
       controlApiBaseUrl: "https://control.local/",
       machineId: "machine_123",
       machineToken: "piwt_mtok_v1_machine",
+      machineSlug: "my-dev-box",
+      publicUrl: "https://my-dev-box.ns-abc123.tunnels.pi-web.dev",
     },
     registeredMachine: {
       machine: {
@@ -258,6 +260,8 @@ describe("connector login flow", () => {
         controlApiBaseUrl: "https://control.local/",
         machineId: "machine_123",
         machineToken: "piwt_mtok_v1_machine",
+        machineSlug: "my-dev-box",
+        publicUrl: "https://my-dev-box.ns-abc123.tunnels.pi-web.dev",
       },
     });
   });

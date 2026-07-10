@@ -9,6 +9,7 @@ import {
   parseLoginArgs,
   parseRegisterMachineArgs,
   parseStartArgs,
+  parseStatusArgs,
   runCli,
 } from "./cli.js";
 import { type ConnectorConfig, createDefaultConnectorConfig } from "./config-storage.js";
@@ -58,6 +59,7 @@ function createCliDependencies(argv: readonly string[]): CliDependencies {
     now: () => new Date("2026-07-03T12:00:00.000Z"),
     pid: 4321,
     platform: "linux",
+    processExists: () => false,
     readConfig: () => createDefaultConnectorConfig(),
     registerSignalHandler: () => undefined,
     runtime: createNodeConnectorRuntimeDependencies("linux"),
@@ -108,7 +110,7 @@ describe("pi-web-tunnel CLI", () => {
     expect(stdout.output()).toContain("  login             Authenticate and register this machine with the hosted service.\n");
     expect(stdout.output()).toContain("  register-machine  Persist bootstrap-issued machine credentials locally.\n");
     expect(stdout.output()).toContain("  start             Start the PI WEB Safe Tunnel connector.\n");
-    expect(stdout.output()).toContain("  status            Show connector status and the discovered config path.\n");
+    expect(stdout.output()).toContain("  status [--json]   Show connector status and the discovered config path.\n");
     expect(stdout.output()).toContain("  stop              Stop the PI WEB Safe Tunnel connector.\n");
   });
 
@@ -138,6 +140,84 @@ describe("pi-web-tunnel CLI", () => {
     expect(exitCode).toBe(0);
     expect(stdout.output()).toContain("Status: not configured\n");
     expect(stdout.output()).toContain("Config path: /home/pi/.config/pi-web-tunnel/config.json\n");
+    expect(stdout.output()).toContain("Runtime: stopped\n");
+  });
+
+  it("prints structured JSON status without exposing the machine token", async () => {
+    const stdout = createCapturedSink();
+    const stderr = createCapturedSink();
+    const configPath = "/home/pi/.config/pi-web-tunnel/config.json";
+    const pidFilePath = "/home/pi/.config/pi-web-tunnel/connector.pid";
+    const frpcConfigPath = "/home/pi/.config/pi-web-tunnel/frpc.toml";
+    const logPath = "/home/pi/.config/pi-web-tunnel/connector.log";
+    const existingFiles = new Set([configPath, pidFilePath, frpcConfigPath, logPath]);
+    const runtimeFiles = new Map([
+      [pidFilePath, "9988\n"],
+      [logPath, "\u001B[31mfrpc failed\u001B[0m\n"],
+    ]);
+
+    const exitCode = await runCli({
+      ...createCliDependencies(["status", "--json"]),
+      fileExists: (path) => existingFiles.has(path),
+      processExists: (pid) => pid === 9988,
+      readConfig: () => ({
+        localPiWebUrl: "http://127.0.0.1:9000",
+        schemaVersion: 2,
+        frpcPath: "/usr/local/bin/frpc",
+        machine: {
+          controlApiBaseUrl: "https://control.example.test",
+          machineId: "machine_abc",
+          machineToken: "piwt_mtok_v1_secret",
+          machineSlug: "dev-box",
+          publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",
+        },
+      }),
+      runtime: {
+        ...createNodeConnectorRuntimeDependencies("linux"),
+        readFile: (path) => {
+          const contents = runtimeFiles.get(path);
+          if (contents === undefined) throw new Error(`ENOENT: ${path}`);
+          return contents;
+        },
+      },
+      stderr: stderr.sink,
+      stdout: stdout.sink,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.output()).toBe("");
+    expect(stdout.output()).not.toContain("piwt_mtok_v1_secret");
+    const parsed: unknown = JSON.parse(stdout.output());
+    expect(parsed).toEqual({
+      statusVersion: 1,
+      config: {
+        path: configPath,
+        exists: true,
+        state: "registered",
+        localPiWebUrl: "http://127.0.0.1:9000",
+        frpcPathConfigured: true,
+        machine: {
+          controlApiBaseUrl: "https://control.example.test",
+          machineId: "machine_abc",
+          machineSlug: "dev-box",
+          publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",
+        },
+      },
+      runtime: {
+        pidFilePath,
+        frpcConfigPath,
+        frpcConfigExists: true,
+        state: "running",
+        pid: 9988,
+      },
+      log: {
+        path: logPath,
+        exists: true,
+        tailMaxCharacters: 12_000,
+        tail: "frpc failed\n",
+      },
+    });
+    expect(parsed).not.toHaveProperty(["config", "machine", "machineToken"]);
   });
 
   it("reports no running connector on stop when no PID file exists", async () => {
@@ -290,6 +370,8 @@ describe("pi-web-tunnel CLI", () => {
             controlApiBaseUrl: "https://control.local/",
             machineId: "machine_123",
             machineToken: "piwt_mtok_v1_machine",
+            machineSlug: "my-dev-box",
+            publicUrl: "https://my-dev-box.ns-abc123.tunnels.pi-web.dev",
           },
         },
       },
@@ -374,6 +456,12 @@ describe("pi-web-tunnel CLI", () => {
       localPiWebUrl: "http://127.0.0.1:9000",
       frpcPath: "/usr/local/bin/frpc",
     });
+  });
+
+  it("parses status args", () => {
+    expect(parseStatusArgs(["--json"])).toEqual({ json: true });
+    expect(parseStatusArgs([])).toEqual({ json: false });
+    expect(() => parseStatusArgs(["--verbose"])).toThrow("Unknown status option");
   });
 
   it("parses start args", () => {

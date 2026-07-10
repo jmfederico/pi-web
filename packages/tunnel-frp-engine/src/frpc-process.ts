@@ -218,7 +218,7 @@ export function createNodeFrpcProcessManagerDependencies(): FrpcProcessManagerDe
 
 function createNodeSpawnOptions(request: FrpcSpawnRequest): SpawnOptions {
   const options: SpawnOptions = {
-    stdio: "ignore",
+    stdio: "inherit",
     windowsHide: true,
   };
 

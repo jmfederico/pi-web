@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { safeTunnelApi, type SafeTunnelOperationResponse, type SafeTunnelStatusResponse } from "../../api";
-import { createSafeTunnelLoginRequest, machineSlugFromName, safeTunnelLoginValidationMessage, SettingsSafeTunnelPanel } from "./SettingsSafeTunnelPanel";
+import { createSafeTunnelLoginRequest, machineSlugFromName, safeTunnelLoginValidationMessage, safeTunnelRuntimeSummary, SettingsSafeTunnelPanel } from "./SettingsSafeTunnelPanel";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -29,6 +29,11 @@ describe("Safe Tunnel login form helpers", () => {
       localPiWebUrl: "http://127.0.0.1:8504",
     });
   });
+
+  it("formats runtime summaries for the current tunnel card", () => {
+    expect(safeTunnelRuntimeSummary({ pidFilePath: "/tmp/connector.pid", state: "running", pid: 1234 })).toBe("Running (PID 1234)");
+    expect(safeTunnelRuntimeSummary({ pidFilePath: "/tmp/connector.pid", state: "stopped" })).toBe("Stopped");
+  });
 });
 
 describe("settings-safe-tunnel-panel operations", () => {
@@ -43,8 +48,60 @@ describe("settings-safe-tunnel-panel operations", () => {
     expect(getPanelProperty(panel, "status")).toBe(status);
     expect(getPanelProperty(panel, "operation")).toBe(operation);
     expect(getPanelProperty(panel, "controlApiUrl")).toBe("https://control.example.test");
+    expect(getPanelProperty(panel, "machineSlug")).toBe("my-pi-web-machine");
     expect(getPanelProperty(panel, "localPiWebUrl")).toBe("http://127.0.0.1:8504");
     expect(getPanelProperty(panel, "loading")).toBe(false);
+  });
+
+  it("renders a separate current tunnel card with connector-owned metadata and actions", () => {
+    const panel = new SettingsSafeTunnelPanel();
+    setPanelProperty(panel, "status", safeTunnelStatus({ runtimeState: "running", frpcPathConfigured: true }));
+
+    const text = renderedTemplateText(callPanelMethod(panel, "renderCurrentTunnelCard"));
+
+    expect(text).toContain("Current tunnel");
+    expect(text).toContain("Slug");
+    expect(text).toContain("dev-box");
+    expect(text).toContain("Public URL");
+    expect(text).toContain("https://dev-box.ns.tunnels.pi-web.dev");
+    expect(text).toContain("Machine ID");
+    expect(text).toContain("machine_1");
+    expect(text).toContain("Config path");
+    expect(text).toContain("/home/test/.config/pi-web-tunnel/config.json");
+    expect(text).toContain("Local PI WEB URL");
+    expect(text).toContain("http://127.0.0.1:8504");
+    expect(text).toContain("Running (PID 1234)");
+    expect(text).toContain("Open");
+    expect(text).toContain("Copy");
+  });
+
+  it("renders the registration form as an explicit new or re-register action", () => {
+    const panel = new SettingsSafeTunnelPanel();
+    setPanelProperty(panel, "status", safeTunnelStatus());
+
+    const text = renderedTemplateText(callPanelMethod(panel, "renderLoginForm"));
+
+    expect(text).toContain("New / re-register tunnel");
+    expect(text).toContain("Current tunnel remains separate");
+    expect(text).toContain("Current tunnel: slug dev-box");
+    expect(text).toContain("intentionally not prefilled from the current tunnel");
+    expect(text).toContain("Start new/re-register login");
+  });
+
+  it("keeps user-edited registration fields when status defaults are applied", () => {
+    const panel = new SettingsSafeTunnelPanel();
+    setPanelProperty(panel, "controlApiUrl", "https://edited-control.example.test");
+    setPanelProperty(panel, "controlApiUrlEdited", true);
+    setPanelProperty(panel, "machineSlug", "edited-slug");
+    setPanelProperty(panel, "machineSlugEdited", true);
+    setPanelProperty(panel, "localPiWebUrl", "http://127.0.0.1:9999");
+    setPanelProperty(panel, "localPiWebUrlEdited", true);
+
+    callPanelMethod(panel, "applyStatusDefaults", safeTunnelStatus());
+
+    expect(getPanelProperty(panel, "controlApiUrl")).toBe("https://edited-control.example.test");
+    expect(getPanelProperty(panel, "machineSlug")).toBe("edited-slug");
+    expect(getPanelProperty(panel, "localPiWebUrl")).toBe("http://127.0.0.1:9999");
   });
 
   it("starts login through the Safe Tunnel bridge", async () => {
@@ -87,8 +144,9 @@ describe("settings-safe-tunnel-panel operations", () => {
 
   it("starts and stops the connector through the bridge", async () => {
     const stopped = safeTunnelStatus({ runtimeState: "stopped", frpcPathConfigured: true });
-    const running = safeTunnelStatus({ runtimeState: "running", frpcPathConfigured: true });
-    const startSpy = vi.spyOn(safeTunnelApi, "start").mockResolvedValue({ accepted: true, connectorProcessId: 1234, status: running });
+    const operation = safeTunnelOperation({ connectorProcessId: 1234, kind: "start", status: "running" });
+    const running = safeTunnelStatus({ activeOperation: operation, runtimeState: "running", frpcPathConfigured: true });
+    const startSpy = vi.spyOn(safeTunnelApi, "start").mockResolvedValue({ accepted: true, operation, connectorProcessId: 1234, status: running });
     const stopSpy = vi.spyOn(safeTunnelApi, "stop").mockResolvedValue({ command: { exitCode: 0, stdout: "Stopped\n", stderr: "" }, status: stopped });
     const panel = new SettingsSafeTunnelPanel();
     setPanelProperty(panel, "status", stopped);
@@ -96,8 +154,9 @@ describe("settings-safe-tunnel-panel operations", () => {
     await callPanelPromise(panel, "startConnector");
 
     expect(startSpy).toHaveBeenCalledWith({});
+    expect(getPanelProperty(panel, "operation")).toBe(operation);
     expect(getPanelProperty(panel, "status")).toBe(running);
-    expect(getPanelProperty(panel, "message")).toBe("Safe Tunnel connector start requested (PID 1234).");
+    expect(getPanelProperty(panel, "message")).toBe("Safe Tunnel connector start operation started (PID 1234).");
 
     await callPanelPromise(panel, "stopConnector");
 
@@ -149,7 +208,12 @@ function safeTunnelStatus(options: SafeTunnelStatusOptions = {}): SafeTunnelStat
       state: "registered",
       localPiWebUrl: "http://127.0.0.1:8504",
       frpcPathConfigured: options.frpcPathConfigured ?? true,
-      machine: { controlApiBaseUrl: "https://control.example.test", machineId: "machine_1" },
+      machine: {
+        controlApiBaseUrl: "https://control.example.test",
+        machineId: "machine_1",
+        machineSlug: "dev-box",
+        publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",
+      },
     },
     runtime: {
       pidFilePath: "/home/test/.config/pi-web-tunnel/connector.pid",
@@ -160,18 +224,34 @@ function safeTunnelStatus(options: SafeTunnelStatusOptions = {}): SafeTunnelStat
   };
 }
 
-function safeTunnelOperation(options: { publicUrl?: string; status: SafeTunnelOperationResponse["status"] }): SafeTunnelOperationResponse {
+function safeTunnelOperation(options: { connectorProcessId?: number; kind?: SafeTunnelOperationResponse["kind"]; publicUrl?: string; status: SafeTunnelOperationResponse["status"] }): SafeTunnelOperationResponse {
+  const kind = options.kind ?? "login";
   return {
     id: "op_1",
-    kind: "login",
+    kind,
     status: options.status,
     startedAt: "2026-07-03T00:00:00.000Z",
-    stdout: "Open this URL to authorize the connector:\nhttps://control.example.test/device?userCode=ABCD-EFGH\nUser code: ABCD-EFGH\n",
+    stdout: kind === "login" ? "Open this URL to authorize the connector:\nhttps://control.example.test/device?userCode=ABCD-EFGH\nUser code: ABCD-EFGH\n" : "Starting PI WEB Safe Tunnel connector.\n",
     stderr: "",
-    userCode: "ABCD-EFGH",
-    verificationUriComplete: "https://control.example.test/device?userCode=ABCD-EFGH",
+    ...(options.connectorProcessId === undefined ? {} : { connectorProcessId: options.connectorProcessId }),
+    ...(kind === "login" ? { userCode: "ABCD-EFGH", verificationUriComplete: "https://control.example.test/device?userCode=ABCD-EFGH" } : {}),
     ...(options.publicUrl === undefined ? {} : { publicUrl: options.publicUrl }),
   };
+}
+
+function renderedTemplateText(value: unknown): string {
+  if (value === null || value === undefined || value === false) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map((item) => renderedTemplateText(item)).join("");
+  if (isTemplateResultRecord(value)) {
+    return value.strings.reduce((text, stringPart, index) => `${text}${stringPart}${renderedTemplateText(value.values[index])}`, "");
+  }
+  return "";
+}
+
+function isTemplateResultRecord(value: unknown): value is { strings: readonly string[]; values: readonly unknown[] } {
+  if (typeof value !== "object" || value === null) return false;
+  return Array.isArray(Reflect.get(value, "strings")) && Array.isArray(Reflect.get(value, "values"));
 }
 
 async function callPanelPromise(panel: SettingsSafeTunnelPanel, methodName: string, ...args: readonly unknown[]): Promise<void> {

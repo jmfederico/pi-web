@@ -133,8 +133,12 @@ export function parseSafeTunnelLoginResponse(value: unknown): SafeTunnelLoginRes
 
 export function parseSafeTunnelOperationResponse(value: unknown): SafeTunnelOperationResponse {
   const record = requireRecord(value);
+  const connectorProcessId = optionalNumber(record, "connectorProcessId");
   const exitCode = optionalNumberOrNull(record, "exitCode");
   const finishedAt = optionalString(record, "finishedAt");
+  const logPath = optionalString(record, "logPath");
+  const logTail = optionalString(record, "logTail");
+  const logTailMaxCharacters = optionalNumber(record, "logTailMaxCharacters");
   const publicUrl = optionalString(record, "publicUrl");
   const signal = optionalString(record, "signal");
   const userCode = optionalString(record, "userCode");
@@ -147,9 +151,13 @@ export function parseSafeTunnelOperationResponse(value: unknown): SafeTunnelOper
     startedAt: requireString(record, "startedAt"),
     stdout: requireString(record, "stdout"),
     stderr: requireString(record, "stderr"),
+    ...(connectorProcessId === undefined ? {} : { connectorProcessId }),
     ...(error === undefined ? {} : { error }),
     ...(exitCode === undefined ? {} : { exitCode }),
     ...(finishedAt === undefined ? {} : { finishedAt }),
+    ...(logPath === undefined ? {} : { logPath }),
+    ...(logTail === undefined ? {} : { logTail }),
+    ...(logTailMaxCharacters === undefined ? {} : { logTailMaxCharacters }),
     ...(publicUrl === undefined ? {} : { publicUrl }),
     ...(signal === undefined ? {} : { signal }),
     ...(userCode === undefined ? {} : { userCode }),
@@ -163,6 +171,7 @@ export function parseSafeTunnelStartResponse(value: unknown): SafeTunnelStartRes
   if (record["accepted"] !== true) throw new Error("Expected Safe Tunnel start accepted response");
   return {
     accepted: true,
+    operation: parseSafeTunnelOperationResponse(record["operation"]),
     ...(connectorProcessId === undefined ? {} : { connectorProcessId }),
     status: parseSafeTunnelStatusResponse(record["status"]),
   };
@@ -220,21 +229,41 @@ function parseSafeTunnelConfigStatus(value: unknown): SafeTunnelConfigStatus {
 
 function parseSafeTunnelConfigMachine(value: unknown): NonNullable<SafeTunnelConfigStatus["machine"]> {
   const record = requireRecord(value);
+  const machineSlug = optionalString(record, "machineSlug");
+  const publicHostname = optionalString(record, "publicHostname");
+  const publicUrl = optionalString(record, "publicUrl");
   return {
     controlApiBaseUrl: requireString(record, "controlApiBaseUrl"),
     machineId: requireString(record, "machineId"),
+    ...(machineSlug === undefined ? {} : { machineSlug }),
+    ...(publicHostname === undefined ? {} : { publicHostname }),
+    ...(publicUrl === undefined ? {} : { publicUrl }),
   };
 }
 
 function parseSafeTunnelRuntimeStatus(value: unknown): SafeTunnelRuntimeStatus {
   const record = requireRecord(value);
+  const frpcConfigExists = parseOptionalBoolean(record["frpcConfigExists"], "frpcConfigExists");
+  const frpcConfigPath = optionalString(record, "frpcConfigPath");
   const pid = optionalNumber(record, "pid");
   const error = optionalString(record, "error");
+  const logError = optionalString(record, "logError");
+  const logExists = parseOptionalBoolean(record["logExists"], "logExists");
+  const logPath = optionalString(record, "logPath");
+  const logTail = optionalString(record, "logTail");
+  const logTailMaxCharacters = optionalNumber(record, "logTailMaxCharacters");
   return {
     pidFilePath: requireString(record, "pidFilePath"),
     state: requireSafeTunnelRuntimeState(record, "state"),
+    ...(frpcConfigExists === undefined ? {} : { frpcConfigExists }),
+    ...(frpcConfigPath === undefined ? {} : { frpcConfigPath }),
     ...(pid === undefined ? {} : { pid }),
     ...(error === undefined ? {} : { error }),
+    ...(logError === undefined ? {} : { logError }),
+    ...(logExists === undefined ? {} : { logExists }),
+    ...(logPath === undefined ? {} : { logPath }),
+    ...(logTail === undefined ? {} : { logTail }),
+    ...(logTailMaxCharacters === undefined ? {} : { logTailMaxCharacters }),
   };
 }
 
@@ -267,9 +296,9 @@ function requireSafeTunnelRuntimeState(record: Record<string, unknown>, key: str
   return value;
 }
 
-function requireSafeTunnelOperationKind(record: Record<string, unknown>, key: string): "login" {
+function requireSafeTunnelOperationKind(record: Record<string, unknown>, key: string): "login" | "start" {
   const value = requireString(record, key);
-  if (value !== "login") throw new Error(`Expected Safe Tunnel operation kind field: ${key}`);
+  if (value !== "login" && value !== "start") throw new Error(`Expected Safe Tunnel operation kind field: ${key}`);
   return value;
 }
 

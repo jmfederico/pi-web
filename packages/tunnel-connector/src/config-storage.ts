@@ -32,6 +32,8 @@ export interface ConnectorMachineCredentials {
   readonly controlApiBaseUrl: string;
   readonly machineId: string;
   readonly machineToken: string;
+  readonly machineSlug?: string;
+  readonly publicUrl?: string;
 }
 
 export interface ConnectorConfig {
@@ -177,11 +179,27 @@ function parseOptionalMachineCredentials(value: unknown): ConnectorMachineCreden
     throw new Error("Connector config machine must be a JSON object.");
   }
 
-  return {
+  const machine: ConnectorMachineCredentials = {
     controlApiBaseUrl: requireMachineCredentialString(value["controlApiBaseUrl"], "controlApiBaseUrl"),
     machineId: requireMachineCredentialString(value["machineId"], "machineId"),
     machineToken: requireMachineCredentialString(value["machineToken"], "machineToken"),
   };
+  const machineSlug = parseOptionalConfigString(value["machineSlug"], "machine.machineSlug");
+  const publicUrl = parseOptionalConfigString(value["publicUrl"], "machine.publicUrl");
+
+  if (machineSlug !== undefined && publicUrl !== undefined) {
+    return { ...machine, machineSlug, publicUrl };
+  }
+
+  if (machineSlug !== undefined) {
+    return { ...machine, machineSlug };
+  }
+
+  if (publicUrl !== undefined) {
+    return { ...machine, publicUrl };
+  }
+
+  return machine;
 }
 
 function requireMachineCredentialString(value: unknown, fieldName: string): string {

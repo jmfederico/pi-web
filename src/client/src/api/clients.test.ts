@@ -110,14 +110,14 @@ describe("Safe Tunnel API", () => {
       jsonResponse(status),
       jsonResponse({ operation, status: { ...status, activeOperation: operation } }),
       jsonResponse(operation),
-      jsonResponse({ accepted: true, connectorProcessId: 321, status }),
+      jsonResponse({ accepted: true, operation: { ...operation, kind: "start", connectorProcessId: 321 }, connectorProcessId: 321, status }),
       jsonResponse({ command: { exitCode: 0, stdout: "Stopped\n", stderr: "" }, status }),
     ]);
 
     await expect(safeTunnelApi.status()).resolves.toEqual(status);
     await expect(safeTunnelApi.login({ controlApiUrl: "https://control.example.test", machineName: "Dev Box", machineSlug: "dev-box" })).resolves.toEqual({ operation, status: { ...status, activeOperation: operation } });
     await expect(safeTunnelApi.operation("op 1")).resolves.toEqual(operation);
-    await expect(safeTunnelApi.start({ frpcPath: "/opt/frpc" })).resolves.toEqual({ accepted: true, connectorProcessId: 321, status });
+    await expect(safeTunnelApi.start({ frpcPath: "/opt/frpc" })).resolves.toEqual({ accepted: true, operation: { ...operation, kind: "start", connectorProcessId: 321 }, connectorProcessId: 321, status });
     await expect(safeTunnelApi.stop()).resolves.toEqual({ command: { exitCode: 0, stdout: "Stopped\n", stderr: "" }, status });
 
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
@@ -455,7 +455,12 @@ function safeTunnelStatusResponse() {
       state: "registered",
       localPiWebUrl: "http://127.0.0.1:8504",
       frpcPathConfigured: true,
-      machine: { controlApiBaseUrl: "https://control.example.test", machineId: "machine_1" },
+      machine: {
+        controlApiBaseUrl: "https://control.example.test",
+        machineId: "machine_1",
+        machineSlug: "dev-box",
+        publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",
+      },
     },
     runtime: { pidFilePath: "/home/test/.config/pi-web-tunnel/connector.pid", state: "running", pid: 123 },
   };

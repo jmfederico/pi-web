@@ -118,6 +118,7 @@ class FakeSafeTunnelBridgeService implements SafeTunnelBridgeService {
 
   readonly startResponse: SafeTunnelStartResponse = {
     accepted: true,
+    operation: { ...this.operationResponse, connectorProcessId: 1234, kind: "start" },
     connectorProcessId: 1234,
     status: this.statusResponse,
   };

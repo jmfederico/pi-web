@@ -11,6 +11,7 @@ import {
   readConnectorConfig,
   writeConnectorConfig,
   type ConnectorConfig,
+  type ConnectorMachineCredentials,
 } from "./config-storage.js";
 import {
   applyConnectorLoginResultToConfig,
@@ -24,12 +25,18 @@ import {
   runConnectorStart,
   runConnectorStop,
   type ConnectorRuntimeDependencies,
+  type ConnectorRuntimePaths,
   type FetchLike,
   type FetchLikeRequestInit,
 } from "./connector-runtime.js";
 
 export const connectorConfigDirectoryName = "pi-web-tunnel";
 export const connectorConfigFileName = "config.json";
+export const connectorLogFileName = "connector.log";
+export const connectorStatusFormatVersion = 1;
+
+const maxStatusLogTailCharacters = 12_000;
+const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "gu");
 
 type PathApi = Pick<typeof posix, "join">;
 
@@ -39,16 +46,58 @@ export interface ConfigPathDependencies {
   readonly platform: NodeJS.Platform;
 }
 
-export type ConnectorStatusState = "configured" | "not-configured";
+export type ConnectorConfigStatusState = "missing" | "unregistered" | "registered" | "invalid";
+export type ConnectorRuntimeStatusState = "stopped" | "running" | "stale" | "unknown";
+
+export interface ConnectorMachineStatus {
+  readonly controlApiBaseUrl: string;
+  readonly machineId: string;
+  readonly machineSlug?: string;
+  readonly publicUrl?: string;
+}
+
+export interface ConnectorConfigStatus {
+  readonly path: string;
+  readonly exists: boolean;
+  readonly state: ConnectorConfigStatusState;
+  readonly localPiWebUrl?: string;
+  readonly frpcPathConfigured?: boolean;
+  readonly machine?: ConnectorMachineStatus;
+  readonly error?: string;
+}
+
+export interface ConnectorRuntimeStatus {
+  readonly pidFilePath: string;
+  readonly frpcConfigPath: string;
+  readonly frpcConfigExists: boolean;
+  readonly state: ConnectorRuntimeStatusState;
+  readonly pid?: number;
+  readonly error?: string;
+}
+
+export interface ConnectorLogStatus {
+  readonly path: string;
+  readonly exists: boolean;
+  readonly tailMaxCharacters: number;
+  readonly tail?: string;
+  readonly error?: string;
+}
 
 export interface ConnectorStatus {
-  readonly configPath: string;
-  readonly state: ConnectorStatusState;
+  readonly statusVersion: typeof connectorStatusFormatVersion;
+  readonly config: ConnectorConfigStatus;
+  readonly runtime: ConnectorRuntimeStatus;
+  readonly log: ConnectorLogStatus;
 }
 
 export interface StatusDependencies {
   readonly configPath: string;
+  readonly runtimePaths: ConnectorRuntimePaths;
+  readonly logPath: string;
   readonly fileExists: (path: string) => boolean;
+  readonly processExists: (pid: number) => boolean;
+  readonly readConfig: (configPath: string) => ConnectorConfig;
+  readonly readFile: (path: string) => string;
 }
 
 export interface OutputSink {
@@ -62,6 +111,7 @@ export interface CliDependencies extends ConfigPathDependencies {
   readonly fileExists: (path: string) => boolean;
   readonly now: () => Date;
   readonly pid: number;
+  readonly processExists: (pid: number) => boolean;
   readonly readConfig: (configPath: string) => ConnectorConfig;
   readonly registerSignalHandler: (signal: NodeJS.Signals, handler: () => void) => void;
   readonly runtime: ConnectorRuntimeDependencies;
@@ -84,6 +134,10 @@ export interface RegisterMachineArgs {
   readonly frpcPath?: string;
 }
 
+export interface StatusArgs {
+  readonly json: boolean;
+}
+
 type CliCommand =
   | { readonly kind: "config-path" }
   | { readonly kind: "help" }
@@ -91,7 +145,7 @@ type CliCommand =
   | { readonly kind: "register-machine"; readonly args: readonly string[] }
   | { readonly kind: "start"; readonly args: readonly string[] }
   | { readonly kind: "stop"; readonly args: readonly string[] }
-  | { readonly kind: "status" }
+  | { readonly kind: "status"; readonly args: readonly string[] }
   | { readonly command: string; readonly kind: "unknown" };
 
 export function createDefaultCliDependencies(argv: readonly string[]): CliDependencies {
@@ -105,6 +159,7 @@ export function createDefaultCliDependencies(argv: readonly string[]): CliDepend
     now: () => new Date(),
     pid: process.pid,
     platform: process.platform,
+    processExists: defaultProcessExists,
     readConfig: (configPath) => readConnectorConfig(configPath),
     registerSignalHandler: (signal, handler) => {
       process.once(signal, handler);
@@ -141,12 +196,113 @@ export function discoverConnectorConfigPath(dependencies: ConfigPathDependencies
 }
 
 export function readConnectorStatus(dependencies: StatusDependencies): ConnectorStatus {
-  const configExists = dependencies.fileExists(dependencies.configPath);
-
   return {
-    configPath: dependencies.configPath,
-    state: configExists ? "configured" : "not-configured",
+    statusVersion: connectorStatusFormatVersion,
+    config: readConnectorConfigStatus(dependencies),
+    runtime: readConnectorRuntimeStatus(dependencies),
+    log: readConnectorLogStatus(dependencies),
   };
+}
+
+function readConnectorConfigStatus(dependencies: StatusDependencies): ConnectorConfigStatus {
+  if (!dependencies.fileExists(dependencies.configPath)) {
+    return { exists: false, path: dependencies.configPath, state: "missing" };
+  }
+
+  try {
+    const config = dependencies.readConfig(dependencies.configPath);
+    const status: ConnectorConfigStatus = {
+      exists: true,
+      path: dependencies.configPath,
+      state: config.machine === undefined ? "unregistered" : "registered",
+      localPiWebUrl: config.localPiWebUrl,
+      frpcPathConfigured: config.frpcPath !== undefined,
+    };
+
+    return config.machine === undefined
+      ? status
+      : { ...status, machine: connectorMachineStatus(config.machine) };
+  } catch (error) {
+    return {
+      exists: true,
+      path: dependencies.configPath,
+      state: "invalid",
+      error: errorMessage(error),
+    };
+  }
+}
+
+function connectorMachineStatus(credentials: ConnectorMachineCredentials): ConnectorMachineStatus {
+  return {
+    controlApiBaseUrl: credentials.controlApiBaseUrl,
+    machineId: credentials.machineId,
+    ...(credentials.machineSlug === undefined ? {} : { machineSlug: credentials.machineSlug }),
+    ...(credentials.publicUrl === undefined ? {} : { publicUrl: credentials.publicUrl }),
+  };
+}
+
+function readConnectorRuntimeStatus(dependencies: StatusDependencies): ConnectorRuntimeStatus {
+  const base = {
+    pidFilePath: dependencies.runtimePaths.pidFilePath,
+    frpcConfigPath: dependencies.runtimePaths.frpcConfigPath,
+    frpcConfigExists: dependencies.fileExists(dependencies.runtimePaths.frpcConfigPath),
+  };
+
+  if (!dependencies.fileExists(dependencies.runtimePaths.pidFilePath)) {
+    return { ...base, state: "stopped" };
+  }
+
+  try {
+    const pid = parseConnectorPidFile(dependencies.readFile(dependencies.runtimePaths.pidFilePath));
+    return dependencies.processExists(pid)
+      ? { ...base, state: "running", pid }
+      : { ...base, state: "stale", pid };
+  } catch (error) {
+    return { ...base, state: "unknown", error: errorMessage(error) };
+  }
+}
+
+function readConnectorLogStatus(dependencies: StatusDependencies): ConnectorLogStatus {
+  const base = {
+    path: dependencies.logPath,
+    tailMaxCharacters: maxStatusLogTailCharacters,
+  };
+
+  if (!dependencies.fileExists(dependencies.logPath)) {
+    return { ...base, exists: false };
+  }
+
+  try {
+    const tail = tailText(
+      sanitizeConnectorLog(dependencies.readFile(dependencies.logPath)),
+      maxStatusLogTailCharacters,
+    );
+
+    return tail.length === 0
+      ? { ...base, exists: true }
+      : { ...base, exists: true, tail };
+  } catch (error) {
+    return { ...base, exists: true, error: errorMessage(error) };
+  }
+}
+
+function parseConnectorPidFile(contents: string): number {
+  const trimmed = contents.trim();
+
+  if (!/^[1-9]\d*$/u.test(trimmed)) {
+    throw new Error("Connector PID file is malformed.");
+  }
+
+  return Number.parseInt(trimmed, 10);
+}
+
+function sanitizeConnectorLog(contents: string): string {
+  return contents.replace(ansiEscapePattern, "");
+}
+
+function tailText(contents: string, maxCharacters: number): string {
+  if (contents.length <= maxCharacters) return contents;
+  return contents.slice(contents.length - maxCharacters);
 }
 
 export function parseCliCommand(argv: readonly string[]): CliCommand {
@@ -157,7 +313,7 @@ export function parseCliCommand(argv: readonly string[]): CliCommand {
   }
 
   if (command === "status") {
-    return { kind: "status" };
+    return { args: argv.slice(1), kind: "status" };
   }
 
   if (command === "config-path") {
@@ -204,12 +360,17 @@ async function runCliCommand(dependencies: CliDependencies): Promise<number> {
       writeLine(dependencies.stdout, discoverConnectorConfigPath(dependencies));
       return 0;
 
-    case "status":
-      printStatus(dependencies.stdout, readConnectorStatus({
-        configPath: discoverConnectorConfigPath(dependencies),
-        fileExists: dependencies.fileExists,
-      }));
+    case "status": {
+      const statusArgs = parseStatusArgs(command.args);
+      const status = readCliConnectorStatus(dependencies);
+
+      if (statusArgs.json) {
+        printJsonStatus(dependencies.stdout, status);
+      } else {
+        printStatus(dependencies.stdout, status);
+      }
       return 0;
+    }
 
     case "login":
       return runLoginCommand(dependencies, command.args);
@@ -305,6 +466,21 @@ function runStopCommand(dependencies: CliDependencies, args: readonly string[]):
   });
 }
 
+function readCliConnectorStatus(dependencies: CliDependencies): ConnectorStatus {
+  const configDirectory = discoverConnectorConfigDirectory(dependencies);
+  const pathApi = pathApiForPlatform(dependencies.platform);
+
+  return readConnectorStatus({
+    configPath: pathApi.join(configDirectory, connectorConfigFileName),
+    runtimePaths: resolveConnectorRuntimePaths(configDirectory, dependencies.platform),
+    logPath: pathApi.join(configDirectory, connectorLogFileName),
+    fileExists: dependencies.fileExists,
+    processExists: dependencies.processExists,
+    readConfig: dependencies.readConfig,
+    readFile: dependencies.runtime.readFile,
+  });
+}
+
 export function parseLoginArgs(args: readonly string[]): ConnectorLoginArgs {
   let controlApiBaseUrl: string | undefined;
   let machineName: string | undefined;
@@ -377,6 +553,25 @@ export function parseLoginArgs(args: readonly string[]): ConnectorLoginArgs {
   }
 
   return base;
+}
+
+export function parseStatusArgs(args: readonly string[]): StatusArgs {
+  let json = false;
+  let index = 0;
+
+  while (index < args.length) {
+    const flag = args[index];
+
+    if (flag === "--json") {
+      json = true;
+      index += 1;
+      continue;
+    }
+
+    throw new Error(`Unknown status option: ${flag ?? ""}`);
+  }
+
+  return { json };
 }
 
 export function parseStartArgs(args: readonly string[]): StartArgs {
@@ -540,17 +735,59 @@ function printHelp(stdout: OutputSink): void {
   writeLine(stdout, "  login             Authenticate and register this machine with the hosted service.");
   writeLine(stdout, "  register-machine  Persist bootstrap-issued machine credentials locally.");
   writeLine(stdout, "  start             Start the PI WEB Safe Tunnel connector.");
-  writeLine(stdout, "  status            Show connector status and the discovered config path.");
+  writeLine(stdout, "  status [--json]   Show connector status and the discovered config path.");
   writeLine(stdout, "  stop              Stop the PI WEB Safe Tunnel connector.");
   writeLine(stdout, "  config-path       Print the discovered connector config path.");
 }
 
 function printStatus(stdout: OutputSink, status: ConnectorStatus): void {
-  const statusLabel = status.state === "configured" ? "configured" : "not configured";
-
   writeLine(stdout, "PI WEB Safe Tunnel connector");
-  writeLine(stdout, `Status: ${statusLabel}`);
-  writeLine(stdout, `Config path: ${status.configPath}`);
+  writeLine(stdout, `Status: ${formatConfigStatusLabel(status.config.state)}`);
+  writeLine(stdout, `Config path: ${status.config.path}`);
+  writeLine(stdout, `Runtime: ${formatRuntimeStatus(status.runtime)}`);
+
+  if (status.config.localPiWebUrl !== undefined) {
+    writeLine(stdout, `Local target: ${status.config.localPiWebUrl}`);
+  }
+
+  if (status.config.frpcPathConfigured !== undefined) {
+    writeLine(stdout, `frpc path configured: ${status.config.frpcPathConfigured ? "yes" : "no"}`);
+  }
+
+  if (status.config.machine !== undefined) {
+    writeLine(stdout, `Machine id: ${status.config.machine.machineId}`);
+    if (status.config.machine.machineSlug !== undefined) {
+      writeLine(stdout, `Machine slug: ${status.config.machine.machineSlug}`);
+    }
+    if (status.config.machine.publicUrl !== undefined) {
+      writeLine(stdout, `Public URL: ${status.config.machine.publicUrl}`);
+    }
+  }
+
+  if (status.config.error !== undefined) {
+    writeLine(stdout, `Config error: ${status.config.error}`);
+  }
+
+  if (status.runtime.error !== undefined) {
+    writeLine(stdout, `Runtime error: ${status.runtime.error}`);
+  }
+}
+
+function printJsonStatus(stdout: OutputSink, status: ConnectorStatus): void {
+  writeLine(stdout, JSON.stringify(status, null, 2));
+}
+
+function formatConfigStatusLabel(state: ConnectorConfigStatusState): string {
+  if (state === "missing") return "not configured";
+  return state;
+}
+
+function formatRuntimeStatus(status: ConnectorRuntimeStatus): string {
+  if (status.pid === undefined) {
+    return status.state;
+  }
+
+  return `${status.state} (pid ${status.pid.toString()})`;
 }
 
 function formatCliError(error: unknown): string {
@@ -581,6 +818,23 @@ function createFetchRequestInit(init: FetchLikeRequestInit | undefined): Request
   }
 
   return requestInit;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function defaultProcessExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return hasErrorCode(error, "EPERM");
+  }
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 function nonEmptyString(value: string | undefined): string | undefined {

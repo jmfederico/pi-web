@@ -1,6 +1,6 @@
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { safeTunnelApi, type SafeTunnelLoginRequest, type SafeTunnelOperationResponse, type SafeTunnelStatusResponse } from "../../api";
+import { safeTunnelApi, type SafeTunnelLoginRequest, type SafeTunnelOperationResponse, type SafeTunnelRuntimeStatus, type SafeTunnelStatusResponse } from "../../api";
 import { writeClipboardText } from "../../clipboard";
 
 const operationPollIntervalMs = 2_000;
@@ -31,7 +31,9 @@ export class SettingsSafeTunnelPanel extends LitElement {
   @state() private localPiWebUrl = defaultLocalPiWebUrl;
   @state() private loginFrpcPath = "";
   @state() private startFrpcPath = "";
+  private controlApiUrlEdited = false;
   private machineSlugEdited = false;
+  private localPiWebUrlEdited = false;
   private operationPollTimer: number | undefined;
 
   override connectedCallback(): void {
@@ -61,6 +63,7 @@ export class SettingsSafeTunnelPanel extends LitElement {
         ${this.loading && this.status === undefined ? html`<div class="notice">Loading Safe Tunnel status…</div>` : null}
 
         ${this.renderStatusCards()}
+        ${this.renderCurrentTunnelCard()}
         ${this.renderLoginForm()}
         ${this.renderOperation()}
         ${this.renderConnectorControls()}
@@ -92,37 +95,145 @@ export class SettingsSafeTunnelPanel extends LitElement {
         <article>
           <strong>Registration</strong>
           <span class=${status.config.state === "registered" ? "good" : "muted"}>${configStateLabel(status.config.state)}</span>
-          ${status.config.machine === undefined ? html`<small>${status.config.path}</small>` : html`
-            <small>Machine ${status.config.machine.machineId}</small>
-            <small>${status.config.machine.controlApiBaseUrl}</small>
-          `}
+          <small>${status.config.path}</small>
+          ${status.config.machine === undefined ? null : html`<small>${status.config.machine.controlApiBaseUrl}</small>`}
           ${status.config.error === undefined ? null : html`<small class="bad">${status.config.error}</small>`}
         </article>
         <article>
           <strong>Runtime</strong>
-          <span class=${status.runtime.state === "running" ? "good" : status.runtime.state === "stale" || status.runtime.state === "unknown" ? "bad" : "muted"}>${runtimeStateLabel(status.runtime.state)}</span>
+          <span class=${runtimeStateClass(status.runtime.state)}>${runtimeStateLabel(status.runtime.state)}</span>
           <small>${status.runtime.pid === undefined ? status.runtime.pidFilePath : `PID ${String(status.runtime.pid)}`}</small>
           ${status.runtime.error === undefined ? null : html`<small class="bad">${status.runtime.error}</small>`}
+          ${status.runtime.logError === undefined ? null : html`<small class="bad">Connector log: ${status.runtime.logError}</small>`}
         </article>
       </div>
+    `;
+  }
+
+  private renderCurrentTunnelCard(): TemplateResult {
+    const status = this.status;
+    if (status === undefined) {
+      return html`
+        <section class="card current-tunnel-card" aria-labelledby="safe-tunnel-current-heading">
+          <div class="section-heading">
+            <div>
+              <h3 id="safe-tunnel-current-heading">Current tunnel</h3>
+              <p>Loading connector-owned tunnel metadata…</p>
+            </div>
+            <span class="status-pill muted">Loading</span>
+          </div>
+        </section>
+      `;
+    }
+
+    const machine = status.config.machine;
+    const localPiWebUrl = status.config.localPiWebUrl;
+    const publicUrl = machine?.publicUrl;
+    return html`
+      <section class="card current-tunnel-card" aria-labelledby="safe-tunnel-current-heading">
+        <div class="section-heading">
+          <div>
+            <h3 id="safe-tunnel-current-heading">Current tunnel</h3>
+            <p>Read-only connector-owned registration and runtime metadata for this PI WEB.</p>
+          </div>
+          <span class=${`status-pill ${status.config.state === "registered" ? "good" : "muted"}`}>${configStateLabel(status.config.state)}</span>
+        </div>
+        ${machine === undefined ? html`
+          <p class="help empty-state">No registered tunnel is saved in the connector config yet. Use the login form below to register this PI WEB.</p>
+          <dl class="detail-list">
+            ${this.renderDetailRow("Config path", status.config.path, { copyLabel: "Config path" })}
+            ${this.renderDetailRow("Local PI WEB URL", localPiWebUrl, { copyLabel: "Local PI WEB URL", openUrl: localPiWebUrl })}
+            ${this.renderRuntimeDetail(status.runtime)}
+          </dl>
+        ` : html`
+          <dl class="detail-list">
+            ${this.renderDetailRow("Slug", machine.machineSlug, { copyLabel: "Tunnel slug" })}
+            ${this.renderDetailRow("Public URL", publicUrl, { copyLabel: "Public URL", openUrl: publicUrl })}
+            ${this.renderDetailRow("Machine ID", machine.machineId, { copyLabel: "Machine ID" })}
+            ${this.renderDetailRow("Config path", status.config.path, { copyLabel: "Config path" })}
+            ${this.renderDetailRow("Local PI WEB URL", localPiWebUrl, { copyLabel: "Local PI WEB URL", openUrl: localPiWebUrl })}
+            ${this.renderRuntimeDetail(status.runtime)}
+          </dl>
+        `}
+        ${status.config.error === undefined ? null : html`<p class="bad">${status.config.error}</p>`}
+        ${this.renderCurrentTunnelRuntimeDiagnostics(status.runtime)}
+      </section>
+    `;
+  }
+
+  private renderDetailRow(label: string, value: string | undefined, options: { copyLabel?: string; openUrl?: string | undefined } = {}): TemplateResult {
+    const displayValue = value === undefined || value.trim() === "" ? undefined : value;
+    const copyLabel = options.copyLabel;
+    const openUrl = displayValue === undefined ? undefined : options.openUrl;
+    return html`
+      <div class="detail-row">
+        <dt>${label}</dt>
+        <dd>
+          ${openUrl === undefined
+            ? html`<span class=${displayValue === undefined ? "detail-value muted" : "detail-value"}>${displayValue ?? "Not reported"}</span>`
+            : html`<a class="detail-value" href=${openUrl} target="_blank" rel="noreferrer">${displayValue}</a>`}
+          ${displayValue === undefined ? null : html`
+            <span class="detail-actions">
+              ${openUrl === undefined ? null : html`<button type="button" @click=${() => { this.openUrl(openUrl); }}>Open</button>`}
+              ${copyLabel === undefined ? null : html`<button type="button" @click=${() => { void this.copyText(displayValue, copyLabel); }}>Copy</button>`}
+            </span>
+          `}
+        </dd>
+      </div>
+    `;
+  }
+
+  private renderRuntimeDetail(runtime: SafeTunnelRuntimeStatus): TemplateResult {
+    return html`
+      <div class="detail-row">
+        <dt>Runtime</dt>
+        <dd>
+          <span class=${`detail-value ${runtimeStateClass(runtime.state)}`}>${safeTunnelRuntimeSummary(runtime)}</span>
+          <small>PID file ${runtime.pidFilePath}</small>
+          ${runtime.frpcConfigPath === undefined ? null : html`<small>frpc config ${runtime.frpcConfigPath}${runtime.frpcConfigExists === false ? " (missing)" : ""}</small>`}
+        </dd>
+      </div>
+    `;
+  }
+
+  private renderCurrentTunnelRuntimeDiagnostics(runtime: SafeTunnelRuntimeStatus): TemplateResult | null {
+    const hasLogTail = runtime.logTail !== undefined && runtime.logTail.trim() !== "";
+    const showLogTail = hasLogTail && runtime.state !== "running";
+    if (runtime.error === undefined && runtime.logError === undefined && !showLogTail) return null;
+
+    return html`
+      <details class="runtime-diagnostics" ?open=${runtime.state === "stale" || runtime.state === "unknown" || runtime.error !== undefined || runtime.logError !== undefined}>
+        <summary>Runtime diagnostics</summary>
+        ${runtime.error === undefined ? null : html`<p class="bad">${runtime.error}</p>`}
+        ${runtime.logError === undefined ? null : html`<p class="bad">Connector log: ${runtime.logError}</p>`}
+        ${!showLogTail ? null : html`
+          ${runtime.logPath === undefined ? null : html`<p class="help muted">${runtime.logPath}</p>`}
+          <pre>${runtime.logTail}</pre>
+        `}
+      </details>
     `;
   }
 
   private renderLoginForm(): TemplateResult {
     const validationMessage = safeTunnelLoginValidationMessage(this.loginFields());
     const disabledReason = this.loginDisabledReason(validationMessage);
+    const currentMachine = this.status?.config.machine;
+    const hasCurrentMachine = currentMachine !== undefined;
     return html`
       <section class="card form-card">
         <div class="section-heading">
           <div>
-            <h3>Register or sign in</h3>
-            <p>Starts the connector device flow. Approve it in the hosted Safe Tunnels page, then this panel will show the public URL when registration finishes.</p>
+            <h3>${hasCurrentMachine ? "New / re-register tunnel" : "Register this PI WEB"}</h3>
+            <p>${hasCurrentMachine
+              ? "Start a fresh connector device login. After hosted approval, the connector saves the new registration and the Current tunnel card updates."
+              : "Starts the connector device flow. Approve it in the hosted Safe Tunnels page, then this panel will show the public URL when registration finishes."}</p>
           </div>
         </div>
+        ${this.renderRegistrationActionNotice(currentMachine)}
         <form @submit=${(event: Event) => { event.preventDefault(); void this.startLogin(); }}>
           <label>
             Control API URL
-            <input .value=${this.controlApiUrl} placeholder="https://control.example.test" @input=${(event: Event) => { this.controlApiUrl = inputValue(event); }}>
+            <input .value=${this.controlApiUrl} placeholder="https://control.example.test" @input=${(event: Event) => { this.handleControlApiUrlInput(event); }}>
           </label>
           <label>
             Machine name
@@ -132,9 +243,12 @@ export class SettingsSafeTunnelPanel extends LitElement {
             Machine slug
             <input .value=${this.machineSlug} spellcheck="false" @input=${(event: Event) => { this.handleMachineSlugInput(event); }}>
           </label>
+          ${currentMachine?.machineSlug === undefined
+            ? html`<p class="field-help help">Choose a lowercase DNS label for this registration.</p>`
+            : html`<p class="field-help help">Current tunnel slug is <code>${currentMachine.machineSlug}</code>. This field is for the new/re-registered tunnel and is intentionally not prefilled from the current tunnel.</p>`}
           <label>
             Local PI WEB URL <small>optional</small>
-            <input .value=${this.localPiWebUrl} placeholder="http://127.0.0.1:8504" @input=${(event: Event) => { this.localPiWebUrl = inputValue(event); }}>
+            <input .value=${this.localPiWebUrl} placeholder="http://127.0.0.1:8504" @input=${(event: Event) => { this.handleLocalPiWebUrlInput(event); }}>
           </label>
           <label>
             frpc path <small>optional</small>
@@ -142,10 +256,21 @@ export class SettingsSafeTunnelPanel extends LitElement {
           </label>
           ${disabledReason === undefined ? null : html`<p class="help bad">${disabledReason}</p>`}
           <div class="actions">
-            <button type="submit" ?disabled=${disabledReason !== undefined || this.mutating}>Start login</button>
+            <button type="submit" ?disabled=${disabledReason !== undefined || this.mutating}>${hasCurrentMachine ? "Start new/re-register login" : "Start login"}</button>
           </div>
         </form>
       </section>
+    `;
+  }
+
+  private renderRegistrationActionNotice(currentMachine: NonNullable<SafeTunnelStatusResponse["config"]["machine"]> | undefined): TemplateResult | null {
+    if (currentMachine === undefined) return null;
+
+    return html`
+      <div class="callout registration-action">
+        <strong>Current tunnel remains separate</strong>
+        <p>Current tunnel: ${currentTunnelDescription(currentMachine)}. The form below starts a new or replacement registration; it does not edit the current tunnel card until hosted approval succeeds.</p>
+      </div>
     `;
   }
 
@@ -159,7 +284,7 @@ export class SettingsSafeTunnelPanel extends LitElement {
       <section class="card operation-card">
         <div class="section-heading">
           <div>
-            <h3>Login operation</h3>
+            <h3>${operationKindLabel(operation.kind)} operation</h3>
             <p>Status: <strong class=${operation.status === "failed" ? "bad" : operation.status === "succeeded" ? "good" : "muted"}>${operationStatusLabel(operation.status)}</strong></p>
           </div>
           ${operation.status === "running" ? html`<button type="button" @click=${() => { void this.pollOperation(operation.id); }}>Poll now</button>` : null}
@@ -187,7 +312,15 @@ export class SettingsSafeTunnelPanel extends LitElement {
             </div>
           </div>
         `}
+        ${operation.connectorProcessId === undefined ? null : html`<p class="help muted">Connector process ${operation.connectorProcessId}</p>`}
         ${operation.error === undefined ? null : html`<p class="bad">${operation.error}</p>`}
+        ${operation.logTail === undefined || operation.logTail.trim() === "" ? null : html`
+          <details ?open=${operation.kind === "start" && operation.status === "failed"}>
+            <summary>Connector log tail</summary>
+            ${operation.logPath === undefined ? null : html`<p class="help muted">${operation.logPath}</p>`}
+            <pre>${operation.logTail}</pre>
+          </details>
+        `}
         ${operation.stderr.trim() === "" ? null : html`<details><summary>Connector error output</summary><pre>${operation.stderr}</pre></details>`}
         ${operation.stdout.trim() === "" ? null : html`<details><summary>Connector output</summary><pre>${operation.stdout}</pre></details>`}
       </section>
@@ -215,7 +348,23 @@ export class SettingsSafeTunnelPanel extends LitElement {
         </div>
         ${startDisabledReason === undefined ? null : html`<p class="help muted">Start unavailable: ${startDisabledReason}</p>`}
         ${stopDisabledReason === undefined ? null : html`<p class="help muted">Stop unavailable: ${stopDisabledReason}</p>`}
+        ${this.renderConnectorLog()}
       </section>
+    `;
+  }
+
+  private renderConnectorLog(): TemplateResult | null {
+    const runtime = this.status?.runtime;
+    const logTail = runtime?.logTail;
+    if (runtime === undefined || logTail === undefined || logTail.trim() === "") return null;
+
+    const summary = runtime.state === "running" ? "Connector output" : "Last connector output";
+    return html`
+      <details>
+        <summary>${summary}</summary>
+        ${runtime.logPath === undefined ? null : html`<p class="help muted">${runtime.logPath}</p>`}
+        <pre>${logTail}</pre>
+      </details>
     `;
   }
 
@@ -251,8 +400,9 @@ export class SettingsSafeTunnelPanel extends LitElement {
   }
 
   private applyStatusDefaults(status: SafeTunnelStatusResponse): void {
-    if (this.controlApiUrl === defaultControlApiUrl && status.config.machine !== undefined) this.controlApiUrl = status.config.machine.controlApiBaseUrl;
-    if (this.localPiWebUrl === defaultLocalPiWebUrl && status.config.localPiWebUrl !== undefined) this.localPiWebUrl = status.config.localPiWebUrl;
+    if (!this.controlApiUrlEdited && this.controlApiUrl === defaultControlApiUrl && status.config.machine !== undefined) this.controlApiUrl = status.config.machine.controlApiBaseUrl;
+    // Do not seed the form slug from the current registration: this form starts a new/re-register login.
+    if (!this.localPiWebUrlEdited && this.localPiWebUrl === defaultLocalPiWebUrl && status.config.localPiWebUrl !== undefined) this.localPiWebUrl = status.config.localPiWebUrl;
   }
 
   private async startLogin(): Promise<void> {
@@ -290,7 +440,7 @@ export class SettingsSafeTunnelPanel extends LitElement {
       }
       this.clearOperationPollTimer();
       if (operation.status === "succeeded") {
-        this.message = operation.publicUrl === undefined ? "Safe Tunnel login completed." : "Safe Tunnel login completed. Public URL is ready.";
+        this.message = operationSucceededMessage(operation);
       } else {
         this.message = "";
       }
@@ -330,9 +480,11 @@ export class SettingsSafeTunnelPanel extends LitElement {
       const frpcPath = normalizedOptionalString(this.startFrpcPath);
       const response = await safeTunnelApi.start(frpcPath === undefined ? {} : { frpcPath });
       this.applyStatus(response.status);
+      this.operation = response.operation;
       this.message = response.connectorProcessId === undefined
-        ? "Safe Tunnel connector start requested."
-        : `Safe Tunnel connector start requested (PID ${String(response.connectorProcessId)}).`;
+        ? "Safe Tunnel connector start operation started."
+        : `Safe Tunnel connector start operation started (PID ${String(response.connectorProcessId)}).`;
+      this.scheduleOperationPoll(response.operation);
     } catch (error) {
       this.error = `Failed to start Safe Tunnel connector: ${errorMessage(error)}`;
       this.message = "";
@@ -362,6 +514,11 @@ export class SettingsSafeTunnelPanel extends LitElement {
     }
   }
 
+  private handleControlApiUrlInput(event: Event): void {
+    this.controlApiUrlEdited = true;
+    this.controlApiUrl = inputValue(event);
+  }
+
   private handleMachineNameInput(event: Event): void {
     this.machineName = inputValue(event);
     if (!this.machineSlugEdited) this.machineSlug = machineSlugFromName(this.machineName);
@@ -372,8 +529,15 @@ export class SettingsSafeTunnelPanel extends LitElement {
     this.machineSlug = inputValue(event);
   }
 
+  private handleLocalPiWebUrlInput(event: Event): void {
+    this.localPiWebUrlEdited = true;
+    this.localPiWebUrl = inputValue(event);
+  }
+
   private loginDisabledReason(validationMessage: string | undefined): string | undefined {
     if (validationMessage !== undefined) return validationMessage;
+    const activeOperation = this.activeRunningOperation();
+    if (activeOperation !== undefined) return `${operationKindLabel(activeOperation.kind)} operation is already running`;
     if (this.status !== undefined && !connectorCanRun(this.status)) return connectorUnavailableMessage(this.status);
     return undefined;
   }
@@ -381,11 +545,19 @@ export class SettingsSafeTunnelPanel extends LitElement {
   private startDisabledReason(): string | undefined {
     const status = this.status;
     if (status === undefined) return "status has not loaded yet";
+    const activeOperation = this.activeRunningOperation();
+    if (activeOperation !== undefined) return `${operationKindLabel(activeOperation.kind)} operation is already running`;
     if (!connectorCanRun(status)) return connectorUnavailableMessage(status);
     if (status.config.state !== "registered") return "register or log in first";
     if (status.runtime.state === "running") return "connector is already running";
     if (normalizedOptionalString(this.startFrpcPath) === undefined && status.config.frpcPathConfigured !== true) return "configure an frpc path";
     return undefined;
+  }
+
+  private activeRunningOperation(): SafeTunnelOperationResponse | undefined {
+    if (this.operation?.status === "running") return this.operation;
+    const statusOperation = this.status?.activeOperation;
+    return statusOperation?.status === "running" ? statusOperation : undefined;
   }
 
   private stopDisabledReason(): string | undefined {
@@ -438,7 +610,18 @@ export class SettingsSafeTunnelPanel extends LitElement {
     .cards span { font-weight: 700; }
     .cards small, .help, label small { color: var(--pi-muted); overflow-wrap: anywhere; }
     .card { display: grid; gap: 12px; }
+    .status-pill { align-self: flex-start; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-bg); padding: 3px 8px; font-size: 12px; font-weight: 700; }
+    .detail-list { display: grid; gap: 8px; margin: 0; }
+    .detail-row { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 10px; border-top: 1px solid var(--pi-border); padding-top: 8px; }
+    .detail-row:first-child { border-top: 0; padding-top: 0; }
+    .detail-row dt { color: var(--pi-muted); font-weight: 700; }
+    .detail-row dd { min-width: 0; display: grid; gap: 5px; margin: 0; }
+    .detail-value { overflow-wrap: anywhere; }
+    .detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .detail-actions button { padding: 4px 7px; font-size: 12px; }
+    .empty-state { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); padding: 10px; }
     .form-card form { display: grid; gap: 10px; }
+    .field-help { margin-top: -4px; font-size: 12px; }
     .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .actions.compact { margin-top: 8px; }
     .notice { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); padding: 10px 12px; }
@@ -454,6 +637,7 @@ export class SettingsSafeTunnelPanel extends LitElement {
     @media (max-width: 760px) {
       header, .section-heading { display: grid; }
       .cards { grid-template-columns: minmax(0, 1fr); }
+      .detail-row { grid-template-columns: minmax(0, 1fr); }
     }
   `;
 }
@@ -499,6 +683,17 @@ export function machineSlugFromName(name: string): string {
     .replace(/-{2,}/gu, "-")
     .replace(/^-|-$/gu, "");
   return slug === "" ? defaultMachineSlug : slug.slice(0, 63).replace(/-$/u, "");
+}
+
+export function safeTunnelRuntimeSummary(runtime: SafeTunnelRuntimeStatus): string {
+  const label = runtimeStateLabel(runtime.state);
+  return runtime.pid === undefined ? label : `${label} (PID ${String(runtime.pid)})`;
+}
+
+function currentTunnelDescription(machine: NonNullable<SafeTunnelStatusResponse["config"]["machine"]>): string {
+  if (machine.machineSlug !== undefined && machine.machineSlug.trim() !== "") return `slug ${machine.machineSlug}`;
+  if (machine.publicUrl !== undefined && machine.publicUrl.trim() !== "") return machine.publicUrl;
+  return `machine ${machine.machineId}`;
 }
 
 function inputValue(event: Event): string {
@@ -563,7 +758,13 @@ function configStateLabel(state: SafeTunnelStatusResponse["config"]["state"]): s
   }
 }
 
-function runtimeStateLabel(state: SafeTunnelStatusResponse["runtime"]["state"]): string {
+function runtimeStateClass(state: SafeTunnelRuntimeStatus["state"]): string {
+  if (state === "running") return "good";
+  if (state === "stale" || state === "unknown") return "bad";
+  return "muted";
+}
+
+function runtimeStateLabel(state: SafeTunnelRuntimeStatus["state"]): string {
   switch (state) {
     case "stopped":
       return "Stopped";
@@ -576,6 +777,15 @@ function runtimeStateLabel(state: SafeTunnelStatusResponse["runtime"]["state"]):
   }
 }
 
+function operationKindLabel(kind: SafeTunnelOperationResponse["kind"]): string {
+  switch (kind) {
+    case "login":
+      return "Login";
+    case "start":
+      return "Start";
+  }
+}
+
 function operationStatusLabel(status: SafeTunnelOperationResponse["status"]): string {
   switch (status) {
     case "running":
@@ -585,6 +795,14 @@ function operationStatusLabel(status: SafeTunnelOperationResponse["status"]): st
     case "failed":
       return "Failed";
   }
+}
+
+function operationSucceededMessage(operation: SafeTunnelOperationResponse): string {
+  if (operation.kind === "login") {
+    return operation.publicUrl === undefined ? "Safe Tunnel login completed." : "Safe Tunnel login completed. Public URL is ready.";
+  }
+
+  return operation.exitCode === 0 ? "Safe Tunnel connector exited cleanly." : "Safe Tunnel start completed.";
 }
 
 function formatExitCode(exitCode: number | null): string {

@@ -116,6 +116,8 @@ export async function runConnectorLoginFlow(
       controlApiBaseUrl: dependencies.controlApiBaseUrl,
       machineId: registeredMachine.machine.id,
       machineToken: registeredMachine.machineToken,
+      machineSlug: registeredMachine.machine.slug,
+      publicUrl: registeredMachine.publicUrl,
     },
   };
 }

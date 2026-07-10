@@ -7,15 +7,16 @@ The connector stays optional. Users who never open or enable Safe Tunnel do not 
 ## Local bridge and connector ownership
 
 - The browser UI is the **Expose Safely** action plus **Settings → Safe Tunnel**.
+- Settings → Safe Tunnel has a read-only **Current tunnel** card separated from the login form. It shows connector-owned slug/public URL metadata, machine id, connector config path, local PI WEB URL, runtime state, and copy/open actions without exposing connector credentials. The form below it is explicitly a new/re-register action: when current tunnel metadata exists, the form calls out that it will not edit the current card until approval succeeds, does not prefill the slug from the current registration, and preserves user-edited fields across status refreshes.
 - The PI WEB web/API process serves local routes under `/api/safe-tunnel/*`.
 - The bridge shells out to the connector for `status`, `login`, `start`, and `stop`.
-- Connector secrets live in the connector config, normally `~/.config/pi-web-tunnel/config.json`; PI WEB only reads redacted config/runtime state.
+- Connector secrets live in the connector config, normally `~/.config/pi-web-tunnel/config.json`; PI WEB reads `pi-web-tunnel status --json` for redacted config/runtime state, optional non-secret slug/public URL metadata, and capped/sanitized connector output.
 
 ## Connector config and local target
 
-`pi-web-tunnel login` and `pi-web-tunnel register-machine` persist the local PI WEB target as `localPiWebUrl` in the connector config. The default is `http://127.0.0.1:8504`; use `--local-pi-web-url http://127.0.0.1:<port>` when PI WEB is running on another local port.
+`pi-web-tunnel login` and `pi-web-tunnel register-machine` persist the local PI WEB target as `localPiWebUrl` in the connector config. `login` also persists the non-secret machine slug and public URL returned by hosted registration so Settings → Safe Tunnel can display the current registration without exposing the machine token. The default local target is `http://127.0.0.1:8504`; use `--local-pi-web-url http://127.0.0.1:<port>` when PI WEB is running on another local port.
 
-`pi-web-tunnel start` fetches the hosted tunnel configuration, then applies the connector-owned `localPiWebUrl` to the frp `localIP`/`localPort` before writing `frpc.toml`. This lets source-tree and packaged PI WEB instances expose non-default local ports without storing a per-machine local URL in the hosted service.
+`pi-web-tunnel start` fetches the hosted tunnel configuration, then applies the connector-owned `localPiWebUrl` to the frp `localIP`/`localPort` before writing `frpc.toml`. This lets source-tree and packaged PI WEB instances expose non-default local ports without storing a per-machine local URL in the hosted service. `pi-web-tunnel status --json` is the bridge contract for current tunnel metadata: it reports redacted connector-owned config/machine metadata, `frpc` path configured/not configured, PID/frpc-config runtime metadata, and the capped current connector log tail when available, without returning `machineToken` or generated frp config contents. The PI WEB bridge consumes that structured status instead of parsing generated `frpc.toml` for normal operation. When PI WEB starts the connector, it creates a tracked start operation, truncates the private `connector.log` for the new launch, tees connector/frpc stdout and stderr into the operation plus that log, and returns capped ANSI-stripped log tails in status/operation responses. Because the connector start command remains foreground until `frpc` exits, an early `frpc` exit updates the tracked operation with final exit code/signal and captured output.
 
 The connector's foreground start/stop behavior and future user-service install design are documented in [safe-tunnel-connector-service.md](safe-tunnel-connector-service.md).
 
@@ -68,10 +69,10 @@ Connector credentials still live only in the connector's private config file; th
 ```bash
 # From /srv/dev/pi-web:
 npm run tunnel:connector -- --help
-scripts/pi-web-tunnel-dev.sh status
+scripts/pi-web-tunnel-dev.sh status --json
 
 # Run PI WEB dev normally; the bridge will prefer scripts/pi-web-tunnel-dev.sh.
 npm run dev:web
 ```
 
-Run the hosted Safe Tunnels stack from `/srv/dev/pi-web-tunnels` when you need a local Control API, edge, and relay. The connector command used by PI WEB should still point at this repo's wrapper or an installed `pi-web-tunnel` binary.
+Run the hosted Safe Tunnels stack from `/srv/dev/pi-web-tunnels` when you need a local Control API, edge, and relay. The connector command used by PI WEB should still point at the PI WEB repo's wrapper (`/srv/dev/pi-web/scripts/pi-web-tunnel-dev.sh`) or an installed `pi-web-tunnel` binary.

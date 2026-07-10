@@ -20,9 +20,9 @@ This document defines how `pi-web-tunnel` should install and manage a user-scope
 
 ## Current foreground connector behavior
 
-Today `pi-web-tunnel start` stays attached, fetches tunnel configuration from the Control API, writes `frpc.toml` and `connector.pid` into the connector config directory with private file modes, launches/supervises `frpc`, and handles `SIGTERM`/`SIGINT` by stopping `frpc` before exiting. `pi-web-tunnel stop` reads the PID file and signals that foreground connector process.
+Today `pi-web-tunnel start` stays attached, fetches tunnel configuration from the Control API, writes `frpc.toml` and `connector.pid` into the connector config directory with private file modes, launches/supervises `frpc` with inherited stdout/stderr for caller/service log capture, and handles `SIGTERM`/`SIGINT` by stopping `frpc` before exiting. `pi-web-tunnel stop` reads the PID file and signals that foreground connector process.
 
-`login`/`register-machine` persist `localPiWebUrl` in the connector config. On `start`, the connector applies that local target to the Control API-issued frp TOML (`localIP`/`localPort`) before writing it, so a local PI WEB running on a non-default port can be exposed without storing per-machine local URLs in the hosted service.
+`login`/`register-machine` persist `localPiWebUrl` in the connector config. On `start`, the connector applies that local target to the Control API-issued frp TOML (`localIP`/`localPort`) before writing it, so a local PI WEB running on a non-default port can be exposed without storing per-machine local URLs in the hosted service. `pi-web-tunnel status --json` is the connector-owned machine-readable status surface for PI WEB: it reports redacted config/machine metadata, `frpc` path configured/not configured, PID-file runtime state, private runtime file paths/existence, and the capped current connector log tail when available; it never returns the machine token or generated frp config contents.
 
 ## Future CLI shape
 

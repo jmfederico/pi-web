@@ -10,6 +10,7 @@ export {
   parseLoginArgs,
   parseRegisterMachineArgs,
   parseStartArgs,
+  parseStatusArgs,
   readConnectorStatus,
   runCli,
 } from "./cli.js";
@@ -17,11 +18,17 @@ export {
 export type {
   CliDependencies,
   ConfigPathDependencies,
+  ConnectorConfigStatus,
+  ConnectorConfigStatusState,
+  ConnectorLogStatus,
+  ConnectorMachineStatus,
+  ConnectorRuntimeStatus,
+  ConnectorRuntimeStatusState,
   ConnectorStatus,
-  ConnectorStatusState,
   OutputSink,
   RegisterMachineArgs,
   StartArgs,
+  StatusArgs,
   StatusDependencies,
 } from "./cli.js";
 

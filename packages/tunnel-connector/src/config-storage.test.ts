@@ -140,6 +140,8 @@ describe("connector config storage", () => {
           controlApiBaseUrl: "http://127.0.0.1:8787",
           machineId: "machine_abc",
           machineToken: "piwt_mtok_v1_secret",
+          machineSlug: "my-dev-box",
+          publicUrl: "https://my-dev-box.ns.tunnels.pi-web.dev",
         },
       })),
     ).toEqual({
@@ -150,6 +152,8 @@ describe("connector config storage", () => {
         controlApiBaseUrl: "http://127.0.0.1:8787",
         machineId: "machine_abc",
         machineToken: "piwt_mtok_v1_secret",
+        machineSlug: "my-dev-box",
+        publicUrl: "https://my-dev-box.ns.tunnels.pi-web.dev",
       },
     });
   });

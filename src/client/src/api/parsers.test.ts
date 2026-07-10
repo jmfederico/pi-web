@@ -50,13 +50,31 @@ describe("API parsers", () => {
         state: "registered",
         localPiWebUrl: "http://127.0.0.1:8504",
         frpcPathConfigured: true,
-        machine: { controlApiBaseUrl: "https://control.example.test", machineId: "machine_1" },
+        machine: {
+          controlApiBaseUrl: "https://control.example.test",
+          machineId: "machine_1",
+          machineSlug: "dev-box",
+          publicHostname: "dev-box.ns.tunnels.pi-web.dev",
+          publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",
+        },
       },
-      runtime: { pidFilePath: "/home/test/.config/pi-web-tunnel/connector.pid", state: "running", pid: 123 },
+      runtime: {
+        pidFilePath: "/home/test/.config/pi-web-tunnel/connector.pid",
+        state: "running",
+        frpcConfigPath: "/home/test/.config/pi-web-tunnel/frpc.toml",
+        frpcConfigExists: true,
+        pid: 123,
+        logPath: "/home/test/.config/pi-web-tunnel/connector.log",
+        logExists: true,
+        logTail: "frpc failed\n",
+        logTailMaxCharacters: 12_000,
+      },
       activeOperation: operation,
     };
 
     expect(parseSafeTunnelOperationResponse({ ...operation, status: "succeeded", exitCode: 0, finishedAt: "2026-07-03T00:01:00.000Z", publicUrl: "https://dev.example.test" })).toMatchObject({ status: "succeeded", exitCode: 0, publicUrl: "https://dev.example.test" });
+    const startOperation = { ...operation, kind: "start", connectorProcessId: 456, logPath: "/home/test/.config/pi-web-tunnel/connector.log", logTail: "frpc failed\n", logTailMaxCharacters: 12_000 };
+    expect(parseSafeTunnelOperationResponse(startOperation)).toMatchObject({ connectorProcessId: 456, kind: "start", logTail: "frpc failed\n" });
     expect(parseSafeTunnelStatusResponse(status)).toEqual(status);
     expect(parseSafeTunnelStatusResponse({
       ...status,
@@ -75,7 +93,7 @@ describe("API parsers", () => {
       },
     })).toMatchObject({ connector: { state: "installable", install: { packageSpec: "@jmfederico/pi-web-tunnel" } } });
     expect(parseSafeTunnelLoginResponse({ operation, status })).toEqual({ operation, status });
-    expect(parseSafeTunnelStartResponse({ accepted: true, connectorProcessId: 456, status })).toEqual({ accepted: true, connectorProcessId: 456, status });
+    expect(parseSafeTunnelStartResponse({ accepted: true, operation: startOperation, connectorProcessId: 456, status })).toEqual({ accepted: true, operation: startOperation, connectorProcessId: 456, status });
     expect(parseSafeTunnelStopResponse({ command: { exitCode: null, stdout: "", stderr: "", signal: "SIGTERM" }, status })).toEqual({ command: { exitCode: null, stdout: "", stderr: "", signal: "SIGTERM" }, status });
   });
 

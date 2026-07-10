@@ -142,7 +142,7 @@ export interface PiPackageMutationResponse extends PiPackagesResponse {
 export type SafeTunnelConnectorState = "available" | "installable" | "unavailable";
 export type SafeTunnelConfigState = "missing" | "unregistered" | "registered" | "invalid";
 export type SafeTunnelRuntimeState = "stopped" | "running" | "stale" | "unknown";
-export type SafeTunnelOperationKind = "login";
+export type SafeTunnelOperationKind = "login" | "start";
 export type SafeTunnelOperationStatus = "running" | "succeeded" | "failed";
 
 export interface SafeTunnelConnectorInstallStatus {
@@ -170,6 +170,9 @@ export interface SafeTunnelConfigStatus {
   machine?: {
     controlApiBaseUrl: string;
     machineId: string;
+    machineSlug?: string;
+    publicHostname?: string;
+    publicUrl?: string;
   };
   error?: string;
 }
@@ -177,8 +180,15 @@ export interface SafeTunnelConfigStatus {
 export interface SafeTunnelRuntimeStatus {
   pidFilePath: string;
   state: SafeTunnelRuntimeState;
+  frpcConfigExists?: boolean;
+  frpcConfigPath?: string;
   pid?: number;
   error?: string;
+  logError?: string;
+  logExists?: boolean;
+  logPath?: string;
+  logTail?: string;
+  logTailMaxCharacters?: number;
 }
 
 export interface SafeTunnelCommandOutput {
@@ -195,9 +205,13 @@ export interface SafeTunnelOperationResponse {
   startedAt: string;
   stdout: string;
   stderr: string;
+  connectorProcessId?: number;
   error?: string;
   exitCode?: number | null;
   finishedAt?: string;
+  logPath?: string;
+  logTail?: string;
+  logTailMaxCharacters?: number;
   publicUrl?: string;
   signal?: string;
   userCode?: string;
@@ -230,6 +244,7 @@ export interface SafeTunnelStartRequest {
 
 export interface SafeTunnelStartResponse {
   accepted: true;
+  operation: SafeTunnelOperationResponse;
   connectorProcessId?: number;
   status: SafeTunnelStatusResponse;
 }

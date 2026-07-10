@@ -49,7 +49,7 @@ describe("SafeTunnelConnectorManager", () => {
         packageSpec: "@jmfederico/pi-web-tunnel",
       },
     });
-    expect(runner.runCalls).toEqual([{ command: "pi-web-tunnel", args: ["status"] }]);
+    expect(runner.runCalls).toEqual([{ command: "pi-web-tunnel", args: ["status", "--json"] }]);
   });
 
   it("installs the managed connector on first use after the PATH command is unavailable", async () => {
@@ -60,9 +60,9 @@ describe("SafeTunnelConnectorManager", () => {
     await expect(manager.ensureCommand()).resolves.toBe(managedCommand);
 
     expect(runner.runCalls).toEqual([
-      { command: "pi-web-tunnel", args: ["status"] },
+      { command: "pi-web-tunnel", args: ["status", "--json"] },
       { command: "npm", args: ["install", "--prefix", join(tempDir, "pi-web", "safe-tunnel-connector"), "--no-audit", "--no-fund", "@jmfederico/pi-web-tunnel"] },
-      { command: managedCommand, args: ["status"] },
+      { command: managedCommand, args: ["status", "--json"] },
     ]);
   });
 
@@ -80,9 +80,9 @@ describe("SafeTunnelConnectorManager", () => {
     await expect(manager.ensureCommand()).resolves.toBe(managedCommand);
 
     expect(runner.runCalls).toEqual([
-      { command: "pi-web-tunnel", args: ["status"] },
+      { command: "pi-web-tunnel", args: ["status", "--json"] },
       { command: "/opt/npm", args: ["install", "--prefix", installDirectory, "--no-audit", "--no-fund", "@example/pi-web-tunnel@1.2.3"] },
-      { command: managedCommand, args: ["status"] },
+      { command: managedCommand, args: ["status", "--json"] },
     ]);
   });
 
@@ -93,8 +93,8 @@ describe("SafeTunnelConnectorManager", () => {
     await expect(manager.status()).resolves.toEqual({ command: "pi-web-tunnel", state: "unavailable", error: "spawn ENOENT" });
     await expect(manager.ensureCommand()).rejects.toThrow("PI WEB Safe Tunnel connector command is unavailable: spawn ENOENT");
     expect(runner.runCalls).toEqual([
-      { command: "pi-web-tunnel", args: ["status"] },
-      { command: "pi-web-tunnel", args: ["status"] },
+      { command: "pi-web-tunnel", args: ["status", "--json"] },
+      { command: "pi-web-tunnel", args: ["status", "--json"] },
     ]);
   });
 });

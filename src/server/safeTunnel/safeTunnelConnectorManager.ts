@@ -59,9 +59,15 @@ interface ConnectorResolution {
   readonly install?: ConnectorInstallPlan;
 }
 
+export interface SafeTunnelConnectorStatusProbe {
+  readonly connector: SafeTunnelConnectorStatus;
+  readonly statusJson?: string;
+}
+
 interface ConnectorCommandCheck {
   readonly available: boolean;
   readonly error?: string;
+  readonly statusJson?: string;
 }
 
 export class SafeTunnelConnectorManager {
@@ -70,26 +76,37 @@ export class SafeTunnelConnectorManager {
   constructor(private readonly dependencies: SafeTunnelConnectorManagerDependencies) {}
 
   async status(): Promise<SafeTunnelConnectorStatus> {
+    return (await this.probeStatus()).connector;
+  }
+
+  async probeStatus(): Promise<SafeTunnelConnectorStatusProbe> {
     const resolution = resolveConnector(this.dependencies);
     const check = await this.checkCommand(resolution.command);
 
     if (check.available) {
-      return { command: resolution.command, state: "available" };
+      return {
+        connector: { command: resolution.command, state: "available" },
+        ...(check.statusJson === undefined ? {} : { statusJson: check.statusJson }),
+      };
     }
 
     if (resolution.install !== undefined) {
       return {
-        command: resolution.install.command,
-        state: "installable",
-        install: installStatus(resolution.install),
-        ...(check.error === undefined ? {} : { error: check.error }),
+        connector: {
+          command: resolution.install.command,
+          state: "installable",
+          install: installStatus(resolution.install),
+          ...(check.error === undefined ? {} : { error: check.error }),
+        },
       };
     }
 
     return {
-      command: resolution.command,
-      state: "unavailable",
-      ...(check.error === undefined ? {} : { error: check.error }),
+      connector: {
+        command: resolution.command,
+        state: "unavailable",
+        ...(check.error === undefined ? {} : { error: check.error }),
+      },
     };
   }
 
@@ -136,12 +153,12 @@ export class SafeTunnelConnectorManager {
 
   private async checkCommand(command: string): Promise<ConnectorCommandCheck> {
     try {
-      const result = await this.dependencies.commandRunner.run({ command, args: ["status"] }, {
+      const result = await this.dependencies.commandRunner.run({ command, args: ["status", "--json"] }, {
         maxOutputCharacters: maxCapturedOutputCharacters,
         timeoutMs: connectorStatusTimeoutMs,
       });
 
-      if (result.exitCode === 0 && !result.timedOut) return { available: true };
+      if (result.exitCode === 0 && !result.timedOut) return { available: true, statusJson: result.stdout };
       return {
         available: false,
         error: nonEmptyString(result.stderr) ?? nonEmptyString(result.stdout) ?? (result.timedOut ? "connector status timed out" : `connector status exited with code ${formatExitCode(result.exitCode)}`),
