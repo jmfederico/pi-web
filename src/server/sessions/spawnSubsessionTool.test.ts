@@ -52,26 +52,25 @@ describe("createSubsessionToolDefinitions", () => {
     expect(firstText(result.content)).toContain("Started tracked subsession child-1");
   });
 
-  it("describes tracked dispatch and notification without workflow policy", async () => {
+  it("guides the parent to join all required subsessions without polling", async () => {
     const { spawn: spawnTool } = tools({
       spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a-feature" })),
     });
 
-    expect(spawnTool.description).toBe("Start a tracked child session and send it an initial prompt. The call returns after dispatch; the parent is notified when the child stops working and can inspect its status, latest output, and transcript.");
+    expect(spawnTool.description).toBe("Start a tracked child and return after dispatch. Track required children as pending: continue independent work, then yield at a join point until all have notified completion. Notifications queue while the parent is busy; do not poll for completion.");
+    expect(spawnTool.promptSnippet).toBe("spawn_subsession: delegate parallel work; yield at a join point until all required children complete.");
 
     const result = await spawnTool.execute("call-contract", { prompt: "do it" }, undefined, undefined, ctxFor("parent-1", undefined));
-    const message = firstText(result.content);
-    expect(message).toBe("Started tracked subsession child-1 in /repos/a-feature. The parent will be notified when it stops working.");
-    expect(`${spawnTool.description}\n${message}`).not.toMatch(/do not poll|continue (?:useful|independent) work|end (?:this|the) turn|relay/i);
+    expect(firstText(result.content)).toBe("Started tracked subsession child-1 in /repos/a-feature. Track it as pending and, before finalizing dependent work, yield until all required children have notified completion.");
   });
 
-  it("keeps all subsession tool descriptions capability-oriented", () => {
+  it("keeps subsession inspection tool descriptions capability-oriented", () => {
     const definitions = tools({});
 
     expect(definitions.list.description).toBe("List tracked child sessions owned by the calling session, with each child's current status (working, idle, error, or unknown).");
     expect(definitions.check.description).toBe("Return a tracked subsession's current status, message count, and most recent assistant output.");
     expect(definitions.read.description).toBe("Return a filtered, paginated transcript of a tracked subsession. Filters select message roles and content kinds, search full message content, optionally include raw tool arguments, and cap or page the returned entries.");
-    for (const definition of Object.values(definitions)) {
+    for (const definition of [definitions.list, definitions.check, definitions.read]) {
       expect(definition.description).not.toMatch(/use this|do not poll|continue working|start narrow|for just the final|relay/i);
     }
   });

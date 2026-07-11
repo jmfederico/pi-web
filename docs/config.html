@@ -513,8 +513,19 @@
                 to be enabled.
               </p>
               <p>
-                Tracked subsessions let an agent delegate work to child sessions, get notified when children stop
-                working, and inspect their transcripts. Restart the session daemon after changing this setting.
+                Tracked subsessions let an agent delegate work to child sessions, receive a notification when each child
+                stops working, and inspect their status and transcripts. Calling <code>spawn_subsession</code> returns
+                immediately. The parent can continue independent work while treating every child whose result it needs
+                as pending. Before producing work that depends on those results, the parent reaches a join point and
+                yields until every required child has sent a completion notice.
+              </p>
+              <p>
+                A completion notice wakes an idle parent. If the parent is busy, the notice queues until the current
+                turn ends rather than interrupting in-flight work. For multiple required children, each notice resolves
+                one pending child; after processing it, the parent yields again if another required child is pending.
+                <code>list_subsessions</code>, <code>check_subsession</code>, and <code>read_subsession</code> provide
+                on-demand status and transcript inspection for deliberate progress checks or recovery. Completion
+                notifications, rather than polling these tools, are the normal synchronization mechanism.
               </p>
               <p>
                 In <strong>Settings → Session daemon</strong>, these keys are saved on the selected machine. Restart the

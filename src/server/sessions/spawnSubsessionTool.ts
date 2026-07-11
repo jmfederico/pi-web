@@ -178,8 +178,8 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const spawnTool = defineTool<typeof SpawnSubsessionParams, SpawnSubsessionResult>({
     name: "spawn_subsession",
     label: "Spawn subsession",
-    description: "Start a tracked child session and send it an initial prompt. The call returns after dispatch; the parent is notified when the child stops working and can inspect its status, latest output, and transcript.",
-    promptSnippet: "spawn_subsession: start a tracked child session you will be notified about",
+    description: "Start a tracked child and return after dispatch. Track required children as pending: continue independent work, then yield at a join point until all have notified completion. Notifications queue while the parent is busy; do not poll for completion.",
+    promptSnippet: "spawn_subsession: delegate parallel work; yield at a join point until all required children complete.",
     parameters: SpawnSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
@@ -193,7 +193,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
         ...(ctx.model === undefined ? {} : { model: ctx.model }),
       });
       return {
-        content: [{ type: "text", text: `Started tracked subsession ${result.sessionId} in ${result.cwd}. The parent will be notified when it stops working.` }],
+        content: [{ type: "text", text: `Started tracked subsession ${result.sessionId} in ${result.cwd}. Track it as pending and, before finalizing dependent work, yield until all required children have notified completion.` }],
         details: result,
       };
     },

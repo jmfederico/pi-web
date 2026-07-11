@@ -171,7 +171,9 @@ The per-request size limit is still controlled by `maxUploadBytes` / `PI_WEB_MAX
 
 `subsessions` is beta and controls whether agents receive the tracked-subsession tools: `spawn_subsession`, `list_subsessions`, `check_subsession`, and `read_subsession`. It defaults to `false` and also requires `spawnSessions` to be enabled.
 
-Tracked subsessions let an agent delegate work to child sessions, get notified when children stop working, and inspect their transcripts.
+Tracked subsessions let an agent delegate work to child sessions, receive a notification when each child stops working, and inspect their status and transcripts. Calling `spawn_subsession` returns immediately. The parent can continue independent work while treating every child whose result it needs as pending. Before producing work that depends on those results, the parent reaches a join point and yields until every required child has sent a completion notice.
+
+A completion notice wakes an idle parent. If the parent is busy, the notice queues until the current turn ends rather than interrupting in-flight work. For multiple required children, each notice resolves one pending child; after processing it, the parent yields again if another required child is pending. `list_subsessions`, `check_subsession`, and `read_subsession` provide on-demand status and transcript inspection for deliberate progress checks or recovery. Completion notifications, rather than polling these tools, are the normal synchronization mechanism.
 
 In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
 
