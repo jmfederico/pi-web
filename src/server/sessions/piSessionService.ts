@@ -406,6 +406,7 @@ export class PiSessionService {
   /** Pending questionnaire requests keyed by requestId. */
   private readonly pendingQuestionnaires = new Map<string, {
     sessionId: string;
+    questions: AskUserQuestionParams["questions"];
     resolve: (result: AskUserQuestionResult) => void;
     reject: (error: Error) => void;
     timeout: NodeJS.Timeout;
@@ -681,7 +682,7 @@ export class PiSessionService {
         reject(new Error("Questionnaire timed out"));
       }, 5 * 60 * 1000); // 5 minutes
 
-      this.pendingQuestionnaires.set(requestId, { sessionId, resolve, reject, timeout });
+      this.pendingQuestionnaires.set(requestId, { sessionId, questions: params.questions, resolve, reject, timeout });
       this.events.publish(sessionId, {
         type: "questionnaire.show",
         requestId,
@@ -702,6 +703,19 @@ export class PiSessionService {
     clearTimeout(pending.timeout);
     pending.resolve(result);
     return true;
+  }
+
+  /**
+   * The questionnaire currently awaiting a response for a session, if any.
+   * Used to catch up a websocket that (re)connects after `questionnaire.show`
+   * already went out, since that event is only broadcast to sockets that were
+   * connected at the time and is never persisted to the transcript.
+   */
+  getPendingQuestionnaire(sessionId: string): { requestId: string; questions: AskUserQuestionParams["questions"] } | undefined {
+    for (const [requestId, pending] of this.pendingQuestionnaires) {
+      if (pending.sessionId === sessionId) return { requestId, questions: pending.questions };
+    }
+    return undefined;
   }
 
   /** Open a session after verifying it is one of the caller's tracked children. */

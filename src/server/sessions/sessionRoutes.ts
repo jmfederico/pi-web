@@ -315,7 +315,15 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: PiSessionS
   app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/events`, { websocket: true }, (socket, request) => {
     // Only the id matters for event subscription; cwd is intentionally ignored
     // so a malformed value cannot throw inside the websocket handler.
-    eventHub.add(request.params.sessionId, socket);
+    const sessionId = request.params.sessionId;
+    eventHub.add(sessionId, socket);
+    // questionnaire.show is only ever broadcast once, at ask time, to sockets
+    // connected at that moment. Catch up a (re)connecting socket so a pending
+    // question isn't stranded as an unactionable "pending" tool call.
+    const pending = sessions.getPendingQuestionnaire(sessionId);
+    if (pending !== undefined && socket.readyState === socket.OPEN) {
+      socket.send(JSON.stringify({ type: "questionnaire.show", requestId: pending.requestId, questions: pending.questions }));
+    }
   });
 
   app.get(`${prefix}/sessions/events`, { websocket: true }, (socket) => {
