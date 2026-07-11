@@ -68,6 +68,7 @@
     "@fastify/websocket": "^11.3.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "cron-parser": "^5.6.1",
     "diff": "^9.0.0",
     "fastify": "^5.10.0",
     "lit": "^3.3.3",

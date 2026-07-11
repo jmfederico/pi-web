@@ -1,4 +1,4 @@
-import type { DeleteWorkspaceFileResponse, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionBulkMutationRef, SessionCleanupRequest, SessionRef, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
+import type { DeleteWorkspaceFileResponse, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, ScheduledTaskCreateRequest, ScheduledTaskUpdateRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionRef, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { request } from "./http";
 import {
   arrayOf,
@@ -34,6 +34,8 @@ import {
   parseReloaded,
   parseRestored,
   parseSavedAttachments,
+  parseScheduledTask,
+  parseScheduledTaskRun,
   parseSessionBulkArchiveResponse,
   parseSessionBulkDeleteArchivedResponse,
   parseSessionCleanupExecuteResponse,
@@ -328,6 +330,15 @@ export const gitApi = {
   gitDiff: (projectId: string, workspaceId: string, options?: { path?: string; staged?: boolean }, machineId = "local") => request(machineGitDiffUrl(machineId, projectId, workspaceId, options), parseGitDiffResponse),
 };
 
+export const scheduledTasksApi = {
+  scheduledTasks: (machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks`, arrayOf(parseScheduledTask)),
+  createScheduledTask: (input: ScheduledTaskCreateRequest, machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks`, parseScheduledTask, { method: "POST", body: JSON.stringify(input) }),
+  updateScheduledTask: (id: string, patch: ScheduledTaskUpdateRequest, machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks/${encodeURIComponent(id)}`, parseScheduledTask, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteScheduledTask: (id: string, machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks/${encodeURIComponent(id)}`, parseDeleted, { method: "DELETE" }),
+  runScheduledTaskNow: (id: string, machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks/${encodeURIComponent(id)}/run`, parseScheduledTaskRun, { method: "POST" }),
+  scheduledTaskRuns: (id: string, machineId = "local") => request(`${machinePrefix(machineId)}/scheduled-tasks/${encodeURIComponent(id)}/runs`, arrayOf(parseScheduledTaskRun)),
+};
+
 export const api = {
   ...piWebApi,
   ...machinesApi,
@@ -341,4 +352,5 @@ export const api = {
   ...terminalsApi,
   ...filesApi,
   ...gitApi,
+  ...scheduledTasksApi,
 };

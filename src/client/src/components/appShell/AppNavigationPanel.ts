@@ -1,6 +1,6 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace, WorkspaceActivity } from "../../api";
+import type { Machine, MachineHealth, Project, ScheduledTask, SessionActivity, SessionInfo, SessionStatus, Workspace, WorkspaceActivity } from "../../api";
 import type { WorkspaceLabelItem } from "../../plugins/types";
 import type { NavigationSection } from "../../appShell/navigationState";
 import { NAVIGATION_SECTION_ORDER } from "../../appShell/navigationState";
@@ -9,6 +9,7 @@ import "../MachineList";
 import "../MachineSwitcher";
 import "../ProjectList";
 import "../WorkspaceList";
+import "../ScheduledTaskList";
 import "../SessionList";
 
 export type NavigationFocusTarget = NavigationSection | "chat";
@@ -32,12 +33,16 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) workspacesByProjectId: Record<string, Workspace[]> = {};
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
+  @property({ attribute: false }) scheduledTaskCounts: Record<string, number> = {};
+  @property({ attribute: false }) scheduledTasks: ScheduledTask[] = [];
+  @property({ attribute: false }) runningScheduledTaskIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) refreshControl: unknown;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) compact = false;
   @property({ type: Boolean }) machinesCollapsed = false;
   @property({ type: Boolean }) projectsCollapsed = false;
   @property({ type: Boolean }) workspacesCollapsed = false;
+  @property({ type: Boolean }) scheduledTasksCollapsed = false;
   @property({ type: Boolean }) sessionsCollapsed = false;
   @property({ type: Number }) startingSessionCount = 0;
   @property({ type: Boolean }) canStartSession = false;
@@ -54,12 +59,19 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onToggleMachines?: () => void;
   @property({ attribute: false }) onToggleProjects?: () => void;
   @property({ attribute: false }) onToggleWorkspaces?: () => void;
+  @property({ attribute: false }) onToggleScheduledTasks?: () => void;
   @property({ attribute: false }) onToggleSessions?: () => void;
   @property({ attribute: false }) onSelectProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onCloseProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onRenameProject?: (project: Project, name: string) => void | Promise<void>;
   @property({ attribute: false }) onSelectWorkspace?: (workspace: Workspace) => void | Promise<void>;
   @property({ attribute: false }) onDeleteWorkspace?: (workspace: Workspace) => void | Promise<void>;
+  @property({ attribute: false }) onNewScheduledTask?: () => void;
+  @property({ attribute: false }) onEditScheduledTask?: (task: ScheduledTask) => void;
+  @property({ attribute: false }) onRunScheduledTaskNow?: (task: ScheduledTask) => void;
+  @property({ attribute: false }) onToggleScheduledTaskEnabled?: (task: ScheduledTask) => void;
+  @property({ attribute: false }) onViewScheduledTaskHistory?: (task: ScheduledTask) => void;
+  @property({ attribute: false }) onDeleteScheduledTask?: (task: ScheduledTask) => void;
   @property({ attribute: false }) onStartSession?: () => void | Promise<void>;
   @property({ attribute: false }) onSelectSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchiveSession?: (session: SessionInfo) => void | Promise<void>;
@@ -82,6 +94,7 @@ export class AppNavigationPanel extends LitElement {
   @query("machine-switcher") private machineSwitcher?: KeyboardNavigableSection;
   @query("project-list") private projectList?: KeyboardNavigableSection;
   @query("workspace-list") private workspaceList?: KeyboardNavigableSection;
+  @query("scheduled-task-list") private scheduledTaskList?: KeyboardNavigableSection;
   @query("session-list") private sessionList?: KeyboardNavigableSection;
 
   async focusSection(section: NavigationSection): Promise<boolean> {
@@ -90,6 +103,7 @@ export class AppNavigationPanel extends LitElement {
       case "machines": return await this.focusNavigableSection(this.compact ? this.machineList : this.machineSwitcher);
       case "projects": return await this.focusNavigableSection(this.projectList);
       case "workspaces": return await this.focusNavigableSection(this.workspaceList);
+      case "scheduledTasks": return await this.focusNavigableSection(this.scheduledTaskList);
       case "sessions": return await this.focusNavigableSection(this.sessionList);
     }
   }
@@ -150,6 +164,7 @@ export class AppNavigationPanel extends LitElement {
         .selected=${this.selectedWorkspace}
         .activities=${this.workspaceActivities}
         .deletingWorkspaceIds=${this.deletingWorkspaceIds}
+        .scheduledTaskCounts=${this.scheduledTaskCounts}
         .collapsible=${this.collapsible}
         .collapsed=${this.workspacesCollapsed}
         .workspaceLabelItems=${this.workspaceLabelItems}
@@ -160,6 +175,22 @@ export class AppNavigationPanel extends LitElement {
         .onFocusNextSection=${() => { this.focusNextFrom("workspaces"); }}
         .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
       ></workspace-list>
+      <scheduled-task-list
+        .tasks=${this.scheduledTasks}
+        .runningTaskIds=${this.runningScheduledTaskIds}
+        .collapsible=${this.collapsible}
+        .collapsed=${this.scheduledTasksCollapsed}
+        .onToggleCollapsed=${() => { this.onToggleScheduledTasks?.(); }}
+        .onNew=${() => { this.onNewScheduledTask?.(); }}
+        .onEdit=${(task: ScheduledTask) => { this.onEditScheduledTask?.(task); }}
+        .onRunNow=${(task: ScheduledTask) => { this.onRunScheduledTaskNow?.(task); }}
+        .onToggleEnabled=${(task: ScheduledTask) => { this.onToggleScheduledTaskEnabled?.(task); }}
+        .onViewHistory=${(task: ScheduledTask) => { this.onViewScheduledTaskHistory?.(task); }}
+        .onDelete=${(task: ScheduledTask) => { this.onDeleteScheduledTask?.(task); }}
+        .onFocusPreviousSection=${() => { this.focusPreviousFrom("scheduledTasks"); }}
+        .onFocusNextSection=${() => { this.focusNextFrom("scheduledTasks"); }}
+        .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+      ></scheduled-task-list>
       <session-list
         .sessions=${this.sessions}
         .statuses=${this.sessionStatuses}
@@ -226,19 +257,22 @@ export class AppNavigationPanel extends LitElement {
     machine-switcher { flex: 1 1 auto; min-width: 0; }
     :host([compact]) header { display: none; }
     .header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
-    machine-list, project-list, workspace-list { flex: 0 0 auto; max-height: 26%; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--pi-border-muted); }
+    machine-list, project-list, workspace-list, scheduled-task-list { flex: 0 0 auto; max-height: 26%; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--pi-border-muted); }
     session-list { flex: 1 1 auto; min-height: 0; overflow: hidden; }
     machine-list[collapsed],
     project-list[collapsed],
     workspace-list[collapsed],
+    scheduled-task-list[collapsed],
     session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
     :host([compact]) machine-list,
     :host([compact]) project-list,
     :host([compact]) workspace-list,
+    :host([compact]) scheduled-task-list,
     :host([compact]) session-list { flex: 1 1 auto; max-height: none; min-height: 0; overflow: hidden; }
     :host([compact]) machine-list[collapsed],
     :host([compact]) project-list[collapsed],
     :host([compact]) workspace-list[collapsed],
+    :host([compact]) scheduled-task-list[collapsed],
     :host([compact]) session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
   `;

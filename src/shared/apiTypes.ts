@@ -86,6 +86,8 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
+  /** When true (the default), the Scheduled Tasks cron scheduler runs. */
+  scheduledTasks?: boolean;
   /** VAPID public key for Web Push notifications (generated via `npx web-push generate-vapid-keys`). */
   vapidPublicKey?: string;
   /** VAPID private key for Web Push notifications. Keep secret. */
@@ -184,6 +186,73 @@ export interface Workspace {
   isGitWorktree: boolean;
   /** Workspace-effective project/global settings needed by workspace UI features. */
   effectiveConfig?: WorkspaceEffectiveConfig;
+}
+
+export type ScheduledTaskSessionMode = "new" | "continue-latest";
+
+export interface ScheduledTaskSchedule {
+  /** Standard cron expression (5 fields, or 6 with a leading seconds field). */
+  cron: string;
+  /** IANA timezone, e.g. "Asia/Jakarta". */
+  timezone: string;
+}
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  projectId: string;
+  /** Omitted = the project's main workspace/checkout. */
+  workspaceId?: string;
+  /** Sent verbatim as the prompt text on each run — identical to a typed chat message. */
+  prompt: string;
+  schedule: ScheduledTaskSchedule;
+  sessionMode: ScheduledTaskSessionMode;
+  notifyOnComplete: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Computed, not persisted: ISO timestamp of the next scheduled fire. Absent when disabled or unschedulable. */
+  nextRunAt?: string;
+}
+
+export type ScheduledTaskRunStatus = "running" | "success" | "failure" | "skipped";
+export type ScheduledTaskRunTrigger = "schedule" | "manual";
+
+export interface ScheduledTaskRun {
+  id: string;
+  taskId: string;
+  triggeredBy: ScheduledTaskRunTrigger;
+  startedAt: string;
+  finishedAt?: string;
+  status: ScheduledTaskRunStatus;
+  sessionId?: string;
+  cwd?: string;
+  /** Populated for "skipped" (why it was skipped) and "failure" (what went wrong) runs. */
+  note?: string;
+}
+
+export interface ScheduledTaskCreateRequest {
+  name: string;
+  projectId: string;
+  workspaceId?: string;
+  prompt: string;
+  schedule: ScheduledTaskSchedule;
+  sessionMode?: ScheduledTaskSessionMode;
+  notifyOnComplete?: boolean;
+  enabled?: boolean;
+}
+
+export interface ScheduledTaskUpdateRequest {
+  name?: string;
+  projectId?: string;
+  workspaceId?: string;
+  /** Set true to clear workspaceId back to "project's main workspace", distinct from "not provided". */
+  clearWorkspaceId?: boolean;
+  prompt?: string;
+  schedule?: ScheduledTaskSchedule;
+  sessionMode?: ScheduledTaskSessionMode;
+  notifyOnComplete?: boolean;
+  enabled?: boolean;
 }
 
 export interface SessionRef {

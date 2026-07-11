@@ -1,4 +1,4 @@
-import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebStatusResponse, Project, QuestionnaireQuestion, QueuedSessionMessage, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebStatusResponse, Project, QuestionnaireQuestion, QueuedSessionMessage, ScheduledTask, ScheduledTaskRun, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { WorkspaceUploadBatchState } from "./workspaceUploadState";
@@ -66,6 +66,11 @@ export interface AppState {
   piWebStatus: PiWebStatusResponse | undefined;
   error: string;
   questionnaire: QuestionnaireState | undefined;
+  scheduledTasks: ScheduledTask[];
+  isLoadingScheduledTasks: boolean;
+  /** Present (possibly with no `task`, meaning "create") while the create/edit dialog is open. */
+  scheduledTaskDialog: { task?: ScheduledTask } | undefined;
+  scheduledTaskHistoryDialog: { taskId: string; taskName: string; runs: ScheduledTaskRun[] } | undefined;
 }
 
 export interface QuestionnaireState {
@@ -177,5 +182,9 @@ export function initialAppState(): AppState {
     piWebStatus: undefined,
     error: "",
     questionnaire: undefined,
+    scheduledTasks: [],
+    isLoadingScheduledTasks: false,
+    scheduledTaskDialog: undefined,
+    scheduledTaskHistoryDialog: undefined,
   };
 }

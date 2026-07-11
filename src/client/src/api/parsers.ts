@@ -1,5 +1,6 @@
 import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileResponse, OAuthFlowState, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupThresholds, SessionCleanupTotals, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
 import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse } from "../../../shared/apiTypes";
+import type { ScheduledTask, ScheduledTaskRun, ScheduledTaskRunStatus, ScheduledTaskRunTrigger, ScheduledTaskSchedule, ScheduledTaskSessionMode } from "../../../shared/apiTypes";
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -960,4 +961,61 @@ function numberOrNull(record: Record<string, unknown>, key: string): number | nu
 
 function optionalField(key: string, value: unknown): object {
   return value === undefined ? {} : { [key]: value };
+}
+
+function requireSchedule(record: Record<string, unknown>, key: string): ScheduledTaskSchedule {
+  const value = record[key];
+  const scheduleRecord = requireRecord(value);
+  return { cron: requireString(scheduleRecord, "cron"), timezone: requireString(scheduleRecord, "timezone") };
+}
+
+function requireSessionMode(record: Record<string, unknown>, key: string): ScheduledTaskSessionMode {
+  const value = record[key];
+  if (value !== "new" && value !== "continue-latest") throw new Error(`Expected scheduled task session mode field: ${key}`);
+  return value;
+}
+
+function requireRunStatus(record: Record<string, unknown>, key: string): ScheduledTaskRunStatus {
+  const value = record[key];
+  if (value !== "running" && value !== "success" && value !== "failure" && value !== "skipped") throw new Error(`Expected scheduled task run status field: ${key}`);
+  return value;
+}
+
+function requireRunTrigger(record: Record<string, unknown>, key: string): ScheduledTaskRunTrigger {
+  const value = record[key];
+  if (value !== "schedule" && value !== "manual") throw new Error(`Expected scheduled task run trigger field: ${key}`);
+  return value;
+}
+
+export function parseScheduledTask(value: unknown): ScheduledTask {
+  const record = requireRecord(value);
+  return {
+    id: requireString(record, "id"),
+    name: requireString(record, "name"),
+    projectId: requireString(record, "projectId"),
+    prompt: requireString(record, "prompt"),
+    schedule: requireSchedule(record, "schedule"),
+    sessionMode: requireSessionMode(record, "sessionMode"),
+    notifyOnComplete: requireBoolean(record, "notifyOnComplete"),
+    enabled: requireBoolean(record, "enabled"),
+    createdAt: requireString(record, "createdAt"),
+    updatedAt: requireString(record, "updatedAt"),
+    ...optionalField("workspaceId", optionalString(record, "workspaceId")),
+    ...optionalField("nextRunAt", optionalString(record, "nextRunAt")),
+  };
+}
+
+export function parseScheduledTaskRun(value: unknown): ScheduledTaskRun {
+  const record = requireRecord(value);
+  return {
+    id: requireString(record, "id"),
+    taskId: requireString(record, "taskId"),
+    triggeredBy: requireRunTrigger(record, "triggeredBy"),
+    startedAt: requireString(record, "startedAt"),
+    status: requireRunStatus(record, "status"),
+    ...optionalField("finishedAt", optionalString(record, "finishedAt")),
+    ...optionalField("sessionId", optionalString(record, "sessionId")),
+    ...optionalField("cwd", optionalString(record, "cwd")),
+    ...optionalField("note", optionalString(record, "note")),
+  };
 }

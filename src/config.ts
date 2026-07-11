@@ -97,6 +97,7 @@ export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConf
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
       // Beta capability, resolved off by default.
       subsessions: subsessionsEnabled(env, loaded.config),
+      scheduledTasks: scheduledTasksEnabled(env, loaded.config),
       ...(vapidPublicKey !== undefined && vapidPublicKey !== "" ? { vapidPublicKey } : {}),
       ...(vapidPrivateKey !== undefined && vapidPrivateKey !== "" ? { vapidPrivateKey } : {}),
       ...(vapidContact !== undefined && vapidContact !== "" ? { vapidContact } : {}),
@@ -119,6 +120,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["maxUploadBytes"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
+  delete existing["scheduledTasks"];
   delete existing["vapidPublicKey"];
   delete existing["vapidPrivateKey"];
   delete existing["vapidContact"];
@@ -147,6 +149,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+    ...(config.scheduledTasks !== undefined ? { scheduledTasks: config.scheduledTasks } : {}),
     ...(config.vapidPublicKey !== undefined ? { vapidPublicKey: config.vapidPublicKey } : {}),
     ...(config.vapidPrivateKey !== undefined ? { vapidPrivateKey: config.vapidPrivateKey } : {}),
     ...(config.vapidContact !== undefined ? { vapidContact: config.vapidContact } : {}),
@@ -165,6 +168,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
+    ...(value["scheduledTasks"] !== undefined ? { scheduledTasks: parseScheduledTasks(value["scheduledTasks"], path) } : {}),
     ...(value["vapidPublicKey"] !== undefined ? { vapidPublicKey: parseString(value["vapidPublicKey"], "vapidPublicKey", path) } : {}),
     ...(value["vapidPrivateKey"] !== undefined ? { vapidPrivateKey: parseString(value["vapidPrivateKey"], "vapidPrivateKey", path) } : {}),
     ...(value["vapidContact"] !== undefined ? { vapidContact: parseString(value["vapidContact"], "vapidContact", path) } : {}),
@@ -211,6 +215,24 @@ export function subsessionsEnabled(env: NodeJS.ProcessEnv = process.env, config:
   const fromEnv = env["PI_WEB_SUBSESSIONS"];
   if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv.toLowerCase() === "true";
   return config.subsessions ?? false;
+}
+
+function parseScheduledTasks(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`PI WEB config scheduledTasks must be a boolean: ${path}`);
+  return value;
+}
+
+/**
+ * Whether the "Scheduled tasks" cron scheduler runs at all. On by default —
+ * each task is still an explicit, per-task opt-in a human creates, same
+ * rationale as spawnSessions. Set the env var `PI_WEB_SCHEDULED_TASKS` or the
+ * `scheduledTasks` config key to `false` to disable. The env var takes
+ * precedence over the config file.
+ */
+export function scheduledTasksEnabled(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): boolean {
+  const fromEnv = env["PI_WEB_SCHEDULED_TASKS"];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv.toLowerCase() === "true";
+  return config.scheduledTasks ?? true;
 }
 
 function parseString(value: unknown, key: string, path: string): string {

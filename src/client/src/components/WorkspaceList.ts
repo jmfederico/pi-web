@@ -18,6 +18,8 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) activities: Record<string, WorkspaceActivity> = {};
+  /** Scheduled task counts, keyed by workspace id — surfaces task presence while browsing Workspaces, before drilling into one. */
+  @property({ attribute: false }) scheduledTaskCounts: Record<string, number> = {};
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
   @property({ attribute: false }) onSelect?: (workspace: Workspace) => void;
   @property({ attribute: false }) onDelete?: (workspace: Workspace) => void;
@@ -97,10 +99,12 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   }
 
   private renderWorkspaceMain(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {
+    const taskCount = this.scheduledTaskCounts[workspace.id] ?? 0;
     return html`
       <span class="workspace-primary">
         <span class="workspace-primary-label">${label}</span>
         ${this.isDeleting(workspace) ? html`<span class="workspace-status">Deleting…</span>` : null}
+        ${taskCount > 0 ? html`<span class="badge">${taskCount} task${taskCount === 1 ? "" : "s"}</span>` : null}
       </span>
       ${items.length === 0 ? null : html`
         <small class="workspace-secondary">

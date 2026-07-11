@@ -19,9 +19,14 @@ import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { effectivePiWebConfig, maxUploadBytes, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
+import { effectivePiWebConfig, maxUploadBytes, scheduledTasksEnabled, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
 import { PushService } from "./push/pushService.js";
 import { PushSubscriptionStore } from "./push/pushSubscriptionStore.js";
+import { ScheduledTaskRunStore } from "./storage/scheduledTaskRunStore.js";
+import { ScheduledTaskStore } from "./storage/scheduledTaskStore.js";
+import { ScheduledTaskScheduler } from "./scheduledTasks/scheduledTaskScheduler.js";
+import { ScheduledTaskService } from "./scheduledTasks/scheduledTaskService.js";
+import { registerScheduledTaskRoutes } from "./scheduledTasks/scheduledTaskRoutes.js";
 
 const { config } = effectivePiWebConfig();
 const app = Fastify({ logger: true, bodyLimit: maxUploadBytes(process.env, config) });
@@ -30,8 +35,10 @@ await app.register(fastifyWebsocket);
 const eventHub = new SessionEventHub();
 const workspaceActivity = new WorkspaceActivityService(eventHub);
 const auth = new AuthService();
+const projects = new ProjectService(new ProjectStore());
+const workspaces = new WorkspaceService();
 const spawnTargets = spawnSessionsEnabled(process.env, config)
-  ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
+  ? new ProjectScopedSpawnTargetResolver({ projects, workspaces })
   : undefined;
 const pushStore = new PushSubscriptionStore();
 const pushService = new PushService(config, pushStore, { logger: app.log });
@@ -49,6 +56,22 @@ registerWorkspaceActivityRoutes(app, workspaceActivity);
 registerAuthRoutes(app, auth);
 registerSessionRoutes(app, sessions, eventHub);
 registerTerminalRoutes(app, terminals);
+
+const scheduledTaskStore = new ScheduledTaskStore();
+const scheduledTaskRunStore = new ScheduledTaskRunStore();
+const scheduledTaskService = new ScheduledTaskService(scheduledTaskStore, scheduledTaskRunStore, projects, workspaces);
+const scheduledTaskScheduler = new ScheduledTaskScheduler({
+  store: scheduledTaskStore,
+  runs: scheduledTaskRunStore,
+  service: scheduledTaskService,
+  sessions,
+  pushNotifier: pushService,
+  logger: app.log,
+});
+if (scheduledTasksEnabled(process.env, config)) {
+  registerScheduledTaskRoutes(app, scheduledTaskService, scheduledTaskScheduler);
+  await scheduledTaskScheduler.start();
+}
 
 app.get("/health", () => {
   const runtime = getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES);
@@ -73,6 +96,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   app.log.info({ signal }, "shutting down session daemon");
+  scheduledTaskScheduler.dispose();
   terminals.dispose();
   auth.dispose();
   await sessions.dispose();

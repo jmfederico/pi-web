@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { configApi, effectiveWorkspaceUploadFolder, piWebApi, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type AskUserQuestionResult, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
+import { configApi, effectiveWorkspaceUploadFolder, piWebApi, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type AskUserQuestionResult, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type ScheduledTask, type ScheduledTaskCreateRequest, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
@@ -12,6 +12,7 @@ import { FileExplorerController } from "../controllers/fileExplorerController";
 import { GitController } from "../controllers/gitController";
 import { MachineController } from "../controllers/machineController";
 import { ProjectController } from "../controllers/projectController";
+import { ScheduledTaskController } from "../controllers/scheduledTaskController";
 import { SessionController } from "../controllers/sessionController";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
@@ -46,6 +47,9 @@ import { isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorksp
 import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
+import "./ScheduledTaskList";
+import "./ScheduledTaskDialog";
+import "./ScheduledTaskRunHistory";
 import "./SessionList";
 import "./SessionCleanupDialog";
 import "./ChatView";
@@ -134,6 +138,10 @@ export class PiWebApp extends LitElement {
     () => this.state,
     (patch) => { this.setState(patch); },
     this.workspaces,
+  );
+  private readonly scheduledTasks = new ScheduledTaskController(
+    () => this.state,
+    (patch) => { this.setState(patch); },
   );
   private readonly machines = new MachineController(
     () => this.state,
@@ -264,6 +272,7 @@ export class PiWebApp extends LitElement {
     void this.refreshWorkspaceActivity();
     void this.loadClientConfig();
     void this.ensureGatewayPluginsLoaded();
+    void this.scheduledTasks.loadScheduledTasks();
     installLaunchQueueConsumer((url) => { void this.applyAppIntent(parseAppIntent(url.searchParams)); });
     clearAppBadge();
     void this.loadProjectsAndRestoreRoute().finally(() => {
@@ -1158,6 +1167,43 @@ export class PiWebApp extends LitElement {
     return runtime?.ok === true && supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsCleanup);
   }
 
+  /** A task's effective workspace: its own `workspaceId`, or the project's main workspace when omitted. */
+  private taskWorkspaceId(task: ScheduledTask): string | undefined {
+    if (task.workspaceId !== undefined) return task.workspaceId;
+    const mainWorkspace = this.state.workspacesByProjectId[task.projectId]?.find((workspace) => workspace.isMain);
+    return mainWorkspace?.id;
+  }
+
+  private scheduledTasksForSelectedWorkspace(): ScheduledTask[] {
+    const workspace = this.state.selectedWorkspace;
+    if (workspace === undefined) return [];
+    return this.state.scheduledTasks.filter((task) => task.projectId === workspace.projectId && this.taskWorkspaceId(task) === workspace.id);
+  }
+
+  private scheduledTaskCountsByWorkspaceId(): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const task of this.state.scheduledTasks) {
+      const workspaceId = this.taskWorkspaceId(task);
+      if (workspaceId === undefined) continue;
+      counts[workspaceId] = (counts[workspaceId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  private saveScheduledTask(input: ScheduledTaskCreateRequest): void {
+    void this.scheduledTasks.save(input);
+  }
+
+  private openSessionFromScheduledTaskRun(sessionId: string): void {
+    const session = this.state.sessions.find((candidate) => candidate.id === sessionId);
+    if (session === undefined) {
+      this.setState({ error: "That session is no longer available." });
+      return;
+    }
+    this.scheduledTasks.closeHistory();
+    void this.selectNavigationItem("sessions", "chat", () => this.sessions.selectSession(session));
+  }
+
   private hasAuthoritativeSessionPersistence(): boolean {
     return runtimeHasAuthoritativeSessionPersistence(this.selectedMachineRuntime());
   }
@@ -1257,6 +1303,8 @@ export class PiWebApp extends LitElement {
         .workspaces=${this.state.workspaces}
         .selectedWorkspace=${this.state.selectedWorkspace}
         .deletingWorkspaceIds=${pendingWorkspaceDeletionIds(this.state.workspaceDeletionRuns)}
+        .scheduledTaskCounts=${this.scheduledTaskCountsByWorkspaceId()}
+        .scheduledTasks=${this.scheduledTasksForSelectedWorkspace()}
         .sessions=${this.state.sessions}
         .sessionStatuses=${this.state.sessionStatuses}
         .sessionActivities=${this.state.sessionActivities}
@@ -1277,18 +1325,26 @@ export class PiWebApp extends LitElement {
         .unreadSessionIds=${unreadSessionIds}
         .projectsCollapsed=${this.navigationSections.isCollapsed("projects")}
         .workspacesCollapsed=${this.navigationSections.isCollapsed("workspaces")}
+        .scheduledTasksCollapsed=${this.navigationSections.isCollapsed("scheduledTasks")}
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
         .workspaceLabelItems=${(workspace: Workspace) => this.workspaceLabelItems(workspace)}
         .refreshControl=${this.appShell.shouldShowAppRefreshInHeader() ? this.renderAppRefresh() : undefined}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
         .onToggleProjects=${() => { this.navigationSections.toggle("projects"); }}
         .onToggleWorkspaces=${() => { this.navigationSections.toggle("workspaces"); }}
+        .onToggleScheduledTasks=${() => { this.navigationSections.toggle("scheduledTasks"); }}
         .onToggleSessions=${() => { this.navigationSections.toggle("sessions"); }}
         .onSelectProject=${(project: Project) => this.selectNavigationItem("projects", "workspaces", () => this.workspaces.selectProject(project))}
         .onCloseProject=${(project: Project) => this.projects.closeProject(project.id)}
         .onRenameProject=${(project: Project, name: string) => this.projects.renameProject(project.id, name)}
         .onSelectWorkspace=${(workspace: Workspace) => this.selectNavigationItem("workspaces", "sessions", () => this.workspaces.selectWorkspace(workspace))}
         .onDeleteWorkspace=${(workspace: Workspace) => { void this.deleteWorkspace(workspace); }}
+        .onNewScheduledTask=${() => { this.scheduledTasks.openNewDialog(); }}
+        .onEditScheduledTask=${(task: ScheduledTask) => { this.scheduledTasks.openEditDialog(task); }}
+        .onRunScheduledTaskNow=${(task: ScheduledTask) => { void this.scheduledTasks.runNow(task); }}
+        .onToggleScheduledTaskEnabled=${(task: ScheduledTask) => { void this.scheduledTasks.toggleEnabled(task); }}
+        .onViewScheduledTaskHistory=${(task: ScheduledTask) => { void this.scheduledTasks.openHistory(task); }}
+        .onDeleteScheduledTask=${(task: ScheduledTask) => { void this.scheduledTasks.remove(task); }}
         .onArchivedCollapsed=${() => { this.sessions.clearSelectionAfterArchivedCollapse(); }}
         .onStartSession=${() => this.startSessionFromNavigation()}
         .onSelectSession=${(session: SessionInfo) => this.selectNavigationItem("sessions", "chat", () => this.sessions.selectSession(session))}
@@ -2092,6 +2148,26 @@ export class PiWebApp extends LitElement {
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .canCleanup=${this.canCleanupSessions()} .unavailableMessage=${this.sessionCleanupUnavailableMessage()} .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
         ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }}></settings-dialog>` : null}
+        ${state.scheduledTaskDialog !== undefined ? html`
+          <scheduled-task-dialog
+            .task=${state.scheduledTaskDialog.task}
+            .defaultProjectId=${state.selectedProject?.id ?? ""}
+            .defaultProjectName=${state.selectedProject?.name ?? ""}
+            .defaultWorkspaceId=${state.selectedWorkspace?.id}
+            .defaultWorkspaceLabel=${state.selectedWorkspace?.label ?? "main"}
+            .projects=${state.projects}
+            .onSave=${(input: ScheduledTaskCreateRequest) => { this.saveScheduledTask(input); }}
+            .onCancel=${() => { this.scheduledTasks.closeDialog(); }}
+          ></scheduled-task-dialog>
+        ` : null}
+        ${state.scheduledTaskHistoryDialog !== undefined ? html`
+          <scheduled-task-run-history
+            .taskName=${state.scheduledTaskHistoryDialog.taskName}
+            .runs=${state.scheduledTaskHistoryDialog.runs}
+            .onOpenSession=${(sessionId: string) => { this.openSessionFromScheduledTaskRun(sessionId); }}
+            .onCancel=${() => { this.scheduledTasks.closeHistory(); }}
+          ></scheduled-task-run-history>
+        ` : null}
       </div>
     `;
   }
