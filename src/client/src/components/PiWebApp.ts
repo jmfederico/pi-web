@@ -4,6 +4,7 @@ import { configApi, effectiveWorkspaceUploadFolder, piWebApi, sessionsApi, termi
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
+import { deriveDocumentTitle } from "../documentTitle";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
 import { ActivityController } from "../controllers/activityController";
 import { AuthController } from "../controllers/authController";
@@ -202,6 +203,8 @@ export class PiWebApp extends LitElement {
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(undefined);
+  private lastDocumentSessionId: string | undefined;
+
   private readonly onPopState = () => void this.withChatScrollTransition(async () => {
     this.restoreSettingsRoute();
     await this.restoreRoute(false);
@@ -259,6 +262,7 @@ export class PiWebApp extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    document.title = deriveDocumentTitle(this.state.selectedSession, this.state.status, this.state.activity);
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("pageshow", this.onPageShow);
     window.addEventListener("focus", this.onFocus);
@@ -311,7 +315,21 @@ export class PiWebApp extends LitElement {
     this.handleActivityTransition(previous, this.state);
     this.handleWorkspaceChange(previous, this.state);
     this.handleMachineChange(previous, this.state);
+    this.updateDocumentTitle(previous);
     if (machineActivitySubscriptionInputsChanged(previous, this.state)) this.syncMachineActivitySubscriptions();
+  }
+
+  private updateDocumentTitle(previous: AppState): void {
+    const session = this.state.selectedSession;
+    const status = this.state.status;
+    const activity = this.state.activity;
+    // Recalculate when the session itself changes (by id), or when the
+    // status / activity of the same session changes (streaming start/stop).
+    const idChanged = session?.id !== previous.selectedSession?.id;
+    const activeChanged = status !== previous.status || activity !== previous.activity;
+    if (idChanged) this.lastDocumentSessionId = session?.id;
+    if (!idChanged && !activeChanged) return;
+    document.title = deriveDocumentTitle(session, status, activity);
   }
 
   private async loadProjectsAndRestoreRoute() {
