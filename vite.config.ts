@@ -93,6 +93,7 @@ function devDocsPlugin(): Plugin {
 export default defineConfig({
   plugins: [devDocsPlugin()],
   root: "src/client",
+  base: "./",
   build: {
     outDir: "../../dist/client",
     emptyOutDir: true,
