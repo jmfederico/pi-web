@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
 import { packageVersion, printPiWebVersionReport } from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
+import { checkServiceShellPathDrift, formatServiceShellPathDriftCheck } from "./server/diagnostics/serviceShellPathDrift.js";
 
 const PI_WEB_PACKAGE_NAME = "@jmfederico/pi-web";
 
@@ -797,6 +798,11 @@ async function install(args: string[]): Promise<void> {
     printPathSetupAdvice();
     throw new Error("Install preflight checks failed. Fix the failed checks above, then run `pi-web doctor` for more detail.");
   }
+  if (serviceShellPathDriftDetected()) {
+    printServiceShellPathDriftCheck();
+    printPathSetupAdvice();
+    throw new Error("Service shell PATH drift detected. Services would start but fail with exit code 127. Fix the PATH setup above, then re-run `pi-web install`.");
+  }
 
   const configPath = await writeInitialConfig(options);
   const services = options.mode === "dev"
@@ -1019,6 +1025,7 @@ async function doctor(): Promise<void> {
   const ok = runChecks(doctorChecks());
   printOptionalDoctorChecks();
   const nodePtySpawnHelperOk = printNodePtyDarwinSpawnHelperCheck();
+  const pathDriftOk = printServiceShellPathDriftCheck();
 
   if (supportsSystemdUserServices()) {
     const linger = isLingerEnabled();
@@ -1037,7 +1044,7 @@ async function doctor(): Promise<void> {
     console.log(`- systemd user lingering skipped on ${platformLabel()}`);
   }
 
-  if (!ok) {
+  if (!ok || !pathDriftOk) {
     console.log("\nIf a command works in your terminal but fails here, make sure your service shell login files set PATH the same way.");
     if (backend?.kind === "systemd") console.log("If a bundled entrypoint is not accessible, reinstall or update the PI WEB package.");
     printPathSetupAdvice();
@@ -1047,13 +1054,35 @@ async function doctor(): Promise<void> {
     console.log(`\n${manualRunAdvice()}`);
   }
 
-  if (!ok || !nodePtySpawnHelperOk) process.exitCode = 1;
+  if (!ok || !nodePtySpawnHelperOk || !pathDriftOk) process.exitCode = 1;
 }
 
 function printNodePtyDarwinSpawnHelperCheck(): boolean {
   const result = formatNodePtyDarwinSpawnHelperCheck(checkNodePtyDarwinSpawnHelper());
   for (const line of result.lines) console.log(line);
   return result.ok;
+}
+
+function serviceShellPathDriftCommands(): string[] {
+  // Tools the service shell must resolve to launch PI WEB services. If any of
+  // these is on the interactive PATH but missing from a clean login shell, the
+  // generated service plists/units will fail with exit code 127.
+  return ["node", "pi-web-server", "pi-web-sessiond"];
+}
+
+function printServiceShellPathDriftCheck(): boolean {
+  const shell = detectServiceShell();
+  const result = formatServiceShellPathDriftCheck(
+    checkServiceShellPathDrift(serviceShellPathDriftCommands(), shell.executable),
+    shell.name,
+  );
+  for (const line of result.lines) console.log(line);
+  return result.ok;
+}
+
+function serviceShellPathDriftDetected(): boolean {
+  const shell = detectServiceShell();
+  return checkServiceShellPathDrift(serviceShellPathDriftCommands(), shell.executable).status === "path-drift";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
