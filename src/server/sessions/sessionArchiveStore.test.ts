@@ -1,15 +1,53 @@
 import { constants } from "node:fs";
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it } from "vitest";
-import { SessionArchiveStore } from "./sessionArchiveStore.js";
+import { homedir, tmpdir } from "node:os";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { defaultSessionArchiveFilePath, SessionArchiveStore } from "./sessionArchiveStore.js";
 
 const tempRoots: string[] = [];
 
+describe("defaultSessionArchiveFilePath", () => {
+  it("uses PI_WEB_DATA_DIR when configured", () => {
+    expect(defaultSessionArchiveFilePath({ PI_WEB_DATA_DIR: "managed-state" }, "/tmp/pi-web")).toBe(resolve("/tmp/pi-web", "managed-state", "archived-sessions.json"));
+  });
+
+  it("preserves the ~/.pi-web default when PI_WEB_DATA_DIR is unset", () => {
+    expect(defaultSessionArchiveFilePath({}, "/tmp/pi-web")).toBe(join(homedir(), ".pi-web", "archived-sessions.json"));
+  });
+});
+
 describe("SessionArchiveStore", () => {
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it("stores its default index and archived files under PI_WEB_DATA_DIR", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-archive-data-dir-"));
+    tempRoots.push(root);
+    const dataDir = join(root, "managed-state");
+    const activeDir = join(root, "active");
+    await mkdir(activeDir, { recursive: true });
+    const sourcePath = join(activeDir, "2026-01-01_managed.jsonl");
+    await writeFile(sourcePath, "session contents\n", "utf8");
+    vi.stubEnv("PI_WEB_DATA_DIR", dataDir);
+
+    const store = new SessionArchiveStore();
+    const record = await store.archive({
+      sessionId: "managed",
+      cwd: "/workspace",
+      path: sourcePath,
+      created: "2026-01-01T00:00:00.000Z",
+      modified: "2026-01-01T00:01:00.000Z",
+      messageCount: 1,
+      firstMessage: "hello",
+    });
+
+    const archivePath = join(dataDir, "archived-sessions", "2026-01-01_managed.jsonl");
+    expect(record.archivePath).toBe(archivePath);
+    await expect(readFile(archivePath, "utf8")).resolves.toBe("session contents\n");
+    await expect(readFile(join(dataDir, "archived-sessions.json"), "utf8")).resolves.toContain('"sessionId": "managed"');
   });
 
   it("moves archived session files out of the active session directory and restores them", async () => {
