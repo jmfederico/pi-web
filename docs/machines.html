@@ -174,7 +174,9 @@ PI WEB gateway you opened
               <p>
                 Prefer a private path such as NetBird, Tailscale, WireGuard, private LAN, SSH tunnel, or an authenticated reverse
                 proxy. If the remote is behind a path prefix, include that prefix in the machine URL, for example
-                <code>https://devbox.example.test/pi-web</code>.
+                <code>https://devbox.example.test/pi-web</code>. The machine registry normalizes the trailing slash; when
+                opening that deployment directly in a browser, use its canonical <code>https://devbox.example.test/pi-web/</code>
+                URL and configure the proxy to redirect the slashless form.
               </p>
               <div class="callout danger">
                 Do not expose PI WEB directly to the public internet. Register machines only over trusted network paths

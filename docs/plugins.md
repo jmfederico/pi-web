@@ -325,14 +325,14 @@ Rules:
 
 ### Manifest and assets
 
-The manifest contains each discovered plugin module:
+The manifest contains each discovered plugin module. Current PI WEB releases emit `module` relative to the fetched manifest so the same manifest works at the origin root or under a reverse-proxy path prefix:
 
 ```json
 {
   "plugins": [
     {
       "id": "my-plugin",
-      "module": "/pi-web-plugins/my-plugin/pi-web-plugin.js?v=1234567890",
+      "module": "./my-plugin/pi-web-plugin.js?v=1234567890",
       "source": "local",
       "scope": "local",
       "machineSpecific": false
@@ -341,9 +341,11 @@ The manifest contains each discovered plugin module:
 }
 ```
 
+The browser resolves manifest-relative module references against the manifest URL. For backward compatibility, it also treats leading-root references such as `/pi-web-plugins/my-plugin/pi-web-plugin.js` from existing PI WEB releases as application-root input, not origin-root input. Federated gateways accept both forms from remote machines and rewrite them to deployment-portable, gateway-relative references.
+
 `source` describes where the plugin came from (`bundled`, `local`, or the Pi package source). `scope` is `bundled`, `local`, `user`, or `project`. `machineSpecific` controls whether the gateway copy is valid for remote machines or only each selected machine's own copy can appear.
 
-A plugin can fetch its own static assets with URLs under:
+At an origin-root deployment, a plugin's static assets are available under:
 
 ```text
 /pi-web-plugins/<plugin-id>/<path-inside-plugin-root>

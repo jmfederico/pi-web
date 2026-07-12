@@ -95,6 +95,7 @@
             <a href="#pi-package">Install through Pi</a>
             <a href="#manual-run">WSL / manual run</a>
             <a href="#remote-access">Remote access</a>
+            <a href="#reverse-proxy-prefix">Reverse proxy prefixes</a>
             <a href="#federated-machines">Federated machines</a>
             <a href="#manage-services">Manage services</a>
             <a href="#configure">Configure</a>
@@ -218,6 +219,79 @@
                 NetBird/Tailscale/WireGuard/LAN address, and make sure that network policy limits access. Avoid
                 <code>0.0.0.0</code> unless a firewall, VPN, or authenticated reverse proxy strictly controls the port.
               </div>
+            </section>
+
+            <section id="reverse-proxy-prefix">
+              <h2>Reverse proxy root and path-prefix deployments</h2>
+              <p>
+                The published PI WEB client is deployment-independent. The same package works at the origin root
+                (<code>/</code>) or at canonical nested prefixes such as <code>/ai/</code> and <code>/test/ai/</code>;
+                no prefix-specific rebuild or PI WEB configuration is needed.
+              </p>
+              <p>
+                For a root deployment, proxy <code>/</code> directly to <code>http://127.0.0.1:8504</code> without
+                rewriting the path. For a nested deployment:
+              </p>
+              <ol>
+                <li>Redirect the slashless prefix, such as <code>/ai</code>, to <code>/ai/</code>. The browser uses the trailing-slash document URL as the application base.</li>
+                <li>Strip the prefix before forwarding. PI WEB continues to serve root paths on its localhost listener.</li>
+                <li>Apply authentication to the whole served <code>/ai/</code> application and preserve required authentication headers and cookies.</li>
+                <li>Forward WebSocket upgrades through the same location as HTTP, API, image, PWA, and plugin traffic.</li>
+              </ol>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Nginx path-prefix proxy</strong>
+                  <button class="copy-button" data-copy="#nginx-prefix-proxy">Copy</button>
+                </div>
+                <pre id="nginx-prefix-proxy"><code><span class="comment"># http context</span>
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name pi.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/pi.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pi.example.com/privkey.pem;
+
+    auth_basic "PI WEB";
+    auth_basic_user_file /etc/nginx/pi-web.htpasswd;
+
+    location = /ai {
+        return 308 /ai/$is_args$args;
+    }
+
+    location ^~ /ai/ {
+        <span class="comment"># The trailing slash strips /ai/ before forwarding.</span>
+        proxy_pass http://127.0.0.1:8504/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+    }
+}</code></pre>
+              </div>
+              <p>
+                Use the same pattern for <code>/test/ai/</code> by changing both Nginx locations. If your proxy uses
+                bearer tokens, SSO, or another authentication mechanism, keep that policy on the prefixed application
+                location and continue forwarding the headers or cookies it requires; the slashless redirect serves no
+                PI WEB content. Do not create unprotected exceptions for <code>/api/</code> or
+                <code>/pi-web-plugins/</code>.
+              </p>
+              <p>
+                Once the proxy follows this contract, relative client assets, images, PWA assets, API calls, local and
+                federated plugins, and WebSocket URLs stay inside the prefix. Installed PWA <code>start_url</code> and
+                scope stay inside it as well.
+              </p>
             </section>
 
             <section id="federated-machines">

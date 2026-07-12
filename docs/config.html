@@ -91,6 +91,7 @@
           <aside class="toc" aria-label="Config page contents">
             <strong>On this page</strong>
             <a href="#files">Config files</a>
+            <a href="#deployment-paths">Deployment paths</a>
             <a href="#precedence">Precedence and reloads</a>
             <a href="#global-config">Global config</a>
             <a href="#project-config">Project config</a>
@@ -130,6 +131,22 @@
                 <code>pi-web install --config /path/to/config.json</code> after changing that path or after upgrading from
                 a version that only applied the custom path to the web service. This regenerates service files so the
                 web/API and session daemon use the same <code>PI_WEB_CONFIG</code>.
+              </p>
+            </section>
+
+            <section id="deployment-paths">
+              <h2>Reverse-proxy deployment paths</h2>
+              <p>
+                The deployment path is not a PI WEB config-file key or environment setting. The published client is
+                portable: one build works at <code>/</code> and at canonical trailing-slash prefixes such as
+                <code>/ai/</code> or <code>/test/ai/</code>.
+              </p>
+              <p>
+                For a nested deployment, redirect the slashless prefix to the trailing-slash URL, strip the prefix
+                before forwarding to PI WEB, and proxy authenticated HTTP and WebSocket traffic through the same
+                location. Relative browser and PWA URLs then stay within that prefix. See the
+                <a href="install#reverse-proxy-prefix">reverse proxy deployment example</a> for complete Nginx
+                configuration.
               </p>
             </section>
 

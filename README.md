@@ -95,6 +95,60 @@ Use a private network, SSH tunnel, trusted reverse proxy, or federated PI WEB ma
 
 Read more: [Remote-first development](https://pi-web.dev/remote-first)
 
+## Reverse proxy deployments
+
+The published production client is deployment-independent. The same package works at the origin root (`/`) or at canonical nested prefixes such as `/ai/` and `/test/ai/`; do not rebuild or configure PI WEB for a particular prefix.
+
+For a root deployment, proxy `/` directly to `http://127.0.0.1:8504` without rewriting the path. For a nested deployment:
+
+1. Redirect the slashless prefix (`/ai`) to its trailing-slash form (`/ai/`). The browser uses that document URL as the application base.
+2. Strip `/ai` before forwarding requests. PI WEB continues to serve `/`, `/api/...`, and `/pi-web-plugins/...` on its localhost listener.
+3. Put authentication on the whole served `/ai/` application and preserve authentication headers/cookies when forwarding.
+4. Proxy WebSocket upgrades through the same prefix. Do not create unprotected exceptions for API or plugin paths.
+
+For example, this Nginx configuration belongs behind working TLS certificate directives:
+
+```nginx
+# http context
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name pi.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/pi.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/pi.example.com/privkey.pem;
+
+    auth_basic "PI WEB";
+    auth_basic_user_file /etc/nginx/pi-web.htpasswd;
+
+    location = /ai {
+        return 308 /ai/$is_args$args;
+    }
+
+    location ^~ /ai/ {
+        # The trailing slash strips /ai/ before forwarding.
+        proxy_pass http://127.0.0.1:8504/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Cookie $http_cookie;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+Use the same pattern for `/test/ai/` by changing both Nginx locations. If your proxy uses bearer tokens, SSO, or another authentication mechanism, keep that policy on the prefixed application location and continue forwarding the headers/cookies it requires; the slashless redirect serves no PI WEB content. Relative client, PWA, image, API, plugin, and WebSocket URLs then remain inside the deployment prefix; installed PWA `start_url` and scope do too.
+
 ## Machines and fleets
 
 PI WEB can register other PI WEB runtimes as remote machines. One browser-facing PI WEB instance can proxy projects, files, git state, sessions, terminals, activity, Pi package management, and selected-machine settings from trusted remote machines.
