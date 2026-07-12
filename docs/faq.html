@@ -131,8 +131,9 @@
               <h2>Tools are failing, node is not found, or Pi cannot find commands</h2>
               <p>
                 The shell environment needs to be set up so login shells have the required PATH entries for PI WEB, Pi,
-                and any tools your agents need. PI WEB services run commands through a non-interactive login shell, so
-                an interactive terminal can work while services fail.
+                and any tools your agents need. PI WEB services run commands through a non-interactive login shell owned
+                by systemd or launchd, so an interactive terminal—or even a caller-invoked login shell—can work while the
+                native service fails.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -156,14 +157,17 @@
             <article id="doctor-fails" class="faq-item">
               <h2>What does <code>pi-web doctor</code> check?</h2>
               <p>
-                It checks whether the service shell and native service environment can find Node 22+, npm, Pi, and the Pi
-                Web binaries. It also prints installed and running PI WEB versions when available, reports optional ripgrep
-                availability for faster all-file <code>@</code>-mention suggestions, uses a bounded filesystem fallback when
-                ripgrep is unavailable, and reports user service lingering when relevant for server-style installs.
+                It keeps two kinds of checks separate. General login-shell readiness covers Node 22+, npm, Pi, and optional
+                ripgrep. Native-service diagnostics validate only the exact prerequisites of the selected service plan in
+                the real systemd user-manager or launchd <code>gui/&lt;uid&gt;</code> context. Development installs follow their
+                installed checkout plan; production checks are clearly labelled prospective when the installed executable
+                strategy cannot be reconstructed safely.
               </p>
               <p>
-                If something works in your terminal but fails in doctor, treat that as a login-shell PATH mismatch and
-                move the setup earlier in your shell startup chain.
+                Missing plan requirements fail doctor and include login-file guidance. Manager, timeout, malformed-output,
+                and cleanup failures are reported as probe infrastructure problems rather than being mislabeled as PATH
+                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also prints
+                installed and running PI WEB versions and reports systemd lingering when relevant.
               </p>
             </article>
 

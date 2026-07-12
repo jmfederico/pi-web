@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { commandWithVersionCheck, isCliEntrypoint } from "./cli.js";
+import {
+  commandWithVersionCheck,
+  doctorExitCode,
+  isCliEntrypoint,
+  launchdRuntimeDetails,
+  serviceBackendForPlatform,
+} from "./cli.js";
 
 const originalShell = process.env["SHELL"];
 
@@ -30,6 +36,29 @@ describe("commandWithVersionCheck", () => {
     const command = commandWithVersionCheck("npm");
     expect(command).toBe("command -v npm && begin; npm --version 2>&1 || true; end");
     expect(command).not.toContain("(");
+  });
+});
+
+describe("native-service doctor CLI contracts", () => {
+  it("uses native services only on supported platforms", () => {
+    expect(serviceBackendForPlatform("linux")).toEqual({ kind: "systemd", label: "systemd user services" });
+    expect(serviceBackendForPlatform("darwin")).toEqual({ kind: "launchd", label: "LaunchAgents" });
+    expect(serviceBackendForPlatform("win32")).toBeUndefined();
+  });
+
+  it("fails doctor for general, native-plan, or node-pty failures", () => {
+    expect(doctorExitCode(true, true, true)).toBe(0);
+    expect(doctorExitCode(false, true, true)).toBe(1);
+    expect(doctorExitCode(true, false, true)).toBe(1);
+    expect(doctorExitCode(true, true, false)).toBe(1);
+  });
+
+  it("surfaces launchd last exit code 127 in service status", () => {
+    expect(launchdRuntimeDetails("state = exited\nlast exit code = 127\n")).toEqual({
+      state: "exited",
+      detail: "exited (last exit code 127)",
+      pid: undefined,
+    });
   });
 });
 

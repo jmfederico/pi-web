@@ -112,8 +112,10 @@
               </ul>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>
-                PI WEB services run through your login shell with <code>-lc</code>. Setup that only lives in interactive shell
-                files or prompt hooks may not be visible to services. Run <code>pi-web doctor</code> after installing.
+                PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
+                interactive shell files or prompt hooks may not be visible to the systemd or launchd manager. The installer
+                probes the exact candidate plan in that manager context before changing config or replacing services; run
+                <code>pi-web doctor</code> later to repeat plan-specific diagnostics.
               </div>
             </section>
 
@@ -134,6 +136,7 @@
 <span class="prompt">$</span> pi-web doctor</code></pre>
               </div>
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
+              <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
             </section>
 

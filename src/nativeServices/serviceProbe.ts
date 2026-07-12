@@ -365,7 +365,7 @@ function prerequisiteProbeCommand(
   outputPrefix: string,
 ): string {
   return prerequisites.map((prerequisite) => {
-    const check = prerequisiteCheck(shell, prerequisite);
+    const check = nativeServicePrerequisiteShellCheck(shell, prerequisite);
     const encodedId = Buffer.from(prerequisite.id, "utf8").toString("base64");
     const satisfied = markerCommand(shell, outputPrefix, encodedId, "satisfied");
     const unsatisfied = markerCommand(shell, outputPrefix, encodedId, "unsatisfied");
@@ -373,7 +373,7 @@ function prerequisiteProbeCommand(
   }).join("; ") || ":";
 }
 
-function prerequisiteCheck(shell: NativeServiceShellName, prerequisite: NativeServicePrerequisite): string {
+export function nativeServicePrerequisiteShellCheck(shell: NativeServiceShellName, prerequisite: NativeServicePrerequisite): string {
   switch (prerequisite.kind) {
     case "command-available":
       return `command -v ${shellQuote(shell, prerequisite.command)}`;

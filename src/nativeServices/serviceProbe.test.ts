@@ -102,6 +102,25 @@ describe("systemd authoritative native-service probe", () => {
     });
   });
 
+  it("bounds a hung unit, cleans it up, and reports the timeout", async () => {
+    const runner = queuedRunner([
+      { kind: "timeout", stdout: "", stderr: "" },
+      completed(0),
+      completed(0),
+    ]);
+    const probe = new SystemdNativeServiceProbe({
+      commandRunner: runner,
+      createUniqueId: () => "fixed",
+      commandTimeoutMs: 100,
+    });
+
+    await expect(probe.run(request())).resolves.toMatchObject({
+      kind: "infrastructure-failure",
+      reason: "timeout",
+    });
+    expect(runner.calls.map(({ command }) => command)).toEqual(["systemd-run", "systemctl", "systemctl"]);
+  });
+
   it("bounds a hung unit and distinguishes cleanup failure", async () => {
     const runner = queuedRunner([
       { kind: "timeout", stdout: "", stderr: "" },
@@ -275,6 +294,80 @@ describe("launchd authoritative native-service probe", () => {
     expect(result.kind === "infrastructure-failure" && result.message).toContain("bootstrap denied");
     expect(runner.calls).toHaveLength(1);
     expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+  });
+
+  it("cleans a loaded label after malformed launchctl output", async () => {
+    const runner = queuedRunner([
+      completed(0),
+      completed(0, "pid = 123\n"),
+      completed(0),
+    ]);
+    const fileSystem = launchdFileSystem({});
+    const probe = new LaunchdNativeServiceProbe({
+      commandRunner: runner,
+      fileSystem,
+      uid: 505,
+      createUniqueId: () => "fixed",
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      probeTimeoutMs: 20,
+      pollIntervalMs: 10,
+      commandTimeoutMs: 100,
+    });
+
+    await expect(probe.run(request("launchd"))).resolves.toMatchObject({
+      kind: "infrastructure-failure",
+      reason: "malformed-output",
+    });
+    expect(runner.calls.at(-1)?.args[0]).toBe("bootout");
+    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+  });
+
+  it("cleans a loaded label when probe output cannot be read", async () => {
+    const runner = queuedRunner([
+      completed(0),
+      completed(0, "state = not running\nlast exit code = 0\n"),
+      completed(0),
+    ]);
+    const fileSystem = launchdFileSystem({});
+    const probe = new LaunchdNativeServiceProbe({
+      commandRunner: runner,
+      fileSystem,
+      uid: 506,
+      createUniqueId: () => "fixed",
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      probeTimeoutMs: 20,
+      pollIntervalMs: 10,
+      commandTimeoutMs: 100,
+    });
+
+    const result = await probe.run(request("launchd"));
+    expect(result).toMatchObject({ kind: "infrastructure-failure", reason: "manager" });
+    expect(result.kind === "infrastructure-failure" && result.message).toContain("Could not read launchd probe output");
+    expect(runner.calls.at(-1)?.args[0]).toBe("bootout");
+    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+  });
+
+  it("reports temporary-file cleanup failures", async () => {
+    const runner = queuedRunner([completed(1, "", "bootstrap denied")]);
+    const fileSystem = launchdFileSystem({});
+    fileSystem.removeDirectory.mockRejectedValueOnce(new Error("rm denied"));
+    const probe = new LaunchdNativeServiceProbe({
+      commandRunner: runner,
+      fileSystem,
+      uid: 506,
+      createUniqueId: () => "fixed",
+      now: () => 0,
+      sleep: () => Promise.resolve(),
+      probeTimeoutMs: 20,
+      pollIntervalMs: 10,
+      commandTimeoutMs: 100,
+    });
+
+    const result = await probe.run(request("launchd"));
+    expect(result).toMatchObject({ kind: "infrastructure-failure", reason: "cleanup" });
+    expect(result.kind === "infrastructure-failure" && result.message).toContain("rm denied");
   });
 });
 

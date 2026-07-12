@@ -64,6 +64,8 @@ pi-web version
 pi-web uninstall
 ```
 
+`pi-web install` validates the exact production or development service plan inside the native user-service manager before changing config or replacing services. `pi-web doctor` repeats manager-context diagnostics, labels prospective production checks when an installed command strategy cannot be reconstructed, and keeps general shell/Pi/npm readiness separate from service-start requirements.
+
 For more install options, including one-line install, Pi package install, WSL/manual usage, and remote access, see the [installation guide](https://pi-web.dev/install).
 
 ## Core model
