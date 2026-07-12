@@ -16,7 +16,7 @@ export interface LoadExternalPluginsOptions {
   shouldLoadPlugin?: (entry: PluginManifestEntry) => boolean;
 }
 
-export async function loadExternalPlugins(manifestUrl = "/pi-web-plugins/manifest.json", options: LoadExternalPluginsOptions = {}): Promise<PiWebPluginRegistration[]> {
+export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest.json", options: LoadExternalPluginsOptions = {}): Promise<PiWebPluginRegistration[]> {
   const manifest = await fetchPluginManifest(manifestUrl);
   if (manifest === undefined) return [];
 

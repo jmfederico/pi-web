@@ -144,7 +144,7 @@ function fetchCallToRoute(call: Parameters<FetchLike>, scopedMachineId: string):
 
 function routeFromMachineUrl(method: string, input: string | URL | Request, scopedMachineId: string): ObservedHttpRoute {
   const url = toUrl(input);
-  const prefix = `/api/machines/${encodeURIComponent(scopedMachineId)}`;
+  const prefix = `api/machines/${encodeURIComponent(scopedMachineId)}`;
   if (!url.pathname.startsWith(prefix)) throw new Error(`Expected machine-scoped URL, got ${url.pathname}`);
   return { method, path: url.pathname.slice(prefix.length) || "/" };
 }

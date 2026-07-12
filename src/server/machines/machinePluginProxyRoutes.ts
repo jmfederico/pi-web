@@ -86,7 +86,7 @@ function rewriteRemotePluginManifest(machineId: string, manifest: RemotePluginMa
       if (modulePath === undefined) return [];
       return [{
         ...plugin,
-        module: `/pi-web-plugins/${encodeURIComponent(machineScopedPluginId(machineId, plugin.id))}/${modulePath.path}${modulePath.query}`,
+        module: `${piWebBasePath()}/pi-web-plugins/${encodeURIComponent(machineScopedPluginId(machineId, plugin.id))}/${modulePath.path}${modulePath.query}`,
       }];
     }),
   };
@@ -188,6 +188,11 @@ function sendGatewayError(reply: FastifyReply, machineId: string, error: unknown
     statusCode,
     detail: error instanceof Error ? error.message : String(error),
   });
+}
+
+function piWebBasePath(): string {
+  const basePath = process.env["PI_WEB_BASE_PATH"] ?? "";
+  return basePath.replace(/\/$/u, "");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

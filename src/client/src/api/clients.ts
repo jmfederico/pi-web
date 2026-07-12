@@ -51,7 +51,7 @@ import {
 } from "./parsers";
 import { machineGitDiffUrl, messageUrl } from "./urls";
 
-const machinePrefix = (machineId = "local") => `/api/machines/${encodeURIComponent(machineId)}`;
+const machinePrefix = (machineId = "local") => `api/machines/${encodeURIComponent(machineId)}`;
 
 type SessionLookup = SessionRef | string;
 
@@ -100,24 +100,24 @@ function sessionBulkMutationRef(session: SessionLookup): SessionBulkMutationRef 
 }
 
 export const piWebApi = {
-  piWebStatus: (machineId = "local") => request(machineId === "local" ? "/api/pi-web/status" : `${machinePrefix(machineId)}/pi-web/status`, parsePiWebStatusResponse),
-  piWebRuntime: () => request("/api/pi-web/runtime", parsePiWebRuntimeResponse),
+  piWebStatus: (machineId = "local") => request(machineId === "local" ? "api/pi-web/status" : `${machinePrefix(machineId)}/pi-web/status`, parsePiWebStatusResponse),
+  piWebRuntime: () => request("api/pi-web/runtime", parsePiWebRuntimeResponse),
 };
 
 export const machinesApi = {
-  machines: () => request("/api/machines", parseMachinesResponse),
-  addMachine: (input: { name: string; baseUrl: string; token?: string }) => request("/api/machines", parseMachine, { method: "POST", body: JSON.stringify(input) }),
-  deleteMachine: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}`, (value) => value, { method: "DELETE" }),
-  health: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}/health`, parseMachineHealth),
-  runtime: (machineId: string) => request(`/api/machines/${encodeURIComponent(machineId)}/runtime`, parseMachineRuntime),
+  machines: () => request("api/machines", parseMachinesResponse),
+  addMachine: (input: { name: string; baseUrl: string; token?: string }) => request("api/machines", parseMachine, { method: "POST", body: JSON.stringify(input) }),
+  deleteMachine: (machineId: string) => request(`api/machines/${encodeURIComponent(machineId)}`, (value) => value, { method: "DELETE" }),
+  health: (machineId: string) => request(`api/machines/${encodeURIComponent(machineId)}/health`, parseMachineHealth),
+  runtime: (machineId: string) => request(`api/machines/${encodeURIComponent(machineId)}/runtime`, parseMachineRuntime),
 };
 
 function configUrl(machineId?: string): string {
-  return machineId === undefined ? "/api/config" : `${machinePrefix(machineId)}/config`;
+  return machineId === undefined ? "api/config" : `${machinePrefix(machineId)}/config`;
 }
 
 function pluginsUrl(machineId?: string): string {
-  return machineId === undefined ? "/api/plugins" : `${machinePrefix(machineId)}/plugins`;
+  return machineId === undefined ? "api/plugins" : `${machinePrefix(machineId)}/plugins`;
 }
 
 export const configApi = {
@@ -130,7 +130,7 @@ export const pluginsApi = {
 };
 
 function piPackageUrl(endpoint = "", machineId?: string): string {
-  const baseUrl = machineId === undefined ? "/api/pi-packages" : `${machinePrefix(machineId)}/pi-packages`;
+  const baseUrl = machineId === undefined ? "api/pi-packages" : `${machinePrefix(machineId)}/pi-packages`;
   return endpoint === "" ? baseUrl : `${baseUrl}/${endpoint}`;
 }
 

@@ -23,10 +23,9 @@ export function realtimeEvents(machineId = "local"): WebSocket {
 }
 
 function machinePrefix(machineId: string): string {
-  return `/api/machines/${encodeURIComponent(machineId)}`;
+  return `api/machines/${encodeURIComponent(machineId)}`;
 }
 
 function webSocketBaseUrl(): string {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}`;
+  return "";
 }

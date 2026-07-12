@@ -50,6 +50,11 @@ interface PiWebPluginServiceOptions {
   configProvider?: () => PiWebConfig;
 }
 
+function piWebBasePath(): string {
+  const basePath = process.env["PI_WEB_BASE_PATH"] ?? "";
+  return basePath.replace(/\/$/u, "");
+}
+
 interface LocalPluginRoot {
   path: string;
   source: string;
@@ -135,7 +140,7 @@ export class PiWebPluginService {
   private pluginInfo(plugin: PluginRecord, config: PiWebConfig): PiWebPluginInfo {
     return {
       id: plugin.id,
-      module: `/pi-web-plugins/${encodeURIComponent(plugin.id)}/${plugin.entryFile}?${pluginModuleQuery(plugin)}`,
+      module: `${piWebBasePath()}/pi-web-plugins/${encodeURIComponent(plugin.id)}/${plugin.entryFile}?${pluginModuleQuery(plugin)}`,
       source: plugin.source,
       scope: plugin.scope,
       machineSpecific: plugin.machineSpecific,
