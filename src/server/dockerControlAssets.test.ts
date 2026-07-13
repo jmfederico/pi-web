@@ -39,20 +39,24 @@ describe("Docker command assets", () => {
       execUtf8("sh", ["-n", dockerEntrypoint], process.env),
       execUtf8("sh", ["-n", join(repoRoot, "docker", "install.sh")], process.env),
       execUtf8("sh", ["-n", join(repoRoot, "docker", "internal", "dev", "compose")], process.env),
+      execUtf8("bash", ["-n", join(repoRoot, "docker", "internal", "dev", "sync-node-modules")], process.env),
       execUtf8("sh", ["-n", join(repoRoot, "docker", "internal", "host-profile.sh")], process.env),
     ]);
   });
 
   it("packages the canonical Docker command and internal support assets", async () => {
-    const [dockerfile, devDockerfile, runtimeCompose, devCompose, installer, devWrapper, dockerignore] = await Promise.all([
+    const [dockerfile, devDockerfile, runtimeCompose, devCompose, installer, devWrapper, dependencySync, dockerignore] = await Promise.all([
       readRepoFile("docker/Dockerfile"),
       readRepoFile("docker/Dockerfile.dev"),
       readRepoFile("docker/compose.yml"),
       readRepoFile("docker/compose.dev.yml"),
       readRepoFile("docker/install.sh"),
       readRepoFile("docker/internal/dev/compose"),
+      readRepoFile("docker/internal/dev/sync-node-modules"),
       readRepoFile("docker/.dockerignore"),
     ]);
+    const customImageHooksIndex = devDockerfile.indexOf("for script in /tmp/pi-web-custom-image.d/*.sh");
+    const dependencyGenerationIndex = devDockerfile.indexOf("/opt/pi-web-dev-dependencies/generation");
 
     expect(dockerfile).toContain("COPY pi-web-docker /usr/local/bin/pi-web-docker");
     expect(dockerfile).toContain("COPY internal/bin/hostexec /usr/local/bin/hostexec");
@@ -62,6 +66,12 @@ describe("Docker command assets", () => {
     expect(dockerfile).not.toContain("@earendil-works/pi-coding-agent@");
     expect(devDockerfile).toContain("COPY docker/pi-web-docker /usr/local/bin/pi-web-docker");
     expect(devDockerfile).toContain("COPY docker/internal/bin/hostexec /usr/local/bin/hostexec");
+    expect(devDockerfile).toContain("COPY --chmod=0755 docker/internal/dev/sync-node-modules /usr/local/sbin/pi-web-dev-sync-node-modules");
+    expect(devDockerfile).toContain("/opt/pi-web-dev-dependencies/node_modules");
+    // Hooks can mutate the dependency seed, so its cache generation must be finalized afterward.
+    expect(customImageHooksIndex).toBeGreaterThanOrEqual(0);
+    expect(dependencyGenerationIndex).toBeGreaterThan(customImageHooksIndex);
+    expect(dependencySync).toContain(".pi-web-dev-dependency-generation");
     expect(dockerignore).toContain("!pi-web-docker");
     expect(dockerignore).toContain("!internal/bin/hostexec");
     expect(installer).toContain("write_asset pi-web-docker 0755");
@@ -83,6 +93,8 @@ describe("Docker command assets", () => {
     expect(devCompose).toContain("PI_WEB_DOCKER_DEV_REPO_ROOT: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}");
     expect(devCompose).toContain("PI_WEB_DOCKER_HELPER_IMAGE: ${PI_WEB_DEV_IMAGE:-pi-web:dev}");
     expect(devCompose).toContain("COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-pi-web-dev}");
+    expect(devCompose).toContain("/usr/local/sbin/pi-web-dev-sync-node-modules");
+    expect(devCompose.match(/volumes: \*pi-web-dev-volumes/g)).toHaveLength(3);
   });
 
   dockerCommandIt("fetches remote installer assets without clobbering the write target", async () => {

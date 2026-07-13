@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+log() {
+  printf '%s\n' "$*" >&2
+}
+
+die() {
+  log "pi-web Docker dev dependencies: $*"
+  exit 1
+}
+
+workspace_dir=${PI_WEB_DEV_WORKSPACE_DIR:-/workspace}
+seed_dir=${PI_WEB_DEV_DEPENDENCY_SEED_DIR:-/opt/pi-web-dev-dependencies}
+target_dir=$workspace_dir/node_modules
+generation_file=$seed_dir/generation
+marker_file=$target_dir/.pi-web-dev-dependency-generation
+
+# A direct Compose invocation may skip the image rebuild. Fail closed rather
+# than copying dependencies for different checkout manifests.
+for manifest in package.json package-lock.json; do
+  source_manifest=$workspace_dir/$manifest
+  image_manifest=$seed_dir/$manifest
+  [ -f "$source_manifest" ] || die "checkout is missing $source_manifest"
+  [ -f "$image_manifest" ] || die "development image is missing $image_manifest"
+  if ! cmp -s "$source_manifest" "$image_manifest"; then
+    die "development image dependencies do not match the checkout; run ./docker/pi-web-docker --dev start or update to rebuild the image"
+  fi
+done
+
+[ -d "$seed_dir/node_modules" ] || die "development image is missing the dependency seed at $seed_dir/node_modules"
+[ -s "$generation_file" ] || die "development image is missing its dependency generation at $generation_file"
+[ ! -L "$target_dir" ] || die "refusing to synchronize through the node_modules symlink at $target_dir"
+mkdir -p "$target_dir"
+
+expected_generation=$(cat "$generation_file")
+current_generation=
+if [ -f "$marker_file" ]; then
+  current_generation=$(cat "$marker_file")
+fi
+
+if [ "$current_generation" = "$expected_generation" ]; then
+  log "PI WEB Docker dev dependencies are current."
+  exit 0
+fi
+
+log "Synchronizing PI WEB Docker dev dependencies from the rebuilt image ..."
+# Write the marker only after a complete copy so a failed init retries next time.
+find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+cp -a "$seed_dir/node_modules/." "$target_dir/"
+printf '%s\n' "$expected_generation" >"$marker_file"
+chmod 0666 "$marker_file"
+log "PI WEB Docker dev dependencies synchronized."

@@ -56,14 +56,14 @@ services:
         set -euo pipefail
         mkdir -p /data/home /data/config /data/npm-cache /data/pi-web /data/pi-agent
         chown -R "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}" /data
+        /usr/local/sbin/pi-web-dev-sync-node-modules
     user: "0:0"
     security_opt:
       - label=disable
     environment:
       PI_WEB_UID: ${PI_WEB_UID:-1000}
       PI_WEB_GID: ${PI_WEB_GID:-1000}
-    volumes:
-      - *pi-web-dev-data-volume
+    volumes: *pi-web-dev-volumes
 
   sessiond:
     build: *pi-web-dev-build
