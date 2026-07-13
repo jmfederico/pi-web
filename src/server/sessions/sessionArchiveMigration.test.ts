@@ -3,17 +3,19 @@ import {
   access,
   appendFile,
   copyFile,
+  link as createHardLink,
   lstat,
   mkdtemp,
   mkdir,
   readFile,
   readdir,
+  realpath,
   rm,
   unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   inspectLegacySessionArchiveMigration,
@@ -122,16 +124,15 @@ describe("legacy session archive migration preflight", () => {
     await expectLegacyStateUntouched(fixture);
   });
 
-  it("skips a non-empty destination archive directory without changing either side", async () => {
+  it("leaves an interrupted pre-commit file untouched instead of adopting a non-empty destination archive", async () => {
     const fixture = await createLegacyArchiveFixture({ createDestinationArchive: true });
-    const destinationEntry = join(fixture.destinationArchiveDir, "already-here.jsonl");
-    await writeFile(destinationEntry, "destination owner\n", "utf8");
+    await writeFile(fixture.destinationFilePath, "partial destination copy\n", "utf8");
 
     await expect(migrateLegacySessionArchive(fixture.options)).resolves.toEqual({
       status: "skipped",
       reason: "destination-archive-not-empty-or-invalid",
     });
-    await expect(readFile(destinationEntry, "utf8")).resolves.toBe("destination owner\n");
+    await expect(readFile(fixture.destinationFilePath, "utf8")).resolves.toBe("partial destination copy\n");
     await expectLegacyStateUntouched(fixture);
   });
 
@@ -153,6 +154,42 @@ describe("legacy session archive migration preflight", () => {
     await expect(readFile(outsidePath, "utf8")).resolves.toBe("outside\n");
     await expect(readFile(fixture.legacyFilePath, "utf8")).resolves.toBe("legacy session\n");
     expect(await exists(fixture.destinationRoot)).toBe(false);
+  });
+
+  it("uses Windows case-insensitive path semantics without weakening Linux containment", async () => {
+    const fixture = await createLegacyArchiveFixture();
+    const casedArchivePath = resolve(fixture.legacyFilePath.toUpperCase());
+    const firstRecord = requiredRecord(fixture.document.sessions, 0);
+    await writeArchiveIndex(fixture.legacyIndexPath, {
+      ...fixture.document,
+      sessions: [
+        { ...firstRecord, archivePath: casedArchivePath },
+        ...fixture.document.sessions.slice(1),
+      ],
+    });
+    const mapCaseVariant = (path: string): string => path.toLowerCase() === casedArchivePath.toLowerCase()
+      ? fixture.legacyFilePath
+      : path;
+    const fileSystem = {
+      lstat: (path: string) => lstat(mapCaseVariant(path)),
+      realpath: (path: string) => realpath(mapCaseVariant(path)),
+    };
+
+    await expect(inspectLegacySessionArchiveMigration({
+      ...fixture.options,
+      platform: "linux",
+      fileSystem,
+    })).resolves.toEqual({ status: "skipped", reason: "legacy-archive-layout-invalid" });
+    await expect(inspectLegacySessionArchiveMigration({
+      ...fixture.options,
+      platform: "win32",
+      fileSystem,
+    })).resolves.toEqual({
+      status: "eligible",
+      legacyIndexPath: fixture.legacyIndexPath,
+      destinationIndexPath: fixture.destinationIndexPath,
+      archiveFileCount: 1,
+    });
   });
 
   it("skips legacy directories containing unindexed entries", async () => {
@@ -211,9 +248,10 @@ describe("legacy session archive migration execution", () => {
     await Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
   });
 
-  it("stages and verifies copies, atomically publishes the rewritten index, then removes legacy state", async () => {
+  it("copies across the source boundary, atomically publishes the rewritten index, then removes legacy state", async () => {
     const fixture = await createLegacyArchiveFixture({ createDestinationArchive: true });
     const copies: { source: string; destination: string; mode: number }[] = [];
+    const links: { source: string; destination: string }[] = [];
 
     await expect(migrateLegacySessionArchive({
       ...fixture.options,
@@ -222,6 +260,16 @@ describe("legacy session archive migration execution", () => {
           copies.push({ source, destination, mode });
           await copyFile(source, destination, mode);
         },
+        link: async (source, destination) => {
+          links.push({ source, destination });
+          await createHardLink(source, destination);
+        },
+        unlink: async (path) => {
+          if (path === fixture.legacyFilePath || path === fixture.legacyIndexPath) {
+            expect(await exists(fixture.destinationIndexPath)).toBe(true);
+          }
+          await unlink(path);
+        },
       },
     })).resolves.toEqual({ status: "migrated", archiveFileCount: 1, cleanup: "complete" });
 
@@ -229,6 +277,10 @@ describe("legacy session archive migration execution", () => {
     expect(copies[0]).toMatchObject({ source: fixture.legacyFilePath, mode: constants.COPYFILE_EXCL });
     expect(copies[0]?.destination).toContain(".archived-sessions-migration-test-attempt");
     expect(copies[1]).toMatchObject({ destination: fixture.destinationFilePath, mode: constants.COPYFILE_EXCL });
+    expect(links).toEqual([{
+      source: join(fixture.destinationRoot, ".archived-sessions-migration-test-attempt", "archived-sessions.json"),
+      destination: fixture.destinationIndexPath,
+    }]);
     await expect(readFile(fixture.destinationFilePath, "utf8")).resolves.toBe("legacy session\n");
 
     const migratedDocument: unknown = JSON.parse(await readFile(fixture.destinationIndexPath, "utf8"));
@@ -250,6 +302,29 @@ describe("legacy session archive migration execution", () => {
     ]));
   });
 
+  it("retries safely when an interrupted staging-only attempt left an unowned sibling tree", async () => {
+    const fixture = await createLegacyArchiveFixture();
+    const abandonedFile = join(
+      fixture.destinationRoot,
+      ".archived-sessions-migration-interrupted-attempt",
+      "files",
+      "abandoned.jsonl",
+    );
+    await mkdir(dirname(abandonedFile), { recursive: true });
+    await writeFile(abandonedFile, "unowned staging data\n", "utf8");
+
+    await expect(migrateLegacySessionArchive(fixture.options)).resolves.toEqual({
+      status: "migrated",
+      archiveFileCount: 1,
+      cleanup: "complete",
+    });
+
+    await expect(readFile(abandonedFile, "utf8")).resolves.toBe("unowned staging data\n");
+    await expect(readFile(fixture.destinationFilePath, "utf8")).resolves.toBe("legacy session\n");
+    expect(await exists(fixture.destinationIndexPath)).toBe(true);
+    expect(await exists(fixture.legacyIndexPath)).toBe(false);
+  });
+
   it("rolls back destination artifacts and preserves all legacy state when staged-copy verification fails", async () => {
     const fixture = await createLegacyArchiveFixture();
 
@@ -267,6 +342,31 @@ describe("legacy session archive migration execution", () => {
     await expectLegacyStateUntouched(fixture);
     expect(await exists(fixture.destinationIndexPath)).toBe(false);
     await expect(readdir(fixture.destinationRoot)).resolves.toEqual([]);
+  });
+
+  it("revalidates source files before commit and rolls back if one changes during migration", async () => {
+    const fixture = await createLegacyArchiveFixture();
+
+    const result = await migrateLegacySessionArchive({
+      ...fixture.options,
+      fileSystem: {
+        copyFile: async (source, destination, mode) => {
+          await copyFile(source, destination, mode);
+          if (destination === fixture.destinationFilePath) {
+            await appendFile(fixture.legacyFilePath, "changed during migration\n", "utf8");
+          }
+        },
+      },
+    });
+
+    expect(result).toMatchObject({ status: "failed", phase: "commit-index", rollbackErrors: [] });
+    await expect(readFile(fixture.legacyIndexPath, "utf8")).resolves.toBe(fixture.sourceIndexContents);
+    await expect(readFile(fixture.legacyFilePath, "utf8")).resolves.toBe(
+      "legacy session\nchanged during migration\n",
+    );
+    await expect(readFile(fixture.activeFilePath, "utf8")).resolves.toBe("active session\n");
+    expect(await exists(fixture.destinationIndexPath)).toBe(false);
+    expect(await exists(fixture.destinationArchiveDir)).toBe(false);
   });
 
   it("rolls back published files but never source state when atomic index publication fails", async () => {
@@ -290,6 +390,31 @@ describe("legacy session archive migration execution", () => {
     expect(await exists(fixture.destinationIndexPath)).toBe(false);
     expect(await exists(fixture.destinationArchiveDir)).toBe(false);
     await expect(readdir(fixture.destinationRoot)).resolves.toEqual([]);
+  });
+
+  it("does not overwrite a destination index that appears at the atomic commit boundary", async () => {
+    const fixture = await createLegacyArchiveFixture();
+    const publicationError = Object.assign(new Error("destination index won the race"), { code: "EEXIST" });
+
+    const result = await migrateLegacySessionArchive({
+      ...fixture.options,
+      fileSystem: {
+        link: async (_source, destination) => {
+          await writeFile(destination, "destination owner\n", { encoding: "utf8", flag: "wx" });
+          throw publicationError;
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      phase: "commit-index",
+      error: publicationError,
+      rollbackErrors: [],
+    });
+    await expect(readFile(fixture.destinationIndexPath, "utf8")).resolves.toBe("destination owner\n");
+    expect(await exists(fixture.destinationArchiveDir)).toBe(false);
+    await expectLegacyStateUntouched(fixture);
   });
 
   it("keeps the committed destination authoritative when legacy cleanup fails", async () => {

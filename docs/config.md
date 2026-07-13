@@ -122,6 +122,26 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 
 ## Key details
 
+### Managed data directory and session archive migration
+
+`PI_WEB_DATA_DIR` selects the root for PI WEB-managed state, including the session archive index and archived session files. It does not move active Pi session files from `PI_CODING_AGENT_SESSION_DIR`.
+
+After an upgrade from a version that stored session archives only in `~/.pi-web`, the session daemon performs a one-time migration on the first eligible startup, before it creates the session runtime, registers routes, or starts listening. Automatic migration is deliberately strict. It runs only when all of these conditions are proven:
+
+1. `PI_WEB_DATA_DIR` is explicitly set to a non-empty value and resolves to a root other than `~/.pi-web`.
+2. `~/.pi-web/archived-sessions.json` is a regular file that parses with the current archive schema.
+3. `$PI_WEB_DATA_DIR/archived-sessions.json` does not exist.
+4. `$PI_WEB_DATA_DIR/archived-sessions/` is absent or is a real, empty directory.
+5. Every defined `archivePath` points directly into the real `~/.pi-web/archived-sessions/` directory, names an existing regular file, and maps uniquely to the destination. Metadata-only records without an `archivePath` are preserved.
+6. The legacy archive directory is absent or empty when no files are referenced; otherwise it contains exactly the regular files referenced by the index, with no extra files, symlinks, nested directories, or temporary entries.
+7. Session IDs are non-empty and unique, source paths are unique under the host's path semantics, and destination mappings have no case/normalization collisions or other ambiguity.
+
+An eligible migration copies and byte-verifies the archived files, so it works when the legacy and configured roots are on different filesystems. It rewrites only the migrated `archivePath` values, preserves the remaining archive metadata, verifies the complete destination, and atomically publishes the destination index. Only after that commit does it remove the legacy archived files, archive directory, and index.
+
+If any preflight condition is false or filesystem inspection is inconclusive, migration makes no archive filesystem changes and the session daemon starts against the configured destination. PI WEB does not infer intent, merge indexes, adopt partial files, or overwrite either side. If you expected a migration but it was skipped, stop the daemon, back up both roots, and inspect them before reconciling the state manually; do not delete either side based only on the skip.
+
+A copy, verification, or commit failure before the destination index is published keeps the legacy index authoritative, rolls back artifacts owned by that attempt where possible, and stops session-daemon startup. Correct the reported filesystem problem and remove only artifacts you have verified belong to the failed attempt before restarting. If cleanup fails after the destination index is committed, the daemon warns and starts from the verified destination; treat that destination as authoritative and inspect any legacy or staging leftovers manually rather than merging them back.
+
 ### External path access
 
 `pathAccess.allowedPaths` grants PI WEB's file explorer and absolute `@` path completions access to specific filesystem roots outside the current workspace.
