@@ -3,12 +3,15 @@ import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
 import type { SpawnTargetDecision } from "./spawnTargetResolver.js";
 import { CapturingSessionEventHub, fakeRuntime, runtimeCreator, sessionGateway, testModel, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
+const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+
 describe("PiSessionService", () => {
   describe("spawnSession", () => {
     function spawnService(decision: SpawnTargetDecision) {
       const fake = fakeRuntime("spawned-1", { sessionFile: "/tmp/spawned-1.jsonl" });
       const log: { details: Record<string, unknown>; message: string }[] = [];
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         spawnTargets: { resolveSpawnTarget: () => Promise.resolve(decision) },
@@ -41,6 +44,7 @@ describe("PiSessionService", () => {
         return fake.runtime;
       };
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime,
         sessionManager: sessionGateway([]),
         spawnTargets: { resolveSpawnTarget: () => Promise.resolve({ allowed: true, cwd: "/workspace-feature" }) },
@@ -75,6 +79,7 @@ describe("PiSessionService", () => {
     it("is disabled when no spawn target resolver is configured", async () => {
       const fake = fakeRuntime("spawned-x");
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         heartbeatIntervalMs: 60_000,

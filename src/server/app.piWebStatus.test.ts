@@ -6,7 +6,8 @@ describe("PI WEB status routes", () => {
   it("forces a fresh status load when refresh is requested", async () => {
     const get = vi.fn(() => Promise.resolve(status("cached")));
     const refresh = vi.fn(() => Promise.resolve(status("forced")));
-    const app = await buildApp({ piWebStatusCache: { get, refresh }, clientDist: false, logger: false });
+    const invalidate = vi.fn();
+    const app = await buildApp({ piWebStatusCache: { get, refresh, invalidate }, clientDist: false, logger: false });
 
     try {
       const cachedResponse = await app.inject({ method: "GET", url: "/api/pi-web/status" });

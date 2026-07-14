@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PiPackageInfo } from "../shared/apiTypes.js";
-import { DefaultPiPackageService, type PiPackageManagerPort } from "./piPackageService.js";
+import { type ActiveAgentProfileProvider } from "./activeAgentProfileProvider.js";
+import { ActiveProfilePiPackageService, DefaultPiPackageService, type PiPackageManagerPort, type PiPackageService } from "./piPackageService.js";
 
 function fakeManager(packages: PiPackageInfo[] = []) {
   const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => packages);
@@ -20,6 +21,44 @@ function deferred<T = void>() {
   });
   return { promise, resolve, reject };
 }
+
+describe("ActiveProfilePiPackageService", () => {
+  it("uses the daemon profile active when each package operation begins", async () => {
+    const getActiveAgentProfile = vi.fn<ActiveAgentProfileProvider["getActiveAgentProfile"]>()
+      .mockResolvedValueOnce(availableProfile("a", "/state/first"))
+      .mockResolvedValueOnce(availableProfile("b", "/state/second"));
+    const firstService = fakePiPackageService("first");
+    const secondService = fakePiPackageService("second");
+    const serviceForAgentDir = vi.fn((agentDir: string): PiPackageService => agentDir === "/state/first" ? firstService : secondService);
+    const service = new ActiveProfilePiPackageService({ getActiveAgentProfile }, serviceForAgentDir);
+
+    await expect(service.list()).resolves.toEqual({ packages: [{ source: "first", scope: "user", filtered: false }] });
+    await expect(service.install("npm:@acme/tools")).resolves.toMatchObject({ action: "install", source: "npm:@acme/tools", packages: [{ source: "second" }] });
+
+    expect(serviceForAgentDir).toHaveBeenNthCalledWith(1, "/state/first");
+    expect(serviceForAgentDir).toHaveBeenNthCalledWith(2, "/state/second");
+    expect(firstService.list).toHaveBeenCalledOnce();
+    expect(secondService.install).toHaveBeenCalledWith("npm:@acme/tools");
+  });
+
+  it.each(["unavailable", "invalid"] as const)("fails closed without constructing a package manager when the profile is %s", async (status) => {
+    const activeAgentProfile: ActiveAgentProfileProvider = {
+      getActiveAgentProfile: () => Promise.resolve({ status, error: `${status} profile` }),
+    };
+    const serviceForAgentDir = vi.fn<(agentDir: string) => PiPackageService>();
+    const service = new ActiveProfilePiPackageService(activeAgentProfile, serviceForAgentDir);
+
+    await expect(service.list()).rejects.toMatchObject({
+      profileStatus: status,
+      message: `Active agent profile is ${status}: ${status} profile`,
+    });
+    await expect(service.install("npm:@acme/tools")).rejects.toMatchObject({
+      profileStatus: status,
+      message: `Active agent profile is ${status}: ${status} profile`,
+    });
+    expect(serviceForAgentDir).not.toHaveBeenCalled();
+  });
+});
 
 describe("DefaultPiPackageService", () => {
   it("lists configured Pi packages with source, scope, filtered status, and installed path", async () => {
@@ -201,3 +240,26 @@ describe("DefaultPiPackageService", () => {
     ]);
   });
 });
+
+function availableProfile(revisionCharacter: string, dir: string) {
+  return {
+    status: "available" as const,
+    profile: {
+      schemaVersion: 1 as const,
+      revision: `sha256:${revisionCharacter.repeat(64)}`,
+      command: `${revisionCharacter}-agent`,
+      dir,
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
+    },
+  };
+}
+
+function fakePiPackageService(source: string) {
+  const packages = [{ source, scope: "user" as const, filtered: false }];
+  return {
+    list: vi.fn(() => Promise.resolve({ packages })),
+    install: vi.fn((installedSource: string) => Promise.resolve({ action: "install" as const, source: installedSource, packages })),
+    remove: vi.fn((removedSource: string, scope: "user" | "project" = "user") => Promise.resolve({ action: "remove" as const, source: removedSource, scope, removed: true, packages })),
+    update: vi.fn((updatedSource?: string) => Promise.resolve({ action: "update" as const, ...(updatedSource === undefined ? {} : { source: updatedSource }), packages })),
+  } satisfies PiPackageService;
+}

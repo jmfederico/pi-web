@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { configApi, pluginsApi, type PiWebConfigResponse, type PiWebPluginsResponse } from "../api";
 import { SettingsDialog } from "./SettingsDialog";
 import { callDialogPromise, callDialogUpdated, configResponse, deferred, getDialogProperty, pluginInfo, pluginsResponse, remoteMachine, runtimeWithPackageManagement as runtimeWithoutSelectedMachineSettings, secondRemoteMachine, setDialogProperty, stubWindowTimers } from "./SettingsDialog.testSupport";
@@ -40,6 +41,21 @@ describe("settings-dialog session daemon machine targeting", () => {
     expect(getDialogProperty(dialog, "sessiondLoading")).toBe(false);
   });
 
+  it("reloads desired config and the active runtime descriptor together", async () => {
+    const config = configResponse({ agent: { command: "agent-lab", dir: "/srv/agent-lab" } });
+    const configSpy = vi.spyOn(configApi, "config").mockResolvedValue(config);
+    const runtimeRefresh = vi.fn(() => Promise.resolve());
+    const dialog = new SettingsDialog();
+    dialog.machine = remoteMachine;
+    dialog.onRefreshMachineRuntime = runtimeRefresh;
+
+    await callDialogPromise(dialog, "reloadSessiondState");
+
+    expect(configSpy).toHaveBeenCalledWith(remoteMachine.id);
+    expect(runtimeRefresh).toHaveBeenCalledWith(remoteMachine.id);
+    expect(getDialogProperty(dialog, "sessiondConfigResponse")).toBe(config);
+  });
+
   it("saves local session-daemon config through the local machine alias and updates local daemon state", async () => {
     stubWindowTimers();
     const gatewayConfig = configResponse({ host: "127.0.0.1", spawnSessions: false, subsessions: false });
@@ -55,6 +71,43 @@ describe("settings-dialog session daemon machine targeting", () => {
     expect(getDialogProperty(dialog, "configResponse")).toMatchObject({ config: { host: "127.0.0.1", spawnSessions: true, subsessions: false } });
     expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
+  });
+
+  it("fails closed for a remote agent-profile save without granular support", async () => {
+    const saveSpy = vi.spyOn(configApi, "saveConfig").mockResolvedValue(configResponse({ agent: { command: "agent-lab", dir: "/srv/agent-lab" } }));
+    const dialog = new SettingsDialog();
+    dialog.machine = remoteMachine;
+    dialog.machineRuntime = {
+      machineId: remoteMachine.id,
+      ok: true,
+      checkedAt: "now",
+      capabilities: [PI_WEB_CAPABILITIES.selectedMachineSettings],
+    };
+
+    await callDialogPromise(dialog, "saveSessiondConfig", { agent: { command: "agent-lab", dir: "/srv/agent-lab" } });
+
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(getDialogProperty(dialog, "sessiondError")).toBe("Pi-compatible agent profile settings are not available on Lab Mac. Update and restart PI WEB on that machine, then try again.");
+  });
+
+  it("saves a remote agent profile when granular support is advertised", async () => {
+    stubWindowTimers();
+    const patch = { agent: { command: "agent-lab", dir: "/srv/agent-lab" } };
+    const saved = configResponse(patch);
+    const saveSpy = vi.spyOn(configApi, "saveConfig").mockResolvedValue(saved);
+    const dialog = new SettingsDialog();
+    dialog.machine = remoteMachine;
+    dialog.machineRuntime = {
+      machineId: remoteMachine.id,
+      ok: true,
+      checkedAt: "now",
+      capabilities: [PI_WEB_CAPABILITIES.selectedMachineSettings, PI_WEB_CAPABILITIES.agentProfileConfig],
+    };
+
+    await callDialogPromise(dialog, "saveSessiondConfig", patch);
+
+    expect(saveSpy).toHaveBeenCalledWith(patch, remoteMachine.id);
+    expect(getDialogProperty(dialog, "sessiondConfigResponse")).toBe(saved);
   });
 
   it("ignores stale session-daemon load responses after the selected machine changes", async () => {

@@ -19,6 +19,7 @@ export interface PiWebStatusCacheRefreshOptions {
 export interface PiWebStatusCache {
   get(): Promise<PiWebStatusResponse>;
   refresh(options?: PiWebStatusCacheRefreshOptions): Promise<PiWebStatusResponse>;
+  invalidate(): void;
 }
 
 export function createPiWebStatusCache(load: (options: PiWebStatusCacheLoadOptions) => Promise<PiWebStatusResponse>, options: PiWebStatusCacheOptions = {}): PiWebStatusCache {
@@ -56,5 +57,10 @@ export function createPiWebStatusCache(load: (options: PiWebStatusCacheLoadOptio
       return refresh();
     },
     refresh,
+    invalidate(): void {
+      cached = undefined;
+      loadSequence += 1;
+      pending = undefined;
+    },
   };
 }

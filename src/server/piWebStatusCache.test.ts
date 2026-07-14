@@ -113,6 +113,42 @@ describe("createPiWebStatusCache", () => {
     expect(load).toHaveBeenCalledTimes(3);
   });
 
+  it("loads again after a fresh cache is invalidated", async () => {
+    const load = vi.fn()
+      .mockResolvedValueOnce(status("first"))
+      .mockResolvedValueOnce(status("second"));
+    const cache = createPiWebStatusCache(load);
+
+    await expect(cache.get()).resolves.toMatchObject({ generatedAt: "first" });
+    cache.invalidate();
+    await expect(cache.get()).resolves.toMatchObject({ generatedAt: "second" });
+
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("abandons an in-flight load when invalidated", async () => {
+    const firstLoad = createDeferred<PiWebStatusResponse>();
+    const secondLoad = createDeferred<PiWebStatusResponse>();
+    const load = vi.fn()
+      .mockImplementationOnce(() => firstLoad.promise)
+      .mockImplementationOnce(() => secondLoad.promise);
+    const cache = createPiWebStatusCache(load);
+
+    const first = cache.get();
+    await waitForMicrotasks();
+    cache.invalidate();
+    const second = cache.get();
+    await waitForMicrotasks();
+
+    secondLoad.resolve(status("second"));
+    await expect(second).resolves.toMatchObject({ generatedAt: "second" });
+    firstLoad.resolve(status("first"));
+    await expect(first).resolves.toMatchObject({ generatedAt: "first" });
+
+    await expect(cache.get()).resolves.toMatchObject({ generatedAt: "second" });
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("deduplicates concurrent cold loads", async () => {
     const deferred = createDeferred<PiWebStatusResponse>();
     const load = vi.fn(() => deferred.promise);

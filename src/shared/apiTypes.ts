@@ -12,6 +12,7 @@ export const PI_WEB_CAPABILITIES = {
   workspaceFileSuggestions: "workspace.fileSuggestions",
   piPackagesManage: "piPackages.manage",
   selectedMachineSettings: "settings.selectedMachine",
+  agentProfileConfig: "settings.agentProfile",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -66,6 +67,13 @@ export interface PiWebUploadsConfig {
   defaultFolder?: string;
 }
 
+export interface PiWebAgentConfig {
+  /** Pi-compatible companion CLI used for diagnostics and safe package-managed updates. */
+  command?: string;
+  /** Pi-compatible profile directory containing auth.json, models.json, settings.json, and sessions/. */
+  dir?: string;
+}
+
 export interface PiWebConfigValues {
   host?: string;
   port?: number;
@@ -87,6 +95,8 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
+  /** Desired Pi-compatible agent profile and companion CLI (Pi by default). */
+  agent?: PiWebAgentConfig;
 }
 
 export type PiWebPluginScope = "bundled" | "local" | "user" | "project";
@@ -141,12 +151,19 @@ export interface PiPackageMutationResponse extends PiPackagesResponse {
   removed?: boolean;
 }
 
+export type PiWebAgentDirEnvSource = "pi-web" | "pi-compatibility";
+
 export interface PiWebConfigEnvOverrides {
   host: boolean;
   port: boolean;
   allowedHosts: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
+  agentCommand: boolean;
+  agentDir: boolean;
+  /** The configured directory environment source, even when Pi compatibility is inactive for the desired command. */
+  agentDirSource?: PiWebAgentDirEnvSource;
+  agentSessionDir: boolean;
 }
 
 export interface PiWebConfigResponse {
@@ -582,12 +599,23 @@ export interface PiWebComponentStatus {
   error?: string;
 }
 
+/** Secret-free identity of the Pi-compatible CLI/state profile fixed for one sessiond lifetime. */
+export interface ActiveAgentProfileDescriptor {
+  readonly schemaVersion: 1;
+  readonly revision: string;
+  readonly command: string;
+  readonly dir: string;
+  readonly sessionDirEnvKeys: readonly string[];
+}
+
 export interface PiWebRuntimeComponent {
   component: PiWebServiceComponent;
   label: string;
   runtimeVersion?: string;
   available: boolean;
   capabilities: PiWebCapability[];
+  /** Present only for a session daemon that supports active-profile reporting. */
+  activeAgentProfile?: ActiveAgentProfileDescriptor;
   error?: string;
 }
 

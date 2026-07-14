@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiPackageInfo } from "../shared/apiTypes.js";
+import { ActiveAgentProfileAccessError } from "./activeAgentProfileProvider.js";
 import type { PiPackageService } from "./piPackageService.js";
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
 
@@ -93,6 +94,15 @@ describe("registerPiPackageRoutes", () => {
     expect(serviceMocks.install).not.toHaveBeenCalled();
     expect(serviceMocks.remove).not.toHaveBeenCalled();
     expect(serviceMocks.update).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when the daemon-owned active profile is unavailable", async () => {
+    serviceMocks.list.mockRejectedValueOnce(new ActiveAgentProfileAccessError({ status: "unavailable", error: "connect ECONNREFUSED" }));
+
+    const response = await app.inject({ method: "GET", url: "/api/pi-packages" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "Active agent profile is unavailable: connect ECONNREFUSED" });
   });
 
   it("returns stable 500 errors for package-manager failures", async () => {

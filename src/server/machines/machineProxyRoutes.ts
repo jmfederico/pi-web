@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { WebSocket } from "ws";
+import type { PiWebAgentConfig } from "../../shared/apiTypes.js";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, type FederatedHttpRouteSpec } from "../../shared/federatedRoutes.js";
 import { mergeSelectedMachineConfig, parsePiWebConfigResponseBody, parseSelectedMachineConfigRequest, selectedMachineConfigResponse } from "../configRoutes.js";
 import { bridgeSockets } from "../webSocketBridge.js";
@@ -69,13 +70,14 @@ async function proxySelectedMachineConfigRequest(client: MachineClient, machineI
   }
 
   if (method === "PUT") {
-    const patch = parseSelectedMachineConfigRequest(configPayload(body));
+    const patch = parseSelectedMachineConfigRequest(configPayload(body), "portable");
     const currentResponse = await client.requestJson("GET", remotePath);
     if (!isSuccessfulStatus(currentResponse.statusCode)) return sendUpstreamJsonResponse(reply, currentResponse, machineId);
 
     const current = parsePiWebConfigResponseBody(currentResponse.body, "Remote machine config response");
     const merged = mergeSelectedMachineConfig(current.config, patch);
-    return sendSelectedMachineConfigResponse(reply, await client.requestJson("PUT", remotePath, { config: merged }), machineId);
+    const updateResponse = await client.requestJson("PUT", remotePath, { config: merged });
+    return sendSelectedMachineConfigResponse(reply, updateResponse, machineId, patch.agent);
   }
 
   return reply.code(405).send({ error: "Method not allowed" });
@@ -85,11 +87,23 @@ function configPayload(body: unknown): unknown {
   return isRecord(body) ? body["config"] : undefined;
 }
 
-function sendSelectedMachineConfigResponse(reply: FastifyReply, upstream: MachineJsonResponse, machineId: string): FastifyReply {
+function sendSelectedMachineConfigResponse(reply: FastifyReply, upstream: MachineJsonResponse, machineId: string, expectedAgentProfile?: PiWebAgentConfig): FastifyReply {
   if (!isSuccessfulStatus(upstream.statusCode)) return sendUpstreamJsonResponse(reply, upstream, machineId);
+  const response = parsePiWebConfigResponseBody(upstream.body, "Remote machine config response");
+  if (expectedAgentProfile !== undefined && !sameAgentProfile(response.config.agent, expectedAgentProfile)) {
+    return reply.code(409).send({
+      error: "Remote machine did not persist the requested agent profile",
+      machineId,
+      detail: "Update and restart PI WEB on the remote machine before changing its agent profile.",
+    });
+  }
   reply.code(upstream.statusCode);
   applySafeHeaders(reply, upstream.headers);
-  return reply.send(selectedMachineConfigResponse(parsePiWebConfigResponseBody(upstream.body, "Remote machine config response")));
+  return reply.send(selectedMachineConfigResponse(response));
+}
+
+function sameAgentProfile(actual: PiWebAgentConfig | undefined, expected: PiWebAgentConfig): boolean {
+  return actual !== undefined && actual.command === expected.command && actual.dir === expected.dir;
 }
 
 function sendUpstreamJsonResponse(reply: FastifyReply, upstream: MachineJsonResponse, machineId: string): FastifyReply {

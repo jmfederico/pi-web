@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
+import { defaultPiWebConfigPath, defaultPiWebDataDir, effectivePiWebConfig, examplePiWebConfig } from "./config.js";
 import { packageVersion, printPiWebVersionReport } from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
 import {
@@ -153,7 +153,7 @@ function runQuiet(command: string, args: string[]): number {
 }
 
 function hasCommand(command: string): boolean {
-  return capture("/usr/bin/env", ["sh", "-c", `command -v ${command}`]).status === 0;
+  return capture("/usr/bin/env", ["sh", "-c", `command -v ${shellSingleQuote(command)}`]).status === 0;
 }
 
 function isLingerEnabled(): boolean | undefined {
@@ -760,15 +760,16 @@ function serviceShellLabel(): string {
 }
 
 function commandCheck(command: string): string {
-  return `command -v ${command}`;
+  return `command -v ${serviceShellQuote(command)}`;
 }
 
 export function commandWithVersionCheck(command: string): string {
   const found = commandCheck(command);
+  const commandWord = serviceShellQuote(command);
   if (detectServiceShell().name === "fish") {
-    return `${found} && begin; ${command} --version 2>&1 || true; end`;
+    return `${found} && begin; ${commandWord} --version 2>&1 || true; end`;
   }
-  return `${found} && (${command} --version 2>&1 || true)`;
+  return `${found} && (${commandWord} --version 2>&1 || true)`;
 }
 
 function nodeVersionCheck(): string {
@@ -778,12 +779,17 @@ function nodeVersionCheck(): string {
   ].join(" && ");
 }
 
+export function agentCommandForChecks(env: NodeJS.ProcessEnv = process.env): string {
+  return effectivePiWebConfig({ env }).config.agent.command;
+}
+
 function generalDoctorChecks(): Check[] {
   const shell = serviceShellLabel();
+  const agentCommand = agentCommandForChecks();
   return [
     [`Caller login ${shell} can find node >= 22`, serviceShellCommand(nodeVersionCheck())],
     [`Caller login ${shell} can find npm`, serviceShellCommand(commandWithVersionCheck("npm"))],
-    [`Caller login ${shell} can find pi`, serviceShellCommand(commandWithVersionCheck("pi"))],
+    [`Caller login ${shell} can find ${agentCommand}`, serviceShellCommand(commandWithVersionCheck(agentCommand))],
   ];
 }
 

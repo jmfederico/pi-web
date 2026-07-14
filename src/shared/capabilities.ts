@@ -17,6 +17,7 @@ export const WEB_RUNTIME_CAPABILITIES = [
   PI_WEB_CAPABILITIES.workspaceFileSuggestions,
   PI_WEB_CAPABILITIES.piPackagesManage,
   PI_WEB_CAPABILITIES.selectedMachineSettings,
+  PI_WEB_CAPABILITIES.agentProfileConfig,
 ] as const satisfies readonly PiWebCapability[];
 
 export const SESSIOND_RUNTIME_CAPABILITIES = [
@@ -40,6 +41,7 @@ const EFFECTIVE_CAPABILITY_REQUIREMENTS = {
   [PI_WEB_CAPABILITIES.workspaceFileSuggestions]: ["web"],
   [PI_WEB_CAPABILITIES.piPackagesManage]: ["web"],
   [PI_WEB_CAPABILITIES.selectedMachineSettings]: ["web"],
+  [PI_WEB_CAPABILITIES.agentProfileConfig]: ["web"],
 } as const satisfies Record<PiWebCapability, readonly PiWebServiceComponent[]>;
 
 export function isPiWebCapability(value: unknown): value is PiWebCapability {

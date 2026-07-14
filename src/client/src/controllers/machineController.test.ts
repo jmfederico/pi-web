@@ -93,7 +93,7 @@ describe("MachineController", () => {
     expect(projects.loadProjects).toHaveBeenCalledOnce();
     expect(updateUrl).toHaveBeenCalledOnce();
     expect(health).toHaveBeenCalledWith(addedMachine.id);
-    expect(runtime).toHaveBeenCalledWith(addedMachine.id);
+    expect(runtime).toHaveBeenCalledWith(addedMachine.id, true);
   });
 
   it("preserves the current machine state when adding a machine fails", async () => {

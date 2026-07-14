@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { PiPackageScope } from "../shared/apiTypes.js";
-import { createDefaultPiPackageService, type PiPackageService } from "./piPackageService.js";
+import { ActiveAgentProfileAccessError } from "./activeAgentProfileProvider.js";
+import type { PiPackageService } from "./piPackageService.js";
 
 class PiPackageRequestValidationError extends Error {}
 
-export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackageService = createDefaultPiPackageService(), prefix = "/api"): void {
+export function registerPiPackageRoutes(app: FastifyInstance, service: PiPackageService, prefix = "/api"): void {
   const routePrefix = normalizeRoutePrefix(prefix);
 
   app.get(`${routePrefix}/pi-packages`, async (_request, reply) => {
@@ -79,7 +80,11 @@ function requireRequestObject(value: unknown): Record<string, unknown> {
 }
 
 function sendPiPackageError(reply: FastifyReply, error: unknown): FastifyReply {
-  const status = error instanceof PiPackageRequestValidationError ? 400 : 500;
+  const status = error instanceof PiPackageRequestValidationError
+    ? 400
+    : error instanceof ActiveAgentProfileAccessError
+      ? 503
+      : 500;
   return reply.code(status).send({ error: errorMessage(error) });
 }
 

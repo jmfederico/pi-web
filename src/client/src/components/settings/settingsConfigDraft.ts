@@ -12,12 +12,21 @@ export interface MachineAccessConfigDraft {
   uploadDefaultFolder: string;
 }
 
+export interface AgentProfileConfigDraft {
+  command: string;
+  dir: string;
+}
+
 export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
   return { host: "", port: "", allowedHostsMode: "list", allowedHostsText: "" };
 }
 
 export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
   return { allowedPathsText: "", uploadDefaultFolder: "" };
+}
+
+export function emptyAgentProfileConfigDraft(): AgentProfileConfigDraft {
+  return { command: "", dir: "" };
 }
 
 export function gatewayServerDraftFromConfig(config: PiWebConfigValues): GatewayServerConfigDraft {
@@ -34,6 +43,30 @@ export function machineAccessDraftFromConfig(config: PiWebConfigValues): Machine
     allowedPathsText: config.pathAccess?.allowedPaths?.join("\n") ?? "",
     uploadDefaultFolder: config.uploads?.defaultFolder ?? "",
   };
+}
+
+export function agentProfileDraftFromConfig(config: PiWebConfigValues): AgentProfileConfigDraft {
+  return {
+    command: config.agent?.command ?? "",
+    dir: config.agent?.dir ?? "",
+  };
+}
+
+export function agentProfileConfigPatchFromDraft(draft: AgentProfileConfigDraft): PiWebConfigValues {
+  const command = draft.command.trim();
+  const dir = draft.dir.trim();
+  return {
+    agent: {
+      ...(command === "" ? {} : { command }),
+      ...(dir === "" ? {} : { dir }),
+    },
+  };
+}
+
+export function agentProfileDraftMatchesConfig(draft: AgentProfileConfigDraft, config: PiWebConfigValues): boolean {
+  const normalizedDraft = agentProfileConfigPatchFromDraft(draft).agent ?? {};
+  const configured = config.agent ?? {};
+  return normalizedDraft.command === configured.command && normalizedDraft.dir === configured.dir;
 }
 
 export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, baseConfig: PiWebConfigValues = {}): PiWebConfigValues {
@@ -68,6 +101,7 @@ function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebCo
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
+    ...(baseConfig.agent === undefined ? {} : { agent: baseConfig.agent }),
   };
 }
 

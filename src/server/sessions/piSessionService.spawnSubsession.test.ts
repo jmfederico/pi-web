@@ -6,6 +6,8 @@ import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
 import type { SpawnTargetDecision } from "./spawnTargetResolver.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModel, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
+const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+
 describe("PiSessionService", () => {
   describe("spawnSubsession", () => {
     function subsessionService(decision: SpawnTargetDecision, heartbeatIntervalMs = 60_000, childIds = ["child-1"]) {
@@ -37,6 +39,7 @@ describe("PiSessionService", () => {
         isArchived: (sessionId: string) => Promise.resolve(archived.has(sessionId)),
       };
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime,
         sessionManager: sessionGateway([]),
         archiveStore,
@@ -77,6 +80,7 @@ describe("PiSessionService", () => {
         return runtime;
       };
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime,
         sessionManager: sessionGateway([]),
         archiveStore: emptyArchiveStore(),
@@ -116,6 +120,7 @@ describe("PiSessionService", () => {
       const runtimes = [parent.runtime, child.runtime];
       let index = 0;
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: () => {
           const runtime = runtimes[index] ?? child.runtime;
           index += 1;
@@ -167,6 +172,7 @@ describe("PiSessionService", () => {
         let index = 0;
         const open = vi.fn(() => childManager);
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: () => {
             const runtime = runtimes[index] ?? child.runtime;
             index += 1;
@@ -208,6 +214,7 @@ describe("PiSessionService", () => {
           }),
         });
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: runtimeCreator(parent.runtime),
           sessionManager: { create: () => parent.session.sessionManager, list: () => Promise.resolve([]), listAll: () => Promise.resolve([]), open: () => fakeSessionManager() },
           archiveStore: emptyArchiveStore(),
@@ -232,6 +239,7 @@ describe("PiSessionService", () => {
         }),
       });
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(parent.runtime),
         sessionManager: { create: () => parent.session.sessionManager, list: () => Promise.resolve([]), listAll: () => Promise.resolve([]), open: () => fakeSessionManager() },
         archiveStore: emptyArchiveStore(),
@@ -253,6 +261,7 @@ describe("PiSessionService", () => {
         }),
       });
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(parent.runtime),
         sessionManager: { create: () => parent.session.sessionManager, list: () => Promise.resolve([]), listAll: () => Promise.resolve([]), open: () => fakeSessionManager() },
         archiveStore: emptyArchiveStore(),
@@ -273,6 +282,7 @@ describe("PiSessionService", () => {
         sessionManager: fakeSessionManager("/workspace", { getEntries: () => [] }),
       });
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(parent.runtime),
         sessionManager: { create: () => parent.session.sessionManager, list: () => Promise.resolve([]), listAll: () => Promise.resolve([childRecord]), open: () => fakeSessionManager() },
         archiveStore: emptyArchiveStore(),
@@ -293,6 +303,7 @@ describe("PiSessionService", () => {
         }),
       });
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(forkedParent.runtime),
         sessionManager: { create: () => forkedParent.session.sessionManager, list: () => Promise.resolve([]), listAll: () => Promise.resolve([]), open: () => fakeSessionManager() },
         archiveStore: emptyArchiveStore(),
@@ -331,6 +342,7 @@ describe("PiSessionService", () => {
         let index = 0;
         const open = vi.fn((path: string) => path === parentFile ? parentManager : childManager);
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: (_createRuntime, options) => {
             delegationCapabilities.push(options.delegationToolsEnabled);
             const runtime = runtimes[index] ?? parent.runtime;
@@ -393,6 +405,7 @@ describe("PiSessionService", () => {
           return childManager;
         });
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: () => {
             const runtime = runtimes[index] ?? parent.runtime;
             index += 1;
@@ -450,6 +463,7 @@ describe("PiSessionService", () => {
         let index = 0;
         const open = vi.fn((path: string) => path === parentFile ? parentManager : childManager);
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: () => {
             const runtime = runtimes[index] ?? parent.runtime;
             index += 1;
@@ -514,6 +528,7 @@ describe("PiSessionService", () => {
           throw new Error(`unexpected open path ${path}`);
         });
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime,
           sessionManager: {
             create: () => parentManager,
@@ -589,6 +604,7 @@ describe("PiSessionService", () => {
           throw new Error(`unexpected open path ${path}`);
         });
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime,
           sessionManager: {
             create: () => copiedParentManager,
@@ -646,6 +662,7 @@ describe("PiSessionService", () => {
         let index = 0;
         const open = vi.fn((path: string) => path === parentFile ? parentManager : childManager);
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: () => {
             const runtime = runtimes[index] ?? parent.runtime;
             index += 1;
@@ -698,6 +715,7 @@ describe("PiSessionService", () => {
         let index = 0;
         const open = vi.fn((path: string) => path === actualParentFile ? parent.session.sessionManager : childManager);
         const service = new PiSessionService(new CapturingSessionEventHub(), {
+          agentDir: TEST_AGENT_DIR,
           createAgentRuntime: () => {
             const runtime = runtimes[index] ?? parent.runtime;
             index += 1;
@@ -738,6 +756,7 @@ describe("PiSessionService", () => {
       const child = fakeRuntime("child-fork-1", { sessionFile: childFile, sessionManager: childManager });
       const open = vi.fn(() => childManager);
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(child.runtime),
         sessionManager: {
           create: () => childManager,
@@ -882,6 +901,7 @@ describe("PiSessionService", () => {
     it("is disabled when no spawn target resolver is configured", async () => {
       const fake = fakeRuntime("nope");
       const service = new PiSessionService(new CapturingSessionEventHub(), {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         heartbeatIntervalMs: 60_000,

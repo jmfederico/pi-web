@@ -1,8 +1,17 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
 import { AuthService, type AuthChange } from "./authService.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe("AuthService", () => {
   it("saves API keys and emits a global auth change", () => {
@@ -30,6 +39,16 @@ describe("AuthService", () => {
 
     expect(() => { auth.saveApiKey("anthropic", "   "); }).toThrow("API key is required");
     expect(changes).toEqual([]);
+    auth.dispose();
+  });
+
+  it("stores credentials in the configured agent directory", async () => {
+    const agentDir = await tempAgentDir();
+    const auth = new AuthService({ agentDir });
+
+    auth.saveApiKey("anthropic", "sk-test");
+
+    await expect(readFile(join(agentDir, "auth.json"), "utf8")).resolves.toContain("sk-test");
     auth.dispose();
   });
 
@@ -74,6 +93,12 @@ function createAuthService(data: Parameters<typeof AuthStorage.inMemory>[0] = {}
   const changes: AuthChange[] = [];
   auth.subscribe((change) => { changes.push(change); });
   return { auth, authStorage, changes };
+}
+
+async function tempAgentDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-auth-agent-"));
+  tempDirs.push(dir);
+  return dir;
 }
 
 class CapturingOAuthLoginFlowService extends OAuthLoginFlowService {

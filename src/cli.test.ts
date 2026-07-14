@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  agentCommandForChecks,
   commandWithVersionCheck,
   doctorExitCode,
   isCliEntrypoint,
@@ -12,6 +13,8 @@ import {
 } from "./cli.js";
 
 const originalShell = process.env["SHELL"];
+const originalPiWebConfig = process.env["PI_WEB_CONFIG"];
+const originalPiWebAgentCommand = process.env["PI_WEB_AGENT_COMMAND"];
 
 afterEach(() => {
   if (originalShell === undefined) {
@@ -19,24 +22,60 @@ afterEach(() => {
   } else {
     process.env["SHELL"] = originalShell;
   }
+  if (originalPiWebConfig === undefined) {
+    delete process.env["PI_WEB_CONFIG"];
+  } else {
+    process.env["PI_WEB_CONFIG"] = originalPiWebConfig;
+  }
+  if (originalPiWebAgentCommand === undefined) {
+    delete process.env["PI_WEB_AGENT_COMMAND"];
+  } else {
+    process.env["PI_WEB_AGENT_COMMAND"] = originalPiWebAgentCommand;
+  }
 });
 
 describe("commandWithVersionCheck", () => {
   it("emits a POSIX subshell group for bash", () => {
     process.env["SHELL"] = "/bin/bash";
-    expect(commandWithVersionCheck("npm")).toBe("command -v npm && (npm --version 2>&1 || true)");
+    expect(commandWithVersionCheck("npm")).toBe("command -v 'npm' && ('npm' --version 2>&1 || true)");
   });
 
   it("emits a POSIX subshell group for zsh", () => {
     process.env["SHELL"] = "/bin/zsh";
-    expect(commandWithVersionCheck("pi")).toBe("command -v pi && (pi --version 2>&1 || true)");
+    expect(commandWithVersionCheck("pi")).toBe("command -v 'pi' && ('pi' --version 2>&1 || true)");
   });
 
   it("uses fish begin/end grouping instead of a POSIX subshell", () => {
     process.env["SHELL"] = "/usr/local/bin/fish";
     const command = commandWithVersionCheck("npm");
-    expect(command).toBe("command -v npm && begin; npm --version 2>&1 || true; end");
+    expect(command).toBe("command -v 'npm' && begin; 'npm' --version 2>&1 || true; end");
     expect(command).not.toContain("(");
+  });
+
+  it("shell-quotes command words", () => {
+    process.env["SHELL"] = "/bin/bash";
+    expect(commandWithVersionCheck("/tmp/agent's/acme-agent")).toBe("command -v '/tmp/agent'\\''s/acme-agent' && ('/tmp/agent'\\''s/acme-agent' --version 2>&1 || true)");
+  });
+});
+
+describe("agentCommandForChecks", () => {
+  it("reads the configured agent command for doctor checks", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-web-cli-test-"));
+    try {
+      const configPath = join(dir, "config.json");
+      writeFileSync(configPath, `${JSON.stringify({ agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } })}\n`);
+      process.env["PI_WEB_CONFIG"] = configPath;
+      delete process.env["PI_WEB_AGENT_COMMAND"];
+
+      expect(agentCommandForChecks()).toBe("acme-agent");
+      expect(agentCommandForChecks({
+        PI_WEB_CONFIG: configPath,
+        PI_WEB_AGENT_COMMAND: "environment-agent",
+        PI_WEB_AGENT_DIR: join(dir, "environment-agent-state"),
+      })).toBe("environment-agent");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

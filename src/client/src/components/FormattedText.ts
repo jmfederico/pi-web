@@ -67,4 +67,3 @@ export class FormattedText extends LitElement {
 
   static override styles = formattedTextStyles;
 }
-

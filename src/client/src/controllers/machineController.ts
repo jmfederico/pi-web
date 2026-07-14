@@ -102,7 +102,7 @@ export class MachineController {
 
   async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<void> {
     try {
-      const runtime = await api.runtime(machineId);
+      const runtime = await api.runtime(machineId, true);
       this.setState({ machineRuntimes: { ...this.getState().machineRuntimes, [runtime.machineId]: runtime } });
     } catch (error) {
       this.setState({ error: String(error) });

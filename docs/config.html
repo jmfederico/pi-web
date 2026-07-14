@@ -81,7 +81,7 @@
           <p>
             PI WEB configuration covers the machine-local and project-local settings you usually need: bind address,
             trusted development-host settings, UI preferences, PI WEB plugin enablement, file-explorer path access,
-            manual upload defaults, upload limits, and session-daemon tools.
+            manual upload defaults, upload limits, Pi-compatible agent profiles and companion CLIs, and session-daemon tools.
           </p>
         </div>
       </section>
@@ -98,6 +98,7 @@
             <a href="#keys">Config matrix</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
+            <a href="#agent-runtime">Agent profile and companion CLI</a>
             <a href="#session-tools">Session tools</a>
             <a href="#completion-tools">Completion tools</a>
           </aside>
@@ -112,8 +113,8 @@
               </ul>
               <p>
                 Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected
-                machine for config that affects work running there: session daemon tools, PI WEB plugin enablement,
-                external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
+                machine for config that affects work running there: the Pi-compatible agent profile and companion CLI,
+                session daemon tools, PI WEB plugin enablement, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
                 keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts. Remote servers
                 that do not advertise selected-machine settings support report those settings as unavailable instead of
                 silently falling back to the gateway.
@@ -162,13 +163,15 @@
               </p>
               <p>
                 Environment overrides include <code>PI_WEB_HOST</code>, <code>PI_WEB_PORT</code> / <code>PORT</code>,
-                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_SPAWN_SESSIONS</code>,
-                and <code>PI_WEB_SUBSESSIONS</code>.
+                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_AGENT_COMMAND</code>,
+                <code>PI_WEB_AGENT_DIR</code>, <code>PI_WEB_AGENT_SESSION_DIR</code>, <code>PI_CODING_AGENT_DIR</code> /
+                <code>PI_CODING_AGENT_SESSION_DIR</code> for Pi compatibility, <code>PI_WEB_SPAWN_SESSIONS</code>, and
+                <code>PI_WEB_SUBSESSIONS</code>.
               </p>
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
-                <li><code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
+                <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
@@ -201,6 +204,10 @@
     "defaultFolder": ".pi-web/uploads"
   },
   "maxUploadBytes": 67108864,
+  "agent": {
+    "command": "pi",
+    "dir": "~/agent-profiles/research"
+  },
   "spawnSessions": true,
   "subsessions": false,
   "plugins": {
@@ -260,7 +267,7 @@
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
-                <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, and <code>plugins</code>)
+                <code>maxUploadBytes</code>, <code>agent</code>, <code>spawnSessions</code>, <code>subsessions</code>, and <code>plugins</code>)
                 are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
                 registry/tokens stay local.
               </p>
@@ -325,6 +332,22 @@
                       <td>Global</td>
                       <td>Not supported locally</td>
                       <td>Restart web/API and session daemon on that machine</td>
+                    </tr>
+                    <tr>
+                      <td>Companion CLI command</td>
+                      <td><code>agent.command</code></td>
+                      <td><code>PI_WEB_AGENT_COMMAND</code></td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine; affects doctor/status/update checks</td>
+                    </tr>
+                    <tr>
+                      <td>Agent profile state directory</td>
+                      <td><code>agent.dir</code></td>
+                      <td><code>PI_WEB_AGENT_DIR</code> (<code>PI_CODING_AGENT_DIR</code> for Pi compatibility)</td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and package-backed plugins</td>
                     </tr>
                     <tr>
                       <td>Agent can spawn sessions</td>
@@ -432,18 +455,18 @@
                       <td>Restart web/API; advanced state override</td>
                     </tr>
                     <tr>
-                      <td>Pi session storage directory</td>
+                      <td>Agent profile session storage directory</td>
                       <td>—</td>
-                      <td><code>PI_CODING_AGENT_SESSION_DIR</code></td>
-                      <td>Pi/session daemon env</td>
+                      <td><code>PI_WEB_AGENT_SESSION_DIR</code> (<code>PI_CODING_AGENT_SESSION_DIR</code> for Pi compatibility)</td>
+                      <td>Session daemon env</td>
                       <td>Not supported locally</td>
-                      <td>Restart session daemon; follows Pi session priority</td>
+                      <td>Restart session daemon; env-only session storage override</td>
                     </tr>
                     <tr>
-                      <td>Pi agent config directory</td>
+                      <td>Agent profile state directory</td>
                       <td>—</td>
-                      <td><code>PI_CODING_AGENT_DIR</code></td>
-                      <td>Pi/Web/API/session daemon env</td>
+                      <td><code>PI_WEB_AGENT_DIR</code> (<code>PI_CODING_AGENT_DIR</code> for Pi compatibility)</td>
+                      <td>Web/API + session daemon env</td>
                       <td>Not supported locally</td>
                       <td>Restart services</td>
                     </tr>
@@ -511,6 +534,67 @@
                 PI WEB servers also return workspace-effective upload defaults on workspace responses; older remote
                 servers may omit them and the browser falls back to the global/default upload folder.
               </p>
+            </section>
+
+            <section id="agent-runtime">
+              <h2>Pi-compatible agent profile and companion CLI</h2>
+              <p>
+                <code>agent.command</code> selects the Pi-compatible companion CLI used by <code>pi-web doctor</code> and,
+                when it can be generated safely, package-managed update commands. It defaults to <code>pi</code>. This
+                setting does <strong>not</strong> replace the embedded runtime: every session continues to use PI WEB's
+                bundled Pi SDK.
+              </p>
+              <p>
+                <code>agent.dir</code> selects the Pi-compatible state profile used for auth providers, models, settings,
+                sessions, Pi packages, and Pi-package-backed PI WEB plugin discovery. It defaults to
+                <code>~/.pi/agent</code> only for a canonical Pi companion command. The directory must use the data layout
+                supported by the bundled Pi SDK; PI WEB does not load or convert incompatible fork formats, migrate
+                profile data, or repartition PI WEB-managed archives when the profile changes.
+              </p>
+              <div class="code-card">
+                <pre><code>{
+  "agent": {
+    "command": "pi-lab",
+    "dir": "/opt/pi-profiles/lab"
+  }
+}</code></pre>
+              </div>
+              <p>
+                An alternate command always requires an explicit state directory. The command must be a safe bare
+                executable name such as <code>pi-lab</code> or a host-absolute executable path such as
+                <code>/opt/pi/bin/pi</code>; relative paths, shell expressions, and launcher strings are rejected. The
+                state directory must be host-absolute or start with <code>~</code>. In a federated save, the gateway
+                transports Unix and Windows absolute paths without reinterpreting them, and the target machine validates
+                and returns the persisted profile.
+              </p>
+              <p>
+                Environment variables take precedence over the config file. <code>PI_WEB_AGENT_COMMAND</code> selects the
+                companion CLI, <code>PI_WEB_AGENT_DIR</code> sets the profile state directory, and
+                <code>PI_WEB_AGENT_SESSION_DIR</code> overrides session storage separately from <code>agent.dir</code>. The
+                legacy <code>PI_CODING_AGENT_DIR</code> and <code>PI_CODING_AGENT_SESSION_DIR</code> names apply only to a
+                canonical Pi companion command; PI WEB never derives ambient environment-variable names from an arbitrary
+                command. Use the explicit <code>PI_WEB_AGENT_*</code> names for alternate commands.
+                <code>PI_WEB_AGENT_DIR</code> is an unconditional override, while a legacy
+                <code>PI_CODING_AGENT_DIR</code> override stops applying when Settings selects an alternate command so the
+                command and directory can transition together.
+              </p>
+              <p>
+                The session daemon resolves the persisted desired values plus its environment once at startup. That
+                secret-free active profile stays fixed for the daemon lifetime. <strong>Settings → Session daemon</strong>
+                saves command and directory together as desired configuration and shows whether the profile is active,
+                needs a restart, or cannot be compared. Until the daemon restarts, sessions, Pi package operations,
+                package-backed plugin discovery, status/install detection, and update planning continue to use the
+                daemon-owned active profile; a web/API restart recovers that same active profile instead of applying the
+                newly saved values.
+              </p>
+              <div class="callout warning">
+                If the session daemon cannot report a valid active profile, profile-dependent package and plugin
+                operations report unavailable instead of falling back to independently resolved config. A package-managed
+                update command is shown only when PI WEB can preserve the active profile with a recognized, safe Pi
+                companion CLI; otherwise the command is omitted. Remote profile editing likewise requires advertised
+                support, and the gateway rejects a remote save if the target does not return the requested profile.
+                Restart the session daemon on the selected machine to establish the next active profile.
+              </div>
             </section>
 
             <section id="session-tools">

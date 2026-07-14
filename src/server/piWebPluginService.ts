@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { loadPiWebConfig, piWebDataDir, type PiWebConfig } from "../config.js";
 import type { PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
@@ -46,8 +46,9 @@ interface PiWebPluginServiceOptions {
   roots?: LocalPluginRoot[];
   cwd?: string;
   agentDir?: string;
+  agentDirProvider?: () => string | Promise<string>;
   packageProvider?: PiPackageProvider | false;
-  configProvider?: () => PiWebConfig;
+  configProvider?: () => PiWebConfig | Promise<PiWebConfig>;
 }
 
 interface LocalPluginRoot {
@@ -69,7 +70,10 @@ interface PiWebPluginEntry {
 type ArraylessPluginRecord = Omit<PluginRecord, "source" | "scope">;
 
 export class DefaultPiPackageProvider implements PiPackageProvider {
-  constructor(private readonly cwd = process.cwd(), private readonly agentDir = getAgentDir()) {}
+  constructor(
+    private readonly cwd: string,
+    private readonly agentDir: string,
+  ) {}
 
   listPackages(): ConfiguredPiPackage[] {
     return this.createPackageManager().listConfiguredPackages();
@@ -90,14 +94,22 @@ export class DefaultPiPackageProvider implements PiPackageProvider {
 
 export class PiWebPluginService {
   private readonly roots: LocalPluginRoot[];
-  private readonly packageProvider: PiPackageProvider | undefined;
-  private readonly configProvider: () => PiWebConfig;
+  private readonly agentDir: string | undefined;
+  private readonly agentDirProvider: (() => string | Promise<string>) | undefined;
+  private readonly staticPackageProvider: PiPackageProvider | undefined;
+  private readonly packageProviderForAgentDir: ((agentDir: string) => PiPackageProvider) | undefined;
+  private readonly configProvider: () => PiWebConfig | Promise<PiWebConfig>;
 
   constructor(options: PiWebPluginServiceOptions = {}) {
     const cwd = options.cwd ?? process.cwd();
-    const agentDir = options.agentDir ?? getAgentDir();
     this.roots = options.roots ?? defaultPluginRoots(cwd);
-    this.packageProvider = options.packageProvider === false ? undefined : options.packageProvider ?? new DefaultPiPackageProvider(cwd, agentDir);
+    this.agentDir = options.agentDir;
+    this.agentDirProvider = options.agentDirProvider;
+    const packageProvider = options.packageProvider;
+    this.staticPackageProvider = packageProvider === false || packageProvider === undefined ? undefined : packageProvider;
+    this.packageProviderForAgentDir = packageProvider === false || packageProvider !== undefined
+      ? undefined
+      : (agentDir) => new DefaultPiPackageProvider(cwd, agentDir);
     this.configProvider = options.configProvider ?? (() => loadPiWebConfig({ cwd }).config);
   }
 
@@ -110,13 +122,14 @@ export class PiWebPluginService {
   }
 
   async plugins(): Promise<PiWebPluginsResponse> {
-    const [plugins, config] = await Promise.all([this.discoverPlugins(), Promise.resolve(this.configProvider())]);
+    const config = await this.configProvider();
+    const plugins = await this.discoverPlugins();
     return { plugins: plugins.map((plugin) => this.pluginInfo(plugin, config)) };
   }
 
   async readAsset(pluginId: string, assetPath: string): Promise<{ content: Buffer; contentType: string } | undefined> {
     if (!isPiWebPluginId(pluginId)) return undefined;
-    const plugin = (await this.discoverPlugins()).find((candidate) => candidate.id === pluginId);
+    const plugin = await this.findPlugin(pluginId);
     if (plugin === undefined) return undefined;
 
     const resolved = resolve(plugin.root, assetPath);
@@ -146,10 +159,34 @@ export class PiWebPluginService {
   private async discoverPlugins(): Promise<PluginRecord[]> {
     const records = new Map<string, PluginRecord>();
     for (const plugin of await this.discoverLocalPlugins()) addUnique(records, plugin);
-    if (this.packageProvider !== undefined) {
-      for (const plugin of await this.discoverPiPackagePlugins(this.packageProvider)) addUnique(records, plugin);
+    const packageProvider = await this.currentPackageProvider();
+    if (packageProvider !== undefined) {
+      for (const plugin of await this.discoverPiPackagePlugins(packageProvider)) addUnique(records, plugin);
     }
     return [...records.values()].sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  private async findPlugin(pluginId: string): Promise<PluginRecord | undefined> {
+    const localPlugin = (await this.discoverLocalPlugins()).find((candidate) => candidate.id === pluginId);
+    if (localPlugin !== undefined) return localPlugin;
+
+    const packageProvider = await this.currentPackageProvider();
+    if (packageProvider === undefined) return undefined;
+    const records = new Map<string, PluginRecord>();
+    for (const plugin of await this.discoverPiPackagePlugins(packageProvider)) addUnique(records, plugin);
+    return records.get(pluginId);
+  }
+
+  private async currentPackageProvider(): Promise<PiPackageProvider | undefined> {
+    if (this.staticPackageProvider !== undefined) return this.staticPackageProvider;
+    if (this.packageProviderForAgentDir === undefined) return undefined;
+    return this.packageProviderForAgentDir(await this.currentAgentDir());
+  }
+
+  private async currentAgentDir(): Promise<string> {
+    if (this.agentDirProvider !== undefined) return await this.agentDirProvider();
+    if (this.agentDir !== undefined) return this.agentDir;
+    throw new Error("Pi package plugin discovery requires an explicit active agent directory");
   }
 
   private async discoverLocalPlugins(): Promise<PluginRecord[]> {

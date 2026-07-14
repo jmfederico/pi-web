@@ -1,8 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { PiWebConfigValues } from "./shared/apiTypes.js";
+import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
+import type { PiWebAgentDirEnvSource, PiWebConfigValues } from "./shared/apiTypes.js";
+import { isPiCompanionCommand, usesPiCodingAgentStateCompatibility } from "./shared/activeAgentProfile.js";
 import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
+
+export { isPiCompanionCommand };
 
 export type PiWebConfig = PiWebConfigValues;
 
@@ -10,6 +13,17 @@ export interface LoadedPiWebConfig {
   path: string;
   exists: boolean;
   config: PiWebConfig;
+}
+
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "spawnSessions" | "subsessions" | "agent"> {
+  uploads: NonNullable<PiWebConfig["uploads"]>;
+  spawnSessions: boolean;
+  subsessions: boolean;
+  agent: Required<NonNullable<PiWebConfig["agent"]>>;
+}
+
+export interface LoadedEffectivePiWebConfig extends Omit<LoadedPiWebConfig, "config"> {
+  config: EffectivePiWebConfig;
 }
 
 export interface LoadOptions {
@@ -34,6 +48,51 @@ export function defaultPiWebDataDir(): string {
 export const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 export const DEFAULT_UPLOADS_FOLDER = ".pi-web/uploads";
+
+export const DEFAULT_AGENT_COMMAND = "pi";
+export const PI_WEB_AGENT_COMMAND_ENV = "PI_WEB_AGENT_COMMAND";
+export const PI_WEB_AGENT_DIR_ENV = "PI_WEB_AGENT_DIR";
+export const PI_WEB_AGENT_SESSION_DIR_ENV = "PI_WEB_AGENT_SESSION_DIR";
+export const PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+export const PI_CODING_AGENT_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+
+export interface EffectivePiWebAgentConfig {
+  command: string;
+  dir: string;
+  sessionDirEnvKeys: string[];
+}
+
+export function effectiveAgentConfig(env: NodeJS.ProcessEnv = process.env, config: Pick<PiWebConfig, "agent"> = {}): EffectivePiWebAgentConfig {
+  const command = parseAgentCommand(envValue(env, PI_WEB_AGENT_COMMAND_ENV) ?? config.agent?.command ?? DEFAULT_AGENT_COMMAND, "agent.command", "environment", "current");
+  const configuredDir = envValue(env, PI_WEB_AGENT_DIR_ENV) ?? (usesPiCodingAgentStateCompatibility(command) ? envValue(env, PI_CODING_AGENT_DIR_ENV) : undefined) ?? config.agent?.dir ?? defaultAgentDirForCommand(command, env);
+  return {
+    command,
+    dir: resolveAgentDirPath(configuredDir, env, "agent.dir", "environment"),
+    sessionDirEnvKeys: agentSessionDirEnvKeys(command),
+  };
+}
+
+export function agentSessionDirEnvKeys(command = DEFAULT_AGENT_COMMAND): string[] {
+  return uniqueStrings([
+    PI_WEB_AGENT_SESSION_DIR_ENV,
+    ...(usesPiCodingAgentStateCompatibility(command) ? [PI_CODING_AGENT_SESSION_DIR_ENV] : []),
+  ]);
+}
+
+export function agentDirEnvSource(env: NodeJS.ProcessEnv): PiWebAgentDirEnvSource | undefined {
+  if (isEnvSet(env[PI_WEB_AGENT_DIR_ENV])) return "pi-web";
+  if (isEnvSet(env[PI_CODING_AGENT_DIR_ENV])) return "pi-compatibility";
+  return undefined;
+}
+
+export function hasAgentDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
+  const source = agentDirEnvSource(env);
+  return source === "pi-web" || (source === "pi-compatibility" && usesPiCodingAgentStateCompatibility(command));
+}
+
+export function hasAgentSessionDirEnvOverride(env: NodeJS.ProcessEnv, command = DEFAULT_AGENT_COMMAND): boolean {
+  return agentSessionDirEnvKeys(command).some((key) => isEnvSet(env[key]));
+}
 
 export function effectiveUploadsConfig(config: Pick<PiWebConfig, "uploads"> = {}): NonNullable<PiWebConfig["uploads"]> {
   return { defaultFolder: config.uploads?.defaultFolder ?? DEFAULT_UPLOADS_FOLDER };
@@ -72,14 +131,17 @@ export function loadPiWebConfig(options: LoadOptions = {}): LoadedPiWebConfig {
   return { path, exists: true, config: parsePiWebConfig(parsed, path) };
 }
 
-export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConfig {
-  const loaded = loadPiWebConfig(options);
+export function effectivePiWebConfig(options: LoadOptions = {}): LoadedEffectivePiWebConfig {
+  return resolveEffectivePiWebConfig(loadPiWebConfig(options), options);
+}
+
+export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: LoadOptions = {}): LoadedEffectivePiWebConfig {
   const env = options.env ?? process.env;
   const host = env["PI_WEB_HOST"];
   const port = env["PI_WEB_PORT"] ?? env["PORT"];
   const allowedHosts = env["PI_WEB_ALLOWED_HOSTS"];
   const maxUpload = env["PI_WEB_MAX_UPLOAD_BYTES"];
-
+  const agent = effectiveAgentConfig(env, loaded.config);
   return {
     ...loaded,
     config: {
@@ -94,6 +156,7 @@ export function effectivePiWebConfig(options: LoadOptions = {}): LoadedPiWebConf
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
       // Beta capability, resolved off by default.
       subsessions: subsessionsEnabled(env, loaded.config),
+      agent: { command: agent.command, dir: agent.dir },
     },
   };
 }
@@ -102,7 +165,9 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   const env = options.env ?? process.env;
   const path = piWebConfigPath(env, options.cwd ?? process.cwd());
   const normalized = parsePiWebConfig(piWebConfigRecord(config), path);
+  effectiveAgentConfig(env, normalized);
   const existing = readExistingConfigObject(path);
+  if (existing["agent"] !== undefined) parseAgentConfig(existing["agent"], path);
   delete existing["host"];
   delete existing["port"];
   delete existing["allowedHosts"];
@@ -113,6 +178,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["maxUploadBytes"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
+  delete existing["agent"];
   const merged = { ...existing, ...piWebConfigRecord(normalized) };
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
@@ -138,6 +204,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+    ...(config.agent !== undefined ? { agent: config.agent } : {}),
   };
 }
 
@@ -153,6 +220,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
+    ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
 }
 
@@ -203,6 +271,74 @@ function parseString(value: unknown, key: string, path: string): string {
   return value;
 }
 
+const AGENT_CONFIG_KEYS = new Set(["command", "dir"]);
+const SAFE_BARE_AGENT_COMMAND_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._+-]*$/u;
+
+export type AgentPathHost = "current" | "portable";
+
+export function parseAgentConfig(value: unknown, path: string, pathHost: AgentPathHost = "current"): NonNullable<PiWebConfig["agent"]> {
+  if (!isRecord(value)) throw new Error(`PI WEB config agent must be an object: ${path}`);
+  const unknownKey = Object.keys(value).find((key) => !AGENT_CONFIG_KEYS.has(key));
+  if (unknownKey !== undefined) throw new Error(`PI WEB config agent contains unknown key ${JSON.stringify(unknownKey)}: ${path}`);
+  const command = value["command"];
+  const dir = value["dir"];
+  return {
+    ...(command !== undefined ? { command: parseAgentCommand(command, "agent.command", path, pathHost) } : {}),
+    ...(dir !== undefined ? { dir: parseAgentDir(dir, "agent.dir", path, pathHost) } : {}),
+  };
+}
+
+function parseAgentCommand(value: unknown, key: string, path: string, pathHost: AgentPathHost): string {
+  const command = parseString(value, key, path).trim();
+  if (!isSafeAgentCommand(command, pathHost)) {
+    const absoluteLabel = pathHost === "current" ? "host-absolute" : "absolute";
+    throw new Error(`PI WEB config ${key} must be a safe bare executable name or ${absoluteLabel} executable path: ${path}`);
+  }
+  return command;
+}
+
+function parseAgentDir(value: unknown, key: string, path: string, pathHost: AgentPathHost): string {
+  const dir = parseString(value, key, path).trim();
+  const isAbsoluteDir = pathHost === "current" ? isHostAbsoluteAgentDir(dir) : isPortableAbsoluteAgentPath(dir);
+  if (!isAbsoluteDir && !isHomePath(dir, pathHost)) {
+    const absoluteLabel = pathHost === "current" ? "a host-absolute" : "an absolute";
+    throw new Error(`PI WEB config ${key} must be ${absoluteLabel} path or start with ~: ${path}`);
+  }
+  return dir;
+}
+
+function resolveAgentDirPath(value: string, env: NodeJS.ProcessEnv, key: string, path: string): string {
+  const parsed = parseAgentDir(value, key, path, "current");
+  const expanded = expandHomePath(parsed, env);
+  if (!isHostAbsoluteAgentDir(expanded)) {
+    throw new Error(`PI WEB config ${key} must resolve to a host-absolute path: ${path}`);
+  }
+  return normalize(expanded);
+}
+
+export function isSafeAgentCommandForHost(value: string): boolean {
+  return isSafeAgentCommand(value, "current");
+}
+
+function isSafeAgentCommand(value: string, pathHost: AgentPathHost): boolean {
+  if (value === "" || value !== value.trim() || value.includes("\0") || /[\s;&|`$<>]/u.test(value)) return false;
+  if (SAFE_BARE_AGENT_COMMAND_PATTERN.test(value)) return true;
+  if (pathHost === "current") return isAbsolute(value) && basename(value) !== "";
+  return isAbsoluteLike(value) && value.split(/[\\/]/u).at(-1) !== "";
+}
+
+export function isHostAbsoluteAgentDir(value: string): boolean {
+  return isSafeAgentDirPath(value) && isAbsolute(value);
+}
+
+function isPortableAbsoluteAgentPath(value: string): boolean {
+  return isSafeAgentDirPath(value) && isAbsoluteLike(value);
+}
+
+function isSafeAgentDirPath(value: string): boolean {
+  return value !== "" && value === value.trim() && !hasControlCharacter(value);
+}
+
 function parsePort(value: unknown, key: string, path = "environment"): number {
   const port = typeof value === "number" ? value : typeof value === "string" && value !== "" ? Number(value) : NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`PI WEB config ${key} must be an integer from 1 to 65535: ${path}`);
@@ -250,6 +386,44 @@ function parseWorkspaceRelativeFolder(value: unknown, key: string, path: string)
   if (parts.length === 0) throw new Error(`PI WEB config ${key} must be a non-empty workspace-relative path: ${path}`);
   if (parts.some((part) => part === "..")) throw new Error(`PI WEB config ${key} must not contain path traversal: ${path}`);
   return parts.join("/");
+}
+
+
+function isHomePath(value: string, pathHost: AgentPathHost): boolean {
+  return value === "~" || value.startsWith("~/") || ((pathHost === "portable" || process.platform === "win32") && value.startsWith("~\\"));
+}
+
+function expandHomePath(value: string, env: NodeJS.ProcessEnv): string {
+  const home = env["HOME"] !== undefined && env["HOME"] !== "" ? env["HOME"] : homedir();
+  if (value === "~") return home;
+  if (value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\"))) return join(home, value.slice(2));
+  return value;
+}
+
+function defaultAgentDirForCommand(command: string, env: NodeJS.ProcessEnv): string {
+  if (usesPiCodingAgentStateCompatibility(command)) return expandHomePath("~/.pi/agent", env);
+  throw new Error(`PI WEB config agent.dir or ${PI_WEB_AGENT_DIR_ENV} is required when agent.command is ${JSON.stringify(command)}`);
+}
+
+function envValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const value = env[key];
+  return value !== undefined && value !== "" ? value : undefined;
+}
+
+function isEnvSet(value: string | undefined): boolean {
+  return value !== undefined && value !== "";
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 32 || code === 127) return true;
+  }
+  return false;
 }
 
 function isAbsoluteLike(value: string): boolean {

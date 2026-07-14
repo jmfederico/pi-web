@@ -1,4 +1,5 @@
 import type { PiWebComponentStatus, PiWebInstallationInfo, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebVersionResponse } from "./apiTypes.js";
+import { parseActiveAgentProfileDescriptor } from "./activeAgentProfile.js";
 import { parseKnownPiWebCapabilities } from "./capabilities.js";
 
 export function parsePiWebVersionResponse(value: unknown): PiWebVersionResponse | undefined {
@@ -33,15 +34,19 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
   const runtimeVersion = value["runtimeVersion"];
   const available = value["available"];
   const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
+  const activeAgentProfileValue = value["activeAgentProfile"];
+  const activeAgentProfile = activeAgentProfileValue === undefined ? undefined : parseActiveAgentProfileDescriptor(activeAgentProfileValue);
   const error = value["error"];
   if (component !== "web" && component !== "sessiond") return undefined;
   if (typeof label !== "string" || label === "" || typeof available !== "boolean" || capabilities === undefined) return undefined;
+  if (activeAgentProfileValue !== undefined && (component !== "sessiond" || activeAgentProfile === undefined)) return undefined;
   return {
     component,
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
     available,
     capabilities,
+    ...(activeAgentProfile === undefined ? {} : { activeAgentProfile }),
     ...(typeof error === "string" ? { error } : {}),
   };
 }

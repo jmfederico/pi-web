@@ -79,12 +79,16 @@ describe("machine-scoped runtime API", () => {
   });
 
   it("reads machine runtime through the gateway route", async () => {
-    const fetchMock = stubJsonFetch({ machineId: "remote a", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived] });
+    const response = { machineId: "remote a", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.sessionsDeleteArchived] };
+    const fetchMock = stubSequenceFetch([jsonResponse(response), jsonResponse(response)]);
 
     await machinesApi.runtime("remote a");
+    await machinesApi.runtime("remote a", true);
 
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/runtime");
+    expect(fetchCall(fetchMock, 1)[0]).toBe("https://pi.example.test/api/machines/remote%20a/runtime?refresh=1");
+    expect(fetchCall(fetchMock, 1)[1]?.cache).toBe("no-store");
   });
 });
 
@@ -475,7 +479,7 @@ function piWebConfigResponse(config: PiWebConfigValues) {
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false },
   };
 }
 

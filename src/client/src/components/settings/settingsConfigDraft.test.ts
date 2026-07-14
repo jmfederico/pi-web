@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentProfileConfigPatchFromDraft,
+  agentProfileDraftFromConfig,
+  agentProfileDraftMatchesConfig,
   gatewayServerConfigFromDraft,
   gatewayServerDraftFromConfig,
   machineAccessConfigPatchFromDraft,
@@ -29,6 +32,22 @@ describe("settings config drafts", () => {
     expect(gatewayServerDraftFromConfig({ allowedHosts: true }).allowedHostsMode).toBe("all");
   });
 
+  it("builds one atomic agent profile patch from both draft fields", () => {
+    expect(agentProfileDraftFromConfig({ agent: { command: "agent-lab", dir: "/srv/agent-lab" } })).toEqual({
+      command: "agent-lab",
+      dir: "/srv/agent-lab",
+    });
+    expect(agentProfileConfigPatchFromDraft({ command: " alternate-agent ", dir: " /srv/alternate-agent " })).toEqual({
+      agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
+    });
+    expect(agentProfileConfigPatchFromDraft({ command: " ", dir: " " })).toEqual({ agent: {} });
+    expect(agentProfileConfigPatchFromDraft({ command: " C:\\tools\\pi.exe ", dir: " C:\\agent-profiles\\work " })).toEqual({
+      agent: { command: "C:\\tools\\pi.exe", dir: "C:\\agent-profiles\\work" },
+    });
+    expect(agentProfileDraftMatchesConfig({ command: " agent-lab ", dir: " /srv/agent-lab " }, { agent: { command: "agent-lab", dir: "/srv/agent-lab" } })).toBe(true);
+    expect(agentProfileDraftMatchesConfig({ command: "agent-lab", dir: "/draft" }, { agent: { command: "agent-lab", dir: "/saved" } })).toBe(false);
+  });
+
   it("builds gateway server saves without dropping preserved config values", () => {
     expect(gatewayServerConfigFromDraft({
       host: " gateway.local ",
@@ -43,6 +62,7 @@ describe("settings config drafts", () => {
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
+      agent: { command: "agent-lab", dir: "~/agent-profiles/lab" },
     })).toEqual({
       host: "gateway.local",
       port: 9000,
@@ -54,6 +74,7 @@ describe("settings config drafts", () => {
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
+      agent: { command: "agent-lab", dir: "~/agent-profiles/lab" },
     });
 
     expect(gatewayServerConfigFromDraft({

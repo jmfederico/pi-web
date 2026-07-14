@@ -1,5 +1,6 @@
-import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileResponse, OAuthFlowState, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupThresholds, SessionCleanupTotals, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
+import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileResponse, OAuthFlowState, PiWebAgentDirEnvSource, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupThresholds, SessionCleanupTotals, SessionInfo, SessionModel, SessionStatus, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
 import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse } from "../../../shared/apiTypes";
+import { parseActiveAgentProfileDescriptor } from "../../../shared/activeAgentProfile";
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -562,8 +563,18 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("pathAccess", optionalPathAccess(record["pathAccess"])),
     ...optionalField("uploads", optionalUploads(record["uploads"])),
     ...optionalField("maxUploadBytes", optionalNumber(record, "maxUploadBytes")),
+    ...optionalField("agent", optionalAgent(record["agent"])),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
+  };
+}
+
+function optionalAgent(value: unknown): PiWebConfigValues["agent"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB agent field");
+  return {
+    ...optionalField("command", optionalString(value, "command")),
+    ...optionalField("dir", optionalString(value, "dir")),
   };
 }
 
@@ -629,7 +640,24 @@ function optionalPlugins(value: unknown): PiWebPluginConfigMap | undefined {
 
 function parsePiWebConfigEnvOverrides(value: unknown): PiWebConfigEnvOverrides {
   const record = requireRecord(value);
-  return { host: requireBoolean(record, "host"), port: requireBoolean(record, "port"), allowedHosts: requireBoolean(record, "allowedHosts"), spawnSessions: requireBoolean(record, "spawnSessions"), subsessions: requireBoolean(record, "subsessions") };
+  return {
+    host: requireBoolean(record, "host"),
+    port: requireBoolean(record, "port"),
+    allowedHosts: requireBoolean(record, "allowedHosts"),
+    spawnSessions: requireBoolean(record, "spawnSessions"),
+    subsessions: requireBoolean(record, "subsessions"),
+    agentCommand: optionalBoolean(record, "agentCommand") ?? false,
+    agentDir: optionalBoolean(record, "agentDir") ?? false,
+    ...optionalAgentDirSource(record),
+    agentSessionDir: optionalBoolean(record, "agentSessionDir") ?? false,
+  };
+}
+
+function optionalAgentDirSource(record: Record<string, unknown>): { agentDirSource?: PiWebAgentDirEnvSource } {
+  const value = record["agentDirSource"];
+  if (value === undefined) return {};
+  if (value !== "pi-web" && value !== "pi-compatibility") throw new Error("Invalid PI WEB agentDirSource field");
+  return { agentDirSource: value };
 }
 
 export function parsePiPackagesResponse(value: unknown): PiPackagesResponse {
@@ -733,12 +761,17 @@ function parsePiWebRuntimeComponents(value: unknown): PiWebRuntimeResponse["comp
 
 function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponent {
   const record = requireRecord(value);
+  const component = parsePiWebServiceComponent(record["component"]);
+  const activeAgentProfileValue = record["activeAgentProfile"];
+  const activeAgentProfile = activeAgentProfileValue === undefined ? undefined : parseActiveAgentProfileDescriptor(activeAgentProfileValue);
+  if (activeAgentProfileValue !== undefined && (component !== "sessiond" || activeAgentProfile === undefined)) throw new Error("Invalid active agent profile descriptor");
   return {
-    component: parsePiWebServiceComponent(record["component"]),
+    component,
     label: requireString(record, "label"),
     ...optionalField("runtimeVersion", optionalString(record, "runtimeVersion")),
     available: requireBoolean(record, "available"),
     capabilities: parsePiWebCapabilities(record["capabilities"]),
+    ...optionalField("activeAgentProfile", activeAgentProfile),
     ...optionalField("error", optionalString(record, "error")),
   };
 }

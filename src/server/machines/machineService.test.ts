@@ -171,6 +171,7 @@ describe("MachineService", () => {
 
     const first = await remoteService.runtime(machine.id);
     const second = await remoteService.runtime(machine.id);
+    const forced = await remoteService.runtime(machine.id, true);
 
     expect(first).toEqual({
       machineId: machine.id,
@@ -182,7 +183,8 @@ describe("MachineService", () => {
       capabilities: body.capabilities,
     });
     expect(second).toEqual(first);
-    expect(requestJson).toHaveBeenCalledTimes(1);
+    expect(forced).toEqual(first);
+    expect(requestJson).toHaveBeenCalledTimes(2);
     expect(requestJson).toHaveBeenCalledWith("GET", "/api/pi-web/runtime", undefined, { timeoutMs: 3000 });
     expect(factoryMachines).toEqual([
       expect.objectContaining({
@@ -192,6 +194,7 @@ describe("MachineService", () => {
         token: "secret",
         headers: { "X-Pi-Web-Test": "yes" },
       }),
+      expect.objectContaining({ id: machine.id }),
     ]);
   });
 

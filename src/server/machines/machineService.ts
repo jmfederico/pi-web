@@ -93,10 +93,10 @@ export class MachineService {
     return health;
   }
 
-  async runtime(id: string): Promise<MachineRuntime | undefined> {
+  async runtime(id: string, refresh = false): Promise<MachineRuntime | undefined> {
     const cached = this.runtimeCache.get(id);
     const now = this.now().getTime();
-    if (cached !== undefined && cached.expiresAt > now) return cached.runtime;
+    if (!refresh && cached !== undefined && cached.expiresAt > now) return cached.runtime;
 
     const runtime = id === "local" ? await this.localRuntime() : await this.remoteRuntime(id);
     if (runtime === undefined) return undefined;

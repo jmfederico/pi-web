@@ -8,16 +8,16 @@ describe("PI WEB status parsing", () => {
       packageName: "@jmfederico/pi-web",
       generatedAt: "now",
       components: {
-        web: { component: "web", label: "Web/UI", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, "future.capability"] },
+        web: { component: "web", label: "Web/UI", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, PI_WEB_CAPABILITIES.agentProfileConfig, "future.capability"] },
         sessiond: { component: "sessiond", label: "Session daemon", runtimeVersion: "1.0.0", available: true, capabilities: ["future.sessiondCapability"] },
       },
-      capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, "future.capability"],
+      capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, PI_WEB_CAPABILITIES.agentProfileConfig, "future.capability"],
     })).toMatchObject({
       components: {
-        web: { capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings] },
+        web: { capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, PI_WEB_CAPABILITIES.agentProfileConfig] },
         sessiond: { capabilities: [] },
       },
-      capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings],
+      capabilities: [PI_WEB_CAPABILITIES.piPackagesManage, PI_WEB_CAPABILITIES.selectedMachineSettings, PI_WEB_CAPABILITIES.agentProfileConfig],
     });
   });
 
@@ -31,6 +31,59 @@ describe("PI WEB status parsing", () => {
       },
       capabilities: [PI_WEB_CAPABILITIES.piPackagesManage],
     })).toBeUndefined();
+  });
+
+  it("parses and freezes a session daemon active agent profile", () => {
+    const parsed = parsePiWebRuntimeResponse({
+      packageName: "@jmfederico/pi-web",
+      generatedAt: "now",
+      components: {
+        web: { component: "web", label: "Web/UI", available: true, capabilities: [] },
+        sessiond: {
+          component: "sessiond",
+          label: "Session daemon",
+          available: true,
+          capabilities: [],
+          activeAgentProfile: {
+            schemaVersion: 1,
+            revision: `sha256:${"a".repeat(64)}`,
+            command: "acme-agent",
+            dir: "/opt/acme-agent/state",
+            sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
+          },
+        },
+      },
+      capabilities: [],
+    });
+
+    expect(parsed?.components.sessiond.activeAgentProfile).toMatchObject({ command: "acme-agent", dir: "/opt/acme-agent/state" });
+    expect(Object.isFrozen(parsed?.components.sessiond.activeAgentProfile)).toBe(true);
+    expect(Object.isFrozen(parsed?.components.sessiond.activeAgentProfile?.sessionDirEnvKeys)).toBe(true);
+  });
+
+  it("rejects malformed, secret-bearing, or web-owned active profile descriptors", () => {
+    const profile = {
+      schemaVersion: 1,
+      revision: `sha256:${"a".repeat(64)}`,
+      command: "acme-agent",
+      dir: "/opt/acme-agent/state",
+      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
+    };
+    const responseFor = (webProfile: unknown, sessiondProfile: unknown) => ({
+      packageName: "@jmfederico/pi-web",
+      generatedAt: "now",
+      components: {
+        web: { component: "web", label: "Web/UI", available: true, capabilities: [], ...(webProfile === undefined ? {} : { activeAgentProfile: webProfile }) },
+        sessiond: { component: "sessiond", label: "Session daemon", available: true, capabilities: [], ...(sessiondProfile === undefined ? {} : { activeAgentProfile: sessiondProfile }) },
+      },
+      capabilities: [],
+    });
+
+    expect(parsePiWebRuntimeResponse(responseFor(undefined, { ...profile, token: "secret" }))).toBeUndefined();
+    expect(parsePiWebRuntimeResponse(responseFor(undefined, { ...profile, command: "./acme-agent" }))).toBeUndefined();
+    expect(parsePiWebRuntimeResponse(responseFor(undefined, { ...profile, dir: "relative/state" }))).toBeUndefined();
+    expect(parsePiWebRuntimeResponse(responseFor(undefined, { ...profile, sessionDirEnvKeys: ["ARBITRARY_AGENT_SESSION_DIR"] }))).toBeUndefined();
+    expect(parsePiWebRuntimeResponse(responseFor(profile, undefined))).toBeUndefined();
   });
 
   it("parses Docker installation metadata", () => {

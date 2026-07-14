@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession, type PiSessionRuntime } from "./piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
+const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -20,12 +22,15 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const hub = new CapturingSessionEventHub();
     const fake = fakeRuntime();
     let createCalls = 0;
-    const createAgentRuntime: RuntimeCreator = async () => {
+    let runtimeAgentDir: string | undefined;
+    const createAgentRuntime: RuntimeCreator = async (_createRuntime, options) => {
       createCalls += 1;
+      runtimeAgentDir = options.agentDir;
       await Promise.resolve();
       return fake.runtime;
     };
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime,
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -34,6 +39,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const session = await service.start("/workspace");
 
     expect(createCalls).toBe(1);
+    expect(runtimeAgentDir).toBe(TEST_AGENT_DIR);
     expect(fake.calls.bindExtensions).toHaveLength(1);
     expect(session).toMatchObject({ id: "session-1", cwd: "/workspace", messageCount: 0 });
     expect(service.activeCount()).toBe(1);
@@ -53,6 +59,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     let service: PiSessionService | undefined;
     try {
       service = new PiSessionService(hub, {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         heartbeatIntervalMs: 60_000,
@@ -79,6 +86,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const fake = fakeRuntime("legacy-session");
     const open = vi.fn(() => fakeSessionManager());
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: {
         create: () => fakeSessionManager(),
@@ -127,6 +135,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const gateway = sessionGateway([sessionRecord(sessionId)]);
     const open = vi.spyOn(gateway, "open");
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime,
       sessionManager: gateway,
@@ -180,6 +189,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
         : Promise.resolve(runtime);
     };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime,
       sessionManager: sessionGateway([sessionRecord(sessionId)]),
@@ -219,6 +229,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const runtimeResult = deferred<PiSessionRuntime>();
     const fake = fakeRuntime(sessionId);
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime: () => {
         createStarted.resolve();
@@ -252,6 +263,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
     fake.runtime.setRebindSession = (callback) => { rebindSession = callback; };
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -278,6 +290,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       },
     });
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -312,6 +325,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
         },
       });
       service = new PiSessionService(hub, {
+        agentDir: TEST_AGENT_DIR,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([sessionRecord("idle-session")]),
         heartbeatIntervalMs: 1_000,
@@ -347,6 +361,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       },
     });
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("completion-session")]),
       heartbeatIntervalMs: 60_000,
@@ -365,6 +380,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("uses injected archive and session-manager gateways for listing", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-01T00:00:00.000Z" }]),
         get: () => Promise.resolve(undefined),
@@ -394,6 +410,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("lists archived records that have been moved out of the active session directory", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),
         get: () => Promise.resolve(undefined),
@@ -424,6 +441,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const hub = new CapturingSessionEventHub();
     const fake = fakeRuntime("runtime-reload-session");
     const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("runtime-reload-session")]),
       heartbeatIntervalMs: 60_000,
@@ -456,6 +474,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       return runtime;
     };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime,
       sessionManager: sessionGateway([sessionRecord("reload-session")]),
       heartbeatIntervalMs: 60_000,
@@ -479,6 +498,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("refuses to reload a session that has active work in progress", async () => {
     const fake = fakeRuntime("busy-session", { isStreaming: true });
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("busy-session")]),
       heartbeatIntervalMs: 60_000,
@@ -493,6 +513,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("refuses to reload an archived session", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([]),
         get: (sessionId) => Promise.resolve(sessionId === "archived" || "archived".startsWith(sessionId)
@@ -514,6 +535,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("reconciles workspace activity when listing only archived sessions", async () => {
     const reconciliations: { cwd: string; sessionIds: string[] }[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),
         get: () => Promise.resolve(undefined),

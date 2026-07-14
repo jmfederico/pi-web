@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ActiveAgentProfileAccessError } from "./activeAgentProfileProvider.js";
 import { PiWebPluginService, type PiPackageProvider } from "./piWebPluginService.js";
 
 let tempDir: string;
@@ -131,6 +132,43 @@ describe("PiWebPluginService", () => {
     expect(manifest.plugins).toHaveLength(1);
     expect(manifest.plugins[0]).toMatchObject({ id: "review", source: "npm:@acme/review", scope: "user" });
     expect(manifest.plugins[0]?.module).toMatch(/^\/pi-web-plugins\/review\/dist\/review\.js\?v=\d+$/u);
+  });
+
+  it("uses the active agent directory on every Pi package plugin discovery", async () => {
+    const packageDir = join(tempDir, "pkg");
+    const initialAgentDir = join(tempDir, "initial-agent");
+    const updatedAgentDir = join(tempDir, "updated-agent");
+    let activeAgentDir = initialAgentDir;
+    await writePlugin(packageDir, {
+      packageJson: { piWeb: { plugins: [{ id: "agent-package", module: "dist/plugin.js" }] } },
+      files: { "dist/plugin.js": "export default {};" },
+    });
+    await mkdir(initialAgentDir, { recursive: true });
+    await mkdir(updatedAgentDir, { recursive: true });
+    await writeFile(join(updatedAgentDir, "settings.json"), `${JSON.stringify({ packages: [packageDir] }, null, 2)}\n`, "utf8");
+    const service = new PiWebPluginService({ roots: [], cwd: tempDir, agentDirProvider: () => activeAgentDir });
+
+    await expect(service.manifest()).resolves.toEqual({ plugins: [] });
+
+    activeAgentDir = updatedAgentDir;
+
+    await expect(service.manifest()).resolves.toMatchObject({ plugins: [{ id: "agent-package", source: packageDir, scope: "user" }] });
+  });
+
+  it("fails complete package-backed discovery closed while keeping known local assets independent", async () => {
+    const pluginDir = join(tempDir, "plugins", "local-only");
+    await writePlugin(pluginDir, {
+      packageJson: { piWeb: { plugins: [{ id: "local-only", module: "pi-web-plugin.js" }] } },
+      files: { "pi-web-plugin.js": "export default {};" },
+    });
+    const profileError = new ActiveAgentProfileAccessError({ status: "invalid", error: "missing descriptor" });
+    const service = new PiWebPluginService({
+      roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }],
+      agentDirProvider: () => { throw profileError; },
+    });
+
+    await expect(service.manifest()).rejects.toBe(profileError);
+    await expect(service.readAsset("local-only", "pi-web-plugin.js")).resolves.toMatchObject({ contentType: "application/javascript; charset=utf-8" });
   });
 
   it("refreshes Pi package plugin discovery after Pi package settings change", async () => {

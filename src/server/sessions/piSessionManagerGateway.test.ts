@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { agentSessionDirEnvKeys } from "../../config.js";
 import { createPiSessionManagerGateway, defaultPiSessionDir, defaultPiSessionsRoot, filterSessionsForCwd, SessionDirResolver } from "./piSessionManagerGateway.js";
 import type { PiSessionListEntry } from "./piSessionService.js";
 import type { PiSessionManager } from "./piSessionService.js";
@@ -24,7 +25,7 @@ afterEach(async () => {
 
 describe("SessionDirResolver", () => {
   it("uses Pi default session storage when no Pi override is configured", () => {
-    const resolver = new SessionDirResolver({ agentDir, env: {} });
+    const resolver = new SessionDirResolver(piProfileOptions());
 
     expect(resolver.resolve(cwd)).toMatchObject({ source: "pi-default", sessionDir: defaultPiSessionDir(cwd, agentDir), usesConfiguredSessionDir: false });
     expect(defaultPiSessionsRoot(agentDir)).toBe(join(agentDir, "sessions"));
@@ -34,7 +35,7 @@ describe("SessionDirResolver", () => {
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ sessionDir: ".pi/sessions" }, null, 2)}\n`, "utf8");
 
-    const resolver = new SessionDirResolver({ agentDir, env: {} });
+    const resolver = new SessionDirResolver(piProfileOptions());
 
     expect(resolver.resolve(cwd)).toMatchObject({ source: "settings", sessionDir: join(cwd, ".pi", "sessions"), usesConfiguredSessionDir: true });
   });
@@ -45,7 +46,7 @@ describe("SessionDirResolver", () => {
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ sessionDir: join(tempDir, "global-sessions") }, null, 2)}\n`, "utf8");
     await writeFile(join(cwd, ".pi", "settings.json"), `${JSON.stringify({ sessionDir: ".workspace-sessions" }, null, 2)}\n`, "utf8");
 
-    const resolver = new SessionDirResolver({ agentDir, env: {} });
+    const resolver = new SessionDirResolver(piProfileOptions());
 
     expect(resolver.resolve(cwd)).toMatchObject({ source: "settings", sessionDir: join(cwd, ".workspace-sessions"), usesConfiguredSessionDir: true });
   });
@@ -55,9 +56,31 @@ describe("SessionDirResolver", () => {
     await mkdir(agentDir, { recursive: true });
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ sessionDir: join(tempDir, "settings-sessions") }, null, 2)}\n`, "utf8");
 
-    const resolver = new SessionDirResolver({ agentDir, env: { PI_CODING_AGENT_SESSION_DIR: envDir } });
+    const resolver = new SessionDirResolver(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: envDir }));
 
     expect(resolver.resolve(cwd)).toMatchObject({ source: "env", sessionDir: envDir, usesConfiguredSessionDir: true });
+  });
+
+  it("uses PI WEB sessionDir environment overrides before settings", async () => {
+    const envDir = join(tempDir, "pi-web-env-sessions");
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ sessionDir: join(tempDir, "settings-sessions") }, null, 2)}\n`, "utf8");
+
+    const resolver = new SessionDirResolver(piProfileOptions({ PI_WEB_AGENT_SESSION_DIR: envDir }));
+
+    expect(resolver.resolve(cwd)).toMatchObject({ source: "env", sessionDir: envDir, usesConfiguredSessionDir: true });
+  });
+
+  it("snapshots the daemon epoch's injected session-directory environment", () => {
+    const firstDir = join(tempDir, "first-env-sessions");
+    const env = { PI_WEB_AGENT_SESSION_DIR: firstDir };
+    const sessionDirEnvKeys = ["PI_WEB_AGENT_SESSION_DIR"];
+    const resolver = new SessionDirResolver({ agentDir, env, sessionDirEnvKeys });
+
+    env.PI_WEB_AGENT_SESSION_DIR = join(tempDir, "mutated-env-sessions");
+    sessionDirEnvKeys[0] = "OTHER_SESSION_DIR";
+
+    expect(resolver.resolve(cwd)).toMatchObject({ source: "env", sessionDir: firstDir, usesConfiguredSessionDir: true });
   });
 });
 
@@ -66,7 +89,7 @@ describe("Pi session manager gateway", () => {
     const otherCwd = join(tempDir, "other-workspace");
     await writeSessionFile(defaultPiSessionDir(cwd, agentDir), "session-a", cwd);
     await writeSessionFile(defaultPiSessionDir(otherCwd, agentDir), "session-b", otherCwd);
-    const gateway = createPiSessionManagerGateway({ agentDir, env: {} });
+    const gateway = createPiSessionManagerGateway(piProfileOptions());
 
     if (gateway.listAll === undefined) throw new Error("Expected legacy listing support");
     await expect(gateway.listAll()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "session-a", cwd }), expect.objectContaining({ id: "session-b", cwd: otherCwd })]));
@@ -76,10 +99,25 @@ describe("Pi session manager gateway", () => {
     const envSessionDir = join(tempDir, "env-sessions");
     await writeSessionFile(defaultPiSessionDir(cwd, agentDir), "default-session", cwd);
     await writeSessionFile(envSessionDir, "env-session", cwd);
-    const gateway = createPiSessionManagerGateway({ agentDir, env: { PI_CODING_AGENT_SESSION_DIR: envSessionDir } });
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: envSessionDir }));
 
     if (gateway.listAll === undefined) throw new Error("Expected legacy listing support");
     await expect(gateway.listAll()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "default-session", cwd }), expect.objectContaining({ id: "env-session", cwd })]));
+  });
+
+  it("includes generic env session directories in global listing", async () => {
+    for (const envKey of ["PI_WEB_AGENT_SESSION_DIR", "PI_CODING_AGENT_SESSION_DIR"]) {
+      const envSessionDir = join(tempDir, `${envKey.toLowerCase()}-sessions`);
+      await writeSessionFile(envSessionDir, `${envKey.toLowerCase()}-session`, cwd);
+      const gateway = createPiSessionManagerGateway({
+        agentDir,
+        env: { [envKey]: envSessionDir },
+        sessionDirEnvKeys: [envKey],
+      });
+
+      if (gateway.listAll === undefined) throw new Error("Expected legacy listing support");
+      await expect(gateway.listAll()).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: `${envKey.toLowerCase()}-session`, cwd })]));
+    }
   });
 
   it("lists only sessions for the requested cwd when a custom Pi sessionDir is shared", async () => {
@@ -87,7 +125,7 @@ describe("Pi session manager gateway", () => {
     const otherCwd = join(tempDir, "other-workspace");
     await writeSessionFile(sharedSessionDir, "session-a", cwd);
     await writeSessionFile(sharedSessionDir, "session-b", otherCwd);
-    const gateway = createPiSessionManagerGateway({ agentDir, env: { PI_CODING_AGENT_SESSION_DIR: sharedSessionDir } });
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
 
     await expect(gateway.list(cwd)).resolves.toMatchObject([{ id: "session-a", cwd }]);
     const created = gateway.create(cwd);
@@ -101,7 +139,7 @@ describe("Pi session manager gateway", () => {
     // hiding every session outside the daemon's own launch directory.
     expect(cwd).not.toBe(process.cwd());
     await writeSessionFile(defaultPiSessionDir(cwd, agentDir), "session-elsewhere", cwd);
-    const gateway = createPiSessionManagerGateway({ agentDir, env: {} });
+    const gateway = createPiSessionManagerGateway(piProfileOptions());
 
     await expect(gateway.list(cwd)).resolves.toMatchObject([{ id: "session-elsewhere", cwd }]);
   });
@@ -129,11 +167,15 @@ describe("session listing canonicalization", () => {
     // Headers are written by the Pi CLI / SDK consumers and may contain
     // unnormalized paths (trailing separators, redundant segments).
     await writeSessionFile(defaultPiSessionDir(cwd, agentDir), "session-messy", `${cwd}${sep}.${sep}`);
-    const gateway = createPiSessionManagerGateway({ agentDir, env: {} });
+    const gateway = createPiSessionManagerGateway(piProfileOptions());
 
     await expect(gateway.list(cwd)).resolves.toMatchObject([{ id: "session-messy", cwd }]);
   });
 });
+
+function piProfileOptions(env: NodeJS.ProcessEnv = {}) {
+  return { agentDir, env, sessionDirEnvKeys: agentSessionDirEnvKeys() };
+}
 
 function hasSessionDir(manager: PiSessionManager): manager is PiSessionManager & { getSessionDir(): string } {
   return "getSessionDir" in manager && typeof manager.getSessionDir === "function";

@@ -9,6 +9,7 @@ import { SessionEventHub } from "./realtime/sessionEventHub.js";
 import { AuthService } from "./sessions/authService.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
+import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { ProjectService } from "./projects/projectService.js";
@@ -19,11 +20,18 @@ import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { effectivePiWebConfig, maxUploadBytes, spawnSessionsEnabled, subsessionsEnabled } from "../config.js";
+import { agentSessionDirEnvKeys, effectivePiWebConfig, maxUploadBytes } from "../config.js";
+import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { runSessionDaemonStartup } from "./sessiond/sessionDaemonStartup.js";
 
-const { config } = effectivePiWebConfig();
-const app = Fastify({ logger: true, bodyLimit: maxUploadBytes(process.env, config) });
+const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
+const { config } = effectivePiWebConfig({ env: daemonEnvironment });
+const activeAgentProfile = createActiveAgentProfileDescriptor({
+  command: config.agent.command,
+  dir: config.agent.dir,
+  sessionDirEnvKeys: agentSessionDirEnvKeys(config.agent.command),
+});
+const app = Fastify({ logger: true, bodyLimit: maxUploadBytes(daemonEnvironment, config) });
 await app.register(fastifyWebsocket);
 
 await runSessionDaemonStartup({
@@ -31,44 +39,51 @@ await runSessionDaemonStartup({
   createRuntime() {
     const eventHub = new SessionEventHub();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
-    const auth = new AuthService();
-    const spawnTargets = spawnSessionsEnabled(process.env, config)
+    const auth = new AuthService({ agentDir: activeAgentProfile.dir });
+    const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
     const sessions = new PiSessionService(eventHub, {
       modelRegistry: auth.modelRegistry,
+      agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
-      subsessionsEnabled: spawnTargets !== undefined && subsessionsEnabled(process.env, config),
+      subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
+      sessionManager: createPiSessionManagerGateway({
+        agentDir: activeAgentProfile.dir,
+        env: daemonEnvironment,
+        sessionDirEnvKeys: activeAgentProfile.sessionDirEnvKeys,
+      }),
     });
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
-    return { eventHub, workspaceActivity, auth, sessions, terminals };
+    const runtimeComponent = Object.freeze({
+      ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),
+      activeAgentProfile,
+    });
+    return { eventHub, workspaceActivity, auth, sessions, terminals, activeAgentProfile, runtimeComponent };
   },
-  registerRoutes({ eventHub, workspaceActivity, auth, sessions, terminals }) {
+  registerRoutes({ eventHub, workspaceActivity, auth, sessions, terminals, runtimeComponent }) {
     registerWorkspaceActivityRoutes(app, workspaceActivity);
     registerAuthRoutes(app, auth);
     registerSessionRoutes(app, sessions, eventHub);
     registerTerminalRoutes(app, terminals);
 
-    app.get("/health", () => {
-      const runtime = getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES);
-      return {
-        ok: true,
-        activeSessions: sessions.activeCount(),
-        checkedAt: new Date().toISOString(),
-        version: {
-          component: runtime.component,
-          label: runtime.label,
-          ...(runtime.runtimeVersion === undefined ? {} : { runtimeVersion: runtime.runtimeVersion }),
-          stale: false,
-          available: runtime.available,
-        },
-      };
-    });
+    app.get("/health", () => ({
+      ok: true,
+      activeSessions: sessions.activeCount(),
+      checkedAt: new Date().toISOString(),
+      version: {
+        component: runtimeComponent.component,
+        label: runtimeComponent.label,
+        ...(runtimeComponent.runtimeVersion === undefined ? {} : { runtimeVersion: runtimeComponent.runtimeVersion }),
+        stale: false,
+        available: runtimeComponent.available,
+      },
+    }));
 
-    app.get("/runtime", () => getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES));
+    app.get("/runtime", () => runtimeComponent);
   },
   async listen({ auth, sessions, terminals }) {
     let shuttingDown = false;
@@ -85,9 +100,9 @@ await runSessionDaemonStartup({
     process.once("SIGINT", (signal) => { void shutdown(signal); });
     process.once("SIGTERM", (signal) => { void shutdown(signal); });
 
-    const portValue = process.env["PI_WEB_SESSIOND_PORT"];
+    const portValue = daemonEnvironment["PI_WEB_SESSIOND_PORT"];
     const port = portValue !== undefined && portValue !== "" ? Number(portValue) : undefined;
-    const host = process.env["PI_WEB_SESSIOND_HOST"] ?? "127.0.0.1";
+    const host = daemonEnvironment["PI_WEB_SESSIOND_HOST"] ?? "127.0.0.1";
 
     if (port !== undefined) {
       await app.listen({ port, host });
