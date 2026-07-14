@@ -33,6 +33,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) refreshControl: unknown;
+  @property({ type: String }) secureInputLabel?: string;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) compact = false;
   @property({ type: Boolean }) machinesCollapsed = false;
@@ -48,6 +49,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ type: String }) archivedDeleteUnavailableMessage = "Update and restart Pi-Web on this machine to delete archived sessions.";
   @property({ type: String }) cleanupUnavailableMessage = "Update and restart Pi-Web on this machine to clean up sessions.";
   @property({ attribute: false }) onShowActions?: () => void;
+  @property({ attribute: false }) onSecureInput?: () => void;
   @property({ attribute: false }) onToggleMachines?: () => void;
   @property({ attribute: false }) onToggleProjects?: () => void;
   @property({ attribute: false }) onToggleWorkspaces?: () => void;
@@ -108,6 +110,7 @@ export class AppNavigationPanel extends LitElement {
         ` : null}
         <div class="header-actions">
           ${this.refreshControl}
+          ${this.secureInputLabel === undefined ? null : html`<button title=${`Send ${this.secureInputLabel} securely`} aria-label=${`Send ${this.secureInputLabel} securely`} @click=${() => { this.onSecureInput?.(); }}>${this.secureInputLabel}</button>`}
           <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
         </div>
       </header>

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import type { PiWebConfigValues, TerminalCommandRun, Workspace } from "../../../shared/apiTypes";
-import { configApi, filesApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import { configApi, filesApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, secureInputApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
 
 const workspace: Workspace = {
   id: "w/1",
@@ -131,6 +131,32 @@ describe("settings config and plugin APIs", () => {
     ]);
     expect(fetchCall(fetchMock, 1)[1]?.method).toBe("PUT");
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ config: { spawnSessions: true } });
+  });
+});
+
+describe("secure input API", () => {
+  it("uses a local-only non-simple request with an opaque binary body", async () => {
+    const receipt = { accepted: true, receiptId: "receipt-1", acceptedAt: "2026-07-14T00:00:00.000Z" };
+    const fetchMock = stubSequenceFetch([
+      jsonResponse({ enabled: true, label: "Secret", maxBytes: 4096 }),
+      jsonResponse(receipt),
+    ]);
+    const input = new TextEncoder().encode("do-not-serialize");
+
+    await expect(secureInputApi.status()).resolves.toEqual({ enabled: true, label: "Secret", maxBytes: 4096 });
+    await expect(secureInputApi.submit(input)).resolves.toEqual(receipt);
+
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/secure-input");
+    expect(fetchCall(fetchMock, 0)[1]?.cache).toBe("no-store");
+    const [url, init] = fetchCall(fetchMock, 1);
+    expect(url).toBe("https://pi.example.test/api/secure-input");
+    expect(init?.method).toBe("POST");
+    expect(init?.cache).toBe("no-store");
+    expect(new Headers(init?.headers).get("content-type")).toBe("application/vnd.pi-web.secure-input");
+    expect(new Headers(init?.headers).get("x-pi-web-secure-input")).toBe("1");
+    expect(init?.body).toBeInstanceOf(ArrayBuffer);
+    if (!(init?.body instanceof ArrayBuffer)) throw new Error("Expected secure input ArrayBuffer body");
+    expect(new Uint8Array(init.body)).toEqual(input);
   });
 });
 

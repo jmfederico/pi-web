@@ -1,4 +1,4 @@
-import type { DeleteWorkspaceFileResponse, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionBulkMutationRef, SessionCleanupRequest, SessionRef, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
+import type { DeleteWorkspaceFileResponse, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SecureInputReceipt, SessionBulkMutationRef, SessionCleanupRequest, SessionRef, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
 import {
@@ -35,6 +35,8 @@ import {
   parseReloaded,
   parseRestored,
   parseSavedAttachments,
+  parseSecureInputReceipt,
+  parseSecureInputStatusResponse,
   parseSessionBulkArchiveResponse,
   parseSessionBulkDeleteArchivedResponse,
   parseSessionCleanupExecuteResponse,
@@ -133,6 +135,19 @@ export const configApi = {
 
 export const pluginsApi = {
   plugins: (machineId?: string) => request(pluginsPath(machineId), parsePiWebPluginsResponse),
+};
+
+export const secureInputApi = {
+  status: () => request("api/secure-input", parseSecureInputStatusResponse, { cache: "no-store" }),
+  submit: (input: Uint8Array<ArrayBuffer>): Promise<SecureInputReceipt> => request("api/secure-input", parseSecureInputReceipt, {
+    method: "POST",
+    body: input.buffer,
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/vnd.pi-web.secure-input",
+      "X-Pi-Web-Secure-Input": "1",
+    },
+  }),
 };
 
 function piPackagePath(endpoint = "", machineId?: string): string {
@@ -323,6 +338,7 @@ export const api = {
   ...machinesApi,
   ...configApi,
   ...pluginsApi,
+  ...secureInputApi,
   ...piPackagesApi,
   ...activityApi,
   ...projectsApi,

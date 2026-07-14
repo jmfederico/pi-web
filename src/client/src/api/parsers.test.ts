@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parseSecureInputReceipt, parseSecureInputStatusResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("parses PI WEB config responses", () => {
@@ -17,6 +17,13 @@ describe("API parsers", () => {
       effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: true, agentDirSource: "pi-compatibility", agentSessionDir: false },
     });
+  });
+
+  it("parses secure input status and opaque receipts", () => {
+    expect(parseSecureInputStatusResponse({ enabled: true, label: "Secret", maxBytes: 4096 })).toEqual({ enabled: true, label: "Secret", maxBytes: 4096 });
+    expect(parseSecureInputStatusResponse({ enabled: false })).toEqual({ enabled: false });
+    expect(parseSecureInputReceipt({ accepted: true, receiptId: "receipt-1", acceptedAt: "2026-07-14T00:00:00.000Z" })).toEqual({ accepted: true, receiptId: "receipt-1", acceptedAt: "2026-07-14T00:00:00.000Z" });
+    expect(() => parseSecureInputReceipt({ accepted: false })).toThrow("Invalid secure input receipt");
   });
 
   it("parses PI WEB runtime responses including the daemon-owned active profile", () => {

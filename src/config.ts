@@ -31,6 +31,17 @@ export interface LoadOptions {
   cwd?: string;
 }
 
+export interface SecureInputConfig {
+  command: [string, ...string[]];
+  label: string;
+  maxBytes: number;
+  timeoutMs: number;
+}
+
+export const DEFAULT_SECURE_INPUT_LABEL = "Secret";
+export const DEFAULT_SECURE_INPUT_MAX_BYTES = 4096;
+export const DEFAULT_SECURE_INPUT_TIMEOUT_MS = 10_000;
+
 export function defaultPiWebConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const xdgConfigHome = env["XDG_CONFIG_HOME"];
   return join(xdgConfigHome !== undefined && xdgConfigHome !== "" ? xdgConfigHome : join(homedir(), ".config"), "pi-web", "config.json");
@@ -135,6 +146,17 @@ export function effectivePiWebConfig(options: LoadOptions = {}): LoadedEffective
   return resolveEffectivePiWebConfig(loadPiWebConfig(options), options);
 }
 
+export function loadSecureInputConfig(options: LoadOptions = {}): SecureInputConfig | undefined {
+  const env = options.env ?? process.env;
+  const path = piWebConfigPath(env, options.cwd ?? process.cwd());
+  if (!existsSync(path)) return undefined;
+
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+  if (!isRecord(parsed)) throw new Error(`PI WEB config must be a JSON object: ${path}`);
+  const value = parsed["secureInput"];
+  return value === undefined ? undefined : parseSecureInputConfig(value, path);
+}
+
 export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: LoadOptions = {}): LoadedEffectivePiWebConfig {
   const env = options.env ?? process.env;
   const host = env["PI_WEB_HOST"];
@@ -222,6 +244,45 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
+}
+
+export function parseSecureInputConfig(value: unknown, path: string): SecureInputConfig {
+  if (!isRecord(value)) throw new Error(`PI WEB config secureInput must be an object: ${path}`);
+  const allowedKeys = new Set(["command", "label", "maxBytes", "timeoutMs"]);
+  const unknownKey = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknownKey !== undefined) throw new Error(`PI WEB config secureInput contains unknown key ${JSON.stringify(unknownKey)}: ${path}`);
+
+  const command = value["command"];
+  if (!Array.isArray(command) || command.length === 0 || command.length > 64 || !command.every(isSafeCommandArgument)) {
+    throw new Error(`PI WEB config secureInput.command must be an array of 1-64 strings without control characters: ${path}`);
+  }
+  const executable = command[0];
+  if (executable === undefined || !isSafeAgentCommandForHost(executable)) {
+    throw new Error(`PI WEB config secureInput.command executable must be a safe bare name or host-absolute path: ${path}`);
+  }
+
+  const label = value["label"] === undefined ? DEFAULT_SECURE_INPUT_LABEL : parseSecureInputLabel(value["label"], path);
+  const maxBytes = value["maxBytes"] === undefined ? DEFAULT_SECURE_INPUT_MAX_BYTES : parseBoundedPositiveInteger(value["maxBytes"], "secureInput.maxBytes", DEFAULT_SECURE_INPUT_MAX_BYTES, path);
+  const timeoutMs = value["timeoutMs"] === undefined ? DEFAULT_SECURE_INPUT_TIMEOUT_MS : parseBoundedPositiveInteger(value["timeoutMs"], "secureInput.timeoutMs", 60_000, path);
+  return { command: [executable, ...command.slice(1)], label, maxBytes, timeoutMs };
+}
+
+function isSafeCommandArgument(value: unknown): value is string {
+  return typeof value === "string" && !hasControlCharacter(value);
+}
+
+function parseSecureInputLabel(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim() === "" || value.length > 80 || hasControlCharacter(value)) {
+    throw new Error(`PI WEB config secureInput.label must be a non-empty string of at most 80 characters: ${path}`);
+  }
+  return value;
+}
+
+function parseBoundedPositiveInteger(value: unknown, key: string, maximum: number, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`PI WEB config ${key} must be an integer from 1 to ${String(maximum)}: ${path}`);
+  }
+  return value;
 }
 
 function parseMaxUploadBytes(value: unknown, key: string, path = "environment"): number {

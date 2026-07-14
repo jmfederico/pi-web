@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { configApi, effectiveWorkspaceUploadFolder, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
+import { configApi, effectiveWorkspaceUploadFolder, secureInputApi, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type RealtimeEvent, type SecureInputStatusResponse, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
@@ -45,6 +45,7 @@ import "./ProjectList";
 import "./WorkspaceList";
 import "./SessionList";
 import "./SessionCleanupDialog";
+import "./SecureInputDialog";
 import "./ChatView";
 import type { ChatView } from "./ChatView";
 import "./PromptEditor";
@@ -193,6 +194,8 @@ export class PiWebApp extends LitElement {
   @state() private isRefreshingApp = false;
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
+  @state() private secureInputStatus: SecureInputStatusResponse = { enabled: false };
+  @state() private secureInputDialogOpen = false;
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(undefined);
   private readonly onPopState = () => void this.withChatScrollTransition(async () => {
@@ -234,6 +237,7 @@ export class PiWebApp extends LitElement {
     this.piWebStatusTimer = window.setInterval(() => { this.schedulePiWebStatusRefresh(); }, PI_WEB_STATUS_REFRESH_MS);
     void this.refreshWorkspaceActivity();
     void this.loadClientConfig();
+    void this.loadSecureInputStatus();
     void this.ensureGatewayPluginsLoaded();
     void this.loadProjectsAndRestoreRoute().finally(() => { this.schedulePiWebStatusRefresh(); });
   }
@@ -344,6 +348,15 @@ export class PiWebApp extends LitElement {
     this.workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(config);
   }
 
+  private async loadSecureInputStatus(): Promise<void> {
+    try {
+      this.secureInputStatus = await secureInputApi.status();
+    } catch (error) {
+      this.secureInputStatus = { enabled: false };
+      console.warn("Failed to load secure input status", error);
+    }
+  }
+
   private async refreshAppData(): Promise<void> {
     if (this.isRefreshingApp) return;
     this.isRefreshingApp = true;
@@ -352,6 +365,7 @@ export class PiWebApp extends LitElement {
         this.sessions.refreshSelectedSession(),
         this.refreshMachineActivities(),
         this.loadClientConfig(),
+        this.loadSecureInputStatus(),
         this.refreshWorkspaceDeletionRuns(),
         this.refreshCurrentWorkspaceSurface(),
       ]);
@@ -1142,6 +1156,8 @@ export class PiWebApp extends LitElement {
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
         .workspaceLabelItems=${(workspace: Workspace) => this.workspaceLabelItems(workspace)}
         .refreshControl=${this.appShell.shouldShowAppRefreshInHeader() ? this.renderAppRefresh() : undefined}
+        .secureInputLabel=${this.secureInputLabelForSelectedMachine()}
+        .onSecureInput=${() => { this.secureInputDialogOpen = true; }}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
         .onToggleProjects=${() => { this.navigationSections.toggle("projects"); }}
         .onToggleWorkspaces=${() => { this.navigationSections.toggle("workspaces"); }}
@@ -1392,7 +1408,20 @@ export class PiWebApp extends LitElement {
   }
 
   private getDefaultActions(): AppAction[] {
-    return [...this.plugins.getActions(this.createPluginRuntimeContext()), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
+    return [...this.plugins.getActions(this.createPluginRuntimeContext()), ...this.secureInputActions(), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
+  }
+
+  private secureInputActions(): AppAction[] {
+    const machine = this.state.selectedMachine;
+    if (!this.secureInputStatus.enabled || machine?.kind === "remote") return [];
+    const label = this.secureInputStatus.label ?? "Secret";
+    return [{
+      id: "app.secure-input",
+      title: label,
+      description: "Send sensitive input directly to this machine without adding it to chat or the session transcript",
+      group: "General",
+      run: () => { this.secureInputDialogOpen = true; },
+    }];
   }
 
   private sessionActions(): AppAction[] {
@@ -1888,6 +1917,10 @@ export class PiWebApp extends LitElement {
     `;
   }
 
+  private secureInputLabelForSelectedMachine(): string | undefined {
+    return this.secureInputStatus.enabled && this.state.selectedMachine?.kind !== "remote" ? this.secureInputStatus.label ?? "Secret" : undefined;
+  }
+
   private renderContextBar() {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
@@ -1898,6 +1931,8 @@ export class PiWebApp extends LitElement {
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
         .refreshControl=${this.appShell.shouldShowAppRefreshInContextBar() ? this.renderAppRefresh() : undefined}
+        .secureInputLabel=${this.secureInputLabelForSelectedMachine()}
+        .onSecureInput=${() => { this.secureInputDialogOpen = true; }}
         .onOpenSection=${(section: NavigationSection) => { this.openNavigationSection(section); }}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
       ></app-context-bar>
@@ -1960,6 +1995,7 @@ export class PiWebApp extends LitElement {
         ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean) => this.projects.addProject(path, create)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
+        ${this.secureInputDialogOpen ? html`<secure-input-dialog .label=${this.secureInputStatus.label ?? "Secret"} .maxBytes=${this.secureInputStatus.maxBytes ?? 4096} .onClose=${() => { this.secureInputDialogOpen = false; }}></secure-input-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .canCleanup=${this.canCleanupSessions()} .unavailableMessage=${this.sessionCleanupUnavailableMessage()} .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
         ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${(machineId: string) => this.machines.refreshMachineRuntime(machineId)}></settings-dialog>` : null}
