@@ -45,6 +45,7 @@ Process restarts depend on the key:
 - `plugins`: reload the browser tab after changing PI WEB plugin enablement.
 - Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required.
 - `shortcuts`: saved settings apply in the browser after config refresh/save.
+- `secureInput`: read by the web/API process on each status/submission request; reload the browser to show or hide the button after changing config.
 
 ## Global config example
 
@@ -65,6 +66,10 @@ Process restarts depend on the key:
   },
   "spawnSessions": true,
   "subsessions": false,
+  "secureInput": {
+    "command": ["/usr/local/bin/store-secret", "--stdin"],
+    "label": "Secret"
+  },
   "plugins": {
     "workspace-tasks": { "enabled": true },
     "updates": { "enabled": true },
@@ -116,6 +121,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Agent profile state directory | `agent.dir` | `PI_WEB_AGENT_DIR` (`PI_CODING_AGENT_DIR` for Pi compatibility) | Global/session daemon | Not supported locally | Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and package-backed plugins |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions (beta) | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
+| Secure input receiver | `secureInput.command`, `secureInput.label`, `secureInput.maxBytes`, `secureInput.timeoutMs` | — | Global web/API process | Not supported locally or through machine federation | Browser refresh after config change |
 | Plugin enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global | Not core local config; plugins may read their own project files | Reload browser tab |
 | Keyboard shortcuts | `shortcuts.<actionId>` | — | Global | Not supported locally | Applies after settings save/config refresh |
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
@@ -133,6 +139,29 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Skip update checks | — | `PI_WEB_SKIP_VERSION_CHECK`, `PI_WEB_OFFLINE`, `PI_SKIP_VERSION_CHECK`, `PI_OFFLINE` | Web/API env | Not supported locally | Restart web/API after env changes |
 
 ## Key details
+
+### Secure input receiver
+
+`secureInput` enables a native **Secret** button for sending sensitive UTF-8 input directly to a command running on the same machine as the PI WEB web/API process:
+
+```json
+{
+  "secureInput": {
+    "command": ["/usr/local/bin/store-secret", "--stdin"],
+    "label": "Secret",
+    "maxBytes": 4096,
+    "timeoutMs": 10000
+  }
+}
+```
+
+The feature is disabled when `secureInput` is absent. `command` is a fixed argv array: the first entry must be a safe bare executable name or host-absolute executable path, PI WEB never invokes a shell, and the submitted bytes are written only to the command's standard input. Standard output and standard error are discarded. `label` defaults to `Secret`, `maxBytes` defaults to and cannot exceed `4096`, and `timeoutMs` defaults to `10000` with a maximum of `60000`.
+
+The browser renders a native `type="password"` field. The value does not use the chat composer, session daemon, agent prompt, session state, or transcript. The web/API returns only opaque receipt metadata and never returns receiver output. Requests and responses use `Cache-Control: no-store`; submissions require a non-simple same-origin request header and content type; only one receiver invocation may run at a time. Configure the receiver itself to store or consume stdin safely.
+
+This is deliberately machine-local. PI WEB does not proxy secure input through Fleet/machine federation, and the button is hidden while a remote machine is selected. The public config API also omits the receiver command and arguments. Configure `secureInput` directly in the global config file on the machine that will receive it; do not place it in project-local config. Reload the browser after changing the setting.
+
+Transport security remains the deployer's responsibility. Use an authenticated HTTPS reverse proxy for non-loopback access, protect the host and browser session, and do not assume password masking protects against a compromised browser, device, operating system, receiver executable, or screen capture.
 
 ### Managed data directory
 

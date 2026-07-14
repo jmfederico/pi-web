@@ -12,8 +12,10 @@ export class AppContextBar extends LitElement {
   @property({ attribute: false }) workspace?: Workspace;
   @property({ attribute: false }) session?: SessionInfo;
   @property({ attribute: false }) refreshControl: unknown;
+  @property({ type: String }) secureInputLabel?: string;
   @property({ attribute: false }) onOpenSection?: (section: NavigationSection) => void;
   @property({ attribute: false }) onShowActions?: () => void;
+  @property({ attribute: false }) onSecureInput?: () => void;
   @query(".context-items") private contextItems?: HTMLElement | null;
   @state() private canScrollLeft = false;
   @state() private canScrollRight = false;
@@ -74,8 +76,19 @@ export class AppContextBar extends LitElement {
             </button>
           </li>
         </ol>
-        ${this.hasContextActions() ? html`<div class="context-actions">${this.renderActionsButton()}${this.refreshControl}</div>` : null}
+        ${this.hasContextActions() ? html`<div class="context-actions">${this.renderSecureInputButton()}${this.renderActionsButton()}${this.refreshControl}</div>` : null}
       </nav>
+    `;
+  }
+
+  private renderSecureInputButton() {
+    if (this.secureInputLabel === undefined) return null;
+    return html`
+      <button type="button" class="context-action-button" title=${`Send ${this.secureInputLabel} securely`} aria-label=${`Send ${this.secureInputLabel} securely`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onSecureInput?.(); }}>
+        <svg class="context-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M17 8h-1V6a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V6Zm3 9.73V18h-2v-2.27a2 2 0 1 1 2 0Z"></path>
+        </svg>
+      </button>
     `;
   }
 
@@ -93,14 +106,19 @@ export class AppContextBar extends LitElement {
   private contextBarClass(): string {
     const classes = ["context-bar"];
     if (this.hasContextActions()) classes.push("has-context-actions");
-    if (this.refreshControl !== undefined && this.onShowActions !== undefined) classes.push("has-context-actions-double");
+    if (this.contextActionCount() > 1) classes.push("has-context-actions-double");
+    if (this.contextActionCount() > 2) classes.push("has-context-actions-triple");
     if (this.canScrollLeft) classes.push("can-scroll-left");
     if (this.canScrollRight) classes.push("can-scroll-right");
     return classes.join(" ");
   }
 
   private hasContextActions(): boolean {
-    return this.refreshControl !== undefined || this.onShowActions !== undefined;
+    return this.contextActionCount() > 0;
+  }
+
+  private contextActionCount(): number {
+    return [this.refreshControl, this.onShowActions, this.secureInputLabel].filter((value) => value !== undefined).length;
   }
 
   private observeContextItems(): void {
@@ -146,6 +164,7 @@ export class AppContextBar extends LitElement {
     .context-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 5px; margin: 0; padding: 0 8px; list-style: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: thin; }
     .context-bar.has-context-actions .context-items { padding-right: 58px; scroll-padding-inline: 8px 58px; }
     .context-bar.has-context-actions-double .context-items { padding-right: 102px; scroll-padding-inline: 8px 102px; }
+    .context-bar.has-context-actions-triple .context-items { padding-right: 146px; scroll-padding-inline: 8px 146px; }
     .context-item { flex: 0 0 auto; min-width: 0; display: flex; }
     .context-actions { position: absolute; top: 6px; right: 0; bottom: 6px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--pi-bg); pointer-events: none; }
     .context-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -24px; z-index: 0; width: 24px; background: linear-gradient(90deg, transparent, var(--pi-bg)); pointer-events: none; }

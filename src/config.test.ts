@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, loadSecureInputConfig, maxUploadBytes, parseSecureInputConfig, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -67,6 +67,32 @@ describe("PI WEB config persistence", () => {
     savePiWebConfig({ agent: { command: "acme-agent", dir: "/opt/acme-agent/state" } }, testOptions());
 
     expect(loadPiWebConfig(testOptions()).config.agent).toEqual({ command: "acme-agent", dir: "/opt/acme-agent/state" });
+  });
+
+  it("loads secure input separately from browser-visible config", async () => {
+    const secureInput = { command: [process.execPath, "receiver.js", "--stdin"], label: "Vault Secret", maxBytes: 1024, timeoutMs: 5000 };
+    await writeFile(configPath, `${JSON.stringify({ port: 9000, secureInput }, null, 2)}\n`, "utf8");
+
+    expect(loadPiWebConfig(testOptions()).config).toEqual({ port: 9000 });
+    expect(loadSecureInputConfig(testOptions())).toEqual(secureInput);
+    expect(effectivePiWebConfig(testOptions()).config).not.toHaveProperty("secureInput");
+  });
+
+  it("preserves secure input when browser-visible config is saved", async () => {
+    const secureInput = { command: [process.execPath, "receiver.js"], label: "Secret" };
+    await writeFile(configPath, `${JSON.stringify({ port: 8504, secureInput }, null, 2)}\n`, "utf8");
+
+    savePiWebConfig({ port: 9000 }, testOptions());
+
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({ secureInput, port: 9000 });
+  });
+
+  it("validates secure input without accepting shell or control-character injection", () => {
+    expect(parseSecureInputConfig({ command: [process.execPath, "--safe value"] }, "test").command).toEqual([process.execPath, "--safe value"]);
+    expect(() => parseSecureInputConfig({ command: ["node;other"] }, "test")).toThrow("safe bare name or host-absolute path");
+    expect(() => parseSecureInputConfig({ command: [process.execPath, "bad\narg"] }, "test")).toThrow("without control characters");
+    expect(() => parseSecureInputConfig({ command: [process.execPath], future: true }, "test")).toThrow('contains unknown key "future"');
+    expect(() => parseSecureInputConfig({ command: [process.execPath], maxBytes: 4097 }, "test")).toThrow("secureInput.maxBytes");
   });
 
   it("defaults to the Pi agent directory only for canonical Pi companion names", () => {

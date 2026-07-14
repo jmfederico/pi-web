@@ -74,6 +74,18 @@ export interface PiWebAgentConfig {
   dir?: string;
 }
 
+export interface SecureInputStatusResponse {
+  enabled: boolean;
+  label?: string;
+  maxBytes?: number;
+}
+
+export interface SecureInputReceipt {
+  accepted: true;
+  receiptId: string;
+  acceptedAt: string;
+}
+
 export interface PiWebConfigValues {
   host?: string;
   port?: number;

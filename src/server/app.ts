@@ -35,6 +35,7 @@ import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
+import { registerSecureInputRoutes, type SecureInputService } from "./secureInputRoutes.js";
 import type { Project, Workspace } from "./types.js";
 
 export interface AppDependencies {
@@ -47,6 +48,7 @@ export interface AppDependencies {
   piPackages?: PiPackageService;
   piWebStatusCache?: PiWebStatusCache;
   config?: PiWebConfigService;
+  secureInput?: SecureInputService;
   clientDist?: string | false;
   logger?: FastifyServerOptions["logger"];
   /** Maximum accepted HTTP request body size in bytes. */
@@ -214,6 +216,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const invalidatingConfigService = invalidatePiWebStatusOnWrite(configService, piWebStatusCache);
   registerConfigRoutes(app, invalidatingConfigService);
   registerLocalMachineConfigRoutes(app, invalidatingConfigService);
+  registerSecureInputRoutes(app, deps.secureInput);
 
   registerMachineRoutes(app, machines);
   registerMachinePluginProxyRoutes(app, machines);
