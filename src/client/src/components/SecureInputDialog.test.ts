@@ -15,12 +15,41 @@ describe("secure-input-dialog", () => {
 
     const markup = flattenTemplate(dialog.render());
 
-    expect(markup).toContain('type="password"');
+    expect(markup).toContain("password");
     expect(markup).toContain('autocomplete="off"');
     expect(markup).toContain('name="secure-input-value"');
+    expect(markup).toContain("Show Vault Secret");
+    expect(markup).toContain("false");
     expect(markup).not.toContain(".value=");
     expect(markup).toContain("will not be added to the chat or session transcript");
     expect(markup).not.toContain("prompt-editor");
+  });
+
+  it("reveals and hides the existing DOM value without copying it into component state", () => {
+    const dialog = new SecureInputDialog();
+    const input = { value: "still-only-in-the-dom", focus: vi.fn() };
+    Object.defineProperty(dialog, "input", { value: input, configurable: true });
+
+    callToggleReveal(dialog);
+    expect(flattenTemplate(dialog.render())).toContain("text");
+    expect(flattenTemplate(dialog.render())).toContain("Hide Secret");
+    expect(flattenTemplate(dialog.render())).not.toContain(input.value);
+
+    callToggleReveal(dialog);
+    expect(flattenTemplate(dialog.render())).toContain("password");
+    expect(flattenTemplate(dialog.render())).toContain("Show Secret");
+    expect(flattenTemplate(dialog.render())).not.toContain(input.value);
+  });
+
+  it("closes from the receipt state after the input has left the DOM", () => {
+    const dialog = new SecureInputDialog();
+    const onClose = vi.fn();
+    dialog.onClose = onClose;
+    Object.defineProperty(dialog, "input", { value: null, configurable: true });
+
+    callClose(dialog);
+
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("clears the password field before transport and zeroes transport bytes afterward", async () => {
@@ -42,6 +71,18 @@ describe("secure-input-dialog", () => {
     expect(flattenTemplate(dialog.render())).not.toContain("thư bí mật");
   });
 });
+
+function callToggleReveal(dialog: SecureInputDialog): void {
+  const toggle: unknown = Reflect.get(dialog, "toggleRevealInput");
+  if (typeof toggle !== "function") throw new Error("SecureInputDialog.toggleRevealInput was unavailable");
+  Reflect.apply(toggle, dialog, []);
+}
+
+function callClose(dialog: SecureInputDialog): void {
+  const close: unknown = Reflect.get(dialog, "close");
+  if (typeof close !== "function") throw new Error("SecureInputDialog.close was unavailable");
+  Reflect.apply(close, dialog, []);
+}
 
 async function callSubmit(dialog: SecureInputDialog): Promise<void> {
   const submit: unknown = Reflect.get(dialog, "submit");
