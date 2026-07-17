@@ -198,9 +198,12 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
 
     fake.session.isCompacting = false;
     fake.emit({ type: "compaction_end" });
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // compaction_end drains the held queue on a scheduled timer; wait for the
+    // first prompt to be delivered rather than sleeping a fixed interval.
+    await vi.waitFor(() => {
+      expect(fake.calls.prompt).toEqual([{ text: "Start task 1", options: undefined }]);
+    });
 
-    expect(fake.calls.prompt).toEqual([{ text: "Start task 1", options: undefined }]);
     expect(hub.sessionEvents.some(({ event }) => event.type === "message.append" && JSON.stringify(event.message).includes("Start task 1"))).toBe(true);
     await expect(service.status(sessionRef("compacting-session"))).resolves.toMatchObject({
       pendingMessageCount: 1,
@@ -208,12 +211,14 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     });
 
     fake.emit({ type: "agent_start" });
-    await new Promise((resolve) => setTimeout(resolve, 5));
-
-    expect(fake.calls.prompt).toEqual([
-      { text: "Start task 1", options: undefined },
-      { text: "Then task 2", options: { streamingBehavior: "followUp" } },
-    ]);
+    // agent_start drains the next queued prompt asynchronously; wait for both
+    // prompts to have been delivered rather than sleeping.
+    await vi.waitFor(() => {
+      expect(fake.calls.prompt).toEqual([
+        { text: "Start task 1", options: undefined },
+        { text: "Then task 2", options: { streamingBehavior: "followUp" } },
+      ]);
+    });
     await expect(service.status(sessionRef("compacting-session"))).resolves.toMatchObject({
       pendingMessageCount: 0,
       queuedMessages: [],
