@@ -169,3 +169,47 @@ Also: human confirmed `/tmp` is usable again, so the `TMPDIR` install
 workaround is no longer required (status.md updated).
 
 **Handoff:** spawning leg 3 (slice 2).
+
+## Leg 3 — slice 2: authProviderOptions.ts migration (commit d09d7cc)
+
+**Did:** Migrated `src/server/sessions/authProviderOptions.ts` off the removed
+`authStorage`-centric surface onto the new `ModelRuntime` API.
+- Replaced the `AuthProviderModelRegistry` structural interface (which required
+  `authStorage.getOAuthProviders()/list()/get()`, `getAll()`,
+  `getProviderDisplayName()`) with a runtime-shaped `AuthProviderRuntime`
+  interface exposing `getProviders()` (`{ id, name, auth: { apiKey?, oauth? } }`),
+  `listCredentials()` (`Promise<{ providerId, type }[]>`), and
+  `getProviderAuthStatus(id)`. Kept it structural (not `Pick<ModelRuntime,...>`)
+  so the test can supply a lightweight double; verified the real `ModelRuntime`
+  satisfies it (call sites in `authService.ts` typecheck clean).
+- Made `getLoginProviderOptions` / `getLogoutProviderOptions` `async` to match
+  the `await` call sites already present in `authService.ts` (leg 2).
+- Login options: OAuth options from providers with `auth.oauth`; api-key options
+  from providers with `auth.apiKey` filtered through the unchanged
+  `OAUTH_ONLY_PROVIDERS` / `isApiKeyLoginProvider` logic. Display names now come
+  from `Provider.name` (replacing `getProviderDisplayName`). Logout options
+  derived from `listCredentials()`, mapping provider id -> name via
+  `getProviders()`.
+- Rewrote the `authProviderOptions.test.ts` double to the runtime shape (a
+  `getProviders` array with per-provider `auth`, a `listCredentials` promise,
+  `getProviderAuthStatus`); made the two option-building tests async. All 3
+  tests pass.
+
+**Decisions:** `AuthProviderInfo.auth` typed as `{ apiKey?: unknown; oauth?:
+unknown }` — presence is all this module needs, and `unknown` keeps the double
+trivial while remaining assignable-from the real `ProviderAuth`. Structural
+interface (not `Pick<ModelRuntime>`) chosen for testability per
+code-quality-architecture (injectable seam, no SDK construction in unit test).
+
+**Verify state:** `npx tsc --noEmit` 31 -> 28 errors. No `authProviderOptions`
+errors; `getLogin/LogoutProviderOptions` call sites in `authService.ts` clean.
+Remaining 28 are cross-slice: `authService.ts` line-83 `OAuthLoginFlowService.
+start` still expects `authStorage` (slice 3); `sessiond.ts`(1)+`piSessionService.
+ts`(6) slice 4; test/support files slice 5.
+
+**Artifacts:** `src/server/sessions/authProviderOptions.ts`,
+`src/server/sessions/authProviderOptions.test.ts`; status.md updated; committed
+`d09d7cc` with `--no-verify` (migration not yet verify-green, permitted).
+
+**Handoff:** spawning leg 4 (slice 3, oauthLoginFlowService.ts). Sessiond
+restart from leg 2 still pending — carried forward, not cleared.

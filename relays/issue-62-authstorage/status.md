@@ -1,6 +1,30 @@
 # Relay status — issue-62-authstorage
 
 ## Current position
+Slice 2 (`authProviderOptions.ts` migration) complete and committed (`d09d7cc`).
+`authProviderOptions.ts` now derives options from a runtime-shaped
+`AuthProviderRuntime` interface (`getProviders()` + `listCredentials()` +
+`getProviderAuthStatus()`). `getLoginProviderOptions`/`getLogoutProviderOptions`
+are now `async` (matching the `await` call sites already in `authService.ts`).
+The old `AuthProviderModelRegistry` interface is gone; a real `ModelRuntime`
+satisfies `AuthProviderRuntime` structurally. The test double in
+`authProviderOptions.test.ts` was rewritten to the runtime shape and its 3
+tests pass. OAuth-capable = `auth.oauth` present; api-key = `auth.apiKey`
+present; `OAUTH_ONLY_PROVIDERS` / `isApiKeyLoginProvider` logic preserved;
+display names come from `Provider.name`.
+
+`npx tsc --noEmit` now reports **28 errors** (down from 31). No
+`authProviderOptions` errors remain and the `getLoginProviderOptions` /
+`getLogoutProviderOptions` call sites in `authService.ts` typecheck cleanly.
+Remaining errors are all cross-slice: `authService.ts` (1: line-83
+`OAuthLoginFlowService.start` still expects `authStorage` not `runtime` —
+slice 3), `sessiond.ts` (1) + `piSessionService.ts` (6, slice 4), and the
+test/support files (slice 5): `authService.test.ts` (9),
+`oauthLoginFlowService.ts`/`.test.ts` (1+1, slice 3),
+`piSessionService.testSupport.ts` (3), `.promptQueue.test.ts` (2),
+`.warnings.test.ts` (4).
+
+### Prior position (slice 1, leg 2, commit `e37148c`)
 Slice 1 (`authService.ts` core migration) complete and committed (`e37148c`).
 `authService.ts` now uses the async `ModelRuntime` API: `AuthService.create({
 agentDir | runtime })` factory wraps `ModelRuntime.create({ authPath,
@@ -27,32 +51,40 @@ Remaining errors otherwise live in slices 2/3/4 files and all test/support
 files (slice 5).
 
 ## Leg tracking
-- **Last completed leg:** 2 (slice 1 — authService.ts core migration + sessiond
-  async construction).
-- **Next leg to run:** 3.
+- **Last completed leg:** 3 (slice 2 — authProviderOptions.ts migration).
+- **Next leg to run:** 4.
 
 ## Next task
-Run **charter slice 2 (`authProviderOptions.ts` migration)** as leg 3:
-- Rederive login/logout provider options from `runtime.getProviders()`
-  (`{ id, name, auth: { apiKey?, oauth? } }`) + `runtime.listCredentials()`
-  (`{ providerId, type }[]`) / `runtime.getProviderAuthStatus(id)` instead of
-  `authStorage.getOAuthProviders()/list()/get()` + `getAll()` +
-  `getProviderDisplayName()`.
-- The functions are already **called as async** from `authService.ts`
-  (`await getLoginProviderOptions(this.runtime, authType)` etc.) — make them
-  async and change their parameter type from `AuthProviderModelRegistry` to a
-  runtime-shaped interface (e.g. `AuthProviderRuntime` = `Pick<ModelRuntime,
-  "getProviders" | "listCredentials" | "getProviderAuthStatus">` or a
-  structural equivalent). Update the structural interface + `authProviderOptions.test.ts`
-  test double accordingly.
-- See assessment §5.2 / §3.3 for the new API shapes. Provider display names come
-  from `Provider.name`; OAuth-capable providers are those with `auth.oauth`,
-  api-key providers those with `auth.apiKey` (respect the existing
-  `OAUTH_ONLY_PROVIDERS` / `isApiKeyLoginProvider` logic).
+Run **charter slice 3 (`oauthLoginFlowService.ts` migration)** as leg 4. This
+is the riskiest slice — verify the prompt/select/device-code/auth_url mapping
+carefully. Concretely:
+- Reimplement `oauthLoginFlowService.ts` against the pi-ai `AuthInteraction`
+  contract (`{ signal?, prompt(prompt: AuthPrompt): Promise<string>,
+  notify(event: AuthEvent): void }`) instead of the removed
+  `OAuthLoginCallbacks` shape (`onAuth`/`onDeviceCode`/`onPrompt`/
+  `onManualCodeInput`/`onSelect`/`onProgress`). Types live in
+  `node_modules/@earendil-works/pi-ai/dist/auth/types.d.ts`.
+- `AuthPrompt` is a discriminated union: `text` / `secret` / `select`
+  (`options: { id, label, description? }[]`, returns the chosen option id) /
+  `manual_code`. `AuthEvent` is `info` / `auth_url` (`{ url, instructions? }`)
+  / `device_code` (`{ userCode, verificationUri, intervalSeconds?,
+  expiresInSeconds? }`) / `progress`. Map these onto the existing web-UI flow
+  state fields (see the current `oauthLoginFlowService.ts` prompt/select/
+  device-code/auth_url handling).
+- Change `OAuthLoginFlowService.start` to accept `runtime` (the
+  `ModelRuntime`) instead of `authStorage`, and drive login via
+  `runtime.login(providerId, "oauth", interaction)` where `interaction` is the
+  adapter you build. `authService.ts` already calls
+  `OAuthLoginFlowService.start({ ..., runtime: this.runtime })` (this is the
+  line-83 tsc error). Also update `oauthLoginFlowService.test.ts`.
+- After slice 3, `authService.ts` should reach 0 errors. `sessiond.ts` +
+  `piSessionService.ts` (slice 4) and the remaining test/support files
+  (slice 5) stay until their slices.
 
-If slice 2 is already done when you arrive, apply the charter's task-selection
-policy: pick the lowest-numbered incomplete slice (3 → 6). Slices 3 and 4
-unblock the remaining `authService.ts` / `sessiond.ts` cross-slice errors.
+If slice 3 is already done when you arrive, apply the charter's task-selection
+policy: pick the lowest-numbered incomplete slice (4 → 6). Slice 4 unblocks the
+remaining `sessiond.ts` / `piSessionService.ts` cross-slice errors; slice 5
+finalizes tests; slice 6 adds the changeset + final verify.
 
 ### Build/tooling note (important for every leg)
 **Update (leg 2):** the human reports `/tmp` is now fully usable again, so the
