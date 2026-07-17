@@ -1,6 +1,39 @@
 # Relay status — issue-62-authstorage
 
 ## Current position
+Slice 4 (`piSessionService.ts` migration) complete and committed (`4ccd4f8`).
+`piSessionService.ts` now uses the new `ModelRuntime` API end to end:
+- `createDefaultRuntimeFactory(modelRuntime, ...)` passes `modelRuntime` to
+  `createAgentSessionServices({ cwd, agentDir, modelRuntime })` (no more
+  `authStorage` + `modelRegistry`).
+- `PiAgentSession.modelRegistry` → `PiAgentSession.modelRuntime: ModelRuntime`.
+- `anthropicSubscriptionWarning(session, authPath?)` now reads via
+  `readStoredCredential("anthropic", authPath)` (sync); `warningsForSession`
+  passes `join(this.agentDir, "auth.json")`. Its `session` param narrowed to
+  `Pick<PiAgentSession, "model" | "settingsManager">` (no longer needs the
+  registry).
+- Model reads rederived onto the runtime: `availableModels`/`setModel` use
+  `await modelRuntime.refresh()` + `getAvailableSnapshot()` + `getModel(...)`;
+  `syncCurrentModelAuthWarning` uses `getModel(...)` +
+  `hasConfiguredAuth(providerId)`.
+- `applyAuthChange` no longer refreshes a registry (the shared runtime is
+  refreshed by AuthService before it emits, and all sessions share that
+  runtime), so the `auth.subscribe` callback stays synchronous.
+- **`modelRuntime` is now a REQUIRED `PiSessionServiceDependencies` field**
+  (the old `modelRegistry?` fallback used a *sync* `ModelRegistry.create`; a
+  `ModelRuntime` can only be built by the async `ModelRuntime.create`, which
+  can't run inside a constructor). `sessiond.ts` already injects
+  `modelRuntime: auth.runtime` (slice 1), so it typechecks unchanged.
+- Dropped the `AuthStorage` / `ModelRegistry` imports and the
+  `createModelRegistryForAgentDir` import (only `AuthChange` is still imported
+  from `authService.js`).
+
+`npx tsc --noEmit`: **`sessiond.ts` and `piSessionService.ts` are at 0 errors**
+(production code is fully migrated; `grep -vE '\.test\.ts|testSupport\.ts'` on
+tsc output is empty). All remaining errors are slice-5 test/support files.
+`piSessionService.ts` lints clean.
+
+### Prior position (slice 3, leg 4, commit `1c3d6db`)
 Slice 3 (`oauthLoginFlowService.ts` migration) complete and committed (`1c3d6db`).
 `OAuthLoginFlowService` is reimplemented against the pi-ai `AuthInteraction`
 contract (`{ signal?, prompt(AuthPrompt), notify(AuthEvent) }`); the old
@@ -76,34 +109,56 @@ Remaining errors otherwise live in slices 2/3/4 files and all test/support
 files (slice 5).
 
 ## Leg tracking
-- **Last completed leg:** 4 (slice 3 — oauthLoginFlowService.ts migration).
-- **Next leg to run:** 5.
+- **Last completed leg:** 5 (slice 4 — piSessionService.ts migration).
+- **Next leg to run:** 6.
 
 ## Next task
-Run **charter slice 4 (`piSessionService.ts` migration)** as leg 5. Concretely
-(see assessment §5.4 and §3.3):
-- Pass `modelRuntime` to `createAgentSessionServices` (instead of the old
-  `modelRegistry`); update the `PiAgentSession` type accordingly.
-- `sessiond.ts` already passes `modelRuntime: auth.runtime` into
-  `PiSessionService` (from slice 1) but `PiSessionServiceDependencies` still
-  declares `modelRegistry` — reconcile the dependency shape so the sessiond
-  wiring typechecks (this is the remaining `sessiond.ts` error).
-- Switch `anthropicSubscriptionWarning` to `readStoredCredential(providerId,
-  authPath?)` (the sync credential read replacing the old AuthStorage-based
-  read).
-- Target: after slice 4, `sessiond.ts` and `piSessionService.ts` reach 0
-  errors; only the test/support files (slice 5) remain.
-- **Note:** `piSessionService.ts` is a session-daemon path — keep the
-  sessiond-restart-pending note current (it is already active from slice 1).
+Run **charter slice 5 (tests + testSupport)** as leg 6: migrate all test
+doubles off `AuthStorage.inMemory(...)` / `ModelRegistry.create|inMemory(...)`
+to the pi-ai `InMemoryCredentialStore` + `await ModelRuntime.create({
+credentials })`, and get `npm run verify` green. Follow the testing-guide skill
+(async construction seams, no over-mocking of the SDK).
 
-Then slice 5 migrates all test doubles to `InMemoryCredentialStore` +
-`ModelRuntime.create` and gets `npm run verify` green (currently the failing
-test/support files are `authService.test.ts` (10), `piSessionService.testSupport.ts`
-(3), `.promptQueue.test.ts` (2), `.warnings.test.ts` (4)); slice 6 adds the
-changeset + final verify + cleanup.
+**Scope note (important):** slice 4 made `modelRuntime` a *required*
+`PiSessionServiceDependencies` field (see Current position for why). That means
+the slice-5 test surface is LARGER than the four files originally listed in the
+assessment. Current `npx tsc --noEmit` failing files (all tests/support):
+- `piSessionService.testSupport.ts` (4) — `fakeRuntime` builds
+  `modelRegistry: ModelRegistry.create(AuthStorage.inMemory())`; the
+  `TestSession` type still has `modelRegistry`. Give the fake a `modelRuntime`
+  (e.g. `await ModelRuntime.create({ credentials: new InMemoryCredentialStore() })`
+  — note this makes `fakeRuntime` async, which ripples into its callers) and
+  update `TestSession`. This is the central helper; fixing it first will clear
+  many downstream errors.
+- `authService.test.ts` (10) — already partly slice-1/2/3 debt.
+- `piSessionService.warnings.test.ts` (5) — `anthropicSubscriptionWarning` no
+  longer takes a registry; it now reads `readStoredCredential("anthropic",
+  authPath)`. Tests that build credentials via `authStorage.set(...)` must
+  instead write an `auth.json` (temp dir) and pass its path, OR the test seam
+  must be reconsidered. `SubscriptionSession` type ref to `modelRegistry` is
+  gone. Check whether `readStoredCredential` can be pointed at a temp authPath
+  cleanly; if not, consider whether the warning fn needs a small injectable
+  credential-read seam (raise via intervention if the API can't support the
+  test without contortion).
+- `piSessionService.promptQueue.test.ts` (17), `.lifecycle.test.ts` (19),
+  `.archiveCleanup.test.ts` (9), `.spawnSession.test.ts` (3),
+  `.spawnSubsession.test.ts` (18), `sessionRoutes.test.ts` (1) — mostly the
+  new required `modelRuntime` dep on `new PiSessionService(...)` plus
+  `fakeRuntime`/`ModelRegistry.inMemory` usages. Many of these should clear
+  automatically once `testSupport.ts` provides a shared `modelRuntime` helper
+  and the `PiSessionService` test-construction path supplies it.
 
-If slice 4 is already done when you arrive, apply the charter's task-selection
-policy: pick the lowest-numbered incomplete slice (5 → 6).
+Suggested approach: add a small shared test helper (e.g.
+`await createTestModelRuntime()` wrapping `ModelRuntime.create({ credentials:
+new InMemoryCredentialStore(...) })`) in `testSupport.ts`, thread it into
+`fakeRuntime` and the `new PiSessionService(...)` call sites, then work file by
+file until `npm run verify` (typecheck + lint + knip + test) is green.
+
+Then slice 6 adds the `.changeset/*.md` fragment, runs the full `npm run
+verify`, and does final cleanup (ASSESSMENT stays).
+
+If slice 5 is already done when you arrive, apply the charter's task-selection
+policy: pick the lowest-numbered incomplete slice (6).
 
 ### Build/tooling note (important for every leg)
 **Update (leg 2):** the human reports `/tmp` is now fully usable again, so the
@@ -142,10 +197,11 @@ charter's Handover section.
 ## Blockers / intervention state
 None. Known constraints:
 - **Sessiond restart pending (ACTIVE):** slice 1 (leg 2, commit `e37148c`)
-  changed `sessiond.ts` + the session-daemon auth construction path. Per
-  AGENTS.md the human must **manually restart the sessiond service** for these
-  changes to take effect once the migration lands. Keep this note until the
-  human confirms the restart.
+  changed `sessiond.ts` + the session-daemon auth construction path; slice 4
+  (leg 5, commit `4ccd4f8`) added `piSessionService.ts` (a session-daemon path)
+  to this surface. Per AGENTS.md the human must **manually restart the sessiond
+  service** for these changes to take effect once the migration lands. Keep
+  this note until the human confirms the restart.
 - `/tmp` disk-quota issue is resolved (human confirmed usable) — see the
   Build/tooling note above.
 - node_modules is installed (gitignored) at 0.80.10; a fresh `npm install` is

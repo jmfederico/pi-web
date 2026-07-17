@@ -263,3 +263,53 @@ verify-green, per charter).
 **Blockers:** none. Sessiond-restart-pending note still ACTIVE (unchanged;
 this slice did not touch the daemon path, but slice 1 did). Handing off to
 leg 5 (slice 4).
+
+---
+
+## Leg 5 — slice 4: piSessionService.ts migration (commit `4ccd4f8`)
+
+**What:** Migrated `src/server/sessions/piSessionService.ts` to the new
+`ModelRuntime` API.
+- `createDefaultRuntimeFactory` now takes a `ModelRuntime` and passes
+  `modelRuntime` to `createAgentSessionServices({ cwd, agentDir, modelRuntime })`
+  (dropped the `authStorage` + `modelRegistry` args).
+- `PiAgentSession.modelRegistry: ModelRegistryInstance` → `modelRuntime:
+  ModelRuntime`. Removed the `ModelRegistryInstance` type alias and the
+  `AuthStorage`/`ModelRegistry` SDK imports; added `type ModelRuntime` +
+  `readStoredCredential` imports and `join` from node:path. `authService.js`
+  import reduced to just `AuthChange` (dropped `createModelRegistryForAgentDir`).
+- `anthropicSubscriptionWarning(session, authPath?)`: reads via
+  `readStoredCredential("anthropic", authPath)`; param narrowed to
+  `Pick<PiAgentSession, "model" | "settingsManager">`. `warningsForSession`
+  passes `join(this.agentDir, "auth.json")`.
+- Model reads rederived onto the runtime: `availableModels`/`setModel` →
+  `await modelRuntime.refresh()` + `getAvailableSnapshot()` + `getModel(...)`;
+  `syncCurrentModelAuthWarning` → `getModel(...)` +
+  `hasConfiguredAuth(providerId)`.
+- `applyAuthChange` no longer refreshes a registry (shared runtime is refreshed
+  by AuthService before emit; all sessions share it), keeping the subscribe
+  callback synchronous.
+
+**Decision:** made `modelRuntime` a **required** `PiSessionServiceDependencies`
+field rather than keeping an optional `modelRegistry?`-style fallback. The old
+fallback built a registry synchronously in the constructor; `ModelRuntime` can
+only be created by the async `ModelRuntime.create`, which cannot run in a
+constructor. `sessiond.ts` already injects `modelRuntime: auth.runtime` (slice
+1), so production wiring is unaffected. Consequence: the slice-5 test surface is
+wider than the four files the assessment listed — every `new
+PiSessionService(...)` in tests now needs `modelRuntime`, and `fakeRuntime`/the
+`TestSession` type in `testSupport.ts` must expose `modelRuntime`. Documented in
+status.md "Next task".
+
+**Result:** `npx tsc --noEmit` — `sessiond.ts` and `piSessionService.ts` at 0
+errors; all production code migrated (tsc output filtered to non-test/support
+files is empty). Remaining errors are slice-5 test/support only:
+authService.test (10), testSupport (4), warnings (5), promptQueue (17),
+lifecycle (19), archiveCleanup (9), spawnSession (3), spawnSubsession (18),
+sessionRoutes (1). `piSessionService.ts` lints clean. Committed `--no-verify`
+(migration not yet verify-green, per charter).
+
+**Blockers:** none. **Sessiond-restart-pending note still ACTIVE** — this slice
+added `piSessionService.ts` (a session-daemon path) to the pending-restart
+surface; do not clear the note. Handing off to leg 6 (slice 5: tests +
+testSupport).
