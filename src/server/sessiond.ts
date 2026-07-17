@@ -57,7 +57,7 @@ await runSessionDaemonStartup({
         sessionDirEnvKeys: activeAgentProfile.sessionDirEnvKeys,
       }),
     });
-    auth.subscribe((change) => { void sessions.applyAuthChange(change); });
+    auth.subscribe((change) => { sessions.applyAuthChange(change); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const runtimeComponent = Object.freeze({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),

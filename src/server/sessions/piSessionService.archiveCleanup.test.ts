@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
-import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef } from "./piSessionService.testSupport.js";
+import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, unreachableRuntimeFactory } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
@@ -48,6 +48,7 @@ describe("PiSessionService archive and cleanup", () => {
   it("permanently deletes archived sessions through the archive store", async () => {
     const deletedSessionIds: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -82,6 +83,7 @@ describe("PiSessionService archive and cleanup", () => {
     const open = vi.fn(() => { throw new Error("bulk archive should not open inactive runtimes"); });
     const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }))));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -195,6 +197,7 @@ describe("PiSessionService archive and cleanup", () => {
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const listCalls: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([
@@ -238,6 +241,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archived = { sessionId: "archived-old", cwd: "/old-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-old.jsonl" };
     const otherArchived = { sessionId: "archived-other", cwd: "/other-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-other.jsonl" };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
@@ -291,6 +295,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-06-25T00:00:00.000Z", archivePath: `/archive/${input.sessionId}.jsonl` }))));
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {

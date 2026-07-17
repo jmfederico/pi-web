@@ -335,13 +335,41 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     await service.dispose();
   });
 
+  it("reloads model configuration and reads the resulting snapshot", async () => {
+    const firstModel = testModel();
+    const updatedModel = { ...firstModel, id: "updated-model", name: "Updated model" };
+    let snapshot: readonly NonNullable<PiAgentSession["model"]>[] = [firstModel];
+    const reloadConfig = vi.fn(() => {
+      snapshot = [updatedModel];
+      return Promise.resolve();
+    });
+    const modelRuntime: PiAgentSession["modelRuntime"] = {
+      reloadConfig,
+      getAvailableSnapshot: () => snapshot,
+      getModel: (provider: string, modelId: string) => snapshot.find((model) => model.provider === provider && model.id === modelId),
+      getProviderAuthStatus: () => ({ configured: true }),
+    };
+    const fake = fakeRuntime("models-session", { modelRuntime });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("models-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await expect(service.availableModels(sessionRef("models-session"))).resolves.toEqual([expect.objectContaining({ id: "updated-model" })]);
+    expect(reloadConfig).toHaveBeenCalledOnce();
+    await service.dispose();
+  });
+
   it("refreshes auth state and dedupes warnings when logout removes the current model's credentials", async () => {
     const hub = new CapturingSessionEventHub();
     let configured = true;
     const model = testModel();
+    const reloadConfig = vi.fn(() => Promise.resolve());
     const modelRuntime: PiAgentSession["modelRuntime"] = {
-      refresh: vi.fn(() => Promise.resolve()),
-      getAvailable: () => Promise.resolve([model]),
+      reloadConfig,
+      getAvailableSnapshot: () => [model],
       getModel: (provider: string, modelId: string) => provider === model.provider && modelId === model.id ? model : undefined,
       getProviderAuthStatus: () => ({ configured }),
     };
@@ -359,18 +387,19 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     hub.globalEvents.length = 0;
 
     configured = false;
-    await service.applyAuthChange({ removedProviderId: "anthropic" });
-    await service.applyAuthChange({ removedProviderId: "anthropic" });
+    service.applyAuthChange({ removedProviderId: "anthropic" });
+    service.applyAuthChange({ removedProviderId: "anthropic" });
 
     const warningCount = () => hub.sessionEvents.filter(({ event }) => event.type === "command.output" && event.level === "error" && event.message.includes(`${TEST_MODEL_PROVIDER}/${TEST_MODEL_ID}`)).length;
     expect(warningCount()).toBe(1);
     expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === "auth-session")).toBe(true);
 
     configured = true;
-    await service.applyAuthChange();
+    service.applyAuthChange();
     configured = false;
-    await service.applyAuthChange({ removedProviderId: "anthropic" });
+    service.applyAuthChange({ removedProviderId: "anthropic" });
     expect(warningCount()).toBe(2);
+    expect(reloadConfig).not.toHaveBeenCalled();
 
     await service.dispose();
   });

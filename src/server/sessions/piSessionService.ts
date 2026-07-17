@@ -168,8 +168,8 @@ interface BulkDeletePlanItem {
 type AgentModel = NonNullable<SpawnSessionInvocation["model"]>;
 
 export interface PiModelRuntime {
-  refresh(): Promise<unknown>;
-  getAvailable(): Promise<readonly AgentModel[]>;
+  reloadConfig(): Promise<void>;
+  getAvailableSnapshot(): readonly AgentModel[];
   getModel(provider: string, modelId: string): AgentModel | undefined;
   getProviderAuthStatus(providerId: string): { configured: boolean };
 }
@@ -336,17 +336,13 @@ export function createPiWebCustomToolDefinitions(
 }
 
 function createDefaultRuntimeFactory(
-  modelRuntime: ModelRuntime | undefined,
+  modelRuntime: ModelRuntime,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
-    const services = await createAgentSessionServices({
-      cwd,
-      agentDir,
-      ...(modelRuntime === undefined ? {} : { modelRuntime }),
-    });
+    const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
@@ -360,6 +356,10 @@ function createDefaultRuntimeFactory(
     return { ...result, services, diagnostics: services.diagnostics };
   };
 }
+
+const missingInjectedRuntimeFactory: PiWebCreateAgentSessionRuntimeFactory = () => Promise.reject(
+  new Error("Injected createAgentRuntime cannot invoke Pi's built-in runtime factory without modelRuntime"),
+);
 
 type PiWebEditToolDetails = EditToolDetails | { preview: EditPreviewResult } | undefined;
 
@@ -385,13 +385,10 @@ function createPiWebEditToolDefinition(cwd: string) {
   });
 }
 
-export interface PiSessionServiceDependencies {
+interface PiSessionServiceBaseDependencies {
   agentDir: string;
   sessionManager: PiSessionManagerGateway;
   archiveStore?: SessionArchiveRepository;
-  createRuntime?: PiWebCreateAgentSessionRuntimeFactory;
-  createAgentRuntime?: CreateAgentRuntime;
-  modelRuntime?: ModelRuntime;
   heartbeatIntervalMs?: number;
   workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity">;
   /**
@@ -412,6 +409,13 @@ export interface PiSessionServiceDependencies {
   /** Clock seam for cleanup planning tests. */
   now?: () => Date;
 }
+
+type PiSessionRuntimeDependencies =
+  | { modelRuntime: ModelRuntime; createRuntime?: never; createAgentRuntime?: CreateAgentRuntime }
+  | { modelRuntime?: never; createRuntime: PiWebCreateAgentSessionRuntimeFactory; createAgentRuntime?: CreateAgentRuntime }
+  | { modelRuntime?: ModelRuntime; createRuntime?: PiWebCreateAgentSessionRuntimeFactory; createAgentRuntime: CreateAgentRuntime };
+
+export type PiSessionServiceDependencies = PiSessionServiceBaseDependencies & PiSessionRuntimeDependencies;
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
@@ -456,17 +460,19 @@ export class PiSessionService implements SessionRouteService {
     // Subsessions are a beta capability gated behind their own flag, and they
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
-    this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
-      deps.modelRuntime,
-      this.sessionManager,
-      this.spawnTargets === undefined ? undefined : (input) => this.spawnSession(input),
-      !subsessionsActive ? undefined : {
-        spawn: (input) => this.spawnSubsession(input),
-        list: (parentSessionId, parentSessionFile) => this.listSubsessions(parentSessionId, parentSessionFile),
-        check: (parentSessionId, sessionId, parentSessionFile) => this.checkSubsession(parentSessionId, sessionId, parentSessionFile),
-        read: (parentSessionId, sessionId, query, parentSessionFile) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile),
-      },
-    );
+    this.createRuntime = deps.createRuntime ?? (deps.modelRuntime === undefined
+      ? missingInjectedRuntimeFactory
+      : createDefaultRuntimeFactory(
+        deps.modelRuntime,
+        this.sessionManager,
+        this.spawnTargets === undefined ? undefined : (input) => this.spawnSession(input),
+        !subsessionsActive ? undefined : {
+          spawn: (input) => this.spawnSubsession(input),
+          list: (parentSessionId, parentSessionFile) => this.listSubsessions(parentSessionId, parentSessionFile),
+          check: (parentSessionId, sessionId, parentSessionFile) => this.checkSubsession(parentSessionId, sessionId, parentSessionFile),
+          read: (parentSessionId, sessionId, query, parentSessionFile) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile),
+        },
+      ));
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;
     this.heartbeat = setInterval(() => { this.publishHeartbeats(); }, deps.heartbeatIntervalMs ?? 2000);
@@ -988,20 +994,20 @@ export class PiSessionService implements SessionRouteService {
 
   async availableModels(ref: PiSessionLookup): Promise<ClientSessionModel[]> {
     const session = await this.getOrOpen(ref);
-    await session.modelRuntime.refresh();
+    await session.modelRuntime.reloadConfig();
     const models = session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
-      : await session.modelRuntime.getAvailable();
+      : session.modelRuntime.getAvailableSnapshot();
     return models.map(modelToClientModel);
   }
 
   async setModel(ref: PiSessionLookup, provider: string, modelId: string): Promise<ClientSessionStatus> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
-    await session.modelRuntime.refresh();
+    await session.modelRuntime.reloadConfig();
     const candidates = session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
-      : await session.modelRuntime.getAvailable();
+      : session.modelRuntime.getAvailableSnapshot();
     const model = candidates.find((candidate) => candidate.provider === provider && candidate.id === modelId)
       ?? session.modelRuntime.getModel(provider, modelId);
     if (model === undefined) throw new Error(`Model not found: ${provider}/${modelId}`);
@@ -1841,14 +1847,9 @@ export class PiSessionService implements SessionRouteService {
     this.publishSessionName(session);
   }
 
-  async applyAuthChange(change: AuthChange = {}): Promise<void> {
-    const refreshedRuntimes = new Set<PiModelRuntime>();
+  applyAuthChange(change: AuthChange = {}): void {
     for (const active of this.active.values()) {
       const { session } = active.runtime;
-      if (!refreshedRuntimes.has(session.modelRuntime)) {
-        await session.modelRuntime.refresh();
-        refreshedRuntimes.add(session.modelRuntime);
-      }
       this.syncCurrentModelAuthWarning(session, change.removedProviderId);
       this.publishStatus(session);
     }

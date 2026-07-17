@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession, type PiSessionRuntime } from "./piSessionService.js";
-import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, type RuntimeCreator } from "./piSessionService.testSupport.js";
+import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, unreachableRuntimeFactory, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
@@ -380,6 +380,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("uses injected archive and session-manager gateways for listing", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-01T00:00:00.000Z" }]),
@@ -410,6 +411,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("lists archived records that have been moved out of the active session directory", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),
@@ -513,6 +515,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
   it("refuses to reload an archived session", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -535,6 +538,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("reconciles workspace activity when listing only archived sessions", async () => {
     const reconciliations: { cwd: string; sessionIds: string[] }[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
+      createRuntime: unreachableRuntimeFactory,
       agentDir: TEST_AGENT_DIR,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),

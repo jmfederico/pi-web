@@ -18,6 +18,9 @@ export class CapturingSessionEventHub extends SessionEventHub {
 
 export type SessionGateway = NonNullable<PiSessionServiceDependencies["sessionManager"]>;
 export type RuntimeCreator = NonNullable<PiSessionServiceDependencies["createAgentRuntime"]>;
+export const unreachableRuntimeFactory: NonNullable<PiSessionServiceDependencies["createRuntime"]> = () => Promise.reject(
+  new Error("Test unexpectedly invoked the Pi session runtime factory"),
+);
 
 export interface TestSession extends PiAgentSession {
   sessionName: string | undefined;
@@ -56,11 +59,11 @@ export function testModel(): NonNullable<PiAgentSession["model"]> {
   return getBuiltinModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
 }
 
-function fakeModelRuntime(): PiAgentSession["modelRuntime"] {
+export function fakeModelRuntime(): PiAgentSession["modelRuntime"] {
   const model = testModel();
   return {
-    refresh: () => Promise.resolve(),
-    getAvailable: () => Promise.resolve([model]),
+    reloadConfig: () => Promise.resolve(),
+    getAvailableSnapshot: () => [model],
     getModel: (provider: string, modelId: string) => provider === model.provider && modelId === model.id ? model : undefined,
     getProviderAuthStatus: () => ({ configured: true }),
   };
