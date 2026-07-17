@@ -15,6 +15,7 @@ describe("ChatView image rendering", () => {
 
     expect(templateStaticMarkup(rendered)).toContain("<img");
     expect(templateStaticMarkup(rendered)).toContain('loading="lazy"');
+    expect(templateStaticMarkup(rendered)).toContain('role="button"');
     expect(templateValuesAfterMarker(rendered, "src=")).toEqual(["data:image/png;base64,QUJD"]);
 
     if (!Reflect.set(view, "pinnedToBottom", true)) throw new Error("Could not set ChatView.pinnedToBottom");
@@ -23,6 +24,23 @@ describe("ChatView image rendering", () => {
     onLoad(new Event("load"));
 
     expect(scrollCalls).toBe(1);
+  });
+
+  // Clicking an image records the zoom target so the modal dialog can present
+  // it at full size, and dismissing clears the target.
+  it("opens and closes the image zoom target on click and close", () => {
+    const view = new ChatView();
+    const rendered = renderPart(view, { type: "image", mimeType: "image/png", data: "QUJD" });
+    const onClick = templateEventHandler(rendered, "@click=");
+
+    expect(zoomedImage(view)).toBeUndefined();
+    onClick(new Event("click"));
+    expect(zoomedImage(view)).toEqual({ src: "data:image/png;base64,QUJD", alt: "attached image" });
+
+    const close: unknown = Reflect.get(view, "closeImageZoom");
+    if (typeof close !== "function") throw new Error("ChatView.closeImageZoom is not callable");
+    close.call(view);
+    expect(zoomedImage(view)).toBeUndefined();
   });
 
   // Direct rendering keeps this node-environment test focused on the dedicated
@@ -40,10 +58,14 @@ describe("ChatView image rendering", () => {
     expect(markup).not.toContain('class="msg tool"');
     expect(markup).toContain("<img");
     expect(templateValuesAfterMarker(rendered, '<b class="label">')).toEqual(["read output"]);
-    expect(templateValuesAfterMarker(rendered, "title=")).toEqual([chatMessageMetadataLabel(message)]);
+    expect(templateValuesAfterMarker(rendered, "title=").filter((value) => typeof value === "string")).toEqual([chatMessageMetadataLabel(message)]);
     expect(templateValuesAfterMarker(rendered, "data-scroll-anchor-id=")).toEqual(["m:7"]);
   });
 });
+
+function zoomedImage(view: ChatView): unknown {
+  return Reflect.get(view, "zoomedImage");
+}
 
 type RenderPart = (this: ChatView, part: ChatLine["parts"][number], message?: ChatLine) => TemplateResult;
 type RenderToolImageOutput = (this: ChatView, message: ChatLine, index: number, toolName?: string) => TemplateResult;

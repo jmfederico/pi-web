@@ -94,7 +94,9 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) onClearServerQueue?: () => void;
   @property({ attribute: false }) onLoadMore?: () => void;
   @query(".chat") private chat?: HTMLDivElement;
+  @query("dialog.image-zoom") private imageZoomDialog?: HTMLDialogElement;
   @state() private pinnedToBottom = true;
+  @state() private zoomedImage: { src: string; alt: string } | undefined = undefined;
   @state() private expandedMetaKey: string | undefined;
   @state() private copiedMessageKey: string | undefined;
   @state() private currentConversationIndex: number | undefined;
@@ -125,6 +127,15 @@ export class ChatView extends LitElement {
   };
   private readonly onImageLoad = (): void => {
     if (this.pinnedToBottom) this.scrollToBottom();
+  };
+  private readonly openImageZoom = (src: string, alt: string): void => {
+    this.zoomedImage = { src, alt };
+  };
+  private readonly closeImageZoom = (): void => {
+    if (this.zoomedImage !== undefined) this.zoomedImage = undefined;
+  };
+  private readonly onImageZoomDialogClick = (event: MouseEvent): void => {
+    if (event.target === this.imageZoomDialog) this.closeImageZoom();
   };
   private readonly onPageHide = () => {
     this.saveScrollPosition();
@@ -200,6 +211,14 @@ export class ChatView extends LitElement {
     if (changed.has("messages") || changed.has("messageStart") || changed.has("messageTotal") || changed.has("hasMore") || changed.has("loadingMore")) this.scheduleConversationRailUpdate();
     if (changed.has("messages") || changed.has("messageStart") || changed.has("hasMore") || changed.has("loadingMore")) this.continuePendingScrollRestore();
     if (changed.has("messages") || changed.has("hasMore") || changed.has("loadingMore")) this.requestLoadMoreIfNeeded();
+    if (changed.has("zoomedImage")) this.syncImageZoomDialog();
+  }
+
+  private syncImageZoomDialog(): void {
+    const dialog = this.imageZoomDialog;
+    if (dialog === undefined) return;
+    if (this.zoomedImage !== undefined && !dialog.open) dialog.showModal();
+    else if (this.zoomedImage === undefined && dialog.open) dialog.close();
   }
 
   override render() {
@@ -223,6 +242,18 @@ export class ChatView extends LitElement {
         </div>
         ${this.renderActivityDock()}
       </div>
+      ${this.renderImageZoom()}
+    `;
+  }
+
+  private renderImageZoom() {
+    return html`
+      <dialog class="image-zoom" @click=${this.onImageZoomDialogClick} @close=${this.closeImageZoom} @cancel=${this.closeImageZoom}>
+        ${this.zoomedImage === undefined ? null : html`
+          <button type="button" class="image-zoom-close" aria-label="Close image" @click=${this.closeImageZoom}>×</button>
+          <img class="image-zoom-full" src=${this.zoomedImage.src} alt=${this.zoomedImage.alt} />
+        `}
+      </dialog>
     `;
   }
 
@@ -528,7 +559,11 @@ export class ChatView extends LitElement {
         <small>read ${part.path}</small>
       </div>
     `;
-    if (part.type === "image") return html`<img class="part chat-image" src=${`data:${part.mimeType};base64,${part.data}`} alt="attached image" loading="lazy" @load=${this.onImageLoad} />`;
+    if (part.type === "image") {
+      const src = `data:${part.mimeType};base64,${part.data}`;
+      const alt = "attached image";
+      return html`<img class="part chat-image" src=${src} alt=${alt} loading="lazy" role="button" tabindex="0" title="Click to enlarge" @load=${this.onImageLoad} @click=${() => { this.openImageZoom(src, alt); }} @keydown=${(event: KeyboardEvent) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openImageZoom(src, alt); } }} />`;
+    }
     if (part.type === "toolCall") return html`<div class="part tool-line">▶ ${part.toolName}<span class="summary">${part.summary}</span></div>`;
     if (part.type === "toolExecution") return html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
     if (part.type === "toolResult") return html`
