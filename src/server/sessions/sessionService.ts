@@ -16,6 +16,7 @@ import type {
   ClientSessionRef,
   ClientSessionStatus,
   ClientThinkingLevel,
+  SessionStreamSnapshot,
 } from "../types.js";
 import type { NormalizedSessionCleanupRequest } from "./sessionCleanup.js";
 
@@ -34,6 +35,7 @@ export interface SessionRouteService {
   start(cwd: string): Promise<ClientSession>;
   messages(ref: SessionRouteLookup, page?: { before?: number; limit?: number }): Promise<unknown[] | ClientMessagePage>;
   status(ref: SessionRouteLookup): Promise<ClientSessionStatus>;
+  streamSnapshot(ref: SessionRouteLookup): Promise<SessionStreamSnapshot>;
   clearQueue(ref: SessionRouteLookup): Promise<ClientSessionStatus>;
   availableModels(ref: SessionRouteLookup): Promise<ClientSessionModel[]>;
   setModel(ref: SessionRouteLookup, provider: string, modelId: string): Promise<ClientSessionStatus>;

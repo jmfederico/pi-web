@@ -280,6 +280,29 @@ describe("session API compatibility", () => {
     expect(init?.method).toBe("POST");
     expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo with spaces" });
   });
+
+  it("reads a session stream snapshot through an encoded machine route with cwd context", async () => {
+    const fetchMock = stubJsonFetch({ seq: 12, partial: { role: "assistant", content: [{ type: "text", text: "streaming" }] } });
+
+    await expect(sessionsApi.streamSnapshot({ id: "s /?", cwd: "/repo with spaces" }, "remote /?")).resolves.toEqual({
+      seq: 12,
+      partial: { role: "assistant", content: [{ type: "text", text: "streaming" }] },
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/stream-snapshot?cwd=%2Frepo+with+spaces");
+    expect(init?.method ?? "GET").toBe("GET");
+  });
+
+  it("reads a session stream snapshot for a legacy session-id ref without cwd context", async () => {
+    const fetchMock = stubJsonFetch({ seq: 0, partial: null });
+
+    await expect(sessionsApi.streamSnapshot("s 1", "remote a")).resolves.toEqual({ seq: 0, partial: null });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/sessions/s%201/stream-snapshot");
+  });
 });
 
 describe("machine-scoped file suggestion API", () => {

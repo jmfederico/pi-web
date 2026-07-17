@@ -324,9 +324,7 @@ export const chatStyles = css`
   .queued-kind { color: var(--pi-muted); font-size: 12px; text-transform: uppercase; }
   .session-activity { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 4px; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); color: var(--pi-text); overflow: hidden; }
   .session-activity.compacting { border-color: var(--pi-purple-border); background: var(--pi-purple-surface); }
-  .session-activity.receiving { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
   .session-activity strong { color: var(--pi-purple); }
-  .session-activity.receiving strong { color: var(--pi-success); }
   .session-activity span, .session-activity small { color: var(--pi-muted); }
   .history-boundary small { color: var(--pi-dim); }
   .msg-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 22px; margin-bottom: 8px; }

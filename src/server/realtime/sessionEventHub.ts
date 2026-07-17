@@ -11,6 +11,7 @@ export interface RealtimeSocket {
 export class SessionEventHub {
   private readonly socketsBySession = new Map<string, Set<RealtimeSocket>>();
   private readonly globalSockets = new Set<RealtimeSocket>();
+  private readonly seqBySession = new Map<string, number>();
 
   add(sessionId: string, socket: RealtimeSocket): void {
     let sockets = this.socketsBySession.get(sessionId);
@@ -30,10 +31,22 @@ export class SessionEventHub {
   }
 
   publish(sessionId: string, event: SessionUiEvent): void {
-    const payload = JSON.stringify(projectBrowserSessionEvent(event));
+    const seq = (this.seqBySession.get(sessionId) ?? 0) + 1;
+    this.seqBySession.set(sessionId, seq);
+    const payload = JSON.stringify({ ...projectBrowserSessionEvent(event), seq });
     for (const socket of this.socketsBySession.get(sessionId) ?? []) {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     }
+  }
+
+  /**
+   * Last per-session sequence number stamped by {@link publish} (0 before any
+   * event). Callers building a join-time stream snapshot read this as the
+   * watermark: buffered live events with `seq <= currentSeq` are already
+   * reflected in the snapshot's partial and must be dropped by the client.
+   */
+  currentSeq(sessionId: string): number {
+    return this.seqBySession.get(sessionId) ?? 0;
   }
 
   publishGlobal(event: GlobalSessionEvent): void {

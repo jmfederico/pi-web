@@ -6,6 +6,7 @@ import type { PiAgentSession, PiSessionManager, PiSessionRuntime, PiSessionServi
 export class CapturingSessionEventHub extends SessionEventHub {
   readonly sessionEvents: { sessionId: string; event: SessionUiEvent }[] = [];
   readonly globalEvents: GlobalSessionEvent[] = [];
+  private readonly seqBySessionOverride = new Map<string, number>();
 
   override publish(sessionId: string, event: SessionUiEvent): void {
     this.sessionEvents.push({ sessionId, event });
@@ -13,6 +14,15 @@ export class CapturingSessionEventHub extends SessionEventHub {
 
   override publishGlobal(event: GlobalSessionEvent): void {
     this.globalEvents.push(event);
+  }
+
+  /** Test seam: set the per-session watermark returned by {@link currentSeq}. */
+  setSeq(sessionId: string, value: number): void {
+    this.seqBySessionOverride.set(sessionId, value);
+  }
+
+  override currentSeq(sessionId: string): number {
+    return this.seqBySessionOverride.get(sessionId) ?? 0;
   }
 }
 
@@ -68,6 +78,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     sessionId,
     sessionFile: `/tmp/${sessionId}.jsonl`,
     messages: [],
+    state: {},
     sessionName: undefined,
     model: undefined,
     thinkingLevel: "off",

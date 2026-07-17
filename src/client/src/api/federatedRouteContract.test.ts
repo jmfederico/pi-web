@@ -64,6 +64,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.deleteArchivedMany([session], machineId)),
       ignoreParseFailure(sessionsApi.messages(session, { limit: 20, before: 10 }, machineId)),
       ignoreParseFailure(sessionsApi.status(session, machineId)),
+      ignoreParseFailure(sessionsApi.streamSnapshot(session, machineId)),
       ignoreParseFailure(sessionsApi.clearQueue(session, machineId)),
       ignoreParseFailure(sessionsApi.models(session, machineId)),
       ignoreParseFailure(sessionsApi.setModel(session, "openai", "gpt", machineId)),

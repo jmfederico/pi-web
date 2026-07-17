@@ -32,6 +32,7 @@ describe("SessionController reload and selection", () => {
         return Promise.resolve(freshPage);
       },
       status: (session) => Promise.resolve(status(sessionLookupId(session))),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
       thinkingLevels: () => Promise.resolve({ levels: [] }),
     };
     const controller = new SessionController(

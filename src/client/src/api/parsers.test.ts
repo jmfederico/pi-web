@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("parses PI WEB config responses", () => {
@@ -150,6 +150,19 @@ describe("API parsers", () => {
   it("accepts legacy array message pages and paged message responses", () => {
     expect(parseMessagePage(["a", "b"])).toEqual({ messages: ["a", "b"], start: 0, total: 2 });
     expect(parseMessagePage({ messages: ["c"], start: 3, total: 9 })).toEqual({ messages: ["c"], start: 3, total: 9 });
+  });
+
+  it("parses a session stream snapshot, defaulting a missing partial to null", () => {
+    expect(parseSessionStreamSnapshot({ seq: 7, partial: { role: "assistant", content: [{ type: "text", text: "hi" }] } })).toEqual({
+      seq: 7,
+      partial: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+    });
+    expect(parseSessionStreamSnapshot({ seq: 0, partial: null })).toEqual({ seq: 0, partial: null });
+    expect(parseSessionStreamSnapshot({ seq: 3 })).toEqual({ seq: 3, partial: null });
+  });
+
+  it("rejects a session stream snapshot without a numeric seq", () => {
+    expect(() => parseSessionStreamSnapshot({ partial: null })).toThrow("Expected number field: seq");
   });
 
   it("parses session cleanup preview and execute responses", () => {

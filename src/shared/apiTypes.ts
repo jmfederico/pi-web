@@ -689,12 +689,34 @@ export interface MessagePage {
   total: number;
 }
 
+/**
+ * Join-time snapshot of a session's in-flight assistant stream. `seq` is the
+ * `SessionEventHub` watermark captured together with `partial` in a single tick,
+ * so a joining client can seed `partial` and then apply only buffered live events
+ * with `seq > snapshot.seq` (exactly-once). `partial` is a browser-projected
+ * in-flight `AssistantMessage` (thinking signatures stripped), or `null` when the
+ * session is not mid assistant-message stream.
+ */
+export interface SessionStreamSnapshot {
+  seq: number;
+  /** Browser-projected in-flight `AssistantMessage`, or `null` when idle. */
+  partial: unknown;
+}
+
 export type CommandResult =
   | { type: "done"; message?: string; session?: SessionInfo; promptDraft?: string }
   | { type: "select"; requestId: string; title: string; options: CommandOption[] }
   | { type: "unsupported"; message: string };
 
-export type SessionUiEvent =
+/**
+ * Transport-level per-session sequence stamp. `SessionEventHub.publish` assigns a
+ * monotonic `seq` to every per-session event as it is serialized to the socket.
+ * Clients use it as a watermark against the join-time stream snapshot so buffered
+ * live events are applied exactly once. Existing consumers may ignore it.
+ */
+export type SessionUiEvent = SessionUiEventBody & { seq?: number };
+
+type SessionUiEventBody =
   | { type: "message.append"; message: unknown }
   | { type: "assistant.delta"; text: string }
   | { type: "assistant.thinking.delta"; text: string }
@@ -715,5 +737,5 @@ export type SessionUiEvent =
   | { type: "session.created"; session: SessionInfo }
   | { type: "pi.event"; eventType: string };
 
-export type GlobalSessionEvent = Extract<SessionUiEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>;
+export type GlobalSessionEvent = Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>;
 export type RealtimeEvent = GlobalSessionEvent | TerminalUiEvent | WorkspaceActivityUiEvent;

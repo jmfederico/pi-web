@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { MessagePage, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkMutationRef, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionStatus } from "../../shared/apiTypes.js";
+import type { MessagePage, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkMutationRef, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionStatus, SessionStreamSnapshot } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { PiSessionService, type PiSessionManagerGateway } from "./piSessionService.js";
 import type { SessionRouteLookup, SessionRouteService } from "./sessionService.js";
@@ -168,6 +168,46 @@ describe("session routes", () => {
     }
   });
 
+  it("returns the join-time stream snapshot, forwarding workspace context", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    routeService.streamSnapshotResponse = { seq: 7, partial: { role: "assistant", content: [{ type: "text", text: "partial" }] } };
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const response = await routeApp.inject({ method: "GET", url: `/sessions/session-1/stream-snapshot?cwd=${encodeURIComponent(requestCwd)}` });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ seq: 7, partial: { role: "assistant", content: [{ type: "text", text: "partial" }] } });
+      expect(routeService.streamSnapshotCalls).toEqual([{ id: "session-1", cwd: requestCwd }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("maps stream-snapshot lookup failures to 404", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    routeService.streamSnapshot = () => Promise.reject(new Error("Session not found"));
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const response = await routeApp.inject({ method: "GET", url: "/sessions/missing/stream-snapshot" });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: "Session not found" });
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("clears a session queue with workspace context and returns fresh status", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -306,6 +346,8 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly reloadCalls: SessionRouteLookup[] = [];
   readonly clearQueueCalls: SessionRouteLookup[] = [];
   messagesResponse: unknown[] | MessagePage = [];
+  streamSnapshotResponse: SessionStreamSnapshot = { seq: 0, partial: null };
+  readonly streamSnapshotCalls: SessionRouteLookup[] = [];
   readonly cleanupPreviewCalls: NormalizedSessionCleanupRequest[] = [];
   readonly cleanupCalls: NormalizedSessionCleanupRequest[] = [];
   readonly bulkArchiveCalls: SessionBulkMutationRef[][] = [];
@@ -377,6 +419,11 @@ class CapturingRouteSessionService implements SessionRouteService {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       cost: 0,
     });
+  }
+
+  streamSnapshot(lookup: SessionRouteLookup): Promise<SessionStreamSnapshot> {
+    this.streamSnapshotCalls.push(lookup);
+    return Promise.resolve(this.streamSnapshotResponse);
   }
 
   availableModels(): Promise<[]> { return Promise.resolve([]); }

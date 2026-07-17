@@ -9,6 +9,7 @@ export type {
   SessionCleanupPreviewResponse as ClientSessionCleanupPreviewResponse,
   SessionCleanupExecuteResponse as ClientSessionCleanupExecuteResponse,
   MessagePage as ClientMessagePage,
+  SessionStreamSnapshot,
   SessionStatus as ClientSessionStatus,
   SessionModel as ClientSessionModel,
   ThinkingLevel as ClientThinkingLevel,

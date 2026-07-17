@@ -14,7 +14,8 @@ import {
   type CreateAgentSessionRuntimeFactory,
   type EditToolDetails,
 } from "@earendil-works/pi-coding-agent";
-import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionStatus, ClientThinkingLevel, SessionUiEvent } from "../types.js";
+import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionStatus, ClientThinkingLevel, SessionStreamSnapshot, SessionUiEvent } from "../types.js";
+import { projectBrowserMessage } from "../browserMessageProjection.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
@@ -211,6 +212,14 @@ export interface PiAgentSession {
   sessionFile: string | undefined;
   sessionName: string | undefined;
   messages: readonly unknown[];
+  /**
+   * Narrow read of the SDK `AgentState`. Only the in-flight partial is consumed
+   * here: `state.streamingMessage` is the current streamed assistant message
+   * (an `AssistantMessage`) while a turn is mid-stream, and `undefined`
+   * otherwise (idle, or during post-message tool execution). Used by
+   * {@link PiSessionService.streamSnapshot} to seed a joining client.
+   */
+  readonly state: { readonly streamingMessage?: unknown };
   model: AgentModel | undefined;
   thinkingLevel: ClientThinkingLevel;
   isStreaming: boolean;
@@ -979,6 +988,26 @@ export class PiSessionService implements SessionRouteService {
 
   async status(ref: PiSessionLookup): Promise<ClientSessionStatus> {
     return this.statusFromSession(await this.getOrOpen(ref));
+  }
+
+  /**
+   * Join-time snapshot of the in-flight assistant stream. The `seq` watermark and
+   * the partial are read together in one synchronous tick (no await between the
+   * `currentSeq` read and the `state.streamingMessage` read) so a joining client
+   * can seed the partial and then apply only buffered live events with
+   * `seq > snapshot.seq`. The partial is browser-projected to strip thinking
+   * signatures; it is `null` when no assistant message is mid-stream.
+   */
+  async streamSnapshot(ref: PiSessionLookup): Promise<SessionStreamSnapshot> {
+    const session = await this.getOrOpen(ref);
+    // Single consistent tick: capture the watermark and the partial together so
+    // the seq matches the partial the client seeds against.
+    const seq = this.events.currentSeq(session.sessionId);
+    const streamingMessage = session.state.streamingMessage;
+    const partial = streamingMessage === undefined || streamingMessage === null
+      ? null
+      : projectBrowserMessage(streamingMessage);
+    return { seq, partial };
   }
 
   async availableModels(ref: PiSessionLookup): Promise<ClientSessionModel[]> {

@@ -566,3 +566,65 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 });
+
+describe("PiSessionService.streamSnapshot", () => {
+  it("returns a null partial with the current watermark when idle", async () => {
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("snap-idle");
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+    try {
+      await service.start("/workspace");
+
+      const snapshot = await service.streamSnapshot(sessionRef("snap-idle"));
+
+      expect(snapshot).toEqual({ seq: 0, partial: null });
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("projects the in-flight partial and matches the event watermark mid-stream", async () => {
+    const hub = new CapturingSessionEventHub();
+    const streamingMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "weighing options", thinkingSignature: "opaque" },
+        { type: "text", text: "partial answer" },
+        { type: "toolCall", id: "call-1", name: "edit", arguments: { path: "a.ts" } },
+      ],
+    };
+    const fake = fakeRuntime("snap-live", { state: { streamingMessage } });
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+    try {
+      await service.start("/workspace");
+      // Advance the per-session watermark to a known value.
+      hub.setSeq("snap-live", 5);
+
+      const snapshot = await service.streamSnapshot(sessionRef("snap-live"));
+
+      expect(snapshot.seq).toBe(5);
+      expect(snapshot.partial).toEqual({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "weighing options" },
+          { type: "text", text: "partial answer" },
+          { type: "toolCall", id: "call-1", name: "edit", arguments: { path: "a.ts" } },
+        ],
+      });
+      // The runtime message is not mutated by the browser projection.
+      expect(streamingMessage.content[0]).toHaveProperty("thinkingSignature", "opaque");
+    } finally {
+      await service.dispose();
+    }
+  });
+});

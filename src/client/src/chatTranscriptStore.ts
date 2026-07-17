@@ -1,5 +1,5 @@
 import { normalizeMessages } from "./chatMessages";
-import { applyTranscriptEvent } from "./chatTranscript";
+import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import { mergeChatHistory, readChatHistoryCache, removeChatHistoryCache, writeChatHistoryCache, type RawMessagePage } from "./chatHistoryCache";
 import type { ChatLine } from "./components/shared";
 import type { SessionUiEvent } from "./sessionSocket";
@@ -43,6 +43,15 @@ export class ChatTranscriptStore {
 
   applyLiveEvent(messages: ChatLine[], event: SessionUiEvent): ChatLine[] | undefined {
     return applyTranscriptEvent(messages, event);
+  }
+
+  /**
+   * Seed the join-time in-flight partial assistant message on top of the
+   * committed history view. Returns a new in-memory message list; the raw
+   * history cache is deliberately untouched so the partial never persists.
+   */
+  seedStreamingPartial(messages: ChatLine[], partial: unknown): ChatLine[] {
+    return seedStreamingPartial(messages, partial);
   }
 
   discard(sessionId: string): void {

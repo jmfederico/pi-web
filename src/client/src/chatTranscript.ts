@@ -1,4 +1,4 @@
-import { appendText, appendThinking, normalizeMessage, previewFromDetails, summarizeArgs, textMessage } from "./chatMessages";
+import { appendText, appendThinking, normalizeMessage, normalizeMessages, previewFromDetails, summarizeArgs, textMessage } from "./chatMessages";
 import type { ChatLine, ToolExecutionPart } from "./components/shared";
 import { appendShellChunk, finalizeShellMessage, shellStartMessage } from "./shellMessages";
 import type { SessionUiEvent } from "./sessionSocket";
@@ -18,6 +18,26 @@ interface ToolResultUpdate {
   content: unknown;
   details: unknown;
   presentation: ToolResultPresentation;
+}
+
+/**
+ * Seed the in-flight partial assistant message on top of committed history at
+ * join time. `partial` is the browser-projected `AssistantMessage` from the
+ * stream snapshot (or `null`/`undefined` when the session is not mid
+ * assistant-message stream). The partial is normalized the same way a streamed
+ * message is (text/thinking parts plus any in-progress tool call parts kept on
+ * the assistant line), so live `assistant.delta`/`assistant.thinking.delta`
+ * events append onto it and `message.end` reconciles it into the finalized shape.
+ * This returns a new in-memory message list only; it never writes to the raw
+ * history cache.
+ */
+export function seedStreamingPartial(messages: ChatLine[], partial: unknown): ChatLine[] {
+  if (partial === null || partial === undefined) return messages;
+  // Normalize the same way committed history is (coalescing an in-progress tool
+  // call into a `toolExecution` line) so the seeded partial renders identically
+  // to its finalized form and live `tool.*` events can target it by call id.
+  const lines = normalizeMessages([partial]);
+  return lines.length === 0 ? messages : [...messages, ...lines];
 }
 
 export function applyTranscriptEvent(messages: ChatLine[], event: SessionUiEvent): ChatLine[] | undefined {

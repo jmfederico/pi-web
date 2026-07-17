@@ -5,7 +5,7 @@ import type { SessionUiEvent } from "../sessionSocket";
 import type { SessionEventSocket } from "./sessionController";
 
 export { api as defaultApi } from "../api";
-export type { MessagePage, PromptAttachment, SessionActivity, SessionInfo, SessionRef, SessionStatus, Workspace } from "../api";
+export type { MessagePage, PromptAttachment, SessionActivity, SessionInfo, SessionRef, SessionStatus, SessionStreamSnapshot, Workspace } from "../api";
 export type { AppState } from "../appState";
 
 export class MemoryStorage implements Storage {

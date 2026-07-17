@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { groupChatMessages } from "./chatGroups";
 import { normalizeMessages, textMessage } from "./chatMessages";
-import { applyTranscriptEvent } from "./chatTranscript";
+import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import type { ChatLine } from "./components/shared";
 
 const finalAssistant = {
@@ -461,6 +461,42 @@ describe("applyTranscriptEvent", () => {
     expect(applyTranscriptEvent(messages, { type: "message.end", message: { role: "user", content: "new prompt", timestamp: "2026-05-09T12:00:00.000Z" } })).toEqual([
       textMessage("user", "stopped prompt"),
       { ...textMessage("user", "new prompt"), meta: { timestamp: "2026-05-09T12:00:00.000Z" } },
+    ]);
+  });
+
+  it("seeds a null or undefined partial as a no-op", () => {
+    const messages = [textMessage("user", "question")];
+    expect(seedStreamingPartial(messages, null)).toBe(messages);
+    expect(seedStreamingPartial(messages, undefined)).toBe(messages);
+  });
+
+  it("seeds an in-flight assistant partial with text and thinking so live deltas append onto it", () => {
+    const seeded = seedStreamingPartial([textMessage("user", "question")], {
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "plan" }, { type: "text", text: "partial" }],
+    });
+
+    expect(seeded).toEqual([
+      textMessage("user", "question"),
+      { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "text", text: "partial" }] },
+    ]);
+
+    // A live delta continues the seeded assistant message rather than starting a new one.
+    expect(applyTranscriptEvent(seeded, { type: "assistant.delta", text: " answer" })).toEqual([
+      textMessage("user", "question"),
+      { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "text", text: "partial answer" }] },
+    ]);
+  });
+
+  it("seeds an in-progress tool call from the partial as a tool execution line", () => {
+    const seeded = seedStreamingPartial([textMessage("user", "run it")], {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "ls" } }],
+    });
+
+    expect(seeded).toEqual([
+      textMessage("user", "run it"),
+      { role: "tool", parts: [{ type: "toolExecution", toolCallId: "tool-1", toolName: "bash", summary: "ls", args: { command: "ls" }, status: "pending" }] },
     ]);
   });
 

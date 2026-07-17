@@ -28,6 +28,7 @@ describe("SessionController selected-session refresh", () => {
         statusCalls += 1;
         return statusCalls === 1 ? firstStatus.promise : trailingStatus.promise;
       },
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
     };
     const controller = new SessionController(
       () => state,
@@ -72,6 +73,7 @@ describe("SessionController selected-session refresh", () => {
       ...defaultApi,
       messages: (session) => sessionLookupId(session) === oldSession.id ? stalePage.promise : Promise.resolve(replacementPage),
       status: (session) => sessionLookupId(session) === oldSession.id ? staleStatus.promise : Promise.resolve(status(replacementSession.id)),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
       thinkingLevels: () => Promise.resolve({ levels: [] }),
     };
     const controller = new SessionController(
@@ -92,5 +94,33 @@ describe("SessionController selected-session refresh", () => {
     expect(state.selectedSession?.id).toBe(replacementSession.id);
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "replacement" }] }]);
     expect(state.status?.sessionId).toBe(replacementSession.id);
+  });
+
+  it("fetches the join-time stream snapshot alongside messages and status on refresh", async () => {
+    // Leg 3 contract: the snapshot is fetched for the selected session on the join
+    // refresh path. Seeding/watermark application is deliberately NOT asserted here
+    // (that is Leg 4); this only guards that the data is fetched.
+    const snapshotLookups: string[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => Promise.resolve(page("live", 1)),
+      status: () => Promise.resolve({ ...status(oldSession.id), isStreaming: true }),
+      streamSnapshot: (session) => {
+        snapshotLookups.push(sessionLookupId(session));
+        return Promise.resolve({ seq: 5, partial: { role: "assistant", content: [{ type: "text", text: "partial" }] } });
+      },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    await controller.refreshSelectedSession();
+
+    expect(snapshotLookups).toEqual([oldSession.id]);
   });
 });

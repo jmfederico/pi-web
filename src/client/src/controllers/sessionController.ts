@@ -1,4 +1,4 @@
-import { api as defaultApi, type CommandResult, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type Workspace } from "../api";
+import { api as defaultApi, type CommandResult, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type Workspace } from "../api";
 import type { AppState } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
@@ -72,7 +72,12 @@ export class SessionController {
   private readonly api: typeof defaultApi;
   private readonly transcripts: ChatTranscriptStore;
   private selectionSeq = 0;
-  private catchupStreamSessionId: string | undefined;
+  // Join-time stream watermark for the selected session. `seq` is the
+  // `SessionEventHub` sequence captured together with the seeded partial by the
+  // stream snapshot: buffered/live events with `seq <= seq` are already reflected
+  // in the committed history + seeded partial and must be dropped, so every event
+  // applies exactly once. Reset whenever the selection changes.
+  private streamWatermark: { sessionId: string; seq: number } | undefined;
   private pendingTranscriptEvents: SessionUiEvent[] = [];
   private pendingStatusBySession = new Map<string, SessionStatus>();
   private pendingActivityBySession = new Map<string, SessionActivity>();
@@ -111,13 +116,13 @@ export class SessionController {
   clearActiveSession() {
     this.selectionSeq += 1;
     this.socket.close();
-    this.catchupStreamSessionId = undefined;
+    this.streamWatermark = undefined;
     this.clearPendingUpdates();
     // Note: sendingPrompts is intentionally NOT cleared here. Deselecting a
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, isReceivingPartialStream: false, status: undefined, activity: undefined, availableThinkingLevels: [] });
+    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [] });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -161,7 +166,7 @@ export class SessionController {
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     const seq = ++this.selectionSeq;
     this.socket.close();
-    this.catchupStreamSessionId = undefined;
+    this.streamWatermark = undefined;
     this.clearPendingUpdates();
     const transcriptKey = this.sessionCacheKey(session.id);
     const cached = this.transcripts.cachedView(transcriptKey);
@@ -169,7 +174,6 @@ export class SessionController {
       selectedSession: session,
       ...cached,
       isLoadingEarlierMessages: false,
-      isReceivingPartialStream: false,
       status: session.archived === true ? undefined : this.getState().sessionStatuses[session.id],
       activity: session.archived === true ? undefined : this.getState().sessionActivities[session.id],
       availableThinkingLevels: [],
@@ -179,7 +183,7 @@ export class SessionController {
         const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
         const history = this.transcripts.mergeHistory(transcriptKey, page);
-        this.setState({ ...history, isLoadingEarlierMessages: false, isReceivingPartialStream: false, status: undefined, activity: undefined });
+        this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
       }
@@ -765,17 +769,32 @@ export class SessionController {
     return this.selectedSessionRefreshes.request(key, async () => {
       if (!this.isCurrentRefreshTarget(target)) return;
       this.flushPendingUpdates();
-      const [page, status] = await Promise.all([
+      const [page, status, streamSnapshot] = await Promise.all([
         this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId),
         this.api.status(target.session, target.machineId),
+        // The stream snapshot is a progressive enhancement. An older/not-yet-
+        // restarted session daemon or a remote machine on an older pi-web has no
+        // `stream-snapshot` route and returns 404; treat any failure as "no
+        // partial to seed". A `seq: 0` watermark drops nothing (live events start
+        // at seq 1, and un-stamped events fail open), so the core transcript
+        // still loads and streams normally.
+        this.api.streamSnapshot(target.session, target.machineId).catch((): SessionStreamSnapshot => ({ seq: 0, partial: null })),
       ]);
       if (!this.isCurrentRefreshTarget(target)) return;
+      // Seed the in-flight partial assistant message on top of committed history
+      // and record the snapshot's sequence as the watermark. Buffered/live events
+      // with `seq <= watermark` are already reflected here and are dropped by
+      // `applyEvent`; later events (`seq > watermark`) stream in on top. The
+      // partial is seeded into the in-memory transcript only, never the raw
+      // history cache, so it never persists.
       const history = this.transcripts.mergeHistory(key, page);
+      const messages = this.transcripts.seedStreamingPartial(history.messages, streamSnapshot.partial);
+      this.streamWatermark = { sessionId: target.session.id, seq: streamSnapshot.seq };
       this.setState({
         ...history,
+        messages,
         status,
         activity: this.getState().sessionActivities[target.session.id],
-        ...this.setStreamCatchup(status.isStreaming ? target.session.id : undefined),
       });
       this.applyStatus(status);
     });
@@ -859,7 +878,7 @@ export class SessionController {
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     this.selectionSeq += 1;
     this.socket.close();
-    this.catchupStreamSessionId = undefined;
+    this.streamWatermark = undefined;
     this.clearPendingUpdates();
     const state = this.getState();
     const pendingStart = this.pendingSessionStarts.get(session.id);
@@ -872,7 +891,6 @@ export class SessionController {
       messagePageEnd: 0,
       messagePageTotal: 0,
       isLoadingEarlierMessages: false,
-      isReceivingPartialStream: false,
       status: undefined,
       activity,
       availableThinkingLevels: [],
@@ -1061,7 +1079,6 @@ export class SessionController {
       status: state.selectedSession?.id === status.sessionId ? status : state.status,
       activity: state.selectedSession?.id === status.sessionId && clearsStaleActivity ? undefined : state.activity,
     });
-    if (!status.isStreaming) this.finishStreamCatchup(status.sessionId);
   }
 
   private applySessionName(sessionId: string, name: string | undefined) {
@@ -1080,14 +1097,10 @@ export class SessionController {
   }
 
   private applyEvent(event: SessionUiEvent) {
-    const selectedSessionId = this.getState().selectedSession?.id;
-    if (this.catchupStreamSessionId !== undefined && this.catchupStreamSessionId === selectedSessionId) {
-      if (event.type === "message.end" || event.type === "agent.end") {
-        this.finishStreamCatchup(this.catchupStreamSessionId);
-        return;
-      }
-      if (isTranscriptEvent(event)) return;
-    }
+    // Drop events already reflected in the seeded join snapshot (committed
+    // history + partial). Everything past the watermark applies exactly once,
+    // so live content streams directly on top of the seeded partial.
+    if (this.isStreamEventBelowWatermark(event)) return;
 
     // Status and activity arrive once per token (the server republishes them on
     // every transcript event). Buffer them alongside high-frequency transcript
@@ -1175,37 +1188,15 @@ export class SessionController {
     this.pendingFrame = undefined;
   }
 
-  // Stream catch-up is a single mode with two coupled facets that must never
-  // drift: the private `catchupStreamSessionId` guard (which suppresses live
-  // transcript events while we lack the in-flight message prefix) and the
-  // public `isReceivingPartialStream` flag (which drives the "Catching up…"
-  // badge). Route every mutation of the mode through this helper so the guard
-  // and the badge can never disagree. Catch-up only ever applies to the
-  // selected session, so an active session id always implies the badge is on.
-  private setStreamCatchup(sessionId: string | undefined): Pick<AppState, "isReceivingPartialStream"> {
-    this.catchupStreamSessionId = sessionId;
-    return { isReceivingPartialStream: sessionId !== undefined };
-  }
-
-  private finishStreamCatchup(sessionId: string) {
-    const isSelected = this.getState().selectedSession?.id === sessionId;
-    const wasCatchingUp = this.catchupStreamSessionId === sessionId || (isSelected && this.getState().isReceivingPartialStream);
-    if (!wasCatchingUp) return;
-    this.catchupStreamSessionId = undefined;
-    if (isSelected) this.setState({ isReceivingPartialStream: false });
-    void this.refreshMessages(sessionId);
-  }
-
-  private async refreshMessages(sessionId: string) {
-    try {
-      const session = this.getState().selectedSession;
-      if (session?.id !== sessionId) return;
-      const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
-      if (this.getState().selectedSession?.id !== sessionId) return;
-      this.setState(this.transcripts.mergeHistory(this.sessionCacheKey(sessionId), page));
-    } catch (error) {
-      if (this.getState().selectedSession?.id === sessionId) this.setState({ error: String(error) });
-    }
+  // Watermark filter for join-time exactly-once application. An event is below
+  // the watermark when it belongs to the selected session's seeded snapshot
+  // (`seq <= watermark.seq`); such events are already reflected in the committed
+  // history + seeded partial and must be dropped. Events with no `seq` (which
+  // should not occur on the per-session socket) are never dropped.
+  private isStreamEventBelowWatermark(event: SessionUiEvent): boolean {
+    const watermark = this.streamWatermark;
+    if (watermark === undefined || watermark.sessionId !== this.getState().selectedSession?.id) return false;
+    return event.seq !== undefined && event.seq <= watermark.seq;
   }
 }
 
@@ -1375,10 +1366,6 @@ function sessionMessageCountPatch(state: AppState, sessionId: string, messageCou
     ...(sessions === undefined ? {} : { sessions }),
     ...(selectedSession !== state.selectedSession ? { selectedSession } : {}),
   };
-}
-
-function isTranscriptEvent(event: SessionUiEvent): boolean {
-  return ["message.append", "assistant.delta", "assistant.thinking.delta", "tool.start", "tool.update", "tool.end", "shell.start", "shell.chunk", "shell.end", "command.output", "session.error"].includes(event.type);
 }
 
 function isHighFrequencyTranscriptEvent(event: SessionUiEvent): boolean {
