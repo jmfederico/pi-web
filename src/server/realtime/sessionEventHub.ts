@@ -31,9 +31,7 @@ export class SessionEventHub {
 
   publish(sessionId: string, event: SessionUiEvent): void {
     const payload = JSON.stringify(projectBrowserSessionEvent(event));
-    for (const socket of this.socketsBySession.get(sessionId) ?? []) {
-      if (socket.readyState === socket.OPEN) socket.send(payload);
-    }
+    this.sendToSockets(this.socketsBySession.get(sessionId), payload);
   }
 
   publishGlobal(event: GlobalSessionEvent): void {
@@ -42,8 +40,18 @@ export class SessionEventHub {
 
   publishRealtime(event: RealtimeEvent): void {
     const payload = JSON.stringify(event);
-    for (const socket of this.globalSockets) {
-      if (socket.readyState === socket.OPEN) socket.send(payload);
+    this.sendToSockets(this.globalSockets, payload);
+  }
+
+  private sendToSockets(sockets: Set<RealtimeSocket> | undefined, payload: string): void {
+    if (sockets === undefined) return;
+    for (const socket of sockets) {
+      if (socket.readyState !== socket.OPEN) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        sockets.delete(socket);
+      }
     }
   }
 }

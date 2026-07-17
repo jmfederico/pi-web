@@ -19,7 +19,15 @@ export interface AuthModelRuntime extends AuthProviderModelRuntime {
 export interface AuthServiceDependencies {
   modelRuntime: AuthModelRuntime;
   authFlows?: OAuthLoginFlowService;
+  logger?: AuthServiceLogger;
 }
+
+/** Minimal structured-logging seam used for non-fatal auth propagation errors. */
+export interface AuthServiceLogger {
+  error(details: Record<string, unknown>, message: string): void;
+}
+
+const noopLogger: AuthServiceLogger = { error() { /* no-op */ } };
 
 export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwork = true): Promise<ModelRuntime> {
   return ModelRuntime.create({
@@ -32,11 +40,13 @@ export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwor
 export class AuthService {
   readonly modelRuntime: AuthModelRuntime;
   private readonly authFlows: OAuthLoginFlowService;
+  private readonly logger: AuthServiceLogger;
   private readonly listeners = new Set<AuthChangeListener>();
 
   constructor(deps: AuthServiceDependencies) {
     this.modelRuntime = deps.modelRuntime;
     this.authFlows = deps.authFlows ?? new OAuthLoginFlowService();
+    this.logger = deps.logger ?? noopLogger;
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -111,7 +121,12 @@ export class AuthService {
   }
 
   private async emit(change: AuthChange): Promise<void> {
-    await Promise.all([...this.listeners].map((listener) => Promise.resolve(listener(change))));
+    const results = await Promise.allSettled([...this.listeners].map(async (listener) => listener(change)));
+    for (const result of results) {
+      if (result.status === "rejected") {
+        this.logger.error({ err: result.reason }, "auth-change listener failed");
+      }
+    }
   }
 
   private requireLoginProvider(providerId: string, authType: AuthType) {

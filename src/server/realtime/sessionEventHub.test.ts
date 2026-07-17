@@ -53,6 +53,24 @@ describe("SessionEventHub", () => {
     expect(removed.send).not.toHaveBeenCalled();
   });
 
+  it("continues publishing when a socket send fails", () => {
+    const hub = new SessionEventHub();
+    const failed = new FakeSocket();
+    const healthy = new FakeSocket();
+    failed.send.mockImplementation(() => { throw new Error("socket closed"); });
+    hub.add("s1", failed);
+    hub.add("s1", healthy);
+
+    hub.publish("s1", { type: "assistant.delta", text: "hello" });
+
+    expect(failed.send).toHaveBeenCalledOnce();
+    expect(healthy.send).toHaveBeenCalledWith(JSON.stringify({ type: "assistant.delta", text: "hello" }));
+    failed.send.mockClear();
+    hub.publish("s1", { type: "assistant.delta", text: "again" });
+    expect(failed.send).not.toHaveBeenCalled();
+    expect(healthy.send).toHaveBeenCalledWith(JSON.stringify({ type: "assistant.delta", text: "again" }));
+  });
+
   it("publishes global events only to global sockets", () => {
     const hub = new SessionEventHub();
     const globalSocket = new FakeSocket();
