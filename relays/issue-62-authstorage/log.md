@@ -87,3 +87,85 @@ onward once `sessiond.ts` changes land).
 
 **Handoff:** spawning leg 2 (slice 1).
 
+
+---
+
+## Leg 2 — slice 1: `authService.ts` core migration (commit `e37148c`)
+
+**What I did:** migrated `src/server/sessions/authService.ts` off the removed
+`AuthStorage` / `ModelRegistry.create` surface onto the async `ModelRuntime`
+API, and propagated the async construction into the session daemon.
+
+- `authService.ts`:
+  - Imports `ModelRuntime` from `@earendil-works/pi-coding-agent` and
+    `AuthInteraction` (type) from `@earendil-works/pi-ai`. Dropped
+    `AuthStorage` / `ModelRegistry`.
+  - `createModelRegistryForAgentDir` → `createModelRuntimeForAgentDir(agentDir)`
+    returning `ModelRuntime.create({ authPath: <dir>/auth.json, modelsPath:
+    <dir>/models.json })`.
+  - Construction is now async: private constructor + static
+    `AuthService.create({ agentDir? | runtime? | authFlows? })`. `runtime` dep
+    replaces the old `modelRegistry` dep; no-agentDir fallback is
+    `ModelRuntime.create({})`.
+  - Public field `readonly runtime: ModelRuntime` replaces `modelRegistry`.
+  - `saveApiKey` → `runtime.login(providerId, "api_key", interaction)` where
+    `interaction` is a non-interactive `AuthInteraction` (`prompt: async () =>
+    key`, `notify: () => {}`). Verified against pi-ai `envApiKeyAuth().login`,
+    which calls `interaction.prompt({ type: "secret" })` and persists the
+    returned `{ type:"api_key", key }` through `credentials.modify` inside
+    `Models.login`. This is the credential-persistence path the assessment
+    (§5.1) called for.
+  - `logoutProvider` → `await runtime.logout(providerId)`.
+  - `refreshAuthState` → `await runtime.refresh()` (no more `authStorage.reload()`
+    — the file store is re-read by the runtime). Now async.
+  - `authProviders` and `requireOAuthLoginProvider` became async, awaiting
+    `runtime.refresh()` and the now-async `getLogin/LogoutProviderOptions`.
+  - `startOAuthLogin` passes `runtime: this.runtime` into
+    `OAuthLoginFlowService.start` (slice 3 will consume it via `runtime.login`).
+- `sessiond.ts`: `createRuntime()` is now `async`; `new AuthService(...)` →
+  `await AuthService.create({ agentDir })`; `PiSessionService` now receives
+  `modelRuntime: auth.runtime` instead of `modelRegistry: auth.modelRegistry`.
+- `sessiond/sessionDaemonStartup.ts`: `createRuntime` may now return
+  `Runtime | Promise<Runtime>` and `runSessionDaemonStartup` `await`s it. The
+  existing sync test doubles still satisfy the widened type.
+
+**Decisions:**
+- **saveApiKey via `runtime.login("api_key", …)`** rather than reaching for a
+  raw `CredentialStore.modify`: the pi-ai `CredentialStore` is not exposed off
+  `ModelRuntime` publicly, and the provider's own api-key `login` is the
+  intended persistence entry point (it writes through `credentials.modify`).
+  Feeding the key back through a non-interactive `AuthInteraction.prompt` keeps
+  us on the supported public surface. This matches assessment §5.1's
+  "credential persistence via the pi-ai CredentialStore.modify path" without
+  depending on unexported internals.
+- Kept `AuthService` construction async via a static factory (private ctor)
+  rather than an `init()` method — cleaner async boundary, single valid
+  construction path (code-quality-architecture skill).
+- Did NOT touch `authProviderOptions.ts`, `oauthLoginFlowService.ts`,
+  `piSessionService.ts`, or any test/support files — strictly slice 1 scope.
+  The async call sites I introduced (`await getLoginProviderOptions(...)`,
+  `runtime:` in `authFlows.start`, `modelRuntime:` in PiSessionService deps)
+  deliberately point at the interfaces slices 2–4 will expose.
+
+**Typecheck state:** `npx tsc --noEmit` = 31 errors (was 24 at slice 0). The
+increase is expected and honest: the migrated authService now calls
+runtime-based interfaces that slices 2/3/4 have not migrated yet. All remaining
+`authService.ts` / `sessiond.ts` errors are cross-slice (authProviderOptions
+shape → slice 2; OAuthLoginFlowService.start `runtime` param → slice 3;
+`PiSessionServiceDependencies.modelRuntime` → slice 4). Test/support files
+(slice 5) still import the removed `AuthStorage`.
+
+**Artifacts changed:** `src/server/sessions/authService.ts`,
+`src/server/sessiond.ts`, `src/server/sessiond/sessionDaemonStartup.ts`
+(commit `e37148c`); `relays/issue-62-authstorage/{status,log}.md`.
+
+**Status update:** last completed leg 2, next leg 3 = charter slice 2
+(`authProviderOptions.ts` migration).
+
+**Blockers:** none. **Sessiond restart now ACTIVE-pending** — slice 1 changed
+`sessiond.ts` and the daemon auth construction path; the human must manually
+restart the sessiond service once the migration lands (noted in status.md).
+Also: human confirmed `/tmp` is usable again, so the `TMPDIR` install
+workaround is no longer required (status.md updated).
+
+**Handoff:** spawning leg 3 (slice 2).
