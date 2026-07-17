@@ -5,7 +5,7 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type AuthPrompt, type Credential } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
-import { AuthService, type AuthChange } from "./authService.js";
+import { AuthService, type AuthChange, type AuthServiceLogger } from "./authService.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
 const tempDirs: string[] = [];
@@ -38,6 +38,54 @@ describe("AuthService", () => {
     await expect(credentials.read("anthropic")).resolves.toBeUndefined();
     expect(refresh).toHaveBeenCalledOnce();
     expect(changes).toEqual([{ removedProviderId: "anthropic" }]);
+    auth.dispose();
+  });
+
+  it("persists an API key and attempts every listener when propagation fails", async () => {
+    const error = vi.fn();
+    const logger: AuthServiceLogger = { error };
+    const { auth, credentials, changes } = await createAuthService({}, logger);
+    const failure = new Error("session auth refresh failed");
+    const attempts: string[] = [];
+    auth.subscribe(() => {
+      attempts.push("throwing");
+      throw failure;
+    });
+    auth.subscribe(async () => {
+      await Promise.resolve();
+      attempts.push("healthy");
+    });
+
+    await expect(auth.saveApiKey("anthropic", "sk-test")).resolves.toEqual({ accepted: true });
+
+    await expect(credentials.read("anthropic")).resolves.toEqual({ type: "api_key", key: "sk-test" });
+    expect(changes).toEqual([{}]);
+    expect(attempts).toEqual(["throwing", "healthy"]);
+    expect(error).toHaveBeenCalledWith(
+      { err: failure, operation: "login", providerId: "anthropic", authType: "api_key" },
+      "auth-change listener failed",
+    );
+    auth.dispose();
+  });
+
+  it("removes a credential when auth-change propagation rejects", async () => {
+    const error = vi.fn();
+    const logger: AuthServiceLogger = { error };
+    const { auth, credentials, changes } = await createAuthService(
+      { anthropic: { type: "api_key", key: "sk-test" } },
+      logger,
+    );
+    const failure = new Error("session logout refresh failed");
+    auth.subscribe(() => Promise.reject(failure));
+
+    await expect(auth.logoutProvider("anthropic")).resolves.toEqual({ accepted: true });
+
+    await expect(credentials.read("anthropic")).resolves.toBeUndefined();
+    expect(changes).toEqual([{ removedProviderId: "anthropic" }]);
+    expect(error).toHaveBeenCalledWith(
+      { err: failure, operation: "logout", providerId: "anthropic" },
+      "auth-change listener failed",
+    );
     auth.dispose();
   });
 
@@ -236,22 +284,48 @@ describe("AuthService", () => {
 
     refresh.mockClear();
     if (startOptions.onComplete === undefined) throw new Error("Expected OAuth completion callback");
-    startOptions.onComplete();
-    await vi.waitFor(() => { expect(changes).toEqual([{}]); });
+    await startOptions.onComplete();
+    expect(changes).toEqual([{}]);
 
     expect(refresh).not.toHaveBeenCalled();
     auth.dispose();
     expect(authFlows.disposed).toBe(true);
   });
+
+  it("completes OAuth when an auth-change listener rejects", async () => {
+    const error = vi.fn();
+    const logger: AuthServiceLogger = { error };
+    const { auth, runtime, changes } = await createAuthService({}, logger);
+    const provider = runtime.getProviders().find((option) => option.id === "anthropic" && option.auth.oauth !== undefined);
+    if (provider === undefined) throw new Error("Expected built-in OAuth provider");
+    vi.spyOn(runtime, "login").mockResolvedValue({
+      type: "oauth",
+      refresh: "refresh-token",
+      access: "access-token",
+      expires: Date.now() + 60_000,
+    });
+    const failure = new Error("session OAuth refresh failed");
+    auth.subscribe(() => Promise.reject(failure));
+
+    const state = await auth.startOAuthLogin(provider.id);
+    await vi.waitFor(() => { expect(auth.oauthFlow(state.flowId).status).toBe("complete"); });
+
+    expect(changes).toEqual([{}]);
+    expect(error).toHaveBeenCalledWith(
+      { err: failure, operation: "login", providerId: provider.id, authType: "oauth" },
+      "auth-change listener failed",
+    );
+    auth.dispose();
+  });
 });
 
-async function createAuthService(seed: Record<string, Credential> = {}) {
+async function createAuthService(seed: Record<string, Credential> = {}, logger?: AuthServiceLogger) {
   const credentials = new InMemoryCredentialStore();
   for (const [providerId, credential] of Object.entries(seed)) {
     await credentials.modify(providerId, () => Promise.resolve(credential));
   }
   const runtime = await ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
-  const auth = await AuthService.create({ runtime });
+  const auth = await AuthService.create({ runtime, ...(logger === undefined ? {} : { logger }) });
   const changes: AuthChange[] = [];
   auth.subscribe((change) => { changes.push(change); });
   return { auth, runtime, credentials, changes };

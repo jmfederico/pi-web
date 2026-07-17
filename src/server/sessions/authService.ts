@@ -9,13 +9,27 @@ export interface AuthChange {
   removedProviderId?: string;
 }
 
-type AuthChangeListener = (change: AuthChange) => void;
+type AuthChangeListener = (change: AuthChange) => void | Promise<void>;
 
 export interface AuthServiceDependencies {
   agentDir?: string;
   runtime?: ModelRuntime;
   authFlows?: OAuthLoginFlowService;
+  logger?: AuthServiceLogger;
 }
+
+/** Minimal structured-logging seam for non-fatal auth propagation failures. */
+export interface AuthServiceLogger {
+  error(details: Record<string, unknown>, message: string): void;
+}
+
+interface AuthChangeContext {
+  operation: "login" | "logout";
+  providerId: string;
+  authType?: AuthType;
+}
+
+const noopLogger: AuthServiceLogger = { error() { /* no-op */ } };
 
 export function createModelRuntimeForAgentDir(agentDir: string): Promise<ModelRuntime> {
   return ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
@@ -24,17 +38,19 @@ export function createModelRuntimeForAgentDir(agentDir: string): Promise<ModelRu
 export class AuthService {
   readonly runtime: ModelRuntime;
   private readonly authFlows: OAuthLoginFlowService;
+  private readonly logger: AuthServiceLogger;
   private readonly listeners = new Set<AuthChangeListener>();
 
-  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService) {
+  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService, logger: AuthServiceLogger) {
     this.runtime = runtime;
     this.authFlows = authFlows;
+    this.logger = logger;
   }
 
   static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
     const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
     const authFlows = deps.authFlows ?? new OAuthLoginFlowService();
-    return new AuthService(runtime, authFlows);
+    return new AuthService(runtime, authFlows, deps.logger ?? noopLogger);
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -74,13 +90,13 @@ export class AuthService {
       notify: () => undefined,
     };
     await this.runtime.login(providerId, "api_key", interaction);
-    this.emit({});
+    await this.emit({}, { operation: "login", providerId, authType: "api_key" });
     return { accepted: true };
   }
 
   async logoutProvider(providerId: string): Promise<{ accepted: true }> {
     await this.runtime.logout(providerId);
-    this.emit({ removedProviderId: providerId });
+    await this.emit({ removedProviderId: providerId }, { operation: "logout", providerId });
     return { accepted: true };
   }
 
@@ -90,9 +106,7 @@ export class AuthService {
       providerId,
       providerName: provider.name,
       runtime: this.runtime,
-      onComplete: () => {
-        this.emit({});
-      },
+      onComplete: () => this.emit({}, { operation: "login", providerId, authType: "oauth" }),
     });
   }
 
@@ -108,8 +122,13 @@ export class AuthService {
     return this.authFlows.cancel(flowId);
   }
 
-  private emit(change: AuthChange): void {
-    for (const listener of this.listeners) listener(change);
+  private async emit(change: AuthChange, context: AuthChangeContext): Promise<void> {
+    const results = await Promise.allSettled([...this.listeners].map(async (listener) => listener(change)));
+    for (const result of results) {
+      if (result.status === "rejected") {
+        this.logger.error({ err: result.reason, ...context }, "auth-change listener failed");
+      }
+    }
   }
 
   private async requireApiKeyLoginProvider(providerId: string) {

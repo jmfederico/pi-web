@@ -39,7 +39,7 @@ await runSessionDaemonStartup({
   async createRuntime() {
     const eventHub = new SessionEventHub();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
-    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir });
+    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, logger: app.log });
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;

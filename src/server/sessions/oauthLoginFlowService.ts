@@ -52,7 +52,7 @@ export class OAuthLoginFlowService {
     providerId: string;
     providerName: string;
     runtime: OAuthLoginRuntime;
-    onComplete?: () => void;
+    onComplete?: () => void | Promise<void>;
   }): OAuthFlowState {
     const flowId = crypto.randomUUID();
     const abort = new AbortController();
@@ -81,11 +81,12 @@ export class OAuthLoginFlowService {
     };
 
     void options.runtime.login(options.providerId, "oauth", interaction)
-      .then(() => {
+      .then(async () => {
         if (!this.isCurrentRunning(record)) return;
         this.clearPending(record);
+        await options.onComplete?.();
+        if (!this.isCurrentRunning(record)) return;
         this.markTerminal(record, { ...withoutInteraction(record.state), status: "complete", progress: [...record.state.progress, "Login complete"] });
-        options.onComplete?.();
       })
       .catch((error: unknown) => {
         if (this.flows.get(record.flowId) !== record) return;

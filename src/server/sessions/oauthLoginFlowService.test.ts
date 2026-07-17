@@ -41,6 +41,25 @@ describe("OAuthLoginFlowService", () => {
     service.dispose();
   });
 
+  it("awaits async completion propagation before marking the flow complete", async () => {
+    const completion = deferred<undefined>();
+    const service = new OAuthLoginFlowService();
+    const state = service.start({
+      providerId: "test-provider",
+      providerName: "Test Provider",
+      runtime: fakeRuntime(() => Promise.resolve()),
+      onComplete: () => completion.promise,
+    });
+
+    await flushAsyncLogin();
+    expect(service.get(state.flowId).status).toBe("running");
+
+    completion.resolve(undefined);
+    await flushAsyncLogin();
+    expect(service.get(state.flowId).status).toBe("complete");
+    service.dispose();
+  });
+
   it("allows blank text responses for providers that use blank as a default", async () => {
     let domain: string | undefined;
     const service = new OAuthLoginFlowService();
