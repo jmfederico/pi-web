@@ -6,7 +6,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { WorkspaceActivityService } from "./activity/workspaceActivityService.js";
 import { registerWorkspaceActivityRoutes } from "./activity/workspaceActivityRoutes.js";
 import { SessionEventHub } from "./realtime/sessionEventHub.js";
-import { AuthService } from "./sessions/authService.js";
+import { AuthService, createModelRuntimeForAgentDir } from "./sessions/authService.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
@@ -36,15 +36,16 @@ await app.register(fastifyWebsocket);
 
 await runSessionDaemonStartup({
   logger: app.log,
-  createRuntime() {
+  async createRuntime() {
     const eventHub = new SessionEventHub();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
-    const auth = new AuthService({ agentDir: activeAgentProfile.dir });
+    const modelRuntime = await createModelRuntimeForAgentDir(activeAgentProfile.dir);
+    const auth = new AuthService({ modelRuntime });
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
     const sessions = new PiSessionService(eventHub, {
-      modelRegistry: auth.modelRegistry,
+      modelRuntime,
       agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,
@@ -56,7 +57,7 @@ await runSessionDaemonStartup({
         sessionDirEnvKeys: activeAgentProfile.sessionDirEnvKeys,
       }),
     });
-    auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    auth.subscribe((change) => { void sessions.applyAuthChange(change); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const runtimeComponent = Object.freeze({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),

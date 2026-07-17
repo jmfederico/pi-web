@@ -1,4 +1,4 @@
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import type { PiAgentSession, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies } from "./piSessionService.js";
@@ -53,9 +53,17 @@ export const TEST_MODEL_PROVIDER = "anthropic";
 export const TEST_MODEL_ID = "claude-sonnet-4-5-20250929";
 
 export function testModel(): NonNullable<PiAgentSession["model"]> {
-  const model = ModelRegistry.inMemory(AuthStorage.inMemory()).find(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
-  if (model === undefined) throw new Error("test model not found");
-  return model;
+  return getBuiltinModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
+}
+
+function fakeModelRuntime(): PiAgentSession["modelRuntime"] {
+  const model = testModel();
+  return {
+    refresh: () => Promise.resolve(),
+    getAvailable: () => Promise.resolve([model]),
+    getModel: (provider: string, modelId: string) => provider === model.provider && modelId === model.id ? model : undefined,
+    getProviderAuthStatus: () => ({ configured: true }),
+  };
 }
 
 export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession> = {}) {
@@ -76,7 +84,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     isBashRunning: false,
     pendingMessageCount: 0,
     sessionManager: fakeSessionManager(),
-    modelRegistry: ModelRegistry.create(AuthStorage.inMemory()),
+    modelRuntime: fakeModelRuntime(),
     scopedModels: [],
     extensionRunner: { getRegisteredCommands: () => [] },
     promptTemplates: [],
