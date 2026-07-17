@@ -1,6 +1,6 @@
 ---
 name: testing-guide
-description: Repository-specific testing guide. Use for any test work: planning coverage, writing/fixing/reviewing Vitest tests, test helpers/fakes, failure triage, choosing test layers, and Lit UI tests, including TemplateResult handler extraction rules.
+description: "Repository-specific testing guide. Use for any test work: planning coverage, writing/fixing/reviewing Vitest tests, test helpers/fakes, failure triage, choosing test layers, and Lit UI tests, including TemplateResult handler extraction rules."
 ---
 
 # Testing guide

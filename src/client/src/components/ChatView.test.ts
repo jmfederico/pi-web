@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { QueuedSessionMessage, SessionStatus } from "../api";
+import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
 import type { ChatLine } from "./shared";
 import { ChatView, chatMessageMetadataLabel, chatQueuedMessageSections } from "./ChatView";
 
@@ -65,6 +65,73 @@ describe("ChatView queued-message clear action", () => {
     view.onClearServerQueue = vi.fn();
 
     expect(templateStaticMarkup(renderQueuedMessages(view))).not.toContain("Clear queue");
+  });
+});
+
+describe("ChatView session warnings banner", () => {
+  it("renders one severity-tagged row per warning with optional path and source", () => {
+    const view = new ChatView();
+    view.status = warningStatus([
+      { severity: "error", message: "skill failed to load", source: "skill", path: "/skills/a.md" },
+      { severity: "warning", message: "subscription auth is active" },
+      { severity: "info", message: "heads up", source: "runtime" },
+    ]);
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    const markup = templateStaticMarkup(rendered);
+    const values = collectStringValues(rendered);
+
+    expect(markup).toContain('class="session-warnings"');
+    expect(markup).toContain('role="alert"');
+    expect(values).toContain("skill failed to load");
+    expect(values).toContain("/skills/a.md");
+    expect(values).toContain("subscription auth is active");
+    expect(values).toContain("heads up");
+    expect(values).toContain("skill");
+    const severityClasses = values.filter((value) => value.startsWith("session-warning "));
+    expect(severityClasses).toEqual(["session-warning error", "session-warning warning", "session-warning info"]);
+  });
+
+  it("renders nothing when there are no warnings", () => {
+    const view = new ChatView();
+    view.status = warningStatus([]);
+    expect(renderWarnings(view)).toBeNull();
+  });
+
+  it("renders nothing when status is unset", () => {
+    expect(renderWarnings(new ChatView())).toBeNull();
+  });
+
+  it("renders a dismiss control only for warnings carrying a dismiss capability", () => {
+    const view = new ChatView();
+    view.status = warningStatus([
+      { severity: "error", message: "skill failed to load", source: "skill" },
+      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+    ]);
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    const markup = templateStaticMarkup(rendered);
+    // One dismiss button total: only the warning with a dismiss capability gets one.
+    expect(markup.match(/session-warning-dismiss/g)?.length).toBe(1);
+  });
+
+  // Direct handler extraction keeps this node-environment test focused on the
+  // dismiss button wiring without a component-wide DOM shim.
+  it("invokes onDismissWarning with the warning's dismiss id", () => {
+    const view = new ChatView();
+    const onDismissWarning = vi.fn();
+    view.onDismissWarning = onDismissWarning;
+    view.status = warningStatus([
+      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+    ]);
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    templateEventHandler(rendered, "session-warning-dismiss")(new Event("click"));
+
+    expect(onDismissWarning).toHaveBeenCalledExactlyOnceWith("anthropicExtraUsage");
   });
 });
 
@@ -291,6 +358,44 @@ function isTemplateResult(value: unknown): value is TemplateResult {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
+}
+
+function collectStringValues(template: TemplateResult): string[] {
+  const found: string[] = [];
+  visit(template);
+  return found;
+
+  function visit(value: unknown): void {
+    if (typeof value === "string") {
+      found.push(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item);
+      return;
+    }
+    if (!isTemplateResult(value)) return;
+    for (const child of templateValues(value)) visit(child);
+  }
+}
+
+type RenderWarnings = (this: ChatView) => TemplateResult | null;
+
+function isRenderWarnings(value: unknown): value is RenderWarnings {
+  return typeof value === "function";
+}
+
+function renderWarnings(view: ChatView): TemplateResult | null {
+  const method: unknown = Reflect.get(view, "renderWarnings");
+  if (!isRenderWarnings(method)) throw new Error("ChatView.renderWarnings is not callable");
+  return method.call(view);
+}
+
+function warningStatus(warnings: SessionWarning[]): SessionStatus {
+  return {
+    ...queuedStatus([]),
+    ...(warnings.length === 0 ? {} : { warnings }),
+  };
 }
 
 function queuedStatus(queuedMessages: QueuedSessionMessage[]): SessionStatus {

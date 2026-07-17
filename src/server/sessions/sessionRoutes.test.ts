@@ -237,6 +237,44 @@ describe("session routes", () => {
     }
   });
 
+  it("dismisses a session warning with workspace context and returns fresh status", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/warnings/dismiss", payload: { cwd: requestCwd, dismissId: "anthropicExtraUsage" } });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ sessionId: "session-1" });
+      expect(routeService.dismissWarningCalls).toEqual([{ lookup: { id: "session-1", cwd: requestCwd }, dismissId: "anthropicExtraUsage" }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("rejects a warning dismiss without a dismissId", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/warnings/dismiss", payload: {} });
+
+      expect(response.statusCode).toBe(400);
+      expect(routeService.dismissWarningCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("maps archived queue-clear failures to a mutation error without requiring a body", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -345,6 +383,8 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly calls: unknown[] = [];
   readonly reloadCalls: SessionRouteLookup[] = [];
   readonly clearQueueCalls: SessionRouteLookup[] = [];
+  readonly dismissWarningCalls: { lookup: SessionRouteLookup; dismissId: string }[] = [];
+  dismissWarningError: Error | undefined;
   messagesResponse: unknown[] | MessagePage = [];
   streamSnapshotResponse: SessionStreamSnapshot = { seq: 0, partial: null };
   readonly streamSnapshotCalls: SessionRouteLookup[] = [];
@@ -387,6 +427,21 @@ class CapturingRouteSessionService implements SessionRouteService {
 
   list(): never { throw unusedRouteMethod("list"); }
   start(): never { throw unusedRouteMethod("start"); }
+
+  dismissWarning(lookup: SessionRouteLookup, dismissId: string): Promise<SessionStatus> {
+    this.dismissWarningCalls.push({ lookup, dismissId });
+    if (this.dismissWarningError !== undefined) return Promise.reject(this.dismissWarningError);
+    return Promise.resolve({
+      sessionId: sessionIdFromLookup(lookup),
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+    });
+  }
 
   clearQueue(lookup: SessionRouteLookup): Promise<SessionStatus> {
     this.clearQueueCalls.push(lookup);

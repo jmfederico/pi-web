@@ -87,6 +87,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     isBashRunning: false,
     pendingMessageCount: 0,
     sessionManager: fakeSessionManager(),
+    settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined },
     modelRegistry: ModelRegistry.create(AuthStorage.inMemory()),
     scopedModels: [],
     extensionRunner: { getRegisteredCommands: () => [] },

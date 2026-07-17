@@ -7,7 +7,7 @@ import { writeClipboardText } from "../clipboard";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
 import { ChatScrollController, distanceFromScrollBottom, findFirstVisibleArticle, isNearScrollBottom, type ChatAnchorScrollPosition, type ChatScrollRestoreResult } from "../chatScrollPosition";
-import type { QueuedSessionMessage, SessionActivity, SessionStatus } from "../api";
+import type { QueuedSessionMessage, SessionActivity, SessionStatus, SessionWarningSeverity } from "../api";
 import type { ChatLine, ChatPart } from "./shared";
 import { chatStyles } from "./shared";
 import "./ConversationMeter";
@@ -15,6 +15,12 @@ import "./FormattedText";
 import "./ToolExecutionView";
 
 const messageTimestampFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" });
+
+function warningSeverityIcon(severity: SessionWarningSeverity): string {
+  if (severity === "error") return "⛔";
+  if (severity === "info") return "ℹ️";
+  return "⚠️";
+}
 
 function clampPercent(value: number): number {
   return clampNumber(value, 0, 100);
@@ -78,6 +84,7 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) activity?: SessionActivity;
   @property({ type: Boolean }) canClearServerQueue = false;
   @property({ attribute: false }) onClearServerQueue?: () => void;
+  @property({ attribute: false }) onDismissWarning?: (dismissId: string) => void;
   @property({ attribute: false }) onLoadMore?: () => void;
   @query(".chat") private chat?: HTMLDivElement;
   @query("dialog.image-zoom") private imageZoomDialog?: HTMLDialogElement;
@@ -208,6 +215,7 @@ export class ChatView extends LitElement {
   override render() {
     const groups = this.groupedMessages();
     return html`
+      ${this.renderWarnings()}
       <div class="chat-wrap">
         ${this.renderConversationRail()}
         <div class="chat" @scroll=${() => { this.onScroll(); }} @wheel=${(event: WheelEvent) => { this.onWheel(event); }} @touchstart=${(event: TouchEvent) => { this.onTouchStart(event); }} @touchmove=${(event: TouchEvent) => { this.onTouchMove(event); }}>
@@ -227,6 +235,39 @@ export class ChatView extends LitElement {
         ${this.renderActivityDock()}
       </div>
       ${this.renderImageZoom()}
+    `;
+  }
+
+  private renderWarnings() {
+    const warnings = this.status?.warnings ?? [];
+    if (warnings.length === 0) return null;
+    return html`
+      <aside class="session-warnings" role="alert" aria-live="polite">
+        ${warnings.map((warning) => {
+          const dismiss = warning.dismiss;
+          return html`
+          <div class=${`session-warning ${warning.severity}`}>
+            <div class="session-warning-head">
+              <span class="session-warning-icon" aria-hidden="true">${warningSeverityIcon(warning.severity)}</span>
+              ${warning.source === undefined ? null : html`<span class="session-warning-source">${warning.source}</span>`}
+            </div>
+            <div class="session-warning-body">
+              <p class="session-warning-message">${warning.message}</p>
+              ${warning.path === undefined ? null : html`<p class="session-warning-path">${warning.path}</p>`}
+            </div>
+            ${dismiss === undefined ? null : html`
+              <button
+                type="button"
+                class="session-warning-dismiss"
+                title="Don't show this warning again"
+                aria-label="Dismiss warning"
+                @click=${() => { this.onDismissWarning?.(dismiss.id); }}
+              >×</button>
+            `}
+          </div>
+        `;
+        })}
+      </aside>
     `;
   }
 

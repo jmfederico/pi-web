@@ -37,6 +37,7 @@ export interface SessionRouteService {
   status(ref: SessionRouteLookup): Promise<ClientSessionStatus>;
   streamSnapshot(ref: SessionRouteLookup): Promise<SessionStreamSnapshot>;
   clearQueue(ref: SessionRouteLookup): Promise<ClientSessionStatus>;
+  dismissWarning(ref: SessionRouteLookup, dismissId: string): Promise<ClientSessionStatus>;
   availableModels(ref: SessionRouteLookup): Promise<ClientSessionModel[]>;
   setModel(ref: SessionRouteLookup, provider: string, modelId: string): Promise<ClientSessionStatus>;
   cycleModel(ref: SessionRouteLookup, direction: "forward" | "backward"): Promise<ClientSessionStatus>;

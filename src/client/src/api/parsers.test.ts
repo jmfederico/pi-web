@@ -268,6 +268,59 @@ describe("API parsers", () => {
     });
   });
 
+  it("parses live session warnings including optional source and path", () => {
+    const parsed = parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+      warnings: [
+        { severity: "error", message: "bad skill", source: "skill", path: "/skills/a.md" },
+        { severity: "warning", message: "subscription active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+        { severity: "info", message: "heads up", source: "runtime" },
+      ],
+    });
+
+    expect(parsed.warnings).toEqual([
+      { severity: "error", message: "bad skill", source: "skill", path: "/skills/a.md" },
+      { severity: "warning", message: "subscription active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+      { severity: "info", message: "heads up", source: "runtime" },
+    ]);
+  });
+
+  it("omits warnings entirely when the field is absent", () => {
+    const parsed = parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+    });
+
+    expect(parsed.warnings).toBeUndefined();
+  });
+
+  it("rejects a warning with an invalid severity", () => {
+    expect(() => parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+      warnings: [{ severity: "fatal", message: "nope" }],
+    })).toThrow("Invalid session warning severity");
+  });
+
   it("parses workspace effective upload config when present", () => {
     expect(parseWorkspace({
       id: "w1",

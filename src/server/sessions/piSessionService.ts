@@ -11,8 +11,11 @@ import {
   defineTool,
   ModelRegistry,
   SessionManager,
+  type AgentSessionRuntimeDiagnostic,
+  type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type EditToolDetails,
+  type ResourceDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionStatus, ClientThinkingLevel, SessionStreamSnapshot, SessionUiEvent } from "../types.js";
 import { projectBrowserMessage } from "../browserMessageProjection.js";
@@ -28,7 +31,7 @@ import { deterministicSessionName, fallbackSessionName, generateShortSessionName
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 import { parsePromptAttachments } from "../../shared/promptAttachments.js";
-import type { SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionBulkMutationRef } from "../../shared/apiTypes.js";
+import type { SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionBulkMutationRef, SessionWarning } from "../../shared/apiTypes.js";
 import type { SessionRouteLookup, SessionRouteRef, SessionRouteService } from "./sessionService.js";
 
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
@@ -206,6 +209,16 @@ interface PiExtensionBindings {
 
 export interface PiAgentSession {
   modelRegistry: ModelRegistryInstance;
+  /**
+   * Narrow read/write of the SDK `SettingsManager`, exposing only the warning
+   * suppression flags consumed here (e.g. `anthropicExtraUsage`). Used to gate
+   * the Anthropic subscription-auth billing warning the same way the TUI does,
+   * and to durably suppress it when the user dismisses the warning.
+   */
+  settingsManager: {
+    getWarnings(): { anthropicExtraUsage?: boolean };
+    setWarnings(warnings: { anthropicExtraUsage?: boolean }): void;
+  };
   sessionManager: PiSessionManager;
   scopedModels: readonly { model: AgentModel; thinkingLevel?: ClientThinkingLevel }[];
   sessionId: string;
@@ -263,6 +276,15 @@ export interface PiAgentSession {
 export interface PiSessionRuntime {
   readonly cwd: string;
   readonly session: PiAgentSession;
+  /**
+   * Live, runtime-scoped diagnostics/services used to compute session warnings.
+   *
+   * These mirror the SDK runtime and are recomputed whenever the runtime is
+   * (re)built. `undefined` on lightweight/test runtimes that do not carry SDK
+   * services; callers must treat missing sources as "no warnings".
+   */
+  readonly diagnostics?: readonly AgentSessionRuntimeDiagnostic[];
+  readonly services?: AgentSessionServices;
   setRebindSession(rebindSession?: (session: PiAgentSession) => Promise<void>): void;
   fork(entryId: string, options?: { position?: "before" | "at" }): Promise<{ cancelled: boolean; selectedText?: string }>;
   dispose(): Promise<void>;
@@ -271,6 +293,131 @@ export interface PiSessionRuntime {
 interface PendingSessionOpen {
   sessionId: string;
   promise: Promise<ActiveSession<PiSessionRuntime>>;
+}
+
+function resourceDiagnosticToWarning(diagnostic: ResourceDiagnostic, source: string): SessionWarning {
+  return {
+    severity: diagnostic.type === "error" ? "error" : "warning",
+    message: diagnostic.message,
+    source,
+    ...(diagnostic.path === undefined ? {} : { path: diagnostic.path }),
+  };
+}
+
+function runtimeDiagnosticToWarning(diagnostic: AgentSessionRuntimeDiagnostic): SessionWarning {
+  return { severity: diagnostic.type, message: diagnostic.message, source: "runtime" };
+}
+
+/**
+ * Minimal structural view of a runtime's warning sources: the runtime setup
+ * diagnostics plus the resource loader's per-collection diagnostics and
+ * extension load errors. Narrowed to just what {@link collectRuntimeWarnings}
+ * reads so the real SDK runtime and lightweight test doubles both satisfy it.
+ */
+export interface RuntimeWarningSources {
+  readonly diagnostics?: readonly AgentSessionRuntimeDiagnostic[];
+  readonly services?: {
+    resourceLoader: {
+      getSkills(): { diagnostics: readonly ResourceDiagnostic[] };
+      getPrompts(): { diagnostics: readonly ResourceDiagnostic[] };
+      getThemes(): { diagnostics: readonly ResourceDiagnostic[] };
+      getExtensions(): { errors: readonly { path: string; error: string }[] };
+    };
+  };
+}
+
+/**
+ * Compute the live warnings for a runtime by re-reading its current resource
+ * loader diagnostics, extension load errors, and runtime setup diagnostics.
+ *
+ * This mimics the TUI recomputing warnings on every (re)bind: it reads the
+ * runtime's current state rather than a cached snapshot, so a rebuilt runtime
+ * yields fresh warnings. Runtimes without SDK services (e.g. test fakes)
+ * contribute no warnings.
+ */
+export function collectRuntimeWarnings(runtime: RuntimeWarningSources): SessionWarning[] {
+  const warnings: SessionWarning[] = [];
+  for (const diagnostic of runtime.diagnostics ?? []) warnings.push(runtimeDiagnosticToWarning(diagnostic));
+  const resourceLoader = runtime.services?.resourceLoader;
+  if (resourceLoader !== undefined) {
+    for (const diagnostic of resourceLoader.getSkills().diagnostics) warnings.push(resourceDiagnosticToWarning(diagnostic, "skill"));
+    for (const diagnostic of resourceLoader.getPrompts().diagnostics) warnings.push(resourceDiagnosticToWarning(diagnostic, "prompt"));
+    for (const diagnostic of resourceLoader.getThemes().diagnostics) warnings.push(resourceDiagnosticToWarning(diagnostic, "theme"));
+    for (const error of resourceLoader.getExtensions().errors) {
+      warnings.push({ severity: "error", message: `${error.path}: ${error.error}`, source: "extension", path: error.path });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Verbatim TUI wording for the Anthropic subscription-auth billing notice. Kept
+ * character-for-character in sync with `ANTHROPIC_SUBSCRIPTION_AUTH_WARNING` in
+ * the SDK's interactive mode so the browser shows the same message the TUI does.
+ */
+const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
+  "Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
+
+/** Mirror of the SDK TUI `isAnthropicSubscriptionAuthKey` (subscription API keys start with `sk-ant-oat`). */
+function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
+  return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
+}
+
+/**
+ * Dismiss id for the Anthropic subscription-auth billing notice. This is `pi`'s
+ * own `WarningSettings` key verbatim (`anthropicExtraUsage`): we carry the
+ * coupling `pi` already defines rather than inventing a parallel vocabulary, and
+ * {@link dismissSessionWarning} maps it back to `setWarnings`.
+ */
+const ANTHROPIC_EXTRA_USAGE_DISMISS_ID = "anthropicExtraUsage";
+
+/**
+ * Port of the TUI `maybeWarnAboutAnthropicSubscriptionAuth` gate/trigger, computed
+ * live from the session's current model, stored Anthropic credential, and warning
+ * settings. Returns the billing warning when the active provider is `anthropic`
+ * and auth is a subscription credential (stored `oauth`, or an `sk-ant-oat` API
+ * key), unless suppressed via `getWarnings().anthropicExtraUsage === false`.
+ *
+ * The stored credential is read synchronously (matching the TUI's `oauth` branch
+ * and the documented `sk-ant-oat` key trigger) so warnings stay part of the
+ * synchronous live status computation.
+ */
+export function anthropicSubscriptionWarning(
+  session: Pick<PiAgentSession, "model" | "modelRegistry" | "settingsManager">,
+): SessionWarning | undefined {
+  if (session.settingsManager.getWarnings().anthropicExtraUsage === false) return undefined;
+  if (session.model?.provider !== "anthropic") return undefined;
+  const credential = session.modelRegistry.authStorage.get("anthropic");
+  if (credential === undefined) return undefined;
+  const isSubscriptionAuth = credential.type === "oauth"
+    ? true
+    : isAnthropicSubscriptionAuthKey(credential.key);
+  if (!isSubscriptionAuth) return undefined;
+  return {
+    severity: "warning",
+    message: ANTHROPIC_SUBSCRIPTION_AUTH_WARNING,
+    source: "anthropic",
+    dismiss: { id: ANTHROPIC_EXTRA_USAGE_DISMISS_ID },
+  };
+}
+
+/**
+ * Durably suppress a dismissable session warning by mapping its opaque dismiss
+ * id back to the concrete `pi` suppression it represents. Only known ids are
+ * honored; unknown ids throw so a stale/forged client cannot silently no-op.
+ *
+ * This is the single place provider-specific suppression lives: the wire type,
+ * parser, and UI stay agnostic. Adding a future dismissable warning is a
+ * server-only change here plus a `dismiss` id on its producer.
+ */
+export function dismissSessionWarning(
+  session: Pick<PiAgentSession, "settingsManager">,
+  dismissId: string,
+): void {
+  if (dismissId !== ANTHROPIC_EXTRA_USAGE_DISMISS_ID) {
+    throw new Error(`Unknown session warning dismiss id: ${dismissId}`);
+  }
+  session.settingsManager.setWarnings({ ...session.settingsManager.getWarnings(), anthropicExtraUsage: false });
 }
 
 interface CreateAgentRuntimeOptions {
@@ -1399,6 +1546,13 @@ export class PiSessionService implements SessionRouteService {
     return this.statusFromSession(session);
   }
 
+  async dismissWarning(ref: PiSessionLookup, dismissId: string): Promise<ClientSessionStatus> {
+    const session = await this.getOrOpen(ref);
+    dismissSessionWarning(session, dismissId);
+    this.publishStatus(session);
+    return this.statusFromSession(session);
+  }
+
   async abort(ref: PiSessionLookup): Promise<void> {
     const active = this.activeForLookup(ref);
     if (active === undefined) return;
@@ -2000,6 +2154,7 @@ export class PiSessionService implements SessionRouteService {
     const stats = session.getSessionStats();
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
+    const warnings = this.warningsForSession(session);
     return {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
@@ -2014,7 +2169,22 @@ export class PiSessionService implements SessionRouteService {
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(warnings.length === 0 ? {} : { warnings }),
     };
+  }
+
+  /**
+   * Compute the live warning set for a session: runtime/resource diagnostics from
+   * the active runtime (if any) plus the Anthropic subscription-auth notice. Read
+   * fresh on each status publish so a rebuilt runtime or an auth/model change is
+   * reflected without caching a stale snapshot.
+   */
+  private warningsForSession(session: PiAgentSession): SessionWarning[] {
+    const runtime = this.active.get(session.sessionId)?.runtime;
+    const warnings = runtime === undefined ? [] : collectRuntimeWarnings(runtime);
+    const anthropic = anthropicSubscriptionWarning(session);
+    if (anthropic !== undefined) warnings.push(anthropic);
+    return warnings;
   }
 
   private pendingMessageCount(session: PiAgentSession): number {

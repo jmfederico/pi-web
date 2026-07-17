@@ -399,6 +399,30 @@ export interface ThinkingLevelsResponse {
   levels: string[];
 }
 
+export type SessionWarningSeverity = "info" | "warning" | "error";
+
+/**
+ * A live, runtime-scoped warning surfaced to the browser (skill/resource
+ * diagnostics, extension load errors, subscription-auth billing notice, etc.).
+ *
+ * Warnings are recomputed whenever the runtime is (re)built inside sessiond and
+ * are not persisted chat messages. `source` is an optional short origin label
+ * (e.g. `"skill"`, `"extension"`, `"anthropic"`); `path` carries a related file
+ * path when the warning came from a resource diagnostic.
+ *
+ * `dismiss` is present only when the warning has a durable, first-class
+ * off-switch in the underlying `pi` agent (not a UI-only hide). Its `id` is the
+ * opaque token the server maps back to that suppression; the client renders a
+ * dismiss control for any warning carrying it, without knowing what it means.
+ */
+export interface SessionWarning {
+  severity: SessionWarningSeverity;
+  message: string;
+  source?: string;
+  path?: string;
+  dismiss?: { id: string };
+}
+
 export interface SessionStatus {
   sessionId: string;
   /** True when the server has verified a backing session file exists; false when known transient. */
@@ -414,6 +438,13 @@ export interface SessionStatus {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   cost: number;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  /**
+   * Live, runtime-scoped warnings for this session (skill/resource diagnostics,
+   * extension load errors, Anthropic subscription-auth billing notice, etc.).
+   * Recomputed on each status read from the current runtime; absent/empty when
+   * there are none. See {@link SessionWarning}.
+   */
+  warnings?: SessionWarning[];
 }
 
 export interface WorkspaceActivity {

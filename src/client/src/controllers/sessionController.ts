@@ -741,6 +741,20 @@ export class SessionController {
     }
   }
 
+  async dismissWarning(dismissId: string) {
+    const state = this.getState();
+    const session = state.selectedSession;
+    if (session === undefined || isClientPendingStartSessionInfo(session)) return;
+    const machineId = selectedMachineId(state);
+    const selectionSeq = this.selectionSeq;
+    try {
+      const status = await this.api.dismissWarning(session, dismissId, machineId);
+      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(status);
+    } catch (error) {
+      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+    }
+  }
+
   async stopActiveWork() {
     const session = this.getState().selectedSession;
     if (!session) return;
