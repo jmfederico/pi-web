@@ -45,3 +45,45 @@ pending sessiond restart for later daemon-path slices.
 
 **Handoff:** Planning only — NOT auto-spawning the first implementation leg.
 Assessment + relay plan are laid out ready to be kicked off by the user.
+
+---
+
+## Leg 1 — Slice 0 Bootstrap (deps + range correction)
+
+**Did:**
+- Corrected `package.json`: three `@earendil-works/*` devDependencies
+  `^0.80.6` → `^0.80.8`; peerDependencies `>=0.80.0 <1` → `>=0.80.8 <0.81`.
+- `npm install` in the worktree. The default `/tmp`-based node-gyp build of
+  `node-pty` failed with "Disk quota exceeded" (/tmp is a 5.8G tmpfs at ~81%).
+  Re-ran with `TMPDIR="$PWD/.tmp-build" npm install`, which succeeded (618
+  packages, 0 vulnerabilities). Removed `.tmp-build` after.
+- Confirmed installed versions: all three packages resolve to **0.80.10**
+  (lockfile updated).
+- Verified the new export surface via a node ESM check: `ModelRuntime` ✓,
+  `readStoredCredential` ✓, `ModelRegistry` ✓, `AuthStorage` absent ✓, pi-ai
+  `InMemoryCredentialStore` ✓.
+- Ran `npx tsc --noEmit`: 24 errors, all in `src/server/sessions/` at the
+  expected migration sites (removed `AuthStorage`, `ModelRegistry.create/inMemory`,
+  `authStorage` on session-services options, `PiAgentSession.modelRegistry`).
+  This matches assessment §2/§3 — the new surface resolves; only Pi Web's old
+  usage is broken.
+
+**Decisions:**
+- Committed with `git commit --no-verify`: the pre-commit hook runs a
+  whole-project typecheck which cannot pass until the migration lands. Charter
+  explicitly permits non-verify-green legs. Documented this + the `TMPDIR`
+  workaround in `status.md` so future legs don't rediscover them.
+- Did not touch any `src/` migration code — kept strictly to slice 0 scope.
+
+**Artifacts changed:** `package.json`, `package-lock.json` (commit `0fa9d0e`);
+`relays/issue-62-authstorage/{status,log}.md`. `node_modules/` installed
+(gitignored, not committed).
+
+**Status update:** last completed leg 1, next leg 2 = charter slice 1
+(`authService.ts` core migration → propagate async construction to `sessiond.ts`).
+
+**Blockers:** none. Sessiond restart still pending (becomes relevant from leg 2
+onward once `sessiond.ts` changes land).
+
+**Handoff:** spawning leg 2 (slice 1).
+
