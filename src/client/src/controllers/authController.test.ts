@@ -32,10 +32,10 @@ describe("AuthController", () => {
   });
 
   it("keeps OAuth prompt input and submit state across poll refreshes for the same request", async () => {
-    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" } });
+    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" } });
     const { controller, getState } = createController(
       { authDialog: { step: "oauth", flow, inputValue: "https://callback", responding: true } },
-      { respondOAuthFlow: () => Promise.resolve(oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" }, progress: ["Still waiting"] })) },
+      { respondOAuthFlow: () => Promise.resolve(oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" }, progress: ["Still waiting"] })) },
     );
 
     await controller.respondOAuth();
@@ -44,7 +44,7 @@ describe("AuthController", () => {
   });
 
   it("resets OAuth prompt input and submit state when the request id changes", async () => {
-    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" } });
+    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" } });
     const { controller, getState } = createController(
       { authDialog: { step: "oauth", flow, inputValue: "https://callback", responding: true } },
       {
@@ -66,7 +66,7 @@ describe("AuthController", () => {
   });
 
   it("closes the OAuth dialog and refreshes selected session status when the flow completes", async () => {
-    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" } });
+    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" } });
     const session = sessionInfo("session-1");
     const refreshedStatus = sessionStatus(session.id);
     const respondCalls: { flowId: string; requestId: string; value: string; machineId: string | undefined }[] = [];
@@ -97,7 +97,7 @@ describe("AuthController", () => {
   });
 
   it("leaves the OAuth dialog ready to retry if responding fails", async () => {
-    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" } });
+    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" } });
     const { controller, getState } = createController(
       { authDialog: { step: "oauth", flow, inputValue: "https://callback", responding: true } },
       { respondOAuthFlow: () => Promise.reject(new Error("Invalid callback")) },
@@ -115,7 +115,7 @@ describe("AuthController", () => {
   });
 
   it("cancels the active OAuth flow and closes the dialog even when cancellation fails", async () => {
-    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual" } });
+    const flow = oauthFlow({ prompt: { requestId: "request-1", message: "Paste callback", kind: "manual-code" } });
     const cancelCalls: { flowId: string; machineId: string | undefined }[] = [];
     const { controller, getState } = createController(
       { authDialog: { step: "oauth", flow } },

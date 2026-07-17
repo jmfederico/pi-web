@@ -96,12 +96,17 @@ export class AuthDialog extends LitElement {
         ${flow.progress.length > 0 ? html`<ul class="progress">${flow.progress.map((line) => html`<li>${line}</li>`)}</ul>` : null}
         ${prompt !== undefined ? html`
           <label>${prompt.message}</label>
-          <input .value=${state.inputValue ?? ""} placeholder=${prompt.placeholder ?? ""} @input=${(event: Event) => { if (event.target instanceof HTMLInputElement) this.onOAuthInput?.(event.target.value); }}>
+          <input type=${oauthPromptInputType(prompt.kind)} autocomplete=${prompt.kind === "secret" ? "off" : "on"} .value=${state.inputValue ?? ""} placeholder=${prompt.placeholder ?? ""} @input=${(event: Event) => { if (event.target instanceof HTMLInputElement) this.onOAuthInput?.(event.target.value); }}>
           <div class="actions"><button @click=${() => { this.onOAuthCancel?.(); }}>Cancel</button><button class="primary" ?disabled=${state.responding === true} @click=${() => { this.onOAuthRespond?.(); }}>Submit</button></div>
         ` : null}
         ${select !== undefined ? html`
           <p>${select.message}</p>
-          <div class="inline-options">${select.options.map((option) => html`<button @click=${() => { this.onOAuthRespond?.(option.value); }}>${option.label}</button>`)}</div>
+          <div class="inline-options">${select.options.map((option) => html`
+            <button @click=${() => { this.onOAuthRespond?.(option.value); }}>
+              <span>${option.label}</span>
+              ${option.description === undefined ? null : html`<small>${option.description}</small>`}
+            </button>
+          `)}</div>
         ` : null}
         ${state.error !== undefined && state.error !== "" ? html`<div class="error-text">${state.error}</div>` : null}
         ${flow.status === "error" || flow.status === "cancelled" ? html`<div class="error-text">${flow.error ?? flow.status}</div><div class="actions"><button @click=${() => { this.cancel(); }}>Close</button></div>` : null}
@@ -158,6 +163,8 @@ export class AuthDialog extends LitElement {
     .error-text { color: var(--pi-danger); }
     .progress { margin: 0; padding-left: 18px; color: var(--pi-muted); }
     .inline-options { display: grid; gap: 8px; }
+    .inline-options button { display: grid; gap: 2px; text-align: left; }
+    .inline-options small { color: var(--pi-muted); }
     em { color: var(--pi-success); font-style: normal; font-size: 12px; }
   `];
 }
@@ -185,3 +192,7 @@ function statusLabel(provider: AuthProviderOption): string {
   }
 }
 
+
+export function oauthPromptInputType(kind: "text" | "secret" | "manual-code"): "text" | "password" {
+  return kind === "secret" ? "password" : "text";
+}

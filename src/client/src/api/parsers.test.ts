@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
+  it("preserves OAuth prompt, selection, and device-code metadata", () => {
+    expect(parseOAuthFlowState({
+      flowId: "flow-1",
+      providerId: "provider",
+      providerName: "Provider",
+      status: "running",
+      auth: {
+        url: "https://example.test/device",
+        instructions: "Enter code",
+        deviceCode: { userCode: "ABCD", intervalSeconds: 5, expiresInSeconds: 900 },
+      },
+      prompt: { requestId: "prompt-1", message: "Secret", kind: "secret", placeholder: "token" },
+      select: { requestId: "select-1", message: "Choose", options: [{ value: "work", label: "Work", description: "Company account" }] },
+      progress: [],
+    })).toMatchObject({
+      auth: { deviceCode: { userCode: "ABCD", intervalSeconds: 5, expiresInSeconds: 900 } },
+      prompt: { kind: "secret" },
+      select: { options: [{ value: "work", description: "Company account" }] },
+    });
+  });
+
   it("parses PI WEB config responses", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",

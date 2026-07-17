@@ -1,11 +1,11 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Credential, CredentialStore } from "@earendil-works/pi-ai";
+import type { AuthInteraction, AuthPrompt, Credential, CredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
-import { AuthService, createModelRuntimeForAgentDir, type AuthChange } from "./authService.js";
+import { AuthService, createModelRuntimeForAgentDir, type AuthChange, type AuthModelRuntime } from "./authService.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
 const tempDirs: string[] = [];
@@ -54,6 +54,59 @@ describe("AuthService", () => {
     auth.dispose();
   });
 
+
+  it("awaits auth-change propagation before completing API-key login", async () => {
+    const runtime = new PromptingAuthRuntime([{ type: "secret", message: "API key" }]);
+    const auth = new AuthService({ modelRuntime: runtime });
+    const propagation = deferred<undefined>();
+    auth.subscribe(() => propagation.promise);
+
+    let settled = false;
+    const saving = auth.saveApiKey("test-provider", "sk-test").finally(() => { settled = true; });
+    await flushMicrotasks();
+
+    expect(settled).toBe(false);
+    propagation.resolve(undefined);
+    await expect(saving).resolves.toEqual({ accepted: true });
+    auth.dispose();
+  });
+
+  it.each([
+    { prompt: { type: "text", message: "Account" } as const, label: "text" },
+    { prompt: { type: "manual_code", message: "Code" } as const, label: "manual-code" },
+    { prompt: { type: "select", message: "Region", options: [{ id: "us", label: "US" }] } as const, label: "select" },
+  ])("rejects a first $label prompt in the API-key endpoint", async ({ prompt }) => {
+    const runtime = new PromptingAuthRuntime([prompt]);
+    const auth = new AuthService({ modelRuntime: runtime });
+
+    await expect(auth.saveApiKey("test-provider", "sk-test")).rejects.toThrow("requires interactive setup");
+    expect(runtime.completedLogins).toBe(0);
+    auth.dispose();
+  });
+
+  it("rejects a second API-key prompt", async () => {
+    const runtime = new PromptingAuthRuntime([
+      { type: "secret", message: "API key" },
+      { type: "text", message: "Account" },
+    ]);
+    const auth = new AuthService({ modelRuntime: runtime });
+
+    await expect(auth.saveApiKey("test-provider", "sk-test")).rejects.toThrow("requires interactive setup");
+    expect(runtime.completedLogins).toBe(0);
+    auth.dispose();
+  });
+
+  it("rejects an aborted API-key prompt", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const runtime = new PromptingAuthRuntime([{ type: "secret", message: "API key", signal: abort.signal }]);
+    const auth = new AuthService({ modelRuntime: runtime });
+
+    await expect(auth.saveApiKey("test-provider", "sk-test")).rejects.toThrow("Login cancelled");
+    expect(runtime.completedLogins).toBe(0);
+    auth.dispose();
+  });
+
   it("emits an auth change after OAuth login completes", async () => {
     const modelRuntime = await ModelRuntime.create({ credentials: new MemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });
     const authFlows = new CapturingOAuthLoginFlowService();
@@ -70,7 +123,7 @@ describe("AuthService", () => {
     expect(changes).toEqual([]);
 
     if (startOptions.onComplete === undefined) throw new Error("Expected OAuth completion callback");
-    startOptions.onComplete();
+    await startOptions.onComplete();
 
     expect(changes).toEqual([{}]);
     auth.dispose();
@@ -132,4 +185,51 @@ class CapturingOAuthLoginFlowService extends OAuthLoginFlowService {
   override dispose(): void {
     this.disposed = true;
   }
+}
+
+
+class PromptingAuthRuntime implements AuthModelRuntime {
+  completedLogins = 0;
+
+  constructor(private readonly prompts: readonly AuthPrompt[]) {}
+
+  getProviders() {
+    return [{ id: "test-provider", name: "Test Provider", auth: { apiKey: { login: true }, oauth: true } }];
+  }
+
+  getProvider(providerId: string) {
+    return this.getProviders().find((provider) => provider.id === providerId);
+  }
+
+  listCredentials(): Promise<readonly { providerId: string; type: "api_key" | "oauth" }[]> {
+    return Promise.resolve([]);
+  }
+
+  getProviderAuthStatus() {
+    return { configured: false };
+  }
+
+  async login(_providerId: string, _authType: "api_key" | "oauth", interaction: AuthInteraction): Promise<void> {
+    for (const prompt of this.prompts) await interaction.prompt(prompt);
+    this.completedLogins++;
+  }
+
+  logout(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function deferred<T>() {
+  let resolveValue: (value: T | PromiseLike<T>) => void = () => undefined;
+  let rejectValue: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveValue = resolve;
+    rejectValue = reject;
+  });
+  return { promise, resolve: resolveValue, reject: rejectValue };
 }

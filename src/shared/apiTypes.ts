@@ -384,8 +384,17 @@ export interface OAuthFlowState {
   providerId: string;
   providerName: string;
   status: "running" | "complete" | "error" | "cancelled";
-  auth?: { url: string; instructions?: string };
-  prompt?: { requestId: string; message: string; placeholder?: string; allowEmpty?: boolean; kind: "prompt" | "manual" };
+  auth?: {
+    url: string;
+    instructions?: string;
+    deviceCode?: { userCode: string; intervalSeconds?: number; expiresInSeconds?: number };
+  };
+  prompt?: {
+    requestId: string;
+    message: string;
+    placeholder?: string;
+    kind: "text" | "secret" | "manual-code";
+  };
   select?: { requestId: string; message: string; options: CommandOption[] };
   progress: string[];
   error?: string;

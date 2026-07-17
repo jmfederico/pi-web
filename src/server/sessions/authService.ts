@@ -2,17 +2,22 @@ import { join } from "node:path";
 import type { AuthInteraction } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
-import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
+import { getLoginProviderOptions, getLogoutProviderOptions, type AuthProviderModelRuntime } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
 export interface AuthChange {
   removedProviderId?: string;
 }
 
-type AuthChangeListener = (change: AuthChange) => void;
+type AuthChangeListener = (change: AuthChange) => void | Promise<void>;
+
+export interface AuthModelRuntime extends AuthProviderModelRuntime {
+  login(providerId: string, authType: AuthType, interaction: AuthInteraction): Promise<unknown>;
+  logout(providerId: string): Promise<void>;
+}
 
 export interface AuthServiceDependencies {
-  modelRuntime: ModelRuntime;
+  modelRuntime: AuthModelRuntime;
   authFlows?: OAuthLoginFlowService;
 }
 
@@ -25,7 +30,7 @@ export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwor
 }
 
 export class AuthService {
-  readonly modelRuntime: ModelRuntime;
+  readonly modelRuntime: AuthModelRuntime;
   private readonly authFlows: OAuthLoginFlowService;
   private readonly listeners = new Set<AuthChangeListener>();
 
@@ -60,7 +65,7 @@ export class AuthService {
     const interaction: AuthInteraction = {
       prompt: (prompt) => {
         if (prompt.signal?.aborted === true) throw new Error("Login cancelled");
-        if (promptHandled || prompt.type === "select") {
+        if (promptHandled || prompt.type !== "secret") {
           throw new Error(`${provider.name} requires interactive setup; use Pi's /login command`);
         }
         promptHandled = true;
@@ -73,13 +78,13 @@ export class AuthService {
       },
     };
     await this.modelRuntime.login(providerId, "api_key", interaction);
-    this.emit({});
+    await this.emit({});
     return { accepted: true };
   }
 
   async logoutProvider(providerId: string): Promise<{ accepted: true }> {
     await this.modelRuntime.logout(providerId);
-    this.emit({ removedProviderId: providerId });
+    await this.emit({ removedProviderId: providerId });
     return { accepted: true };
   }
 
@@ -89,9 +94,7 @@ export class AuthService {
       providerId,
       providerName: provider.name,
       login: (interaction) => this.modelRuntime.login(providerId, "oauth", interaction),
-      onComplete: () => {
-        this.emit({});
-      },
+      onComplete: () => this.emit({}),
     });
   }
 
@@ -107,8 +110,8 @@ export class AuthService {
     return this.authFlows.cancel(flowId);
   }
 
-  private emit(change: AuthChange): void {
-    for (const listener of this.listeners) listener(change);
+  private async emit(change: AuthChange): Promise<void> {
+    await Promise.all([...this.listeners].map((listener) => Promise.resolve(listener(change))));
   }
 
   private requireLoginProvider(providerId: string, authType: AuthType) {

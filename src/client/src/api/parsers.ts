@@ -367,15 +367,30 @@ function parseOAuthFlowStatus(value: unknown): OAuthFlowState["status"] {
 function optionalOAuthAuth(value: unknown): OAuthFlowState["auth"] | undefined {
   if (value === undefined) return undefined;
   const record = requireRecord(value);
-  return { url: requireString(record, "url"), ...optionalField("instructions", optionalString(record, "instructions")) };
+  const deviceCode = optionalOAuthDeviceCode(record["deviceCode"]);
+  return {
+    url: requireString(record, "url"),
+    ...optionalField("instructions", optionalString(record, "instructions")),
+    ...optionalField("deviceCode", deviceCode),
+  };
+}
+
+function optionalOAuthDeviceCode(value: unknown): NonNullable<OAuthFlowState["auth"]>["deviceCode"] | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  return {
+    userCode: requireString(record, "userCode"),
+    ...optionalField("intervalSeconds", optionalNumber(record, "intervalSeconds")),
+    ...optionalField("expiresInSeconds", optionalNumber(record, "expiresInSeconds")),
+  };
 }
 
 function optionalOAuthPrompt(value: unknown): OAuthFlowState["prompt"] | undefined {
   if (value === undefined) return undefined;
   const record = requireRecord(value);
   const kind = requireString(record, "kind");
-  if (kind !== "prompt" && kind !== "manual") throw new Error("Invalid OAuth prompt kind");
-  return { requestId: requireString(record, "requestId"), message: requireString(record, "message"), kind, ...optionalField("placeholder", optionalString(record, "placeholder")), ...(record["allowEmpty"] === true ? { allowEmpty: true } : {}) };
+  if (kind !== "text" && kind !== "secret" && kind !== "manual-code") throw new Error("Invalid OAuth prompt kind");
+  return { requestId: requireString(record, "requestId"), message: requireString(record, "message"), kind, ...optionalField("placeholder", optionalString(record, "placeholder")) };
 }
 
 function optionalOAuthSelect(value: unknown): OAuthFlowState["select"] | undefined {

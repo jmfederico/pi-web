@@ -13,6 +13,7 @@ interface PendingOAuthRequest {
   resolve: (value: string | undefined) => void;
   reject: (error: Error) => void;
   cleanup?: () => void;
+  allowedValues?: ReadonlySet<string>;
 }
 
 interface OAuthFlowRecord {
@@ -49,7 +50,7 @@ export class OAuthLoginFlowService {
     providerId: string;
     providerName: string;
     login: LoginRunner;
-    onComplete?: () => void;
+    onComplete?: () => void | Promise<void>;
   }): OAuthFlowState {
     const flowId = crypto.randomUUID();
     const abort = new AbortController();
@@ -72,7 +73,7 @@ export class OAuthLoginFlowService {
       signal: abort.signal,
       prompt: (prompt) => {
         if (prompt.type === "select") return this.waitForSelect(record, prompt);
-        return this.waitForPrompt(record, prompt, prompt.type === "manual_code" ? "manual" : "prompt");
+        return this.waitForPrompt(record, prompt);
       },
       notify: (event) => {
         this.handleEvent(record, event);
@@ -80,11 +81,12 @@ export class OAuthLoginFlowService {
     };
 
     void options.login(interaction)
-      .then(() => {
+      .then(async () => {
         if (!this.isCurrentRunning(record)) return;
         this.clearPending(record);
+        await options.onComplete?.();
+        if (!this.isCurrentRunning(record)) return;
         this.markTerminal(record, { ...withoutInteraction(record.state), status: "complete", progress: [...record.state.progress, "Login complete"] });
-        options.onComplete?.();
       })
       .catch((error: unknown) => {
         if (this.flows.get(record.flowId) !== record) return;
@@ -109,6 +111,7 @@ export class OAuthLoginFlowService {
     const pending = record.pending;
     if (pending?.requestId !== requestId) throw new Error("OAuth login request expired");
     if (!pending.allowEmpty && value.trim() === "") throw new Error("A value is required");
+    if (pending.allowedValues !== undefined && !pending.allowedValues.has(value)) throw new Error("Invalid OAuth selection");
     record.pending = undefined;
     pending.cleanup?.();
     this.updateState(record, withoutInteraction(record.state));
@@ -145,7 +148,18 @@ export class OAuthLoginFlowService {
       return;
     }
     if (event.type === "device_code") {
-      this.updateState(record, { ...record.state, auth: { url: event.verificationUri, instructions: `Enter code: ${event.userCode}` } });
+      this.updateState(record, {
+        ...record.state,
+        auth: {
+          url: event.verificationUri,
+          instructions: `Enter code: ${event.userCode}`,
+          deviceCode: {
+            userCode: event.userCode,
+            ...(event.intervalSeconds === undefined ? {} : { intervalSeconds: event.intervalSeconds }),
+            ...(event.expiresInSeconds === undefined ? {} : { expiresInSeconds: event.expiresInSeconds }),
+          },
+        },
+      });
       return;
     }
     if (event.type === "info") {
@@ -160,7 +174,7 @@ export class OAuthLoginFlowService {
     this.updateState(record, { ...record.state, progress: [...record.state.progress, event.message] });
   }
 
-  private waitForPrompt(record: OAuthFlowRecord, prompt: ValuePrompt, kind: "prompt" | "manual"): Promise<string> {
+  private waitForPrompt(record: OAuthFlowRecord, prompt: ValuePrompt): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.isCurrentRunning(record)) {
         reject(new Error("Login cancelled"));
@@ -192,7 +206,7 @@ export class OAuthLoginFlowService {
         prompt: {
           requestId,
           message: prompt.message,
-          kind,
+          kind: prompt.type === "manual_code" ? "manual-code" : prompt.type,
           ...(prompt.placeholder === undefined ? {} : { placeholder: prompt.placeholder }),
         },
       });
@@ -212,13 +226,18 @@ export class OAuthLoginFlowService {
         this.updateState(record, withoutInteraction(record.state));
         pending?.reject(new Error("Login cancelled"));
       };
-      const options: CommandOption[] = prompt.options.map((option) => ({ value: option.id, label: option.label }));
+      const options: CommandOption[] = prompt.options.map((option) => ({
+        value: option.id,
+        label: option.label,
+        ...(option.description === undefined ? {} : { description: option.description }),
+      }));
       const pending: PendingOAuthRequest = {
         requestId,
         allowEmpty: false,
         resolve: (value) => { resolve(value ?? ""); },
         reject,
         cleanup: () => { prompt.signal?.removeEventListener("abort", onAbort); },
+        allowedValues: new Set(options.map((option) => option.value)),
       };
       record.pending = pending;
       prompt.signal?.addEventListener("abort", onAbort, { once: true });
@@ -310,7 +329,12 @@ function cloneState(state: OAuthFlowState): OAuthFlowState {
   return {
     ...state,
     progress: [...state.progress],
-    ...(state.auth === undefined ? {} : { auth: { ...state.auth } }),
+    ...(state.auth === undefined ? {} : {
+      auth: {
+        ...state.auth,
+        ...(state.auth.deviceCode === undefined ? {} : { deviceCode: { ...state.auth.deviceCode } }),
+      },
+    }),
     ...(state.prompt === undefined ? {} : { prompt: { ...state.prompt } }),
     ...(state.select === undefined ? {} : { select: { ...state.select, options: state.select.options.map((option) => ({ ...option })) } }),
   };
