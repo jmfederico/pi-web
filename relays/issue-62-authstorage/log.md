@@ -367,3 +367,31 @@ typecheck + knip + eslint + related vitest) passed — committed normally
 this leg but slices 1 + 4 touched session-daemon paths; only the human clears
 it after restarting the sessiond service. Handing off to leg 7 (slice 6:
 changeset + final verify + cleanup; the finish line — no PR).
+
+## Leg 7 (slice 6 — changeset + final verify + cleanup) — RELAY COMPLETE
+- **Added changeset** `.changeset/fix-pi-0-80-8-modelruntime-auth.md`: single
+  `patch` fragment for `@jmfederico/pi-web` describing the user-visible fix
+  (session daemon crash on Pi 0.80.8+ fixed by migrating auth to the new
+  `ModelRuntime` credential APIs; Pi Web now requires Pi `>=0.80.8`). Did NOT
+  edit `CHANGELOG.md`.
+- **Bump type decision:** chose `patch`, not `minor`. status.md floated that a
+  minor was "defensible" (narrowed Pi range), but the `changeset-changelog`
+  skill is explicit for this CalVer repo: `patch` for all non-breaking changes,
+  never `minor` (the minor slot = release month), `major` only on explicit user
+  request. The fix is non-breaking to Pi Web consumers, so `patch` is correct.
+- **Re-ran `npm run verify`:** fully GREEN — typecheck + lint + knip + 188 test
+  files, 1390 passed / 2 skipped.
+- **Goal criteria confirmed:** (1) no live `AuthStorage`/`ModelRegistry.create|
+  inMemory`/`.authStorage`/`modelRegistry` use in `src/` — only remaining match
+  is an explanatory comment in `piSessionService.testSupport.ts`; (2) auth
+  surfaces all on new APIs (slices 1–5); (3) `package.json` peerDeps for the
+  three `@earendil-works/*` = `>=0.80.8 <0.81`, devDeps = `^0.80.8` (verified);
+  (4) changeset added this leg; (5) verify green.
+- **Cleanup:** confirmed no scratch files in the repo (no `probe*.mjs`,
+  `.tmp-build/`). `ASSESSMENT-issue-62.md` intentionally kept (plan of record).
+- **No PR opened** (explicitly out of scope for this relay).
+- **STOP per charter:** goal reached, so no next leg was spawned. Surfaced to
+  the human: (a) verify green, (b) sessiond restart STILL PENDING (slices 1+4
+  touched session-daemon paths; only the human clears that note after
+  restarting the sessiond service), (c) no PR by design.
+- Committed status/log/changeset.

@@ -1,12 +1,43 @@
 # Relay status — issue-62-authstorage
 
-## Current position
+## RELAY COMPLETE — goal reached (leg 7, slice 6)
+All charter goal criteria (1–5) are met and committed on branch
+`fix/issue-62-authstorage`. **No PR was opened, by design (out of scope).**
+The relay is finished; no further leg was spawned.
+
+**Surface to the human:**
+- (a) `npm run verify` is fully GREEN (typecheck + lint + knip + 1390 tests,
+  2 skipped).
+- (b) **Sessiond restart is still PENDING** — slices 1 + 4 changed
+  session-daemon paths (`sessiond.ts`, `piSessionService.ts`). The human must
+  manually restart the sessiond service for the migration to take effect. Only
+  the human clears this note.
+- (c) No PR opened (explicitly out of scope for this relay).
+
+Leg 7 (slice 6) added the changeset, re-verified green, confirmed goal
+criteria, and confirmed no scratch files remain:
+- **`.changeset/fix-pi-0-80-8-modelruntime-auth.md`** — a single `patch`
+  fragment for `@jmfederico/pi-web` describing the user-visible fix (session
+  daemon crash with Pi 0.80.8+ fixed by migrating to the new `ModelRuntime`
+  auth APIs; Pi Web now requires Pi `>=0.80.8`). Per the `changeset-changelog`
+  skill this repo uses **patch** for all non-breaking changes (CalVer: the
+  `minor` slot is the release month, not feature size; `major` only on explicit
+  request), so `patch` was chosen over the "minor is defensible" note. Commit
+  `<this leg>`.
+- Re-ran full `npm run verify`: GREEN.
+- Double-checked `package.json`: peerDeps for the three `@earendil-works/*`
+  packages are `>=0.80.8 <0.81`, devDeps are `^0.80.8` — correct.
+- Confirmed no scratch files in the repo (no `probe*.mjs`, `.tmp-build/`,
+  etc.). `ASSESSMENT-issue-62.md` intentionally stays (plan of record).
+- Only `src` mention of the old API is an explanatory comment in
+  `piSessionService.testSupport.ts` (documents what the seam replaced) — no
+  live import/use.
+
+## Prior position (slice 5, leg 6, commit `d0cc55c`)
 Slice 5 (tests + testSupport) complete and committed (`d0cc55c`).
-**`npm run verify` is fully GREEN** — typecheck + lint + knip + 1390 tests
-pass (2 skipped). All production code and all test/support code are now off the
-removed `AuthStorage` / `ModelRegistry.create|inMemory` surface. Goal criteria
-1, 2, 5 are met; criteria 3 (dep ranges) was done in slice 0/1; only criterion
-4 (changeset) remains — that is slice 6.
+**`npm run verify` was fully GREEN** — typecheck + lint + knip + 1390 tests
+pass (2 skipped). All production code and all test/support code are off the
+removed `AuthStorage` / `ModelRegistry.create|inMemory` surface.
 
 What slice 5 changed (all under `src/server/sessions/`):
 - **`piSessionService.testSupport.ts`** (central helper): dropped
@@ -162,39 +193,12 @@ Remaining errors otherwise live in slices 2/3/4 files and all test/support
 files (slice 5).
 
 ## Leg tracking
-- **Last completed leg:** 6 (slice 5 — tests + testSupport migration).
-- **Next leg to run:** 7.
+- **Last completed leg:** 7 (slice 6 — changeset + final verify + cleanup). **FINAL LEG.**
+- **Next leg to run:** none — relay complete, no handoff spawned.
 
 ## Next task
-Run **charter slice 6 (changeset + final verify + cleanup)** as leg 7. This is
-the closing leg:
-1. Add a `.changeset/*.md` fragment for `@jmfederico/pi-web` describing the
-   user-visible fix (session daemon crash with Pi 0.80.8+ fixed by migrating
-   to the new `ModelRuntime` API; requires Pi `>=0.80.8`). Use the
-   `changeset-changelog` skill. Do **not** edit `CHANGELOG.md` directly. The
-   maintainer's call on patch vs minor — the assessment §5 suggests patch or
-   minor; a **minor** is defensible since the supported Pi range narrows
-   (`>=0.80.8 <0.81`, dropping 0.80.0–0.80.7), but follow the changeset skill
-   and keep it a single fragment.
-2. Re-run the full `npm run verify` to confirm still green.
-3. Confirm the goal criteria in `charter.md` are all met (1 no AuthStorage/
-   registry use — done; 2 auth surfaces on new APIs — done; 3 dep ranges —
-   already corrected in slice 0/1, double-check `package.json` peer/dev ranges;
-   4 changeset — this leg; 5 verify green — confirm).
-4. Cleanup: `ASSESSMENT-issue-62.md` stays (it's the plan of record).
-   `/srv/dev/pi-inspect` is outside the repo, not ours to touch. Confirm no
-   scratch files were left in the repo (e.g. no stray `probe*.mjs`,
-   `.tmp-build/`).
-5. **Do NOT open a PR** (explicitly out of scope for this relay).
-
-This is the finish line. After confirming everything, the goal is reached:
-update `status.md`/`log.md`, commit, and per the charter **stop** (the goal is
-reached) — or if you prefer, hand off a final "relay complete" confirmation
-leg. Either way, surface to the human that the **sessiond restart is still
-pending** (see Blockers) and a PR was intentionally not opened.
-
-Verification already passing as of slice 5 (leg 6): `npm run verify` green
-(typecheck + lint + knip + 1390 tests, 2 skipped).
+None — the relay goal is reached. If new work is needed (e.g. opening a PR),
+that is a separate task outside this relay's charter.
 
 ### Build/tooling note (important for every leg)
 **Update (leg 2):** the human reports `/tmp` is now fully usable again, so the
@@ -232,7 +236,7 @@ commit before handing off. Hand off with `spawn_session` **once** per the
 charter's Handover section.
 
 ## Blockers / intervention state
-None. Known constraints:
+None blocking. Relay complete. Known constraints:
 - **Sessiond restart pending (ACTIVE):** slice 1 (leg 2, commit `e37148c`)
   changed `sessiond.ts` + the session-daemon auth construction path; slice 4
   (leg 5, commit `4ccd4f8`) added `piSessionService.ts` (a session-daemon path)
