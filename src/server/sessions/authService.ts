@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AuthInteraction } from "@earendil-works/pi-ai";
 import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
@@ -9,27 +10,31 @@ export interface AuthChange {
 }
 
 type AuthChangeListener = (change: AuthChange) => void;
-type ModelRegistryInstance = ReturnType<typeof ModelRegistry.create>;
 
 export interface AuthServiceDependencies {
   agentDir?: string;
-  modelRegistry?: ModelRegistryInstance;
+  runtime?: ModelRuntime;
   authFlows?: OAuthLoginFlowService;
 }
 
-export function createModelRegistryForAgentDir(agentDir: string): ModelRegistryInstance {
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  return ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+export function createModelRuntimeForAgentDir(agentDir: string): Promise<ModelRuntime> {
+  return ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
 }
 
 export class AuthService {
-  readonly modelRegistry: ModelRegistryInstance;
+  readonly runtime: ModelRuntime;
   private readonly authFlows: OAuthLoginFlowService;
   private readonly listeners = new Set<AuthChangeListener>();
 
-  constructor(deps: AuthServiceDependencies = {}) {
-    this.modelRegistry = deps.modelRegistry ?? (deps.agentDir === undefined ? ModelRegistry.create(AuthStorage.create()) : createModelRegistryForAgentDir(deps.agentDir));
-    this.authFlows = deps.authFlows ?? new OAuthLoginFlowService();
+  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService) {
+    this.runtime = runtime;
+    this.authFlows = authFlows;
+  }
+
+  static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
+    const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
+    const authFlows = deps.authFlows ?? new OAuthLoginFlowService();
+    return new AuthService(runtime, authFlows);
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -44,33 +49,40 @@ export class AuthService {
     this.listeners.clear();
   }
 
-  authProviders(mode: "login" | "logout", authType?: AuthType): AuthProvidersResponse {
-    this.modelRegistry.refresh();
-    const providers = mode === "logout" ? getLogoutProviderOptions(this.modelRegistry) : getLoginProviderOptions(this.modelRegistry, authType);
+  async authProviders(mode: "login" | "logout", authType?: AuthType): Promise<AuthProvidersResponse> {
+    await this.runtime.refresh();
+    const providers = mode === "logout" ? await getLogoutProviderOptions(this.runtime) : await getLoginProviderOptions(this.runtime, authType);
     return { providers };
   }
 
-  saveApiKey(providerId: string, key: string): { accepted: true } {
+  async saveApiKey(providerId: string, key: string): Promise<{ accepted: true }> {
     if (key.trim() === "") throw new Error("API key is required");
-    this.modelRegistry.authStorage.set(providerId, { type: "api_key", key });
-    this.refreshAuthState();
+    // The provider's api-key login prompts for the key and persists the returned
+    // credential through the runtime's credential store; feed the key back via a
+    // non-interactive AuthInteraction.
+    const interaction: AuthInteraction = {
+      prompt: async () => key,
+      notify: () => {},
+    };
+    await this.runtime.login(providerId, "api_key", interaction);
+    await this.refreshAuthState();
     return { accepted: true };
   }
 
-  logoutProvider(providerId: string): { accepted: true } {
-    this.modelRegistry.authStorage.logout(providerId);
-    this.refreshAuthState({ removedProviderId: providerId });
+  async logoutProvider(providerId: string): Promise<{ accepted: true }> {
+    await this.runtime.logout(providerId);
+    await this.refreshAuthState({ removedProviderId: providerId });
     return { accepted: true };
   }
 
-  startOAuthLogin(providerId: string): OAuthFlowState {
-    const provider = this.requireOAuthLoginProvider(providerId);
+  async startOAuthLogin(providerId: string): Promise<OAuthFlowState> {
+    const provider = await this.requireOAuthLoginProvider(providerId);
     return this.authFlows.start({
       providerId,
       providerName: provider.name,
-      authStorage: this.modelRegistry.authStorage,
+      runtime: this.runtime,
       onComplete: () => {
-        this.refreshAuthState();
+        void this.refreshAuthState();
       },
     });
   }
@@ -87,9 +99,8 @@ export class AuthService {
     return this.authFlows.cancel(flowId);
   }
 
-  private refreshAuthState(change: AuthChange = {}): void {
-    this.modelRegistry.authStorage.reload();
-    this.modelRegistry.refresh();
+  private async refreshAuthState(change: AuthChange = {}): Promise<void> {
+    await this.runtime.refresh();
     this.emit(change);
   }
 
@@ -97,9 +108,9 @@ export class AuthService {
     for (const listener of this.listeners) listener(change);
   }
 
-  private requireOAuthLoginProvider(providerId: string) {
-    this.modelRegistry.refresh();
-    const provider = getLoginProviderOptions(this.modelRegistry, "oauth").find((option) => option.id === providerId);
+  private async requireOAuthLoginProvider(providerId: string) {
+    await this.runtime.refresh();
+    const provider = (await getLoginProviderOptions(this.runtime, "oauth")).find((option) => option.id === providerId);
     if (provider === undefined) throw new Error(`OAuth provider not found: ${providerId}`);
     return provider;
   }

@@ -36,15 +36,15 @@ await app.register(fastifyWebsocket);
 
 await runSessionDaemonStartup({
   logger: app.log,
-  createRuntime() {
+  async createRuntime() {
     const eventHub = new SessionEventHub();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
-    const auth = new AuthService({ agentDir: activeAgentProfile.dir });
+    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir });
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
     const sessions = new PiSessionService(eventHub, {
-      modelRegistry: auth.modelRegistry,
+      modelRuntime: auth.runtime,
       agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,

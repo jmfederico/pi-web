@@ -12,7 +12,7 @@ export interface SessionDaemonStartupLogger {
 
 export interface SessionDaemonStartupSteps<Runtime> {
   logger: SessionDaemonStartupLogger;
-  createRuntime(): Runtime;
+  createRuntime(): Runtime | Promise<Runtime>;
   registerRoutes(runtime: Runtime): void;
   listen(runtime: Runtime): Promise<void>;
   migrateArchive?: () => Promise<LegacySessionArchiveMigrationResult>;
@@ -36,7 +36,7 @@ export async function runSessionDaemonStartup<Runtime>(
     );
   }
 
-  const runtime = steps.createRuntime();
+  const runtime = await steps.createRuntime();
   steps.registerRoutes(runtime);
   await steps.listen(runtime);
   return runtime;
