@@ -65,53 +65,6 @@ export function isTemplateEventHandler<E extends Event = Event>(value: unknown):
 }
 
 /**
- * Concatenate only the static markup chunks of a template tree.
- *
- * Use for asserting stable structural markers (tag/attribute names, ids
- * intentionally used by the component) while locating wiring — not as a general
- * content-assertion tool.
- *
- * @public
- */
-export function templateStaticMarkup(template: TemplateResult): string {
-  const chunks: string[] = [];
-  visit(template);
-  return chunks.join("");
-
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isTemplateResult(value)) return;
-    chunks.push(...templateStrings(value));
-    for (const child of templateValues(value)) visit(child);
-  }
-}
-
-/**
- * The static markup chunks of a template tree as a flat array.
- *
- * @public
- */
-export function collectTemplateStrings(template: TemplateResult): string[] {
-  const strings: string[] = [];
-  visit(template);
-  return strings;
-
-  function visit(current: TemplateResult): void {
-    strings.push(...templateStrings(current));
-    for (const value of templateValues(current)) {
-      if (Array.isArray(value)) {
-        for (const item of value) if (isTemplateResult(item)) visit(item);
-      } else if (isTemplateResult(value)) {
-        visit(value);
-      }
-    }
-  }
-}
-
-/**
  * Flatten static markup interleaved with primitive (string/number) values into
  * a single string, in document order.
  */
@@ -123,30 +76,6 @@ export function templateText(value: unknown): string {
     return strings.map((part, index) => `${part}${index < values.length ? templateText(values[index]) : ""}`).join("");
   }
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
-
-/**
- * Collect every interpolated string value in a template tree, in order.
- *
- * @public
- */
-export function collectStringValues(template: TemplateResult): string[] {
-  const found: string[] = [];
-  visit(template);
-  return found;
-
-  function visit(value: unknown): void {
-    if (typeof value === "string") {
-      found.push(value);
-      return;
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isTemplateResult(value)) return;
-    for (const child of templateValues(value)) visit(child);
-  }
 }
 
 /**
