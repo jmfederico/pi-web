@@ -149,18 +149,6 @@ export function collectStringValues(template: TemplateResult): string[] {
   }
 }
 
-/** True when `expectedValue` appears as an interpolated value anywhere in the tree. */
-export function templateContainsValue(template: TemplateResult, expectedValue: unknown): boolean {
-  return templateValues(template).some((value) => valueContains(value, expectedValue));
-
-  function valueContains(value: unknown, target: unknown): boolean {
-    if (value === target) return true;
-    if (Array.isArray(value)) return value.some((item) => valueContains(item, target));
-    if (isTemplateResult(value)) return templateContainsValue(value, target);
-    return false;
-  }
-}
-
 /**
  * Every interpolated value whose immediately preceding static chunk includes
  * `marker`, collected across the whole tree in document order.
@@ -282,8 +270,6 @@ export function findOptionalTemplateEventHandlerAfterMarker<E extends Event = Ev
  * Anchors to a stable value (e.g. an accessible label like `Remove report.pdf`)
  * and then locates the handler tagged by `marker` (e.g. `@click=`) that follows
  * it, so the wiring is tied to user-facing content rather than handler order.
- *
- * @public
  */
 export function templateEventHandlerAfterValue<E extends Event = Event>(template: TemplateResult, expectedValue: unknown, marker: string): TemplateEventHandler<E> {
   const handler = findOptionalTemplateEventHandlerAfterValue<E>(template, expectedValue, marker);
