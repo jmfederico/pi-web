@@ -100,7 +100,7 @@ describe("production native service planning", () => {
           wants: [],
           prerequisites: [
             { id: "sessiond.command.pi-web-sessiond", kind: "command-available", command: "pi-web-sessiond" },
-            { id: "sessiond.node", kind: "node-version", command: "node", minimumMajor: 22 },
+            { id: "sessiond.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
           ],
         },
         {
@@ -111,7 +111,7 @@ describe("production native service planning", () => {
           wants: ["sessiond"],
           prerequisites: [
             { id: "web.command.pi-web-server", kind: "command-available", command: "pi-web-server" },
-            { id: "web.node", kind: "node-version", command: "node", minimumMajor: 22 },
+            { id: "web.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
           ],
         },
       ],
@@ -196,7 +196,7 @@ describe("production native service planning", () => {
         namedCommandFailure: "command not found",
       },
       prerequisites: [
-        { id: "sessiond.node", kind: "node-version", command: "node", minimumMajor: 22 },
+        { id: "sessiond.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
         { id: "sessiond.entrypoint", kind: "readable-file", path: "/package with space/sessiond's entry.js" },
       ],
     });
@@ -324,7 +324,7 @@ describe("development native service planning", () => {
           environment: { PI_WEB_CONFIG: "/tmp/config.json" },
           workingDirectory: "/checkout with space",
           prerequisites: [
-            { id: "sessiond.node", kind: "node-version", minimumMajor: 22 },
+            { id: "sessiond.node", kind: "node-version", minimumVersion: "22.19.0" },
             { id: "sessiond.command.npm", kind: "command-available", command: "npm" },
             { id: "sessiond.package-scripts", kind: "package-scripts", scripts: ["start:sessiond"] },
           ],
@@ -338,7 +338,7 @@ describe("development native service planning", () => {
           after: ["sessiond"],
           wants: ["sessiond"],
           prerequisites: [
-            { id: "uiDev.node", kind: "node-version", minimumMajor: 22 },
+            { id: "uiDev.node", kind: "node-version", minimumVersion: "22.19.0" },
             { id: "uiDev.command.npm", kind: "command-available", command: "npm" },
             { id: "uiDev.command.bash", kind: "command-available", command: "bash" },
             { id: "uiDev.package-scripts", kind: "package-scripts", scripts: ["dev:web", "dev:client"] },

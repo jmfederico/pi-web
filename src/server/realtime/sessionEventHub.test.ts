@@ -6,6 +6,7 @@ class FakeSocket extends EventEmitter implements RealtimeSocket {
   readonly OPEN = 1;
   readyState = this.OPEN;
   send = vi.fn();
+  terminate = vi.fn();
 }
 
 describe("SessionEventHub", () => {
@@ -54,6 +55,30 @@ describe("SessionEventHub", () => {
     expect(removed.send).not.toHaveBeenCalled();
   });
 
+  it("terminates a failed session socket without disrupting healthy delivery or sequence watermarks", () => {
+    const hub = new SessionEventHub();
+    const failed = new FakeSocket();
+    const healthy = new FakeSocket();
+    failed.send.mockImplementation(() => { throw new Error("socket closed"); });
+    hub.add("s1", failed);
+    hub.add("s1", healthy);
+
+    hub.publish("s1", { type: "assistant.delta", text: "hello" });
+
+    expect(failed.send).toHaveBeenCalledOnce();
+    expect(failed.terminate).toHaveBeenCalledOnce();
+    expect(healthy.send).toHaveBeenCalledWith(JSON.stringify({ type: "assistant.delta", text: "hello", seq: 1 }));
+    expect(hub.currentSeq("s1")).toBe(1);
+
+    failed.send.mockClear();
+    hub.publish("s1", { type: "assistant.delta", text: "again" });
+
+    expect(failed.send).not.toHaveBeenCalled();
+    expect(failed.terminate).toHaveBeenCalledOnce();
+    expect(healthy.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "assistant.delta", text: "again", seq: 2 }));
+    expect(hub.currentSeq("s1")).toBe(2);
+  });
+
   it("publishes global events only to global sockets", () => {
     const hub = new SessionEventHub();
     const globalSocket = new FakeSocket();
@@ -76,6 +101,29 @@ describe("SessionEventHub", () => {
 
     expect(globalSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: "status.update", status }));
     expect(sessionSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("contains termination failures while publishing unstamped global events", () => {
+    const hub = new SessionEventHub();
+    const failed = new FakeSocket();
+    const healthy = new FakeSocket();
+    failed.send.mockImplementation(() => { throw new Error("socket closed"); });
+    failed.terminate.mockImplementation(() => { throw new Error("termination failed"); });
+    hub.addGlobal(failed);
+    hub.addGlobal(healthy);
+
+    hub.publishGlobal({ type: "session.name", sessionId: "s1", name: "Renamed" });
+
+    expect(failed.send).toHaveBeenCalledOnce();
+    expect(failed.terminate).toHaveBeenCalledOnce();
+    expect(healthy.send).toHaveBeenCalledWith(JSON.stringify({ type: "session.name", sessionId: "s1", name: "Renamed" }));
+
+    failed.send.mockClear();
+    hub.publishGlobal({ type: "session.name", sessionId: "s1", name: "Renamed again" });
+
+    expect(failed.send).not.toHaveBeenCalled();
+    expect(failed.terminate).toHaveBeenCalledOnce();
+    expect(healthy.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "session.name", sessionId: "s1", name: "Renamed again" }));
   });
 
   it("stamps a monotonically increasing per-session seq on published events", () => {

@@ -15,6 +15,7 @@ import {
   type NativeServiceInstallFailure,
 } from "./nativeServices/serviceInstall.js";
 import {
+  minimumSupportedNodeVersion,
   nativeServiceManagerRefs,
   productionNativeServiceIds,
   type NativeServiceBackend,
@@ -772,11 +773,14 @@ export function commandWithVersionCheck(command: string): string {
   return `${found} && (${commandWord} --version 2>&1 || true)`;
 }
 
-function nodeVersionCheck(): string {
-  return [
-    commandCheck("node"),
-    "node -e \"const major = Number(process.versions.node.split('.')[0]); console.log(process.version); process.exit(major >= 22 ? 0 : 1);\"",
-  ].join(" && ");
+export function nodeVersionCheck(): string {
+  return nativeServicePrerequisiteShellCheck(detectServiceShell().name, {
+    id: "caller.node",
+    kind: "node-version",
+    command: "node",
+    minimumVersion: minimumSupportedNodeVersion,
+    description: `node >= ${minimumSupportedNodeVersion}`,
+  });
 }
 
 export function agentCommandForChecks(env: NodeJS.ProcessEnv = process.env): string {
@@ -787,7 +791,7 @@ function generalDoctorChecks(): Check[] {
   const shell = serviceShellLabel();
   const agentCommand = agentCommandForChecks();
   return [
-    [`Caller login ${shell} can find node >= 22`, serviceShellCommand(nodeVersionCheck())],
+    [`Caller login ${shell} can find node >= ${minimumSupportedNodeVersion}`, serviceShellCommand(nodeVersionCheck())],
     [`Caller login ${shell} can find npm`, serviceShellCommand(commandWithVersionCheck("npm"))],
     [`Caller login ${shell} can find ${agentCommand}`, serviceShellCommand(commandWithVersionCheck(agentCommand))],
   ];

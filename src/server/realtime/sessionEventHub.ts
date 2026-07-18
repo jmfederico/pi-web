@@ -5,6 +5,7 @@ export interface RealtimeSocket {
   readonly OPEN: number;
   readyState: number;
   send(payload: string): void;
+  terminate(): void;
   on(event: "close", listener: () => void): unknown;
 }
 
@@ -34,9 +35,7 @@ export class SessionEventHub {
     const seq = (this.seqBySession.get(sessionId) ?? 0) + 1;
     this.seqBySession.set(sessionId, seq);
     const payload = JSON.stringify({ ...projectBrowserSessionEvent(event), seq });
-    for (const socket of this.socketsBySession.get(sessionId) ?? []) {
-      if (socket.readyState === socket.OPEN) socket.send(payload);
-    }
+    this.sendToSockets(this.socketsBySession.get(sessionId), payload);
   }
 
   /**
@@ -55,8 +54,23 @@ export class SessionEventHub {
 
   publishRealtime(event: RealtimeEvent): void {
     const payload = JSON.stringify(event);
-    for (const socket of this.globalSockets) {
-      if (socket.readyState === socket.OPEN) socket.send(payload);
+    this.sendToSockets(this.globalSockets, payload);
+  }
+
+  private sendToSockets(sockets: Set<RealtimeSocket> | undefined, payload: string): void {
+    if (sockets === undefined) return;
+    for (const socket of sockets) {
+      if (socket.readyState !== socket.OPEN) continue;
+      try {
+        socket.send(payload);
+      } catch {
+        sockets.delete(socket);
+        try {
+          socket.terminate();
+        } catch {
+          // Removal is authoritative; cleanup failure must not block healthy sockets.
+        }
+      }
     }
   }
 }

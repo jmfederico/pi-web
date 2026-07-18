@@ -373,6 +373,8 @@ export interface AuthProviderOption {
   name: string;
   authType: AuthType;
   status: AuthProviderStatus;
+  /** Additive hint: use the generic AuthInteraction transport instead of the legacy one-secret form. */
+  loginFlow?: "interactive";
 }
 
 export interface AuthProvidersResponse {
@@ -384,10 +386,23 @@ export interface OAuthFlowState {
   providerId: string;
   providerName: string;
   status: "running" | "complete" | "error" | "cancelled";
-  auth?: { url: string; instructions?: string };
-  prompt?: { requestId: string; message: string; placeholder?: string; allowEmpty?: boolean; kind: "prompt" | "manual" };
+  auth?: {
+    url: string;
+    instructions?: string;
+    deviceCode?: { userCode: string; intervalSeconds?: number; expiresInSeconds?: number };
+  };
+  prompt?: {
+    requestId: string;
+    message: string;
+    placeholder?: string;
+    allowEmpty?: boolean;
+    /** Additive semantic detail; legacy peers continue to use `kind`. */
+    promptType?: "text" | "secret" | "manual_code";
+    kind: "prompt" | "manual";
+  };
   select?: { requestId: string; message: string; options: CommandOption[] };
   progress: string[];
+  info?: { message: string; links?: { url: string; label?: string }[] }[];
   error?: string;
 }
 

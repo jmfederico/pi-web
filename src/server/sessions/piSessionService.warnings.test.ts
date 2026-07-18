@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { AuthStorage, ModelRegistry, type AgentSessionRuntimeDiagnostic, type ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { type AgentSessionRuntimeDiagnostic, type ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
 import { anthropicSubscriptionWarning, collectRuntimeWarnings, dismissSessionWarning, type RuntimeWarningSources } from "./piSessionService.js";
+import { testModel } from "./piSessionService.testSupport.js";
 import type { PiAgentSession } from "./piSessionService.js";
 import type { SessionWarning } from "../../shared/apiTypes.js";
 
@@ -83,47 +87,55 @@ describe("collectRuntimeWarnings", () => {
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
   "Anthropic subscription auth is active. Third-party harness usage draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
 
-type SubscriptionSession = Pick<PiAgentSession, "model" | "modelRegistry" | "settingsManager">;
+type SubscriptionSession = Pick<PiAgentSession, "model" | "settingsManager">;
 
 function anthropicModel(provider: string): PiAgentSession["model"] {
-  const registry = ModelRegistry.inMemory(AuthStorage.inMemory());
-  const model = registry.getAll().find((candidate) => candidate.provider === provider) ?? registry.getAll()[0];
-  if (model === undefined) throw new Error("expected at least one built-in model");
-  return { ...model, provider };
+  // anthropicSubscriptionWarning only reads `model.provider`, so any built-in
+  // model re-tagged with the desired provider is a sufficient fixture.
+  return { ...testModel(), provider };
 }
 
 function subscriptionSession(options: {
   provider?: string;
   anthropicExtraUsage?: boolean;
-  credential?: AuthStorage;
 }): SubscriptionSession {
-  const authStorage = options.credential ?? AuthStorage.inMemory();
   return {
     model: options.provider === undefined ? undefined : anthropicModel(options.provider),
     settingsManager: {
       getWarnings: () => (options.anthropicExtraUsage === undefined ? {} : { anthropicExtraUsage: options.anthropicExtraUsage }),
       setWarnings: () => undefined,
     },
-    modelRegistry: ModelRegistry.create(authStorage),
   };
 }
 
-function anthropicAuth(credential: { type: "oauth" } | { type: "api_key"; key: string }): AuthStorage {
-  const authStorage = AuthStorage.inMemory();
-  if (credential.type === "oauth") {
-    authStorage.set("anthropic", { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 });
-  } else {
-    authStorage.set("anthropic", { type: "api_key", key: credential.key });
-  }
-  return authStorage;
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+/**
+ * Write an `auth.json` holding a single anthropic credential and return its
+ * path. `anthropicSubscriptionWarning` reads it via `readStoredCredential`, so
+ * the credential seam is the on-disk auth file rather than an in-memory store.
+ */
+async function anthropicAuthPath(credential: { type: "oauth" } | { type: "api_key"; key: string }): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "pi-web-warnings-"));
+  tempDirs.push(dir);
+  const authPath = join(dir, "auth.json");
+  const stored = credential.type === "oauth"
+    ? { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000 }
+    : { type: "api_key", key: credential.key };
+  await writeFile(authPath, JSON.stringify({ anthropic: stored }));
+  return authPath;
 }
 
 describe("anthropicSubscriptionWarning", () => {
-  it("warns with the verbatim SDK wording for a stored oauth credential", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({
-      provider: "anthropic",
-      credential: anthropicAuth({ type: "oauth" }),
-    }))).toEqual({
+  it("warns with the verbatim SDK wording for a stored oauth credential", async () => {
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "anthropic" }),
+      await anthropicAuthPath({ type: "oauth" }),
+    )).toEqual({
       severity: "warning",
       message: ANTHROPIC_SUBSCRIPTION_AUTH_WARNING,
       source: "anthropic",
@@ -131,37 +143,41 @@ describe("anthropicSubscriptionWarning", () => {
     } satisfies SessionWarning);
   });
 
-  it("warns for an sk-ant-oat subscription API key", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({
-      provider: "anthropic",
-      credential: anthropicAuth({ type: "api_key", key: "sk-ant-oat-abc123" }),
-    }))?.message).toBe(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
+  it("warns for an sk-ant-oat subscription API key", async () => {
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "anthropic" }),
+      await anthropicAuthPath({ type: "api_key", key: "sk-ant-oat-abc123" }),
+    )?.message).toBe(ANTHROPIC_SUBSCRIPTION_AUTH_WARNING);
   });
 
-  it("does not warn for a standard anthropic API key", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({
-      provider: "anthropic",
-      credential: anthropicAuth({ type: "api_key", key: "sk-ant-api-abc123" }),
-    }))).toBeUndefined();
+  it("does not warn for a standard anthropic API key", async () => {
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "anthropic" }),
+      await anthropicAuthPath({ type: "api_key", key: "sk-ant-api-abc123" }),
+    )).toBeUndefined();
   });
 
-  it("respects the anthropicExtraUsage suppression gate", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({
-      provider: "anthropic",
-      anthropicExtraUsage: false,
-      credential: anthropicAuth({ type: "oauth" }),
-    }))).toBeUndefined();
+  it("respects the anthropicExtraUsage suppression gate", async () => {
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "anthropic", anthropicExtraUsage: false }),
+      await anthropicAuthPath({ type: "oauth" }),
+    )).toBeUndefined();
   });
 
-  it("does not warn when the active provider is not anthropic", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({
-      provider: "openai",
-      credential: anthropicAuth({ type: "oauth" }),
-    }))).toBeUndefined();
+  it("does not warn when the active provider is not anthropic", async () => {
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "openai" }),
+      await anthropicAuthPath({ type: "oauth" }),
+    )).toBeUndefined();
   });
 
-  it("does not warn when no anthropic credential is stored", () => {
-    expect(anthropicSubscriptionWarning(subscriptionSession({ provider: "anthropic" }))).toBeUndefined();
+  it("does not warn when no anthropic credential is stored", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-warnings-"));
+    tempDirs.push(dir);
+    expect(anthropicSubscriptionWarning(
+      subscriptionSession({ provider: "anthropic" }),
+      join(dir, "auth.json"),
+    )).toBeUndefined();
   });
 });
 

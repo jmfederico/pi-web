@@ -1,8 +1,59 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
+  it("preserves additive interactive API-key flow hints and defaults legacy options", () => {
+    const base = { id: "openai", name: "OpenAI", authType: "api_key", status: { configured: false } };
+
+    expect(parseAuthProvidersResponse({ providers: [{ ...base, loginFlow: "interactive" }, base] }).providers).toEqual([
+      { ...base, loginFlow: "interactive" },
+      base,
+    ]);
+  });
+
+  it("preserves additive OAuth interaction semantics", () => {
+    expect(parseOAuthFlowState({
+      flowId: "flow-1",
+      providerId: "provider",
+      providerName: "Provider",
+      status: "running",
+      auth: {
+        url: "https://example.test/device",
+        instructions: "Enter code",
+        deviceCode: { userCode: "ABCD", intervalSeconds: 5, expiresInSeconds: 900 },
+      },
+      prompt: { requestId: "prompt-1", message: "Secret", kind: "prompt", promptType: "secret", allowEmpty: false, placeholder: "token" },
+      select: { requestId: "select-1", message: "Choose", options: [{ value: "work", label: "Work", description: "Company account" }] },
+      progress: ["Read the guide"],
+      info: [{ message: "Read the guide", links: [{ url: "https://example.test/docs", label: "Guide" }] }],
+    })).toMatchObject({
+      auth: { deviceCode: { userCode: "ABCD", intervalSeconds: 5, expiresInSeconds: 900 } },
+      prompt: { kind: "prompt", promptType: "secret", allowEmpty: false },
+      select: { options: [{ value: "work", description: "Company account" }] },
+      info: [{ links: [{ url: "https://example.test/docs", label: "Guide" }] }],
+    });
+  });
+
+  it("defaults semantic prompt types from legacy OAuth wire kinds", () => {
+    const flow = {
+      flowId: "flow-1",
+      providerId: "provider",
+      providerName: "Provider",
+      status: "running",
+      progress: [],
+    };
+
+    expect(parseOAuthFlowState({ ...flow, prompt: { requestId: "text", message: "Value", kind: "prompt" } }).prompt).toMatchObject({
+      kind: "prompt",
+      promptType: "text",
+    });
+    expect(parseOAuthFlowState({ ...flow, prompt: { requestId: "manual", message: "Code", kind: "manual" } }).prompt).toMatchObject({
+      kind: "manual",
+      promptType: "manual_code",
+    });
+  });
+
   it("parses PI WEB config responses", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",

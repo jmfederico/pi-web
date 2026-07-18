@@ -157,7 +157,7 @@
             <article id="doctor-fails" class="faq-item">
               <h2>What does <code>pi-web doctor</code> check?</h2>
               <p>
-                It keeps two kinds of checks separate. General login-shell readiness covers Node 22+, npm, Pi, and optional
+                It keeps two kinds of checks separate. General login-shell readiness covers Node 22.19.0 or newer, npm, Pi, and optional
                 ripgrep. Native-service diagnostics validate only the exact prerequisites of the selected service plan in
                 the real systemd user-manager or launchd <code>gui/&lt;uid&gt;</code> context. Development installs follow their
                 installed checkout plan; production checks are clearly labelled prospective when the installed executable
@@ -181,7 +181,7 @@
               <ul>
                 <li>Prefer version-manager shims when available; for <code>mise</code>, use shims or enable its shim setup rather than relying only on shell activation.</li>
                 <li>Move any required version-manager initialization to your login shell file.</li>
-                <li>Make sure <code>node --version</code> is at least <code>v22</code> from <code>bash -lc</code>, <code>zsh -lc</code>, or your detected shell.</li>
+                <li>Make sure <code>node --version</code> is at least <code>v22.19.0</code> from <code>bash -lc</code>, <code>zsh -lc</code>, or your detected shell.</li>
                 <li>Run <code>pi-web doctor</code> again after changing shell files.</li>
               </ul>
             </article>

@@ -1,3 +1,5 @@
+export const minimumSupportedNodeVersion = "22.19.0";
+
 export type NativeServiceBackendKind = "systemd" | "launchd";
 export type NativeServiceMode = "production" | "development";
 export type NativeServiceId = "sessiond" | "web" | "uiDev";
@@ -64,7 +66,7 @@ export type NativeServicePrerequisite =
       id: string;
       kind: "node-version";
       command: "node";
-      minimumMajor: number;
+      minimumVersion: string;
       description: string;
     }
   | {
@@ -571,8 +573,8 @@ function nodeRequirement(serviceId: NativeServiceId): NativeServicePrerequisite 
     id: `${serviceId}.node`,
     kind: "node-version",
     command: "node",
-    minimumMajor: 22,
-    description: "node >= 22 is available to the service shell",
+    minimumVersion: minimumSupportedNodeVersion,
+    description: `node >= ${minimumSupportedNodeVersion} is available to the service shell`,
   };
 }
 

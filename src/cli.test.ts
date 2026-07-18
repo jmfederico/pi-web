@@ -8,6 +8,7 @@ import {
   doctorExitCode,
   isCliEntrypoint,
   launchdRuntimeDetails,
+  nodeVersionCheck,
   regularFileExists,
   serviceBackendForPlatform,
 } from "./cli.js";
@@ -55,6 +56,18 @@ describe("commandWithVersionCheck", () => {
   it("shell-quotes command words", () => {
     process.env["SHELL"] = "/bin/bash";
     expect(commandWithVersionCheck("/tmp/agent's/acme-agent")).toBe("command -v '/tmp/agent'\\''s/acme-agent' && ('/tmp/agent'\\''s/acme-agent' --version 2>&1 || true)");
+  });
+});
+
+describe("nodeVersionCheck", () => {
+  it("checks the complete supported Node version with the resolved executable", () => {
+    process.env["SHELL"] = "/bin/bash";
+
+    const command = nodeVersionCheck();
+
+    expect(command).toContain("22.19.0");
+    expect(command).toContain("process.versions.node");
+    expect(command).toContain("\"$pi_web_probe_executable\"");
   });
 });
 

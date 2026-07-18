@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MessagePage, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkMutationRef, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionStatus, SessionStreamSnapshot } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { PiSessionService, type PiSessionManagerGateway } from "./piSessionService.js";
+import { testModelRuntime } from "./piSessionService.testSupport.js";
 import type { SessionRouteLookup, SessionRouteService } from "./sessionService.js";
 import { registerSessionRoutes } from "./sessionRoutes.js";
 import type { NormalizedSessionCleanupRequest } from "./sessionCleanup.js";
@@ -20,7 +21,7 @@ beforeEach(async () => {
   await app.register(fastifyWebsocket);
   sessionManager = new RejectingSessionManager();
   const eventHub = new SessionEventHub();
-  service = new PiSessionService(eventHub, { agentDir: TEST_AGENT_DIR, sessionManager, heartbeatIntervalMs: 60_000 });
+  service = new PiSessionService(eventHub, { agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime, sessionManager, heartbeatIntervalMs: 60_000 });
   registerSessionRoutes(app, service, eventHub);
 });
 

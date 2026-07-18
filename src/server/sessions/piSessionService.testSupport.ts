@@ -1,4 +1,5 @@
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, type Credential, type CredentialStore } from "@earendil-works/pi-ai";
 import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import type { PiAgentSession, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies } from "./piSessionService.js";
@@ -62,8 +63,34 @@ export function sessionRef(id: string, cwd = "/workspace") {
 export const TEST_MODEL_PROVIDER = "anthropic";
 export const TEST_MODEL_ID = "claude-sonnet-4-5-20250929";
 
+/**
+ * Seed a credential into an {@link InMemoryCredentialStore}. `modify` is the
+ * only write path on the pi-ai `CredentialStore` contract, so tests that need a
+ * pre-populated store go through it rather than mutating internals.
+ */
+export async function seedCredential(store: InMemoryCredentialStore, providerId: string, credential: Credential): Promise<void> {
+  await store.modify(providerId, () => Promise.resolve(credential));
+}
+
+/**
+ * Build a real {@link ModelRuntime} over an in-memory credential store — the
+ * async test seam that replaces the removed `ModelRegistry.create(AuthStorage
+ * .inMemory())`. Pass a pre-seeded store to exercise credential-dependent
+ * behavior (e.g. auth-loss warnings).
+ */
+export function createTestModelRuntime(credentials: CredentialStore = new InMemoryCredentialStore()): Promise<ModelRuntime> {
+  return ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
+}
+
+/**
+ * Shared runtime for the common case where a test only needs model catalog
+ * reads and no configured auth. Built once so the many `fakeRuntime` sessions
+ * and `PiSessionService` constructions can inject it synchronously.
+ */
+export const testModelRuntime = await createTestModelRuntime();
+
 export function testModel(): NonNullable<PiAgentSession["model"]> {
-  const model = ModelRegistry.inMemory(AuthStorage.inMemory()).find(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
+  const model = testModelRuntime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
   if (model === undefined) throw new Error("test model not found");
   return model;
 }
@@ -88,7 +115,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     pendingMessageCount: 0,
     sessionManager: fakeSessionManager(),
     settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined },
-    modelRegistry: ModelRegistry.create(AuthStorage.inMemory()),
+    modelRuntime: testModelRuntime,
     scopedModels: [],
     extensionRunner: { getRegisteredCommands: () => [] },
     promptTemplates: [],

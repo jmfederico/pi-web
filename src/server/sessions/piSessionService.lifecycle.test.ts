@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession, type PiSessionRuntime } from "./piSessionService.js";
-import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, type RuntimeCreator } from "./piSessionService.testSupport.js";
+import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
@@ -31,6 +31,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     };
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime,
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -60,6 +61,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     try {
       service = new PiSessionService(hub, {
         agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         heartbeatIntervalMs: 60_000,
@@ -87,6 +89,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const open = vi.fn(() => fakeSessionManager());
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: {
         create: () => fakeSessionManager(),
@@ -136,6 +139,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const open = vi.spyOn(gateway, "open");
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime,
       sessionManager: gateway,
@@ -190,6 +194,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime,
       sessionManager: sessionGateway([sessionRecord(sessionId)]),
@@ -230,6 +235,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const fake = fakeRuntime(sessionId);
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: emptyArchiveStore(),
       createAgentRuntime: () => {
         createStarted.resolve();
@@ -264,6 +270,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     fake.runtime.setRebindSession = (callback) => { rebindSession = callback; };
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -291,6 +298,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     });
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -326,6 +334,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       });
       service = new PiSessionService(hub, {
         agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([sessionRecord("idle-session")]),
         heartbeatIntervalMs: 1_000,
@@ -362,6 +371,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     });
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("completion-session")]),
       heartbeatIntervalMs: 60_000,
@@ -381,6 +391,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("uses injected archive and session-manager gateways for listing", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-01T00:00:00.000Z" }]),
         get: () => Promise.resolve(undefined),
@@ -411,6 +422,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("lists archived records that have been moved out of the active session directory", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),
         get: () => Promise.resolve(undefined),
@@ -442,6 +454,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const fake = fakeRuntime("runtime-reload-session");
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("runtime-reload-session")]),
       heartbeatIntervalMs: 60_000,
@@ -475,6 +488,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime,
       sessionManager: sessionGateway([sessionRecord("reload-session")]),
       heartbeatIntervalMs: 60_000,
@@ -499,6 +513,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const fake = fakeRuntime("busy-session", { isStreaming: true });
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([sessionRecord("busy-session")]),
       heartbeatIntervalMs: 60_000,
@@ -514,6 +529,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("refuses to reload an archived session", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([]),
         get: (sessionId) => Promise.resolve(sessionId === "archived" || "archived".startsWith(sessionId)
@@ -536,6 +552,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const reconciliations: { cwd: string; sessionIds: string[] }[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: "/sessions/archived.jsonl", archivePath: "/archive/archived.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 2, firstMessage: "bye" }]),
         get: () => Promise.resolve(undefined),
@@ -573,6 +590,7 @@ describe("PiSessionService.streamSnapshot", () => {
     const fake = fakeRuntime("snap-idle");
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,
@@ -601,6 +619,7 @@ describe("PiSessionService.streamSnapshot", () => {
     const fake = fakeRuntime("snap-live", { state: { streamingMessage } });
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(fake.runtime),
       sessionManager: sessionGateway([]),
       heartbeatIntervalMs: 60_000,

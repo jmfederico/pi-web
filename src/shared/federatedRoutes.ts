@@ -76,6 +76,7 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/detach-parent" },
   { method: "GET", path: "/auth/providers" },
   { method: "POST", path: "/auth/api-key" },
+  { method: "POST", path: "/auth/api-key/interactive" },
   { method: "POST", path: "/auth/logout" },
   { method: "POST", path: "/auth/oauth" },
   { method: "GET", path: "/auth/oauth/:flowId" },

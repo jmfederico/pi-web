@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AuthInteraction } from "@earendil-works/pi-ai";
 import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
@@ -8,28 +9,53 @@ export interface AuthChange {
   removedProviderId?: string;
 }
 
-type AuthChangeListener = (change: AuthChange) => void;
-type ModelRegistryInstance = ReturnType<typeof ModelRegistry.create>;
+type AuthChangeListener = (change: AuthChange) => void | Promise<void>;
 
 export interface AuthServiceDependencies {
   agentDir?: string;
-  modelRegistry?: ModelRegistryInstance;
+  runtime?: ModelRuntime;
   authFlows?: OAuthLoginFlowService;
+  logger?: AuthServiceLogger;
 }
 
-export function createModelRegistryForAgentDir(agentDir: string): ModelRegistryInstance {
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  return ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+/** Minimal structured-logging seam for non-fatal auth propagation failures. */
+export interface AuthServiceLogger {
+  error(details: Record<string, unknown>, message: string): void;
+}
+
+interface AuthChangeContext {
+  operation: "login" | "logout";
+  providerId: string;
+  authType?: AuthType;
+}
+
+const noopLogger: AuthServiceLogger = { error() { /* no-op */ } };
+
+export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwork?: boolean): Promise<ModelRuntime> {
+  return ModelRuntime.create({
+    authPath: join(agentDir, "auth.json"),
+    modelsPath: join(agentDir, "models.json"),
+    ...(allowModelNetwork === undefined ? {} : { allowModelNetwork }),
+  });
 }
 
 export class AuthService {
-  readonly modelRegistry: ModelRegistryInstance;
+  readonly runtime: ModelRuntime;
   private readonly authFlows: OAuthLoginFlowService;
+  private readonly logger: AuthServiceLogger;
   private readonly listeners = new Set<AuthChangeListener>();
 
-  constructor(deps: AuthServiceDependencies = {}) {
-    this.modelRegistry = deps.modelRegistry ?? (deps.agentDir === undefined ? ModelRegistry.create(AuthStorage.create()) : createModelRegistryForAgentDir(deps.agentDir));
-    this.authFlows = deps.authFlows ?? new OAuthLoginFlowService();
+  private constructor(runtime: ModelRuntime, authFlows: OAuthLoginFlowService, logger: AuthServiceLogger) {
+    this.runtime = runtime;
+    this.authFlows = authFlows;
+    this.logger = logger;
+  }
+
+  static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
+    const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
+    const logger = deps.logger ?? noopLogger;
+    const authFlows = deps.authFlows ?? new OAuthLoginFlowService({ logger });
+    return new AuthService(runtime, authFlows, logger);
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -44,34 +70,60 @@ export class AuthService {
     this.listeners.clear();
   }
 
-  authProviders(mode: "login" | "logout", authType?: AuthType): AuthProvidersResponse {
-    this.modelRegistry.refresh();
-    const providers = mode === "logout" ? getLogoutProviderOptions(this.modelRegistry) : getLoginProviderOptions(this.modelRegistry, authType);
+  async authProviders(mode: "login" | "logout", authType?: AuthType): Promise<AuthProvidersResponse> {
+    await this.runtime.reloadConfig();
+    const providers = mode === "logout" ? await getLogoutProviderOptions(this.runtime) : getLoginProviderOptions(this.runtime, authType);
     return { providers };
   }
 
-  saveApiKey(providerId: string, key: string): { accepted: true } {
+  async saveApiKey(providerId: string, key: string): Promise<{ accepted: true }> {
     if (key.trim() === "") throw new Error("API key is required");
-    this.modelRegistry.authStorage.set(providerId, { type: "api_key", key });
-    this.refreshAuthState();
+    const provider = await this.requireApiKeyLoginProvider(providerId);
+    let promptAttempted = false;
+    const interaction: AuthInteraction = {
+      prompt: (prompt) => {
+        if (promptAttempted) {
+          throw new Error(`${provider.name} requires interactive setup; use Pi's generic /login flow`);
+        }
+        promptAttempted = true;
+        if (prompt.signal?.aborted === true) throw new Error("Login cancelled");
+        if (prompt.type !== "secret") {
+          throw new Error(`${provider.name} requires interactive setup; use Pi's generic /login flow`);
+        }
+        return Promise.resolve(key);
+      },
+      notify: () => undefined,
+    };
+    await this.runtime.login(providerId, "api_key", interaction);
+    await this.emit({}, { operation: "login", providerId, authType: "api_key" });
     return { accepted: true };
   }
 
-  logoutProvider(providerId: string): { accepted: true } {
-    this.modelRegistry.authStorage.logout(providerId);
-    this.refreshAuthState({ removedProviderId: providerId });
+  async logoutProvider(providerId: string): Promise<{ accepted: true }> {
+    await this.runtime.logout(providerId);
+    await this.emit({ removedProviderId: providerId }, { operation: "logout", providerId });
     return { accepted: true };
   }
 
-  startOAuthLogin(providerId: string): OAuthFlowState {
-    const provider = this.requireOAuthLoginProvider(providerId);
+  async startApiKeyLogin(providerId: string): Promise<OAuthFlowState> {
+    const provider = await this.requireApiKeyLoginProvider(providerId);
     return this.authFlows.start({
       providerId,
       providerName: provider.name,
-      authStorage: this.modelRegistry.authStorage,
-      onComplete: () => {
-        this.refreshAuthState();
-      },
+      runtime: this.runtime,
+      authType: "api_key",
+      onComplete: () => this.emit({}, { operation: "login", providerId, authType: "api_key" }),
+    });
+  }
+
+  async startOAuthLogin(providerId: string): Promise<OAuthFlowState> {
+    const provider = await this.requireOAuthLoginProvider(providerId);
+    return this.authFlows.start({
+      providerId,
+      providerName: provider.name,
+      runtime: this.runtime,
+      authType: "oauth",
+      onComplete: () => this.emit({}, { operation: "login", providerId, authType: "oauth" }),
     });
   }
 
@@ -87,19 +139,38 @@ export class AuthService {
     return this.authFlows.cancel(flowId);
   }
 
-  private refreshAuthState(change: AuthChange = {}): void {
-    this.modelRegistry.authStorage.reload();
-    this.modelRegistry.refresh();
-    this.emit(change);
+  private async emit(change: AuthChange, context: AuthChangeContext): Promise<void> {
+    const results = await Promise.allSettled([...this.listeners].map(async (listener) => listener(change)));
+    for (const result of results) {
+      if (result.status === "rejected") {
+        this.logErrorNoThrow({ err: result.reason, ...context }, "auth-change listener failed");
+      }
+    }
   }
 
-  private emit(change: AuthChange): void {
-    for (const listener of this.listeners) listener(change);
+  private logErrorNoThrow(details: Record<string, unknown>, message: string): void {
+    try {
+      this.logger.error(details, message);
+    } catch {
+      // A diagnostic failure cannot turn an already-committed auth mutation into an API failure.
+    }
   }
 
-  private requireOAuthLoginProvider(providerId: string) {
-    this.modelRegistry.refresh();
-    const provider = getLoginProviderOptions(this.modelRegistry, "oauth").find((option) => option.id === providerId);
+  private async requireApiKeyLoginProvider(providerId: string) {
+    await this.runtime.reloadConfig();
+    const provider = getLoginProviderOptions(this.runtime, "api_key").find((option) => option.id === providerId);
+    if (provider !== undefined) return provider;
+
+    const knownProvider = this.runtime.getProviders().find((option) => option.id === providerId);
+    if (knownProvider !== undefined) {
+      throw new Error(`${knownProvider.name} does not support interactive API-key setup`);
+    }
+    throw new Error(`API key provider not found: ${providerId}`);
+  }
+
+  private async requireOAuthLoginProvider(providerId: string) {
+    await this.runtime.reloadConfig();
+    const provider = getLoginProviderOptions(this.runtime, "oauth").find((option) => option.id === providerId);
     if (provider === undefined) throw new Error(`OAuth provider not found: ${providerId}`);
     return provider;
   }

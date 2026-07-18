@@ -369,7 +369,15 @@ function parseAuthProviderStatus(value: unknown): AuthProviderStatus {
 
 function parseAuthProviderOption(value: unknown): AuthProviderOption {
   const record = requireRecord(value);
-  return { id: requireString(record, "id"), name: requireString(record, "name"), authType: parseAuthType(record["authType"]), status: parseAuthProviderStatus(record["status"]) };
+  const loginFlow = record["loginFlow"];
+  if (loginFlow !== undefined && loginFlow !== "interactive") throw new Error("Invalid auth provider login flow");
+  return {
+    id: requireString(record, "id"),
+    name: requireString(record, "name"),
+    authType: parseAuthType(record["authType"]),
+    status: parseAuthProviderStatus(record["status"]),
+    ...(loginFlow === undefined ? {} : { loginFlow }),
+  };
 }
 
 export function parseAuthProvidersResponse(value: unknown): AuthProvidersResponse {
@@ -392,6 +400,7 @@ export function parseOAuthFlowState(value: unknown): OAuthFlowState {
     ...optionalField("auth", optionalOAuthAuth(record["auth"])),
     ...optionalField("prompt", optionalOAuthPrompt(record["prompt"])),
     ...optionalField("select", optionalOAuthSelect(record["select"])),
+    ...optionalField("info", optionalOAuthInfo(record["info"])),
   };
   return flow;
 }
@@ -404,7 +413,21 @@ function parseOAuthFlowStatus(value: unknown): OAuthFlowState["status"] {
 function optionalOAuthAuth(value: unknown): OAuthFlowState["auth"] | undefined {
   if (value === undefined) return undefined;
   const record = requireRecord(value);
-  return { url: requireString(record, "url"), ...optionalField("instructions", optionalString(record, "instructions")) };
+  return {
+    url: requireString(record, "url"),
+    ...optionalField("instructions", optionalString(record, "instructions")),
+    ...optionalField("deviceCode", optionalOAuthDeviceCode(record["deviceCode"])),
+  };
+}
+
+function optionalOAuthDeviceCode(value: unknown): NonNullable<OAuthFlowState["auth"]>["deviceCode"] | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  return {
+    userCode: requireString(record, "userCode"),
+    ...optionalField("intervalSeconds", optionalNumber(record, "intervalSeconds")),
+    ...optionalField("expiresInSeconds", optionalNumber(record, "expiresInSeconds")),
+  };
 }
 
 function optionalOAuthPrompt(value: unknown): OAuthFlowState["prompt"] | undefined {
@@ -412,13 +435,42 @@ function optionalOAuthPrompt(value: unknown): OAuthFlowState["prompt"] | undefin
   const record = requireRecord(value);
   const kind = requireString(record, "kind");
   if (kind !== "prompt" && kind !== "manual") throw new Error("Invalid OAuth prompt kind");
-  return { requestId: requireString(record, "requestId"), message: requireString(record, "message"), kind, ...optionalField("placeholder", optionalString(record, "placeholder")), ...(record["allowEmpty"] === true ? { allowEmpty: true } : {}) };
+  const promptType = record["promptType"] === undefined ? (kind === "manual" ? "manual_code" : "text") : parseOAuthPromptType(record["promptType"]);
+  return {
+    requestId: requireString(record, "requestId"),
+    message: requireString(record, "message"),
+    kind,
+    promptType,
+    ...optionalField("placeholder", optionalString(record, "placeholder")),
+    ...optionalField("allowEmpty", optionalBoolean(record, "allowEmpty")),
+  };
+}
+
+function parseOAuthPromptType(value: unknown): "text" | "secret" | "manual_code" {
+  if (value !== "text" && value !== "secret" && value !== "manual_code") throw new Error("Invalid OAuth prompt type");
+  return value;
 }
 
 function optionalOAuthSelect(value: unknown): OAuthFlowState["select"] | undefined {
   if (value === undefined) return undefined;
   const record = requireRecord(value);
   return { requestId: requireString(record, "requestId"), message: requireString(record, "message"), options: arrayOf(parseCommandOption)(record["options"]) };
+}
+
+function optionalOAuthInfo(value: unknown): OAuthFlowState["info"] | undefined {
+  if (value === undefined) return undefined;
+  return arrayOf((item) => {
+    const record = requireRecord(item);
+    return {
+      message: requireString(record, "message"),
+      ...optionalField("links", record["links"] === undefined ? undefined : arrayOf(parseOAuthInfoLink)(record["links"])),
+    };
+  })(value);
+}
+
+function parseOAuthInfoLink(value: unknown): NonNullable<NonNullable<OAuthFlowState["info"]>[number]["links"]>[number] {
+  const record = requireRecord(value);
+  return { url: requireString(record, "url"), ...optionalField("label", optionalString(record, "label")) };
 }
 
 function optionalContextUsage(value: unknown): Pick<SessionStatus, "contextUsage"> | object {

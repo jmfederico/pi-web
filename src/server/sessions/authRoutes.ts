@@ -4,7 +4,7 @@ import type { AuthService } from "./authService.js";
 export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, prefix = ""): void {
   app.get<{ Querystring: { mode?: "login" | "logout"; authType?: "oauth" | "api_key" } }>(`${prefix}/auth/providers`, async (request, reply) => {
     try {
-      return auth.authProviders(request.query.mode ?? "login", request.query.authType);
+      return await auth.authProviders(request.query.mode ?? "login", request.query.authType);
     } catch (error) {
       return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -12,7 +12,17 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, pref
 
   app.post<{ Body: { providerId: string; key: string } }>(`${prefix}/auth/api-key`, async (request, reply) => {
     try {
-      return auth.saveApiKey(request.body.providerId, request.body.key);
+      return await auth.saveApiKey(request.body.providerId, request.body.key);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Additive endpoint for newer browsers; the one-secret route remains for
+  // rolling compatibility with older browser bundles.
+  app.post<{ Body: { providerId: string } }>(`${prefix}/auth/api-key/interactive`, async (request, reply) => {
+    try {
+      return await auth.startApiKeyLogin(request.body.providerId);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -20,7 +30,7 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, pref
 
   app.post<{ Body: { providerId: string } }>(`${prefix}/auth/logout`, async (request, reply) => {
     try {
-      return auth.logoutProvider(request.body.providerId);
+      return await auth.logoutProvider(request.body.providerId);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
@@ -28,7 +38,7 @@ export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, pref
 
   app.post<{ Body: { providerId: string } }>(`${prefix}/auth/oauth`, async (request, reply) => {
     try {
-      return auth.startOAuthLogin(request.body.providerId);
+      return await auth.startOAuthLogin(request.body.providerId);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

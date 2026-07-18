@@ -434,10 +434,8 @@ export function nativeServicePrerequisiteShellCheck(shell: NativeServiceShellNam
   switch (prerequisite.kind) {
     case "command-available":
       return externalExecutableShellCheck(shell, prerequisite.command);
-    case "node-version": {
-      const script = `const major=Number(process.versions.node.split('.')[0]);process.exit(major>=${String(prerequisite.minimumMajor)}?0:1)`;
-      return externalExecutableShellCheck(shell, "node", ["-e", script]);
-    }
+    case "node-version":
+      return externalExecutableShellCheck(shell, "node", ["-e", nodeVersionCheckScript(prerequisite.minimumVersion)]);
     case "readable-file": {
       const path = shellQuote(shell, prerequisite.path);
       return `test -f ${path} && test -r ${path}`;
@@ -447,6 +445,11 @@ export function nativeServicePrerequisiteShellCheck(shell: NativeServiceShellNam
       return externalExecutableShellCheck(shell, "node", ["-e", script, prerequisite.packageJsonPath, ...prerequisite.scripts]);
     }
   }
+}
+
+export function nodeVersionCheckScript(minimumVersion: string): string {
+  const encodedMinimum = JSON.stringify(minimumVersion);
+  return `const version=process.argv[1]??process.versions.node;console.log(process.version);const current=version.split('.').map(Number);const minimum=${encodedMinimum}.split('.').map(Number);const length=Math.max(current.length,minimum.length);let comparison=0;for(let index=0;index<length;index+=1){const left=current[index]??0;const right=minimum[index]??0;if(left!==right){comparison=left>right?1:-1;break}}process.exit(comparison>=0?0:1)`;
 }
 
 function externalExecutableShellCheck(
@@ -518,7 +521,7 @@ function unsatisfiedDetail(prerequisite: NativeServicePrerequisite): string {
     case "command-available":
       return `${prerequisite.command} did not resolve to an external executable in the native service environment.`;
     case "node-version":
-      return `node >= ${String(prerequisite.minimumMajor)} was not available in the native service environment.`;
+      return `node >= ${prerequisite.minimumVersion} was not available in the native service environment.`;
     case "readable-file":
       return `${prerequisite.path} was not a readable regular file in the native service environment.`;
     case "package-scripts":

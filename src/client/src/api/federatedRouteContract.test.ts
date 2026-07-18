@@ -88,6 +88,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.detachParent(session, machineId)),
       ignoreParseFailure(sessionsApi.authProviders({ mode: "login", authType: "oauth", machineId })),
       ignoreParseFailure(sessionsApi.saveApiKey("openai", "key", machineId)),
+      ignoreParseFailure(sessionsApi.startInteractiveApiKeyLogin("amazon-bedrock", machineId)),
       ignoreParseFailure(sessionsApi.logoutProvider("openai", machineId)),
       ignoreParseFailure(sessionsApi.startOAuthLogin("openai", machineId)),
       ignoreParseFailure(sessionsApi.oauthFlow("flow 1", machineId)),
