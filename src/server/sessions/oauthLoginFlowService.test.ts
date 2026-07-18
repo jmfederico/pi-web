@@ -60,6 +60,30 @@ describe("OAuthLoginFlowService", () => {
     service.dispose();
   });
 
+  it("keeps a committed login complete when its completion callback and logger throw", async () => {
+    const completionFailure = new Error("completion propagation failed");
+    const loggingFailure = new Error("OAuth logger failed");
+    const error = vi.fn(() => { throw loggingFailure; });
+    const onComplete = vi.fn(() => { throw completionFailure; });
+    const service = new OAuthLoginFlowService({ logger: { error } });
+    const state = service.start({
+      providerId: "test-provider",
+      providerName: "Test Provider",
+      runtime: fakeRuntime(() => Promise.resolve()),
+      onComplete,
+    });
+
+    await vi.waitFor(() => { expect(service.get(state.flowId).status).toBe("complete"); });
+
+    expect(service.get(state.flowId)).toMatchObject({ status: "complete", progress: ["Login complete"] });
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(
+      { err: completionFailure, flowId: state.flowId, providerId: "test-provider" },
+      "OAuth login completion callback failed",
+    );
+    service.dispose();
+  });
+
   it("allows blank text responses for providers that use blank as a default", async () => {
     let domain: string | undefined;
     const service = new OAuthLoginFlowService();

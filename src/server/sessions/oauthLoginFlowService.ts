@@ -27,25 +27,33 @@ interface OAuthFlowRecord {
   cleanupTimer?: TimerHandle;
 }
 
+export interface OAuthLoginFlowLogger {
+  error(details: Record<string, unknown>, message: string): void;
+}
+
 export interface OAuthLoginFlowServiceOptions {
   terminalTtlMs?: number;
   runningTtlMs?: number;
   now?: () => number;
+  logger?: OAuthLoginFlowLogger;
 }
 
 const DEFAULT_TERMINAL_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_RUNNING_TTL_MS = 30 * 60 * 1000;
+const noopLogger: OAuthLoginFlowLogger = { error() { /* no-op */ } };
 
 export class OAuthLoginFlowService {
   private readonly flows = new Map<string, OAuthFlowRecord>();
   private readonly terminalTtlMs: number;
   private readonly runningTtlMs: number;
   private readonly now: () => number;
+  private readonly logger: OAuthLoginFlowLogger;
 
   constructor(options: OAuthLoginFlowServiceOptions = {}) {
     this.terminalTtlMs = options.terminalTtlMs ?? DEFAULT_TERMINAL_TTL_MS;
     this.runningTtlMs = options.runningTtlMs ?? DEFAULT_RUNNING_TTL_MS;
     this.now = options.now ?? (() => Date.now());
+    this.logger = options.logger ?? noopLogger;
   }
 
   start(options: {
@@ -80,20 +88,15 @@ export class OAuthLoginFlowService {
       notify: (event) => { this.handleEvent(record, event); },
     };
 
-    void options.runtime.login(options.providerId, "oauth", interaction)
-      .then(async () => {
-        if (!this.isCurrentRunning(record)) return;
-        this.clearPending(record);
-        await options.onComplete?.();
-        if (!this.isCurrentRunning(record)) return;
-        this.markTerminal(record, { ...withoutInteraction(record.state), status: "complete", progress: [...record.state.progress, "Login complete"] });
-      })
-      .catch((error: unknown) => {
-        if (this.flows.get(record.flowId) !== record) return;
+    void options.runtime.login(options.providerId, "oauth", interaction).then(
+      () => this.reconcileCommittedLogin(record, options.onComplete),
+      (error: unknown) => {
+        if (!this.isCurrent(record)) return;
         this.clearPending(record);
         if (record.state.status !== "running") return;
         this.markTerminal(record, { ...withoutInteraction(record.state), status: "error", error: error instanceof Error ? error.message : String(error) });
-      });
+      },
+    );
 
     return this.get(flowId);
   }
@@ -274,8 +277,39 @@ export class OAuthLoginFlowService {
     return pending;
   }
 
+  // ModelRuntime persists the credential before its post-login refresh. If a
+  // cancellation lands during that refresh, the resolved login is committed
+  // truth and must supersede the transient cancelled state.
+  private async reconcileCommittedLogin(record: OAuthFlowRecord, onComplete?: () => void | Promise<void>): Promise<void> {
+    if (this.isCurrent(record)) this.clearPending(record);
+    try {
+      await onComplete?.();
+    } catch (error) {
+      this.logErrorNoThrow(
+        { err: error, flowId: record.flowId, providerId: record.state.providerId },
+        "OAuth login completion callback failed",
+      );
+    }
+    if (!this.isCurrent(record)) return;
+    const completed = withoutInteraction(record.state);
+    delete completed.error;
+    this.markTerminal(record, { ...completed, status: "complete", progress: [...record.state.progress, "Login complete"] });
+  }
+
+  private isCurrent(record: OAuthFlowRecord): boolean {
+    return this.flows.get(record.flowId) === record;
+  }
+
   private isCurrentRunning(record: OAuthFlowRecord): boolean {
-    return this.flows.get(record.flowId) === record && record.state.status === "running";
+    return this.isCurrent(record) && record.state.status === "running";
+  }
+
+  private logErrorNoThrow(details: Record<string, unknown>, message: string): void {
+    try {
+      this.logger.error(details, message);
+    } catch {
+      // Logging is post-commit diagnostics and must never change auth truth.
+    }
   }
 
   private updateState(record: OAuthFlowRecord, state: OAuthFlowState): void {

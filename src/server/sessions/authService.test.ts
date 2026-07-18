@@ -41,8 +41,9 @@ describe("AuthService", () => {
     auth.dispose();
   });
 
-  it("persists an API key and attempts every listener when propagation fails", async () => {
-    const error = vi.fn();
+  it("persists an API key and attempts every listener when failure logging throws", async () => {
+    const loggingFailure = new Error("auth logger failed");
+    const error = vi.fn(() => { throw loggingFailure; });
     const logger: AuthServiceLogger = { error };
     const { auth, credentials, changes } = await createAuthService({}, logger);
     const failure = new Error("session auth refresh failed");
@@ -260,6 +261,44 @@ describe("AuthService", () => {
     auth.dispose();
   });
 
+  it("reconciles cancellation after ModelRuntime persists OAuth but before its refresh completes", async () => {
+    const { auth, runtime, credentials, changes } = await createAuthService();
+    const provider = runtime.getProviders().find((option) => option.id === "anthropic" && option.auth.oauth !== undefined);
+    if (provider?.auth.oauth === undefined) throw new Error("Expected built-in OAuth provider");
+    const credential: Credential = {
+      type: "oauth",
+      refresh: "refresh-token",
+      access: "access-token",
+      expires: Date.now() + 60_000,
+    };
+    vi.spyOn(provider.auth.oauth, "login").mockResolvedValue(credential);
+    vi.spyOn(runtime, "reloadConfig").mockResolvedValue(undefined);
+    const refreshStarted = deferred<undefined>();
+    const finishRefresh = deferred<undefined>();
+    const refresh = vi.spyOn(runtime, "refresh").mockImplementation(async () => {
+      refreshStarted.resolve(undefined);
+      await finishRefresh.promise;
+      return { aborted: false, errors: new Map() };
+    });
+
+    const state = await auth.startOAuthLogin(provider.id);
+    await refreshStarted.promise;
+
+    await expect(credentials.read(provider.id)).resolves.toEqual(credential);
+    expect(auth.cancelOAuthFlow(state.flowId)).toMatchObject({ status: "cancelled", error: "Login cancelled" });
+    expect(changes).toEqual([]);
+
+    finishRefresh.resolve(undefined);
+    await vi.waitFor(() => { expect(auth.oauthFlow(state.flowId).status).toBe("complete"); });
+
+    expect(auth.oauthFlow(state.flowId)).toMatchObject({ status: "complete", progress: ["Login complete"] });
+    expect(auth.oauthFlow(state.flowId)).not.toHaveProperty("error");
+    await expect(credentials.read(provider.id)).resolves.toEqual(credential);
+    expect(changes).toEqual([{}]);
+    expect(refresh).toHaveBeenCalledOnce();
+    auth.dispose();
+  });
+
   it("emits an auth change after OAuth login completes without refreshing twice", async () => {
     const runtime = await ModelRuntime.create({
       credentials: new InMemoryCredentialStore(),
@@ -293,8 +332,9 @@ describe("AuthService", () => {
     expect(authFlows.disposed).toBe(true);
   });
 
-  it("completes OAuth when an auth-change listener rejects", async () => {
-    const error = vi.fn();
+  it("completes OAuth when an auth-change listener and failure logging throw", async () => {
+    const loggingFailure = new Error("auth logger failed");
+    const error = vi.fn(() => { throw loggingFailure; });
     const logger: AuthServiceLogger = { error };
     const { auth, runtime, changes } = await createAuthService({}, logger);
     const provider = runtime.getProviders().find((option) => option.id === "anthropic" && option.auth.oauth !== undefined);
@@ -351,6 +391,16 @@ async function tempAgentDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-auth-agent-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function deferred<T>() {
+  let resolveValue: (value: T) => void = () => undefined;
+  let rejectValue: (reason?: unknown) => void = () => undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveValue = resolve;
+    rejectValue = reject;
+  });
+  return { promise, resolve: resolveValue, reject: rejectValue };
 }
 
 function radiusModelsConfig(name: string): string {

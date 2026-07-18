@@ -53,8 +53,9 @@ export class AuthService {
 
   static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
     const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
-    const authFlows = deps.authFlows ?? new OAuthLoginFlowService();
-    return new AuthService(runtime, authFlows, deps.logger ?? noopLogger);
+    const logger = deps.logger ?? noopLogger;
+    const authFlows = deps.authFlows ?? new OAuthLoginFlowService({ logger });
+    return new AuthService(runtime, authFlows, logger);
   }
 
   subscribe(listener: AuthChangeListener): () => void {
@@ -130,8 +131,16 @@ export class AuthService {
     const results = await Promise.allSettled([...this.listeners].map(async (listener) => listener(change)));
     for (const result of results) {
       if (result.status === "rejected") {
-        this.logger.error({ err: result.reason, ...context }, "auth-change listener failed");
+        this.logErrorNoThrow({ err: result.reason, ...context }, "auth-change listener failed");
       }
+    }
+  }
+
+  private logErrorNoThrow(details: Record<string, unknown>, message: string): void {
+    try {
+      this.logger.error(details, message);
+    } catch {
+      // A diagnostic failure cannot turn an already-committed auth mutation into an API failure.
     }
   }
 
