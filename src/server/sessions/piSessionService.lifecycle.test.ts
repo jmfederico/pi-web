@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession, type PiSessionRuntime } from "./piSessionService.js";
+import { SessionNotificationStore } from "./sessionNotificationStore.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
@@ -15,6 +16,32 @@ function deferred<T = void>() {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+function notificationStore() {
+  let tick = 0;
+  return new SessionNotificationStore({
+    daemonInstanceId: "daemon-lifecycle-test",
+    now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)),
+  });
+}
+
+function boundNotify(fake: { calls: { bindExtensions: unknown[] } }, index = -1) {
+  const bindings = fake.calls.bindExtensions.at(index);
+  if (typeof bindings !== "object" || bindings === null || !("uiContext" in bindings) || !hasNotify(bindings.uiContext)) {
+    throw new Error("Expected bound extension UI context");
+  }
+  const uiContext = bindings.uiContext;
+  return (message: string, type?: "info" | "warning" | "error") => { uiContext.notify(message, type); };
+}
+
+function hasNotify(value: unknown): value is { notify(message: string, type?: "info" | "warning" | "error"): void } {
+  return typeof value === "object" && value !== null && "notify" in value && typeof value.notify === "function";
+}
+
+function currentNotify(fake: { session: Pick<PiAgentSession, "extensionRunner"> }) {
+  const uiContext = fake.session.extensionRunner.getUIContext();
+  return (message: string, type?: "info" | "warning" | "error") => { uiContext.notify(message, type); };
 }
 
 describe("PiSessionService lifecycle, listing, and reload", () => {
@@ -351,10 +378,235 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await expect(service.runCommand(sessionRef("extension-command-session"), "/ctx-stats")).resolves.toEqual({ type: "done" });
 
     expect(extensionMode).toBe("rpc");
-    expect(hub.sessionEvents).toContainEqual({
+    const legacyEvent = hub.sessionEvents.find(({ event }) => event.type === "command.output" && event.message === "context-mode stats");
+    expect(legacyEvent).toMatchObject({
       sessionId: "extension-command-session",
       event: { type: "command.output", level: "info", message: "context-mode stats" },
     });
+    expect(legacyEvent?.event.type === "command.output" ? typeof legacyEvent.event.notificationId : undefined).toBe("string");
+    const inboxEvent = hub.sessionEvents.find(({ event }) => event.type === "notifications.inbox");
+    expect(inboxEvent).toMatchObject({
+      sessionId: "extension-command-session",
+      event: {
+        type: "notifications.inbox",
+        delta: { kind: "added", notification: { message: "context-mode stats", severity: "info" } },
+      },
+    });
+    expect(hub.notificationSummaryEvents.at(-1)).toMatchObject({
+      type: "notifications.summary",
+      summary: { sessionId: "extension-command-session", retainedCount: 1, highestSeverity: "info" },
+    });
+
+    await service.dispose();
+  });
+
+  it("stores every extension notification without touching Pi session history", async () => {
+    const hub = new CapturingSessionEventHub();
+    const store = notificationStore();
+    const branch = [{ type: "message", message: { role: "user", content: "existing" } }];
+    const fake = fakeRuntime("notification-session", {
+      sessionManager: fakeSessionManager("/workspace", {
+        getSessionId: () => "notification-session",
+        getBranch: () => branch,
+      }),
+    });
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    const notify = boundNotify(fake);
+    notify("duplicate", "warning");
+    notify("duplicate", "error");
+
+    const snapshot = service.notificationInbox(sessionRef("notification-session"));
+    expect(snapshot.notifications).toMatchObject([
+      { id: "daemon-lifecycle-test:2", message: "duplicate", severity: "error" },
+      { id: "daemon-lifecycle-test:1", message: "duplicate", severity: "warning" },
+    ]);
+    expect(fake.session.sessionManager.getBranch()).toBe(branch);
+    expect(fake.session.messages).toEqual([]);
+    expect(hub.sessionEvents.filter(({ event }) => event.type === "command.output")).toHaveLength(2);
+    expect(hub.sessionEvents.filter(({ event }) => event.type === "notifications.inbox")).toHaveLength(2);
+
+    await service.dispose();
+  });
+
+  it("commits Pi /reload only after replacement session_start notifications are bound", async () => {
+    const hub = new CapturingSessionEventHub();
+    const store = notificationStore();
+    const fake = fakeRuntime("runtime-reload-notifications");
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("runtime-reload-notifications")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("runtime-reload-notifications"));
+    const oldNotify = boundNotify(fake);
+    oldNotify("old notification", "warning");
+    fake.session.reload = async (options) => {
+      oldNotify("shutdown notification", "info");
+      await options?.beforeSessionStart?.();
+      currentNotify(fake)("replacement startup", "error");
+    };
+
+    await expect(service.runCommand(sessionRef("runtime-reload-notifications"), "/reload")).resolves.toMatchObject({ type: "done" });
+
+    expect(service.notificationInbox(sessionRef("runtime-reload-notifications"))).toMatchObject({
+      summary: { retainedCount: 1, discardedCount: 0, highestSeverity: "error" },
+      notifications: [{ message: "replacement startup", severity: "error" }],
+    });
+    expect(fake.calls.bindExtensions).toHaveLength(1);
+    const revision = service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision;
+    oldNotify("stale old runner", "error");
+    expect(service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision).toBe(revision);
+
+    await service.dispose();
+  });
+
+  it("preserves prior and candidate notifications when Pi /reload fails after rotation", async () => {
+    const hub = new CapturingSessionEventHub();
+    const store = notificationStore();
+    const fake = fakeRuntime("failed-runtime-reload");
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("failed-runtime-reload")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("failed-runtime-reload"));
+    boundNotify(fake)("prior", "info");
+    fake.session.reload = async (options) => {
+      await options?.beforeSessionStart?.();
+      currentNotify(fake)("candidate before failure", "warning");
+      throw new Error("reload failed after rotation");
+    };
+
+    await expect(service.runCommand(sessionRef("failed-runtime-reload"), "/reload")).resolves.toEqual({
+      type: "unsupported",
+      message: "Reload failed: reload failed after rotation",
+    });
+    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications.map((notification) => notification.message)).toEqual([
+      "candidate before failure",
+      "prior",
+    ]);
+    currentNotify(fake)("after failed reload", "error");
+    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications[0]).toMatchObject({
+      message: "after failed reload",
+      severity: "error",
+    });
+
+    await service.dispose();
+  });
+
+  it("leaves the prior inbox unchanged when Pi /reload fails before rotation", async () => {
+    const store = notificationStore();
+    const fake = fakeRuntime("failed-before-rotation");
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("failed-before-rotation")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("failed-before-rotation"));
+    boundNotify(fake)("prior", "warning");
+    const before = service.notificationInbox(sessionRef("failed-before-rotation"));
+    fake.session.reload = () => Promise.reject(new Error("reload failed before rotation"));
+
+    await expect(service.runCommand(sessionRef("failed-before-rotation"), "/reload")).resolves.toEqual({
+      type: "unsupported",
+      message: "Reload failed: reload failed before rotation",
+    });
+    expect(service.notificationInbox(sessionRef("failed-before-rotation"))).toEqual(before);
+
+    await service.dispose();
+  });
+
+  it("commits changed-id SDK rebind notifications only after binding succeeds", async () => {
+    const store = notificationStore();
+    const first = fakeRuntime("session-1");
+    const replacement = fakeRuntime("session-2", {
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("replacement startup", "error");
+        return Promise.resolve();
+      },
+    });
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(first.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    const staleNotify = boundNotify(first);
+    staleNotify("old", "warning");
+    Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+    await rebindSession?.(replacement.session);
+
+    expect(() => service.notificationInbox(sessionRef("session-1"))).toThrow("Session not found");
+    expect(service.notificationInbox(sessionRef("session-2"))).toMatchObject({
+      notifications: [{ message: "replacement startup", severity: "error" }],
+    });
+    const revision = service.notificationInbox(sessionRef("session-2")).summary.inboxRevision;
+    staleNotify("stale", "error");
+    expect(service.notificationInbox(sessionRef("session-2")).summary.inboxRevision).toBe(revision);
+
+    await service.dispose();
+  });
+
+  it("preserves changed-id SDK rebind notifications on the applied replacement when binding fails", async () => {
+    const store = notificationStore();
+    const first = fakeRuntime("session-1");
+    const replacement = fakeRuntime("session-2");
+    replacement.session.bindExtensions = (bindings) => {
+      replacement.session.extensionRunner.setUIContext(bindings.uiContext, "rpc");
+      bindings.uiContext?.notify("candidate before bind failure", "warning");
+      return Promise.reject(new Error("replacement bind failed"));
+    };
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(first.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    boundNotify(first)("prior", "info");
+    Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+    await expect(rebindSession?.(replacement.session)).rejects.toThrow("replacement bind failed");
+
+    expect(() => service.notificationInbox(sessionRef("session-1"))).toThrow("Session not found");
+    expect(service.notificationInbox(sessionRef("session-2")).notifications.map((notification) => notification.message)).toEqual([
+      "candidate before bind failure",
+      "prior",
+    ]);
+    await expect(service.status(sessionRef("session-2"))).resolves.toMatchObject({ sessionId: "session-2" });
+    currentNotify(replacement)("after failed rebind", "error");
+    expect(service.notificationInbox(sessionRef("session-2")).notifications[0]).toMatchObject({ message: "after failed rebind", severity: "error" });
 
     await service.dispose();
   });
@@ -489,6 +741,34 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   });
 
 
+  it("keeps notifications on abort but clears and unregisters them on stop", async () => {
+    const hub = new CapturingSessionEventHub();
+    const store = notificationStore();
+    const fake = fakeRuntime("stop-notification-session");
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("stop-notification-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("stop-notification-session"));
+    boundNotify(fake)("keep through abort", "warning");
+    await service.abort(sessionRef("stop-notification-session"));
+    expect(service.notificationInbox(sessionRef("stop-notification-session")).summary.retainedCount).toBe(1);
+    await expect(service.stop(sessionRef("stop-notification-session", "/other"))).rejects.toThrow("Session cwd mismatch");
+    expect(service.activeCount()).toBe(1);
+
+    await service.stop(sessionRef("stop-notification-session"));
+    expect(() => service.notificationInbox(sessionRef("stop-notification-session"))).toThrow("Session not found");
+    expect(service.notificationCatalog().sessions).toEqual([]);
+    expect(hub.notificationSummaryEvents.at(-1)).toMatchObject({ summary: { sessionId: "stop-notification-session", retainedCount: 0 } });
+
+    await service.dispose();
+  });
+
   it("runs /reload by refreshing the active runtime resources in place", async () => {
     const hub = new CapturingSessionEventHub();
     const fake = fakeRuntime("runtime-reload-session");
@@ -546,6 +826,123 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     expect(createCalls).toBe(2);
     expect(service.activeCount()).toBe(1);
 
+    await service.dispose();
+  });
+
+  it("reload-from-disk keeps replacement startup notifications and clears the old inbox on success", async () => {
+    const store = notificationStore();
+    const first = fakeRuntime("reload-notification-session");
+    const second = fakeRuntime("reload-notification-session", {
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("replacement startup", "error");
+        return Promise.resolve();
+      },
+    });
+    const runtimes = [first.runtime, second.runtime];
+    let createCalls = 0;
+    const hub = new CapturingSessionEventHub();
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: () => {
+        const runtime = runtimes[createCalls++];
+        return runtime === undefined ? Promise.reject(new Error("unexpected runtime creation")) : Promise.resolve(runtime);
+      },
+      sessionManager: sessionGateway([sessionRecord("reload-notification-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("reload-notification-session"));
+    const oldNotify = boundNotify(first);
+    oldNotify("old", "warning");
+    const disposeFirst = first.runtime.dispose.bind(first.runtime);
+    first.runtime.dispose = async () => {
+      oldNotify("old shutdown", "info");
+      await disposeFirst();
+    };
+    await service.reload(sessionRef("reload-notification-session"));
+
+    expect(service.notificationInbox(sessionRef("reload-notification-session"))).toMatchObject({
+      summary: { retainedCount: 1, highestSeverity: "error" },
+      notifications: [{ message: "replacement startup", severity: "error" }],
+    });
+    expect(hub.sessionEvents.some(({ event }) => event.type === "notifications.inbox" && event.delta.kind === "added" && event.delta.notification.message === "old shutdown")).toBe(true);
+    await service.dispose();
+  });
+
+  it("reload-from-disk preserves prior and candidate notifications when replacement binding fails", async () => {
+    const store = notificationStore();
+    const first = fakeRuntime("failed-disk-reload");
+    const failed = fakeRuntime("failed-disk-reload", {
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("candidate before open failure", "warning");
+        return Promise.reject(new Error("replacement open failed"));
+      },
+    });
+    const runtimes = [first.runtime, failed.runtime];
+    let createCalls = 0;
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: () => {
+        const runtime = runtimes[createCalls++];
+        return runtime === undefined ? Promise.reject(new Error("unexpected runtime creation")) : Promise.resolve(runtime);
+      },
+      sessionManager: sessionGateway([sessionRecord("failed-disk-reload")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("failed-disk-reload"));
+    const oldNotify = boundNotify(first);
+    oldNotify("prior", "info");
+    const disposeFirst = first.runtime.dispose.bind(first.runtime);
+    first.runtime.dispose = async () => {
+      oldNotify("old shutdown", "info");
+      await disposeFirst();
+    };
+    await expect(service.reload(sessionRef("failed-disk-reload"))).rejects.toThrow("replacement open failed");
+
+    expect(service.notificationInbox(sessionRef("failed-disk-reload")).notifications.map((notification) => notification.message)).toEqual([
+      "candidate before open failure",
+      "old shutdown",
+      "prior",
+    ]);
+    expect(service.activeCount()).toBe(0);
+    await service.stop(sessionRef("failed-disk-reload"));
+    expect(() => service.notificationInbox(sessionRef("failed-disk-reload"))).toThrow("Session not found");
+    await service.dispose();
+  });
+
+  it("reload-from-disk preserves the prior inbox when deferred close fails", async () => {
+    const store = notificationStore();
+    const first = fakeRuntime("failed-close-reload");
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(first.runtime),
+      sessionManager: sessionGateway([sessionRecord("failed-close-reload")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("failed-close-reload"));
+    const oldNotify = boundNotify(first);
+    oldNotify("prior", "warning");
+    first.runtime.dispose = () => {
+      oldNotify("shutdown before close failure", "info");
+      return Promise.reject(new Error("close failed"));
+    };
+
+    await expect(service.reload(sessionRef("failed-close-reload"))).rejects.toThrow("close failed");
+
+    expect(service.notificationInbox(sessionRef("failed-close-reload")).notifications.map((notification) => notification.message)).toEqual([
+      "shutdown before close failure",
+      "prior",
+    ]);
+    expect(store.currentGeneration("failed-close-reload", "/workspace")).toBeDefined();
+    await service.stop(sessionRef("failed-close-reload"));
     await service.dispose();
   });
 

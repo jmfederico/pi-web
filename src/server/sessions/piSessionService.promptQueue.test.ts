@@ -456,7 +456,7 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     });
 
     await service.status(sessionRef("stop-session"));
-    service.stop(sessionRef("stop-session"));
+    await service.stop(sessionRef("stop-session"));
 
     expect(fake.calls.clearQueue).toBe(1);
     await service.dispose();

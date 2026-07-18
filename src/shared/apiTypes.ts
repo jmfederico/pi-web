@@ -8,6 +8,7 @@ export const PI_WEB_CAPABILITIES = {
   sessionsReload: "sessions.reload",
   sessionsClearQueue: "sessions.clearQueue",
   sessionsPersistedState: "sessions.persistedState",
+  sessionsNotifications: "sessions.notifications",
   promptAttachments: "prompt.attachments",
   workspaceFileSuggestions: "workspace.fileSuggestions",
   piPackagesManage: "piPackages.manage",
@@ -201,6 +202,93 @@ export interface Workspace {
 export interface SessionRef {
   id: string;
   cwd: string;
+}
+
+export const SESSION_NOTIFICATION_LIMIT = 100;
+export const SESSION_NOTIFICATION_MESSAGE_BYTES = 8 * 1024;
+
+export type SessionNotificationSeverity = "info" | "warning" | "error";
+
+export interface SessionNotification {
+  id: string;
+  message: string;
+  truncated: boolean;
+  severity: SessionNotificationSeverity;
+  receivedAt: string;
+  order: number;
+}
+
+export interface SessionNotificationSummary {
+  sessionId: string;
+  cwd: string;
+  inboxRevision: number;
+  retainedCount: number;
+  discardedCount: number;
+  highestSeverity?: SessionNotificationSeverity;
+}
+
+export interface SessionNotificationDismissThrough {
+  order: number;
+  overflowWatermark: number;
+}
+
+export interface SessionNotificationInboxSnapshot {
+  daemonInstanceId: string;
+  catalogRevision: number;
+  summary: SessionNotificationSummary;
+  notifications: SessionNotification[];
+  dismissThrough: SessionNotificationDismissThrough;
+}
+
+export interface SessionNotificationCatalogSnapshot {
+  daemonInstanceId: string;
+  catalogRevision: number;
+  sessions: SessionNotificationSummary[];
+}
+
+export interface SessionNotificationDismissRequest {
+  cwd: string;
+  daemonInstanceId: string;
+  notificationId: string;
+}
+
+export interface SessionNotificationDismissAllRequest {
+  cwd: string;
+  daemonInstanceId: string;
+  throughOrder: number;
+  throughOverflowWatermark: number;
+}
+
+export type SessionNotificationClearReason =
+  | "runtime-close"
+  | "archive"
+  | "delete"
+  | "restore"
+  | "archive-reconcile"
+  | "replacement"
+  | "initialization-failed"
+  | "service-dispose";
+
+export type SessionNotificationInboxDelta =
+  | { kind: "added"; notification: SessionNotification; evictedNotificationId?: string }
+  | { kind: "dismissed"; notificationIds: string[] }
+  | { kind: "cleared"; reason: SessionNotificationClearReason }
+  | { kind: "resync" };
+
+export interface SessionNotificationInboxEvent {
+  type: "notifications.inbox";
+  daemonInstanceId: string;
+  catalogRevision: number;
+  summary: SessionNotificationSummary;
+  dismissThrough: SessionNotificationDismissThrough;
+  delta: SessionNotificationInboxDelta;
+}
+
+export interface SessionNotificationSummaryEvent {
+  type: "notifications.summary";
+  daemonInstanceId: string;
+  catalogRevision: number;
+  summary: SessionNotificationSummary;
 }
 
 export interface SessionInfo extends SessionRef {
@@ -777,11 +865,14 @@ type SessionUiEventBody =
   | { type: "message.end"; message?: unknown }
   | { type: "status.update"; status: SessionStatus }
   | { type: "activity.update"; activity: SessionActivity }
-  | { type: "command.output"; level: "info" | "success" | "error"; message: string }
+  | { type: "command.output"; level: "info" | "success" | "error"; message: string; notificationId?: string }
+  | SessionNotificationInboxEvent
   | { type: "session.error"; message: string }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
   | { type: "pi.event"; eventType: string };
 
-export type GlobalSessionEvent = Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>;
+export type GlobalSessionEvent =
+  | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
+  | SessionNotificationSummaryEvent;
 export type RealtimeEvent = GlobalSessionEvent | TerminalUiEvent | WorkspaceActivityUiEvent;

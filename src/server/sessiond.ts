@@ -11,6 +11,7 @@ import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
+import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
@@ -38,6 +39,7 @@ await runSessionDaemonStartup({
   logger: app.log,
   async createRuntime() {
     const eventHub = new SessionEventHub();
+    const notificationStore = new SessionNotificationStore();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
     const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, logger: app.log });
     const spawnTargets = config.spawnSessions
@@ -50,6 +52,7 @@ await runSessionDaemonStartup({
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
+      notificationStore,
       sessionManager: createPiSessionManagerGateway({
         agentDir: activeAgentProfile.dir,
         env: daemonEnvironment,

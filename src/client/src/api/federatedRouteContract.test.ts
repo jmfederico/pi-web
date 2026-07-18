@@ -26,6 +26,16 @@ afterEach(() => {
 });
 
 describe("federated route contract", () => {
+  it("allowlists notification HTTP routes without adding a notification WebSocket", () => {
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("notifications"))).toEqual([
+      { method: "GET", path: "/sessions/notifications" },
+      { method: "GET", path: "/sessions/:sessionId/notifications" },
+      { method: "POST", path: "/sessions/:sessionId/notifications/dismiss" },
+      { method: "POST", path: "/sessions/:sessionId/notifications/dismiss-all" },
+    ]);
+    expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("notifications"))).toBe(false);
+  });
+
   it("covers machine-scoped client HTTP calls with remote proxy routes", async () => {
     const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
     vi.stubGlobal("fetch", fetchMock);

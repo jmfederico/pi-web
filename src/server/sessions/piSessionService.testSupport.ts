@@ -1,12 +1,13 @@
 import { ModelRuntime, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type Credential, type CredentialStore } from "@earendil-works/pi-ai";
-import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
+import type { GlobalSessionEvent, SessionNotificationSummaryEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import type { PiAgentSession, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies } from "./piSessionService.js";
 
 export class CapturingSessionEventHub extends SessionEventHub {
   readonly sessionEvents: { sessionId: string; event: SessionUiEvent }[] = [];
   readonly globalEvents: GlobalSessionEvent[] = [];
+  readonly notificationSummaryEvents: SessionNotificationSummaryEvent[] = [];
   private readonly seqBySessionOverride = new Map<string, number>();
 
   override publish(sessionId: string, event: SessionUiEvent): void {
@@ -15,6 +16,10 @@ export class CapturingSessionEventHub extends SessionEventHub {
 
   override publishGlobal(event: GlobalSessionEvent): void {
     this.globalEvents.push(event);
+  }
+
+  override publishNotificationSummary(event: SessionNotificationSummaryEvent): void {
+    this.notificationSummaryEvents.push(event);
   }
 
   /** Test seam: set the per-session watermark returned by {@link currentSeq}. */
@@ -29,6 +34,8 @@ export class CapturingSessionEventHub extends SessionEventHub {
 
 export type SessionGateway = NonNullable<PiSessionServiceDependencies["sessionManager"]>;
 export type RuntimeCreator = NonNullable<PiSessionServiceDependencies["createAgentRuntime"]>;
+
+type TestExtensionBindings = Parameters<PiAgentSession["bindExtensions"]>[0];
 
 export interface TestSession extends PiAgentSession {
   sessionName: string | undefined;
@@ -131,6 +138,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
   const customMessageCalls: { message: { customType: string; content: string; display: boolean; details?: unknown }; options: unknown }[] = [];
   const bindExtensionCalls: unknown[] = [];
   const listeners: ((event: unknown) => void)[] = [];
+  let extensionUiContext = testExtensionUiContext;
   const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, prompt: promptCalls, reload: 0, sendCustomMessage: customMessageCalls };
   const session: TestSession = {
     sessionId,
@@ -150,7 +158,8 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     scopedModels: [],
     extensionRunner: {
       getRegisteredCommands: () => [],
-      getUIContext: () => testExtensionUiContext,
+      getUIContext: () => extensionUiContext,
+      setUIContext: (uiContext) => { extensionUiContext = uiContext ?? testExtensionUiContext; },
     },
     promptTemplates: [],
     resourceLoader: { getSkills: () => ({ skills: [] }) },
@@ -161,8 +170,9 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
         if (index !== -1) listeners.splice(index, 1);
       };
     },
-    bindExtensions: (bindings: unknown) => {
+    bindExtensions: (bindings: TestExtensionBindings) => {
       calls.bindExtensions.push(bindings);
+      if (bindings.uiContext !== undefined) extensionUiContext = bindings.uiContext;
       return Promise.resolve();
     },
     getSessionStats: () => ({ sessionId, totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 }),

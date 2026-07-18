@@ -30,6 +30,11 @@ interface AttachmentsRequestBody {
   folder?: unknown;
 }
 
+const MAX_NOTIFICATION_SESSION_ID_LENGTH = 512;
+const MAX_NOTIFICATION_CWD_LENGTH = 32 * 1024;
+const MAX_NOTIFICATION_DAEMON_ID_LENGTH = 512;
+const MAX_NOTIFICATION_ID_LENGTH = 1024;
+
 export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRouteService, eventHub: SessionEventHub, prefix = ""): void {
   app.get<{ Querystring: SessionQuery }>(`${prefix}/sessions`, async (request, reply) => {
     if (request.query.cwd === undefined || request.query.cwd === "") return reply.code(400).send({ error: "cwd query parameter is required" });
@@ -44,6 +49,14 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     try {
       const body = requireRecord(request.body);
       return await sessions.start(normalizeRequestCwd(requireString(body, "cwd")));
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.get(`${prefix}/sessions/notifications`, async (_request, reply) => {
+    try {
+      return await sessions.notificationCatalog();
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
     }
@@ -78,6 +91,41 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       return await sessions.deleteArchivedMany(bulkMutationRefsFromBody(request.body));
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/notifications`, async (request, reply) => {
+    try {
+      return await sessions.notificationInbox(notificationRefFromQuery(request.params.sessionId, request.query));
+    } catch (error) {
+      return reply.code(notificationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { sessionId: string }; Body: Record<string, unknown> | undefined }>(`${prefix}/sessions/:sessionId/notifications/dismiss`, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      const ref = notificationRefFromBody(request.params.sessionId, body);
+      return await sessions.dismissNotification(ref, {
+        daemonInstanceId: requireNonEmptyBoundedString(body["daemonInstanceId"], "daemonInstanceId", MAX_NOTIFICATION_DAEMON_ID_LENGTH),
+        notificationId: requireNonEmptyBoundedString(body["notificationId"], "notificationId", MAX_NOTIFICATION_ID_LENGTH),
+      });
+    } catch (error) {
+      return reply.code(notificationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { sessionId: string }; Body: Record<string, unknown> | undefined }>(`${prefix}/sessions/:sessionId/notifications/dismiss-all`, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      const ref = notificationRefFromBody(request.params.sessionId, body);
+      return await sessions.dismissAllNotifications(ref, {
+        daemonInstanceId: requireNonEmptyBoundedString(body["daemonInstanceId"], "daemonInstanceId", MAX_NOTIFICATION_DAEMON_ID_LENGTH),
+        throughOrder: requireNonNegativeSafeInteger(body["throughOrder"], "throughOrder"),
+        throughOverflowWatermark: requireNonNegativeSafeInteger(body["throughOverflowWatermark"], "throughOverflowWatermark"),
+      });
+    } catch (error) {
+      return reply.code(notificationErrorStatus(error)).send({ error: errorMessage(error) });
     }
   });
 
@@ -341,6 +389,23 @@ function parseBulkMutationRef(value: unknown): SessionBulkMutationRef {
   return { id, cwd: normalizeRequestCwd(cwd) };
 }
 
+function notificationRefFromQuery(id: string, query: SessionQuery): { id: string; cwd: string } {
+  const cwd = requireNonEmptyBoundedString(query.cwd, "cwd", MAX_NOTIFICATION_CWD_LENGTH);
+  return notificationRef(id, cwd);
+}
+
+function notificationRefFromBody(id: string, body: Record<string, unknown>): { id: string; cwd: string } {
+  const cwd = requireNonEmptyBoundedString(body["cwd"], "cwd", MAX_NOTIFICATION_CWD_LENGTH);
+  return notificationRef(id, cwd);
+}
+
+function notificationRef(id: string, cwd: string): { id: string; cwd: string } {
+  return {
+    id: requireNonEmptyBoundedString(id, "sessionId", MAX_NOTIFICATION_SESSION_ID_LENGTH),
+    cwd: normalizeRequestCwd(cwd),
+  };
+}
+
 function sessionLookupFromQuery(id: string, query: SessionQuery): SessionLookup {
   return sessionLookupFromCwd(id, query.cwd);
 }
@@ -374,6 +439,20 @@ function requireString(record: Record<string, unknown>, field: string): string {
   return value;
 }
 
+function requireNonEmptyBoundedString(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string") throw new Error(`${field} field must be a string`);
+  if (value === "") throw new Error(`${field} field must not be empty`);
+  if (value.length > maxLength) throw new Error(`${field} field is too long`);
+  return value;
+}
+
+function requireNonNegativeSafeInteger(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} field must be a non-negative safe integer`);
+  }
+  return value;
+}
+
 function requireThinkingLevel(value: unknown): string {
   if (typeof value !== "string" || value === "") throw new Error("level field is invalid");
   return value;
@@ -394,6 +473,10 @@ function errorMessage(error: unknown): string {
 }
 
 function mutationErrorStatus(error: unknown): 400 | 404 {
+  return isSessionNotFoundError(error) ? 404 : 400;
+}
+
+function notificationErrorStatus(error: unknown): 400 | 404 {
   return isSessionNotFoundError(error) ? 404 : 400;
 }
 

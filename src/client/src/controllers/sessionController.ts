@@ -104,7 +104,7 @@ export class SessionController {
     if (event.type === "status.update") this.queueStatusUpdate(event.status);
     else if (event.type === "activity.update") this.queueActivityUpdate(event.activity);
     else if (event.type === "session.created") this.applyCreatedSession(event.session);
-    else this.applySessionName(event.sessionId, event.name);
+    else if (event.type === "session.name") this.applySessionName(event.sessionId, event.name);
   }
 
   dispose() {
