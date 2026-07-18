@@ -121,7 +121,11 @@ describe("AuthController", () => {
     const statusCalls: { session: Parameters<typeof defaultApi.status>[0]; machineId: string | undefined }[] = [];
     const appliedStatuses: SessionStatus[] = [];
     const { controller, getState } = createController(
-      { selectedSession: session, authDialog: { step: "oauth", flow, machineId: "local", inputValue: "https://callback" } },
+      {
+        selectedMachine: remoteMachine("remote-2"),
+        selectedSession: session,
+        authDialog: { step: "oauth", flow, machineId: "remote-1", inputValue: "https://callback" },
+      },
       {
         respondOAuthFlow: (flowId, requestId, value, machineId) => {
           respondCalls.push({ flowId, requestId, value, machineId });
@@ -138,9 +142,9 @@ describe("AuthController", () => {
     await controller.respondOAuth();
     await flushMicrotasks();
 
-    expect(respondCalls).toEqual([{ flowId: "flow-1", requestId: "request-1", value: "https://callback", machineId: "local" }]);
+    expect(respondCalls).toEqual([{ flowId: "flow-1", requestId: "request-1", value: "https://callback", machineId: "remote-1" }]);
     expect(getState().authDialog).toBeUndefined();
-    expect(statusCalls).toEqual([{ session, machineId: "local" }]);
+    expect(statusCalls).toEqual([{ session, machineId: "remote-1" }]);
     expect(appliedStatuses).toEqual([refreshedStatus]);
   });
 
