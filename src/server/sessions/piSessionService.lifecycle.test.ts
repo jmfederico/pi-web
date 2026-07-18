@@ -319,6 +319,46 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
+  it("surfaces notifications when an extension command shares a bare name with a skill", async () => {
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("extension-command-session", {
+      resourceLoader: { getSkills: () => ({ skills: [{ name: "ctx-stats" }] }) },
+    });
+    let extensionNotify: ((message: string, type?: "info" | "warning" | "error") => void) | undefined;
+    let extensionMode: string | undefined;
+    fake.session.extensionRunner.getRegisteredCommands = () => [{ invocationName: "ctx-stats" }];
+    fake.session.bindExtensions = (bindings) => {
+      const uiContext = bindings.uiContext;
+      extensionNotify = uiContext === undefined
+        ? undefined
+        : (message, type) => { uiContext.notify(message, type); };
+      extensionMode = bindings.mode;
+      return Promise.resolve();
+    };
+    fake.session.prompt = (text) => {
+      if (text === "/ctx-stats") extensionNotify?.("context-mode stats", "info");
+      return Promise.resolve();
+    };
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    await expect(service.runCommand(sessionRef("extension-command-session"), "/ctx-stats")).resolves.toEqual({ type: "done" });
+
+    expect(extensionMode).toBe("rpc");
+    expect(hub.sessionEvents).toContainEqual({
+      sessionId: "extension-command-session",
+      event: { type: "command.output", level: "info", message: "context-mode stats" },
+    });
+
+    await service.dispose();
+  });
+
   it("clears stale active activity once a previously active session becomes idle", async () => {
     vi.useFakeTimers();
     let service: PiSessionService | undefined;

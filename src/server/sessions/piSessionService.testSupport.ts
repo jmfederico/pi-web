@@ -1,4 +1,4 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type Credential, type CredentialStore } from "@earendil-works/pi-ai";
 import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -89,6 +89,37 @@ export function createTestModelRuntime(credentials: CredentialStore = new InMemo
  */
 export const testModelRuntime = await createTestModelRuntime();
 
+const testExtensionUiContext: ExtensionUIContext = {
+  select: () => Promise.resolve(undefined),
+  confirm: () => Promise.resolve(false),
+  input: () => Promise.resolve(undefined),
+  notify() { /* no-op */ },
+  onTerminalInput: () => () => undefined,
+  setStatus() { /* no-op */ },
+  setWorkingMessage() { /* no-op */ },
+  setWorkingVisible() { /* no-op */ },
+  setWorkingIndicator() { /* no-op */ },
+  setHiddenThinkingLabel() { /* no-op */ },
+  setWidget() { /* no-op */ },
+  setFooter() { /* no-op */ },
+  setHeader() { /* no-op */ },
+  setTitle() { /* no-op */ },
+  custom: () => Promise.reject(new Error("Custom extension UI is unavailable in tests")),
+  pasteToEditor() { /* no-op */ },
+  setEditorText() { /* no-op */ },
+  getEditorText: () => "",
+  editor: () => Promise.resolve(undefined),
+  addAutocompleteProvider() { /* no-op */ },
+  setEditorComponent() { /* no-op */ },
+  getEditorComponent: () => undefined,
+  get theme(): ExtensionUIContext["theme"] { throw new Error("Extension UI theme is unavailable in tests"); },
+  getAllThemes: () => [],
+  getTheme: () => undefined,
+  setTheme: () => ({ success: false, error: "Extension UI is unavailable in tests" }),
+  getToolsExpanded: () => false,
+  setToolsExpanded() { /* no-op */ },
+};
+
 export function testModel(): NonNullable<PiAgentSession["model"]> {
   const model = testModelRuntime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
   if (model === undefined) throw new Error("test model not found");
@@ -117,7 +148,10 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined },
     modelRuntime: testModelRuntime,
     scopedModels: [],
-    extensionRunner: { getRegisteredCommands: () => [] },
+    extensionRunner: {
+      getRegisteredCommands: () => [],
+      getUIContext: () => testExtensionUiContext,
+    },
     promptTemplates: [],
     resourceLoader: { getSkills: () => ({ skills: [] }) },
     subscribe: (listener: (event: unknown) => void) => {

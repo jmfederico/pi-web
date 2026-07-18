@@ -15,6 +15,7 @@ import {
   type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type EditToolDetails,
+  type ExtensionUIContext,
   type ModelRuntime,
   type ResourceDiagnostic,
 } from "@earendil-works/pi-coding-agent";
@@ -204,6 +205,8 @@ interface PiExtensionError {
 }
 
 interface PiExtensionBindings {
+  uiContext?: ExtensionUIContext;
+  mode?: "rpc";
   onError?: (error: PiExtensionError) => void;
 }
 
@@ -239,7 +242,10 @@ export interface PiAgentSession {
   isCompacting: boolean;
   isBashRunning: boolean;
   pendingMessageCount: number;
-  extensionRunner: { getRegisteredCommands(): readonly { invocationName: string; description?: string }[] };
+  extensionRunner: {
+    getRegisteredCommands(): readonly { invocationName: string; description?: string }[];
+    getUIContext(): ExtensionUIContext;
+  };
   promptTemplates: readonly { name: string; description?: string }[];
   resourceLoader: { getSkills(): { skills: readonly { name: string; description?: string }[] } };
   subscribe(listener: (event: unknown) => void): () => void;
@@ -1903,7 +1909,27 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async bindSessionExtensions(session: PiAgentSession): Promise<void> {
+    const baseUiContext = session.extensionRunner.getUIContext();
+    const notify: ExtensionUIContext["notify"] = (message, type) => {
+      this.events.publish(session.sessionId, {
+        type: "command.output",
+        level: type === "error" ? "error" : "info",
+        message,
+      });
+    };
+    // PI WEB is a remote UI host, but currently only extension notifications
+    // cross this boundary. Delegate every other UI method to Pi's headless
+    // defaults so unsupported dialogs cancel safely instead of hanging.
+    const uiContext = new Proxy(baseUiContext, {
+      get(target, property, receiver): unknown {
+        if (property === "notify") return notify;
+        const value: unknown = Reflect.get(target, property, receiver);
+        return value;
+      },
+    });
     await session.bindExtensions({
+      uiContext,
+      mode: "rpc",
       onError: (error) => {
         const message = `${error.extensionPath}: ${error.error}`;
         this.publishActivity(session, "extension error", "error", message);
