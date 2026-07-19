@@ -14,6 +14,7 @@ import { ProjectController } from "../controllers/projectController";
 import { ProjectActivityOwnershipCoordinator } from "../controllers/projectActivityOwnershipCoordinator";
 import { PiWebStatusController } from "../controllers/piWebStatusController";
 import { SessionController } from "../controllers/sessionController";
+import { SessionNotificationController } from "../controllers/sessionNotificationController";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
 import { SessionStorageSessionSelectionMemory } from "../controllers/sessionSelection";
@@ -22,6 +23,16 @@ import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspace
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
+import {
+  aggregateNotificationSummaries,
+  effectiveNotificationSummaries,
+  notificationAggregateAcrossMachines,
+  notificationAggregateForCwd,
+  notificationAggregateForProject,
+  notificationBadgeModel,
+  selectedNotificationView,
+  type SessionNotificationBadgeModel,
+} from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
 import { RealtimeSocket } from "../sessionSocket";
 import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
@@ -63,7 +74,7 @@ import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
 import "./appShell/AppContextBar";
 import "./appShell/AppMobileMainTabs";
 import type { AppMobileMainTab, AppMobileMainTabIcon } from "./appShell/AppMobileMainTabs";
-import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
+import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget, type NavigationNotificationBadges } from "./appShell/AppNavigationPanel";
 import "./appShell/AppPanelEdgeControl";
 import "./appShell/AppRefreshControl";
 import { appStyles } from "./shared";
@@ -101,11 +112,17 @@ export class PiWebApp extends LitElement {
   @query("#navigation-panel") private navigationPanelFrame?: HTMLElement;
   @query("#workspace-panel") private workspacePanelFrame?: HTMLElement;
 
+  private readonly notifications = new SessionNotificationController(
+    () => this.state,
+    (patch) => { this.setState(patch); },
+    { onBackgroundError: (message, error) => { console.warn(message, error); } },
+  );
   private readonly sessions = new SessionController(
     () => this.state,
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
     new SessionStorageSessionSelectionMemory(),
+    { notifications: this.notifications },
   );
   private readonly projectActivityOwnership = new ProjectActivityOwnershipCoordinator(
     () => this.state,
@@ -163,7 +180,7 @@ export class PiWebApp extends LitElement {
   );
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
-  private readonly machineActivitySockets = new Map<string, RealtimeSocket>();
+  private readonly machineRealtimeSockets = new Map<string, RealtimeSocket>();
   private readonly activeTerminalIds = new Set<string>();
   private readonly machineNavigation = new SessionStorageMachineNavigationMemory();
   private readonly terminalSelection = new SessionStorageTerminalSelectionMemory();
@@ -260,6 +277,7 @@ export class PiWebApp extends LitElement {
     this.keyboard.reset();
     this.auth.dispose();
     this.sessions.dispose();
+    this.notifications.dispose();
     this.realtime.close();
     this.closeMachineActivitySockets();
     this.git.dispose();
@@ -280,6 +298,7 @@ export class PiWebApp extends LitElement {
     this.handleWorkspaceChange(previous, this.state);
     this.handleMachineChange(previous, this.state);
     if (machineActivitySubscriptionInputsChanged(previous, this.state)) this.syncMachineActivitySubscriptions();
+    this.notifications.syncEnvironment(previous, this.state);
   }
 
   private async loadProjectsAndRestoreRoute() {
@@ -308,6 +327,7 @@ export class PiWebApp extends LitElement {
   private async refreshAfterBrowserResume(): Promise<void> {
     await Promise.all([
       this.sessions.refreshSelectedSession(),
+      this.notifications.refreshAfterBrowserResume(),
       this.refreshMachineActivities(),
       this.refreshWorkspaceDeletionRuns(),
     ]);
@@ -363,6 +383,7 @@ export class PiWebApp extends LitElement {
     try {
       await Promise.all([
         this.sessions.refreshSelectedSession(),
+        this.notifications.refreshAfterBrowserResume(),
         this.refreshMachineActivities(),
         this.loadClientConfig(),
         this.refreshWorkspaceDeletionRuns(),
@@ -795,39 +816,44 @@ export class PiWebApp extends LitElement {
   }
 
   private connectRealtime(): void {
+    const machineId = selectedMachineId(this.state);
     this.realtime.connect(
-      (event) => { this.handleRealtimeEvent(event); },
+      (event) => { this.handleRealtimeEvent(machineId, event); },
       () => {
+        this.notifications.globalSocketOpened(machineId);
         const workspace = this.state.selectedWorkspace;
         if (workspace !== undefined) void this.refreshActiveTerminals(workspace);
-        void this.refreshWorkspaceActivity();
+        void this.refreshWorkspaceActivity(machineId);
       },
-      selectedMachineId(this.state),
+      machineId,
     );
   }
 
   private syncMachineActivitySubscriptions(): void {
     const desiredMachineIds = this.machineActivitySubscriptionIds();
-    for (const [machineId, socket] of this.machineActivitySockets.entries()) {
+    for (const [machineId, socket] of this.machineRealtimeSockets.entries()) {
       if (desiredMachineIds.has(machineId)) continue;
       socket.close();
-      this.machineActivitySockets.delete(machineId);
+      this.machineRealtimeSockets.delete(machineId);
     }
     for (const machineId of desiredMachineIds) {
-      if (this.machineActivitySockets.has(machineId)) continue;
+      if (this.machineRealtimeSockets.has(machineId)) continue;
       const socket = new RealtimeSocket();
       socket.connect(
         (event) => { this.handleMachineActivityEvent(machineId, event); },
-        () => { void this.refreshWorkspaceActivity(machineId); },
+        () => {
+          this.notifications.globalSocketOpened(machineId);
+          void this.refreshWorkspaceActivity(machineId);
+        },
         machineId,
       );
-      this.machineActivitySockets.set(machineId, socket);
+      this.machineRealtimeSockets.set(machineId, socket);
     }
   }
 
   private closeMachineActivitySockets(): void {
-    for (const socket of this.machineActivitySockets.values()) socket.close();
-    this.machineActivitySockets.clear();
+    for (const socket of this.machineRealtimeSockets.values()) socket.close();
+    this.machineRealtimeSockets.clear();
   }
 
   private machineActivitySubscriptionIds(): Set<string> {
@@ -840,10 +866,12 @@ export class PiWebApp extends LitElement {
 
   private handleMachineActivityEvent(machineId: string, event: RealtimeEvent): void {
     if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity, machineId);
+    else if (event.type === "notifications.summary") this.notifications.applySummaryEvent(machineId, event);
   }
 
-  private handleRealtimeEvent(event: RealtimeEvent): void {
+  private handleRealtimeEvent(machineId: string, event: RealtimeEvent): void {
     if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity);
+    else if (event.type === "notifications.summary") this.notifications.applySummaryEvent(machineId, event);
     else if (isTerminalEvent(event)) {
       this.applyTerminalEvent(event);
       if (event.type === "terminal.exited") void this.refreshWorkspaceDeletionRuns();
@@ -1118,6 +1146,49 @@ export class PiWebApp extends LitElement {
     }
   }
 
+  private navigationNotificationBadges(): NavigationNotificationBadges {
+    const state = this.state;
+    const selectedId = selectedMachineId(state);
+    const selectedCatalog = state.notificationCatalogsByMachine[selectedId];
+    const selectedSummaries = effectiveNotificationSummaries(selectedCatalog, state.selectedNotificationInbox);
+    const selectedSummaryBySessionId = new Map(selectedSummaries.map((summary) => [summary.sessionId, summary]));
+
+    const sessions = Object.fromEntries(state.sessions.map((session): [string, SessionNotificationBadgeModel | undefined] => {
+      const summary = session.archived === true ? undefined : selectedSummaryBySessionId.get(session.id);
+      const exactSummary = summary?.cwd === session.cwd ? summary : undefined;
+      return [session.id, exactSummary === undefined ? undefined : notificationBadgeModel(aggregateNotificationSummaries([exactSummary]))];
+    }));
+    const workspaces = Object.fromEntries(state.workspaces.map((workspace): [string, SessionNotificationBadgeModel | undefined] => [
+      workspace.id,
+      notificationBadgeModel(notificationAggregateForCwd(selectedSummaries, workspace.path)),
+    ]));
+    const projects = Object.fromEntries(state.projects.map((project): [string, SessionNotificationBadgeModel | undefined] => {
+      const projectWorkspaces = state.workspacesByProjectId[project.id] ?? (state.selectedProject?.id === project.id ? state.workspaces : []);
+      return [project.id, notificationBadgeModel(notificationAggregateForProject(selectedSummaries, new Set(projectWorkspaces.map((workspace) => workspace.path))))];
+    }));
+    const machines = Object.fromEntries(state.machines.map((machine): [string, SessionNotificationBadgeModel | undefined] => [
+      machine.id,
+      notificationBadgeModel(aggregateNotificationSummaries(effectiveNotificationSummaries(state.notificationCatalogsByMachine[machine.id], state.selectedNotificationInbox))),
+    ]));
+    const allMachines = notificationBadgeModel(notificationAggregateAcrossMachines(state.notificationCatalogsByMachine, state.selectedNotificationInbox));
+    const selectedWorkspacePaths = new Set(state.workspaces.map((workspace) => workspace.path));
+
+    return {
+      machines,
+      projects,
+      workspaces,
+      sessions,
+      machinesHeading: allMachines,
+      projectsHeading: notificationBadgeModel(aggregateNotificationSummaries(selectedSummaries)),
+      workspacesHeading: notificationBadgeModel(notificationAggregateForProject(selectedSummaries, selectedWorkspacePaths)),
+      sessionsHeading: state.selectedWorkspace === undefined ? undefined : notificationBadgeModel(notificationAggregateForCwd(selectedSummaries, state.selectedWorkspace.path)),
+    };
+  }
+
+  private mobileSessionsNotificationBadge(): SessionNotificationBadgeModel | undefined {
+    return notificationBadgeModel(notificationAggregateAcrossMachines(this.state.notificationCatalogsByMachine, this.state.selectedNotificationInbox));
+  }
+
   private renderNavigationPanel() {
     return html`
       <app-navigation-panel
@@ -1125,6 +1196,7 @@ export class PiWebApp extends LitElement {
         .selectedMachine=${this.state.selectedMachine}
         .machineStatuses=${this.state.machineStatuses}
         .machineActivities=${this.state.machineActivities}
+        .notificationBadges=${this.navigationNotificationBadges()}
         .machinesCollapsed=${this.navigationSections.isCollapsed("machines")}
         .onToggleMachines=${() => { this.navigationSections.toggle("machines"); }}
         .onSelectMachine=${(machine: Machine) => this.selectNavigationItem("machines", "projects", () => this.selectMachineWithMemory(machine))}
@@ -1892,6 +1964,14 @@ export class PiWebApp extends LitElement {
     void this.sessions.dismissWarning(dismissId);
   };
 
+  private readonly handleDismissNotification = (notificationId: string): void => {
+    void this.notifications.dismissNotification(notificationId);
+  };
+
+  private readonly handleDismissAllNotifications = (): void => {
+    void this.notifications.dismissAll();
+  };
+
   private readonly handleSelectModel = (): void => {
     void this.openModelDialog();
   };
@@ -1902,7 +1982,7 @@ export class PiWebApp extends LitElement {
 
   private renderChatView(state: AppState, session: SessionInfo) {
     return html`
-      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
+      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .notificationInbox=${selectedNotificationView(state.selectedNotificationInbox)} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
     `;
   }
 
@@ -1934,7 +2014,7 @@ export class PiWebApp extends LitElement {
 
   private mobileMainTabs(): AppMobileMainTab[] {
     return [
-      { id: "navigation", label: "Sessions", icon: "navigation", className: "navigation-tab" },
+      { id: "navigation", label: "Sessions", icon: "navigation", className: "navigation-tab", badge: this.mobileSessionsNotificationBadge() },
       { id: "chat", label: "Chat", icon: "chat" },
       ...this.visibleWorkspacePanels().map((panel): AppMobileMainTab => {
         const icon = panel.icon ?? this.mobilePanelIcon(panel);

@@ -1,12 +1,14 @@
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth, WorkspaceActivity } from "../api";
+import type { SessionNotificationBadgeModel } from "../sessionNotifications";
 import { machineActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
 import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
+import "./NotificationBadge";
 
 @customElement("machine-list")
 export class MachineList extends LitElement implements KeyboardNavigableSection {
@@ -14,6 +16,8 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) selected?: Machine;
   @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) activities: Record<string, Record<string, WorkspaceActivity>> = {};
+  @property({ attribute: false }) notificationBadges: Record<string, SessionNotificationBadgeModel | undefined> = {};
+  @property({ attribute: false }) notificationHeadingBadge?: SessionNotificationBadgeModel;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (machine: Machine) => void;
@@ -75,7 +79,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
         @keydown=${(event: KeyboardEvent) => { this.handleMachineKeydown(event, machine); }}
       >
         <div class="action-main">
-          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span></span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
+          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span>${this.notificationBadges[machine.id] === undefined ? null : html`<notification-badge .model=${this.notificationBadges[machine.id]}></notification-badge>`}</span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
           ${this.renderActivity(machine)}
         </div>
         ${hasRemoveAction ? this.renderMachineMenu(machine) : null}
@@ -113,10 +117,10 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderHeading() {
-    if (!this.collapsible) return "Machines";
+    if (!this.collapsible) return html`<span>Machines</span>${this.notificationHeadingBadge === undefined ? null : html`<notification-badge .model=${this.notificationHeadingBadge}></notification-badge>`}`;
     const selectedSummary = this.selected?.name ?? "No machine selected";
     const selectedTitle = this.selected?.baseUrl ?? selectedSummary;
-    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Machines</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${this.machines.length}</small></button>`;
+    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Machines</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span>${this.notificationHeadingBadge === undefined ? null : html`<notification-badge .model=${this.notificationHeadingBadge}></notification-badge>`}<small class="section-count">${this.machines.length}</small></button>`;
   }
 
   private toggleMenu(machineId: string, target: EventTarget | null): void {

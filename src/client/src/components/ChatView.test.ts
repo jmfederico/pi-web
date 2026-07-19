@@ -1,6 +1,7 @@
 import type { TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
+import type { SelectedSessionNotificationView } from "../sessionNotifications";
 import type { ChatLine } from "./shared";
 import {
   ChatView,
@@ -141,6 +142,40 @@ describe("ChatView session-warning dismiss wiring", () => {
   });
 });
 
+describe("ChatView notification tray wiring", () => {
+  // Escape hatch: these cases verify only the tray buttons' Lit callback wiring.
+  // Notification content, ordering, severity, collapse, and focus decisions are
+  // covered through pure seams; the node test environment has no shadow-DOM
+  // harness, so semantic class markers keep direct handler extraction narrow.
+  it("wires individual and dismiss-all actions to their injected callbacks", () => {
+    const view = withNotificationInbox(new ChatView());
+    const onDismissNotification = vi.fn();
+    const onDismissAllNotifications = vi.fn();
+    view.onDismissNotification = onDismissNotification;
+    view.onDismissAllNotifications = onDismissAllNotifications;
+
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+    templateEventHandlerAfterMarker(rendered, "notification-card-dismiss")(new Event("click"));
+    templateEventHandlerAfterMarker(rendered, "notification-dismiss-all")(new Event("click"));
+
+    expect(onDismissNotification).toHaveBeenCalledExactlyOnceWith("daemon-a:1");
+    expect(onDismissAllNotifications).toHaveBeenCalledOnce();
+  });
+
+  it("wires the real expand/collapse button to component-local collapse state", () => {
+    const view = withNotificationInbox(new ChatView());
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+
+    templateEventHandlerAfterMarker(rendered, "notification-toggle")(new Event("click"));
+
+    const collapsedSessionIds: unknown = Reflect.get(view, "collapsedNotificationSessionIds");
+    if (!(collapsedSessionIds instanceof Set)) throw new Error("Expected collapsed notification session ids");
+    expect(collapsedSessionIds.has("session-1")).toBe(true);
+  });
+});
+
 describe("chatMessageMetadataLabel", () => {
   it("uses one full date and model label without a model prefix", () => {
     const timestamp = "2026-07-10T19:15:30.000Z";
@@ -232,6 +267,7 @@ type RenderQueuedMessages = (this: ChatView) => TemplateResult;
 type RenderMessageGroup = (this: ChatView, messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean) => TemplateResult;
 type RenderMessageGroupBody = (this: ChatView, messages: ChatLine[], startIndex: number) => TemplateResult;
 type RenderWarnings = (this: ChatView) => TemplateResult | null;
+type RenderNotificationTray = (this: ChatView) => TemplateResult | null;
 type TemplateEventHandler = (event: Event) => void;
 
 function renderQueuedMessages(view: ChatView): TemplateResult {
@@ -249,6 +285,12 @@ function renderMessageGroup(view: ChatView, messages: ChatLine[], startIndex: nu
 function renderWarnings(view: ChatView): TemplateResult | null {
   const method: unknown = Reflect.get(view, "renderWarnings");
   if (!isRenderWarnings(method)) throw new Error("ChatView.renderWarnings is not callable");
+  return method.call(view);
+}
+
+function renderNotificationTray(view: ChatView): TemplateResult | null {
+  const method: unknown = Reflect.get(view, "renderNotificationTray");
+  if (!isRenderNotificationTray(method)) throw new Error("ChatView.renderNotificationTray is not callable");
   return method.call(view);
 }
 
@@ -280,6 +322,10 @@ function isRenderWarnings(value: unknown): value is RenderWarnings {
   return typeof value === "function";
 }
 
+function isRenderNotificationTray(value: unknown): value is RenderNotificationTray {
+  return typeof value === "function";
+}
+
 function dispatchDetailsToggle(handler: TemplateEventHandler, open: boolean): void {
   const hadDetailsElement = Reflect.has(globalThis, "HTMLDetailsElement");
   const previousDetailsElement = Reflect.get(globalThis, "HTMLDetailsElement");
@@ -306,6 +352,33 @@ function requireSection(section: ReturnType<typeof chatQueuedMessageSections>[nu
 
 function withStatus(view: ChatView, status: SessionStatus): ChatView {
   view.status = status;
+  return view;
+}
+
+function withNotificationInbox(view: ChatView): ChatView {
+  const notificationInbox: SelectedSessionNotificationView = {
+    machineId: "local",
+    sessionId: "session-1",
+    cwd: "/repo",
+    daemonInstanceId: "daemon-a",
+    notifications: [{
+      id: "daemon-a:1",
+      message: "plain <strong>text</strong>\nsecond line",
+      truncated: false,
+      severity: "warning",
+      receivedAt: "2026-07-18T00:00:00.000Z",
+      order: 1,
+    }],
+    retainedCount: 1,
+    discardedCount: 0,
+    highestSeverity: "warning",
+    dismissThrough: { order: 1, overflowWatermark: 0 },
+    pendingDismissedIds: new Set(),
+    dismissAllPending: false,
+    announcements: [],
+  };
+  view.sessionId = notificationInbox.sessionId;
+  view.notificationInbox = notificationInbox;
   return view;
 }
 

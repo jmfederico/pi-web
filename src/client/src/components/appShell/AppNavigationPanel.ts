@@ -2,6 +2,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace, WorkspaceActivity } from "../../api";
 import type { WorkspaceLabelItem } from "../../plugins/types";
+import type { SessionNotificationBadgeModel } from "../../sessionNotifications";
 import type { NavigationSection } from "../../appShell/navigationState";
 import { NAVIGATION_SECTION_ORDER } from "../../appShell/navigationState";
 import type { KeyboardNavigableSection } from "../navigationFocus";
@@ -12,6 +13,19 @@ import "../WorkspaceList";
 import "../SessionList";
 
 export type NavigationFocusTarget = NavigationSection | "chat";
+
+export interface NavigationNotificationBadges {
+  machines: Record<string, SessionNotificationBadgeModel | undefined>;
+  projects: Record<string, SessionNotificationBadgeModel | undefined>;
+  workspaces: Record<string, SessionNotificationBadgeModel | undefined>;
+  sessions: Record<string, SessionNotificationBadgeModel | undefined>;
+  machinesHeading?: SessionNotificationBadgeModel | undefined;
+  projectsHeading?: SessionNotificationBadgeModel | undefined;
+  workspacesHeading?: SessionNotificationBadgeModel | undefined;
+  sessionsHeading?: SessionNotificationBadgeModel | undefined;
+}
+
+const emptyNavigationNotificationBadges = (): NavigationNotificationBadges => ({ machines: {}, projects: {}, workspaces: {}, sessions: {} });
 
 @customElement("app-navigation-panel")
 export class AppNavigationPanel extends LitElement {
@@ -30,6 +44,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) sessionStatuses: Record<string, SessionStatus> = {};
   @property({ attribute: false }) sendingPrompts: Record<string, true> = {};
   @property({ attribute: false }) workspacesByProjectId: Record<string, Workspace[]> = {};
+  @property({ attribute: false }) notificationBadges: NavigationNotificationBadges = emptyNavigationNotificationBadges();
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) refreshControl: unknown;
@@ -100,6 +115,8 @@ export class AppNavigationPanel extends LitElement {
             .selected=${this.selectedMachine}
             .statuses=${this.machineStatuses}
             .activities=${this.machineActivities}
+            .notificationBadges=${this.notificationBadges.machines}
+            .notificationHeadingBadge=${this.notificationBadges.machinesHeading}
             .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
             .onRemove=${(machine: Machine) => this.onRemoveMachine?.(machine)}
             .onFocusNextSection=${() => { this.focusNextFrom("machines"); }}
@@ -117,6 +134,8 @@ export class AppNavigationPanel extends LitElement {
           .selected=${this.selectedMachine}
           .statuses=${this.machineStatuses}
           .activities=${this.machineActivities}
+          .notificationBadges=${this.notificationBadges.machines}
+          .notificationHeadingBadge=${this.notificationBadges.machinesHeading}
           .collapsible=${this.collapsible}
           .collapsed=${this.machinesCollapsed}
           .onToggleCollapsed=${() => { this.onToggleMachines?.(); }}
@@ -131,6 +150,8 @@ export class AppNavigationPanel extends LitElement {
         .selected=${this.selectedProject}
         .activities=${this.workspaceActivities}
         .workspacesByProjectId=${this.workspacesByProjectId}
+        .notificationBadges=${this.notificationBadges.projects}
+        .notificationHeadingBadge=${this.notificationBadges.projectsHeading}
         .collapsible=${this.collapsible}
         .collapsed=${this.projectsCollapsed}
         .onToggleCollapsed=${() => { this.onToggleProjects?.(); }}
@@ -145,6 +166,8 @@ export class AppNavigationPanel extends LitElement {
         .selected=${this.selectedWorkspace}
         .activities=${this.workspaceActivities}
         .deletingWorkspaceIds=${this.deletingWorkspaceIds}
+        .notificationBadges=${this.notificationBadges.workspaces}
+        .notificationHeadingBadge=${this.notificationBadges.workspacesHeading}
         .collapsible=${this.collapsible}
         .collapsed=${this.workspacesCollapsed}
         .workspaceLabelItems=${this.workspaceLabelItems}
@@ -160,6 +183,8 @@ export class AppNavigationPanel extends LitElement {
         .statuses=${this.sessionStatuses}
         .activities=${this.sessionActivities}
         .sending=${this.sendingPrompts}
+        .notificationBadges=${this.notificationBadges.sessions}
+        .notificationHeadingBadge=${this.notificationBadges.sessionsHeading}
         .selected=${this.selectedSession}
         .startingCount=${this.startingSessionCount}
         .canStart=${this.canStartSession}

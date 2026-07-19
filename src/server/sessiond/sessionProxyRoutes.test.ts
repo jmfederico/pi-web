@@ -39,6 +39,29 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "POST", path: "/sessions/session-1/queue/clear", body: { cwd: "/repo" } }]);
   });
 
+  it("forwards notification snapshots and dismissal bodies unchanged", async () => {
+    const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/notifications" });
+    const inbox = await app.inject({ method: "GET", url: `/api/machines/local/sessions/session-1/notifications?cwd=${encodeURIComponent("/repo")}` });
+    const dismiss = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/notifications/dismiss",
+      payload: { cwd: "/repo", daemonInstanceId: "daemon-test", notificationId: "notice-1" },
+    });
+    const dismissAll = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/notifications/dismiss-all",
+      payload: { cwd: "/repo", daemonInstanceId: "daemon-test", throughOrder: 7, throughOverflowWatermark: 2 },
+    });
+
+    expect([catalog.statusCode, inbox.statusCode, dismiss.statusCode, dismissAll.statusCode]).toEqual([200, 200, 200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/sessions/notifications", body: undefined },
+      { method: "GET", path: "/sessions/session-1/notifications?cwd=%2Frepo", body: undefined },
+      { method: "POST", path: "/sessions/session-1/notifications/dismiss", body: { cwd: "/repo", daemonInstanceId: "daemon-test", notificationId: "notice-1" } },
+      { method: "POST", path: "/sessions/session-1/notifications/dismiss-all", body: { cwd: "/repo", daemonInstanceId: "daemon-test", throughOrder: 7, throughOverflowWatermark: 2 } },
+    ]);
+  });
+
   it("strips the machine prefix before forwarding auth requests", async () => {
     const response = await app.inject({ method: "POST", url: "/api/machines/local/auth/api-key", payload: { providerId: "p", key: "k" } });
 

@@ -1,4 +1,4 @@
-import type { GlobalSessionEvent, RealtimeEvent, SessionUiEvent } from "../../shared/apiTypes.js";
+import type { GlobalSessionEvent, RealtimeEvent, SessionNotificationSummaryEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { projectBrowserSessionEvent } from "../browserMessageProjection.js";
 
 export interface RealtimeSocket {
@@ -50,6 +50,11 @@ export class SessionEventHub {
 
   publishGlobal(event: GlobalSessionEvent): void {
     this.publishRealtime(event);
+  }
+
+  publishNotificationSummary(event: SessionNotificationSummaryEvent): void {
+    const payload = JSON.stringify(event);
+    this.sendToSockets(this.globalSockets, payload);
   }
 
   publishRealtime(event: RealtimeEvent): void {

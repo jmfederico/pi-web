@@ -1,6 +1,7 @@
 import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/ids";
+import type { SelectedSessionNotificationInbox, SessionNotificationCatalogProjection } from "./sessionNotifications";
 import type { WorkspaceUploadBatchState } from "./workspaceUploadState";
 
 export interface AppState {
@@ -36,6 +37,10 @@ export interface AppState {
   sessionActivities: Record<string, SessionActivity>;
   workspaceActivities: Record<string, WorkspaceActivity>;
   machineActivities: Record<string, Record<string, WorkspaceActivity>>;
+  /** Fresh/stale daemon notification catalogs, isolated by exact machine id. */
+  notificationCatalogsByMachine: Record<string, SessionNotificationCatalogProjection>;
+  /** Authoritative projection plus browser-local optimistic overlays for the selected inbox. */
+  selectedNotificationInbox: SelectedSessionNotificationInbox | undefined;
   workspacesByProjectId: Record<string, Workspace[]>;
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
@@ -77,6 +82,7 @@ export type WorkspaceScopedStateReset = Pick<AppState,
   | "sessions"
   | "clientQueuedSessionMessages"
   | "startingSessionCount"
+  | "selectedNotificationInbox"
   | "fileTree"
   | "expandedDirs"
   | "selectedFilePath"
@@ -96,6 +102,7 @@ export function resetWorkspaceScopedState(): WorkspaceScopedStateReset {
     sessions: [],
     clientQueuedSessionMessages: {},
     startingSessionCount: 0,
+    selectedNotificationInbox: undefined,
     fileTree: [],
     expandedDirs: {},
     selectedFilePath: undefined,
@@ -141,6 +148,8 @@ export function initialAppState(): AppState {
     sessionActivities: {},
     workspaceActivities: {},
     machineActivities: {},
+    notificationCatalogsByMachine: {},
+    selectedNotificationInbox: undefined,
     workspacesByProjectId: {},
     workspaceDeletionRuns: {},
     commandDialog: undefined,

@@ -186,6 +186,33 @@ describe("buildApp remote machine proxy routes", () => {
     expect(request).toHaveBeenCalledWith("POST", "/api/sessions/s1/reload", { cwd: "/repo" });
   });
 
+  it("proxies only the four allowlisted remote notification HTTP routes", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((method, path, body) => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ method, path, body })]),
+    }));
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const catalog = await appTestContext.app.inject({ method: "GET", url: `/api/machines/${remote.id}/sessions/notifications` });
+    const inbox = await appTestContext.app.inject({ method: "GET", url: `/api/machines/${remote.id}/sessions/${encodeURIComponent("s 1")}/notifications?cwd=${encodeURIComponent("/repo one")}` });
+    const dismissBody = { cwd: "/repo one", daemonInstanceId: "daemon-test", notificationId: "notice-1" };
+    const dismiss = await appTestContext.app.inject({ method: "POST", url: `/api/machines/${remote.id}/sessions/${encodeURIComponent("s 1")}/notifications/dismiss`, payload: dismissBody });
+    const dismissAllBody = { cwd: "/repo one", daemonInstanceId: "daemon-test", throughOrder: 7, throughOverflowWatermark: 2 };
+    const dismissAll = await appTestContext.app.inject({ method: "POST", url: `/api/machines/${remote.id}/sessions/${encodeURIComponent("s 1")}/notifications/dismiss-all`, payload: dismissAllBody });
+    const wrongMethod = await appTestContext.app.inject({ method: "DELETE", url: `/api/machines/${remote.id}/sessions/s1/notifications` });
+
+    expect([catalog.statusCode, inbox.statusCode, dismiss.statusCode, dismissAll.statusCode]).toEqual([200, 200, 200, 200]);
+    expect(wrongMethod.statusCode).toBe(404);
+    expect(request).toHaveBeenNthCalledWith(1, "GET", "/api/sessions/notifications", undefined);
+    expect(request).toHaveBeenNthCalledWith(2, "GET", "/api/sessions/s%201/notifications?cwd=%2Frepo%20one", undefined);
+    expect(request).toHaveBeenNthCalledWith(3, "POST", "/api/sessions/s%201/notifications/dismiss", dismissBody);
+    expect(request).toHaveBeenNthCalledWith(4, "POST", "/api/sessions/s%201/notifications/dismiss-all", dismissAllBody);
+    expect(request).toHaveBeenCalledTimes(4);
+  });
+
   it("proxies remote session queue clearing through the allowlisted route", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

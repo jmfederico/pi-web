@@ -23,6 +23,36 @@ describe("SessionEventHub", () => {
     expect(otherSocket.send).not.toHaveBeenCalled();
   });
 
+  it("keeps notification inbox events session-scoped and sequence-stamped", () => {
+    const hub = new SessionEventHub();
+    const sessionSocket = new FakeSocket();
+    const otherSocket = new FakeSocket();
+    hub.add("s1", sessionSocket);
+    hub.add("s2", otherSocket);
+    const notification = { id: "daemon-test:1", message: "notice", truncated: false, severity: "warning" as const, receivedAt: "2026-01-01T00:00:00.000Z", order: 1 };
+    const summary = { sessionId: "s1", cwd: "/workspace", inboxRevision: 1, retainedCount: 1, discardedCount: 0, highestSeverity: "warning" as const };
+
+    hub.publish("s1", {
+      type: "notifications.inbox",
+      daemonInstanceId: "daemon-test",
+      catalogRevision: 1,
+      summary,
+      dismissThrough: { order: 1, overflowWatermark: 0 },
+      delta: { kind: "added", notification },
+    });
+
+    expect(sessionSocket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "notifications.inbox",
+      daemonInstanceId: "daemon-test",
+      catalogRevision: 1,
+      summary,
+      dismissThrough: { order: 1, overflowWatermark: 0 },
+      delta: { kind: "added", notification },
+      seq: 1,
+    }));
+    expect(otherSocket.send).not.toHaveBeenCalled();
+  });
+
   it("omits thinking signatures from final-message payloads without mutating source events", () => {
     const hub = new SessionEventHub();
     const socket = new FakeSocket();
@@ -100,6 +130,30 @@ describe("SessionEventHub", () => {
     hub.publishGlobal({ type: "status.update", status });
 
     expect(globalSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: "status.update", status }));
+    expect(sessionSocket.send).not.toHaveBeenCalled();
+  });
+
+  it("publishes notification summaries only to global sockets", () => {
+    const hub = new SessionEventHub();
+    const globalSocket = new FakeSocket();
+    const sessionSocket = new FakeSocket();
+    hub.addGlobal(globalSocket);
+    hub.add("s1", sessionSocket);
+    const summary = { sessionId: "s1", cwd: "/workspace", inboxRevision: 1, retainedCount: 1, discardedCount: 0, highestSeverity: "warning" as const };
+
+    hub.publishNotificationSummary({
+      type: "notifications.summary",
+      daemonInstanceId: "daemon-test",
+      catalogRevision: 1,
+      summary,
+    });
+
+    expect(globalSocket.send).toHaveBeenCalledWith(JSON.stringify({
+      type: "notifications.summary",
+      daemonInstanceId: "daemon-test",
+      catalogRevision: 1,
+      summary,
+    }));
     expect(sessionSocket.send).not.toHaveBeenCalled();
   });
 

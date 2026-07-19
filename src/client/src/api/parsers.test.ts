@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES } from "../../../shared/apiTypes";
+import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationCatalogSnapshot, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionNotificationSummaryEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves additive interactive API-key flow hints and defaults legacy options", () => {
@@ -512,4 +513,87 @@ describe("API parsers", () => {
     expect(parseCommandResult({ type: "done", message: "ok", promptDraft: "resend me" })).toEqual({ type: "done", message: "ok", promptDraft: "resend me" });
     expect(() => parseCommandResult({ type: "later" })).toThrow("Invalid command result type");
   });
+
+  it("strictly parses notification snapshots and realtime events", () => {
+    const inbox = notificationInboxWire();
+
+    expect(parseSessionNotificationCatalogSnapshot({
+      daemonInstanceId: "daemon-a",
+      catalogRevision: 1,
+      sessions: [inbox.summary],
+    })).toMatchObject({ daemonInstanceId: "daemon-a", sessions: [{ sessionId: "session-1" }] });
+    expect(parseSessionNotificationInboxSnapshot(inbox)).toEqual(inbox);
+    expect(parseSessionNotificationInboxEvent({
+      type: "notifications.inbox",
+      daemonInstanceId: "daemon-a",
+      catalogRevision: 2,
+      summary: { ...inbox.summary, inboxRevision: 2, retainedCount: 2, highestSeverity: "warning" },
+      dismissThrough: { order: 2, overflowWatermark: 0 },
+      delta: { kind: "added", notification: notificationWire(2, "warning") },
+    })).toMatchObject({ type: "notifications.inbox", delta: { kind: "added", notification: { severity: "warning" } } });
+    expect(parseSessionNotificationSummaryEvent({
+      type: "notifications.summary",
+      daemonInstanceId: "daemon-a",
+      catalogRevision: 2,
+      summary: { ...inbox.summary, inboxRevision: 2 },
+    })).toMatchObject({ type: "notifications.summary", catalogRevision: 2 });
+  });
+
+  it("rejects malformed, unsafe, over-cap, and oversized notification payloads", () => {
+    const inbox = notificationInboxWire();
+    expect(() => parseSessionNotificationInboxSnapshot({
+      ...inbox,
+      notifications: [{ ...notificationWire(1), severity: "fatal" }],
+    })).toThrow("Invalid notification severity");
+    expect(() => parseSessionNotificationCatalogSnapshot({
+      daemonInstanceId: "daemon-a",
+      catalogRevision: Number.MAX_SAFE_INTEGER + 1,
+      sessions: [],
+    })).toThrow("safe integer");
+    expect(() => parseSessionNotificationInboxSnapshot({
+      ...inbox,
+      summary: { ...inbox.summary, retainedCount: SESSION_NOTIFICATION_LIMIT },
+      notifications: Array.from({ length: SESSION_NOTIFICATION_LIMIT + 1 }, (_, index) => notificationWire(SESSION_NOTIFICATION_LIMIT + 1 - index)),
+    })).toThrow("exceeds limit");
+    expect(() => parseSessionNotificationInboxSnapshot({
+      ...inbox,
+      notifications: [{ ...notificationWire(1), message: "x".repeat(SESSION_NOTIFICATION_MESSAGE_BYTES + 1) }],
+    })).toThrow("message exceeds byte limit");
+    expect(() => parseSessionNotificationInboxEvent({
+      type: "notifications.inbox",
+      daemonInstanceId: "daemon-a",
+      catalogRevision: 2,
+      summary: { ...inbox.summary, inboxRevision: 2 },
+      dismissThrough: { order: 1, overflowWatermark: 0 },
+      delta: { kind: "cleared", reason: "future-reason" },
+    })).toThrow("Invalid notification clear reason");
+  });
 });
+
+function notificationWire(order: number, severity: "info" | "warning" | "error" = "info") {
+  return {
+    id: `daemon-a:${String(order)}`,
+    message: `notice ${String(order)}`,
+    truncated: false,
+    severity,
+    receivedAt: "2026-07-18T00:00:00.000Z",
+    order,
+  };
+}
+
+function notificationInboxWire() {
+  return {
+    daemonInstanceId: "daemon-a",
+    catalogRevision: 1,
+    summary: {
+      sessionId: "session-1",
+      cwd: "/repo",
+      inboxRevision: 1,
+      retainedCount: 1,
+      discardedCount: 0,
+      highestSeverity: "info" as const,
+    },
+    notifications: [notificationWire(1)],
+    dismissThrough: { order: 1, overflowWatermark: 0 },
+  };
+}

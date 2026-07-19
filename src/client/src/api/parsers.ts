@@ -1,4 +1,4 @@
-import type { ArchiveSessionsResponse, AuthProviderOption, AuthProviderStatus, AuthProvidersResponse, AuthStatusSource, AuthType, CommandOption, CommandResult, DeleteWorkspaceFileResponse, FileContentResponse, FileSuggestion, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse, Machine, MachineHealth, MachineKind, MachineRuntime, MachineStatus, MessagePage, ModelSelectionResponse, MoveWorkspaceFileResponse, OAuthFlowState, PiWebAgentDirEnvSource, PiWebCapability, PiWebComponentStatus, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebInstallationInfo, PiWebPluginConfigMap, PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebShortcutConfig, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, Project, QueuedSessionMessage, SavedPromptAttachment, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkFailure, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupThresholds, SessionCleanupTotals, SessionInfo, SessionModel, SessionStatus, SessionStreamSnapshot, SessionWarning, SessionWarningSeverity, SlashCommand, TerminalCommandRun, TerminalCommandRunStatus, TerminalInfo, ThinkingLevelsResponse, WriteWorkspaceFileResponse, Workspace, WorkspaceActivity, WorkspaceActivityResponse } from "../../../shared/apiTypes";
+import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, type ArchiveSessionsResponse, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GitDiffResponse, type GitFileState, type GitStatusFile, type GitStatusResponse, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebAgentDirEnvSource, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionNotification, type SessionNotificationCatalogSnapshot, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type SessionNotificationSummaryEvent, type SessionStatus, type SessionStreamSnapshot, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type TerminalCommandRun, type TerminalCommandRunStatus, type TerminalInfo, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceActivity, type WorkspaceActivityResponse } from "../../../shared/apiTypes";
 import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse } from "../../../shared/apiTypes";
 import { parseActiveAgentProfileDescriptor } from "../../../shared/activeAgentProfile";
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
@@ -231,6 +231,213 @@ export function parseSessionStreamSnapshot(value: unknown): SessionStreamSnapsho
     seq: requireNumber(record, "seq"),
     partial: record["partial"] ?? null,
   };
+}
+
+export function parseSessionNotificationCatalogSnapshot(value: unknown): SessionNotificationCatalogSnapshot {
+  const record = requireRecord(value);
+  const sessions = arrayOf(parseSessionNotificationSummary)(record["sessions"]);
+  const sessionIds = new Set(sessions.map((summary) => summary.sessionId));
+  if (sessionIds.size !== sessions.length) throw new Error("Duplicate notification catalog session id");
+  if (sessions.some((summary) => summary.retainedCount === 0 && summary.discardedCount === 0)) throw new Error("Empty notification summary in catalog");
+  return {
+    daemonInstanceId: requireNonEmptyString(record, "daemonInstanceId"),
+    catalogRevision: requireNonNegativeSafeInteger(record, "catalogRevision"),
+    sessions,
+  };
+}
+
+export function parseSessionNotificationInboxSnapshot(value: unknown): SessionNotificationInboxSnapshot {
+  const record = requireRecord(value);
+  const summary = parseSessionNotificationSummary(record["summary"]);
+  const notifications = boundedArrayOf(record["notifications"], parseSessionNotification, SESSION_NOTIFICATION_LIMIT, "notifications");
+  assertUniqueNotifications(notifications);
+  assertNewestFirst(notifications);
+  if (summary.retainedCount !== notifications.length) throw new Error("Notification snapshot retained count mismatch");
+  if (summary.highestSeverity !== highestNotificationSeverity(notifications)) throw new Error("Notification snapshot severity mismatch");
+  const dismissThrough = parseSessionNotificationDismissThrough(record["dismissThrough"]);
+  const newestOrder = notifications[0]?.order ?? 0;
+  if (dismissThrough.order !== newestOrder) throw new Error("Notification snapshot dismiss cutoff mismatch");
+  if (dismissThrough.overflowWatermark < summary.discardedCount) throw new Error("Notification snapshot overflow cutoff mismatch");
+  return {
+    daemonInstanceId: requireNonEmptyString(record, "daemonInstanceId"),
+    catalogRevision: requireNonNegativeSafeInteger(record, "catalogRevision"),
+    summary,
+    notifications,
+    dismissThrough,
+  };
+}
+
+export function parseSessionNotificationInboxEvent(value: unknown): SessionNotificationInboxEvent {
+  const record = requireRecord(value);
+  if (record["type"] !== "notifications.inbox") throw new Error("Invalid notification inbox event type");
+  const summary = parseSessionNotificationSummary(record["summary"]);
+  const dismissThrough = parseSessionNotificationDismissThrough(record["dismissThrough"]);
+  if (dismissThrough.overflowWatermark < summary.discardedCount) throw new Error("Notification event overflow cutoff mismatch");
+  const delta = parseSessionNotificationInboxDelta(record["delta"]);
+  if (delta.kind === "cleared" && !notificationSummaryIsEmpty(summary)) throw new Error("Notification clear event summary mismatch");
+  if (delta.kind === "added" && summary.retainedCount === 0) throw new Error("Notification add event summary mismatch");
+  return {
+    type: "notifications.inbox",
+    daemonInstanceId: requireNonEmptyString(record, "daemonInstanceId"),
+    catalogRevision: requireNonNegativeSafeInteger(record, "catalogRevision"),
+    summary,
+    dismissThrough,
+    delta,
+  };
+}
+
+export function parseSessionNotificationSummaryEvent(value: unknown): SessionNotificationSummaryEvent {
+  const record = requireRecord(value);
+  if (record["type"] !== "notifications.summary") throw new Error("Invalid notification summary event type");
+  return {
+    type: "notifications.summary",
+    daemonInstanceId: requireNonEmptyString(record, "daemonInstanceId"),
+    catalogRevision: requireNonNegativeSafeInteger(record, "catalogRevision"),
+    summary: parseSessionNotificationSummary(record["summary"]),
+  };
+}
+
+export function parseSessionNotificationSummary(value: unknown): SessionNotificationSummary {
+  const record = requireRecord(value);
+  const retainedCount = requireNonNegativeSafeInteger(record, "retainedCount");
+  if (retainedCount > SESSION_NOTIFICATION_LIMIT) throw new Error("Notification retained count exceeds limit");
+  const discardedCount = requireNonNegativeSafeInteger(record, "discardedCount");
+  const highestSeverity = optionalSessionNotificationSeverity(record["highestSeverity"]);
+  if ((retainedCount === 0) !== (highestSeverity === undefined)) throw new Error("Notification summary severity mismatch");
+  return {
+    sessionId: requireNonEmptyString(record, "sessionId"),
+    cwd: requireNonEmptyString(record, "cwd"),
+    inboxRevision: requireNonNegativeSafeInteger(record, "inboxRevision"),
+    retainedCount,
+    discardedCount,
+    ...(highestSeverity === undefined ? {} : { highestSeverity }),
+  };
+}
+
+function parseSessionNotification(value: unknown): SessionNotification {
+  const record = requireRecord(value);
+  const message = requireString(record, "message");
+  if (new TextEncoder().encode(message).byteLength > SESSION_NOTIFICATION_MESSAGE_BYTES) throw new Error("Notification message exceeds byte limit");
+  const receivedAt = requireString(record, "receivedAt");
+  if (!Number.isFinite(Date.parse(receivedAt))) throw new Error("Invalid notification receive time");
+  const order = requireNonNegativeSafeInteger(record, "order");
+  if (order === 0) throw new Error("Invalid notification order");
+  return {
+    id: requireNonEmptyString(record, "id"),
+    message,
+    truncated: requireBoolean(record, "truncated"),
+    severity: parseSessionNotificationSeverity(record["severity"]),
+    receivedAt,
+    order,
+  };
+}
+
+function parseSessionNotificationDismissThrough(value: unknown): SessionNotificationDismissThrough {
+  const record = requireRecord(value);
+  return {
+    order: requireNonNegativeSafeInteger(record, "order"),
+    overflowWatermark: requireNonNegativeSafeInteger(record, "overflowWatermark"),
+  };
+}
+
+function parseSessionNotificationInboxDelta(value: unknown): SessionNotificationInboxDelta {
+  const record = requireRecord(value);
+  switch (record["kind"]) {
+    case "added": {
+      const evictedNotificationId = optionalString(record, "evictedNotificationId");
+      return {
+        kind: "added",
+        notification: parseSessionNotification(record["notification"]),
+        ...(evictedNotificationId === undefined ? {} : { evictedNotificationId }),
+      };
+    }
+    case "dismissed": {
+      const notificationIds = boundedArrayOf(record["notificationIds"], parseNonEmptyString, SESSION_NOTIFICATION_LIMIT, "notificationIds");
+      if (new Set(notificationIds).size !== notificationIds.length) throw new Error("Duplicate dismissed notification id");
+      return { kind: "dismissed", notificationIds };
+    }
+    case "cleared":
+      return { kind: "cleared", reason: parseSessionNotificationClearReason(record["reason"]) };
+    case "resync":
+      return { kind: "resync" };
+    default:
+      throw new Error("Invalid notification inbox delta");
+  }
+}
+
+function parseSessionNotificationSeverity(value: unknown): SessionNotificationSeverity {
+  if (value !== "info" && value !== "warning" && value !== "error") throw new Error("Invalid notification severity");
+  return value;
+}
+
+function optionalSessionNotificationSeverity(value: unknown): SessionNotificationSeverity | undefined {
+  return value === undefined ? undefined : parseSessionNotificationSeverity(value);
+}
+
+function parseSessionNotificationClearReason(value: unknown): SessionNotificationClearReason {
+  switch (value) {
+    case "runtime-close":
+    case "archive":
+    case "delete":
+    case "restore":
+    case "archive-reconcile":
+    case "replacement":
+    case "initialization-failed":
+    case "service-dispose":
+      return value;
+    default:
+      throw new Error("Invalid notification clear reason");
+  }
+}
+
+function boundedArrayOf<T>(value: unknown, parse: (item: unknown) => T, limit: number, field: string): T[] {
+  if (!Array.isArray(value)) throw new Error(`Expected array field: ${field}`);
+  if (value.length > limit) throw new Error(`Array field exceeds limit: ${field}`);
+  return value.map(parse);
+}
+
+function parseNonEmptyString(value: unknown): string {
+  if (typeof value !== "string" || value === "") throw new Error("Expected non-empty string");
+  return value;
+}
+
+function requireNonEmptyString(record: Record<string, unknown>, key: string): string {
+  const value = requireString(record, key);
+  if (value === "") throw new Error(`Expected non-empty string field: ${key}`);
+  return value;
+}
+
+function requireNonNegativeSafeInteger(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`Expected non-negative safe integer field: ${key}`);
+  return value;
+}
+
+function assertUniqueNotifications(notifications: readonly SessionNotification[]): void {
+  if (new Set(notifications.map((notification) => notification.id)).size !== notifications.length) throw new Error("Duplicate notification id");
+  if (new Set(notifications.map((notification) => notification.order)).size !== notifications.length) throw new Error("Duplicate notification order");
+}
+
+function assertNewestFirst(notifications: readonly SessionNotification[]): void {
+  for (let index = 1; index < notifications.length; index += 1) {
+    const previous = notifications[index - 1];
+    const current = notifications[index];
+    if (previous === undefined || current === undefined || previous.order <= current.order) throw new Error("Notifications are not newest-first");
+  }
+}
+
+function notificationSummaryIsEmpty(summary: SessionNotificationSummary): boolean {
+  return summary.retainedCount === 0 && summary.discardedCount === 0;
+}
+
+function highestNotificationSeverity(notifications: readonly SessionNotification[]): SessionNotificationSeverity | undefined {
+  let highest: SessionNotificationSeverity | undefined;
+  for (const notification of notifications) {
+    if (notification.severity === "error") return "error";
+    if (notification.severity === "warning") highest = "warning";
+    else highest ??= "info";
+  }
+  return highest;
 }
 
 export function parseSessionCleanupPreviewResponse(value: unknown): SessionCleanupPreviewResponse {

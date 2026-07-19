@@ -2,6 +2,7 @@ import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionActivity, SessionInfo, SessionStatus } from "../api";
 import { isCachedNewSessionInfo } from "../cachedNewSessions";
+import type { SessionNotificationBadgeModel } from "../sessionNotifications";
 import { shortSessionId } from "../sessionLabels";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
 import { isSessionActive } from "../../../shared/activity";
@@ -10,6 +11,7 @@ import { renderActionActivityIndicator, type ActivityIndicatorKind } from "./act
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
+import "./NotificationBadge";
 
 function sessionLabel(session: SessionInfo): string {
   if (session.name !== undefined && session.name !== "") return session.name;
@@ -30,6 +32,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) statuses: Record<string, SessionStatus> = {};
   @property({ attribute: false }) activities: Record<string, SessionActivity> = {};
   @property({ attribute: false }) sending: Record<string, true> = {};
+  @property({ attribute: false }) notificationBadges: Record<string, SessionNotificationBadgeModel | undefined> = {};
+  @property({ attribute: false }) notificationHeadingBadge?: SessionNotificationBadgeModel;
   @property({ attribute: false }) selected?: SessionInfo;
   @property({ type: Number }) startingCount = 0;
   @property({ type: Boolean }) canStart = false;
@@ -132,7 +136,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (!this.collapsible) {
       return html`
         <h2>
-          Sessions
+          <span class="plain-heading">Sessions</span>
+          ${this.notificationHeadingBadge === undefined ? null : html`<notification-badge .model=${this.notificationHeadingBadge}></notification-badge>`}
           ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderCleanupButton()}
           ${this.renderStartButton()}
@@ -144,6 +149,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`
       <h2>
         <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
+        ${this.notificationHeadingBadge === undefined ? null : html`<notification-badge .model=${this.notificationHeadingBadge}></notification-badge>`}
         ${this.renderCurrentSelectionButton(currentSessions)}
         <small class="section-count">${sessionCount}</small>
         ${this.renderCleanupButton()}
@@ -250,7 +256,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
-          <span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
+          <span class="action-name-line"><span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span>${this.notificationBadges[session.id] === undefined ? null : html`<notification-badge .model=${this.notificationBadges[session.id]}></notification-badge>`}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
           ${this.renderActivity(session)}
         </div>
         <div class="action-menu">
@@ -425,6 +431,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .bulk-row button { padding: 5px 7px; font-size: 12px; }
     .bulk-row small { display: inline; min-width: 0; color: var(--pi-muted); }
     .action-name, .section-selected { text-align: start; unicode-bidi: plaintext; }
+    .plain-heading { min-width: 0; }
+    .action-name-line { min-width: 0; display: flex; align-items: flex-start; gap: 6px; }
+    .action-name-line .action-name { flex: 1 1 auto; min-width: 0; }
     .bulk-row .capability-hint { flex: 1 0 100%; color: var(--pi-warning); }
     .bulk-row.selecting { padding: 6px; border: 1px solid var(--pi-border-muted); border-radius: 8px; background: color-mix(in srgb, var(--pi-surface) 65%, transparent); }
     button.danger, .action-menu-panel button.danger { color: var(--pi-danger); }

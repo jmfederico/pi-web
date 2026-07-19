@@ -1,11 +1,13 @@
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth, MachineStatus, WorkspaceActivity } from "../api";
+import type { SessionNotificationBadgeModel } from "../sessionNotifications";
 import { machineActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
 import { renderActivityIndicator } from "./activityBadge";
 import { canRemoveMachine } from "./MachineList";
 import type { KeyboardNavigableSection } from "./navigationFocus";
+import "./NotificationBadge";
 
 @customElement("machine-switcher")
 export class MachineSwitcher extends LitElement implements KeyboardNavigableSection {
@@ -13,6 +15,8 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
   @property({ attribute: false }) selected?: Machine;
   @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) activities: Record<string, Record<string, WorkspaceActivity>> = {};
+  @property({ attribute: false }) notificationBadges: Record<string, SessionNotificationBadgeModel | undefined> = {};
+  @property({ attribute: false }) notificationHeadingBadge?: SessionNotificationBadgeModel;
   @property({ attribute: false }) onSelect?: (machine: Machine) => void | Promise<void>;
   @property({ attribute: false }) onRemove?: (machine: Machine) => void | Promise<void>;
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
@@ -54,13 +58,14 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     if (selected === undefined) return null;
     const status = machineStatus(selected, this.statuses);
     const label = selected.name;
+    const notificationBadge = machineSwitcherNotificationBadge(selected.id, this.notificationBadges, this.notificationHeadingBadge);
     return html`
       <div class="machine-switcher">
         <button
           type="button"
           class="machine-switcher-button"
           title=${machineTitle(selected)}
-          aria-label=${`Machine: ${label}. Switch machine.`}
+          aria-label=${this.machineSwitcherAriaLabel(selected, notificationBadge)}
           aria-expanded=${String(this.open)}
           @click=${(event: MouseEvent) => { this.toggleMenu(event.currentTarget); }}
           @keydown=${(event: KeyboardEvent) => { this.handleSwitcherButtonKeydown(event); }}
@@ -71,6 +76,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
             <span class="machine-switcher-label">${label}</span>
           </span>
           <span class=${`machine-status ${status}`}>${machineStatusLabel(status)}</span>
+          ${notificationBadge === undefined ? null : html`<notification-badge .model=${notificationBadge}></notification-badge>`}
           <span class="machine-chevron" aria-hidden="true">▾</span>
         </button>
         ${this.open ? html`
@@ -97,7 +103,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
           @click=${() => { this.select(machine); }}
           @keydown=${(event: KeyboardEvent) => { this.handleMachineOptionKeydown(event); }}
         >
-          <span class="machine-option-name">${this.renderActivity(machine)}<span>${machine.name}</span></span>
+          <span class="machine-option-name">${this.renderActivity(machine)}<span>${machine.name}</span>${this.notificationBadges[machine.id] === undefined ? null : html`<notification-badge .model=${this.notificationBadges[machine.id]}></notification-badge>`}</span>
           <small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${machineStatusLabel(status)}</small>
         </button>
         ${hasActions ? html`
@@ -130,6 +136,11 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
 
   private selectedMachine(): Machine | undefined {
     return this.selected ?? this.machines.find((machine) => machine.id === "local") ?? this.machines[0];
+  }
+
+  private machineSwitcherAriaLabel(machine: Machine, notificationBadge: SessionNotificationBadgeModel | undefined): string {
+    const notificationLabel = notificationBadge?.accessibleLabel;
+    return `Machine: ${machine.name}.${notificationLabel === undefined ? "" : ` Notifications across machines: ${notificationLabel}.`} Switch machine.`;
   }
 
   private switcherButton(): HTMLElement | null {
@@ -301,6 +312,14 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .machine-option-actions-panel button.danger:hover, .machine-option-actions-panel button.danger:focus-visible { background: color-mix(in srgb, var(--pi-danger) 14%, transparent); }
     @keyframes pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
   `;
+}
+
+export function machineSwitcherNotificationBadge(
+  selectedMachineId: string,
+  notificationBadges: Readonly<Record<string, SessionNotificationBadgeModel | undefined>>,
+  notificationHeadingBadge: SessionNotificationBadgeModel | undefined,
+): SessionNotificationBadgeModel | undefined {
+  return notificationHeadingBadge ?? notificationBadges[selectedMachineId];
 }
 
 function machineStatus(machine: Machine, statuses: Record<string, MachineHealth>): MachineStatus {

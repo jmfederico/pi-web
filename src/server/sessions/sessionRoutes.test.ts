@@ -2,10 +2,24 @@ import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { MessagePage, SessionBulkArchiveResponse, SessionBulkDeleteArchivedResponse, SessionBulkMutationRef, SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionStatus, SessionStreamSnapshot } from "../../shared/apiTypes.js";
+import type {
+  MessagePage,
+  SessionBulkArchiveResponse,
+  SessionBulkDeleteArchivedResponse,
+  SessionBulkMutationRef,
+  SessionCleanupExecuteResponse,
+  SessionCleanupPreviewResponse,
+  SessionNotificationDismissAllRequest,
+  SessionNotificationDismissRequest,
+  SessionNotificationInboxSnapshot,
+  SessionRef,
+  SessionStatus,
+  SessionStreamSnapshot,
+} from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { PiSessionService, type PiSessionManagerGateway } from "./piSessionService.js";
 import { testModelRuntime } from "./piSessionService.testSupport.js";
+import { SessionNotificationStore } from "./sessionNotificationStore.js";
 import type { SessionRouteLookup, SessionRouteService } from "./sessionService.js";
 import { registerSessionRoutes } from "./sessionRoutes.js";
 import type { NormalizedSessionCleanupRequest } from "./sessionCleanup.js";
@@ -31,6 +45,130 @@ afterEach(async () => {
 });
 
 describe("session routes", () => {
+  it("returns notification catalog and selected-inbox snapshots with required cwd context", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const catalog = await routeApp.inject({ method: "GET", url: "/sessions/notifications" });
+      const inbox = await routeApp.inject({ method: "GET", url: `/sessions/session-1/notifications?cwd=${encodeURIComponent(requestCwd)}` });
+
+      expect(catalog.statusCode).toBe(200);
+      expect(catalog.json()).toEqual({ daemonInstanceId: "daemon-test", catalogRevision: 0, sessions: [] });
+      expect(inbox.statusCode).toBe(200);
+      expect(inbox.json()).toMatchObject({ daemonInstanceId: "daemon-test", summary: { sessionId: "session-1", cwd: requestCwd } });
+      expect(routeService.notificationInboxCalls).toEqual([{ id: "session-1", cwd: requestCwd }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("validates and forwards idempotent notification dismissal cutoffs", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const dismiss = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/notifications/dismiss",
+        payload: { cwd: requestCwd, daemonInstanceId: "daemon-test", notificationId: "notice-1" },
+      });
+      const dismissAll = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/notifications/dismiss-all",
+        payload: { cwd: requestCwd, daemonInstanceId: "daemon-test", throughOrder: 12, throughOverflowWatermark: 3 },
+      });
+
+      expect(dismiss.statusCode).toBe(200);
+      expect(dismissAll.statusCode).toBe(200);
+      expect(routeService.dismissNotificationCalls).toEqual([{
+        ref: { id: "session-1", cwd: requestCwd },
+        request: { daemonInstanceId: "daemon-test", notificationId: "notice-1" },
+      }]);
+      expect(routeService.dismissAllNotificationCalls).toEqual([{
+        ref: { id: "session-1", cwd: requestCwd },
+        request: { daemonInstanceId: "daemon-test", throughOrder: 12, throughOverflowWatermark: 3 },
+      }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("keeps stale notification mutations harmless and rejects mismatched ownership", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const requestCwd = resolve("/repo");
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-current" });
+    const registration = notificationStore.registerSession("session-1", requestCwd);
+    notificationStore.addNotification(registration.generation, "keep", "warning");
+    const routeService = new PiSessionService(eventHub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
+      sessionManager: new RejectingSessionManager(),
+      heartbeatIntervalMs: 60_000,
+    });
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const stale = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/notifications/dismiss-all",
+        payload: { cwd: requestCwd, daemonInstanceId: "daemon-old", throughOrder: Number.MAX_SAFE_INTEGER, throughOverflowWatermark: Number.MAX_SAFE_INTEGER },
+      });
+      const mismatch = await routeApp.inject({ method: "GET", url: `/sessions/session-1/notifications?cwd=${encodeURIComponent(resolve("/other"))}` });
+      const missing = await routeApp.inject({ method: "GET", url: `/sessions/missing/notifications?cwd=${encodeURIComponent(requestCwd)}` });
+
+      expect(stale.statusCode).toBe(200);
+      expect(stale.json()).toMatchObject({ summary: { retainedCount: 1, inboxRevision: 1 } });
+      expect(mismatch.statusCode).toBe(400);
+      expect(mismatch.json()).toEqual({ error: "Session cwd mismatch" });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json()).toEqual({ error: "Session not found" });
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("rejects malformed notification requests before calling the service", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const missingCwd = await routeApp.inject({ method: "GET", url: "/sessions/session-1/notifications" });
+      const unsafeCutoff = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/notifications/dismiss-all",
+        payload: { cwd: "/repo", daemonInstanceId: "daemon-test", throughOrder: Number.MAX_SAFE_INTEGER + 1, throughOverflowWatermark: 0 },
+      });
+
+      expect(missingCwd.statusCode).toBe(400);
+      expect(missingCwd.json()).toEqual({ error: "cwd field must be a string" });
+      expect(unsafeCutoff.statusCode).toBe(400);
+      expect(unsafeCutoff.json()).toEqual({ error: "throughOrder field must be a non-negative safe integer" });
+      expect(routeService.notificationInboxCalls).toEqual([]);
+      expect(routeService.dismissAllNotificationCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("rejects prompt payloads that omit text without opening a session", async () => {
     const response = await app.inject({ method: "POST", url: "/sessions/session-1/prompt", payload: { body: "Build the thing" } });
 
@@ -385,6 +523,9 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly reloadCalls: SessionRouteLookup[] = [];
   readonly clearQueueCalls: SessionRouteLookup[] = [];
   readonly dismissWarningCalls: { lookup: SessionRouteLookup; dismissId: string }[] = [];
+  readonly notificationInboxCalls: SessionRef[] = [];
+  readonly dismissNotificationCalls: { ref: SessionRef; request: Omit<SessionNotificationDismissRequest, "cwd"> }[] = [];
+  readonly dismissAllNotificationCalls: { ref: SessionRef; request: Omit<SessionNotificationDismissAllRequest, "cwd"> }[] = [];
   dismissWarningError: Error | undefined;
   messagesResponse: unknown[] | MessagePage = [];
   streamSnapshotResponse: SessionStreamSnapshot = { seq: 0, partial: null };
@@ -424,6 +565,25 @@ class CapturingRouteSessionService implements SessionRouteService {
 
   dispose(): Promise<void> {
     return Promise.resolve();
+  }
+
+  notificationCatalog() {
+    return { daemonInstanceId: "daemon-test", catalogRevision: 0, sessions: [] };
+  }
+
+  notificationInbox(ref: SessionRef): SessionNotificationInboxSnapshot {
+    this.notificationInboxCalls.push(ref);
+    return notificationSnapshot(ref);
+  }
+
+  dismissNotification(ref: SessionRef, request: Omit<SessionNotificationDismissRequest, "cwd">): SessionNotificationInboxSnapshot {
+    this.dismissNotificationCalls.push({ ref, request });
+    return notificationSnapshot(ref);
+  }
+
+  dismissAllNotifications(ref: SessionRef, request: Omit<SessionNotificationDismissAllRequest, "cwd">): SessionNotificationInboxSnapshot {
+    this.dismissAllNotificationCalls.push({ ref, request });
+    return notificationSnapshot(ref);
   }
 
   list(): never { throw unusedRouteMethod("list"); }
@@ -540,6 +700,16 @@ class RejectingSessionManager implements PiSessionManagerGateway {
     this.calls.open += 1;
     throw new Error("Session manager should not open sessions for invalid prompt payloads");
   }
+}
+
+function notificationSnapshot(ref: SessionRef): SessionNotificationInboxSnapshot {
+  return {
+    daemonInstanceId: "daemon-test",
+    catalogRevision: 0,
+    summary: { sessionId: ref.id, cwd: ref.cwd, inboxRevision: 0, retainedCount: 0, discardedCount: 0 },
+    notifications: [],
+    dismissThrough: { order: 0, overflowWatermark: 0 },
+  };
 }
 
 function sessionIdFromLookup(lookup: SessionRouteLookup): string {
