@@ -1,4 +1,4 @@
-import { LitElement, html } from "lit";
+import { LitElement, html, svg } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { ChatDisclosureController } from "../chatDisclosure";
@@ -25,19 +25,13 @@ import {
   type SessionNotificationTarget,
 } from "../sessionNotifications";
 import type { ChatLine, ChatPart } from "./shared";
-import { chatStyles } from "./shared";
+import { chatStyles, renderSessionWarningIcon } from "./shared";
 import "./ConversationMeter";
 import "./FormattedText";
 import "./ToolExecutionView";
 
 const messageTimestampFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" });
 const notificationTimestampFormatter = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
-
-function warningSeverityIcon(severity: SessionWarningSeverity): string {
-  if (severity === "error") return "⛔";
-  if (severity === "info") return "ℹ️";
-  return "⚠️";
-}
 
 function renderNotificationDisclosureIcon(collapsed: boolean) {
   return html`
@@ -204,6 +198,8 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) onDismissWarning?: (dismissId: string) => void;
   @property({ attribute: false }) onDismissNotification?: (notificationId: string) => void;
   @property({ attribute: false }) onDismissAllNotifications?: () => void;
+  @property({ type: Boolean }) warningsVisible = true;
+  @property({ attribute: false }) onCollapseWarnings?: () => void;
   @property({ attribute: false }) onLoadMore?: () => void;
   @query(".chat") private chat?: HTMLDivElement;
   @query("dialog.image-zoom") private imageZoomDialog?: HTMLDialogElement;
@@ -256,6 +252,9 @@ export class ChatView extends LitElement {
   };
   private readonly handleClearServerQueue = (): void => {
     this.onClearServerQueue?.();
+  };
+  private readonly handleCollapseWarnings = (): void => {
+    this.onCollapseWarnings?.();
   };
 
   override connectedCallback(): void {
@@ -513,15 +512,33 @@ export class ChatView extends LitElement {
 
   private renderWarnings() {
     const rows = chatSessionWarningRows(this.status);
-    if (rows.length === 0) return null;
+    if (!this.warningsVisible || rows.length === 0) return null;
     return html`
       <aside class="session-warnings" role="alert" aria-live="polite">
+        ${this.onCollapseWarnings === undefined ? null : html`
+          <div class="session-warnings-controls">
+            <button
+              type="button"
+              class="session-warnings-collapse"
+              title="Minimise warnings"
+              aria-label="Minimise warnings"
+              @click=${this.handleCollapseWarnings}
+            >
+              ${svg`
+                <svg class="session-warnings-collapse-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="m18 15-6-6-6 6"></path>
+                </svg>
+              `}
+              <span>Minimise</span>
+            </button>
+          </div>
+        `}
         ${rows.map((row) => {
           const dismissId = row.dismissId;
           return html`
           <div class=${row.severityClass}>
             <div class="session-warning-head">
-              <span class="session-warning-icon" aria-hidden="true">${warningSeverityIcon(row.severity)}</span>
+              ${renderSessionWarningIcon(row.severity, "session-warning-icon")}
               ${row.source === undefined ? null : html`<span class="session-warning-source">${row.source}</span>`}
             </div>
             <div class="session-warning-body">
