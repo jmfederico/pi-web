@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { SessionNotificationStore } from "./sessionNotificationStore.js";
@@ -29,7 +30,7 @@ describe("PiSessionService archive and cleanup", () => {
     });
 
     await service.status(sessionRef("archive-notification-session"));
-    const generation = store.currentGeneration("archive-notification-session", "/workspace");
+    const generation = store.currentGeneration("archive-notification-session", resolve("/workspace"));
     if (generation === undefined) throw new Error("expected active notification generation");
     store.addNotification(generation, "archive me", "warning");
 

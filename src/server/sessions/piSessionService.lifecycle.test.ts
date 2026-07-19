@@ -944,7 +944,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       "shutdown before close failure",
       "prior",
     ]);
-    expect(store.currentGeneration("failed-close-reload", "/workspace")).toBeDefined();
+    expect(store.currentGeneration("failed-close-reload", resolve("/workspace"))).toBeDefined();
     await service.stop(sessionRef("failed-close-reload"));
     await service.dispose();
   });

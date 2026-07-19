@@ -689,7 +689,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   notificationInbox(ref: PiSessionRef): SessionNotificationInboxSnapshot {
-    return this.notificationStore.inboxSnapshot(ref.id, ref.cwd);
+    return this.notificationStore.inboxSnapshot(ref.id, canonicalizeStoredCwd(ref.cwd));
   }
 
   dismissNotification(
@@ -698,7 +698,7 @@ export class PiSessionService implements SessionRouteService {
   ): SessionNotificationInboxSnapshot {
     const result = this.notificationStore.dismissNotification(
       ref.id,
-      ref.cwd,
+      canonicalizeStoredCwd(ref.cwd),
       request.daemonInstanceId,
       request.notificationId,
     );
@@ -712,7 +712,7 @@ export class PiSessionService implements SessionRouteService {
   ): SessionNotificationInboxSnapshot {
     const result = this.notificationStore.dismissAll(
       ref.id,
-      ref.cwd,
+      canonicalizeStoredCwd(ref.cwd),
       request.daemonInstanceId,
       request.throughOrder,
       request.throughOverflowWatermark,
@@ -1692,7 +1692,7 @@ export class PiSessionService implements SessionRouteService {
       return;
     }
     if (isPiSessionRef(ref)) {
-      this.publishNotificationMutations(this.notificationStore.clearSessionIdentity(ref.id, ref.cwd, "runtime-close"));
+      this.publishNotificationMutations(this.notificationStore.clearSessionIdentity(ref.id, canonicalizeStoredCwd(ref.cwd), "runtime-close"));
       return;
     }
     await this.closeActive(ref);
