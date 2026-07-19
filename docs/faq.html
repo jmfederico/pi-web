@@ -94,6 +94,7 @@
             <a href="#tools-are-not-found">Tools are failing / node not found</a>
             <a href="#doctor-fails">What does doctor check?</a>
             <a href="#nvm-fnm-asdf">nvm, fnm, or asdf issues</a>
+            <a href="#node-pty-native-module">node-pty native module is missing</a>
             <a href="#systemd-not-found">User service manager is unavailable</a>
             <a href="#cannot-open">I cannot open the web UI</a>
             <a href="#public-internet">Can I expose this publicly?</a>
@@ -184,6 +185,27 @@
                 <li>Make sure <code>node --version</code> is at least <code>v22.19.0</code> from <code>bash -lc</code>, <code>zsh -lc</code>, or your detected shell.</li>
                 <li>Run <code>pi-web doctor</code> again after changing shell files.</li>
               </ul>
+            </article>
+
+            <article id="node-pty-native-module" class="faq-item">
+              <h2><code>pi-web-sessiond</code> cannot load <code>pty.node</code></h2>
+              <p>
+                The error <code>Failed to load native module: pty.node</code> means the package was installed without
+                preparing the native binary required by <code>node-pty</code>. This can happen when npm, or a tool that
+                manages your npm installation, blocks dependency lifecycle scripts.
+              </p>
+              <p>Reinstall PI WEB while allowing the required <code>node-pty</code> install script:</p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Allow the node-pty install script</strong>
+                  <button class="copy-button" data-copy="#node-pty-install">Copy</button>
+                </div>
+                <pre id="node-pty-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty</code></pre>
+              </div>
+              <p>
+                Then run <code>pi-web install</code> again, or restart <code>pi-web-sessiond</code> if you run the
+                processes manually. Allowing only <code>node-pty</code> is narrower than enabling all dependency scripts.
+              </p>
             </article>
 
             <article id="systemd-not-found" class="faq-item">

@@ -138,6 +138,10 @@
 <span class="prompt">$</span> pi-web doctor</code></pre>
               </div>
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
+              <p>
+                If <code>pi-web-sessiond</code> reports <code>Failed to load native module: pty.node</code>, your npm
+                setup may have blocked the required install script. Follow the <a href="faq#node-pty-native-module">node-pty troubleshooting steps</a>.
+              </p>
               <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
             </section>
