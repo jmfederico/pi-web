@@ -62,6 +62,7 @@ import {
   type SessionNotificationGeneration,
   type SessionNotificationMutation,
 } from "./sessionNotificationStore.js";
+import { plainTextTheme } from "./plainTextTheme.js";
 
 /**
  * Minimal structured-logging seam, shaped like Fastify's logger so sessiond can
@@ -2361,12 +2362,13 @@ export class PiSessionService implements SessionRouteService {
         notificationId: added.notification.id,
       });
     };
-    // PI WEB is a remote UI host, but currently only extension notifications
-    // cross this boundary. Delegate every other UI method to Pi's headless
-    // defaults so unsupported dialogs cancel safely instead of hanging.
+    // PI WEB owns the browser-facing notification and text-formatting
+    // boundaries. Delegate every other UI method to Pi's headless defaults so
+    // unsupported dialogs cancel safely instead of hanging.
     return new Proxy(baseUiContext, {
       get(target, property, receiver): unknown {
         if (property === "notify") return notify;
+        if (property === "theme") return plainTextTheme;
         const value: unknown = Reflect.get(target, property, receiver);
         return value;
       },
