@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
+import { realpathSync, watch, type FSWatcher } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -148,7 +148,11 @@ export class ProfileCredentialStore implements CredentialStore {
     const authFileName = basename(this.authPath);
 
     try {
-      this.observationWatcher = watch(parent, { persistent: false }, (_eventType, filename) => {
+      // Windows may expose %TEMP% through an 8.3 short path while libuv emits
+      // long-path watch events. Resolve the existing directory first to avoid
+      // a native fs.watch prefix assertion in affected Node/libuv releases.
+      const watchParent = realpathSync.native(parent);
+      this.observationWatcher = watch(watchParent, { persistent: false }, (_eventType, filename) => {
         if (filename === null || filename === authFileName) this.requestObservedReload(this.observationDebounceMs);
       });
       this.observationWatcher.on("error", (error) => {
