@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import type { SessionBulkMutationRequest, SessionBulkMutationRef, SessionCleanupRequest } from "../../shared/apiTypes.js";
+import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice } from "../../shared/apiTypes.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -286,6 +286,15 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     }
   });
 
+  app.post<{ Params: { sessionId: string }; Body: unknown }>(`${prefix}/sessions/:sessionId/tree/navigate`, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      return await sessions.navigateTree(sessionLookupFromBody(request.params.sessionId, body), sessionTreeNavigateRequestFromBody(body));
+    } catch (error) {
+      return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
   app.post<{ Params: { sessionId: string }; Body: { cwd?: unknown } | undefined }>(`${prefix}/sessions/:sessionId/abort`, async (request, reply) => {
     try {
       await sessions.abort(sessionLookupFromBody(request.params.sessionId, optionalRecord(request.body)));
@@ -423,6 +432,38 @@ function sessionLookupFromCwd(id: string, cwd: string | undefined): SessionLooku
   return cwd === undefined || cwd === "" ? id : { id, cwd: normalizeRequestCwd(cwd) };
 }
 
+function sessionTreeNavigateRequestFromBody(body: Record<string, unknown>): SessionTreeNavigateRequest {
+  const targetId = requireNonEmptyString(body, "targetId");
+  const expectedLeafId = requireNullableString(body, "expectedLeafId");
+  return { targetId, expectedLeafId, summary: sessionTreeSummaryChoice(body["summary"]) };
+}
+
+function sessionTreeSummaryChoice(value: unknown): SessionTreeSummaryChoice {
+  const summary = requireRecord(value);
+  const mode = requireString(summary, "mode");
+  if (mode === "none" || mode === "default") {
+    if (Object.hasOwn(summary, "instructions")) throw new Error(`instructions field is not valid for ${mode} summary mode`);
+    requireExactFields(summary, ["mode"], "summary");
+    return { mode };
+  }
+  if (mode === "custom") {
+    requireExactFields(summary, ["mode", "instructions"], "summary");
+    const instructions = requireString(summary, "instructions");
+    if (instructions.trim() === "") throw new Error("instructions field must not be blank");
+    if (instructions.length > SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH) {
+      throw new Error(`instructions field must be at most ${String(SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH)} characters`);
+    }
+    return { mode, instructions: instructions.trim() };
+  }
+  throw new Error("summary mode is invalid");
+}
+
+function requireExactFields(record: Record<string, unknown>, fields: readonly string[], label: string): void {
+  const allowed = new Set(fields);
+  const unexpected = Object.keys(record).find((field) => !allowed.has(field));
+  if (unexpected !== undefined) throw new Error(`${label} field contains unsupported property: ${unexpected}`);
+}
+
 function optionalRecord(value: unknown): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   return requireRecord(value);
@@ -436,6 +477,21 @@ function requireRecord(value: unknown): Record<string, unknown> {
 function requireString(record: Record<string, unknown>, field: string): string {
   const value = record[field];
   if (typeof value !== "string") throw new Error(`${field} field must be a string`);
+  return value;
+}
+
+function requireNonEmptyString(record: Record<string, unknown>, field: string): string {
+  const value = requireString(record, field);
+  if (value.trim() === "") throw new Error(`${field} field must not be empty`);
+  return value;
+}
+
+function requireNullableString(record: Record<string, unknown>, field: string): string | null {
+  if (!Object.hasOwn(record, field)) throw new Error(`${field} field is required`);
+  const value = record[field];
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error(`${field} field must be a string or null`);
+  if (value.trim() === "") throw new Error(`${field} field must not be empty`);
   return value;
 }
 

@@ -132,6 +132,28 @@ export class PromptEditor extends LitElement {
     this.editor?.focus();
   }
 
+  replaceText(text: string): void {
+    this.draft = text;
+    const key = draftStorageKey(this.machineId, this.sessionId);
+    if (key !== undefined) saveDraft(key, text);
+
+    const editor = this.editor;
+    if (editor !== undefined) {
+      const current = editor.state.doc.toString();
+      editor.dispatch({
+        ...(current === text ? {} : { changes: { from: 0, to: current.length, insert: text } }),
+        selection: EditorSelection.cursor(text.length),
+      });
+    }
+
+    // Invalidate completion requests started for either the previous document or
+    // the replacement dispatch, then return the editor to a clean completion state.
+    this.requestVersion += 1;
+    this.currentInputMode = inputModeForDraft(text);
+    this.completions = [];
+    this.selectedIndex = 0;
+  }
+
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
   get view(): EditorView | undefined {
     return this.editor;

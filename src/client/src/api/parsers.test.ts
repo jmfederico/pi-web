@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES } from "../../../shared/apiTypes";
-import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves additive interactive API-key flow hints and defaults legacy options", () => {
@@ -508,10 +508,41 @@ describe("API parsers", () => {
   });
 
   it("parses command result variants", () => {
+    const tree = sessionTreeWire();
     expect(parseCommandResult({ type: "unsupported", message: "nope" })).toEqual({ type: "unsupported", message: "nope" });
     expect(parseCommandResult({ type: "select", requestId: "r1", title: "Pick", options: [{ value: "v", label: "Label", description: "desc" }] })).toEqual({ type: "select", requestId: "r1", title: "Pick", options: [{ value: "v", label: "Label", description: "desc" }] });
+    expect(parseCommandResult({ type: "tree", tree })).toEqual({ type: "tree", tree });
     expect(parseCommandResult({ type: "done", message: "ok", promptDraft: "resend me" })).toEqual({ type: "done", message: "ok", promptDraft: "resend me" });
     expect(() => parseCommandResult({ type: "later" })).toThrow("Invalid command result type");
+  });
+
+  it("strictly parses session tree snapshots and navigation results", () => {
+    const tree = sessionTreeWire();
+    expect(parseSessionTreeSnapshot(tree)).toEqual(tree);
+    expect(parseSessionTreeNavigateResult({ cancelled: false, editorText: "edit this" })).toEqual({ cancelled: false, editorText: "edit this" });
+    expect(parseSessionTreeNavigateResult({ cancelled: false })).toEqual({ cancelled: false });
+    expect(parseSessionTreeNavigateResult({ cancelled: true, aborted: true })).toEqual({ cancelled: true, aborted: true });
+    expect(parseSessionTreeNavigateResult({ cancelled: true })).toEqual({ cancelled: true });
+    expect(parseSessionTreeNavigateResult({ cancelled: false, editorText: "edit this", operationId: "future-metadata" })).toEqual({ cancelled: false, editorText: "edit this" });
+    expect(parseSessionTreeNavigateResult({ cancelled: true, aborted: true, operationId: "future-metadata" })).toEqual({ cancelled: true, aborted: true });
+
+    expect(() => parseSessionTreeSnapshot({ ...tree, activeLeafId: undefined })).toThrow("activeLeafId");
+    expect(() => parseSessionTreeSnapshot({ ...tree, activeLeafId: "missing" })).toThrow("activeLeafId");
+    expect(() => parseSessionTreeSnapshot({ ...tree, activeLeafId: "   " })).toThrow("activeLeafId");
+    expect(() => parseSessionTreeSnapshot({ ...tree, activePathIds: ["root", 2] })).toThrow("activePathIds");
+    expect(() => parseSessionTreeSnapshot({ ...tree, activePathIds: ["   "] })).toThrow("activePathIds");
+    expect(() => parseSessionTreeSnapshot({ ...tree, nodes: [{ ...tree.nodes[0], id: "   " }] })).toThrow("id");
+    expect(() => parseSessionTreeSnapshot({ ...tree, nodes: [{ ...tree.nodes[0], parentId: undefined }] })).toThrow("parentId");
+    expect(() => parseSessionTreeSnapshot({ ...tree, nodes: [{ ...tree.nodes[0], parentId: "   " }] })).toThrow("parentId");
+    expect(() => parseSessionTreeSnapshot({ ...tree, nodes: [tree.nodes[0], tree.nodes[0]] })).toThrow("Duplicate session tree node id");
+    expect(() => parseSessionTreeSnapshot({ ...tree, nodes: [{ ...tree.nodes[0], kind: "future-kind" }] })).toThrow("Invalid session tree node kind");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: true, editorText: "wrong branch" })).toThrow("editorText");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: false, aborted: true })).toThrow("aborted");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: false, editorText: 42 })).toThrow("editorText");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: true, aborted: "yes" })).toThrow("aborted");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: false, summaryEntry: { raw: true } })).toThrow("summaryEntry");
+    expect(() => parseSessionTreeNavigateResult({ cancelled: true, summaryEntry: { raw: true } })).toThrow("summaryEntry");
+    expect(() => parseSessionTreeNavigateResult({ editorText: "missing discriminator" })).toThrow("cancelled");
   });
 
   it("strictly parses selected notification snapshots and realtime events", () => {
@@ -557,6 +588,36 @@ describe("API parsers", () => {
     })).toThrow("Invalid notification clear reason");
   });
 });
+
+function sessionTreeWire() {
+  const kinds = [
+    "user",
+    "assistant",
+    "tool-result",
+    "bash",
+    "custom-message",
+    "compaction",
+    "branch-summary",
+    "model-change",
+    "thinking-level-change",
+    "session-info",
+    "label",
+    "custom",
+    "other",
+  ] as const;
+  const nodes = kinds.map((kind, index) => ({
+    id: `entry-${String(index)}`,
+    parentId: index === 0 ? null : `entry-${String(index - 1)}`,
+    kind,
+    summary: `${kind} summary`,
+    ...(index === 0 ? { timestamp: "2026-07-20T00:00:00.000Z", label: "root label" } : {}),
+  }));
+  return {
+    nodes,
+    activeLeafId: nodes.at(-1)?.id ?? null,
+    activePathIds: nodes.map((node) => node.id),
+  };
+}
 
 function notificationWire(order: number, severity: "info" | "warning" | "error" = "info") {
   return {

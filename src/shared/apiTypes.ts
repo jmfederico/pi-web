@@ -817,6 +817,56 @@ export interface CommandOption {
   description?: string;
 }
 
+export type SessionTreeNodeKind =
+  | "user"
+  | "assistant"
+  | "tool-result"
+  | "bash"
+  | "custom-message"
+  | "compaction"
+  | "branch-summary"
+  | "model-change"
+  | "thinking-level-change"
+  | "session-info"
+  | "label"
+  | "custom"
+  | "other";
+
+export interface SessionTreeNode {
+  id: string;
+  parentId: string | null;
+  kind: SessionTreeNodeKind;
+  summary: string;
+  timestamp?: string;
+  label?: string;
+}
+
+export interface SessionTreeSnapshot {
+  /** Pre-order, parent-linked projection of all retained roots and descendants. */
+  nodes: SessionTreeNode[];
+  activeLeafId: string | null;
+  /** Root-to-leaf IDs for explicit, non-color-only active-path rendering. */
+  activePathIds: string[];
+}
+
+export const SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH = 10_000;
+
+export type SessionTreeSummaryChoice =
+  | { mode: "none" }
+  | { mode: "default" }
+  | { mode: "custom"; instructions: string };
+
+export interface SessionTreeNavigateRequest {
+  targetId: string;
+  /** Leaf shown when the navigator opened; null is valid for an empty/root position. */
+  expectedLeafId: string | null;
+  summary: SessionTreeSummaryChoice;
+}
+
+export type SessionTreeNavigateResult =
+  | { cancelled: false; editorText?: string }
+  | { cancelled: true; aborted?: boolean };
+
 export interface MessagePage {
   messages: unknown[];
   start: number;
@@ -840,6 +890,7 @@ export interface SessionStreamSnapshot {
 export type CommandResult =
   | { type: "done"; message?: string; session?: SessionInfo; promptDraft?: string }
   | { type: "select"; requestId: string; title: string; options: CommandOption[] }
+  | { type: "tree"; tree: SessionTreeSnapshot }
   | { type: "unsupported"; message: string };
 
 /**

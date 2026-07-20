@@ -1,6 +1,6 @@
 import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import { configApi, effectiveWorkspaceUploadFolder, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
+import { configApi, effectiveWorkspaceUploadFolder, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
@@ -49,6 +49,7 @@ import "./ProjectList";
 import "./WorkspaceList";
 import "./SessionList";
 import "./SessionCleanupDialog";
+import "./SessionTreeNavigator";
 import "./ChatView";
 import type { ChatView } from "./ChatView";
 import "./PromptEditor";
@@ -114,7 +115,14 @@ export class PiWebApp extends LitElement {
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
     new SessionStorageSessionSelectionMemory(),
-    { notifications: this.notifications },
+    {
+      notifications: this.notifications,
+      replacePromptEditorText: async ({ machineId, sessionId, text }) => {
+        await this.updateComplete;
+        if (selectedMachineId(this.state) !== machineId || this.state.selectedSession?.id !== sessionId) return;
+        this.promptEditor?.replaceText(text);
+      },
+    },
   );
   private readonly projectActivityOwnership = new ProjectActivityOwnershipCoordinator(
     () => this.state,
@@ -234,7 +242,7 @@ export class PiWebApp extends LitElement {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    if (this.settingsSection !== undefined) return;
+    if (this.settingsSection !== undefined || this.state.treeDialog !== undefined) return;
     if (this.keyboard.handle(event, this.getDefaultActions(), { shortcuts: this.shortcutConfig })) {
       event.preventDefault();
       event.stopPropagation();
@@ -1270,6 +1278,35 @@ export class PiWebApp extends LitElement {
     this.promptEditor?.focusInput();
   }
 
+  private async navigateSessionTree(targetId: string, summaryChoice: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+    const originMachineId = selectedMachineId(this.state);
+    const originSessionId = this.state.selectedSession?.id;
+    const result = await this.sessions.navigateTree(targetId, summaryChoice);
+    if (!result.cancelled
+      && originSessionId !== undefined
+      && selectedMachineId(this.state) === originMachineId
+      && this.state.selectedSession?.id === originSessionId) {
+      await this.focusChatComposer();
+    }
+    return result;
+  }
+
+  private closeSessionTreeNavigator(): void {
+    this.sessions.closeTreeDialog();
+    void this.focusChatComposer();
+  }
+
+  private renderSessionTreeNavigator(state: AppState) {
+    return state.treeDialog === undefined ? null : html`
+      <session-tree-navigator
+        .tree=${state.treeDialog}
+        .onNavigate=${(targetId: string, summaryChoice: SessionTreeSummaryChoice) => this.navigateSessionTree(targetId, summaryChoice)}
+        .onAbort=${() => this.sessions.abortTreeNavigation()}
+        .onCancel=${() => { this.closeSessionTreeNavigator(); }}
+      ></session-tree-navigator>
+    `;
+  }
+
   private visibleWorkspacePanels(): QualifiedWorkspacePanelContribution[] {
     const workspace = this.state.selectedWorkspace;
     if (workspace === undefined) return [];
@@ -2031,6 +2068,7 @@ export class PiWebApp extends LitElement {
         ${this.renderWorkspacePanelEdgeControl()}
         ${this.renderWorkspacePanel()}
         ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
+        ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean) => this.projects.addProject(path, create)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .canCleanup=${this.canCleanupSessions()} .unavailableMessage=${this.sessionCleanupUnavailableMessage()} .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}

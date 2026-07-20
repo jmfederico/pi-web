@@ -1,5 +1,5 @@
 import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, type ArchiveSessionsResponse, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GitDiffResponse, type GitFileState, type GitStatusFile, type GitStatusResponse, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebAgentDirEnvSource, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type SessionStatus, type SessionStreamSnapshot, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type TerminalCommandRun, type TerminalCommandRunStatus, type TerminalInfo, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceActivity, type WorkspaceActivityResponse } from "../../../shared/apiTypes";
-import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse } from "../../../shared/apiTypes";
+import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot } from "../../../shared/apiTypes";
 import { parseActiveAgentProfileDescriptor } from "../../../shared/activeAgentProfile";
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 
@@ -1136,8 +1136,93 @@ export function parseCommandResult(value: unknown): CommandResult {
   const type = requireString(record, "type");
   if (type === "unsupported") return { type, message: requireString(record, "message") };
   if (type === "select") return { type, requestId: requireString(record, "requestId"), title: requireString(record, "title"), options: arrayOf(parseCommandOption)(record["options"]) };
+  if (type === "tree") return { type, tree: parseSessionTreeSnapshot(record["tree"]) };
   if (type === "done") return { type, ...optionalField("message", optionalString(record, "message")), ...optionalSession(record["session"]), ...optionalField("promptDraft", optionalString(record, "promptDraft")) };
   throw new Error("Invalid command result type");
+}
+
+export function parseSessionTreeSnapshot(value: unknown): SessionTreeSnapshot {
+  const record = requireRecord(value);
+  const nodes = arrayOf(parseSessionTreeNode)(record["nodes"]);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  if (nodeIds.size !== nodes.length) throw new Error("Duplicate session tree node id");
+  const activeLeafId = requireNullableString(record, "activeLeafId");
+  if (activeLeafId !== null && !nodeIds.has(activeLeafId)) throw new Error("Invalid session tree activeLeafId");
+  return {
+    nodes,
+    activeLeafId,
+    activePathIds: arrayOfNonBlankString(record["activePathIds"], "activePathIds"),
+  };
+}
+
+function parseSessionTreeNode(value: unknown): SessionTreeNode {
+  const record = requireRecord(value);
+  return {
+    id: requireNonBlankString(record, "id"),
+    parentId: requireNullableString(record, "parentId"),
+    kind: parseSessionTreeNodeKind(record["kind"]),
+    summary: requireString(record, "summary"),
+    ...optionalField("timestamp", optionalString(record, "timestamp")),
+    ...optionalField("label", optionalString(record, "label")),
+  };
+}
+
+function parseSessionTreeNodeKind(value: unknown): SessionTreeNodeKind {
+  switch (value) {
+    case "user":
+    case "assistant":
+    case "tool-result":
+    case "bash":
+    case "custom-message":
+    case "compaction":
+    case "branch-summary":
+    case "model-change":
+    case "thinking-level-change":
+    case "session-info":
+    case "label":
+    case "custom":
+    case "other":
+      return value;
+    default:
+      throw new Error("Invalid session tree node kind");
+  }
+}
+
+export function parseSessionTreeNavigateResult(value: unknown): SessionTreeNavigateResult {
+  const record = requireRecord(value);
+  const cancelled = requireBoolean(record, "cancelled");
+  if (Object.hasOwn(record, "summaryEntry")) throw new Error("Invalid session tree navigation result field: summaryEntry");
+  if (cancelled) {
+    rejectResponseField(record, "editorText", "session tree cancellation result");
+    const aborted = record["aborted"];
+    if (aborted !== undefined && typeof aborted !== "boolean") throw new Error("Expected optional boolean field: aborted");
+    return { cancelled, ...(aborted === undefined ? {} : { aborted }) };
+  }
+  rejectResponseField(record, "aborted", "session tree navigation result");
+  return { cancelled, ...optionalField("editorText", optionalString(record, "editorText")) };
+}
+
+function rejectResponseField(record: Record<string, unknown>, field: string, label: string): void {
+  if (Object.hasOwn(record, field)) throw new Error(`Invalid ${label} field: ${field}`);
+}
+
+function requireNullableString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  if (value !== null && typeof value !== "string") throw new Error(`Expected string or null field: ${key}`);
+  if (typeof value === "string" && value.trim() === "") throw new Error(`Expected non-blank string or null field: ${key}`);
+  return value;
+}
+
+function requireNonBlankString(record: Record<string, unknown>, key: string): string {
+  const value = requireString(record, key);
+  if (value.trim() === "") throw new Error(`Expected non-blank string field: ${key}`);
+  return value;
+}
+
+function arrayOfNonBlankString(value: unknown, key: string): string[] {
+  const strings = arrayOfString(value, key);
+  if (strings.some((item) => item.trim() === "")) throw new Error(`Expected non-blank string array field: ${key}`);
+  return strings;
 }
 
 function parseCommandOption(value: unknown): CommandOption {

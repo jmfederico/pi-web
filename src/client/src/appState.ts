@@ -1,4 +1,4 @@
-import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionStatus, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, FileContentResponse, FileTreeEntry, GitDiffResponse, GitStatusResponse, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace, WorkspaceActivity } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
@@ -42,6 +42,7 @@ export interface AppState {
   workspacesByProjectId: Record<string, Workspace[]>;
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
+  treeDialog: SessionTreeSnapshot | undefined;
   modelDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
   thinkingDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
   themeDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
@@ -81,6 +82,7 @@ export type WorkspaceScopedStateReset = Pick<AppState,
   | "clientQueuedSessionMessages"
   | "startingSessionCount"
   | "selectedNotificationInbox"
+  | "treeDialog"
   | "fileTree"
   | "expandedDirs"
   | "selectedFilePath"
@@ -101,6 +103,7 @@ export function resetWorkspaceScopedState(): WorkspaceScopedStateReset {
     clientQueuedSessionMessages: {},
     startingSessionCount: 0,
     selectedNotificationInbox: undefined,
+    treeDialog: undefined,
     fileTree: [],
     expandedDirs: {},
     selectedFilePath: undefined,
@@ -150,6 +153,7 @@ export function initialAppState(): AppState {
     workspacesByProjectId: {},
     workspaceDeletionRuns: {},
     commandDialog: undefined,
+    treeDialog: undefined,
     modelDialog: undefined,
     thinkingDialog: undefined,
     themeDialog: undefined,

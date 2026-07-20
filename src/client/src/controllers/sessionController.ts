@@ -1,4 +1,4 @@
-import { api as defaultApi, type CommandResult, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type Workspace } from "../api";
+import { api as defaultApi, type CommandResult, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
@@ -39,11 +39,18 @@ export interface SessionNotificationSessionBridge {
   shouldFilterLegacyNotification(machineId: string, notificationId: string | undefined): boolean;
 }
 
+export interface PromptEditorTextReplacement {
+  machineId: string;
+  sessionId: string;
+  text: string;
+}
+
 export interface SessionControllerDependencies {
   api?: typeof defaultApi;
   socket?: SessionEventSocket;
   transcripts?: ChatTranscriptStore;
   notifications?: SessionNotificationSessionBridge;
+  replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
 }
 
 interface BulkSessionMutationResult {
@@ -87,7 +94,9 @@ export class SessionController {
   private readonly api: typeof defaultApi;
   private readonly transcripts: ChatTranscriptStore;
   private readonly notifications: SessionNotificationSessionBridge | undefined;
+  private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
   private selectionSeq = 0;
+  private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
   // `SessionEventHub` sequence captured together with the seeded partial by the
   // stream snapshot: buffered/live events with `seq <= seq` are already reflected
@@ -115,6 +124,7 @@ export class SessionController {
     this.api = deps.api ?? defaultApi;
     this.transcripts = deps.transcripts ?? new ChatTranscriptStore();
     this.notifications = deps.notifications;
+    this.replacePromptEditorText = deps.replacePromptEditorText;
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -125,6 +135,7 @@ export class SessionController {
   }
 
   dispose() {
+    this.disposed = true;
     this.selectionSeq += 1;
     this.socket.close();
     this.clearPendingUpdates();
@@ -140,7 +151,7 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [] });
+    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, availableThinkingLevels: [], treeDialog: undefined });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -176,7 +187,8 @@ export class SessionController {
     return selectPreferredSession(sessions, { targetSessionId, latestSessionId: this.sessionSelection.latestSessionId(this.workspaceSelectionKey(cwd)) });
   }
 
-  async selectSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }) {
+  async selectSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined; preserveTreeDialog?: boolean | undefined; propagateRefreshError?: boolean | undefined }) {
+    if (this.disposed) return;
     if (isClientPendingStartSessionInfo(session)) {
       this.selectClientPendingStartSession(session, options);
       return;
@@ -194,10 +206,12 @@ export class SessionController {
       selectedSession: session,
       ...cached,
       isLoadingEarlierMessages: false,
+      ...(options?.preserveTreeDialog === true ? {} : { treeDialog: undefined }),
       status: session.archived === true ? undefined : this.getState().sessionStatuses[session.id],
       activity: session.archived === true ? undefined : this.getState().sessionActivities[session.id],
       availableThinkingLevels: [],
     });
+    let buffered: SessionUiEvent[] | undefined;
     try {
       if (session.archived === true) {
         const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
@@ -207,10 +221,11 @@ export class SessionController {
         if (options?.updateUrl !== false) this.updateUrl();
         return;
       }
-      const buffered: SessionUiEvent[] = [];
+      const socketBuffer: SessionUiEvent[] = [];
+      buffered = socketBuffer;
       this.socket.connect(
         session,
-        (event) => buffered.push(event),
+        (event) => socketBuffer.push(event),
         () => { void this.refreshSelectedSession(session.id); },
         machineId,
         () => { void this.notifications?.refreshSelectedSession(session, machineId); },
@@ -218,16 +233,29 @@ export class SessionController {
       await this.requestSelectedSessionRefresh({ session, machineId, selectionSeq: seq });
       if (!this.isCurrentRefreshTarget({ session, machineId, selectionSeq: seq })) return;
       void this.refreshAvailableThinkingLevels();
-      for (const event of buffered) this.applyEvent(event);
+      for (const event of socketBuffer) this.applyEvent(event);
       this.socket.setHandler((event) => { this.applyEvent(event); });
       if (options?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
+      if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) {
+        // Tree navigation still needs to know when a same-session reselection's
+        // shared trailing refresh failed, even though this selection is stale.
+        if (options?.propagateRefreshError === true && this.isSelectedSessionIdentity(session.id, machineId)) throw error;
+        return;
+      }
       if (isCachedNewSessionInfo(session) && isSessionNotFoundError(error)) {
         await this.recreateCachedNewSession(session, options);
         return;
       }
+      // A failed join refresh must not strand the socket on its temporary
+      // buffering callback. Apply what arrived and keep live events flowing so
+      // reconnect/trailing refresh can recover authoritatively.
+      if (buffered !== undefined) {
+        for (const event of buffered) this.applyEvent(event);
+        this.socket.setHandler((event) => { this.applyEvent(event); });
+      }
       this.setState({ error: String(error) });
+      if (options?.propagateRefreshError === true) throw error;
     }
   }
 
@@ -378,8 +406,8 @@ export class SessionController {
     this.markSendingPrompt(session.id, true);
     try {
       const result = await this.api.runCommand(session, text, machineId);
-      if (options.applyResult && this.getState().selectedSession?.id === session.id) this.applyCommandResult(result);
-      else if (result.type === "select") this.setState({ error: `Queued command “${text}” needs input; open the session and run it again.` });
+      if (options.applyResult && this.isSelectedSessionIdentity(session.id, machineId)) this.applyCommandResult(result);
+      else if (result.type === "select" || result.type === "tree") this.setState({ error: `Queued command “${text}” needs input; open the session and run it again.` });
       this.markCachedNewSessionPersisted(session);
       return true;
     } catch (error) {
@@ -412,6 +440,76 @@ export class SessionController {
 
   cancelCommand() {
     this.setState({ commandDialog: undefined });
+  }
+
+  async navigateTree(targetId: string, summary: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+    const state = this.getState();
+    const session = state.selectedSession;
+    const tree = state.treeDialog;
+    if (session === undefined || tree === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
+      throw new Error("The session tree navigator is no longer available");
+    }
+
+    const machineId = selectedMachineId(state);
+    const selectionSeq = this.selectionSeq;
+    const cacheKey = machineSessionKey(machineId, session.id);
+    let result: SessionTreeNavigateResult;
+    try {
+      result = await this.api.navigateTree(session, { targetId, expectedLeafId: tree.activeLeafId, summary }, machineId);
+    } catch (error) {
+      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      throw error;
+    }
+
+    if (result.cancelled) return result;
+
+    const editorText = result.editorText ?? "";
+    saveDraft(cacheKey, editorText);
+    this.transcripts.discard(cacheKey);
+
+    // A user can reselect the same session while the request is in flight. Its
+    // sequence changes, but the server mutation still belongs to the selected
+    // identity and requires a fresh authoritative branch read.
+    if (!this.isSelectedSessionIdentity(session.id, machineId)) return result;
+    this.clearPendingUpdates();
+    let authoritativeRefreshFailure: { error: unknown } | undefined;
+    try {
+      await this.selectSession(session, { updateUrl: false, preserveTreeDialog: true, propagateRefreshError: true });
+    } catch (error) {
+      authoritativeRefreshFailure = { error };
+    }
+    if (!this.isSelectedSessionIdentity(session.id, machineId)) return result;
+
+    try {
+      await this.replacePromptEditorText?.({ machineId, sessionId: session.id, text: editorText });
+    } catch (error) {
+      if (this.isSelectedSessionIdentity(session.id, machineId)) this.setState({ error: String(error) });
+      throw error;
+    }
+    if (authoritativeRefreshFailure !== undefined) {
+      if (this.isSelectedSessionIdentity(session.id, machineId)) this.setState({ error: String(authoritativeRefreshFailure.error) });
+      throw authoritativeRefreshFailure.error;
+    }
+    if (this.isSelectedSessionIdentity(session.id, machineId) && this.getState().treeDialog === tree) this.setState({ treeDialog: undefined });
+    return result;
+  }
+
+  async abortTreeNavigation(): Promise<void> {
+    const state = this.getState();
+    const session = state.selectedSession;
+    if (session === undefined || state.treeDialog === undefined || isClientPendingStartSessionInfo(session)) return;
+    const machineId = selectedMachineId(state);
+    const selectionSeq = this.selectionSeq;
+    try {
+      await this.api.abort(session, machineId);
+    } catch (error) {
+      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      throw error;
+    }
+  }
+
+  closeTreeDialog(): void {
+    this.setState({ treeDialog: undefined });
   }
 
   applySessionStatus(status: SessionStatus): void {
@@ -840,10 +938,14 @@ export class SessionController {
   }
 
   private isCurrentSessionSelection(sessionId: string, machineId: string, selectionSeq: number): boolean {
+    return selectionSeq === this.selectionSeq && this.isSelectedSessionIdentity(sessionId, machineId);
+  }
+
+  private isSelectedSessionIdentity(sessionId: string, machineId: string): boolean {
+    if (this.disposed) return false;
     const state = this.getState();
     const selected = state.selectedSession;
-    return selectionSeq === this.selectionSeq
-      && selectedMachineId(state) === machineId
+    return selectedMachineId(state) === machineId
       && selected?.id === sessionId
       && selected.archived !== true
       && !isClientPendingStartSessionInfo(selected);
@@ -930,6 +1032,7 @@ export class SessionController {
       status: undefined,
       activity,
       availableThinkingLevels: [],
+      treeDialog: undefined,
       ...(activity === undefined ? {} : { sessionActivities: { ...state.sessionActivities, [session.id]: activity } }),
       error: "",
     });
@@ -1070,6 +1173,10 @@ export class SessionController {
   private applyCommandResult(result: CommandResult) {
     if (result.type === "select") {
       this.setState({ commandDialog: result });
+      return;
+    }
+    if (result.type === "tree") {
+      this.setState({ treeDialog: result.tree });
       return;
     }
     const message = result.type === "unsupported" ? result.message : result.message;

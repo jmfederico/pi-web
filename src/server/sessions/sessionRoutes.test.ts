@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH } from "../../shared/apiTypes.js";
 import type {
   MessagePage,
   SessionBulkArchiveResponse,
@@ -15,6 +16,8 @@ import type {
   SessionRef,
   SessionStatus,
   SessionStreamSnapshot,
+  SessionTreeNavigateRequest,
+  SessionTreeNavigateResult,
 } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { PiSessionService, type PiSessionManagerGateway } from "./piSessionService.js";
@@ -163,6 +166,89 @@ describe("session routes", () => {
       expect(unsafeCutoff.json()).toEqual({ error: "throughOrder field must be a non-negative safe integer" });
       expect(routeService.notificationInboxCalls).toEqual([]);
       expect(routeService.dismissAllNotificationCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("strictly parses cwd-scoped session tree navigation requests", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const response = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/tree/navigate",
+        payload: {
+          cwd: "/repo/./",
+          targetId: "entry-2",
+          expectedLeafId: null,
+          summary: { mode: "custom", instructions: "  focus on tests  " },
+        },
+      });
+
+      const withoutSummary = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/tree/navigate",
+        payload: { cwd: "/repo", targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } },
+      });
+      const withDefaultSummary = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/tree/navigate",
+        payload: { cwd: "/repo", targetId: "entry-3", expectedLeafId: "leaf-2", summary: { mode: "default" } },
+      });
+
+      expect([response.statusCode, withoutSummary.statusCode, withDefaultSummary.statusCode]).toEqual([200, 200, 200]);
+      expect(response.json()).toEqual({ cancelled: false, editorText: "edit this" });
+      expect(routeService.navigateTreeCalls).toEqual([
+        {
+          lookup: { id: "session-1", cwd: resolve("/repo") },
+          request: { targetId: "entry-2", expectedLeafId: null, summary: { mode: "custom", instructions: "focus on tests" } },
+        },
+        {
+          lookup: { id: "session-1", cwd: resolve("/repo") },
+          request: { targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } },
+        },
+        {
+          lookup: { id: "session-1", cwd: resolve("/repo") },
+          request: { targetId: "entry-3", expectedLeafId: "leaf-2", summary: { mode: "default" } },
+        },
+      ]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("rejects malformed session tree navigation unions before calling the service", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+    const base = { targetId: "entry-2", expectedLeafId: "leaf-1", summary: { mode: "none" } };
+    const malformed: Record<string, unknown>[] = [
+      { targetId: "entry-2", summary: { mode: "none" } },
+      { ...base, expectedLeafId: 1 },
+      { ...base, summary: { mode: "future" } },
+      { ...base, summary: { mode: "none", instructions: "not allowed" } },
+      { ...base, summary: { mode: "default", instructions: "not allowed" } },
+      { ...base, summary: { mode: "custom" } },
+      { ...base, summary: { mode: "custom", instructions: "   " } },
+      { ...base, summary: { mode: "custom", instructions: "x".repeat(SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH + 1) } },
+      { ...base, summary: { mode: "custom", instructions: "focus", extra: true } },
+    ];
+
+    try {
+      for (const payload of malformed) {
+        const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/tree/navigate", payload });
+        expect(response.statusCode).toBe(400);
+      }
+      expect(routeService.navigateTreeCalls).toEqual([]);
     } finally {
       await routeService.dispose();
       await routeApp.close();
@@ -534,6 +620,7 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly cleanupCalls: NormalizedSessionCleanupRequest[] = [];
   readonly bulkArchiveCalls: SessionBulkMutationRef[][] = [];
   readonly bulkDeleteCalls: SessionBulkMutationRef[][] = [];
+  readonly navigateTreeCalls: { lookup: SessionRouteLookup; request: SessionTreeNavigateRequest }[] = [];
   reloadError: Error | undefined;
   clearQueueError: Error | undefined;
 
@@ -667,6 +754,10 @@ class CapturingRouteSessionService implements SessionRouteService {
   shell(): never { throw unusedRouteMethod("shell"); }
   runCommand(): never { throw unusedRouteMethod("runCommand"); }
   respondToCommand(): never { throw unusedRouteMethod("respondToCommand"); }
+  navigateTree(lookup: SessionRouteLookup, request: SessionTreeNavigateRequest): Promise<SessionTreeNavigateResult> {
+    this.navigateTreeCalls.push({ lookup, request });
+    return Promise.resolve({ cancelled: false, editorText: "edit this" });
+  }
   abort(): never { throw unusedRouteMethod("abort"); }
   stop(): never { throw unusedRouteMethod("stop"); }
   archive(): never { throw unusedRouteMethod("archive"); }

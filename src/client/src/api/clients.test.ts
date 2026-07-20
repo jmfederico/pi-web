@@ -46,6 +46,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("machine-scoped runtime API", () => {
@@ -279,6 +280,34 @@ describe("session API compatibility", () => {
     expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/queue/clear");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo with spaces" });
+  });
+
+  it("posts session tree navigation through an encoded cwd-scoped machine route", async () => {
+    const fetchMock = stubJsonFetch({ cancelled: false, editorText: "edit this" });
+    const navigation = { targetId: "entry /?", expectedLeafId: "leaf-1", summary: { mode: "custom" as const, instructions: "focus on tests" } };
+
+    await expect(sessionsApi.navigateTree({ id: "s /?", cwd: "/repo with spaces" }, navigation, "remote /?")).resolves.toEqual({ cancelled: false, editorText: "edit this" });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/tree/navigate");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo with spaces", ...navigation });
+  });
+
+  it("keeps session tree navigation under a canonical nested deployment base", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi-web/" });
+    const fetchMock = stubJsonFetch({ cancelled: false });
+
+    await sessionsApi.navigateTree(
+      { id: "session /?", cwd: "/nested/repo" },
+      { targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } },
+      "remote /?",
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/nested/pi-web/api/machines/remote%20%2F%3F/sessions/session%20%2F%3F/tree/navigate");
   });
 
   it("reads a session stream snapshot through an encoded machine route with cwd context", async () => {

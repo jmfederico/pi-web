@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
-import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
+import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { activityApi, configApi, filesApi, gitApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
@@ -34,6 +34,16 @@ describe("federated route contract", () => {
       { method: "POST", path: "/sessions/:sessionId/notifications/dismiss-all" },
     ]);
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("notifications"))).toBe(false);
+  });
+
+  it("allowlists session tree navigation with a long model-operation timeout and no new WebSocket", () => {
+    expect(FEDERATED_HTTP_ROUTES.find((route) => route.path === "/sessions/:sessionId/tree/navigate")).toEqual({
+      method: "POST",
+      path: "/sessions/:sessionId/tree/navigate",
+      timeoutMs: SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS,
+    });
+    expect(SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS).toBe(5 * 60_000);
+    expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("tree"))).toBe(false);
   });
 
   it("covers machine-scoped client HTTP calls with remote proxy routes", async () => {
@@ -88,6 +98,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.shell(session, "ls", machineId)),
       ignoreParseFailure(sessionsApi.runCommand(session, "/help", machineId)),
       ignoreParseFailure(sessionsApi.respondToCommand(session, "req 1", "yes", machineId)),
+      ignoreParseFailure(sessionsApi.navigateTree(session, { targetId: "entry-1", expectedLeafId: "leaf-1", summary: { mode: "none" } }, machineId)),
       ignoreParseFailure(sessionsApi.abort(session, machineId)),
       ignoreParseFailure(sessionsApi.stop(session, machineId)),
       ignoreParseFailure(sessionsApi.archive(session, machineId)),
