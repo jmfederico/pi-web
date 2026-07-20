@@ -499,7 +499,9 @@ describe("FileSessionUnreadPersistence", () => {
       nextCompletionOrder: 1,
       sessions: [{ sessionId: "session-1", cwd: "/repo", completionOrder: 1 }],
     });
-    expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(filePath)).mode & 0o777).toBe(0o600);
+    }
     expect((await readdir(join(root, "state"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 
     const reloaded = new SessionUnreadStore({ persistence, createCatalogId: () => "unused-catalog" });

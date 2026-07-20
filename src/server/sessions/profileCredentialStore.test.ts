@@ -123,7 +123,7 @@ describe("ProfileCredentialStore", () => {
     expect(runCommand).toHaveBeenCalledTimes(4);
   });
 
-  it("enforces private directory and file permissions", async () => {
+  it.skipIf(process.platform === "win32")("enforces private directory and file permissions", async () => {
     const { agentDir, authPath } = await tempAgentDir();
     await chmod(agentDir, 0o755);
     await writeFile(authPath, "{}\n", { encoding: "utf8", mode: 0o644 });
