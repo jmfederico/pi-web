@@ -8,6 +8,41 @@ function page(text: string, total: number): MessagePage {
 }
 
 describe("SessionController selected-session refresh", () => {
+  it("signals selection readiness only after the initial transcript join succeeds", async () => {
+    const messages = deferred<MessagePage>();
+    const selectedStatus = deferred<SessionStatus>();
+    const ready: string[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => messages.promise,
+      status: () => selectedStatus.promise,
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+      thinkingLevels: () => Promise.resolve({ levels: [] }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api,
+        socket: new FakeSocket(),
+        onSelectedSessionReady: ({ machineId, session }) => { ready.push(`${machineId}:${session.id}`); },
+      },
+    );
+
+    const selecting = controller.selectSession(oldSession, { updateUrl: false });
+    await Promise.resolve();
+    expect(ready).toEqual([]);
+
+    messages.resolve(page("ready", 1));
+    selectedStatus.resolve(status(oldSession.id));
+    await selecting;
+
+    expect(ready).toEqual([`local:${oldSession.id}`]);
+  });
+
   it("shares same-turn requests and runs one trailing refresh requested during the active fetch", async () => {
     const firstPage = deferred<MessagePage>();
     const firstStatus = deferred<SessionStatus>();

@@ -280,6 +280,8 @@ export const listStyles = css`
   .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
   /* Client-side sending (upload in flight); distinct from server activity, which propagates to workspace/machine rows. */
   .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
+  /* Unread is a stable state, not ongoing work: keep it static and accent-colored. */
+  .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }
   .action-menu { position: relative; align-self: stretch; }
   .action-menu-toggle { display: grid; place-items: center; height: 100%; min-width: 32px; padding: 0; color: var(--pi-muted); border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
   .action-menu-toggle:hover { color: var(--pi-text); background: var(--pi-surface-hover); }

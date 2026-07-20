@@ -197,6 +197,25 @@ describe("MachineController", () => {
     expect(updateUrl).not.toHaveBeenCalled();
   });
 
+  it("does not let an older runtime response overwrite a newer capability negotiation", async () => {
+    let state: AppState = { ...initialAppState(), machines: [localMachine], selectedMachine: localMachine };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    let resolveOlder: ((runtime: Awaited<ReturnType<typeof api.runtime>>) => void) | undefined;
+    const older = new Promise<Awaited<ReturnType<typeof api.runtime>>>((resolve) => { resolveOlder = resolve; });
+    vi.spyOn(api, "runtime")
+      .mockImplementationOnce(() => older)
+      .mockResolvedValueOnce({ machineId: "local", ok: true, checkedAt: "new", capabilities: [] });
+    const controller = new MachineController(() => state, setState, vi.fn(), { loadProjects: vi.fn() });
+
+    const first = controller.refreshMachineRuntime("local");
+    const second = controller.refreshMachineRuntime("local");
+    await second;
+    resolveOlder?.({ machineId: "local", ok: true, checkedAt: "old", capabilities: ["sessions.unread"] });
+    await first;
+
+    expect(state.machineRuntimes["local"]).toMatchObject({ checkedAt: "new", capabilities: [] });
+  });
+
   it("selects the fallback machine after deleting the selected machine by default", async () => {
     let state: AppState = { ...initialAppState(), machines: [localMachine, remoteMachine], selectedMachine: remoteMachine, selectedProject: { id: "p1", name: "Project", path: "/repo", createdAt: "now" } };
     const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };

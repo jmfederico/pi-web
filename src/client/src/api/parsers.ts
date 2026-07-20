@@ -1,4 +1,4 @@
-import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, type ArchiveSessionsResponse, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GitDiffResponse, type GitFileState, type GitStatusFile, type GitStatusResponse, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebAgentDirEnvSource, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type SessionStatus, type SessionStreamSnapshot, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type TerminalCommandRun, type TerminalCommandRunStatus, type TerminalInfo, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceActivity, type WorkspaceActivityResponse } from "../../../shared/apiTypes";
+import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GitDiffResponse, type GitFileState, type GitStatusFile, type GitStatusResponse, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebAgentDirEnvSource, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type SessionStatus, type SessionStreamSnapshot, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type TerminalCommandRun, type TerminalCommandRunStatus, type TerminalInfo, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceActivity, type WorkspaceActivityResponse } from "../../../shared/apiTypes";
 import type { PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot } from "../../../shared/apiTypes";
 import { parseActiveAgentProfileDescriptor } from "../../../shared/activeAgentProfile";
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
@@ -231,6 +231,93 @@ export function parseSessionStreamSnapshot(value: unknown): SessionStreamSnapsho
     seq: requireNumber(record, "seq"),
     partial: record["partial"] ?? null,
   };
+}
+
+export function parseSessionUnreadCatalogSnapshot(value: unknown): SessionUnreadCatalogSnapshot {
+  const record = requireRecord(value);
+  const catalogRevision = requireNonNegativeSafeInteger(record, "catalogRevision");
+  const sessions = boundedArrayOf(record["sessions"], parseSessionUnreadSummary, SESSION_UNREAD_LIMIT, "sessions");
+  assertUniqueUnreadSummaries(sessions);
+  assertUnreadNewestFirst(sessions);
+  if (sessions.some((summary) => summary.completionOrder > catalogRevision)) {
+    throw new Error("Session unread completion order exceeds catalog revision");
+  }
+  return {
+    catalogId: requireBoundedNonEmptyString(record, "catalogId", SESSION_UNREAD_CATALOG_ID_MAX_LENGTH),
+    catalogRevision,
+    sessions,
+  };
+}
+
+export function parseSessionUnreadEvent(value: unknown): SessionUnreadEvent {
+  const record = requireRecord(value);
+  if (record["type"] !== "sessions.unread") throw new Error("Invalid session unread event type");
+  const sessionId = requireBoundedNonEmptyString(record, "sessionId", SESSION_UNREAD_SESSION_ID_MAX_LENGTH);
+  const cwd = requireBoundedNonEmptyString(record, "cwd", SESSION_UNREAD_CWD_MAX_LENGTH);
+  const catalogRevision = requirePositiveSafeInteger(record, "catalogRevision");
+  const unread = record["unread"] === null ? null : parseSessionUnreadSummary(record["unread"]);
+  if (unread !== null && (unread.sessionId !== sessionId || unread.cwd !== cwd)) {
+    throw new Error("Session unread event identity mismatch");
+  }
+  if (unread !== null && unread.completionOrder > catalogRevision) {
+    throw new Error("Session unread completion order exceeds catalog revision");
+  }
+  return {
+    type: "sessions.unread",
+    catalogId: requireBoundedNonEmptyString(record, "catalogId", SESSION_UNREAD_CATALOG_ID_MAX_LENGTH),
+    catalogRevision,
+    sessionId,
+    cwd,
+    unread,
+  };
+}
+
+function parseSessionUnreadSummary(value: unknown): SessionUnreadSummary {
+  const record = requireRecord(value);
+  const completedAt = requireBoundedNonEmptyString(
+    record,
+    "completedAt",
+    SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH,
+  );
+  const completedDate = new Date(completedAt);
+  if (!Number.isFinite(completedDate.getTime()) || completedDate.toISOString() !== completedAt) {
+    throw new Error("Invalid canonical session unread completion time");
+  }
+  return {
+    sessionId: requireBoundedNonEmptyString(record, "sessionId", SESSION_UNREAD_SESSION_ID_MAX_LENGTH),
+    cwd: requireBoundedNonEmptyString(record, "cwd", SESSION_UNREAD_CWD_MAX_LENGTH),
+    completionOrder: requirePositiveSafeInteger(record, "completionOrder"),
+    completedAt,
+  };
+}
+
+function assertUniqueUnreadSummaries(summaries: readonly SessionUnreadSummary[]): void {
+  const identities = summaries.map((summary) => JSON.stringify([summary.sessionId, summary.cwd]));
+  if (new Set(identities).size !== identities.length) throw new Error("Duplicate session unread identity");
+  const completionOrders = summaries.map((summary) => summary.completionOrder);
+  if (new Set(completionOrders).size !== completionOrders.length) throw new Error("Duplicate session unread completion order");
+}
+
+function assertUnreadNewestFirst(summaries: readonly SessionUnreadSummary[]): void {
+  for (let index = 1; index < summaries.length; index += 1) {
+    const previous = summaries[index - 1];
+    const current = summaries[index];
+    if (previous === undefined || current === undefined || previous.completionOrder <= current.completionOrder) {
+      throw new Error("Session unread summaries are not newest-first");
+    }
+  }
+}
+
+function requireBoundedNonEmptyString(record: Record<string, unknown>, key: string, maxLength: number): string {
+  const value = requireNonEmptyString(record, key);
+  if (value.length > maxLength) throw new Error(`String field exceeds limit: ${key}`);
+  return value;
+}
+
+function requirePositiveSafeInteger(record: Record<string, unknown>, key: string): number {
+  const value = requireNonNegativeSafeInteger(record, key);
+  if (value === 0) throw new Error(`Expected positive safe integer field: ${key}`);
+  return value;
 }
 
 export function parseSessionNotificationInboxSnapshot(value: unknown): SessionNotificationInboxSnapshot {

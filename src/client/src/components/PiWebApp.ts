@@ -22,9 +22,11 @@ import { SessionStorageTerminalSelectionMemory } from "../controllers/terminalSe
 import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspaceSelection";
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
+import { machineSessionKey } from "../machineKeys";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
 import { selectedNotificationView } from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
+import { SessionUnreadController } from "../sessionUnread";
 import { collapseSessionWarnings, initialSessionWarningVisibilityState, reconcileSessionWarningVisibility, restoreSessionWarnings } from "../sessionWarningVisibility";
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
@@ -47,7 +49,7 @@ import { isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorksp
 import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
-import "./SessionList";
+import { unreadSessionCount } from "./SessionList";
 import "./SessionCleanupDialog";
 import "./SessionTreeNavigator";
 import "./ChatView";
@@ -105,6 +107,21 @@ export class PiWebApp extends LitElement {
   @query("#navigation-panel") private navigationPanelFrame?: HTMLElement;
   @query("#workspace-panel") private workspacePanelFrame?: HTMLElement;
 
+  private readonly sessionUnread = new SessionUnreadController({
+    onChange: (machineId) => {
+      if (selectedMachineId(this.state) !== machineId) return;
+      this.syncUnreadSessionIds();
+      this.syncSelectedSessionReadState();
+    },
+    onBackgroundError: (operation, machineId, error) => {
+      console.warn(`Failed to ${operation} session unread state for ${machineId}`, error);
+    },
+  });
+  @state() private unreadSessionIds: ReadonlySet<string> = this.sessionUnread.unreadSessionIds(selectedMachineId(this.state), this.state.sessions);
+  private unreadConnected = false;
+  private committedChatIdentity: string | undefined;
+  private readyChatIdentity: string | undefined;
+
   private readonly notifications = new SessionNotificationController(
     () => this.state,
     (patch) => { this.setState(patch); },
@@ -117,6 +134,9 @@ export class PiWebApp extends LitElement {
     new SessionStorageSessionSelectionMemory(),
     {
       notifications: this.notifications,
+      onSelectedSessionReady: ({ machineId, session }) => {
+        void this.commitReadyChatAfterRender(machineId, session);
+      },
       replacePromptEditorText: async ({ machineId, sessionId, text }) => {
         await this.updateComplete;
         if (selectedMachineId(this.state) !== machineId || this.state.selectedSession?.id !== sessionId) return;
@@ -181,6 +201,7 @@ export class PiWebApp extends LitElement {
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
   private readonly machineRealtimeSockets = new Map<string, RealtimeSocket>();
+  private readonly unreadRuntimeRefreshes = new Map<string, Promise<void>>();
   private readonly activeTerminalIds = new Set<string>();
   private readonly machineNavigation = new SessionStorageMachineNavigationMemory();
   private readonly terminalSelection = new SessionStorageTerminalSelectionMemory();
@@ -231,6 +252,7 @@ export class PiWebApp extends LitElement {
     await this.restoreRoute(false);
   });
   private readonly onPageShow = () => {
+    void this.renegotiateUnreadMachines();
     this.appShell.repairViewportPosition();
     this.retryPendingRemoteRouteRestoreSoon();
   };
@@ -254,16 +276,77 @@ export class PiWebApp extends LitElement {
     this.syncSessionWarningVisibility();
   }
 
+  protected override updated(): void {
+    // Lit has now committed the selected chat and app-shell visibility state.
+    // Recheck after every rendered transition; the unread controller
+    // deduplicates acknowledgements for the observed completion order.
+    this.committedChatIdentity = selectedChatIdentity(this.state);
+    this.syncSelectedSessionReadState();
+  }
+
   private syncSessionWarningVisibility(): void {
+    const session = this.state.selectedSession;
     this.sessionWarningVisibility = reconcileSessionWarningVisibility(
       this.sessionWarningVisibility,
-      this.state.selectedSession?.id,
-      this.state.status?.warnings,
+      session === undefined ? undefined : machineSessionKey(selectedMachineId(this.state), session.id),
+      this.state.status === undefined ? undefined : this.state.status.warnings ?? [],
     );
+  }
+
+  private syncSelectedSessionReadState(): void {
+    const session = this.state.selectedSession;
+    if (session === undefined) return;
+    const machineId = selectedMachineId(this.state);
+    if (!this.isSessionSeen(machineId, session)) return;
+    void this.sessionUnread.acknowledge(machineId, session);
+  }
+
+  private async commitReadyChatAfterRender(machineId: string, session: SessionInfo): Promise<void> {
+    const identity = unreadChatIdentity(machineId, session);
+    await this.updateComplete;
+    if (!this.unreadConnected || selectedChatIdentity(this.state) !== identity) return;
+    this.readyChatIdentity = identity;
+    this.syncSelectedSessionReadState();
+  }
+
+  private syncUnreadSessionIds(): void {
+    const next = this.sessionUnread.unreadSessionIds(selectedMachineId(this.state), this.state.sessions);
+    if (!sameStringSet(next, this.unreadSessionIds)) this.unreadSessionIds = next;
+  }
+
+  private isSessionSeen(machineId: string, session: SessionInfo): boolean {
+    if (!this.unreadConnected) return false;
+    const identity = unreadChatIdentity(machineId, session);
+    if (selectedChatIdentity(this.state) !== identity
+      || this.committedChatIdentity !== identity
+      || this.readyChatIdentity !== identity) return false;
+    if (typeof document !== "undefined") {
+      if (document.visibilityState !== "visible") return false;
+      if (typeof document.hasFocus === "function" && !document.hasFocus()) return false;
+    }
+    if (this.isChatObscured()) return false;
+    if (this.state.mainView === "chat") return true;
+    if (this.state.mainView === "navigation") return !this.appShell.isMobileNavigationLayout;
+    return this.isDesktopSideBySideLayout();
+  }
+
+  private isChatObscured(): boolean {
+    return this.settingsSection !== undefined
+      || this.sessionCleanupDialog !== undefined
+      || this.state.actionPaletteOpen
+      || this.state.projectDialogOpen
+      || this.state.machineDialogOpen
+      || this.state.commandDialog !== undefined
+      || this.state.treeDialog !== undefined
+      || this.state.modelDialog !== undefined
+      || this.state.thinkingDialog !== undefined
+      || this.state.themeDialog !== undefined
+      || this.state.authDialog !== undefined;
   }
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.unreadConnected = true;
     window.addEventListener("popstate", this.onPopState);
     window.addEventListener("pageshow", this.onPageShow);
     this.browserResume.connect();
@@ -271,6 +354,7 @@ export class PiWebApp extends LitElement {
     this.systemLightThemeMedia?.addEventListener("change", this.onSystemLightThemeChange);
     this.applyPreferredTheme(false);
     this.connectRealtime();
+    void this.renegotiateUnreadMachines();
     this.piWebStatusTimer = window.setInterval(() => { this.schedulePiWebStatusRefresh(); }, PI_WEB_STATUS_REFRESH_MS);
     void this.refreshWorkspaceActivity();
     void this.loadClientConfig();
@@ -279,6 +363,11 @@ export class PiWebApp extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.unreadConnected = false;
+    this.committedChatIdentity = undefined;
+    this.readyChatIdentity = undefined;
+    this.unreadRuntimeRefreshes.clear();
+    this.sessionUnread.retainMachines(new Set<string>());
     window.removeEventListener("popstate", this.onPopState);
     window.removeEventListener("pageshow", this.onPageShow);
     this.browserResume.disconnect();
@@ -304,6 +393,12 @@ export class PiWebApp extends LitElement {
     if (!patchChangesState(this.state, patch)) return;
     const previous = this.state;
     this.state = { ...this.state, ...patch };
+    if (selectedChatIdentity(previous) !== selectedChatIdentity(this.state)) {
+      this.committedChatIdentity = undefined;
+      this.readyChatIdentity = undefined;
+    }
+    if (machineUnreadInputsChanged(previous, this.state)) this.syncSessionUnreadMachines();
+    this.syncUnreadSessionIds();
     this.handleActivityTransition(previous, this.state);
     this.handleWorkspaceChange(previous, this.state);
     this.handleMachineChange(previous, this.state);
@@ -335,6 +430,7 @@ export class PiWebApp extends LitElement {
   }
 
   private async refreshAfterBrowserResume(): Promise<void> {
+    await this.renegotiateUnreadMachines();
     await Promise.all([
       this.sessions.refreshSelectedSession(),
       this.refreshMachineActivities(),
@@ -823,11 +919,58 @@ export class PiWebApp extends LitElement {
     this.git.updatePolling();
   }
 
+  private syncSessionUnreadMachines(): void {
+    if (!this.unreadConnected) {
+      this.sessionUnread.retainMachines(new Set<string>());
+      return;
+    }
+    const machineIds = new Set(this.state.machines.map((machine) => machine.id));
+    this.sessionUnread.retainMachines(machineIds);
+    for (const machineId of machineIds) {
+      const runtime = this.state.machineRuntimes[machineId];
+      if (runtime === undefined) continue;
+      const capability = this.unreadRuntimeRefreshes.has(machineId) || !runtime.ok
+        ? "unknown"
+        : supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionsUnread)
+          ? "supported"
+          : "unsupported";
+      if (this.sessionUnread.setCapability(machineId, capability)) void this.sessionUnread.refresh(machineId);
+    }
+  }
+
+  private async renegotiateUnreadMachines(): Promise<void> {
+    if (!this.unreadConnected) return;
+    const machineIds = new Set(this.state.machines.map((machine) => machine.id));
+    machineIds.add(selectedMachineId(this.state));
+    await Promise.all([...machineIds].map(async (machineId) => { await this.renegotiateUnreadMachine(machineId); }));
+  }
+
+  private renegotiateUnreadMachine(machineId: string): Promise<void> {
+    const existing = this.unreadRuntimeRefreshes.get(machineId);
+    if (existing !== undefined) return existing;
+    this.sessionUnread.setCapability(machineId, "unknown");
+    let refreshed = false;
+    const refresh = Promise.resolve().then(async () => {
+      refreshed = await this.machines.refreshMachineRuntime(machineId) !== undefined;
+    });
+    this.unreadRuntimeRefreshes.set(machineId, refresh);
+    const finishRefresh = () => {
+      if (this.unreadRuntimeRefreshes.get(machineId) !== refresh) return;
+      this.unreadRuntimeRefreshes.delete(machineId);
+      if (!this.unreadConnected) return;
+      if (refreshed) this.syncSessionUnreadMachines();
+      else this.sessionUnread.setCapability(machineId, "unknown");
+    };
+    void refresh.then(finishRefresh, finishRefresh);
+    return refresh;
+  }
+
   private connectRealtime(): void {
     const machineId = selectedMachineId(this.state);
     this.realtime.connect(
-      (event) => { this.handleRealtimeEvent(event); },
+      (event) => { this.handleRealtimeEvent(machineId, event); },
       () => {
+        void this.renegotiateUnreadMachine(machineId);
         const workspace = this.state.selectedWorkspace;
         if (workspace !== undefined) void this.refreshActiveTerminals(workspace);
         void this.refreshWorkspaceActivity(machineId);
@@ -849,6 +992,7 @@ export class PiWebApp extends LitElement {
       socket.connect(
         (event) => { this.handleMachineActivityEvent(machineId, event); },
         () => {
+          void this.renegotiateUnreadMachine(machineId);
           void this.refreshWorkspaceActivity(machineId);
         },
         machineId,
@@ -871,11 +1015,13 @@ export class PiWebApp extends LitElement {
   }
 
   private handleMachineActivityEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity, machineId);
+    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    else if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity, machineId);
   }
 
-  private handleRealtimeEvent(event: BrowserRealtimeEvent): void {
-    if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity);
+  private handleRealtimeEvent(machineId: string, event: BrowserRealtimeEvent): void {
+    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    else if (event.type === "workspace.activity") this.activity.applyWorkspaceActivity(event.activity);
     else if (isTerminalEvent(event)) {
       this.applyTerminalEvent(event);
       if (event.type === "terminal.exited") void this.refreshWorkspaceDeletionRuns();
@@ -1172,6 +1318,7 @@ export class PiWebApp extends LitElement {
         .sessionStatuses=${this.state.sessionStatuses}
         .sessionActivities=${this.state.sessionActivities}
         .sendingPrompts=${this.state.sendingPrompts}
+        .unreadSessionIds=${this.unreadSessionIds}
         .selectedSession=${this.state.selectedSession}
         .startingSessionCount=${this.state.startingSessionCount}
         .canStartSession=${!!this.state.selectedWorkspace}
@@ -2025,8 +2172,19 @@ export class PiWebApp extends LitElement {
   }
 
   private mobileMainTabs(): AppMobileMainTab[] {
+    const unreadCount = unreadSessionCount(this.state.sessions, this.unreadSessionIds, {
+      statuses: this.state.sessionStatuses,
+      activities: this.state.sessionActivities,
+      sending: this.state.sendingPrompts,
+    });
     return [
-      { id: "navigation", label: "Sessions", icon: "navigation", className: "navigation-tab" },
+      {
+        id: "navigation",
+        label: "Sessions",
+        icon: "navigation",
+        className: "navigation-tab",
+        ...(unreadCount === 0 ? {} : { badge: unreadCount, badgeLabel: `${String(unreadCount)} unread`, badgeTone: "unread" }),
+      },
       { id: "chat", label: "Chat", icon: "chat" },
       ...this.visibleWorkspacePanels().map((panel): AppMobileMainTab => {
         const icon = panel.icon ?? this.mobilePanelIcon(panel);
@@ -2073,7 +2231,7 @@ export class PiWebApp extends LitElement {
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .canCleanup=${this.canCleanupSessions()} .unavailableMessage=${this.sessionCleanupUnavailableMessage()} .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${(machineId: string) => this.machines.refreshMachineRuntime(machineId)}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }
@@ -2094,6 +2252,19 @@ function pluginMachineFromState(state: Pick<AppState, "selectedMachine">): Plugi
   return { id: "local", name: "local", kind: "local" };
 }
 
+function unreadChatIdentity(machineId: string, session: Pick<SessionInfo, "id" | "cwd">): string {
+  return JSON.stringify([machineId, session.id, session.cwd]);
+}
+
+function selectedChatIdentity(state: Pick<AppState, "selectedMachine" | "selectedSession">): string | undefined {
+  const session = state.selectedSession;
+  return session === undefined ? undefined : unreadChatIdentity(selectedMachineId(state), session);
+}
+
+function machineUnreadInputsChanged(previous: AppState, next: AppState): boolean {
+  return previous.machines !== next.machines || previous.machineRuntimes !== next.machineRuntimes;
+}
+
 function machineActivitySubscriptionInputsChanged(previous: AppState, next: AppState): boolean {
   return previous.machines !== next.machines
     || previous.machineStatuses !== next.machineStatuses
@@ -2112,6 +2283,10 @@ function shouldRefreshMachineActivity(machine: Machine, health: MachineHealth | 
 
 function patchChangesState(state: AppState, patch: Partial<AppState>): boolean {
   return Object.entries(patch).some(([key, value]) => Reflect.get(state, key) !== value);
+}
+
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
 }
 
 function isActive(state: Pick<AppState, "status" | "activity">): boolean {

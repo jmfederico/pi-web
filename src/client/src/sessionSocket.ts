@@ -1,5 +1,5 @@
 import { realtimeEvents, sessionEvents } from "./api";
-import { parseSessionNotificationInboxEvent } from "./api/parsers";
+import { parseSessionNotificationInboxEvent, parseSessionUnreadEvent } from "./api/parsers";
 import type { GlobalSessionEvent, RealtimeEvent, SessionRef, SessionUiEvent } from "../../shared/apiTypes";
 
 export type { GlobalSessionEvent, RealtimeEvent, SessionUiEvent } from "../../shared/apiTypes";
@@ -159,6 +159,7 @@ export function parseSessionSocketEvent(event: unknown): SessionUiEvent | undefi
 }
 
 export function parseRealtimeSocketEvent(event: unknown): BrowserRealtimeEvent | undefined {
+  if (eventType(event) === "sessions.unread") return safelyParseValidatedEvent(() => parseSessionUnreadEvent(event));
   if (isLegacyGlobalSessionEvent(event) || isLegacyRealtimeEvent(event)) return event;
   return undefined;
 }
@@ -178,6 +179,10 @@ function isLegacyRealtimeEvent(event: unknown): event is NonGlobalBrowserRealtim
 }
 
 function safelyParseNotificationEvent<T>(parse: () => T): T | undefined {
+  return safelyParseValidatedEvent(parse);
+}
+
+function safelyParseValidatedEvent<T>(parse: () => T): T | undefined {
   try {
     return parse();
   } catch {

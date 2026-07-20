@@ -9,6 +9,7 @@ export const PI_WEB_CAPABILITIES = {
   sessionsClearQueue: "sessions.clearQueue",
   sessionsPersistedState: "sessions.persistedState",
   sessionsNotifications: "sessions.notifications",
+  sessionsUnread: "sessions.unread",
   promptAttachments: "prompt.attachments",
   workspaceFileSuggestions: "workspace.fileSuggestions",
   piPackagesManage: "piPackages.manage",
@@ -202,6 +203,47 @@ export interface Workspace {
 export interface SessionRef {
   id: string;
   cwd: string;
+}
+
+export const SESSION_UNREAD_LIMIT = 1_000;
+export const SESSION_UNREAD_SESSION_ID_MAX_LENGTH = 512;
+export const SESSION_UNREAD_CWD_MAX_LENGTH = 32 * 1024;
+export const SESSION_UNREAD_CATALOG_ID_MAX_LENGTH = 512;
+export const SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH = 64;
+
+export interface SessionUnreadSummary {
+  sessionId: string;
+  cwd: string;
+  /** Monotonic within a catalog and never greater than its containing revision. */
+  completionOrder: number;
+  completedAt: string;
+}
+
+export interface SessionUnreadCatalogSnapshot {
+  /** Stable for one persisted catalog epoch; changes when unread state is reset. */
+  catalogId: string;
+  /** Monotonic catalog mutation revision; at least every contained completion order. */
+  catalogRevision: number;
+  /** Bounded by `SESSION_UNREAD_LIMIT` and ordered newest completion first. */
+  sessions: SessionUnreadSummary[];
+}
+
+export interface SessionUnreadAcknowledgeRequest {
+  cwd: string;
+  /** The catalog epoch in which `throughCompletionOrder` was observed. */
+  catalogId: string;
+  throughCompletionOrder: number;
+}
+
+/** Authoritative delta for one session in the daemon-owned unread catalog. */
+export interface SessionUnreadEvent {
+  type: "sessions.unread";
+  catalogId: string;
+  /** At least `unread.completionOrder` when carrying an unread summary. */
+  catalogRevision: number;
+  sessionId: string;
+  cwd: string;
+  unread: SessionUnreadSummary | null;
 }
 
 export const SESSION_NOTIFICATION_LIMIT = 100;
@@ -927,5 +969,6 @@ type SessionUiEventBody =
 
 export type GlobalSessionEvent =
   | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
-  | SessionNotificationSummaryEvent;
+  | SessionNotificationSummaryEvent
+  | SessionUnreadEvent;
 export type RealtimeEvent = GlobalSessionEvent | TerminalUiEvent | WorkspaceActivityUiEvent;

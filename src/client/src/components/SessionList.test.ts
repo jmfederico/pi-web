@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { SessionInfo, SessionStatus } from "../api";
 import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
-import { sessionRowActivityKind, sessionRowsForCurrentTree } from "./SessionList";
+import { sessionRowActivityKind, sessionRowsForCurrentTree, unreadSessionCount } from "./SessionList";
 
 describe("sessionRowActivityKind", () => {
   const idle = sessionStatus("s");
@@ -16,13 +16,33 @@ describe("sessionRowActivityKind", () => {
     expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, false)).toBe("session");
   });
 
-  it("reports undefined when idle and not sending", () => {
+  it("reports unread only while the session is idle", () => {
+    expect(sessionRowActivityKind(session("s"), idle, undefined, false, true)).toBe("unread");
+    expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, false, true)).toBe("session");
+    expect(sessionRowActivityKind(session("s"), idle, undefined, true, true)).toBe("sending");
+  });
+
+  it("reports undefined when idle, read, and not sending", () => {
     expect(sessionRowActivityKind(session("s"), idle, undefined, false)).toBeUndefined();
   });
 
-  it("never shows an indicator for archived or cached-new sessions, even while sending", () => {
-    expect(sessionRowActivityKind({ ...session("s"), archived: true }, idle, undefined, true)).toBeUndefined();
-    expect(sessionRowActivityKind(markCachedNewSessionInfo(session("s")), idle, undefined, true)).toBeUndefined();
+  it("never shows an indicator for archived or cached-new sessions, even while sending or unread", () => {
+    expect(sessionRowActivityKind({ ...session("s"), archived: true }, idle, undefined, true, true)).toBeUndefined();
+    expect(sessionRowActivityKind(markCachedNewSessionInfo(session("s")), idle, undefined, true, true)).toBeUndefined();
+  });
+});
+
+describe("unreadSessionCount", () => {
+  it("counts only current persisted sessions", () => {
+    const current = session("current");
+    const archived = { ...session("archived"), archived: true, archivedAt: "2026-06-09T00:00:00.000Z" };
+    const cached = markCachedNewSessionInfo(session("cached"));
+
+    const unreadIds = new Set([current.id, archived.id, cached.id]);
+    expect(unreadSessionCount([current, archived, cached], unreadIds)).toBe(1);
+    expect(unreadSessionCount([current, archived, cached], unreadIds, {
+      statuses: { [current.id]: sessionStatus(current.id, { isStreaming: true }) },
+    })).toBe(0);
   });
 });
 

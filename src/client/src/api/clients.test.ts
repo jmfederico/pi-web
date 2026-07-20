@@ -196,6 +196,29 @@ describe("Pi package API", () => {
 });
 
 describe("session API compatibility", () => {
+  it("reads and acknowledges daemon-owned unread state through encoded machine routes", async () => {
+    const unread = {
+      catalogId: "catalog-a",
+      catalogRevision: 1,
+      sessions: [{ sessionId: "s /?", cwd: "/repo", completionOrder: 1, completedAt: "2026-07-20T00:00:01.000Z" }],
+    };
+    const cleared = { catalogId: "catalog-a", catalogRevision: 2, sessions: [] };
+    const fetchMock = stubSequenceFetch([jsonResponse(unread), jsonResponse(cleared)]);
+
+    await expect(sessionsApi.unreadCatalog("remote a")).resolves.toEqual(unread);
+    await expect(sessionsApi.acknowledgeUnread({ id: "s /?", cwd: "/repo" }, "catalog-a", 1, "remote a")).resolves.toEqual(cleared);
+
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/sessions/unread");
+    expect(fetchCall(fetchMock, 0)[1]?.cache).toBe("no-store");
+    expect(fetchCall(fetchMock, 1)[0]).toBe("https://pi.example.test/api/machines/remote%20a/sessions/s%20%2F%3F/unread/acknowledge");
+    expect(fetchCall(fetchMock, 1)[1]?.method).toBe("POST");
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({
+      cwd: "/repo",
+      catalogId: "catalog-a",
+      throughCompletionOrder: 1,
+    });
+  });
+
   it("posts session cleanup preview and execute requests through the selected machine", async () => {
     const preview = { generatedAt: "2026-06-25T12:00:00.000Z", thresholds: { archiveIdleDays: 7 }, projects: [{ cwd: "/repo", archiveCount: 2, deleteCount: 0 }], totals: { archiveCount: 2, deleteCount: 0 } };
     const executed = { ...preview, archivedSessionIds: ["s1", "s2"], deletedSessionIds: [] };

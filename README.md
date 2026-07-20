@@ -42,10 +42,12 @@ Requirements:
 Install and start PI WEB as per-user services:
 
 ```bash
-npm install -g @jmfederico/pi-web
+npm install -g @jmfederico/pi-web --allow-scripts=node-pty
 pi-web install
 pi-web doctor
 ```
+
+On npm 12, the scoped flag lets `node-pty` prepare its required native module without enabling install scripts for other dependencies.
 
 Then open:
 

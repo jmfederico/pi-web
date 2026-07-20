@@ -1,9 +1,11 @@
-import { api, type Machine, type MachineHealth } from "../api";
+import { api, type Machine, type MachineHealth, type MachineRuntime } from "../api";
 import { resetWorkspaceScopedState } from "../appState";
 import type { GetState, SetState, UpdateUrl } from "./types";
 import type { ProjectController } from "./projectController";
 
 export class MachineController {
+  private readonly runtimeRefreshSeqByMachine = new Map<string, number>();
+
   constructor(private readonly getState: GetState, private readonly setState: SetState, private readonly updateUrl: UpdateUrl, private readonly projects: Pick<ProjectController, "loadProjects">) {}
 
   async loadMachines(routeMachineId?: string): Promise<void> {
@@ -100,12 +102,17 @@ export class MachineController {
     }
   }
 
-  async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<void> {
+  async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<MachineRuntime | undefined> {
+    const seq = (this.runtimeRefreshSeqByMachine.get(machineId) ?? 0) + 1;
+    this.runtimeRefreshSeqByMachine.set(machineId, seq);
     try {
       const runtime = await api.runtime(machineId, true);
+      if (this.runtimeRefreshSeqByMachine.get(machineId) !== seq) return undefined;
       this.setState({ machineRuntimes: { ...this.getState().machineRuntimes, [runtime.machineId]: runtime } });
+      return runtime;
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (this.runtimeRefreshSeqByMachine.get(machineId) === seq) this.setState({ error: String(error) });
+      return undefined;
     }
   }
 

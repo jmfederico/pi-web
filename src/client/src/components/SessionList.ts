@@ -30,6 +30,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) statuses: Record<string, SessionStatus> = {};
   @property({ attribute: false }) activities: Record<string, SessionActivity> = {};
   @property({ attribute: false }) sending: Record<string, true> = {};
+  @property({ attribute: false }) unreadSessionIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) selected?: SessionInfo;
   @property({ type: Number }) startingCount = 0;
   @property({ type: Boolean }) canStart = false;
@@ -107,9 +108,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
     const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
     const descendantCounts = unarchivedDescendantCounts(this.sessions);
+    const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds, {
+      statuses: this.statuses,
+      activities: this.activities,
+      sending: this.sending,
+    });
     return html`
       <section>
-        ${this.renderHeading(currentRows.length + archivedRows.length, currentSelectableSessions)}
+        ${this.renderHeading(currentRows.length + archivedRows.length, currentSelectableSessions, unreadCount)}
         ${this.collapsed ? null : html`
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
@@ -128,12 +134,13 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     `;
   }
 
-  private renderHeading(sessionCount: number, currentSessions: SessionInfo[]) {
+  private renderHeading(sessionCount: number, currentSessions: SessionInfo[], unreadCount: number) {
     if (!this.collapsible) {
       return html`
         <h2>
           <span class="plain-heading">Sessions</span>
           ${this.renderCurrentSelectionButton(currentSessions)}
+          ${this.renderUnreadCount(unreadCount)}
           ${this.renderCleanupButton()}
           ${this.renderStartButton()}
         </h2>
@@ -145,11 +152,18 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       <h2>
         <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
         ${this.renderCurrentSelectionButton(currentSessions)}
+        ${this.renderUnreadCount(unreadCount)}
         <small class="section-count">${sessionCount}</small>
         ${this.renderCleanupButton()}
         ${this.renderStartButton()}
       </h2>
     `;
+  }
+
+  private renderUnreadCount(unreadCount: number) {
+    if (unreadCount === 0) return null;
+    const label = `${String(unreadCount)} unread`;
+    return html`<small class="section-unread-count" title=${label}>${label}</small>`;
   }
 
   private renderCurrentSelectionButton(currentSessions: SessionInfo[]) {
@@ -235,13 +249,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const bulkSelected = showsCheckbox && this.selectedSessionIds.has(session.id);
     const status = this.statuses[session.id];
     const activity = this.activities[session.id];
+    const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true, this.unreadSessionIds.has(session.id));
     const persistenceOptions = this.sessionPersistenceOptions();
     const canArchive = isArchivableSessionInfo(session, status, persistenceOptions);
     const canDeleteTransient = isTransientNewSessionInfo(session, status, persistenceOptions);
     const canReloadSession = canArchive && this.canReload;
     return html`
       <div
-        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""}"
+        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${indicatorKind === "unread" ? "unread" : ""}"
         style=${`--depth:${String(cappedDepth)}`}
         tabindex="0"
         title=${session.path}
@@ -251,7 +266,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name-line"><span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span></span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
-          ${this.renderActivity(session)}
+          ${this.renderActivity(indicatorKind)}
         </div>
         <div class="action-menu">
           <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
@@ -410,14 +425,19 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return { authoritative: this.authoritativeSessionPersistence };
   }
 
-  private renderActivity(session: SessionInfo) {
-    const kind = sessionRowActivityKind(session, this.statuses[session.id], this.activities[session.id], this.sending[session.id] === true);
-    return renderActionActivityIndicator(kind, kind === "sending" ? "Sending message" : "Session active");
+  private renderActivity(kind: ActivityIndicatorKind | undefined) {
+    const label = kind === "sending"
+      ? "Sending message"
+      : kind === "unread"
+        ? "Unread session activity"
+        : "Session active";
+    return renderActionActivityIndicator(kind, label);
   }
 
   static override styles = [listStyles, css`
     h2 { min-height: 30px; }
     h2 > .section-count { flex: 0 0 auto; display: inline; color: var(--pi-muted); font-size: inherit; }
+    h2 > .section-unread-count { flex: 0 0 auto; display: inline; color: var(--pi-accent); font-size: inherit; text-transform: none; }
     .bulk-select-entry { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; font-size: 13px; line-height: 1; text-transform: none; }
     .start-session-button { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 9px; }
     .cleanup-entry { flex: 0 0 auto; padding: 5px 7px; font-size: 12px; text-transform: none; }
@@ -425,6 +445,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .bulk-row button { padding: 5px 7px; font-size: 12px; }
     .bulk-row small { display: inline; min-width: 0; color: var(--pi-muted); }
     .action-name, .section-selected { text-align: start; unicode-bidi: plaintext; }
+    .action-row.unread .action-name { color: var(--pi-text-bright); font-weight: 650; }
     .plain-heading { min-width: 0; }
     .action-name-line { min-width: 0; display: flex; align-items: flex-start; gap: 6px; }
     .action-name-line .action-name { flex: 1 1 auto; min-width: 0; }
@@ -440,6 +461,24 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .action-main.selecting { padding-left: calc(32px + var(--depth, 0) * 16px); }
     .session-checkbox { position: absolute; top: 9px; left: calc(8px + var(--depth, 0) * 16px); z-index: 2; margin: 0; }
   `];
+}
+
+export function unreadSessionCount(
+  sessions: readonly SessionInfo[],
+  unreadSessionIds: ReadonlySet<string>,
+  runtime: {
+    statuses?: Record<string, SessionStatus> | undefined;
+    activities?: Record<string, SessionActivity> | undefined;
+    sending?: Record<string, true> | undefined;
+  } = {},
+): number {
+  return sessions.filter((session) => sessionRowActivityKind(
+    session,
+    runtime.statuses?.[session.id],
+    runtime.activities?.[session.id],
+    runtime.sending?.[session.id] === true,
+    unreadSessionIds.has(session.id),
+  ) === "unread").length;
 }
 
 function sessionSelectionScope(session: SessionInfo): SessionSelectionScope {
@@ -482,17 +521,20 @@ function unarchivedDescendantCounts(sessions: SessionInfo[]): Map<string, number
  *
  * "sending" (client-side upload in flight) is reported with its own kind, and
  * takes precedence over server activity, so it can be colored distinctly to
- * signal that it is not yet propagated to workspace/machine activity.
+ * signal that it is not yet propagated to workspace/machine activity. Unread is
+ * the idle fallback, so it never replaces an indicator for ongoing work.
  */
 export function sessionRowActivityKind(
   session: SessionInfo,
   status: SessionStatus | undefined,
   activity: SessionActivity | undefined,
   sending: boolean,
+  unread = false,
 ): ActivityIndicatorKind | undefined {
   if (isCachedNewSessionInfo(session) || session.archived === true) return undefined;
   if (sending) return "sending";
-  return isSessionActive(status, activity) ? "session" : undefined;
+  if (isSessionActive(status, activity)) return "session";
+  return unread ? "unread" : undefined;
 }
 
 export function sessionRowsForCurrentTree(sessions: SessionInfo[]): SessionRow[] {

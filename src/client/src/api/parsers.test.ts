@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES } from "../../../shared/apiTypes";
-import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
+import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves additive provider references and interactive API-key flow hints while accepting legacy options", () => {
@@ -215,6 +215,78 @@ describe("API parsers", () => {
 
   it("rejects a session stream snapshot without a numeric seq", () => {
     expect(() => parseSessionStreamSnapshot({ partial: null })).toThrow("Expected number field: seq");
+  });
+
+  it("strictly parses unread snapshots and identity-matched deltas", () => {
+    const newest = { sessionId: "session-2", cwd: "/repo", completionOrder: 2, completedAt: "2026-07-20T00:00:02.000Z" };
+    const oldest = { sessionId: "session-1", cwd: "/repo", completionOrder: 1, completedAt: "2026-07-20T00:00:01.000Z" };
+    expect(parseSessionUnreadCatalogSnapshot({ catalogId: "catalog-a", catalogRevision: 2, sessions: [newest, oldest] })).toEqual({
+      catalogId: "catalog-a",
+      catalogRevision: 2,
+      sessions: [newest, oldest],
+    });
+    expect(parseSessionUnreadEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 3,
+      sessionId: newest.sessionId,
+      cwd: newest.cwd,
+      unread: newest,
+    })).toMatchObject({ type: "sessions.unread", unread: newest });
+    expect(parseSessionUnreadEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 4,
+      sessionId: newest.sessionId,
+      cwd: newest.cwd,
+      unread: null,
+    })).toMatchObject({ type: "sessions.unread", unread: null });
+  });
+
+  it("rejects malformed, duplicate, unsorted, and mismatched unread payloads", () => {
+    const summary = { sessionId: "session-1", cwd: "/repo", completionOrder: 1, completedAt: "2026-07-20T00:00:01.000Z" };
+    expect(() => parseSessionUnreadCatalogSnapshot({ catalogId: "catalog-a", catalogRevision: 2, sessions: [summary, summary] })).toThrow("Duplicate session unread identity");
+    expect(() => parseSessionUnreadCatalogSnapshot({
+      catalogId: "catalog-a",
+      catalogRevision: 2,
+      sessions: [summary, { ...summary, sessionId: "session-2", completionOrder: 2 }],
+    })).toThrow("not newest-first");
+    expect(() => parseSessionUnreadCatalogSnapshot({ catalogId: "catalog-a", catalogRevision: 1, sessions: [{ ...summary, completedAt: "never" }] })).toThrow("Invalid canonical session unread completion time");
+    expect(() => parseSessionUnreadCatalogSnapshot({ catalogId: "catalog-a", catalogRevision: 1, sessions: [{ ...summary, completedAt: "2026-07-20" }] })).toThrow("Invalid canonical session unread completion time");
+    expect(() => parseSessionUnreadCatalogSnapshot({
+      catalogId: "x".repeat(SESSION_UNREAD_CATALOG_ID_MAX_LENGTH + 1),
+      catalogRevision: 0,
+      sessions: [],
+    })).toThrow("String field exceeds limit: catalogId");
+    expect(() => parseSessionUnreadCatalogSnapshot({
+      catalogId: "catalog-a",
+      catalogRevision: 0,
+      sessions: [summary],
+    })).toThrow("completion order exceeds catalog revision");
+    expect(() => parseSessionUnreadEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 1,
+      sessionId: "session-1",
+      cwd: "/repo",
+      unread: { ...summary, completionOrder: 2 },
+    })).toThrow("completion order exceeds catalog revision");
+    expect(() => parseSessionUnreadEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 1,
+      sessionId: "other-session",
+      cwd: "/repo",
+      unread: summary,
+    })).toThrow("identity mismatch");
+    expect(() => parseSessionUnreadEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 0,
+      sessionId: "session-1",
+      cwd: "/repo",
+      unread: null,
+    })).toThrow("positive safe integer");
   });
 
   it("parses session cleanup preview and execute responses", () => {

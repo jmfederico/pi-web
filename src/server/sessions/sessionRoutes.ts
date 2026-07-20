@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice } from "../../shared/apiTypes.js";
+import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice, type SessionUnreadAcknowledgeRequest } from "../../shared/apiTypes.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -59,6 +59,35 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       return await sessions.notificationCatalog();
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.get(`${prefix}/sessions/unread`, async (_request, reply) => {
+    try {
+      return await sessions.unreadCatalog();
+    } catch (error) {
+      return reply.code(503).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { sessionId: string }; Body: Record<string, unknown> | undefined }>(`${prefix}/sessions/:sessionId/unread/acknowledge`, async (request, reply) => {
+    let sessionId: string;
+    let acknowledgement: SessionUnreadAcknowledgeRequest;
+    try {
+      const body = requireRecord(request.body);
+      sessionId = requireNonEmptyBoundedString(request.params.sessionId, "sessionId", SESSION_UNREAD_SESSION_ID_MAX_LENGTH);
+      acknowledgement = {
+        cwd: normalizeRequestCwd(requireNonEmptyBoundedString(body["cwd"], "cwd", SESSION_UNREAD_CWD_MAX_LENGTH)),
+        catalogId: requireNonEmptyBoundedString(body["catalogId"], "catalogId", SESSION_UNREAD_CATALOG_ID_MAX_LENGTH),
+        throughCompletionOrder: requirePositiveSafeInteger(body["throughCompletionOrder"], "throughCompletionOrder"),
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+    try {
+      return await sessions.acknowledgeUnread(sessionId, acknowledgement);
+    } catch (error) {
+      return reply.code(503).send({ error: errorMessage(error) });
     }
   });
 
@@ -507,6 +536,12 @@ function requireNonNegativeSafeInteger(value: unknown, field: string): number {
     throw new Error(`${field} field must be a non-negative safe integer`);
   }
   return value;
+}
+
+function requirePositiveSafeInteger(value: unknown, field: string): number {
+  const parsed = requireNonNegativeSafeInteger(value, field);
+  if (parsed === 0) throw new Error(`${field} field must be positive`);
+  return parsed;
 }
 
 function requireThinkingLevel(value: unknown): string {

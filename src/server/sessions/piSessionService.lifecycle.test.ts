@@ -53,6 +53,12 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
   it("starts sessions through an injected runtime creator", async () => {
     const hub = new CapturingSessionEventHub();
     const fake = fakeRuntime();
+    let sessionStartText: string | undefined;
+    const bindExtensions = fake.session.bindExtensions.bind(fake.session);
+    fake.session.bindExtensions = (bindings) => {
+      sessionStartText = bindings.uiContext?.theme.fg("accent", "session started");
+      return bindExtensions(bindings);
+    };
     let createCalls = 0;
     let runtimeAgentDir: string | undefined;
     const createAgentRuntime: RuntimeCreator = async (_createRuntime, options) => {
@@ -74,6 +80,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     expect(createCalls).toBe(1);
     expect(runtimeAgentDir).toBe(TEST_AGENT_DIR);
     expect(fake.calls.bindExtensions).toHaveLength(1);
+    expect(sessionStartText).toBe("session started");
     expect(session).toMatchObject({ id: "session-1", cwd: "/workspace", messageCount: 0 });
     expect(service.activeCount()).toBe(1);
     expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === "session-1")).toBe(true);
@@ -521,6 +528,12 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const hub = new CapturingSessionEventHub();
     const fake = fakeRuntime("session-1");
     const replacement = fakeRuntime("session-2");
+    let replacementSessionStartText: string | undefined;
+    const bindReplacementExtensions = replacement.session.bindExtensions.bind(replacement.session);
+    replacement.session.bindExtensions = (bindings) => {
+      replacementSessionStartText = bindings.uiContext?.theme.fg("success", "replacement started");
+      return bindReplacementExtensions(bindings);
+    };
     let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
     fake.runtime.setRebindSession = (callback) => { rebindSession = callback; };
     const service = new PiSessionService(hub, {
@@ -537,6 +550,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     expect(fake.calls.bindExtensions).toHaveLength(1);
     expect(replacement.calls.bindExtensions).toHaveLength(1);
+    expect(replacementSessionStartText).toBe("replacement started");
     expect(service.activeCount()).toBe(1);
     expect(await service.status("session-2")).toMatchObject({ sessionId: "session-2" });
 
@@ -668,7 +682,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
-  it("commits clean /reload notifications only after the replacement session_start binding", async () => {
+  it("commits clean /reload only after replacement session_start notifications use the plain-text theme", async () => {
     const hub = new CapturingSessionEventHub();
     const store = notificationStore();
     const sessionId = "runtime-reload-notifications";
@@ -677,7 +691,8 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const second = fakeRuntime(sessionId, {
       sessionManager: manager,
       bindExtensions: (bindings) => {
-        bindings.uiContext?.notify("replacement startup", "error");
+        const replacementStartup = bindings.uiContext?.theme.fg("error", "replacement startup") ?? "replacement startup";
+        bindings.uiContext?.notify(replacementStartup, "error");
         return Promise.resolve();
       },
     });

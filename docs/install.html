@@ -133,10 +133,14 @@
                   <strong>User service install</strong>
                   <button class="copy-button" data-copy="#linux-install">Copy</button>
                 </div>
-                <pre id="linux-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web
+                <pre id="linux-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty
 <span class="prompt">$</span> pi-web install
 <span class="prompt">$</span> pi-web doctor</code></pre>
               </div>
+              <p>
+                The scoped <code>--allow-scripts=node-pty</code> flag lets npm 12 run the native-module installation required
+                by PI WEB terminals without enabling install scripts for other dependencies.
+              </p>
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
               <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
@@ -185,7 +189,7 @@
                   <strong>Manual processes</strong>
                   <button class="copy-button" data-copy="#manual-install">Copy</button>
                 </div>
-                <pre id="manual-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web
+                <pre id="manual-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty
 
 <span class="comment"># Terminal 1</span>
 <span class="prompt">$</span> pi-web-sessiond

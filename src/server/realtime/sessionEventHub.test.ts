@@ -133,6 +133,27 @@ describe("SessionEventHub", () => {
     expect(sessionSocket.send).not.toHaveBeenCalled();
   });
 
+  it("publishes authoritative unread deltas only to global sockets", () => {
+    const hub = new SessionEventHub();
+    const globalSocket = new FakeSocket();
+    const sessionSocket = new FakeSocket();
+    hub.addGlobal(globalSocket);
+    hub.add("s1", sessionSocket);
+    const event = {
+      type: "sessions.unread" as const,
+      catalogId: "catalog-test",
+      catalogRevision: 3,
+      sessionId: "s1",
+      cwd: "/workspace",
+      unread: { sessionId: "s1", cwd: "/workspace", completionOrder: 2, completedAt: "2026-07-20T00:00:00.000Z" },
+    };
+
+    hub.publishGlobal(event);
+
+    expect(globalSocket.send).toHaveBeenCalledWith(JSON.stringify(event));
+    expect(sessionSocket.send).not.toHaveBeenCalled();
+  });
+
   it("publishes notification summaries only to global sockets", () => {
     const hub = new SessionEventHub();
     const globalSocket = new FakeSocket();

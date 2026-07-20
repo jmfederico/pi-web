@@ -1,18 +1,21 @@
 import type { SessionWarning } from "./api";
 
 export interface SessionWarningVisibilityState {
-  sessionId: string | undefined;
+  selectedSessionKey: string | undefined;
   warningSetSignature: string;
   warningCount: number;
   collapsed: boolean;
+  /** Warning-set signatures the user collapsed, keyed by machine/session identity. */
+  collapsedWarningSets: ReadonlyMap<string, string>;
 }
 
 export function initialSessionWarningVisibilityState(): SessionWarningVisibilityState {
   return {
-    sessionId: undefined,
+    selectedSessionKey: undefined,
     warningSetSignature: sessionWarningSetSignature(undefined),
     warningCount: 0,
     collapsed: false,
+    collapsedWarningSets: new Map(),
   };
 }
 
@@ -30,28 +33,49 @@ export function sessionWarningSetSignature(warnings: readonly SessionWarning[] |
   return JSON.stringify(warningIdentities);
 }
 
-/** Preserve collapse only while both the selected session and warning set are unchanged. */
+/** Preserve collapse per session while reopening whenever that session's warning set changes. */
 export function reconcileSessionWarningVisibility(
   current: SessionWarningVisibilityState,
-  sessionId: string | undefined,
+  sessionKey: string | undefined,
   warnings: readonly SessionWarning[] | undefined,
 ): SessionWarningVisibilityState {
   const warningSetSignature = sessionWarningSetSignature(warnings);
-  if (current.sessionId === sessionId && current.warningSetSignature === warningSetSignature) return current;
+  const warningCount = warnings?.length ?? 0;
+  const warningSetKnown = warnings !== undefined;
+  const collapsedWarningSet = sessionKey === undefined ? undefined : current.collapsedWarningSets.get(sessionKey);
+  let collapsedWarningSets = current.collapsedWarningSets;
+  if (warningSetKnown && sessionKey !== undefined && collapsedWarningSet !== undefined && collapsedWarningSet !== warningSetSignature) {
+    const nextCollapsedWarningSets = new Map(current.collapsedWarningSets);
+    nextCollapsedWarningSets.delete(sessionKey);
+    collapsedWarningSets = nextCollapsedWarningSets;
+  }
+  const collapsed = warningSetKnown && warningCount > 0 && collapsedWarningSet === warningSetSignature;
+  if (
+    current.selectedSessionKey === sessionKey
+    && current.warningSetSignature === warningSetSignature
+    && current.warningCount === warningCount
+    && current.collapsed === collapsed
+    && current.collapsedWarningSets === collapsedWarningSets
+  ) return current;
   return {
-    sessionId,
+    selectedSessionKey: sessionKey,
     warningSetSignature,
-    warningCount: warnings?.length ?? 0,
-    collapsed: false,
+    warningCount,
+    collapsed,
+    collapsedWarningSets,
   };
 }
 
 export function collapseSessionWarnings(current: SessionWarningVisibilityState): SessionWarningVisibilityState {
-  if (current.collapsed || current.warningCount === 0) return current;
-  return { ...current, collapsed: true };
+  if (current.collapsed || current.warningCount === 0 || current.selectedSessionKey === undefined) return current;
+  const collapsedWarningSets = new Map(current.collapsedWarningSets);
+  collapsedWarningSets.set(current.selectedSessionKey, current.warningSetSignature);
+  return { ...current, collapsed: true, collapsedWarningSets };
 }
 
 export function restoreSessionWarnings(current: SessionWarningVisibilityState): SessionWarningVisibilityState {
   if (!current.collapsed) return current;
-  return { ...current, collapsed: false };
+  const collapsedWarningSets = new Map(current.collapsedWarningSets);
+  if (current.selectedSessionKey !== undefined) collapsedWarningSets.delete(current.selectedSessionKey);
+  return { ...current, collapsed: false, collapsedWarningSets };
 }

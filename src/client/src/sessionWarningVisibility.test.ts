@@ -46,32 +46,53 @@ describe("session warning visibility transitions", () => {
     expect(reconcileSessionWarningVisibility(collapsed, "session-1", replacement)).toBe(collapsed);
   });
 
-  it("reopens for changed warnings and when the same warnings return after clearing", () => {
+  it("retains collapse while status is unavailable but reopens after a known warning change", () => {
     const visible = reconcileSessionWarningVisibility(initialSessionWarningVisibilityState(), "session-1", warnings);
     const collapsed = collapseSessionWarnings(visible);
+    const unavailable = reconcileSessionWarningVisibility(collapsed, "session-1", undefined);
+    const refreshed = reconcileSessionWarningVisibility(unavailable, "session-1", warnings);
     const changed = reconcileSessionWarningVisibility(collapsed, "session-1", [{ ...subscriptionWarning, message: "changed" }, skillWarning]);
     const cleared = reconcileSessionWarningVisibility(collapsed, "session-1", []);
     const returned = reconcileSessionWarningVisibility(cleared, "session-1", warnings);
 
+    expect(unavailable.collapsed).toBe(false);
+    expect(refreshed.collapsed).toBe(true);
     expect(changed.collapsed).toBe(false);
     expect(cleared.collapsed).toBe(false);
     expect(returned.collapsed).toBe(false);
   });
 
-  it("reopens when session selection changes even if the warning set is equal", () => {
-    const visible = reconcileSessionWarningVisibility(initialSessionWarningVisibilityState(), "session-1", warnings);
-    const collapsed = collapseSessionWarnings(visible);
+  it("remembers collapse per session while navigating between unchanged warning sets", () => {
+    const firstVisible = reconcileSessionWarningVisibility(initialSessionWarningVisibilityState(), "session-1", warnings);
+    const firstCollapsed = collapseSessionWarnings(firstVisible);
+    const secondVisible = reconcileSessionWarningVisibility(firstCollapsed, "session-2", warnings);
+    const secondCollapsed = collapseSessionWarnings(secondVisible);
+    const returnedToFirst = reconcileSessionWarningVisibility(secondCollapsed, "session-1", warnings.map((warning) => ({ ...warning })));
 
-    expect(reconcileSessionWarningVisibility(collapsed, "session-2", warnings).collapsed).toBe(false);
+    expect(secondVisible.collapsed).toBe(false);
+    expect(returnedToFirst.collapsed).toBe(true);
+    expect(reconcileSessionWarningVisibility(returnedToFirst, "session-2", warnings).collapsed).toBe(true);
   });
 
-  it("only collapses a non-empty warning set and restores it explicitly", () => {
+  it("keeps an explicitly restored warning set visible after navigating away and back", () => {
+    const visible = reconcileSessionWarningVisibility(initialSessionWarningVisibilityState(), "session-1", warnings);
+    const restored = restoreSessionWarnings(collapseSessionWarnings(visible));
+    const away = reconcileSessionWarningVisibility(restored, "session-2", warnings);
+
+    expect(reconcileSessionWarningVisibility(away, "session-1", warnings).collapsed).toBe(false);
+  });
+
+  it("only collapses a selected, non-empty warning set and restores it explicitly", () => {
     const empty = initialSessionWarningVisibilityState();
+    const selectedEmpty = reconcileSessionWarningVisibility(empty, "session-1", []);
     const visible = reconcileSessionWarningVisibility(empty, "session-1", warnings);
     const collapsed = collapseSessionWarnings(visible);
+    const restored = restoreSessionWarnings(collapsed);
 
     expect(collapseSessionWarnings(empty)).toBe(empty);
+    expect(collapseSessionWarnings(selectedEmpty)).toBe(selectedEmpty);
     expect(collapsed.collapsed).toBe(true);
-    expect(restoreSessionWarnings(collapsed)).toEqual({ ...collapsed, collapsed: false });
+    expect(restored.collapsed).toBe(false);
+    expect(restored.collapsedWarningSets.size).toBe(0);
   });
 });

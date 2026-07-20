@@ -45,12 +45,18 @@ export interface PromptEditorTextReplacement {
   text: string;
 }
 
+export interface SelectedSessionReady {
+  machineId: string;
+  session: SessionInfo;
+}
+
 export interface SessionControllerDependencies {
   api?: typeof defaultApi;
   socket?: SessionEventSocket;
   transcripts?: ChatTranscriptStore;
   notifications?: SessionNotificationSessionBridge;
   replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
+  onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
 }
 
 interface BulkSessionMutationResult {
@@ -95,6 +101,7 @@ export class SessionController {
   private readonly transcripts: ChatTranscriptStore;
   private readonly notifications: SessionNotificationSessionBridge | undefined;
   private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
+  private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
   private selectionSeq = 0;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -125,6 +132,7 @@ export class SessionController {
     this.transcripts = deps.transcripts ?? new ChatTranscriptStore();
     this.notifications = deps.notifications;
     this.replacePromptEditorText = deps.replacePromptEditorText;
+    this.onSelectedSessionReady = deps.onSelectedSessionReady;
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -218,6 +226,7 @@ export class SessionController {
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
         const history = this.transcripts.mergeHistory(transcriptKey, page);
         this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined });
+        this.onSelectedSessionReady?.({ machineId, session });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
       }
@@ -235,6 +244,7 @@ export class SessionController {
       void this.refreshAvailableThinkingLevels();
       for (const event of socketBuffer) this.applyEvent(event);
       this.socket.setHandler((event) => { this.applyEvent(event); });
+      this.onSelectedSessionReady?.({ machineId, session });
       if (options?.updateUrl !== false) this.updateUrl();
     } catch (error) {
       if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) {

@@ -39,6 +39,21 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "POST", path: "/sessions/session-1/queue/clear", body: { cwd: "/repo" } }]);
   });
 
+  it("forwards unread snapshots and acknowledgement cutoffs unchanged", async () => {
+    const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/unread" });
+    const acknowledge = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/unread/acknowledge",
+      payload: { cwd: "/repo", catalogId: "catalog-test", throughCompletionOrder: 9 },
+    });
+
+    expect([catalog.statusCode, acknowledge.statusCode]).toEqual([200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/sessions/unread", body: undefined },
+      { method: "POST", path: "/sessions/session-1/unread/acknowledge", body: { cwd: "/repo", catalogId: "catalog-test", throughCompletionOrder: 9 } },
+    ]);
+  });
+
   it("forwards notification snapshots and dismissal bodies unchanged", async () => {
     const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/notifications" });
     const inbox = await app.inject({ method: "GET", url: `/api/machines/local/sessions/session-1/notifications?cwd=${encodeURIComponent("/repo")}` });

@@ -26,11 +26,26 @@ describe("PiWebApp session-warning visibility wiring", () => {
     collapse();
 
     const collapsedChat = renderChatView(app, state);
-    const collapsedStatusBar = renderStatusBar(app, state);
     expect(templateValueAfterMarker(collapsedChat, ".warningsVisible=")).toBe(false);
-    expect(templateValueAfterMarker(collapsedStatusBar, ".collapsedWarningCount=")).toBe(2);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".collapsedWarningCount=")).toBe(2);
 
-    const restore = templateCallbackAfterMarker(collapsedStatusBar, ".onRestoreWarnings=");
+    const otherState = stateWithWarnings("session-2");
+    setAppState(app, otherState);
+    syncWarningVisibility(app);
+    expect(templateValueAfterMarker(renderChatView(app, otherState), ".warningsVisible=")).toBe(true);
+
+    const returningState = { ...state, status: undefined };
+    setAppState(app, returningState);
+    syncWarningVisibility(app);
+    expect(templateValueAfterMarker(renderChatView(app, returningState), ".warningsVisible=")).toBe(true);
+
+    setAppState(app, state);
+    syncWarningVisibility(app);
+    const returnedStatusBar = renderStatusBar(app, state);
+    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(false);
+    expect(templateValueAfterMarker(returnedStatusBar, ".collapsedWarningCount=")).toBe(2);
+
+    const restore = templateCallbackAfterMarker(returnedStatusBar, ".onRestoreWarnings=");
     restore();
 
     expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(true);
@@ -53,11 +68,11 @@ function createApp(): PiWebApp {
   return new PiWebApp();
 }
 
-function stateWithWarnings(): AppState {
+function stateWithWarnings(sessionId = "session-1"): AppState {
   const selectedSession: SessionInfo = {
-    id: "session-1",
+    id: sessionId,
     cwd: "/repo",
-    path: "/repo/session-1.jsonl",
+    path: `/repo/${sessionId}.jsonl`,
     created: "2026-07-14T00:00:00.000Z",
     modified: "2026-07-14T00:00:00.000Z",
     messageCount: 1,
@@ -66,13 +81,13 @@ function stateWithWarnings(): AppState {
   return {
     ...initialAppState(),
     selectedSession,
-    status: warningStatus(),
+    status: warningStatus(sessionId),
   };
 }
 
-function warningStatus(): SessionStatus {
+function warningStatus(sessionId: string): SessionStatus {
   return {
-    sessionId: "session-1",
+    sessionId,
     isStreaming: true,
     isCompacting: false,
     isBashRunning: false,

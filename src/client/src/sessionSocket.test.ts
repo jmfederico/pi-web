@@ -57,6 +57,39 @@ describe("notification socket guards", () => {
     })).toBeUndefined();
   });
 
+  it("accepts only strictly validated global unread deltas", () => {
+    const unread = {
+      sessionId: "session-1",
+      cwd: "/repo",
+      completionOrder: 1,
+      completedAt: "2026-07-20T00:00:01.000Z",
+    };
+    expect(parseRealtimeSocketEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 1,
+      sessionId: unread.sessionId,
+      cwd: unread.cwd,
+      unread,
+    })).toMatchObject({ type: "sessions.unread", unread });
+    expect(parseRealtimeSocketEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 1,
+      sessionId: "other-session",
+      cwd: unread.cwd,
+      unread,
+    })).toBeUndefined();
+    expect(parseRealtimeSocketEvent({
+      type: "sessions.unread",
+      catalogId: "catalog-a",
+      catalogRevision: 3.5,
+      sessionId: unread.sessionId,
+      cwd: unread.cwd,
+      unread: null,
+    })).toBeUndefined();
+  });
+
   it("preserves existing event acceptance without treating unknown types as realtime events", () => {
     expect(parseSessionSocketEvent({ type: "command.output", level: "info", message: "legacy" })).toMatchObject({ type: "command.output" });
     expect(parseRealtimeSocketEvent({ type: "future.notification", payload: {} })).toBeUndefined();

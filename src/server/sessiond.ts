@@ -15,6 +15,7 @@ import { createSessionModelRuntimeFactory } from "./sessions/sessionModelRuntime
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
+import { FileSessionUnreadPersistence, SessionUnreadStore } from "./sessions/sessionUnreadStore.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
@@ -43,6 +44,13 @@ await runSessionDaemonStartup({
   async createRuntime() {
     const eventHub = new SessionEventHub();
     const notificationStore = new SessionNotificationStore();
+    const unreadStore = new SessionUnreadStore({
+      persistence: new FileSessionUnreadPersistence(),
+      onPersistenceError(operation, error) {
+        app.log.error({ err: error, operation }, "session unread persistence failed");
+      },
+    });
+    await unreadStore.load();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
     const credentials = await ProfileCredentialStore.create({
       agentDir: activeAgentProfile.dir,
@@ -75,6 +83,7 @@ await runSessionDaemonStartup({
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
       notificationStore,
+      unreadStore,
       sessionManager: createPiSessionManagerGateway({
         agentDir: activeAgentProfile.dir,
         env: daemonEnvironment,
@@ -87,7 +96,18 @@ await runSessionDaemonStartup({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),
       activeAgentProfile,
     });
-    return { eventHub, workspaceActivity, credentials, authRuntimeRegistry, auth, sessions, terminals, activeAgentProfile, runtimeComponent };
+    return {
+      eventHub,
+      workspaceActivity,
+      credentials,
+      authRuntimeRegistry,
+      auth,
+      sessions,
+      terminals,
+      unreadStore,
+      activeAgentProfile,
+      runtimeComponent,
+    };
   },
   registerRoutes({ eventHub, workspaceActivity, auth, sessions, terminals, runtimeComponent }) {
     registerWorkspaceActivityRoutes(app, workspaceActivity);
@@ -110,18 +130,27 @@ await runSessionDaemonStartup({
 
     app.get("/runtime", () => runtimeComponent);
   },
-  async listen({ credentials, authRuntimeRegistry, auth, sessions, terminals }) {
+  async listen({ credentials, authRuntimeRegistry, auth, sessions, terminals, unreadStore }) {
     let shuttingDown = false;
     async function shutdown(signal: NodeJS.Signals): Promise<void> {
       if (shuttingDown) return;
       shuttingDown = true;
       app.log.info({ signal }, "shutting down session daemon");
-      terminals.dispose();
-      auth.dispose();
-      await sessions.dispose();
-      authRuntimeRegistry.dispose();
-      credentials.dispose();
-      await app.close();
+      const attempt = async (operation: string, run: () => void | Promise<void>): Promise<void> => {
+        try {
+          await run();
+        } catch (error: unknown) {
+          process.exitCode = 1;
+          app.log.error({ err: error, operation }, "session daemon shutdown operation failed");
+        }
+      };
+      await attempt("dispose terminals", () => { terminals.dispose(); });
+      await attempt("dispose auth", () => { auth.dispose(); });
+      await attempt("dispose sessions", () => sessions.dispose());
+      await attempt("dispose session auth runtimes", () => { authRuntimeRegistry.dispose(); });
+      await attempt("dispose profile credentials", () => { credentials.dispose(); });
+      await attempt("flush session unread state", () => unreadStore.flush());
+      await attempt("close server", () => app.close());
     }
 
     process.once("SIGINT", (signal) => { void shutdown(signal); });
