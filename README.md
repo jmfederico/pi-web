@@ -112,7 +112,7 @@ PI WEB supports trusted browser-side PI WEB plugins that can add actions, worksp
 
 Pi packages are managed separately through Pi's package manager or **Settings → Pi packages**. In a federated setup, the Pi packages panel targets the selected machine and labels where installs, updates, or removals will run. Use **Settings → PI WEB plugins** to enable or disable discovered browser plugins on the selected machine.
 
-After installing, updating, or removing a Pi package, type `/reload` in each idle PI WEB session on that machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for newly discovered or changed PI WEB plugins.
+After installing, updating, or removing a Pi package, type `/reload` in each idle, message-bearing PI WEB session on that machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for newly discovered or changed PI WEB plugins. See the [plugin guide](https://pi-web.dev/plugins) if `/reload` reports that the active session context has no messages.
 
 Read more: [Plugin API](https://pi-web.dev/plugins)
 

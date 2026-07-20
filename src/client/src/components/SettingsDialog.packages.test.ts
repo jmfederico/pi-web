@@ -53,7 +53,7 @@ describe("settings-dialog Pi package orchestration", () => {
     expect(pluginsSpy).not.toHaveBeenCalled();
     expect(getDialogProperty(dialog, "packagesResponse")).toEqual({ packages: installedPackages });
     expect(getDialogProperty(dialog, "packageMessage")).toContain("Pi package installed on Lab Mac");
-    expect(getDialogProperty(dialog, "packageMessage")).toContain("each idle PI WEB session on Lab Mac");
+    expect(getDialogProperty(dialog, "packageMessage")).toContain("each idle, message-bearing PI WEB session on Lab Mac");
     expect(getDialogProperty(dialog, "packageError")).toBe("");
     expect(getDialogProperty(dialog, "packageOperation")).toBeUndefined();
     expect(getDialogProperty(dialog, "saving")).toBe(false);

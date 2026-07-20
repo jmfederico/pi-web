@@ -49,14 +49,16 @@ export interface TestSession extends PiAgentSession {
 }
 
 export function fakeSessionManager(cwd = "/workspace", patch: Partial<PiSessionManager> = {}): PiSessionManager {
-  return {
+  return Object.assign({
     getCwd: () => cwd,
     getSessionId: () => "session-1",
     getSessionFile: () => undefined,
     getBranch: () => [],
+    buildSessionContext: () => ({ messages: [{ role: "user", content: "test context" }] }),
+    getEntries: () => [],
+    getTree: () => [],
     getLeafId: () => "leaf-1",
-    ...patch,
-  };
+  }, patch);
 }
 
 export function sessionRecord(id: string, cwd = "/workspace") {
@@ -139,7 +141,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
   const bindExtensionCalls: unknown[] = [];
   const listeners: ((event: unknown) => void)[] = [];
   let extensionUiContext = testExtensionUiContext;
-  const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, prompt: promptCalls, reload: 0, sendCustomMessage: customMessageCalls };
+  const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, disposeForReload: 0, prompt: promptCalls, sendCustomMessage: customMessageCalls };
   const session: TestSession = {
     sessionId,
     sessionFile: `/tmp/${sessionId}.jsonl`,
@@ -160,6 +162,9 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
       getRegisteredCommands: () => [],
       getUIContext: () => extensionUiContext,
       setUIContext: (uiContext) => { extensionUiContext = uiContext ?? testExtensionUiContext; },
+      getFlagValues: () => new Map(),
+      hasHandlers: () => false,
+      emit: () => Promise.resolve(undefined),
     },
     promptTemplates: [],
     resourceLoader: { getSkills: () => ({ skills: [] }) },
@@ -176,11 +181,10 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
       return Promise.resolve();
     },
     getSessionStats: () => ({ sessionId, totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 }),
+    getActiveToolNames: () => ["read", "bash", "edit", "write"],
+    getAllTools: () => ["read", "bash", "edit", "write"].map((name) => ({ name, sourceInfo: { source: "builtin" } })),
+    setActiveToolsByName: () => undefined,
     getContextUsage: () => undefined,
-    reload: () => {
-      calls.reload += 1;
-      return Promise.resolve();
-    },
     prompt: (text: string, options: unknown) => {
       calls.prompt.push({ text, options });
       return Promise.resolve();
@@ -206,18 +210,32 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     setThinkingLevel: () => undefined,
     cycleThinkingLevel: () => undefined,
     setSessionName: (name: string) => { session.sessionName = name; },
+    dispose: () => undefined,
     compact: () => Promise.resolve({ summary: "", tokensBefore: 0 }),
     getUserMessagesForForking: () => [],
     agent: { streamFn: () => { throw new Error("streamFn should not be called in this test"); } },
     ...patch,
   };
+  let beforeSessionInvalidate: (() => void) | undefined;
+  let terminal = false;
   const runtime: PiSessionRuntime = {
     cwd: session.sessionManager.getCwd(),
     session,
     setRebindSession: () => undefined,
+    setBeforeSessionInvalidate: (callback) => { beforeSessionInvalidate = callback; },
     fork: () => Promise.resolve({ cancelled: false }),
+    disposeForReload: () => {
+      if (!terminal) {
+        calls.disposeForReload += 1;
+        beforeSessionInvalidate?.();
+        session.dispose();
+        terminal = true;
+      }
+      return Promise.resolve();
+    },
     dispose: () => {
-      calls.dispose += 1;
+      if (!terminal) calls.dispose += 1;
+      terminal = true;
       return Promise.resolve();
     },
   };

@@ -63,7 +63,8 @@ describe("Pi package settings helpers", () => {
   it("describes the browser and session reload follow-up without requiring sessiond restarts", () => {
     const message = piPackageMutationFollowUpMessage("install");
 
-    expect(message).toContain("Type /reload in each idle PI WEB session");
+    expect(message).toContain("Type /reload in each idle, message-bearing PI WEB session");
+    expect(message).toContain("empty active context");
     expect(message).toContain("extensions, skills, prompt templates, themes, and context/system prompt files");
     expect(message).toContain("Reload the browser page separately for PI WEB browser plugin changes");
     expect(message).not.toContain("session daemon");
@@ -74,7 +75,7 @@ describe("Pi package settings helpers", () => {
     const message = piPackageMutationFollowUpMessage("update", remoteTarget);
 
     expect(message).toContain("Pi package updated on Lab Mac");
-    expect(message).toContain("each idle PI WEB session on Lab Mac");
+    expect(message).toContain("each idle, message-bearing PI WEB session on Lab Mac");
     expect(message).toContain("PI WEB browser plugin changes served by Lab Mac");
   });
 

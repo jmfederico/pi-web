@@ -18,6 +18,16 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
+function runtimeSequence(...runtimes: PiSessionRuntime[]): RuntimeCreator {
+  let index = 0;
+  return async () => {
+    await Promise.resolve();
+    const runtime = runtimes[index++];
+    if (runtime === undefined) throw new Error("unexpected runtime creation");
+    return runtime;
+  };
+}
+
 function notificationStore() {
   let tick = 0;
   return new SessionNotificationStore({
@@ -37,11 +47,6 @@ function boundNotify(fake: { calls: { bindExtensions: unknown[] } }, index = -1)
 
 function hasNotify(value: unknown): value is { notify(message: string, type?: "info" | "warning" | "error"): void } {
   return typeof value === "object" && value !== null && "notify" in value && typeof value.notify === "function";
-}
-
-function currentNotify(fake: { session: Pick<PiAgentSession, "extensionRunner"> }) {
-  const uiContext = fake.session.extensionRunner.getUIContext();
-  return (message: string, type?: "info" | "warning" | "error") => { uiContext.notify(message, type); };
 }
 
 describe("PiSessionService lifecycle, listing, and reload", () => {
@@ -285,13 +290,231 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     const settledWhileOpening = disposeSettled;
     runtimeResult.resolve(fake.runtime);
 
-    await expect(statusPromise).resolves.toMatchObject({ sessionId });
+    await expect(statusPromise).rejects.toThrow("Session service is shutting down");
     await disposePromise;
 
     expect(settledWhileOpening).toBe(false);
     expect(service.activeCount()).toBe(0);
     expect(fake.calls.abort).toBe(1);
     expect(fake.calls.dispose).toBe(1);
+  });
+
+  it("lets disposal cancel a pending direct start before candidate binding", async () => {
+    const creationStarted = deferred();
+    const runtimeResult = deferred<PiSessionRuntime>();
+    const fake = fakeRuntime("dispose-pending-start");
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: () => {
+        creationStarted.resolve();
+        return runtimeResult.promise;
+      },
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const starting = service.start("/workspace");
+    void starting.catch(() => undefined);
+    await creationStarted.promise;
+    const disposing = service.dispose();
+    runtimeResult.resolve(fake.runtime);
+
+    await expect(starting).rejects.toThrow("Session service is shutting down");
+    await disposing;
+    expect(service.activeCount()).toBe(0);
+    expect(fake.calls.bindExtensions).toHaveLength(0);
+    expect(fake.calls.abort).toBe(1);
+    expect(fake.calls.dispose).toBe(1);
+  });
+
+  it("lets stop cancel a cwd-qualified cold open before candidate binding", async () => {
+    const sessionId = "stop-pending-open";
+    const creationStarted = deferred();
+    const runtimeResult = deferred<PiSessionRuntime>();
+    const fake = fakeRuntime(sessionId);
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: () => {
+        creationStarted.resolve();
+        return runtimeResult.promise;
+      },
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const opening = service.status(sessionRef(sessionId));
+    void opening.catch(() => undefined);
+    await creationStarted.promise;
+    const stopping = service.stop(sessionRef(sessionId));
+    runtimeResult.resolve(fake.runtime);
+
+    await expect(opening).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(fake.calls.bindExtensions).toHaveLength(0);
+    expect(fake.calls.abort).toBe(1);
+    expect(fake.calls.dispose).toBe(1);
+    await service.dispose();
+  });
+
+  it("lets stop cancel a cold lookup before archive/list I/O registers an open", async () => {
+    const sessionId = "stop-cold-lookup";
+    const listingStarted = deferred();
+    const gateway = sessionGateway([sessionRecord(sessionId)]);
+    const listed = deferred<Awaited<ReturnType<typeof gateway.list>>>();
+    gateway.list = async () => {
+      listingStarted.resolve();
+      return listed.promise;
+    };
+    const createAgentRuntime = vi.fn();
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime,
+      sessionManager: gateway,
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const opening = service.status(sessionRef(sessionId));
+    void opening.catch(() => undefined);
+    await listingStarted.promise;
+    let stopSettled = false;
+    const stopping = service.stop(sessionRef(sessionId)).finally(() => { stopSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stopSettled).toBe(false);
+    listed.resolve([sessionRecord(sessionId)]);
+
+    await expect(opening).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
+  it("tracks writable archive preflight so stop cannot race the following open", async () => {
+    const sessionId = "stop-writable-preflight";
+    const archiveLookupStarted = deferred();
+    const archiveLookup = deferred<undefined>();
+    const archiveStore = emptyArchiveStore();
+    archiveStore.get = () => {
+      archiveLookupStarted.resolve();
+      return archiveLookup.promise;
+    };
+    const createAgentRuntime = vi.fn();
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      archiveStore,
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const clearing = service.clearQueue(sessionRef(sessionId));
+    void clearing.catch(() => undefined);
+    await archiveLookupStarted.promise;
+    const stopping = service.stop(sessionRef(sessionId));
+    archiveLookup.resolve(undefined);
+
+    await expect(clearing).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(createAgentRuntime).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
+  it("does not let a qualified stop claim an id-only lookup with unknown cwd", async () => {
+    const sessionId = "unknown-cwd-lookup";
+    const listingStarted = deferred();
+    const records = [sessionRecord(sessionId)];
+    const gateway = sessionGateway(records);
+    const listed = deferred<typeof records>();
+    gateway.listAll = async () => {
+      listingStarted.resolve();
+      return listed.promise;
+    };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime: vi.fn(),
+      sessionManager: gateway,
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const opening = service.status(sessionId);
+    void opening.catch(() => undefined);
+    await listingStarted.promise;
+    await expect(service.stop(sessionRef(sessionId, "/wrong-workspace"))).rejects.toThrow("Session cwd mismatch");
+    const stopping = service.stop(sessionId);
+    listed.resolve(records);
+
+    await expect(opening).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    await service.dispose();
+  });
+
+  it("rejects a wrong-cwd stop without cancelling a pending cold open", async () => {
+    const sessionId = "wrong-cwd-pending-open";
+    const creationStarted = deferred();
+    const runtimeResult = deferred<PiSessionRuntime>();
+    const fake = fakeRuntime(sessionId);
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: () => {
+        creationStarted.resolve();
+        return runtimeResult.promise;
+      },
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const opening = service.status(sessionRef(sessionId));
+    await creationStarted.promise;
+    await expect(service.stop(sessionRef(sessionId, "/wrong-workspace"))).rejects.toThrow("Session cwd mismatch");
+    runtimeResult.resolve(fake.runtime);
+    await expect(opening).resolves.toMatchObject({ sessionId });
+    expect(service.activeCount()).toBe(1);
+
+    await service.stop(sessionRef(sessionId));
+    await service.dispose();
+  });
+
+  it("awaits every active runtime disposal before reporting aggregate teardown failures", async () => {
+    const first = fakeRuntime("dispose-failure-a", { abort: () => Promise.reject(new Error("abort A failed")) });
+    const second = fakeRuntime("dispose-failure-b");
+    const releaseSecond = deferred();
+    const originalSecondDispose = second.runtime.dispose.bind(second.runtime);
+    second.runtime.dispose = async () => {
+      await releaseSecond.promise;
+      await originalSecondDispose();
+    };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: runtimeSequence(first.runtime, second.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace-a");
+    await service.start("/workspace-b");
+    let disposeSettled = false;
+    const disposing = service.dispose().finally(() => { disposeSettled = true; });
+    void disposing.catch(() => undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(disposeSettled).toBe(false);
+
+    releaseSecond.resolve();
+    await expect(disposing).rejects.toThrow("Failed to dispose every active session runtime");
+    expect(first.calls.dispose).toBe(1);
+    expect(second.calls.dispose).toBe(1);
+    expect(service.activeCount()).toBe(0);
   });
 
   it("binds extensions again when the SDK runtime replaces the active session", async () => {
@@ -445,103 +668,307 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
-  it("commits Pi /reload only after replacement session_start notifications are bound", async () => {
+  it("commits clean /reload notifications only after the replacement session_start binding", async () => {
     const hub = new CapturingSessionEventHub();
     const store = notificationStore();
-    const fake = fakeRuntime("runtime-reload-notifications");
+    const sessionId = "runtime-reload-notifications";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    const second = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("replacement startup", "error");
+        return Promise.resolve();
+      },
+    });
+    const createAgentRuntime = runtimeSequence(first.runtime, second.runtime);
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
       sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore: store,
-      createAgentRuntime: runtimeCreator(fake.runtime),
-      sessionManager: sessionGateway([sessionRecord("runtime-reload-notifications")]),
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
       heartbeatIntervalMs: 60_000,
     });
 
-    await service.status(sessionRef("runtime-reload-notifications"));
-    const oldNotify = boundNotify(fake);
+    await service.status(sessionRef(sessionId));
+    const oldNotify = boundNotify(first);
     oldNotify("old notification", "warning");
-    fake.session.reload = async (options) => {
+    const disposeForReload = first.runtime.disposeForReload.bind(first.runtime);
+    first.runtime.disposeForReload = async () => {
       oldNotify("shutdown notification", "info");
-      await options?.beforeSessionStart?.();
-      currentNotify(fake)("replacement startup", "error");
+      await disposeForReload();
     };
 
-    await expect(service.runCommand(sessionRef("runtime-reload-notifications"), "/reload")).resolves.toMatchObject({ type: "done" });
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toMatchObject({ type: "done" });
 
-    expect(service.notificationInbox(sessionRef("runtime-reload-notifications"))).toMatchObject({
+    expect(service.notificationInbox(sessionRef(sessionId))).toMatchObject({
       summary: { retainedCount: 1, discardedCount: 0, highestSeverity: "error" },
       notifications: [{ message: "replacement startup", severity: "error" }],
     });
-    expect(fake.calls.bindExtensions).toHaveLength(1);
-    const revision = service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision;
+    expect(first.calls.bindExtensions).toHaveLength(1);
+    const revision = service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision;
     oldNotify("stale old runner", "error");
-    expect(service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision).toBe(revision);
+    expect(service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision).toBe(revision);
 
     await service.dispose();
   });
 
-  it("preserves prior and candidate notifications when Pi /reload fails after rotation", async () => {
-    const hub = new CapturingSessionEventHub();
+  it("preserves prior and candidate notifications but removes a failed clean reload candidate", async () => {
     const store = notificationStore();
-    const fake = fakeRuntime("failed-runtime-reload");
-    const service = new PiSessionService(hub, {
-      agentDir: TEST_AGENT_DIR,
-      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
-      notificationStore: store,
-      createAgentRuntime: runtimeCreator(fake.runtime),
-      sessionManager: sessionGateway([sessionRecord("failed-runtime-reload")]),
-      heartbeatIntervalMs: 60_000,
+    const sessionId = "failed-runtime-reload";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    let notifyFromFailedCandidate: (() => void) | undefined;
+    const failed = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("candidate before failure", "warning");
+        notifyFromFailedCandidate = () => { bindings.uiContext?.notify("stale disposed candidate", "error"); };
+        return Promise.reject(new Error("reload failed after rotation"));
+      },
     });
-
-    await service.status(sessionRef("failed-runtime-reload"));
-    boundNotify(fake)("prior", "info");
-    fake.session.reload = async (options) => {
-      await options?.beforeSessionStart?.();
-      currentNotify(fake)("candidate before failure", "warning");
-      throw new Error("reload failed after rotation");
-    };
-
-    await expect(service.runCommand(sessionRef("failed-runtime-reload"), "/reload")).resolves.toEqual({
-      type: "unsupported",
-      message: "Reload failed: reload failed after rotation",
+    const failedRecovery = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      bindExtensions: () => Promise.reject(new Error("recovery bind failed")),
     });
-    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications.map((notification) => notification.message)).toEqual([
-      "candidate before failure",
-      "prior",
-    ]);
-    currentNotify(fake)("after failed reload", "error");
-    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications[0]).toMatchObject({
-      message: "after failed reload",
-      severity: "error",
-    });
-
-    await service.dispose();
-  });
-
-  it("leaves the prior inbox unchanged when Pi /reload fails before rotation", async () => {
-    const store = notificationStore();
-    const fake = fakeRuntime("failed-before-rotation");
+    const recovered = fakeRuntime(sessionId, { sessionManager: manager });
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
       sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore: store,
-      createAgentRuntime: runtimeCreator(fake.runtime),
-      sessionManager: sessionGateway([sessionRecord("failed-before-rotation")]),
+      createAgentRuntime: runtimeSequence(first.runtime, failed.runtime, failedRecovery.runtime, recovered.runtime),
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
       heartbeatIntervalMs: 60_000,
     });
 
-    await service.status(sessionRef("failed-before-rotation"));
-    boundNotify(fake)("prior", "warning");
-    const before = service.notificationInbox(sessionRef("failed-before-rotation"));
-    fake.session.reload = () => Promise.reject(new Error("reload failed before rotation"));
+    await service.status(sessionRef(sessionId));
+    boundNotify(first)("prior", "info");
 
-    await expect(service.runCommand(sessionRef("failed-before-rotation"), "/reload")).resolves.toEqual({
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toEqual({
       type: "unsupported",
-      message: "Reload failed: reload failed before rotation",
+      message: "Reload failed: reload failed after rotation",
     });
-    expect(service.notificationInbox(sessionRef("failed-before-rotation"))).toEqual(before);
+    expect(service.notificationInbox(sessionRef(sessionId)).notifications.map((notification) => notification.message)).toEqual([
+      "candidate before failure",
+      "prior",
+    ]);
+    expect(service.activeCount()).toBe(0);
+    expect(failed.calls.abort).toBe(1);
+    expect(failed.calls.dispose).toBe(1);
+    const failedInboxRevision = service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision;
+    notifyFromFailedCandidate?.();
+    expect(service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision).toBe(failedInboxRevision);
+    await expect(service.status(sessionRef(sessionId))).rejects.toThrow("recovery bind failed");
+    const failedRecoveryRevision = service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision;
+    notifyFromFailedCandidate?.();
+    expect(service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision).toBe(failedRecoveryRevision);
+    await expect(service.status(sessionRef(sessionId))).resolves.toMatchObject({ sessionId });
+    expect(service.activeCount()).toBe(1);
 
+    await service.dispose();
+  });
+
+  it("leaves the prior runtime and inbox unchanged when reload shutdown fails before invalidation", async () => {
+    const store = notificationStore();
+    const sessionId = "failed-before-rotation";
+    const first = fakeRuntime(sessionId);
+    const createAgentRuntime = vi.fn(runtimeCreator(first.runtime));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      notificationStore: store,
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    boundNotify(first)("prior", "warning");
+    const before = service.notificationInbox(sessionRef(sessionId));
+    first.runtime.disposeForReload = () => Promise.reject(new Error("reload failed before invalidation"));
+
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toEqual({
+      type: "unsupported",
+      message: "Reload failed: reload failed before invalidation",
+    });
+    expect(service.notificationInbox(sessionRef(sessionId))).toEqual(before);
+    expect(service.activeCount()).toBe(1);
+    expect(createAgentRuntime).toHaveBeenCalledOnce();
+
+    await service.dispose();
+  });
+
+  it("rejects clean /reload without side effects when the active Pi context has no messages", async () => {
+    const sessionId = "empty-runtime-reload";
+    const manager = fakeSessionManager("/workspace", {
+      getSessionId: () => sessionId,
+      buildSessionContext: () => ({ messages: [] }),
+    });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    const createAgentRuntime = vi.fn(runtimeCreator(first.runtime));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toEqual({
+      type: "unsupported",
+      message: "Reload failed: Cannot reload while the active session context has no messages. Close and reopen a new session, or navigate to a message-bearing tree entry, reload, then navigate back.",
+    });
+
+    expect(createAgentRuntime).toHaveBeenCalledOnce();
+    expect(first.calls.disposeForReload).toBe(0);
+    expect(first.calls.dispose).toBe(0);
+    expect(first.calls.bindExtensions).toHaveLength(1);
+    expect(service.activeCount()).toBe(1);
+    await service.dispose();
+  });
+
+  it("keeps replacement candidates read-invisible until clean reload activation is stable", async () => {
+    const sessionId = "read-gated-reload";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager, sessionName: "prior" });
+    const bindStarted = deferred();
+    const releaseBind = deferred();
+    const second = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      sessionName: "candidate",
+      thinkingLevel: "high",
+      bindExtensions: async () => {
+        bindStarted.resolve();
+        await releaseBind.promise;
+      },
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: runtimeSequence(first.runtime, second.runtime),
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    const reloading = service.runCommand(sessionRef(sessionId), "/reload");
+    await bindStarted.promise;
+    let readSettled = false;
+    const reading = service.status(sessionRef(sessionId)).finally(() => { readSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(readSettled).toBe(false);
+
+    releaseBind.resolve();
+    await expect(reloading).resolves.toMatchObject({ type: "done" });
+    await expect(reading).resolves.toMatchObject({ sessionId, thinkingLevel: "high" });
+    await service.dispose();
+  });
+
+  it("lets stop win permanently over a clean reload candidate", async () => {
+    const sessionId = "stop-wins-reload";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    const bindStarted = deferred();
+    const releaseBind = deferred();
+    const second = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      bindExtensions: async () => {
+        bindStarted.resolve();
+        await releaseBind.promise;
+      },
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: runtimeSequence(first.runtime, second.runtime),
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    const reloading = service.runCommand(sessionRef(sessionId), "/reload");
+    await bindStarted.promise;
+    const stopping = service.stop(sessionRef(sessionId));
+    await expect(service.status(sessionRef(sessionId))).rejects.toThrow("Session is stopping");
+    releaseBind.resolve();
+
+    await expect(reloading).resolves.toEqual({ type: "unsupported", message: "Reload failed: Session is stopping" });
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(second.calls.abort).toBe(1);
+    expect(second.calls.dispose).toBe(1);
+    await service.dispose();
+  });
+
+  it("disposes every candidate exactly once when daemon disposal overlaps clean reload", async () => {
+    const sessionId = "dispose-overlap-reload";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    const bindStarted = deferred();
+    const releaseBind = deferred();
+    const second = fakeRuntime(sessionId, {
+      sessionManager: manager,
+      bindExtensions: async () => {
+        bindStarted.resolve();
+        await releaseBind.promise;
+      },
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: runtimeSequence(first.runtime, second.runtime),
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    const reloading = service.runCommand(sessionRef(sessionId), "/reload");
+    await bindStarted.promise;
+    const disposing = service.dispose();
+    releaseBind.resolve();
+
+    await expect(reloading).resolves.toEqual({ type: "unsupported", message: "Reload failed: Session service is shutting down" });
+    await disposing;
+    expect(service.activeCount()).toBe(0);
+    expect(first.calls.disposeForReload).toBe(1);
+    expect(second.calls.abort).toBe(1);
+    expect(second.calls.dispose).toBe(1);
+  });
+
+  it("drops the invalidated generation when clean reload construction fails", async () => {
+    const sessionId = "reload-construction-failure";
+    const store = notificationStore();
+    const first = fakeRuntime(sessionId);
+    let createCalls = 0;
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      notificationStore: store,
+      createAgentRuntime: () => {
+        createCalls += 1;
+        return createCalls === 1
+          ? Promise.resolve(first.runtime)
+          : Promise.reject(new Error("replacement construction failed"));
+      },
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    const staleNotify = boundNotify(first);
+    staleNotify("prior", "info");
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toEqual({
+      type: "unsupported",
+      message: "Reload failed: replacement construction failed",
+    });
+    expect(service.activeCount()).toBe(0);
+    expect(first.calls.disposeForReload).toBe(1);
+    expect(first.calls.dispose).toBe(0);
+    const failedRevision = service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision;
+    staleNotify("stale after construction failure", "error");
+    expect(service.notificationInbox(sessionRef(sessionId)).summary.inboxRevision).toBe(failedRevision);
     await service.dispose();
   });
 
@@ -582,17 +1009,31 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
-  it("preserves changed-id SDK rebind notifications on the applied replacement when binding fails", async () => {
+  it("removes an invalidated SDK runtime when changed-id replacement binding fails", async () => {
     const store = notificationStore();
     const first = fakeRuntime("session-1");
+    const bindStarted = deferred();
+    const releaseBind = deferred();
+    let notifyFromFailedReplacement: (() => void) | undefined;
     const replacement = fakeRuntime("session-2");
-    replacement.session.bindExtensions = (bindings) => {
+    replacement.session.bindExtensions = async (bindings) => {
       replacement.session.extensionRunner.setUIContext(bindings.uiContext, "rpc");
       bindings.uiContext?.notify("candidate before bind failure", "warning");
-      return Promise.reject(new Error("replacement bind failed"));
+      notifyFromFailedReplacement = () => { bindings.uiContext?.notify("stale changed-id candidate", "error"); };
+      bindStarted.resolve();
+      await releaseBind.promise;
+      throw new Error("replacement bind failed");
     };
     let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    let beforeSessionInvalidate: (() => void) | undefined;
     first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    first.runtime.setBeforeSessionInvalidate = (callback) => { beforeSessionInvalidate = callback; };
+    first.runtime.fork = async () => {
+      beforeSessionInvalidate?.();
+      Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+      await rebindSession?.(replacement.session);
+      return { cancelled: false };
+    };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
       sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
@@ -604,18 +1045,161 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     await service.start("/workspace");
     boundNotify(first)("prior", "info");
-    Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
-    await expect(rebindSession?.(replacement.session)).rejects.toThrow("replacement bind failed");
+    const replacing = service.runCommand(sessionRef("session-1"), "/clone");
+    await bindStarted.promise;
+    let readSettled = false;
+    const readingReplacement = service.status(sessionRef("session-2")).finally(() => { readSettled = true; });
+    void readingReplacement.catch(() => undefined);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(readSettled).toBe(false);
+    releaseBind.resolve();
+    await expect(replacing).rejects.toThrow("replacement bind failed");
+    await expect(readingReplacement).rejects.toThrow("replacement bind failed");
 
-    expect(() => service.notificationInbox(sessionRef("session-1"))).toThrow("Session not found");
-    expect(service.notificationInbox(sessionRef("session-2")).notifications.map((notification) => notification.message)).toEqual([
+    expect(service.activeCount()).toBe(0);
+    expect(service.notificationInbox(sessionRef("session-1")).notifications.map((notification) => notification.message)).toEqual([
       "candidate before bind failure",
       "prior",
     ]);
-    await expect(service.status(sessionRef("session-2"))).resolves.toMatchObject({ sessionId: "session-2" });
-    currentNotify(replacement)("after failed rebind", "error");
-    expect(service.notificationInbox(sessionRef("session-2")).notifications[0]).toMatchObject({ message: "after failed rebind", severity: "error" });
+    expect(() => service.notificationInbox(sessionRef("session-2"))).toThrow("Session not found");
+    const failedReplacementRevision = service.notificationInbox(sessionRef("session-1")).summary.inboxRevision;
+    notifyFromFailedReplacement?.();
+    expect(service.notificationInbox(sessionRef("session-1")).summary.inboxRevision).toBe(failedReplacementRevision);
+    expect(first.calls.dispose).toBe(1);
 
+    await service.dispose();
+  });
+
+  it("discovers a changed-id lifecycle alias before Pi reaches invalidation and rebind", async () => {
+    const first = fakeRuntime("pre-rebind-origin");
+    const replacement = fakeRuntime("pre-rebind-target");
+    const managerMutated = deferred();
+    const releaseInvalidation = deferred();
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    let beforeSessionInvalidate: (() => void) | undefined;
+    first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    first.runtime.setBeforeSessionInvalidate = (callback) => { beforeSessionInvalidate = callback; };
+    first.runtime.fork = async () => {
+      Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+      managerMutated.resolve();
+      await releaseInvalidation.promise;
+      beforeSessionInvalidate?.();
+      await rebindSession?.(replacement.session);
+      return { cancelled: false };
+    };
+    const createAgentRuntime = vi.fn(runtimeCreator(first.runtime));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime,
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    const replacing = service.runCommand(sessionRef("pre-rebind-origin"), "/clone");
+    await managerMutated.promise;
+    const readingTarget = service.status(sessionRef("pre-rebind-target"));
+    void readingTarget.catch(() => undefined);
+    const stopping = service.stop(sessionRef("pre-rebind-target"));
+    releaseInvalidation.resolve();
+
+    await expect(replacing).rejects.toThrow("Session is stopping");
+    await expect(readingTarget).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(createAgentRuntime).toHaveBeenCalledTimes(1);
+    await service.dispose();
+  });
+
+  it("holds a listable changed-id target behind the cwd lifecycle before rebind reveals it", async () => {
+    const first = fakeRuntime("hidden-target-origin");
+    const replacement = fakeRuntime("hidden-target");
+    const replacementPaused = deferred();
+    const releaseReplacement = deferred();
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    let beforeSessionInvalidate: (() => void) | undefined;
+    first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    first.runtime.setBeforeSessionInvalidate = (callback) => { beforeSessionInvalidate = callback; };
+    first.runtime.fork = async () => {
+      replacementPaused.resolve();
+      await releaseReplacement.promise;
+      beforeSessionInvalidate?.();
+      Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+      await rebindSession?.(replacement.session);
+      return { cancelled: false };
+    };
+    const createAgentRuntime = vi.fn(runtimeCreator(first.runtime));
+    const listStarted = deferred();
+    const gateway = sessionGateway([sessionRecord("hidden-target")]);
+    gateway.list = () => {
+      listStarted.resolve();
+      return Promise.resolve([sessionRecord("hidden-target")]);
+    };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime,
+      sessionManager: gateway,
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    const replacing = service.runCommand(sessionRef("hidden-target-origin"), "/clone");
+    await replacementPaused.promise;
+    const readingTarget = service.status(sessionRef("hidden-target"));
+    void readingTarget.catch(() => undefined);
+    await listStarted.promise;
+    const stopping = service.stop(sessionRef("hidden-target"));
+    releaseReplacement.resolve();
+
+    await expect(replacing).rejects.toThrow("Session is stopping");
+    await expect(readingTarget).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(createAgentRuntime).toHaveBeenCalledTimes(1);
+    await service.dispose();
+  });
+
+  it("propagates origin stop intent across a synchronously applied changed-id replacement", async () => {
+    const first = fakeRuntime("stop-origin");
+    const replacement = fakeRuntime("stop-target");
+    const replacementApplied = deferred();
+    const releaseReplacement = deferred();
+    let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
+    let beforeSessionInvalidate: (() => void) | undefined;
+    first.runtime.setRebindSession = (callback) => { rebindSession = callback; };
+    first.runtime.setBeforeSessionInvalidate = (callback) => { beforeSessionInvalidate = callback; };
+    first.runtime.fork = async () => {
+      // Pi may expose the new manager/session before firing the host boundary.
+      Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
+      beforeSessionInvalidate?.();
+      await rebindSession?.(replacement.session);
+      replacementApplied.resolve();
+      await releaseReplacement.promise;
+      return { cancelled: false };
+    };
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime: runtimeCreator(first.runtime),
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.start("/workspace");
+    const replacing = service.runCommand(sessionRef("stop-origin"), "/clone");
+    await replacementApplied.promise;
+    const readingTarget = service.status(sessionRef("stop-target"));
+    void readingTarget.catch(() => undefined);
+    const stopping = service.stop(sessionRef("stop-origin"));
+    releaseReplacement.resolve();
+
+    await expect(replacing).resolves.toMatchObject({ type: "done" });
+    await expect(readingTarget).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(service.activeCount()).toBe(0);
+    expect(first.calls.dispose).toBe(1);
     await service.dispose();
   });
 
@@ -777,29 +1361,42 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
-  it("runs /reload by refreshing the active runtime resources in place", async () => {
+  it("runs /reload by replacing the active runtime with a clean generation", async () => {
     const hub = new CapturingSessionEventHub();
-    const fake = fakeRuntime("runtime-reload-session");
+    const sessionId = "runtime-reload-session";
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => sessionId });
+    const first = fakeRuntime(sessionId, { sessionManager: manager });
+    const second = fakeRuntime(sessionId, { sessionManager: manager });
+    const createAgentRuntime = vi.fn(runtimeSequence(first.runtime, second.runtime));
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
       sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
-      createAgentRuntime: runtimeCreator(fake.runtime),
-      sessionManager: sessionGateway([sessionRecord("runtime-reload-session")]),
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
       heartbeatIntervalMs: 60_000,
     });
 
-    await expect(service.runCommand(sessionRef("runtime-reload-session"), "/reload")).resolves.toEqual({
+    await service.status(sessionRef(sessionId));
+    await expect(service.runCommand(sessionRef(sessionId), "/reload")).resolves.toEqual({
       type: "done",
       message: "Session runtime resources reloaded. Extensions, skills, prompt templates, themes, and context/system prompt files are refreshed for this session. Reload the browser page separately for PI WEB browser plugin changes.",
     });
 
-    expect(fake.calls.reload).toBe(1);
-    expect(fake.calls.abort).toBe(0);
-    expect(fake.calls.dispose).toBe(0);
-    expect(hub.globalEvents.some((event) => event.type === "activity.update" && event.activity.sessionId === "runtime-reload-session" && event.activity.label === "resources reloaded")).toBe(true);
-    expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === "runtime-reload-session")).toBe(true);
+    expect(createAgentRuntime).toHaveBeenCalledTimes(2);
+    expect(createAgentRuntime.mock.calls[1]?.[1]).toMatchObject({
+      sessionManager: manager,
+      sessionStartEvent: { type: "session_start", reason: "reload" },
+      activeToolNames: ["read", "bash", "edit", "write"],
+    });
+    expect(first.calls.disposeForReload).toBe(1);
+    expect(first.calls.abort).toBe(0);
+    expect(first.calls.dispose).toBe(0);
+    expect(second.calls.bindExtensions).toHaveLength(1);
+    expect(hub.globalEvents.some((event) => event.type === "activity.update" && event.activity.sessionId === sessionId && event.activity.label === "resources reloaded")).toBe(true);
+    expect(hub.globalEvents.some((event) => event.type === "status.update" && event.status.sessionId === sessionId)).toBe(true);
 
     await service.dispose();
+    expect(second.calls.dispose).toBe(1);
   });
 
   it("reloads a session by closing the active runtime and re-opening it from disk", async () => {
@@ -834,6 +1431,42 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     expect(createCalls).toBe(2);
     expect(service.activeCount()).toBe(1);
 
+    await service.dispose();
+  });
+
+  it("lets stop win over a route-level close-and-reopen reload", async () => {
+    const sessionId = "stop-wins-disk-reload";
+    const first = fakeRuntime(sessionId);
+    const second = fakeRuntime(sessionId);
+    const disposalStarted = deferred();
+    const releaseDisposal = deferred();
+    const originalDispose = first.runtime.dispose.bind(first.runtime);
+    first.runtime.dispose = async () => {
+      disposalStarted.resolve();
+      await releaseDisposal.promise;
+      await originalDispose();
+    };
+    const createAgentRuntime = vi.fn(runtimeSequence(first.runtime, second.runtime));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      createAgentRuntime,
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(sessionId));
+    const reloading = service.reload(sessionRef(sessionId));
+    await disposalStarted.promise;
+    const stopping = service.stop(sessionRef(sessionId));
+    releaseDisposal.resolve();
+
+    await expect(reloading).rejects.toThrow("Session is stopping");
+    await stopping;
+    expect(createAgentRuntime).toHaveBeenCalledOnce();
+    expect(service.activeCount()).toBe(0);
+    expect(first.calls.dispose).toBe(1);
+    expect(second.calls.dispose).toBe(0);
     await service.dispose();
   });
 
@@ -876,6 +1509,9 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       notifications: [{ message: "replacement startup", severity: "error" }],
     });
     expect(hub.sessionEvents.some(({ event }) => event.type === "notifications.inbox" && event.delta.kind === "added" && event.delta.notification.message === "old shutdown")).toBe(true);
+    const successRevision = service.notificationInbox(sessionRef("reload-notification-session")).summary.inboxRevision;
+    oldNotify("stale old disk runtime", "error");
+    expect(service.notificationInbox(sessionRef("reload-notification-session")).summary.inboxRevision).toBe(successRevision);
     await service.dispose();
   });
 
@@ -918,6 +1554,9 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       "prior",
     ]);
     expect(service.activeCount()).toBe(0);
+    const failedRevision = service.notificationInbox(sessionRef("failed-disk-reload")).summary.inboxRevision;
+    oldNotify("stale after disk reload failure", "error");
+    expect(service.notificationInbox(sessionRef("failed-disk-reload")).summary.inboxRevision).toBe(failedRevision);
     await service.stop(sessionRef("failed-disk-reload"));
     expect(() => service.notificationInbox(sessionRef("failed-disk-reload"))).toThrow("Session not found");
     await service.dispose();
@@ -950,6 +1589,9 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       "prior",
     ]);
     expect(store.currentGeneration("failed-close-reload", resolve("/workspace"))).toBeDefined();
+    const failedCloseRevision = service.notificationInbox(sessionRef("failed-close-reload")).summary.inboxRevision;
+    oldNotify("stale after close failure", "error");
+    expect(service.notificationInbox(sessionRef("failed-close-reload")).summary.inboxRevision).toBe(failedCloseRevision);
     await service.stop(sessionRef("failed-close-reload"));
     await service.dispose();
   });

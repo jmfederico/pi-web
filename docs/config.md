@@ -43,7 +43,7 @@ Process restarts depend on the key:
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `plugins`: reload the browser tab after changing PI WEB plugin enablement.
-- Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required.
+- Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle, message-bearing PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Resource reload is rejected in pristine sessions and at message-empty session-tree roots to preserve the tree. Close and start a new pristine session, or navigate from the root to a message-bearing entry, run `/reload`, and navigate back. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required.
 - `shortcuts`: saved settings apply in the browser after config refresh/save.
 
 ## Global config example

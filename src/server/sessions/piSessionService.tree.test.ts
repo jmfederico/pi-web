@@ -1,3 +1,4 @@
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionTreeNavigateRequest, SessionTreeSummaryChoice } from "../../shared/apiTypes.js";
 import { PiSessionService, type PiAgentSession, type PiSessionManager, type PiSessionServiceDependencies } from "./piSessionService.js";
@@ -260,19 +261,77 @@ describe("PiSessionService session-tree behavior", () => {
     await service.dispose();
   });
 
-  it("blocks tree navigation while session resources reload", async () => {
-    const reloadOperation = deferred<undefined>();
-    const reload = vi.fn(() => reloadOperation.promise);
-    const navigateTree = vi.fn<NavigateTree>(() => Promise.resolve({ cancelled: false }));
-    const { service } = treeHarness({}, { navigateTree, reload });
+  it("rejects /reload without side effects at a message-empty root that still has a full history tree", async () => {
+    const manager = SessionManager.inMemory("/workspace");
+    manager.appendMessage({ role: "user", content: "history remains off the active root", timestamp: Date.now() });
+    const fullTree = structuredClone(manager.getTree());
+    manager.resetLeaf();
+    expect(manager.buildSessionContext().messages).toEqual([]);
+    expect(manager.getTree()).toEqual(fullTree);
+    const sessionId = manager.getSessionId();
+    const fake = fakeRuntime(sessionId, { sessionManager: manager });
+    const createAgentRuntime = vi.fn(runtimeCreator(fake.runtime));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime,
+      sessionManager: {
+        create: () => manager,
+        list: () => Promise.resolve([]),
+        open: (path) => SessionManager.open(path),
+      },
+      heartbeatIntervalMs: 60_000,
+    });
 
+    await service.start("/workspace");
+    const reloadResult = await service.runCommand(sessionRef(sessionId), "/reload");
+    expect(reloadResult.type).toBe("unsupported");
+    expect(reloadResult.type === "unsupported" ? reloadResult.message : "").toContain("active session context has no messages");
+
+    expect(createAgentRuntime).toHaveBeenCalledOnce();
+    expect(fake.calls.disposeForReload).toBe(0);
+    expect(manager.getLeafId()).toBeNull();
+    expect(manager.getTree()).toEqual(fullTree);
+    await service.dispose();
+  });
+
+  it("blocks tree navigation while a clean resource generation replaces the runtime", async () => {
+    const reloadShutdown = deferred<undefined>();
+    const navigateTree = vi.fn<NavigateTree>(() => Promise.resolve({ cancelled: false }));
+    const manager = fakeSessionManager("/workspace", { getSessionId: () => SESSION_ID });
+    const first = fakeRuntime(SESSION_ID, { sessionManager: manager, navigateTree });
+    const second = fakeRuntime(SESSION_ID, { sessionManager: manager, navigateTree });
+    const originalDisposeForReload = first.runtime.disposeForReload.bind(first.runtime);
+    const disposeForReload = vi.fn(async () => {
+      await reloadShutdown.promise;
+      await originalDisposeForReload();
+    });
+    first.runtime.disposeForReload = disposeForReload;
+    const runtimes = [first.runtime, second.runtime];
+    let runtimeIndex = 0;
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime: () => {
+        const runtime = runtimes[runtimeIndex++];
+        return runtime === undefined
+          ? Promise.reject(new Error("unexpected runtime creation"))
+          : Promise.resolve(runtime);
+      },
+      sessionManager: sessionGateway([sessionRecord(SESSION_ID)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef(SESSION_ID));
     const reloading = service.runCommand(sessionRef(SESSION_ID), "/reload");
-    await vi.waitFor(() => { expect(reload).toHaveBeenCalledOnce(); });
+    await vi.waitFor(() => { expect(disposeForReload).toHaveBeenCalledOnce(); });
     await expect(service.navigateTree(sessionRef(SESSION_ID), navigationRequest())).rejects.toThrow(
       "Stop current session activity before navigating the session tree",
     );
 
-    reloadOperation.resolve(undefined);
+    reloadShutdown.resolve(undefined);
     await expect(reloading).resolves.toMatchObject({ type: "done" });
     await expect(service.navigateTree(sessionRef(SESSION_ID), navigationRequest())).resolves.toEqual({ cancelled: false });
     await service.dispose();

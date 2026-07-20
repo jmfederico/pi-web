@@ -68,6 +68,7 @@ interface NotificationRuntimeState {
 interface GenerationBinding {
   state: NotificationRuntimeState;
   role: "active" | "candidate";
+  writable: boolean;
 }
 
 export interface SessionNotificationStoreOptions {
@@ -115,7 +116,7 @@ export class SessionNotificationStore {
       activeBucket: bucket,
     };
     this.statesBySessionId.set(sessionId, state);
-    this.bindings.set(generation, { state, role: "active" });
+    this.bindings.set(generation, { state, role: "active", writable: true });
     return { generation, mutations };
   }
 
@@ -156,7 +157,7 @@ export class SessionNotificationStore {
     const bucket = emptyBucket(generation);
     projection.buckets.push(bucket);
     state.candidate = { generation, projection, bucket };
-    this.bindings.set(generation, { state, role: "candidate" });
+    this.bindings.set(generation, { state, role: "candidate", writable: true });
     return generation;
   }
 
@@ -188,7 +189,7 @@ export class SessionNotificationStore {
     state.activeProjection = candidate.projection;
     state.activeBucket = candidate.bucket;
     delete state.candidate;
-    this.bindings.set(candidate.generation, { state, role: "active" });
+    this.bindings.set(candidate.generation, { state, role: "active", writable: true });
     this.statesBySessionId.set(candidate.projection.sessionId, state);
 
     if (sameProjection && before !== projectionFingerprint(candidate.projection)) {
@@ -208,6 +209,8 @@ export class SessionNotificationStore {
 
     const oldProjection = state.activeProjection;
     const oldGeneration = state.activeGeneration;
+    const oldWritable = this.bindings.get(oldGeneration)?.writable ?? false;
+    const candidateWritable = binding.writable;
     const oldBucket = state.activeBucket;
     const candidateProjection = candidate.projection;
     const sameProjection = oldProjection === candidateProjection;
@@ -246,11 +249,20 @@ export class SessionNotificationStore {
     state.activeBucket = targetBucket;
     delete state.candidate;
     this.statesBySessionId.set(targetProjection.sessionId, state);
-    this.bindings.set(targetGeneration, { state, role: "active" });
+    this.bindings.set(targetGeneration, {
+      state,
+      role: "active",
+      writable: survivingGeneration === "candidate" ? candidateWritable : oldWritable,
+    });
     if (before !== projectionFingerprint(targetProjection)) {
       mutations.push(this.mutation(targetProjection, { kind: "resync" }));
     }
     return mutations;
+  }
+
+  retireGeneration(generation: SessionNotificationGeneration): void {
+    const binding = this.bindings.get(generation);
+    if (binding !== undefined) binding.writable = false;
   }
 
   addNotification(
@@ -261,6 +273,7 @@ export class SessionNotificationStore {
     const binding = this.bindings.get(generation);
     if (binding === undefined) return { mutations: [] };
     const { state } = binding;
+    if (!binding.writable) return { mutations: [] };
     // Once the replacement runner is bound, old callbacks are stale. Suppressing
     // them also keeps generation overflow ordered as a bounded suffix.
     if (binding.role === "active" && state.candidate !== undefined) return { mutations: [] };

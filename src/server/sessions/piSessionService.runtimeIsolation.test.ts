@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,6 +22,7 @@ import {
   TEST_MODEL_PROVIDER,
 } from "./piSessionService.testSupport.js";
 import {
+  adaptAgentSessionRuntime,
   PiSessionService,
   type PiSessionServiceDependencies,
 } from "./piSessionService.js";
@@ -97,6 +98,39 @@ describe("PiSessionService default runtime model ownership", () => {
       await service.dispose();
       registry.dispose();
       credentials.dispose();
+    }
+  });
+
+  it("removes an invalidated SDK runtime when its replacement factory fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-sdk-replacement-failure-"));
+    tempRoots.push(root);
+    const agentDir = join(root, "agent");
+    const cwd = join(root, "workspace");
+    await Promise.all([mkdir(agentDir, { recursive: true }), mkdir(cwd, { recursive: true })]);
+    let modelRuntimeCreations = 0;
+    const manager = SessionManager.inMemory(cwd);
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir,
+      sessionModelRuntimeFactory: async () => {
+        modelRuntimeCreations += 1;
+        if (modelRuntimeCreations > 1) throw new Error("replacement runtime factory failed");
+        return createTestModelRuntime();
+      },
+      sessionManager: {
+        create: () => manager,
+        list: () => Promise.resolve([]),
+        open: (path) => SessionManager.open(path),
+      },
+      heartbeatIntervalMs: 60_000,
+    });
+
+    try {
+      const created = await service.start(cwd);
+      await expect(service.runCommand(sessionRef(created.id, cwd), "/clone")).rejects.toThrow("replacement runtime factory failed");
+      expect(modelRuntimeCreations).toBe(2);
+      expect(service.activeCount()).toBe(0);
+    } finally {
+      await service.dispose();
     }
   });
 
@@ -418,12 +452,22 @@ function capturingRealRuntimeCreator(
 ): NonNullable<PiSessionServiceDependencies["createAgentRuntime"]> {
   return async (createRuntime, options) => {
     if (!(options.sessionManager instanceof SessionManager)) throw new Error("Expected SDK SessionManager");
-    const runtime = await createAgentSessionRuntime(createRuntime, {
+    let firstGeneration = true;
+    const runtime = await createAgentSessionRuntime((runtimeOptions) => {
+      const applyOneShotOptions = firstGeneration;
+      firstGeneration = false;
+      return createRuntime({
+        ...runtimeOptions,
+        ...(applyOneShotOptions && options.initialModel !== undefined ? { initialModel: options.initialModel } : {}),
+        ...(applyOneShotOptions ? { delegationToolsEnabled: options.delegationToolsEnabled } : {}),
+      });
+    }, {
       cwd: options.cwd,
       agentDir: options.agentDir,
       sessionManager: options.sessionManager,
+      ...(options.sessionStartEvent === undefined ? {} : { sessionStartEvent: options.sessionStartEvent }),
     });
     captures.push(runtime);
-    return runtime;
+    return adaptAgentSessionRuntime(runtime);
   };
 }

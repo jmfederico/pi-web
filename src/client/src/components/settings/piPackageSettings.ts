@@ -101,9 +101,9 @@ export function isPiPackageOperationPending(operation: PiPackageOperationState |
 export function piPackageMutationFollowUpMessage(action: PiPackageMutationAction, target = piPackageTargetContext(undefined)): string {
   const verb = action === "install" ? "installed" : action === "remove" ? "removed" : "updated";
   const targetSuffix = target.kind === "local" ? "" : ` on ${target.name}`;
-  const sessionScope = target.kind === "local" ? "each idle PI WEB session" : `each idle PI WEB session on ${target.name}`;
+  const sessionScope = target.kind === "local" ? "each idle, message-bearing PI WEB session" : `each idle, message-bearing PI WEB session on ${target.name}`;
   const pluginScope = target.kind === "local" ? "PI WEB browser plugin changes" : `PI WEB browser plugin changes served by ${target.name}`;
-  return `Pi package ${verb}${targetSuffix}. Type /reload in ${sessionScope} to rediscover Pi runtime resources: extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for ${pluginScope}.`;
+  return `Pi package ${verb}${targetSuffix}. Type /reload in ${sessionScope} to rediscover Pi runtime resources: extensions, skills, prompt templates, themes, and context/system prompt files. If /reload reports an empty active context, follow its recovery guidance. Reload the browser page separately for ${pluginScope}.`;
 }
 
 export function friendlyPiPackageErrorMessage(message: string, target: PiPackageTargetContext): string {
