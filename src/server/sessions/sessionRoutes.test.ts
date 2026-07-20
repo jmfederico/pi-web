@@ -38,7 +38,7 @@ beforeEach(async () => {
   await app.register(fastifyWebsocket);
   sessionManager = new RejectingSessionManager();
   const eventHub = new SessionEventHub();
-  service = new PiSessionService(eventHub, { agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime, sessionManager, heartbeatIntervalMs: 60_000 });
+  service = new PiSessionService(eventHub, { agentDir: TEST_AGENT_DIR, sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime), sessionManager, heartbeatIntervalMs: 60_000 });
   registerSessionRoutes(app, service, eventHub);
 });
 
@@ -117,7 +117,7 @@ describe("session routes", () => {
     notificationStore.addNotification(registration.generation, "keep", "warning");
     const routeService = new PiSessionService(eventHub, {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       sessionManager: new RejectingSessionManager(),
       heartbeatIntervalMs: 60_000,

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
 import { AuthService, createModelRuntimeForAgentDir, type AuthChange, type AuthServiceLogger } from "./authService.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
+import { ProfileCredentialStore } from "./profileCredentialStore.js";
 
 const tempDirs: string[] = [];
 
@@ -356,8 +357,8 @@ describe("AuthService", () => {
 
   it("stores credentials in the configured agent directory", async () => {
     const agentDir = await tempAgentDir();
-    const runtime = await createModelRuntimeForAgentDir(agentDir, false);
-    const auth = await AuthService.create({ runtime });
+    const credentials = await ProfileCredentialStore.create({ agentDir });
+    const auth = await AuthService.create({ agentDir, credentials });
 
     await auth.saveApiKey("anthropic", "sk-test");
 
@@ -480,7 +481,8 @@ async function createFileBackedAuthService(seed: Record<string, Credential>) {
   const agentDir = await tempAgentDir();
   const authPath = join(agentDir, "auth.json");
   await writeFile(authPath, JSON.stringify(seed, null, 2));
-  const runtime = await createModelRuntimeForAgentDir(agentDir, false);
+  const credentials = await ProfileCredentialStore.create({ agentDir });
+  const runtime = await createModelRuntimeForAgentDir(agentDir, credentials, false);
   const auth = await AuthService.create({ runtime });
   const changes: AuthChange[] = [];
   auth.subscribe((change) => { changes.push(change); });

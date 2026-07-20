@@ -50,6 +50,7 @@ import type {
 import type { SessionRouteLookup, SessionRouteRef, SessionRouteService } from "./sessionService.js";
 
 import { type AuthChange } from "./authService.js";
+import type { SessionModelRuntimeFactory } from "./sessionModelRuntimeFactory.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
@@ -574,22 +575,31 @@ export function createPiWebCustomToolDefinitions(
 }
 
 function createDefaultRuntimeFactory(
-  modelRuntime: ModelRuntime,
+  sessionModelRuntimeFactory: SessionModelRuntimeFactory,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
+    // This overlay belongs to exactly this AgentSessionRuntime generation. Pi's
+    // service creation may register cwd extensions into it, so it must never be
+    // shared with another live generation.
+    const modelRuntime = await sessionModelRuntimeFactory();
     const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
+    const targetInitialModel = initialModel === undefined
+      ? undefined
+      : modelRuntime.getModel(initialModel.provider, initialModel.id);
     const result = await createAgentSessionFromServices({
       services,
       sessionManager,
       customTools,
       ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-      ...(initialModel === undefined ? {} : { model: initialModel }),
+      // A source session's Model is plain data but can contain cwd-specific
+      // endpoint/header metadata. Resolve only its identity in this overlay.
+      ...(targetInitialModel === undefined ? {} : { model: targetInitialModel }),
     });
     return { ...result, services, diagnostics: services.diagnostics };
   };
@@ -625,7 +635,7 @@ export interface PiSessionServiceDependencies {
   archiveStore?: SessionArchiveRepository;
   createRuntime?: PiWebCreateAgentSessionRuntimeFactory;
   createAgentRuntime?: CreateAgentRuntime;
-  modelRuntime: ModelRuntime;
+  sessionModelRuntimeFactory: SessionModelRuntimeFactory;
   heartbeatIntervalMs?: number;
   workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity">;
   /**
@@ -686,19 +696,19 @@ export class PiSessionService implements SessionRouteService {
   private readonly sessionManager: PiSessionManagerGateway;
   private readonly createRuntime: PiWebCreateAgentSessionRuntimeFactory;
   private readonly createAgentRuntime: CreateAgentRuntime;
-  private readonly modelRuntime: ModelRuntime;
   private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
   private readonly logger: PiSessionLogger;
   private readonly now: () => Date;
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
+  /** Serialize committed auth recomposition per isolated model runtime. */
+  private readonly authReloads = new WeakMap<ModelRuntime, Promise<void>>();
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
     this.agentDir = deps.agentDir;
     this.sessionManager = deps.sessionManager;
-    this.modelRuntime = deps.modelRuntime;
     this.spawnTargets = deps.spawnTargets;
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
@@ -707,7 +717,7 @@ export class PiSessionService implements SessionRouteService {
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
     this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
-      this.modelRuntime,
+      deps.sessionModelRuntimeFactory,
       this.sessionManager,
       this.spawnTargets === undefined ? undefined : (input) => this.spawnSession(input),
       !subsessionsActive ? undefined : {
@@ -2512,15 +2522,32 @@ export class PiSessionService implements SessionRouteService {
     }
   }
 
-  applyAuthChange(change: AuthChange = {}): void {
-    // ModelRuntime.login()/logout() refresh the shared runtime before AuthService
-    // emits the change, so no refresh is needed here. Keeping this synchronous
-    // also lets every active session observe the same committed auth snapshot.
-    for (const active of this.active.values()) {
-      const { session } = active.runtime;
+  async applyAuthChange(change: AuthChange = {}): Promise<void> {
+    // Profile and cwd runtimes share credentials but not provider composition.
+    // Recompose each active isolated runtime before publishing status so login
+    // and logout never expose a stale availability/auth projection.
+    const sessions = [...new Set([...this.active.values()].map((active) => active.runtime.session))];
+    const results = await Promise.allSettled(sessions.map(async (session) => {
+      await this.enqueueAuthReload(session.modelRuntime);
+      if (!this.isCurrentActiveSession(session)) return;
       this.syncCurrentModelAuthWarning(session, change.removedProviderId);
       this.publishStatus(session);
-    }
+    }));
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => new Error(errorMessage(result.reason)));
+    if (failures.length > 0) throw new AggregateError(failures, "Failed to recompose active session auth");
+  }
+
+  private enqueueAuthReload(runtime: ModelRuntime): Promise<void> {
+    const previous = this.authReloads.get(runtime) ?? Promise.resolve();
+    const reload = previous.catch(() => undefined).then(() => runtime.reloadConfig());
+    const settled = reload.then(() => undefined, () => undefined);
+    this.authReloads.set(runtime, settled);
+    void settled.finally(() => {
+      if (this.authReloads.get(runtime) === settled) this.authReloads.delete(runtime);
+    });
+    return reload;
   }
 
   private syncCurrentModelAuthWarning(session: PiAgentSession, removedProviderId: string | undefined): void {

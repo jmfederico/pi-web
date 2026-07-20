@@ -44,7 +44,7 @@ function treeHarness(
   const fake = fakeRuntime(SESSION_ID, { sessionManager: manager, ...sessionPatch });
   const service = new PiSessionService(hub, {
     agentDir: TEST_AGENT_DIR,
-    modelRuntime: testModelRuntime,
+    sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
     archiveStore: emptyArchiveStore(),
     createAgentRuntime: runtimeCreator(fake.runtime),
     sessionManager: sessionGateway([sessionRecord(SESSION_ID)]),

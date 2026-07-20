@@ -15,7 +15,7 @@ describe("PiSessionService archive and cleanup", () => {
     });
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore: store,
       createAgentRuntime: runtimeCreator(fake.runtime),
       archiveStore: {
@@ -56,7 +56,7 @@ describe("PiSessionService archive and cleanup", () => {
     notificationStore.addNotification(archivedRegistration.generation, "residual archived child", "warning");
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       createAgentRuntime: runtimeCreator(fake.runtime),
       archiveStore: {
@@ -103,7 +103,7 @@ describe("PiSessionService archive and cleanup", () => {
     };
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore: store,
       archiveStore: {
         list: () => Promise.resolve([archivedRecord]),
@@ -136,7 +136,7 @@ describe("PiSessionService archive and cleanup", () => {
     const hub = new CapturingSessionEventHub();
     const service = new PiSessionService(hub, {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       createAgentRuntime: runtimeCreator(archivedRuntime.runtime),
       archiveStore: {
@@ -168,7 +168,7 @@ describe("PiSessionService archive and cleanup", () => {
     notificationStore.addNotification(registration.generation, "delete me", "info");
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -202,7 +202,7 @@ describe("PiSessionService archive and cleanup", () => {
     const restore = vi.fn(() => Promise.resolve());
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -237,7 +237,7 @@ describe("PiSessionService archive and cleanup", () => {
     }
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       archiveStore: {
         list: () => Promise.resolve([]),
@@ -275,7 +275,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }))));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       createAgentRuntime: () => {
         createCalls += 1;
         return Promise.resolve(busy.runtime);
@@ -317,7 +317,7 @@ describe("PiSessionService archive and cleanup", () => {
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       createAgentRuntime: runtimeCreator(busy.runtime),
       archiveStore: {
         list: () => Promise.resolve([busyRecord, idleRecord]),
@@ -355,7 +355,7 @@ describe("PiSessionService archive and cleanup", () => {
     const listCalls: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       archiveStore: {
         list: () => Promise.resolve([
           { sessionId: "legacy-a", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z" },
@@ -404,7 +404,7 @@ describe("PiSessionService archive and cleanup", () => {
     }
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       notificationStore,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
@@ -461,7 +461,7 @@ describe("PiSessionService archive and cleanup", () => {
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
         list: () => Promise.resolve([
@@ -504,7 +504,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archivedInputs: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       createAgentRuntime: runtimeCreator(fake.runtime),
       archiveStore: {

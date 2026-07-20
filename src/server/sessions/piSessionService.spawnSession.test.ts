@@ -12,7 +12,7 @@ describe("PiSessionService", () => {
       const log: { details: Record<string, unknown>; message: string }[] = [];
       const service = new PiSessionService(new CapturingSessionEventHub(), {
         agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         spawnTargets: { resolveSpawnTarget: () => Promise.resolve(decision) },
@@ -46,7 +46,7 @@ describe("PiSessionService", () => {
       };
       const service = new PiSessionService(new CapturingSessionEventHub(), {
         agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
         createAgentRuntime,
         sessionManager: sessionGateway([]),
         spawnTargets: { resolveSpawnTarget: () => Promise.resolve({ allowed: true, cwd: "/workspace-feature" }) },
@@ -82,7 +82,7 @@ describe("PiSessionService", () => {
       const fake = fakeRuntime("spawned-x");
       const service = new PiSessionService(new CapturingSessionEventHub(), {
         agentDir: TEST_AGENT_DIR,
-      modelRuntime: testModelRuntime,
+      sessionModelRuntimeFactory: () => Promise.resolve(testModelRuntime),
         createAgentRuntime: runtimeCreator(fake.runtime),
         sessionManager: sessionGateway([]),
         heartbeatIntervalMs: 60_000,

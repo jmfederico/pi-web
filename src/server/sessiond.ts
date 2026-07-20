@@ -9,6 +9,8 @@ import { SessionEventHub } from "./realtime/sessionEventHub.js";
 import { AuthService } from "./sessions/authService.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
+import { ProfileCredentialStore } from "./sessions/profileCredentialStore.js";
+import { createSessionModelRuntimeFactory } from "./sessions/sessionModelRuntimeFactory.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
@@ -41,12 +43,18 @@ await runSessionDaemonStartup({
     const eventHub = new SessionEventHub();
     const notificationStore = new SessionNotificationStore();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
-    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, logger: app.log });
+    const credentials = await ProfileCredentialStore.create({
+      agentDir: activeAgentProfile.dir,
+      env: daemonEnvironment,
+      logger: app.log,
+    });
+    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, credentials, logger: app.log });
+    const sessionModelRuntimeFactory = createSessionModelRuntimeFactory({ agentDir: activeAgentProfile.dir, credentials });
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
     const sessions = new PiSessionService(eventHub, {
-      modelRuntime: auth.runtime,
+      sessionModelRuntimeFactory,
       agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,
@@ -59,7 +67,7 @@ await runSessionDaemonStartup({
         sessionDirEnvKeys: activeAgentProfile.sessionDirEnvKeys,
       }),
     });
-    auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    auth.subscribe((change) => sessions.applyAuthChange(change));
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const runtimeComponent = Object.freeze({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),

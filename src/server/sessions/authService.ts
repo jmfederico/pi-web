@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { AuthInteraction } from "@earendil-works/pi-ai";
+import type { AuthInteraction, CredentialStore } from "@earendil-works/pi-ai";
 import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
@@ -13,6 +13,7 @@ type AuthChangeListener = (change: AuthChange) => void | Promise<void>;
 
 export interface AuthServiceDependencies {
   agentDir?: string;
+  credentials?: CredentialStore;
   runtime?: ModelRuntime;
   authFlows?: OAuthLoginFlowService;
   logger?: AuthServiceLogger;
@@ -31,9 +32,13 @@ interface AuthChangeContext {
 
 const noopLogger: AuthServiceLogger = { error() { /* no-op */ } };
 
-export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwork?: boolean): Promise<ModelRuntime> {
+export function createModelRuntimeForAgentDir(
+  agentDir: string,
+  credentials: CredentialStore,
+  allowModelNetwork?: boolean,
+): Promise<ModelRuntime> {
   return ModelRuntime.create({
-    authPath: join(agentDir, "auth.json"),
+    credentials,
     modelsPath: join(agentDir, "models.json"),
     ...(allowModelNetwork === undefined ? {} : { allowModelNetwork }),
   });
@@ -51,8 +56,14 @@ export class AuthService {
     this.logger = logger;
   }
 
-  static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
-    const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
+  static async create(deps: AuthServiceDependencies): Promise<AuthService> {
+    let runtime = deps.runtime;
+    if (runtime === undefined) {
+      if (deps.agentDir === undefined || deps.credentials === undefined) {
+        throw new Error("AuthService requires an injected runtime or profile credential store");
+      }
+      runtime = await createModelRuntimeForAgentDir(deps.agentDir, deps.credentials);
+    }
     const logger = deps.logger ?? noopLogger;
     const authFlows = deps.authFlows ?? new OAuthLoginFlowService({ logger });
     return new AuthService(runtime, authFlows, logger);
