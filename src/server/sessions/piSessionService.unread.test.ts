@@ -536,13 +536,13 @@ describe("PiSessionService daemon-owned unread state", () => {
         "restore-me",
       ]);
 
-      await service.restore(sessionRef("restore-me"));
+      await service.restore(sessionRef("restore-me", WORKSPACE_CWD));
       expect((await service.unreadCatalog()).sessions.map((summary) => summary.sessionId)).toEqual([
         "orphan",
         "delete-me",
       ]);
 
-      await service.deleteArchived(sessionRef("delete-me"));
+      await service.deleteArchived(sessionRef("delete-me", WORKSPACE_CWD));
       expect((await service.unreadCatalog()).sessions.map((summary) => summary.sessionId)).toEqual(["orphan"]);
 
       await service.list(WORKSPACE_CWD);
