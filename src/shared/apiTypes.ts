@@ -461,6 +461,8 @@ export interface AuthProviderOption {
   name: string;
   authType: AuthType;
   status: AuthProviderStatus;
+  /** Opaque, short-lived server binding to the exact provider/runtime generation shown. */
+  providerRef?: string;
   /** Additive hint: use the generic AuthInteraction transport instead of the legacy one-secret form. */
   loginFlow?: "interactive";
 }

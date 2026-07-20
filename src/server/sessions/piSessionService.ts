@@ -50,6 +50,8 @@ import type {
 import type { SessionRouteLookup, SessionRouteRef, SessionRouteService } from "./sessionService.js";
 
 import { type AuthChange } from "./authService.js";
+import type { ProfileCredentialStoreChange, ProfileCredentialRevisionSource } from "./profileCredentialStore.js";
+import type { SessionAuthRuntimeRegistry } from "./sessionAuthRuntimeRegistry.js";
 import type { SessionModelRuntimeFactory } from "./sessionModelRuntimeFactory.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
@@ -361,6 +363,7 @@ export interface PiSessionRuntime {
   readonly diagnostics?: readonly AgentSessionRuntimeDiagnostic[];
   readonly services?: AgentSessionServices;
   setRebindSession(rebindSession?: (session: PiAgentSession) => Promise<void>): void;
+  setBeforeSessionInvalidate?(beforeSessionInvalidate?: () => void): void;
   fork(entryId: string, options?: { position?: "before" | "at" }): Promise<{ cancelled: boolean; selectedText?: string }>;
   dispose(): Promise<void>;
 }
@@ -368,6 +371,12 @@ export interface PiSessionRuntime {
 interface PendingSessionOpen {
   sessionId: string;
   promise: Promise<ActiveSession<PiSessionRuntime>>;
+}
+
+interface RuntimeAuthRevisionState {
+  appliedRevision: number;
+  requestedRevision: number;
+  running?: Promise<void>;
 }
 
 interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "creationProvenance"> {
@@ -577,6 +586,7 @@ export function createPiWebCustomToolDefinitions(
 function createDefaultRuntimeFactory(
   sessionModelRuntimeFactory: SessionModelRuntimeFactory,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
+  authRuntimeRegistry?: SessionAuthRuntimeRegistry,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
@@ -584,24 +594,32 @@ function createDefaultRuntimeFactory(
     // This overlay belongs to exactly this AgentSessionRuntime generation. Pi's
     // service creation may register cwd extensions into it, so it must never be
     // shared with another live generation.
-    const modelRuntime = await sessionModelRuntimeFactory();
-    const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
-    const resolvedDelegationToolsEnabled = delegationToolsEnabled
-      ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
-    const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
-    const targetInitialModel = initialModel === undefined
-      ? undefined
-      : modelRuntime.getModel(initialModel.provider, initialModel.id);
-    const result = await createAgentSessionFromServices({
-      services,
-      sessionManager,
-      customTools,
-      ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
-      // A source session's Model is plain data but can contain cwd-specific
-      // endpoint/header metadata. Resolve only its identity in this overlay.
-      ...(targetInitialModel === undefined ? {} : { model: targetInitialModel }),
-    });
-    return { ...result, services, diagnostics: services.diagnostics };
+    const modelRuntime = await sessionModelRuntimeFactory({ cwd });
+    try {
+      const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+      // Register extension provider IDs before session creation performs model
+      // availability reads, so a colliding pending cwd already fails closed.
+      authRuntimeRegistry?.updateExtensionProviders(modelRuntime);
+      const resolvedDelegationToolsEnabled = delegationToolsEnabled
+        ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
+      const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
+      const targetInitialModel = initialModel === undefined
+        ? undefined
+        : modelRuntime.getModel(initialModel.provider, initialModel.id);
+      const result = await createAgentSessionFromServices({
+        services,
+        sessionManager,
+        customTools,
+        ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
+        // A source session's Model is plain data but can contain cwd-specific
+        // endpoint/header metadata. Resolve only its identity in this overlay.
+        ...(targetInitialModel === undefined ? {} : { model: targetInitialModel }),
+      });
+      return { ...result, services, diagnostics: services.diagnostics };
+    } catch (error: unknown) {
+      authRuntimeRegistry?.disposeRuntime(modelRuntime);
+      throw error;
+    }
   };
 }
 
@@ -636,6 +654,10 @@ export interface PiSessionServiceDependencies {
   createRuntime?: PiWebCreateAgentSessionRuntimeFactory;
   createAgentRuntime?: CreateAgentRuntime;
   sessionModelRuntimeFactory: SessionModelRuntimeFactory;
+  /** Shared credential-scope/runtime-generation owner used by targeted auth. */
+  authRuntimeRegistry?: SessionAuthRuntimeRegistry;
+  /** Observable profile-store revisions, including refresh and external edits. */
+  credentialRevisions?: ProfileCredentialRevisionSource;
   heartbeatIntervalMs?: number;
   workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity">;
   /**
@@ -702,8 +724,15 @@ export class PiSessionService implements SessionRouteService {
   private readonly now: () => Date;
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
-  /** Serialize committed auth recomposition per isolated model runtime. */
-  private readonly authReloads = new WeakMap<ModelRuntime, Promise<void>>();
+  private readonly authRuntimeRegistry: SessionAuthRuntimeRegistry | undefined;
+  private readonly credentialRevisions: ProfileCredentialRevisionSource | undefined;
+  private readonly unsubscribeCredentialRevisions: () => void;
+  private latestAuthRevision: number;
+  private readonly authDeletionRevisions = new Map<string, number>();
+  /** Coalesced latest-revision catch-up state per isolated model runtime. */
+  private readonly authRevisionStates = new WeakMap<ModelRuntime, RuntimeAuthRevisionState>();
+  /** Candidates included in revision fan-out before they become API-visible. */
+  private readonly pendingAuthRuntimes = new Set<ModelRuntime>();
 
   constructor(private readonly events: SessionEventHub, deps: PiSessionServiceDependencies) {
     this.archiveStore = deps.archiveStore ?? new SessionArchiveStore();
@@ -713,12 +742,17 @@ export class PiSessionService implements SessionRouteService {
     this.logger = deps.logger ?? noopLogger;
     this.now = deps.now ?? (() => new Date());
     this.notificationStore = deps.notificationStore ?? new SessionNotificationStore();
+    this.authRuntimeRegistry = deps.authRuntimeRegistry;
+    this.credentialRevisions = deps.credentialRevisions;
+    this.latestAuthRevision = deps.credentialRevisions?.revision ?? 0;
+    this.unsubscribeCredentialRevisions = deps.credentialRevisions?.subscribe((change) => this.observeCredentialRevision(change)) ?? noop;
     // Subsessions are a beta capability gated behind their own flag, and they
     // also require the spawn capability (they share its project-scope resolver).
     const subsessionsActive = this.spawnTargets !== undefined && deps.subsessionsEnabled === true;
     this.createRuntime = deps.createRuntime ?? createDefaultRuntimeFactory(
       deps.sessionModelRuntimeFactory,
       this.sessionManager,
+      this.authRuntimeRegistry,
       this.spawnTargets === undefined ? undefined : (input) => this.spawnSession(input),
       !subsessionsActive ? undefined : {
         spawn: (input) => this.spawnSubsession(input),
@@ -851,12 +885,21 @@ export class PiSessionService implements SessionRouteService {
 
   async dispose(): Promise<void> {
     clearInterval(this.heartbeat);
+    this.unsubscribeCredentialRevisions();
     this.clearCompactionDrainTimers();
     const pendingOpens = this.pendingSessionOpenPromises();
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const activeSessions = Array.from(new Set(this.active.values()));
+    for (const active of activeSessions) {
+      this.authRuntimeRegistry?.disposeRuntime(active.runtime.session.modelRuntime);
+    }
+    const authCatchups = activeSessions
+      .map((active) => this.authRevisionStates.get(active.runtime.session.modelRuntime)?.running)
+      .filter(isDefined);
+    if (authCatchups.length > 0) await Promise.allSettled(authCatchups);
     this.active.clear();
     this.pendingSessionOpens.clear();
+    this.pendingAuthRuntimes.clear();
     this.activities.clear();
     this.compactionPromptQueues.clear();
     this.authLossWarnings.clear();
@@ -869,6 +912,8 @@ export class PiSessionService implements SessionRouteService {
     await Promise.all(activeSessions.map(async (active) => {
       active.unsubscribe();
       active.runtime.setRebindSession(undefined);
+      active.runtime.setBeforeSessionInvalidate?.(undefined);
+      this.authRuntimeRegistry?.disposeRuntime(active.runtime.session.modelRuntime);
       this.workspaceActivity?.removeSession(active.runtime.session.sessionId, active.runtime.session.sessionManager.getCwd());
       try {
         await this.abortSessionOperations(active.runtime.session);
@@ -1579,6 +1624,7 @@ export class PiSessionService implements SessionRouteService {
       [{ sessionId: session.sessionId, session }],
       "Stop current session activity before reloading",
       async () => {
+        this.authRuntimeRegistry?.invalidateProviderGeneration(session.modelRuntime);
         this.publishActivity(session, "reloading resources", "active");
         const priorGeneration = this.notificationGenerationBySession.get(session);
         let candidateGeneration: SessionNotificationGeneration | undefined;
@@ -1593,12 +1639,25 @@ export class PiSessionService implements SessionRouteService {
           if (candidateGeneration !== undefined) {
             this.publishNotificationMutations(this.notificationStore.commitReplacement(candidateGeneration));
           }
+          await this.ensureRuntimeAuthRevision(session.modelRuntime);
+          this.activateSessionAuthRuntime(session);
           this.publishActivity(session, "resources reloaded", "idle");
           this.publishStatus(session);
         } catch (error: unknown) {
           if (candidateGeneration !== undefined) {
             this.publishNotificationMutations(this.notificationStore.abortReplacement(candidateGeneration, "candidate"));
             this.notificationGenerationBySession.set(session, candidateGeneration);
+          }
+          // The in-place runtime may remain usable after a failed reload, but
+          // every pre-reload provider reference stays invalid. Re-register the
+          // surviving definition under a fresh opaque generation when possible.
+          try {
+            this.activateSessionAuthRuntime(session);
+          } catch (activationError: unknown) {
+            this.logger.info(
+              { sessionId: session.sessionId, error: errorMessage(activationError) },
+              "failed to reactivate auth provider generation after resource reload failure",
+            );
           }
           const message = error instanceof Error ? error.message : String(error);
           this.publishActivity(session, "reload failed", "error", message);
@@ -2111,6 +2170,11 @@ export class PiSessionService implements SessionRouteService {
     clearSessionQueue(active.runtime.session);
     active.unsubscribe();
     active.runtime.setRebindSession(undefined);
+    active.runtime.setBeforeSessionInvalidate?.(undefined);
+    this.pendingAuthRuntimes.delete(active.runtime.session.modelRuntime);
+    this.authRuntimeRegistry?.disposeRuntime(active.runtime.session.modelRuntime);
+    const authCatchup = this.authRevisionStates.get(active.runtime.session.modelRuntime)?.running;
+    if (authCatchup !== undefined) await Promise.allSettled([authCatchup]);
     try {
       await this.abortSessionOperations(active.runtime.session);
     } finally {
@@ -2235,6 +2299,13 @@ export class PiSessionService implements SessionRouteService {
       ...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
     });
     const active: ActiveSession<PiSessionRuntime> = { runtime, unsubscribe: noop };
+    this.pendingAuthRuntimes.add(runtime.session.modelRuntime);
+    runtime.setBeforeSessionInvalidate?.(() => {
+      // Pi calls this synchronously after extension shutdown and before the old
+      // session becomes stale. Block its credential writes and auth flows before
+      // a replacement factory can expose a new generation.
+      this.authRuntimeRegistry?.disposeRuntime(runtime.session.modelRuntime);
+    });
     let notificationGeneration = options.notificationGeneration;
     let notificationOwnership: "disabled" | "external" | "registered" | "replacement" = options.notifications === "disabled"
       ? "disabled"
@@ -2263,24 +2334,32 @@ export class PiSessionService implements SessionRouteService {
     if (notificationGeneration !== undefined) this.notificationGenerationBySession.set(runtime.session, notificationGeneration);
 
     try {
+      await this.ensureRuntimeAuthRevision(runtime.session.modelRuntime);
       await this.bindSessionExtensions(runtime.session, notificationGeneration);
       this.bindRuntime(active);
       runtime.setRebindSession(async (session) => {
         const priorGeneration = notificationGeneration;
         let candidateGeneration: SessionNotificationGeneration | undefined;
+        this.pendingAuthRuntimes.add(session.modelRuntime);
         try {
           if (priorGeneration !== undefined) {
             candidateGeneration = this.notificationStore.beginReplacement(priorGeneration, notificationIdentityForSession(session));
             this.notificationGenerationBySession.set(session, candidateGeneration);
           }
+          await this.ensureRuntimeAuthRevision(session.modelRuntime);
           this.bindRuntime(active, session);
           await this.bindSessionExtensions(session, candidateGeneration);
           await this.recoverSubsessionTrackingForOpenedSession(session);
+          await this.ensureRuntimeAuthRevision(session.modelRuntime);
+          this.activateSessionAuthRuntime(session);
+          this.pendingAuthRuntimes.delete(session.modelRuntime);
           if (candidateGeneration !== undefined) {
             this.publishNotificationMutations(this.notificationStore.commitReplacement(candidateGeneration));
             notificationGeneration = candidateGeneration;
           }
         } catch (error: unknown) {
+          this.pendingAuthRuntimes.delete(session.modelRuntime);
+          this.authRuntimeRegistry?.disposeRuntime(session.modelRuntime);
           if (candidateGeneration !== undefined) {
             this.publishNotificationMutations(this.notificationStore.abortReplacement(candidateGeneration, "candidate"));
             notificationGeneration = candidateGeneration;
@@ -2291,6 +2370,9 @@ export class PiSessionService implements SessionRouteService {
       });
       this.active.set(runtime.session.sessionId, active);
       await this.recoverSubsessionTrackingForOpenedSession(runtime.session);
+      await this.ensureRuntimeAuthRevision(runtime.session.modelRuntime);
+      this.activateSessionAuthRuntime(runtime.session);
+      this.pendingAuthRuntimes.delete(runtime.session.modelRuntime);
       if (notificationOwnership === "replacement" && notificationGeneration !== undefined) {
         this.publishNotificationMutations(this.notificationStore.commitReplacement(notificationGeneration));
         notificationOwnership = "external";
@@ -2306,6 +2388,9 @@ export class PiSessionService implements SessionRouteService {
         }
       }
       active.unsubscribe();
+      this.pendingAuthRuntimes.delete(runtime.session.modelRuntime);
+      runtime.setBeforeSessionInvalidate?.(undefined);
+      this.authRuntimeRegistry?.disposeRuntime(runtime.session.modelRuntime);
       let removedActive = false;
       for (const [sessionId, candidate] of this.active.entries()) {
         if (candidate !== active) continue;
@@ -2523,31 +2608,99 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async applyAuthChange(change: AuthChange = {}): Promise<void> {
+    // Explicit AuthService propagation remains an awaitable compatibility seam.
+    // The observable profile store has already advanced synchronously for the
+    // production path; lightweight stores/tests synthesize a revision here.
+    if (this.credentialRevisions === undefined) this.latestAuthRevision += 1;
+    else this.latestAuthRevision = Math.max(this.latestAuthRevision, this.credentialRevisions.revision);
+    if (change.removedProviderId !== undefined) {
+      this.authDeletionRevisions.set(change.removedProviderId, this.latestAuthRevision);
+    }
+    await this.catchUpActiveAuthRuntimes(change.removedProviderId);
+  }
+
+  private observeCredentialRevision(change: ProfileCredentialStoreChange): Promise<void> {
+    this.latestAuthRevision = Math.max(this.latestAuthRevision, change.revision);
+    if (change.source === "delete" && change.providerId !== undefined) {
+      this.authDeletionRevisions.set(change.providerId, change.revision);
+    }
+    return this.catchUpActiveAuthRuntimes(change.source === "delete" ? change.providerId : undefined);
+  }
+
+  private async catchUpActiveAuthRuntimes(removedProviderId?: string): Promise<void> {
     // Profile and cwd runtimes share credentials but not provider composition.
-    // Recompose each active isolated runtime before publishing status so login
-    // and logout never expose a stale availability/auth projection.
+    // Recompose each active isolated runtime before publishing status. The
+    // per-runtime queue coalesces a burst to one in-flight reload plus the
+    // newest revision observed while it runs.
     const sessions = [...new Set([...this.active.values()].map((active) => active.runtime.session))];
-    const results = await Promise.allSettled(sessions.map(async (session) => {
-      await this.enqueueAuthReload(session.modelRuntime);
-      if (!this.isCurrentActiveSession(session)) return;
-      this.syncCurrentModelAuthWarning(session, change.removedProviderId);
-      this.publishStatus(session);
-    }));
+    const activeRuntimes = new Set(sessions.map((session) => session.modelRuntime));
+    const pendingRuntimes = [...this.pendingAuthRuntimes].filter((runtime) => !activeRuntimes.has(runtime));
+    const results = await Promise.allSettled([
+      ...sessions.map(async (session) => {
+        await this.requestRuntimeAuthRevision(session.modelRuntime, this.latestAuthRevision);
+        if (!this.isCurrentActiveSession(session)) return;
+        const modelProvider = session.model?.provider;
+        const effectiveRemoval = removedProviderId
+          ?? (modelProvider !== undefined && this.authDeletionRevisions.has(modelProvider) ? modelProvider : undefined);
+        this.syncCurrentModelAuthWarning(session, effectiveRemoval);
+        this.publishStatus(session);
+      }),
+      ...pendingRuntimes.map((runtime) => this.requestRuntimeAuthRevision(runtime, this.latestAuthRevision)),
+    ]);
     const failures = results
       .filter((result): result is PromiseRejectedResult => result.status === "rejected")
       .map((result) => new Error(errorMessage(result.reason)));
     if (failures.length > 0) throw new AggregateError(failures, "Failed to recompose active session auth");
   }
 
-  private enqueueAuthReload(runtime: ModelRuntime): Promise<void> {
-    const previous = this.authReloads.get(runtime) ?? Promise.resolve();
-    const reload = previous.catch(() => undefined).then(() => runtime.reloadConfig());
-    const settled = reload.then(() => undefined, () => undefined);
-    this.authReloads.set(runtime, settled);
-    void settled.finally(() => {
-      if (this.authReloads.get(runtime) === settled) this.authReloads.delete(runtime);
+  private async ensureRuntimeAuthRevision(runtime: ModelRuntime): Promise<void> {
+    let state = this.authRevisionStates.get(runtime);
+    if (state === undefined) {
+      const appliedRevision = this.credentialRevisions === undefined ? this.latestAuthRevision : -1;
+      state = { appliedRevision, requestedRevision: appliedRevision };
+      this.authRevisionStates.set(runtime, state);
+    }
+    if (this.credentialRevisions === undefined) return;
+
+    await this.requestRuntimeAuthRevision(runtime, this.latestAuthRevision);
+    while (state.appliedRevision < this.latestAuthRevision || state.running !== undefined) {
+      await this.requestRuntimeAuthRevision(runtime, this.latestAuthRevision);
+    }
+  }
+
+  private requestRuntimeAuthRevision(runtime: ModelRuntime, revision: number): Promise<void> {
+    let state = this.authRevisionStates.get(runtime);
+    if (state === undefined) {
+      state = { appliedRevision: -1, requestedRevision: -1 };
+      this.authRevisionStates.set(runtime, state);
+    }
+    state.requestedRevision = Math.max(state.requestedRevision, revision);
+    if (state.running !== undefined) return state.running;
+
+    const running = (async () => {
+      while (state.appliedRevision < state.requestedRevision) {
+        const targetRevision = state.requestedRevision;
+        await runtime.reloadConfig();
+        state.appliedRevision = targetRevision;
+      }
+    })();
+    state.running = running;
+    void running.then(
+      () => {
+        if (state.running === running) delete state.running;
+      },
+      () => {
+        if (state.running === running) delete state.running;
+      },
+    );
+    return running;
+  }
+
+  private activateSessionAuthRuntime(session: PiAgentSession): void {
+    this.authRuntimeRegistry?.activateRuntime(session.modelRuntime, {
+      sessionId: session.sessionId,
+      cwd: session.sessionManager.getCwd(),
     });
-    return reload;
   }
 
   private syncCurrentModelAuthWarning(session: PiAgentSession, removedProviderId: string | undefined): void {

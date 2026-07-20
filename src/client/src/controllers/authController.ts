@@ -49,7 +49,14 @@ export class AuthController {
 
   async chooseLoginMethod(authType: AuthType): Promise<void> {
     try {
-      const { providers } = await this.api.authProviders({ mode: "login", authType, machineId: selectedMachineId(this.getState()) });
+      const machineId = selectedMachineId(this.getState());
+      const target = this.selectedSessionForMachine(machineId);
+      const { providers } = await this.api.authProviders({
+        mode: "login",
+        authType,
+        machineId,
+        ...(target === undefined ? {} : { target }),
+      });
       this.setState({ authDialog: { step: "providers", mode: "login", authType, providers } });
     } catch (error) {
       this.setState({ error: String(error) });
@@ -85,7 +92,12 @@ export class AuthController {
     delete clean.error;
     this.setState({ authDialog: { ...clean, saving: true } });
     try {
-      await this.api.saveApiKey(dialog.provider.id, key, selectedMachineId(this.getState()));
+      await this.api.saveApiKey(
+        dialog.provider.id,
+        key,
+        selectedMachineId(this.getState()),
+        dialog.provider.providerRef,
+      );
       this.closeDialog();
       void this.refreshStatus();
     } catch (error) {
@@ -177,7 +189,13 @@ export class AuthController {
 
   private async openLoginProvider(providerId: string): Promise<void> {
     try {
-      const { providers } = await this.api.authProviders({ mode: "login", machineId: selectedMachineId(this.getState()) });
+      const machineId = selectedMachineId(this.getState());
+      const target = this.selectedSessionForMachine(machineId);
+      const { providers } = await this.api.authProviders({
+        mode: "login",
+        machineId,
+        ...(target === undefined ? {} : { target }),
+      });
       const exact = providers.filter((provider) => provider.id === providerId);
       if (exact.length === 0) {
         this.setState({ error: `Auth provider not found: ${providerId}` });
@@ -203,8 +221,8 @@ export class AuthController {
     try {
       const machineId = selectedMachineId(this.getState());
       const flow = provider.authType === "oauth"
-        ? await this.api.startOAuthLogin(provider.id, machineId)
-        : await this.api.startInteractiveApiKeyLogin(provider.id, machineId);
+        ? await this.api.startOAuthLogin(provider.id, machineId, provider.providerRef)
+        : await this.api.startInteractiveApiKeyLogin(provider.id, machineId, provider.providerRef);
       if (operationGeneration !== this.oauthOperationGeneration) {
         // Sessiond has already allocated this flow. Do not orphan its timer,
         // provider polling, or callback listener when the UI operation is stale.

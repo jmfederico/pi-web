@@ -31,15 +31,33 @@ describe("AuthController", () => {
     expect(getState().authDialog).toMatchObject({ step: "apiKey", provider: { id: "anthropic", authType: "api_key" } });
   });
 
-  it("starts provider-driven API-key interactions instead of opening the legacy one-secret form", async () => {
+  it("targets provider discovery to the selected session", async () => {
+    const session = sessionInfo("session-1");
+    const calls: Parameters<typeof defaultApi.authProviders>[0][] = [];
+    const { controller } = createController(
+      { selectedSession: session },
+      {
+        authProviders: (options) => {
+          calls.push(options);
+          return Promise.resolve({ providers: [] });
+        },
+      },
+    );
+
+    await controller.chooseLoginMethod("oauth");
+
+    expect(calls).toEqual([{ mode: "login", authType: "oauth", machineId: "local", target: session }]);
+  });
+
+  it("starts provider-driven API-key interactions with the opaque provider reference", async () => {
     vi.stubGlobal("window", { setInterval: () => 1, clearInterval: () => undefined });
-    const provider: AuthProviderOption = { ...authProvider("amazon-bedrock", "api_key"), loginFlow: "interactive" };
-    const calls: { providerId: string; machineId: string | undefined }[] = [];
+    const provider: AuthProviderOption = { ...authProvider("amazon-bedrock", "api_key"), providerRef: "provider-ref", loginFlow: "interactive" };
+    const calls: { providerId: string; machineId: string | undefined; providerRef: string | undefined }[] = [];
     const { controller, getState } = createController(
       { authDialog: { step: "providers", mode: "login", authType: "api_key", providers: [provider] } },
       {
-        startInteractiveApiKeyLogin: (providerId, machineId) => {
-          calls.push({ providerId, machineId });
+        startInteractiveApiKeyLogin: (providerId, machineId, providerRef) => {
+          calls.push({ providerId, machineId, providerRef });
           return Promise.resolve(oauthFlow({ providerId, providerName: "Amazon Bedrock", select: { requestId: "request-1", message: "Choose method", options: [] } }));
         },
       },
@@ -48,7 +66,7 @@ describe("AuthController", () => {
     try {
       await controller.selectLoginProvider(provider.id, "api_key");
 
-      expect(calls).toEqual([{ providerId: "amazon-bedrock", machineId: "local" }]);
+      expect(calls).toEqual([{ providerId: "amazon-bedrock", machineId: "local", providerRef: "provider-ref" }]);
       expect(getState().authDialog).toMatchObject({
         step: "oauth",
         flow: { providerId: "amazon-bedrock", select: { requestId: "request-1" } },
@@ -470,11 +488,11 @@ describe("AuthController", () => {
     expect(getState().authDialog).not.toHaveProperty("error");
   });
 
-  it("saves a trimmed API key on the selected machine and refreshes selected session status", async () => {
-    const saveCalls: { providerId: string; key: string; machineId: string | undefined }[] = [];
+  it("saves a trimmed API key with its provider reference and refreshes selected session status", async () => {
+    const saveCalls: { providerId: string; key: string; machineId: string | undefined; providerRef: string | undefined }[] = [];
     const statusCalls: { session: Parameters<typeof defaultApi.status>[0]; machineId: string | undefined }[] = [];
     const appliedStatuses: SessionStatus[] = [];
-    const provider = authProvider("openai", "api_key");
+    const provider = { ...authProvider("openai", "api_key"), providerRef: "provider-ref" };
     const session = sessionInfo("session-1");
     const refreshedStatus = sessionStatus(session.id);
     const { controller, getState } = createController(
@@ -484,8 +502,8 @@ describe("AuthController", () => {
         authDialog: { step: "apiKey", provider, value: "  sk-live  " },
       },
       {
-        saveApiKey: (providerId, key, machineId) => {
-          saveCalls.push({ providerId, key, machineId });
+        saveApiKey: (providerId, key, machineId, providerRef) => {
+          saveCalls.push({ providerId, key, machineId, providerRef });
           return Promise.resolve({ accepted: true });
         },
         status: (sessionArg, machineId) => {
@@ -499,7 +517,7 @@ describe("AuthController", () => {
     await controller.saveApiKey();
     await flushMicrotasks();
 
-    expect(saveCalls).toEqual([{ providerId: "openai", key: "sk-live", machineId: "remote-1" }]);
+    expect(saveCalls).toEqual([{ providerId: "openai", key: "sk-live", machineId: "remote-1", providerRef: "provider-ref" }]);
     expect(getState().authDialog).toBeUndefined();
     expect(statusCalls).toEqual([{ session, machineId: "remote-1" }]);
     expect(appliedStatuses).toEqual([refreshedStatus]);

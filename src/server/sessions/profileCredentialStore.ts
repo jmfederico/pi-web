@@ -1,7 +1,8 @@
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { watch, type FSWatcher } from "node:fs";
 import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ApiKeyCredential, Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
 import { lock } from "proper-lockfile";
@@ -10,6 +11,8 @@ const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 const LOCK_STALE_MS = 30_000;
 const LOCK_UPDATE_MS = 10_000;
+const DEFAULT_EXTERNAL_DEBOUNCE_MS = 50;
+const DEFAULT_EXTERNAL_POLL_INTERVAL_MS = 2_000;
 const commandCache = new Map<string, string>();
 const pendingCommands = new Map<string, Promise<string | undefined>>();
 
@@ -40,6 +43,25 @@ export interface ProfileCredentialStoreOptions {
   logger?: ProfileCredentialStoreLogger;
   /** Test seam for command-backed keys. Production uses the host shell. */
   runCommand?: CommandRunner;
+}
+
+export interface ProfileCredentialStoreObservationOptions {
+  debounceMs?: number;
+  pollIntervalMs?: number;
+}
+
+export interface ProfileCredentialRevisionSource {
+  readonly revision: number;
+  subscribe(listener: (change: ProfileCredentialStoreChange) => void | Promise<void>): () => void;
+}
+
+/** Project-owned commit guard used by cwd-scoped CredentialStore wrappers. */
+export interface ProfileCredentialMutationGuardStore extends CredentialStore {
+  modifyGuarded(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    assertCommitAllowed: () => void,
+  ): Promise<Credential | undefined>;
 }
 
 const noopLogger: ProfileCredentialStoreLogger = { error() { /* no-op */ } };
@@ -75,6 +97,13 @@ export class ProfileCredentialStore implements CredentialStore {
   private snapshot: CredentialFile = emptyCredentialFile();
   private snapshotRevision = 0;
   private malformedFileError: ProfileCredentialStoreMalformedFileError | undefined;
+  private observationActive = false;
+  private observationWatcher: FSWatcher | undefined;
+  private observationPollTimer: NodeJS.Timeout | undefined;
+  private observationDebounceTimer: NodeJS.Timeout | undefined;
+  private observationReload: Promise<void> | undefined;
+  private observationReloadRequested = false;
+  private observationDebounceMs = DEFAULT_EXTERNAL_DEBOUNCE_MS;
 
   private constructor(options: ProfileCredentialStoreOptions) {
     this.authPath = join(options.agentDir, "auth.json");
@@ -102,6 +131,53 @@ export class ProfileCredentialStore implements CredentialStore {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * Observe canonical auth.json replacements/edits for the daemon lifetime.
+   * A directory watcher gives low latency while one unref'ed poll timer bounds
+   * missed-event recovery. Both feed one coalesced reload queue.
+   */
+  async startExternalObservation(options: ProfileCredentialStoreObservationOptions = {}): Promise<void> {
+    if (this.observationActive) return;
+    await this.ensureParentDirectory();
+    this.observationActive = true;
+    this.observationDebounceMs = Math.max(0, options.debounceMs ?? DEFAULT_EXTERNAL_DEBOUNCE_MS);
+    const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? DEFAULT_EXTERNAL_POLL_INTERVAL_MS);
+    const parent = dirname(this.authPath);
+    const authFileName = basename(this.authPath);
+
+    try {
+      this.observationWatcher = watch(parent, { persistent: false }, (_eventType, filename) => {
+        if (filename === null || filename === authFileName) this.requestObservedReload(this.observationDebounceMs);
+      });
+      this.observationWatcher.on("error", (error) => {
+        this.logObservationError(error, "credential-store file watcher failed; polling remains active");
+        this.observationWatcher?.close();
+        this.observationWatcher = undefined;
+      });
+    } catch (error: unknown) {
+      this.logObservationError(error, "credential-store file watcher could not start; polling remains active");
+    }
+
+    if (pollIntervalMs > 0) {
+      this.observationPollTimer = setInterval(() => {
+        this.requestObservedReload(0);
+      }, pollIntervalMs);
+      this.observationPollTimer.unref();
+    }
+  }
+
+  dispose(): void {
+    this.observationActive = false;
+    this.observationWatcher?.close();
+    this.observationWatcher = undefined;
+    if (this.observationPollTimer !== undefined) clearInterval(this.observationPollTimer);
+    this.observationPollTimer = undefined;
+    if (this.observationDebounceTimer !== undefined) clearTimeout(this.observationDebounceTimer);
+    this.observationDebounceTimer = undefined;
+    this.observationReloadRequested = false;
+    this.listeners.clear();
   }
 
   async reload(): Promise<ProfileCredentialStoreReloadResult> {
@@ -151,6 +227,14 @@ export class ProfileCredentialStore implements CredentialStore {
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
   ): Promise<Credential | undefined> {
+    return this.modifyGuarded(providerId, fn, () => undefined);
+  }
+
+  modifyGuarded(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    assertCommitAllowed: () => void,
+  ): Promise<Credential | undefined> {
     return this.enqueueProvider(providerId, () => this.enqueueDiskOperation(async () => {
       const result = await this.withFileLock(async (assertLockHealthy) => {
         const latest = await this.readCredentialFileForMutation();
@@ -161,7 +245,10 @@ export class ProfileCredentialStore implements CredentialStore {
 
         const updated = cloneCredentialFile(latest);
         setCredentialFileEntry(updated, providerId, cloneCredential(next));
-        await this.writeCredentialFile(updated, assertLockHealthy);
+        await this.writeCredentialFile(updated, () => {
+          assertLockHealthy();
+          assertCommitAllowed();
+        });
         return { latest: updated, result: next, wrote: true } as const;
       });
 
@@ -336,11 +423,45 @@ export class ProfileCredentialStore implements CredentialStore {
     }
   }
 
+  private requestObservedReload(delayMs: number): void {
+    if (!this.observationActive) return;
+    this.observationReloadRequested = true;
+    if (this.observationReload !== undefined || this.observationDebounceTimer !== undefined) return;
+    this.observationDebounceTimer = setTimeout(() => {
+      this.observationDebounceTimer = undefined;
+      this.runObservedReload();
+    }, delayMs);
+    this.observationDebounceTimer.unref();
+  }
+
+  private runObservedReload(): void {
+    if (!this.observationActive || this.observationReload !== undefined) return;
+    this.observationReloadRequested = false;
+    const reload = this.reload()
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        this.logObservationError(error, "credential-store external reload failed");
+      });
+    this.observationReload = reload;
+    void reload.finally(() => {
+      if (this.observationReload === reload) this.observationReload = undefined;
+      if (this.observationActive && this.observationReloadRequested) this.requestObservedReload(0);
+    });
+  }
+
   private logListenerError(error: unknown, change: ProfileCredentialStoreChange): void {
     try {
       this.logger.error({ err: error, ...change }, "credential-store listener failed");
     } catch {
       // Diagnostics run after durable mutation and cannot change its result.
+    }
+  }
+
+  private logObservationError(error: unknown, message: string): void {
+    try {
+      this.logger.error({ err: error, authPath: this.authPath }, message);
+    } catch {
+      // Observation diagnostics cannot affect the last valid credential view.
     }
   }
 

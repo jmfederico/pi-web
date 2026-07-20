@@ -219,6 +219,21 @@ describe("ProfileCredentialStore", () => {
     });
   });
 
+  it("checks a scoped generation guard at the durable rename boundary", async () => {
+    const { agentDir, authPath } = await tempAgentDir();
+    await writeAuth(authPath, { provider: { type: "api_key", key: "current" } });
+    const store = await ProfileCredentialStore.create({ agentDir });
+
+    await expect(store.modifyGuarded(
+      "provider",
+      () => Promise.resolve({ type: "api_key", key: "stale" }),
+      () => { throw new Error("runtime invalidated"); },
+    )).rejects.toThrow("runtime invalidated");
+
+    expect(await readAuth(authPath)).toEqual({ provider: { type: "api_key", key: "current" } });
+    expect(store.revision).toBe(1);
+  });
+
   it("publishes durable revisions and isolates listener failures from committed mutations", async () => {
     const { agentDir, authPath } = await tempAgentDir();
     const error = vi.fn();
@@ -245,6 +260,33 @@ describe("ProfileCredentialStore", () => {
     await writeAuth(authPath, { provider: { type: "api_key", key: "external" } });
     await expect(store.reload()).resolves.toEqual({ revision: 3, changed: true });
     expect(changes).toContainEqual({ revision: 3, source: "reload" });
+  });
+
+  it("observes valid external replacements while retaining the last valid snapshot through malformed edits", async () => {
+    const { agentDir, authPath } = await tempAgentDir();
+    const store = await ProfileCredentialStore.create({ agentDir });
+    await store.modify("provider", () => Promise.resolve({ type: "api_key", key: "initial" }));
+    await store.startExternalObservation({ debounceMs: 1, pollIntervalMs: 10 });
+
+    try {
+      await writeAuth(authPath, { provider: { type: "api_key", key: "external" } });
+      await vi.waitFor(() => { expect(store.revision).toBe(2); });
+      await expect(store.read("provider")).resolves.toEqual({ type: "api_key", key: "external" });
+
+      await writeFile(authPath, "{not-json", "utf8");
+      await vi.waitFor(() => { expect(store.reloadError).toBeInstanceOf(ProfileCredentialStoreMalformedFileError); });
+      expect(store.revision).toBe(2);
+      await expect(store.read("provider")).resolves.toEqual({ type: "api_key", key: "external" });
+
+      await writeAuth(authPath, { provider: { type: "api_key", key: "repaired" } });
+      await vi.waitFor(() => {
+        expect(store.revision).toBe(3);
+        expect(store.reloadError).toBeUndefined();
+      });
+      await expect(store.read("provider")).resolves.toEqual({ type: "api_key", key: "repaired" });
+    } finally {
+      store.dispose();
+    }
   });
 });
 

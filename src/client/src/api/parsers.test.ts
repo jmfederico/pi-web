@@ -4,11 +4,11 @@ import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES } from "
 import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
-  it("preserves additive interactive API-key flow hints and defaults legacy options", () => {
+  it("preserves additive provider references and interactive API-key flow hints while accepting legacy options", () => {
     const base = { id: "openai", name: "OpenAI", authType: "api_key", status: { configured: false } };
 
-    expect(parseAuthProvidersResponse({ providers: [{ ...base, loginFlow: "interactive" }, base] }).providers).toEqual([
-      { ...base, loginFlow: "interactive" },
+    expect(parseAuthProvidersResponse({ providers: [{ ...base, providerRef: "opaque-ref", loginFlow: "interactive" }, base] }).providers).toEqual([
+      { ...base, providerRef: "opaque-ref", loginFlow: "interactive" },
       base,
     ]);
   });

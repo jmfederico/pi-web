@@ -23,6 +23,8 @@ interface OAuthFlowRecord {
   state: OAuthFlowState;
   abort: AbortController;
   pending: PendingOAuthRequest | undefined;
+  owner?: string;
+  ownerInvalidated?: boolean;
   terminalAt?: number;
   cleanupTimer?: TimerHandle;
 }
@@ -66,6 +68,8 @@ export class OAuthLoginFlowService {
     runtime: OAuthLoginRuntime;
     /** Defaults to OAuth so established callers retain their existing behavior. */
     authType?: AuthType;
+    /** Opaque host-owned runtime generation invalidated on replacement/reload. */
+    owner?: string;
     onComplete?: () => void | Promise<void>;
   }): OAuthFlowState {
     const flowId = crypto.randomUUID();
@@ -74,6 +78,7 @@ export class OAuthLoginFlowService {
       flowId,
       abort,
       pending: undefined,
+      ...(options.owner === undefined ? {} : { owner: options.owner }),
       state: {
         flowId,
         providerId: options.providerId,
@@ -137,6 +142,19 @@ export class OAuthLoginFlowService {
       pending?.reject(new Error("Login cancelled"));
     }
     return cloneState(record.state);
+  }
+
+  /** Cancel every flow bound to an invalidated host runtime generation. */
+  invalidateOwner(owner: string): void {
+    for (const record of this.flows.values()) {
+      if (record.owner !== owner || record.state.status !== "running") continue;
+      record.ownerInvalidated = true;
+      record.abort.abort();
+      const pending = this.clearPending(record);
+      const error = new Error("Session auth runtime changed");
+      this.markTerminal(record, { ...withoutInteraction(record.state), status: "cancelled", error: error.message });
+      pending?.reject(error);
+    }
   }
 
   dispose(): void {
@@ -288,6 +306,7 @@ export class OAuthLoginFlowService {
   // truth and must supersede the transient cancelled state.
   private async reconcileCommittedLogin(record: OAuthFlowRecord, onComplete?: () => void | Promise<void>): Promise<void> {
     if (this.isCurrent(record)) this.clearPending(record);
+    if (record.ownerInvalidated === true) return;
     try {
       await onComplete?.();
     } catch (error) {

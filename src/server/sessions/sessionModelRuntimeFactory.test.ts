@@ -48,7 +48,10 @@ describe("createSessionModelRuntimeFactory", () => {
     const credentials = await ProfileCredentialStore.create({ agentDir });
     await credentials.modify("collision", () => Promise.resolve({ type: "api_key", key: "shared-secret" }));
     const createRuntime = createSessionModelRuntimeFactory({ agentDir, credentials });
-    const [runtimeA, runtimeB] = await Promise.all([createRuntime(), createRuntime()]);
+    const [runtimeA, runtimeB] = await Promise.all([
+      createRuntime({ cwd: "/workspace-a" }),
+      createRuntime({ cwd: "/workspace-b" }),
+    ]);
     expect(runtimeA).not.toBe(runtimeB);
 
     const captures: StreamCapture[] = [];

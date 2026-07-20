@@ -559,6 +559,7 @@ function parseAuthProviderOption(value: unknown): AuthProviderOption {
     name: requireString(record, "name"),
     authType: parseAuthType(record["authType"]),
     status: parseAuthProviderStatus(record["status"]),
+    ...optionalField("providerRef", optionalString(record, "providerRef")),
     ...(loginFlow === undefined ? {} : { loginFlow }),
   };
 }

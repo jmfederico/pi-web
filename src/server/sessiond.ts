@@ -10,6 +10,7 @@ import { AuthService } from "./sessions/authService.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { ProfileCredentialStore } from "./sessions/profileCredentialStore.js";
+import { SessionAuthRuntimeRegistry } from "./sessions/sessionAuthRuntimeRegistry.js";
 import { createSessionModelRuntimeFactory } from "./sessions/sessionModelRuntimeFactory.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
@@ -48,13 +49,26 @@ await runSessionDaemonStartup({
       env: daemonEnvironment,
       logger: app.log,
     });
-    const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, credentials, logger: app.log });
-    const sessionModelRuntimeFactory = createSessionModelRuntimeFactory({ agentDir: activeAgentProfile.dir, credentials });
+    await credentials.startExternalObservation();
+    const authRuntimeRegistry = new SessionAuthRuntimeRegistry(credentials);
+    const auth = await AuthService.create({
+      agentDir: activeAgentProfile.dir,
+      credentials,
+      authRuntimeRegistry,
+      logger: app.log,
+    });
+    const sessionModelRuntimeFactory = createSessionModelRuntimeFactory({
+      agentDir: activeAgentProfile.dir,
+      credentials,
+      authRuntimeRegistry,
+    });
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
     const sessions = new PiSessionService(eventHub, {
       sessionModelRuntimeFactory,
+      authRuntimeRegistry,
+      credentialRevisions: credentials,
       agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,
@@ -73,7 +87,7 @@ await runSessionDaemonStartup({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),
       activeAgentProfile,
     });
-    return { eventHub, workspaceActivity, auth, sessions, terminals, activeAgentProfile, runtimeComponent };
+    return { eventHub, workspaceActivity, credentials, authRuntimeRegistry, auth, sessions, terminals, activeAgentProfile, runtimeComponent };
   },
   registerRoutes({ eventHub, workspaceActivity, auth, sessions, terminals, runtimeComponent }) {
     registerWorkspaceActivityRoutes(app, workspaceActivity);
@@ -96,7 +110,7 @@ await runSessionDaemonStartup({
 
     app.get("/runtime", () => runtimeComponent);
   },
-  async listen({ auth, sessions, terminals }) {
+  async listen({ credentials, authRuntimeRegistry, auth, sessions, terminals }) {
     let shuttingDown = false;
     async function shutdown(signal: NodeJS.Signals): Promise<void> {
       if (shuttingDown) return;
@@ -105,6 +119,8 @@ await runSessionDaemonStartup({
       terminals.dispose();
       auth.dispose();
       await sessions.dispose();
+      authRuntimeRegistry.dispose();
+      credentials.dispose();
       await app.close();
     }
 
