@@ -94,6 +94,7 @@
             <a href="#tools-are-not-found">Tools are failing / node not found</a>
             <a href="#doctor-fails">What does doctor check?</a>
             <a href="#nvm-fnm-asdf">nvm, fnm, or asdf issues</a>
+            <a href="#node-pty-native-module">node-pty native module is missing</a>
             <a href="#systemd-not-found">User service manager is unavailable</a>
             <a href="#cannot-open">I cannot open the web UI</a>
             <a href="#public-internet">Can I expose this publicly?</a>
@@ -112,7 +113,7 @@
                 a supported per-user service manager when one is available.
               </p>
               <ul>
-                <li><strong>User-service install:</strong> use <code>npm install -g @jmfederico/pi-web</code> and <code>pi-web install</code>.</li>
+                <li><strong>User-service install:</strong> use <code>npm install -g @jmfederico/pi-web --allow-scripts=node-pty</code> and <code>pi-web install</code>.</li>
                 <li><strong>WSL:</strong> if your distro has systemd enabled, the installer may work; otherwise use the manual run path.</li>
                 <li><strong>Native Windows:</strong> outside WSL is not the recommended path today.</li>
               </ul>
@@ -166,8 +167,9 @@
               <p>
                 Missing plan requirements fail doctor and include login-file guidance. Manager, timeout, malformed-output,
                 and cleanup failures are reported as probe infrastructure problems rather than being mislabeled as PATH
-                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also prints
-                installed and running PI WEB versions and reports systemd lingering when relevant.
+                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also checks
+                that the <code>node-pty</code> native module can load, prints installed and running PI WEB versions, and reports
+                systemd lingering when relevant.
               </p>
             </article>
 
@@ -184,6 +186,27 @@
                 <li>Make sure <code>node --version</code> is at least <code>v22.19.0</code> from <code>bash -lc</code>, <code>zsh -lc</code>, or your detected shell.</li>
                 <li>Run <code>pi-web doctor</code> again after changing shell files.</li>
               </ul>
+            </article>
+
+            <article id="node-pty-native-module" class="faq-item">
+              <h2><code>pi-web-sessiond</code> cannot load <code>pty.node</code></h2>
+              <p>
+                npm 12 blocks dependency installation scripts unless they are explicitly approved. If PI WEB was installed
+                without approving <code>node-pty</code>, its required native module can be missing even though npm reported a
+                successful installation.
+              </p>
+              <p>Reinstall PI WEB with approval limited to <code>node-pty</code>:</p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Allow the node-pty installation scripts</strong>
+                  <button class="copy-button" data-copy="#node-pty-install">Copy</button>
+                </div>
+                <pre id="node-pty-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty</code></pre>
+              </div>
+              <p>
+                Then run <code>pi-web install</code> again, or restart <code>pi-web-sessiond</code> if you run PI WEB manually.
+                The flag does not enable installation scripts for other dependencies.
+              </p>
             </article>
 
             <article id="systemd-not-found" class="faq-item">

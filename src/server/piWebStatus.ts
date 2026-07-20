@@ -140,7 +140,10 @@ export async function getPiWebStatus(daemon: PiWebStatusDaemon = new SessionDaem
   const { web, sessiond } = versionStatus.components;
   const release = await getLatestReleaseStatus(web.installedVersion ?? web.runtimeVersion ?? DEFAULT_VERSION, options.forceReleaseCheck === true);
   const components = { web, sessiond };
-  const commands = await commandsFor(components, { activeAgentProfile: options.activeAgentProfile, hasCommand: options.hasCommand ?? hasCommand });
+  const commands = await commandsFor(components, {
+    activeAgentProfile: options.activeAgentProfile,
+    hasCommand: options.hasCommand ?? hasCommand,
+  });
   const messages = buildMessages(components, release, commands);
   return {
     ...versionStatus,
@@ -416,7 +419,10 @@ async function fetchLatestNpmVersion(currentVersion: string): Promise<string> {
   return version;
 }
 
-async function commandsFor(components: PiWebStatusResponse["components"], options: { activeAgentProfile: ActiveAgentProfileDescriptor | undefined; hasCommand: (command: string) => Promise<boolean> }): Promise<PiWebStatusResponse["commands"]> {
+async function commandsFor(components: PiWebStatusResponse["components"], options: {
+  activeAgentProfile: ActiveAgentProfileDescriptor | undefined;
+  hasCommand: (command: string) => Promise<boolean>;
+}): Promise<PiWebStatusResponse["commands"]> {
   const installation = preferredInstallation(components);
   if (installation?.kind === "docker") return dockerCommands(installation);
 
@@ -467,7 +473,10 @@ function restartCommandFor(installation: PiWebInstallationInfo | undefined, serv
   return cliCommands.restart ?? serviceCommands.restart;
 }
 
-export async function updateCommandFor(installation: PiWebInstallationInfo | undefined, restartCommand: string | undefined, options: { activeAgentProfile: ActiveAgentProfileDescriptor | undefined; hasCommand: (command: string) => Promise<boolean> }): Promise<string | undefined> {
+export async function updateCommandFor(installation: PiWebInstallationInfo | undefined, restartCommand: string | undefined, options: {
+  activeAgentProfile: ActiveAgentProfileDescriptor | undefined;
+  hasCommand: (command: string) => Promise<boolean>;
+}): Promise<string | undefined> {
   if (restartCommand === undefined) return undefined;
   if (installation?.kind === "pi-package") {
     const profile = options.activeAgentProfile;
@@ -479,8 +488,8 @@ export async function updateCommandFor(installation: PiWebInstallationInfo | und
     if (!(await hasCommand("npm")) || !(await isGitCheckoutWithUpstream(installation.path))) return undefined;
     return `cd ${shellQuote(installation.path)} && git pull --ff-only && npm install && npm run build && ${restartCommand}`;
   }
-  if (installation?.kind !== "npm-global" || !(await hasCommand("npm"))) return undefined;
-  return `npm install -g ${PI_WEB_PACKAGE_NAME} && ${restartCommand}`;
+  if (installation?.kind !== "npm-global" || !(await options.hasCommand("npm"))) return undefined;
+  return `npm install -g ${PI_WEB_PACKAGE_NAME} --allow-scripts=node-pty && ${restartCommand}`;
 }
 
 async function nativeServiceCommands(): Promise<NativeServiceCommands> {

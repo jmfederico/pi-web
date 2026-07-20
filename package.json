@@ -46,6 +46,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",
+    "smoke:package-install": "node scripts/smoke-package-install.mjs",
     "prepublishOnly": "npm run verify",
     "publish:npm": "npm publish --access public",
     "prepare": "node scripts/install-git-hooks.mjs",

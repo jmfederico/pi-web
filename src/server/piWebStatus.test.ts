@@ -215,6 +215,26 @@ describe("PI WEB status", () => {
     expect(updateCommand).toBe("PI_CODING_AGENT_DIR='/tmp/profile'\\''s/state' '/tmp/agent'\\''s/pi' update 'npm:@jmfederico/pi-web' && pi-web restart");
   });
 
+  it("scopes node-pty script approval in npm-global update commands", async () => {
+    const updateCommand = await updateCommandFor(
+      { kind: "npm-global", path: "/opt/npm/@jmfederico/pi-web" },
+      "pi-web restart",
+      { activeAgentProfile: undefined, hasCommand: () => Promise.resolve(true) },
+    );
+
+    expect(updateCommand).toBe("npm install -g @jmfederico/pi-web --allow-scripts=node-pty && pi-web restart");
+  });
+
+  it("suppresses npm-global update commands when npm is unavailable", async () => {
+    const updateCommand = await updateCommandFor(
+      { kind: "npm-global", path: "/opt/npm/@jmfederico/pi-web" },
+      "pi-web restart",
+      { activeAgentProfile: undefined, hasCommand: () => Promise.resolve(false) },
+    );
+
+    expect(updateCommand).toBeUndefined();
+  });
+
   it.each([
     activeProfile("a", "acme-agent", "/opt/acme/state"),
     activeProfile("b", "pi", "relative/state"),

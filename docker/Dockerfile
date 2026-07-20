@@ -30,7 +30,7 @@ ARG CACHE_BUST=local
 
 RUN set -eux; \
   echo "PI WEB Docker build cache bust: ${CACHE_BUST}"; \
-  npm install -g --omit=dev --include=peer --no-audit --no-fund "@jmfederico/pi-web@${PI_WEB_VERSION}"; \
+  npm install -g --omit=dev --include=peer --no-audit --no-fund "@jmfederico/pi-web@${PI_WEB_VERSION}" --allow-scripts=node-pty; \
   global_root="$(npm root -g)"; \
   global_prefix="$(npm prefix -g)"; \
   peer_pi_bin="${global_root}/@jmfederico/pi-web/node_modules/.bin/pi"; \
