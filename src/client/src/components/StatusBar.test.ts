@@ -5,35 +5,36 @@ import { templateEventHandlerAfterMarker } from "../templateInspection.testSuppo
 import { StatusBar, statusBarWarningControlContent } from "./StatusBar";
 
 describe("statusBarWarningControlContent", () => {
-  it("provides only the visible numeric count while keeping a descriptive accessible label", () => {
-    expect(statusBarWarningControlContent(1)).toEqual({
+  it("provides an action label for both states while keeping only the count visible", () => {
+    expect(statusBarWarningControlContent(1, true)).toEqual({
       countText: "1",
-      accessibleLabel: "Show 1 warning in the warning area",
+      accessibleLabel: "Minimise 1 warning",
     });
-    expect(statusBarWarningControlContent(3)).toEqual({
+    expect(statusBarWarningControlContent(3, false)).toEqual({
       countText: "3",
       accessibleLabel: "Show 3 warnings in the warning area",
     });
   });
 
-  it("omits the control content when there are no collapsed warnings", () => {
-    expect(statusBarWarningControlContent(0)).toBeUndefined();
+  it("omits the control content when there are no warnings", () => {
+    expect(statusBarWarningControlContent(0, false)).toBeUndefined();
   });
 });
 
-describe("StatusBar warning restore wiring", () => {
+describe("StatusBar warning toggle wiring", () => {
   // Escape hatch: this specifically verifies the compact status-bar button's
   // Lit callback wiring in the node environment, anchored to its semantic class.
-  it("invokes onRestoreWarnings when the warning-count control is activated", () => {
+  it("invokes onToggleWarnings when the warning-count control is activated", () => {
     const statusBar = new StatusBar();
-    const onRestoreWarnings = vi.fn();
+    const onToggleWarnings = vi.fn();
     statusBar.status = status();
-    statusBar.collapsedWarningCount = 2;
-    statusBar.onRestoreWarnings = onRestoreWarnings;
+    statusBar.warningCount = 2;
+    statusBar.warningsExpanded = true;
+    statusBar.onToggleWarnings = onToggleWarnings;
 
-    templateEventHandlerAfterMarker(renderStatusBar(statusBar), "warning-restore")(new Event("click"));
+    templateEventHandlerAfterMarker(renderStatusBar(statusBar), "warning-toggle")(new Event("click"));
 
-    expect(onRestoreWarnings).toHaveBeenCalledOnce();
+    expect(onToggleWarnings).toHaveBeenCalledOnce();
   });
 });
 

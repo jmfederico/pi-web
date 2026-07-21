@@ -141,22 +141,6 @@ describe("ChatView session-warning dismiss wiring", () => {
     expect(onDismissWarning).toHaveBeenCalledExactlyOnceWith("anthropicExtraUsage");
   });
 
-  // Escape hatch: this verifies the collapse button's Lit callback wiring in
-  // the node test environment, anchored to its stable semantic class marker.
-  it("invokes onCollapseWarnings from the visible warning area", () => {
-    const view = withStatus(new ChatView(), warningStatus([
-      { severity: "warning", message: "subscription auth is active" },
-    ]));
-    const onCollapseWarnings = vi.fn();
-    view.onCollapseWarnings = onCollapseWarnings;
-
-    const rendered = renderWarnings(view);
-    if (rendered === null) throw new Error("expected a warnings banner");
-    templateEventHandlerAfterMarker(rendered, "session-warnings-collapse")(new Event("click"));
-
-    expect(onCollapseWarnings).toHaveBeenCalledOnce();
-  });
-
   it("removes the warning area while presentation is collapsed or there are no warnings", () => {
     const view = withStatus(new ChatView(), warningStatus([
       { severity: "warning", message: "subscription auth is active" },

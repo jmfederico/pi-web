@@ -13,21 +13,24 @@ afterEach(() => {
 });
 
 describe("PiWebApp session-warning visibility wiring", () => {
-  it("collapses the existing warning area and restores it from the status bar", () => {
+  it("keeps the warning control present and toggles the warning area from the status bar", () => {
     const app = createApp();
     const state = stateWithWarnings();
     setAppState(app, state);
     syncWarningVisibility(app);
 
-    const visibleChat = renderChatView(app, state);
-    expect(templateValueAfterMarker(visibleChat, ".warningsVisible=")).toBe(true);
+    const visibleStatusBar = renderStatusBar(app, state);
+    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(true);
+    expect(templateValueAfterMarker(visibleStatusBar, ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(visibleStatusBar, ".warningsExpanded=")).toBe(true);
 
-    const collapse = templateCallbackAfterMarker(visibleChat, ".onCollapseWarnings=");
-    collapse();
+    const toggle = templateCallbackAfterMarker(visibleStatusBar, ".onToggleWarnings=");
+    toggle();
 
-    const collapsedChat = renderChatView(app, state);
-    expect(templateValueAfterMarker(collapsedChat, ".warningsVisible=")).toBe(false);
-    expect(templateValueAfterMarker(renderStatusBar(app, state), ".collapsedWarningCount=")).toBe(2);
+    const collapsedStatusBar = renderStatusBar(app, state);
+    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(false);
+    expect(templateValueAfterMarker(collapsedStatusBar, ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(collapsedStatusBar, ".warningsExpanded=")).toBe(false);
 
     const otherState = stateWithWarnings("session-2");
     setAppState(app, otherState);
@@ -38,18 +41,21 @@ describe("PiWebApp session-warning visibility wiring", () => {
     setAppState(app, returningState);
     syncWarningVisibility(app);
     expect(templateValueAfterMarker(renderChatView(app, returningState), ".warningsVisible=")).toBe(true);
+    expect(templateValueAfterMarker(renderStatusBar(app, returningState), ".warningCount=")).toBe(0);
 
     setAppState(app, state);
     syncWarningVisibility(app);
     const returnedStatusBar = renderStatusBar(app, state);
     expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(false);
-    expect(templateValueAfterMarker(returnedStatusBar, ".collapsedWarningCount=")).toBe(2);
+    expect(templateValueAfterMarker(returnedStatusBar, ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(returnedStatusBar, ".warningsExpanded=")).toBe(false);
 
-    const restore = templateCallbackAfterMarker(returnedStatusBar, ".onRestoreWarnings=");
-    restore();
+    templateCallbackAfterMarker(returnedStatusBar, ".onToggleWarnings=")();
 
+    const restoredStatusBar = renderStatusBar(app, state);
     expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(true);
-    expect(templateValueAfterMarker(renderStatusBar(app, state), ".collapsedWarningCount=")).toBe(0);
+    expect(templateValueAfterMarker(restoredStatusBar, ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(restoredStatusBar, ".warningsExpanded=")).toBe(true);
   });
 });
 

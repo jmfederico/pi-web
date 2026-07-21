@@ -6,6 +6,7 @@ import {
   reconcileSessionWarningVisibility,
   restoreSessionWarnings,
   sessionWarningSetSignature,
+  toggleSessionWarnings,
 } from "./sessionWarningVisibility";
 
 const subscriptionWarning: SessionWarning = { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } };
@@ -91,6 +92,16 @@ describe("session warning visibility transitions", () => {
 
     expect(collapseSessionWarnings(empty)).toBe(empty);
     expect(collapseSessionWarnings(selectedEmpty)).toBe(selectedEmpty);
+    expect(collapsed.collapsed).toBe(true);
+    expect(restored.collapsed).toBe(false);
+    expect(restored.collapsedWarningSets.size).toBe(0);
+  });
+
+  it("uses one toggle transition for both warning-area states", () => {
+    const visible = reconcileSessionWarningVisibility(initialSessionWarningVisibilityState(), "session-1", warnings);
+    const collapsed = toggleSessionWarnings(visible);
+    const restored = toggleSessionWarnings(collapsed);
+
     expect(collapsed.collapsed).toBe(true);
     expect(restored.collapsed).toBe(false);
     expect(restored.collapsedWarningSets.size).toBe(0);

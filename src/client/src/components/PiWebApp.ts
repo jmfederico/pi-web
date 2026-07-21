@@ -27,7 +27,7 @@ import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../s
 import { selectedNotificationView } from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
 import { SessionUnreadController } from "../sessionUnread";
-import { collapseSessionWarnings, initialSessionWarningVisibilityState, reconcileSessionWarningVisibility, restoreSessionWarnings } from "../sessionWarningVisibility";
+import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility, toggleSessionWarnings } from "../sessionWarningVisibility";
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
@@ -2108,15 +2108,8 @@ export class PiWebApp extends LitElement {
     void this.notifications.dismissAll();
   };
 
-  private readonly handleCollapseWarnings = (): void => {
-    const next = collapseSessionWarnings(this.sessionWarningVisibility);
-    if (next === this.sessionWarningVisibility) return;
-    this.sessionWarningVisibility = next;
-    this.requestUpdate();
-  };
-
-  private readonly handleRestoreWarnings = (): void => {
-    const next = restoreSessionWarnings(this.sessionWarningVisibility);
+  private readonly handleToggleWarnings = (): void => {
+    const next = toggleSessionWarnings(this.sessionWarningVisibility);
     if (next === this.sessionWarningVisibility) return;
     this.sessionWarningVisibility = next;
     this.requestUpdate();
@@ -2132,16 +2125,14 @@ export class PiWebApp extends LitElement {
 
   private renderChatView(state: AppState, session: SessionInfo) {
     return html`
-      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .notificationInbox=${selectedNotificationView(state.selectedNotificationInbox)} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .warningsVisible=${!this.sessionWarningVisibility.collapsed} .onCollapseWarnings=${this.handleCollapseWarnings} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
+      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .notificationInbox=${selectedNotificationView(state.selectedNotificationInbox)} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .warningsVisible=${!this.sessionWarningVisibility.collapsed} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
     `;
   }
 
   private renderStatusBar(state: AppState) {
-    const collapsedWarningCount = this.sessionWarningVisibility.collapsed
-      ? this.sessionWarningVisibility.warningCount
-      : 0;
+    const warningCount = this.sessionWarningVisibility.warningCount;
     return html`
-      <status-bar .status=${state.status} .collapsedWarningCount=${collapsedWarningCount} .onRestoreWarnings=${this.handleRestoreWarnings}></status-bar>
+      <status-bar .status=${state.status} .warningCount=${warningCount} .warningsExpanded=${warningCount > 0 && !this.sessionWarningVisibility.collapsed} .onToggleWarnings=${this.handleToggleWarnings}></status-bar>
     `;
   }
 

@@ -79,3 +79,7 @@ export function restoreSessionWarnings(current: SessionWarningVisibilityState): 
   if (current.selectedSessionKey !== undefined) collapsedWarningSets.delete(current.selectedSessionKey);
   return { ...current, collapsed: false, collapsedWarningSets };
 }
+
+export function toggleSessionWarnings(current: SessionWarningVisibilityState): SessionWarningVisibilityState {
+  return current.collapsed ? restoreSessionWarnings(current) : collapseSessionWarnings(current);
+}
