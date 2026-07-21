@@ -141,6 +141,24 @@ describe("ChatView session-warning dismiss wiring", () => {
     expect(onDismissWarning).toHaveBeenCalledExactlyOnceWith("anthropicExtraUsage");
   });
 
+  // Escape hatch: this verifies the minimise chevron's Lit callback wiring in
+  // the node test environment, anchored to its stable semantic class marker.
+  // The chevron is wired to the unified onToggleWarnings (toggle ≡ collapse in
+  // the expanded state), so this also proves the single visibility mutation.
+  it("invokes onToggleWarnings from the visible warning area", () => {
+    const view = withStatus(new ChatView(), warningStatus([
+      { severity: "warning", message: "subscription auth is active" },
+    ]));
+    const onToggleWarnings = vi.fn();
+    view.onToggleWarnings = onToggleWarnings;
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    templateEventHandlerAfterMarker(rendered, "session-warnings-collapse")(new Event("click"));
+
+    expect(onToggleWarnings).toHaveBeenCalledOnce();
+  });
+
   it("removes the warning area while presentation is collapsed or there are no warnings", () => {
     const view = withStatus(new ChatView(), warningStatus([
       { severity: "warning", message: "subscription auth is active" },

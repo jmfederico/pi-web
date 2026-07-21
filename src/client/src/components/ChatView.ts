@@ -199,6 +199,7 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) onDismissNotification?: (notificationId: string) => void;
   @property({ attribute: false }) onDismissAllNotifications?: () => void;
   @property({ type: Boolean }) warningsVisible = true;
+  @property({ attribute: false }) onToggleWarnings?: () => void;
   @property({ attribute: false }) onLoadMore?: () => void;
   @query(".chat") private chat?: HTMLDivElement;
   @query("dialog.image-zoom") private imageZoomDialog?: HTMLDialogElement;
@@ -251,6 +252,9 @@ export class ChatView extends LitElement {
   };
   private readonly handleClearServerQueue = (): void => {
     this.onClearServerQueue?.();
+  };
+  private readonly handleToggleWarnings = (): void => {
+    this.onToggleWarnings?.();
   };
 
   override connectedCallback(): void {
@@ -511,6 +515,22 @@ export class ChatView extends LitElement {
     if (!this.warningsVisible || rows.length === 0) return null;
     return html`
       <aside class="session-warnings" role="alert" aria-live="polite">
+        ${this.onToggleWarnings === undefined ? null : html`
+          <div class="session-warnings-controls">
+            <button
+              type="button"
+              class="session-warnings-collapse"
+              title="Minimise warnings"
+              aria-label="Minimise warnings"
+              @click=${this.handleToggleWarnings}
+            >
+              <svg class="session-warnings-collapse-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="m18 15-6-6-6 6"></path>
+              </svg>
+              <span>Minimise</span>
+            </button>
+          </div>
+        `}
         ${rows.map((row) => {
           const dismissId = row.dismissId;
           return html`
