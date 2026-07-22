@@ -157,6 +157,27 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(JSON.stringify(ignoredMutations)).not.toContain("secret");
   });
 
+  it("keeps ignored mutations as no-ops when structured logging fails", async () => {
+    const agentDir = await tempDir("pi-web-global-provider-unit-");
+    const runtime = await createTestModelRuntime();
+    const { logger } = capturingLogger();
+    const loggingError = new Error("provider mutation logger failed");
+    const throwingLogger: GlobalProviderBootstrapLogger = {
+      ...logger,
+      info(details, message) {
+        if (message === "ignored provider mutation after global bootstrap") throw loggingError;
+        logger.info(details, message);
+      },
+    };
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, throwingLogger);
+
+    expect(() => { registerProjectConfigProvider(runtime); }).not.toThrow();
+    expect(() => { runtime.registerNativeProvider(nativeProvider("project-native")); }).not.toThrow();
+    expect(() => { runtime.unregisterProvider("project-only"); }).not.toThrow();
+    expect(runtime.getRegisteredProviderIds()).toEqual([]);
+  });
+
   it("logs non-fatal Pi bootstrap diagnostics and still freezes the runtime", async () => {
     const agentDir = await agentDirWithExtension(`
       export default function (pi) {

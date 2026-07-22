@@ -62,10 +62,14 @@ function freezeProviderMutations(runtime: ModelRuntime, logger: GlobalProviderBo
     const loggedIds = loggedProviderIds[operation];
     if (loggedIds.has(providerId)) return;
     loggedIds.add(providerId);
-    logger.info(
-      { context: LOG_CONTEXT, operation, providerId },
-      "ignored provider mutation after global bootstrap",
-    );
+    try {
+      logger.info(
+        { context: LOG_CONTEXT, operation, providerId },
+        "ignored provider mutation after global bootstrap",
+      );
+    } catch {
+      // Logging must not turn an ignored mutation into an extension failure.
+    }
   };
   const frozenMethods: ProviderMutationMethods = {
     registerProvider(providerId) {

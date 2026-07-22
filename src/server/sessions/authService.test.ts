@@ -3,12 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore, type AuthPrompt, type Credential } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";
 import { AuthService, createModelRuntimeForAgentDir, type AuthChange, type AuthServiceLogger } from "./authService.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  // Pi 0.81 uses PI_OFFLINE for refreshes after runtime creation. Auth tests
+  // exercise local credential behavior and must never fetch provider catalogs.
+  vi.stubEnv("PI_OFFLINE", "1");
+});
 
 afterEach(async () => {
   vi.unstubAllEnvs();

@@ -4,11 +4,21 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, createTestModelRuntime, fakeRuntime, runtimeCreator, seedCredential, sessionGateway, sessionRecord, sessionRef, TEST_MODEL_ID, TEST_MODEL_PROVIDER, testModel, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+
+beforeEach(() => {
+  // Pi 0.81 uses PI_OFFLINE for refreshes after runtime creation. These tests
+  // exercise local model/auth behavior and must never fetch provider catalogs.
+  vi.stubEnv("PI_OFFLINE", "1");
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("PiSessionService prompt, queue, and auth warnings", () => {
   it("sends prompts to an injected runtime without touching the SDK runtime", async () => {
@@ -78,7 +88,7 @@ describe("PiSessionService prompt, queue, and auth warnings", () => {
     await service.dispose();
   });
 
-  it("generates a session name for the first prompt via the session's agent.streamFn", async () => {
+  it("generates a session name for the first prompt via the session's agent.streamFunction", async () => {
     const model = testModel();
     const streamCalls: unknown[] = [];
     const streamFn: StreamFn = (streamModel, context, options) => {
