@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
 import {
@@ -22,6 +22,9 @@ import {
 } from "./sessionUnreadStore.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+// Unread identities are persisted after platform-native cwd canonicalization.
+const WORKSPACE_CWD = resolve("/workspace");
+const FEATURE_CWD = resolve("/workspace-feature");
 const tempRoots: string[] = [];
 
 afterEach(async () => {
@@ -50,11 +53,11 @@ describe("PiSessionService daemon-owned unread state", () => {
 
       const secondSnapshot = await service.unreadCatalog();
       const current = secondSnapshot.sessions[0];
-      expect(current).toMatchObject({ sessionId: "session-1", cwd: "/workspace", completionOrder: 2 });
+      expect(current).toMatchObject({ sessionId: "session-1", cwd: WORKSPACE_CWD, completionOrder: 2 });
       expect(unreadEvents(hub).map((event) => event.catalogRevision)).toEqual([1, 2]);
 
       const staleSnapshot = await service.acknowledgeUnread("session-1", {
-        cwd: "/workspace",
+        cwd: WORKSPACE_CWD,
         catalogId: "catalog-test",
         throughCompletionOrder: 1,
       });
@@ -62,7 +65,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       expect(unreadEvents(hub).map((event) => event.catalogRevision)).toEqual([1, 2]);
 
       const acknowledged = await service.acknowledgeUnread("session-1", {
-        cwd: "/workspace",
+        cwd: WORKSPACE_CWD,
         catalogId: "catalog-test",
         throughCompletionOrder: current?.completionOrder ?? 0,
       });
@@ -100,7 +103,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       finishBash?.();
       await Promise.resolve();
 
-      expect((await service.unreadCatalog()).sessions).toMatchObject([{ sessionId: "session-1", cwd: "/workspace", completionOrder: 1 }]);
+      expect((await service.unreadCatalog()).sessions).toMatchObject([{ sessionId: "session-1", cwd: WORKSPACE_CWD, completionOrder: 1 }]);
     } finally {
       await service.dispose();
     }
@@ -258,13 +261,13 @@ describe("PiSessionService daemon-owned unread state", () => {
       initial.session.isStreaming = false;
       expect((await service.unreadCatalog()).sessions).toEqual([]);
 
-      completeStoreWork(unreadStore, "session-1", "/workspace");
+      completeStoreWork(unreadStore, "session-1", WORKSPACE_CWD);
       const beforeReload = (await service.unreadCatalog()).sessions[0];
       await service.reload(sessionRef("session-1"));
       const afterReload = (await service.unreadCatalog()).sessions[0];
 
       expect(beforeReload).toBeDefined();
-      expect(afterReload).toMatchObject({ sessionId: "session-1", cwd: "/workspace" });
+      expect(afterReload).toMatchObject({ sessionId: "session-1", cwd: WORKSPACE_CWD });
       expect(afterReload?.completionOrder).toBeGreaterThan(beforeReload?.completionOrder ?? 0);
     } finally {
       await service.dispose();
@@ -273,7 +276,7 @@ describe("PiSessionService daemon-owned unread state", () => {
 
   it("clears stale unread when a runtime rebind changes logical session identity", async () => {
     const unreadStore = new SessionUnreadStore({ createCatalogId: () => "catalog-test" });
-    completeStoreWork(unreadStore, "session-old", "/workspace");
+    completeStoreWork(unreadStore, "session-old", WORKSPACE_CWD);
     const original = fakeRuntime("session-old");
     let rebindSession: ((session: PiAgentSession) => Promise<void>) | undefined;
     original.runtime.setRebindSession = (callback) => { rebindSession = callback; };
@@ -302,7 +305,7 @@ describe("PiSessionService daemon-owned unread state", () => {
   it("cleans unread state through archive, restore, delete, and cwd reconciliation", async () => {
     const unreadStore = new SessionUnreadStore({ createCatalogId: () => "catalog-test" });
     for (const sessionId of ["archive-me", "restore-me", "delete-me", "orphan"]) {
-      completeStoreWork(unreadStore, sessionId, "/workspace");
+      completeStoreWork(unreadStore, sessionId, WORKSPACE_CWD);
     }
     const archived = new Map([
       ["restore-me", { sessionId: "restore-me", cwd: "/workspace", archivedAt: "2026-07-01T00:00:00.000Z", archivePath: "/archive/restore-me.jsonl" }],
@@ -348,7 +351,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       await service.deleteArchived(sessionRef("delete-me"));
       expect((await service.unreadCatalog()).sessions.map((summary) => summary.sessionId)).toEqual(["orphan"]);
 
-      await service.list("/workspace");
+      await service.list(WORKSPACE_CWD);
       expect((await service.unreadCatalog()).sessions).toEqual([]);
     } finally {
       await service.dispose();
@@ -404,7 +407,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       completeRuntimeWork(child);
       expect((await service.unreadCatalog()).sessions).toContainEqual(expect.objectContaining({
         sessionId: "child-1",
-        cwd: "/workspace-feature",
+        cwd: FEATURE_CWD,
       }));
     } finally {
       await service.dispose();
@@ -420,7 +423,7 @@ describe("PiSessionService daemon-owned unread state", () => {
     await writeFile(childFile, `${JSON.stringify({ type: "session", version: 3, id: "child-1", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/workspace-feature", parentSession: parentFile })}\n`, "utf8");
 
     const unreadStore = new SessionUnreadStore({ createCatalogId: () => "catalog-test" });
-    completeStoreWork(unreadStore, "child-1", "/workspace-feature");
+    completeStoreWork(unreadStore, "child-1", FEATURE_CWD);
     const hub = new CapturingSessionEventHub();
     const parentManager = fakeSessionManager("/workspace", {
       getEntries: () => [{
@@ -452,7 +455,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       ]);
 
       expect((await service.unreadCatalog()).sessions).toEqual([]);
-      expect(unreadEvents(hub).at(-1)).toMatchObject({ sessionId: "child-1", cwd: "/workspace-feature", unread: null });
+      expect(unreadEvents(hub).at(-1)).toMatchObject({ sessionId: "child-1", cwd: FEATURE_CWD, unread: null });
     } finally {
       await service.dispose();
     }
@@ -466,7 +469,7 @@ describe("PiSessionService daemon-owned unread state", () => {
     await writeFile(parentFile, `${JSON.stringify({ type: "session", version: 3, id: "parent-1", timestamp: "2026-01-01T00:00:00.000Z", cwd: "/workspace" })}\n`, "utf8");
 
     const unreadStore = new SessionUnreadStore({ createCatalogId: () => "catalog-test" });
-    completeStoreWork(unreadStore, "child-1", "/workspace-feature");
+    completeStoreWork(unreadStore, "child-1", FEATURE_CWD);
     const parentManager = fakeSessionManager("/workspace", {
       getEntries: () => [{
         type: "custom",
