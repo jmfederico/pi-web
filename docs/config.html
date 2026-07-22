@@ -175,7 +175,7 @@
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
-                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required.</li>
+                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required for those ordinary resources. If a globally installed extension adds, removes, or changes a provider, manually restart <code>pi-web-sessiond.service</code>; <code>/reload</code> cannot change the startup provider baseline. See <a href="plugins#extension-provider-registrations">Extension provider registrations</a>.</li>
                 <li><code>shortcuts</code>: saved settings apply in the browser after config refresh/save.</li>
               </ul>
             </section>
