@@ -58,7 +58,49 @@ describe("buildGitFileTree", () => {
     const tree = buildGitFileTree([changed("src/b/c.ts"), changed("src/a.ts"), changed("docs/x.md")]);
     expect(collectGitFileTreeDirectoryPaths(tree)).toEqual(["docs", "src", "src/b"]);
   });
+
+  it("marks a submodule directory and pins its pointer as the first child", () => {
+    const pointer = submodulePointer("HARL", "1111111", "2222222");
+    const tree = buildGitFileTree([pointer, changed("HARL/tracked.txt"), changed("HARL/src/foo.ts"), changed("README.md")], ["HARL"]);
+
+    expect(tree.map((node) => node.name)).toEqual(["HARL", "README.md"]);
+    const harl = expectDirectory(tree[0]);
+    expect(harl.isSubmodule).toBe(true);
+
+    // Pointer first, then directories, then files (submodule-relative nesting kept).
+    const pointerRow = expectFile(harl.children[0]);
+    expect(pointerRow.isSubmodulePointer).toBe(true);
+    expect(pointerRow.name).toBe("1111111 → 2222222");
+    expect(pointerRow.path).toBe("HARL");
+    expect(pointerRow.file).toBe(pointer);
+
+    const src = expectDirectory(harl.children[1]);
+    expect(src.path).toBe("HARL/src");
+    expect(expectFile(src.children[0]).path).toBe("HARL/src/foo.ts");
+    expect(expectFile(harl.children[2]).path).toBe("HARL/tracked.txt");
+  });
+
+  it("creates a submodule node for a pointer-only change with no inner files", () => {
+    const tree = buildGitFileTree([submodulePointer("HARL", "aaaaaaa", "bbbbbbb")], ["HARL"]);
+    const harl = expectDirectory(tree[0]);
+    expect(harl.isSubmodule).toBe(true);
+    expect(harl.children).toHaveLength(1);
+    expect(expectFile(harl.children[0]).isSubmodulePointer).toBe(true);
+    expect(collectGitFileTreeDirectoryPaths(tree)).toEqual(["HARL"]);
+  });
+
+  it("groups a dirty submodule without a moved pointer and emits no pointer row", () => {
+    const tree = buildGitFileTree([changed("HARL/x.txt"), changed("HARL/nested/y.txt")], ["HARL"]);
+    const harl = expectDirectory(tree[0]);
+    expect(harl.isSubmodule).toBe(true);
+    expect(harl.children.every((node) => node.kind !== "file" || node.isSubmodulePointer !== true)).toBe(true);
+    expect(collectGitFileTreeDirectoryPaths(tree)).toEqual(["HARL", "HARL/nested"]);
+  });
 });
+
+function submodulePointer(path: string, from: string, to: string): GitStatusFile {
+  return { path, index: "unmodified", workingTree: "modified", submoduleFromCommit: from, submoduleToCommit: to };
+}
 
 function changed(path: string): GitStatusFile {
   return { path, index: "modified", workingTree: "modified" };

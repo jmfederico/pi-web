@@ -505,6 +505,28 @@ describe("API parsers", () => {
     expect(() => parseGitStatusResponse({ isGitRepo: true, hash: "h", files: [{ path: "a", index: "weird", workingTree: "modified" }] })).toThrow("Invalid git file state");
   });
 
+  it("parses submodule paths and pointer commit fields", () => {
+    const parsed = parseGitStatusResponse({
+      isGitRepo: true,
+      hash: "h",
+      branch: "main",
+      files: [
+        { path: "HARL", index: "unmodified", workingTree: "modified", submoduleFromCommit: "1111111", submoduleToCommit: "2222222" },
+        { path: "HARL/inner.txt", index: "modified", workingTree: "modified" },
+      ],
+      submodules: ["HARL"],
+    });
+    expect(parsed.submodules).toEqual(["HARL"]);
+    expect(parsed.files[0]?.submoduleFromCommit).toBe("1111111");
+    expect(parsed.files[0]?.submoduleToCommit).toBe("2222222");
+    expect(parsed.files[1]?.submoduleFromCommit).toBeUndefined();
+  });
+
+  it("defaults submodules to an empty list when absent", () => {
+    const parsed = parseGitStatusResponse({ isGitRepo: true, hash: "h", files: [] });
+    expect(parsed.submodules).toEqual([]);
+  });
+
   it("validates file content responses", () => {
     const textFile = {
       path: "README.md",

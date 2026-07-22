@@ -2,16 +2,19 @@ import { css, html, LitElement, type PropertyValues, type TemplateResult } from 
 import { customElement, property, state } from "lit/decorators.js";
 import type { GitDiffResponse, GitStatusFile, GitStatusResponse } from "../api";
 import { buildGitFileTree, collectGitFileTreeDirectoryPaths, type GitFileTreeNode } from "../gitFileTree";
+import { buildGitFileList, type GitFileListModel, type GitFileListSubmoduleFile, type GitFileListSubmoduleGroup } from "../gitFileList";
 import { readGitFileView, writeGitFileView, type GitFileView } from "../gitFileViewPreference";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { workspacePanelStyles } from "./shared";
 
-interface GitTreeState {
+interface GitViewState {
   readonly nodes: readonly GitFileTreeNode[];
-  readonly directoryPaths: readonly string[];
+  readonly listModel: GitFileListModel;
+  readonly expandablePaths: readonly string[];
 }
 
-const EMPTY_TREE_STATE: GitTreeState = { nodes: [], directoryPaths: [] };
+const EMPTY_LIST_MODEL: GitFileListModel = { submodules: [], files: [] };
+const EMPTY_VIEW_STATE: GitViewState = { nodes: [], listModel: EMPTY_LIST_MODEL, expandablePaths: [] };
 
 @customElement("workspace-git-panel")
 export class WorkspaceGitPanel extends LitElement {
@@ -27,6 +30,7 @@ export class WorkspaceGitPanel extends LitElement {
       .view-toggle button:last-child { border-top-right-radius: 7px; border-bottom-right-radius: 7px; margin-left: -1px; }
       .view-toggle button.selected { position: relative; z-index: 1; }
       .row .twisty { color: var(--pi-dim, var(--pi-muted)); }
+      .submodule-badge { display: inline-block; margin-left: 6px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; vertical-align: baseline; }
     `,
   ];
 
@@ -37,7 +41,8 @@ export class WorkspaceGitPanel extends LitElement {
 
   // Ephemeral by design: the tree always opens fully collapsed, and expand
   // state is intentionally not persisted. Reassigned (never mutated in place)
-  // so Lit observes the change.
+  // so Lit observes the change. Shared by tree directories and, in list view,
+  // submodule groups, both keyed by their path.
   @state() private expandedDirectories = new Set<string>();
 
   protected override willUpdate(changedProperties: PropertyValues<this>): void {
@@ -53,20 +58,20 @@ export class WorkspaceGitPanel extends LitElement {
     const context = this.context;
     if (context === undefined) return html`<p class="muted">Git unavailable.</p>`;
     const status = context.gitStatus;
-    const treeState = this.computeTreeState(status);
+    const viewState = this.computeViewState(status);
     return html`
       <section class="toolbar">
         <strong>Git</strong>
         ${context.gitStale ? html`<span class="stale">stale</span>` : null}
         <div class="toolbar-actions">
           ${this.renderViewToggle()}
-          ${this.view === "tree" && treeState.directoryPaths.length > 0 ? this.renderExpandCollapseAll(treeState.directoryPaths) : null}
+          ${viewState.expandablePaths.length > 0 ? this.renderExpandCollapseAll(viewState.expandablePaths) : null}
           <button type="button" @click=${context.onRefreshGit}>Refresh</button>
         </div>
       </section>
       <section class="split">
         <div class=${this.view === "tree" ? "list tree" : "list"}>
-          ${this.renderFileList(context, status, treeState.nodes)}
+          ${this.renderFileList(context, status, viewState)}
         </div>
         <div class="viewer">${renderDiffViewer(context)}</div>
       </section>
@@ -89,22 +94,47 @@ export class WorkspaceGitPanel extends LitElement {
     `;
   }
 
-  private renderExpandCollapseAll(directoryPaths: readonly string[]): TemplateResult {
-    const allExpanded = directoryPaths.every((path) => this.expandedDirectories.has(path));
+  private renderExpandCollapseAll(expandablePaths: readonly string[]): TemplateResult {
+    const allExpanded = expandablePaths.every((path) => this.expandedDirectories.has(path));
     return html`
-      <button type="button" @click=${() => { this.toggleExpandAll(directoryPaths, allExpanded); }}>${allExpanded ? "Collapse all" : "Expand all"}</button>
+      <button type="button" @click=${() => { this.toggleExpandAll(expandablePaths, allExpanded); }}>${allExpanded ? "Collapse all" : "Expand all"}</button>
     `;
   }
 
-  private renderFileList(context: WorkspacePanelContext, status: GitStatusResponse | undefined, nodes: readonly GitFileTreeNode[]): TemplateResult {
+  private renderFileList(context: WorkspacePanelContext, status: GitStatusResponse | undefined, viewState: GitViewState): TemplateResult {
     if (status === undefined) return html`<p class="muted">No status loaded.</p>`;
     if (!status.isGitRepo) return html`<p class="muted">Not a git repository.</p>`;
     const summary = html`<p class="summary">${gitSummary(status)}</p>`;
     if (status.files.length === 0) return html`${summary}<p class="muted">No changes.</p>`;
     const body = this.view === "tree"
-      ? nodes.map((node) => this.renderTreeNode(context, node, 0))
-      : status.files.map((file) => this.renderFileRow(context, file));
+      ? viewState.nodes.map((node) => this.renderTreeNode(context, node, 0))
+      : this.renderListBody(context, viewState.listModel);
     return html`${summary}${body}`;
+  }
+
+  private renderListBody(context: WorkspacePanelContext, model: GitFileListModel): TemplateResult {
+    return html`
+      ${model.submodules.map((group) => this.renderSubmoduleGroup(context, group))}
+      ${model.files.map((file) => this.renderFileRow(context, file))}
+    `;
+  }
+
+  private renderSubmoduleGroup(context: WorkspacePanelContext, group: GitFileListSubmoduleGroup): TemplateResult {
+    const expanded = this.expandedDirectories.has(group.path);
+    return html`
+      <button type="button" class="row" style="--depth:0" aria-expanded=${expanded ? "true" : "false"} @click=${() => { this.toggleDirectory(group.path); }}>
+        <span class="twisty">${expanded ? "▾" : "▸"}</span>
+        <span>${group.name}${submoduleBadge()}</span>
+      </button>
+      ${expanded ? html`
+        ${group.pointer === undefined ? null : this.renderSelectableRow(context, group.path, group.pointer.name, group.pointer.file, 1)}
+        ${group.files.map((entry) => this.renderSubmoduleFileRow(context, entry))}
+      ` : null}
+    `;
+  }
+
+  private renderSubmoduleFileRow(context: WorkspacePanelContext, entry: GitFileListSubmoduleFile): TemplateResult {
+    return this.renderSelectableRow(context, entry.path, entry.relativePath, entry.file, 1);
   }
 
   private renderTreeNode(context: WorkspacePanelContext, node: GitFileTreeNode, depth: number): TemplateResult {
@@ -113,42 +143,44 @@ export class WorkspaceGitPanel extends LitElement {
       return html`
         <button type="button" class="row" style=${`--depth:${String(depth)}`} aria-expanded=${expanded ? "true" : "false"} @click=${() => { this.toggleDirectory(node.path); }}>
           <span class="twisty">${expanded ? "▾" : "▸"}</span>
-          <span>${node.name}</span>
+          <span>${node.name}${node.isSubmodule === true ? submoduleBadge() : null}</span>
         </button>
         ${expanded ? node.children.map((child) => this.renderTreeNode(context, child, depth + 1)) : null}
       `;
     }
-    const selected = context.selectedDiffPath === node.path;
-    return html`
-      <button type="button" class=${selected ? "row selected" : "row"} style=${`--depth:${String(depth)}`} @click=${() => { context.onSelectDiff(node.path); }}>
-        <span>${stateLabel(node.file.index, node.file.workingTree)}</span>
-        <span>${node.name}</span>
-      </button>
-    `;
+    return this.renderSelectableRow(context, node.path, node.name, node.file, depth);
   }
 
   private renderFileRow(context: WorkspacePanelContext, file: GitStatusFile): TemplateResult {
-    const selected = context.selectedDiffPath === file.path;
+    return this.renderSelectableRow(context, file.path, file.path, file, 0);
+  }
+
+  private renderSelectableRow(context: WorkspacePanelContext, path: string, label: string, file: GitStatusFile, depth: number): TemplateResult {
+    const selected = context.selectedDiffPath === path;
     return html`
-      <button type="button" class=${selected ? "row selected" : "row"} @click=${() => { context.onSelectDiff(file.path); }}>
+      <button type="button" class=${selected ? "row selected" : "row"} style=${`--depth:${String(depth)}`} @click=${() => { context.onSelectDiff(path); }}>
         <span>${stateLabel(file.index, file.workingTree)}</span>
-        <span>${file.path}</span>
+        <span>${label}</span>
       </button>
     `;
   }
 
-  private computeTreeState(status: GitStatusResponse | undefined): GitTreeState {
-    if (this.view !== "tree" || status === undefined || !status.isGitRepo || status.files.length === 0) return EMPTY_TREE_STATE;
-    const nodes = buildGitFileTree(status.files);
-    return { nodes, directoryPaths: collectGitFileTreeDirectoryPaths(nodes) };
+  private computeViewState(status: GitStatusResponse | undefined): GitViewState {
+    if (status === undefined || !status.isGitRepo || status.files.length === 0) return EMPTY_VIEW_STATE;
+    if (this.view === "tree") {
+      const nodes = buildGitFileTree(status.files, status.submodules);
+      return { nodes, listModel: EMPTY_LIST_MODEL, expandablePaths: collectGitFileTreeDirectoryPaths(nodes) };
+    }
+    const listModel = buildGitFileList(status.files, status.submodules);
+    return { nodes: [], listModel, expandablePaths: listModel.submodules.map((group) => group.path) };
   }
 
   private setView(view: GitFileView): void {
     if (this.view === view) return;
     this.view = view;
     writeGitFileView(view);
-    // The tree always starts fully collapsed when entered.
-    if (view === "tree") this.expandedDirectories = new Set();
+    // Entering either view starts fully collapsed.
+    this.expandedDirectories = new Set();
   }
 
   private toggleDirectory(path: string): void {
@@ -158,9 +190,13 @@ export class WorkspaceGitPanel extends LitElement {
     this.expandedDirectories = next;
   }
 
-  private toggleExpandAll(directoryPaths: readonly string[], allExpanded: boolean): void {
-    this.expandedDirectories = allExpanded ? new Set() : new Set(directoryPaths);
+  private toggleExpandAll(expandablePaths: readonly string[], allExpanded: boolean): void {
+    this.expandedDirectories = allExpanded ? new Set() : new Set(expandablePaths);
   }
+}
+
+function submoduleBadge(): TemplateResult {
+  return html`<span class="submodule-badge">submodule</span>`;
 }
 
 function renderDiffViewer(context: WorkspacePanelContext): TemplateResult {

@@ -818,12 +818,12 @@ function optionalFileMediaType(value: unknown): FileContentResponse["mediaType"]
 
 export function parseGitStatusResponse(value: unknown): GitStatusResponse {
   const record = requireRecord(value);
-  return { isGitRepo: requireBoolean(record, "isGitRepo"), hash: requireString(record, "hash"), ...optionalField("branch", optionalString(record, "branch")), ...optionalField("upstream", optionalString(record, "upstream")), ...optionalField("ahead", optionalNumber(record, "ahead")), ...optionalField("behind", optionalNumber(record, "behind")), files: arrayOf(parseGitStatusFile)(record["files"]) };
+  return { isGitRepo: requireBoolean(record, "isGitRepo"), hash: requireString(record, "hash"), ...optionalField("branch", optionalString(record, "branch")), ...optionalField("upstream", optionalString(record, "upstream")), ...optionalField("ahead", optionalNumber(record, "ahead")), ...optionalField("behind", optionalNumber(record, "behind")), files: arrayOf(parseGitStatusFile)(record["files"]), submodules: record["submodules"] === undefined ? [] : arrayOfString(record["submodules"], "submodules") };
 }
 
 function parseGitStatusFile(value: unknown): GitStatusFile {
   const record = requireRecord(value);
-  return { path: requireString(record, "path"), ...optionalField("oldPath", optionalString(record, "oldPath")), index: parseGitFileState(record["index"]), workingTree: parseGitFileState(record["workingTree"]) };
+  return { path: requireString(record, "path"), ...optionalField("oldPath", optionalString(record, "oldPath")), index: parseGitFileState(record["index"]), workingTree: parseGitFileState(record["workingTree"]), ...optionalField("submoduleFromCommit", optionalString(record, "submoduleFromCommit")), ...optionalField("submoduleToCommit", optionalString(record, "submoduleToCommit")) };
 }
 
 function parseGitFileState(value: unknown): GitFileState {
