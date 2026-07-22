@@ -4,28 +4,158 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { installGlobalProviderPolicy, learnGlobalExtensionProviderIds, providerRejectionMessage } from "./globalProviderPolicy.js";
+import {
+  bootstrapAndFreezeGlobalExtensionProviders,
+  type GlobalProviderBootstrapLogger,
+} from "./globalProviderPolicy.js";
 import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
-import { PiSessionService } from "./piSessionService.js";
-import { CapturingSessionEventHub, createTestModelRuntime, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from "./piSessionService.testSupport.js";
+import { PiSessionService, type PiSessionRef } from "./piSessionService.js";
+import {
+  CapturingSessionEventHub,
+  createTestModelRuntime,
+  TEST_MODEL_ID,
+  TEST_MODEL_PROVIDER,
+} from "./piSessionService.testSupport.js";
 
 /**
- * Acceptance tests for the global provider policy, wired exactly as sessiond
- * wires it in production: one shared ModelRuntime per daemon, the global
- * extensions' provider ids learned at startup, the policy shim installed on
- * the runtime, and rejections fed into the session service. Sessions are
- * created through the real default runtime factory, so extensions in a temp
- * cwd or temp agent dir are genuinely loaded by Pi's
- * `createAgentSessionServices`.
+ * Acceptance coverage for the exact sessiond lifecycle: global extensions are
+ * loaded once against the shared ModelRuntime, provider mutations are frozen,
+ * and real sessions subsequently load both global and project extensions
+ * through Pi's public session factories.
  *
- * These tests are also the tripwire for the shim's one piece of machinery
- * (instance-method shadowing of `registerProvider` / `registerNativeProvider`
- * / `unregisterProvider`): if a Pi upgrade changes how registrations reach
- * the runtime, the load-time and late-registration tests here fail loudly.
+ * These tests are also a tripwire for the instance-method shadowing used to
+ * freeze `registerProvider`, native registration, and unregistration. If Pi
+ * changes how real extension calls reach ModelRuntime, these scenarios fail.
  */
+
+interface LogEntry {
+  level: "error" | "info" | "warn";
+  details: Record<string, unknown>;
+  message: string;
+}
+
+interface PolicyHarness {
+  service: PiSessionService;
+  runtime: ModelRuntime;
+  agentDir: string;
+  logEntries: LogEntry[];
+}
 
 const tempDirs: string[] = [];
 const services: PiSessionService[] = [];
+
+const IGNORED_MUTATION_MESSAGE = "ignored provider mutation after global bootstrap";
+
+function modelId(providerId: string, variant: string): string {
+  return `${providerId}-${variant}-model`;
+}
+
+function providerBaseUrl(providerId: string, variant: string): string {
+  return `https://${providerId}-${variant}.example.com`;
+}
+
+function providerConfig(providerId: string, variant = "baseline"): Record<string, unknown> {
+  return {
+    name: `${providerId} ${variant}`,
+    baseUrl: providerBaseUrl(providerId, variant),
+    apiKey: `sk-${providerId}-${variant}-secret`,
+    api: "openai-completions",
+    models: [{
+      id: modelId(providerId, variant),
+      name: `${providerId} ${variant} model`,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1_000,
+      maxTokens: 100,
+    }],
+  };
+}
+
+function providerRegistrationSource(providerId: string, variant = "baseline"): string {
+  return `pi.registerProvider(${JSON.stringify(providerId)}, ${JSON.stringify(providerConfig(providerId, variant))});`;
+}
+
+function nativeProviderRegistrationSource(providerId: string, variant = "baseline"): string {
+  const baseUrl = providerBaseUrl(providerId, variant);
+  const model = {
+    id: modelId(providerId, variant),
+    name: `${providerId} ${variant} model`,
+    api: "openai-completions",
+    provider: providerId,
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 2_000,
+    maxTokens: 200,
+  };
+  return `pi.registerProvider({
+    id: ${JSON.stringify(providerId)},
+    name: ${JSON.stringify(`${providerId} ${variant}`)},
+    baseUrl: ${JSON.stringify(baseUrl)},
+    auth: {
+      apiKey: {
+        name: ${JSON.stringify(`${providerId} API key`)},
+        async resolve() {
+          return {
+            auth: { apiKey: ${JSON.stringify(`sk-${providerId}-${variant}-secret`)} },
+            source: "acceptance fixture"
+          };
+        }
+      }
+    },
+    getModels() { return [${JSON.stringify(model)}]; },
+    stream() { throw new Error("stream should not be called in this acceptance test"); },
+    streamSimple() { throw new Error("streamSimple should not be called in this acceptance test"); }
+  });`;
+}
+
+function globalProvidersSource(): string {
+  return `
+    export default function (pi) {
+      ${providerRegistrationSource("global-config")}
+      ${nativeProviderRegistrationSource("global-native")}
+    }
+  `;
+}
+
+function capturingLogger(): { entries: LogEntry[]; logger: GlobalProviderBootstrapLogger } {
+  const entries: LogEntry[] = [];
+  const record = (level: LogEntry["level"], details: Record<string, unknown>, message: string): void => {
+    entries.push({ level, details, message });
+  };
+  return {
+    entries,
+    logger: {
+      error: (details, message) => { record("error", details, message); },
+      info: (details, message) => { record("info", details, message); },
+      warn: (details, message) => { record("warn", details, message); },
+    },
+  };
+}
+
+function ignoredMutationEntries(entries: readonly LogEntry[]): LogEntry[] {
+  return entries.filter((entry) => entry.message === IGNORED_MUTATION_MESSAGE);
+}
+
+function expectIgnoredMutations(
+  entries: readonly LogEntry[],
+  expected: readonly { operation: string; providerId: string }[],
+): void {
+  const ignored = ignoredMutationEntries(entries);
+  expect(ignored).toHaveLength(expected.length);
+  expect(ignored.map((entry) => entry.details)).toEqual(expect.arrayContaining(
+    expected.map(({ operation, providerId }) => ({
+      context: "global-provider-bootstrap",
+      operation,
+      providerId,
+    })),
+  ));
+  expect(ignored.every((entry) => entry.level === "info")).toBe(true);
+  const operationProviderKeys = ignored.map((entry) => `${String(entry.details["operation"])}:${String(entry.details["providerId"])}`);
+  expect(new Set(operationProviderKeys).size).toBe(ignored.length);
+}
 
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -39,37 +169,14 @@ async function tempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-interface PolicyHarness {
-  service: PiSessionService;
-  runtime: ModelRuntime;
-  agentDir: string;
-}
-
-async function policyHarness(options: { runtime?: ModelRuntime; agentDir?: string } = {}): Promise<PolicyHarness> {
-  const agentDir = options.agentDir ?? await tempDir("pi-web-policy-agent-");
-  // Isolate Pi's per-user resource discovery (~/.agents/skills et al.) so the
-  // only extensions loaded are the ones a test writes into its temp cwd.
-  vi.stubEnv("HOME", await tempDir("pi-web-policy-home-"));
-  const runtime = options.runtime ?? await createTestModelRuntime();
-  const service = new PiSessionService(new CapturingSessionEventHub(), {
-    agentDir,
-    modelRuntime: runtime,
-    sessionManager: createPiSessionManagerGateway({ agentDir, env: {}, sessionDirEnvKeys: [] }),
-    heartbeatIntervalMs: 60_000,
-  });
-  services.push(service);
-  // The exact sessiond wiring: learn the agent dir's global-extension
-  // providers first, then the policy on the shared runtime, rejections to the
-  // service.
-  const allowedProviderIds = await learnGlobalExtensionProviderIds(runtime, agentDir);
-  installGlobalProviderPolicy(runtime, allowedProviderIds, (providerId) => { service.noteRejectedProviderRegistration(providerId); });
-  return { service, runtime, agentDir };
-}
-
-/** Write a global extension into `<agentDir>/extensions/` (agent-dir extensions load for every session). */
-async function agentDirWithExtension(agentDir: string, source: string): Promise<string> {
+async function writeAgentExtension(agentDir: string, source: string): Promise<void> {
   await mkdir(join(agentDir, "extensions"), { recursive: true });
   await writeFile(join(agentDir, "extensions", "global-probe.js"), source);
+}
+
+async function agentDirWithExtension(source: string): Promise<string> {
+  const agentDir = await tempDir("pi-web-policy-agent-");
+  await writeAgentExtension(agentDir, source);
   return agentDir;
 }
 
@@ -81,17 +188,31 @@ async function projectWithExtension(source: string): Promise<string> {
   return cwd;
 }
 
-function providerConfig(providerId: string): Record<string, unknown> {
-  return {
-    baseUrl: `https://${providerId}.example.com`,
-    apiKey: "sk-test",
-    api: "openai-completions",
-    models: [{ id: "model-1", name: "Model One", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 }],
-  };
+async function policyHarness(options: { runtime?: ModelRuntime; agentDir?: string } = {}): Promise<PolicyHarness> {
+  const agentDir = options.agentDir ?? await tempDir("pi-web-policy-agent-");
+  // Isolate Pi's per-user resource discovery (~/.agents/skills et al.) so the
+  // harness sees only extensions written into its explicit agent/project dirs.
+  vi.stubEnv("HOME", await tempDir("pi-web-policy-home-"));
+  const runtime = options.runtime ?? await createTestModelRuntime();
+  const { entries, logger } = capturingLogger();
+
+  await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+
+  const service = new PiSessionService(new CapturingSessionEventHub(), {
+    agentDir,
+    modelRuntime: runtime,
+    sessionManager: createPiSessionManagerGateway({ agentDir, env: {}, sessionDirEnvKeys: [] }),
+    heartbeatIntervalMs: 60_000,
+    logger,
+  });
+  services.push(service);
+  return { service, runtime, agentDir, logEntries: entries };
 }
 
-function providerConfigJson(providerId: string): string {
-  return JSON.stringify(providerConfig(providerId));
+async function expectNoProviderMutationFeedback(service: PiSessionService, ref: PiSessionRef): Promise<void> {
+  const status = await service.status(ref);
+  expect(status.warnings ?? []).toEqual([]);
+  expect(service.notificationInbox(ref).notifications).toEqual([]);
 }
 
 /** Parse the session-start marker file without type assertions. */
@@ -105,32 +226,84 @@ function parseToolMarker(raw: string): { activeTools: string[]; allTools: string
   return { activeTools: activeTools.map(String), allTools: allTools.map(String) };
 }
 
-function providerRegistrationSource(providerId: string): string {
-  return `pi.registerProvider(${JSON.stringify(providerId)}, ${providerConfigJson(providerId)});`;
-}
+describe("immutable global provider bootstrap acceptance", () => {
+  it("loads global config and native providers once, then treats normal session replay as a no-op", async () => {
+    const agentDir = await agentDirWithExtension(globalProvidersSource());
+    const { service, runtime, logEntries } = await policyHarness({ agentDir });
+    const baselineConfig = runtime.getRegisteredProviderConfig("global-config");
+    const baselineNative = runtime.getRegisteredNativeProvider("global-native");
 
-const POLICY_WORDING = "PI WEB providers must come from global configuration";
+    expect(baselineConfig).toMatchObject({ baseUrl: providerBaseUrl("global-config", "baseline") });
+    expect(baselineNative).toMatchObject({
+      id: "global-native",
+      baseUrl: providerBaseUrl("global-native", "baseline"),
+    });
+    expect(logEntries).toContainEqual({
+      level: "info",
+      details: { context: "global-provider-bootstrap", providerIds: ["global-config", "global-native"] },
+      message: "global extension provider baseline bootstrapped and frozen",
+    });
 
-describe("global provider policy acceptance", () => {
-  it("rejects a load-time provider registration while the extension's tool and command keep working", async () => {
-    const { service, runtime } = await policyHarness();
+    const cwd = await tempDir("pi-web-policy-project-");
+    const session = await service.start(cwd);
+    const ref = { id: session.id, cwd };
+
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native"]);
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
+    expect(runtime.getRegisteredNativeProvider("global-native")).toBe(baselineNative);
+    expect(runtime.getModel("global-config", modelId("global-config", "baseline"))).toMatchObject({
+      provider: "global-config",
+      baseUrl: providerBaseUrl("global-config", "baseline"),
+    });
+    expect(runtime.getModel("global-native", modelId("global-native", "baseline"))).toMatchObject({
+      provider: "global-native",
+      baseUrl: providerBaseUrl("global-native", "baseline"),
+    });
+    const available = await service.availableModels(ref);
+    expect(available).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "global-config", id: modelId("global-config", "baseline") }),
+      expect.objectContaining({ provider: "global-native", id: modelId("global-native", "baseline") }),
+    ]));
+    expectIgnoredMutations(logEntries, [
+      { operation: "registerProvider", providerId: "global-config" },
+      { operation: "registerNativeProvider", providerId: "global-native" },
+    ]);
+    await expectNoProviderMutationFeedback(service, ref);
+  });
+
+  it("blocks real project add, replacement, and unregister calls without disabling other extension features", async () => {
+    const agentDir = await agentDirWithExtension(globalProvidersSource());
+    const { service, runtime, logEntries } = await policyHarness({ agentDir });
+    const baselineConfig = runtime.getRegisteredProviderConfig("global-config");
+    const baselineNative = runtime.getRegisteredNativeProvider("global-native");
     const markerPath = join(await tempDir("pi-web-policy-marker-"), "session-start.json");
     const cwd = await projectWithExtension(`
       import { writeFileSync } from "node:fs";
       export default function (pi) {
-        ${providerRegistrationSource("acme-ext")}
+        ${providerRegistrationSource("project-config", "project-secret")}
+        ${providerRegistrationSource("global-config", "project-secret")}
+        ${nativeProviderRegistrationSource("project-native", "project-secret")}
+        ${nativeProviderRegistrationSource("global-native", "project-secret")}
         pi.registerTool({
-          name: "acme_tool",
-          label: "Acme Tool",
-          description: "acceptance probe tool",
+          name: "project_probe_tool",
+          label: "Project Probe Tool",
+          description: "non-provider acceptance probe",
           parameters: { type: "object", properties: {} },
-          async execute() { return { content: [{ type: "text", text: "acme ok" }] }; },
+          async execute() { return { content: [{ type: "text", text: "project probe ok" }] }; }
         });
-        pi.registerCommand("acme-cmd", { description: "acceptance probe command", async handler() {} });
-        pi.on("session_start", async () => {
+        pi.registerCommand("project-probe", {
+          description: "non-provider acceptance probe",
+          async handler() {}
+        });
+        pi.on("session_start", () => {
+          ${providerRegistrationSource("project-config", "late-secret")}
+          pi.unregisterProvider("global-config");
+          pi.unregisterProvider("global-config");
+          pi.unregisterProvider("global-native");
+          pi.unregisterProvider("global-native");
           writeFileSync(${JSON.stringify(markerPath)}, JSON.stringify({
             activeTools: pi.getActiveTools(),
-            allTools: pi.getAllTools().map((tool) => tool.name),
+            allTools: pi.getAllTools().map((tool) => tool.name)
           }));
         });
       }
@@ -139,167 +312,118 @@ describe("global provider policy acceptance", () => {
     const session = await service.start(cwd);
     const ref = { id: session.id, cwd };
 
-    // The session opens and the rejection is surfaced as the session's one warning.
-    const status = await service.status(ref);
-    expect(status.warnings).toEqual([
-      { severity: "warning", message: providerRejectionMessage("acme-ext", cwd), source: "runtime" },
-    ]);
-
-    // The provider never reached the shared runtime or the model listings.
-    expect(runtime.getRegisteredProviderIds()).toEqual([]);
-    expect(runtime.getModel("acme-ext", "model-1")).toBeUndefined();
-    const models = await service.availableModels(ref);
-    expect(models.some((model) => model.provider === "acme-ext")).toBe(false);
-
-    // Global (built-in) providers are untouched.
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native"]);
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
+    expect(runtime.getRegisteredNativeProvider("global-native")).toBe(baselineNative);
+    expect(runtime.getRegisteredProviderConfig("project-config")).toBeUndefined();
+    expect(runtime.getRegisteredNativeProvider("project-native")).toBeUndefined();
+    expect(runtime.getModel("global-config", modelId("global-config", "baseline"))).toBeDefined();
+    expect(runtime.getModel("global-config", modelId("global-config", "project-secret"))).toBeUndefined();
+    expect(runtime.getModel("global-native", modelId("global-native", "baseline"))).toBeDefined();
+    expect(runtime.getModel("global-native", modelId("global-native", "project-secret"))).toBeUndefined();
     expect(runtime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID)).toBeDefined();
 
-    // Everything else the extension registered still works.
-    const commands = await service.commands(ref);
-    expect(commands).toContainEqual({ name: "acme-cmd", description: "acceptance probe command", source: "extension" });
+    expect(await service.commands(ref)).toContainEqual({
+      name: "project-probe",
+      description: "non-provider acceptance probe",
+      source: "extension",
+    });
     const marker = parseToolMarker(await readFile(markerPath, "utf-8"));
-    expect(marker.activeTools).toContain("acme_tool");
-  });
+    expect(marker.activeTools).toContain("project_probe_tool");
+    expect(marker.allTools).toContain("project_probe_tool");
 
-  it("appends exactly one warning diagnostic per rejected provider", async () => {
-    const { service } = await policyHarness();
-    const cwd = await projectWithExtension(`
-      export default function (pi) {
-        ${providerRegistrationSource("multi-a")}
-        ${providerRegistrationSource("multi-b")}
-        ${providerRegistrationSource("multi-a")}
-      }
-    `);
-
-    const session = await service.start(cwd);
-    const status = await service.status({ id: session.id, cwd });
-
-    expect(status.warnings).toEqual([
-      { severity: "warning", message: providerRejectionMessage("multi-a", cwd), source: "runtime" },
-      { severity: "warning", message: providerRejectionMessage("multi-b", cwd), source: "runtime" },
+    expectIgnoredMutations(logEntries, [
+      { operation: "registerProvider", providerId: "global-config" },
+      { operation: "registerProvider", providerId: "project-config" },
+      { operation: "registerNativeProvider", providerId: "global-native" },
+      { operation: "registerNativeProvider", providerId: "project-native" },
+      { operation: "unregisterProvider", providerId: "global-config" },
+      { operation: "unregisterProvider", providerId: "global-native" },
     ]);
+    expect(JSON.stringify(ignoredMutationEntries(logEntries))).not.toContain("secret");
+    expect(JSON.stringify(ignoredMutationEntries(logEntries))).not.toContain("example.com");
+    await expectNoProviderMutationFeedback(service, ref);
   });
 
-  it("adds no policy warning when a load registers no providers", async () => {
-    const { service } = await policyHarness();
-    const cwd = await tempDir("pi-web-policy-project-");
-
-    const session = await service.start(cwd);
-    const status = await service.status({ id: session.id, cwd });
-
-    expect((status.warnings ?? []).filter((warning) => warning.message.includes(POLICY_WORDING))).toEqual([]);
-  });
-
-  it("rejects a late registration from a session event handler and notifies active sessions", async () => {
-    const { service, runtime } = await policyHarness();
-    const plainCwd = await tempDir("pi-web-policy-project-");
-    const listenerCwd = await projectWithExtension(`
+  it("keeps a tensorX-style startup provider while ignoring its session_start refresh", async () => {
+    const providerId = "tensorx-style";
+    const agentDir = await agentDirWithExtension(`
       export default function (pi) {
+        ${providerRegistrationSource(providerId, "startup")}
         pi.on("session_start", () => {
-          ${providerRegistrationSource("late-acme")}
+          ${providerRegistrationSource(providerId, "late-refresh-secret")}
         });
       }
     `);
-
-    // The listener session's `session_start` fires while it is being bound,
-    // after the load-time rejection window has closed: a late registration.
-    const bystander = await service.start(plainCwd);
-    await service.start(listenerCwd);
-
-    // The rejection is broadcast to the sessions active at the time.
-    const inbox = service.notificationInbox({ id: bystander.id, cwd: plainCwd });
-    const notices = inbox.notifications.filter((notification) => notification.message.includes(POLICY_WORDING));
-    expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ severity: "warning", message: providerRejectionMessage("late-acme") });
-
-    // The late registration never reached the shared runtime either.
-    expect(runtime.getRegisteredProviderIds()).toEqual([]);
-    expect(runtime.getModel("late-acme", "model-1")).toBeUndefined();
-  });
-
-  it("keeps workspaces with colliding provider ids from affecting each other", async () => {
-    const { service, runtime } = await policyHarness();
-    const collisionSource = `
-      export default function (pi) {
-        ${providerRegistrationSource("collide-acme")}
-      }
-    `;
-    const cwdA = await projectWithExtension(collisionSource);
-    const cwdB = await projectWithExtension(collisionSource);
-
-    // The pre-#76 scenario: two workspaces register the same provider id on the
-    // shared runtime. With the policy, both sessions open and neither
-    // registration exists, so there is nothing left to collide.
-    const sessionA = await service.start(cwdA);
-    const sessionB = await service.start(cwdB);
-
-    expect((await service.status({ id: sessionA.id, cwd: cwdA })).warnings).toEqual([
-      { severity: "warning", message: providerRejectionMessage("collide-acme", cwdA), source: "runtime" },
-    ]);
-    expect((await service.status({ id: sessionB.id, cwd: cwdB })).warnings).toEqual([
-      { severity: "warning", message: providerRejectionMessage("collide-acme", cwdB), source: "runtime" },
-    ]);
-    expect(runtime.getRegisteredProviderIds()).toEqual([]);
-    expect(runtime.getModel("collide-acme", "model-1")).toBeUndefined();
-  });
-
-  it("allows providers from global (agent-dir) extensions while still rejecting project extensions", async () => {
-    const agentDir = await agentDirWithExtension(await tempDir("pi-web-policy-agent-"), `
-      export default function (pi) {
-        ${providerRegistrationSource("global-ext")}
-      }
-    `);
-    const { service, runtime } = await policyHarness({ agentDir });
-    const cwd = await projectWithExtension(`
-      export default function (pi) {
-        ${providerRegistrationSource("project-ext")}
-      }
-    `);
+    const { service, runtime, logEntries } = await policyHarness({ agentDir });
+    const baseline = runtime.getRegisteredProviderConfig(providerId);
+    const cwd = await tempDir("pi-web-policy-project-");
 
     const session = await service.start(cwd);
     const ref = { id: session.id, cwd };
 
-    // The global extension's provider reached the shared runtime at daemon
-    // startup and stays usable; the project extension's is rejected.
-    expect(runtime.getModel("global-ext", "model-1")).toBeDefined();
-    expect(runtime.getModel("project-ext", "model-1")).toBeUndefined();
-    expect(runtime.getRegisteredProviderIds()).toEqual(["global-ext"]);
-    const status = await service.status(ref);
-    expect(status.warnings).toEqual([
-      { severity: "warning", message: providerRejectionMessage("project-ext", cwd), source: "runtime" },
+    expect(runtime.getRegisteredProviderConfig(providerId)).toBe(baseline);
+    expect(runtime.getRegisteredProviderConfig(providerId)).toMatchObject({
+      baseUrl: providerBaseUrl(providerId, "startup"),
+    });
+    expect(runtime.getModel(providerId, modelId(providerId, "startup"))).toBeDefined();
+    expect(runtime.getModel(providerId, modelId(providerId, "late-refresh-secret"))).toBeUndefined();
+    expectIgnoredMutations(logEntries, [
+      { operation: "registerProvider", providerId },
     ]);
-    const models = await service.availableModels(ref);
-    expect(models.some((model) => model.provider === "global-ext")).toBe(true);
-    expect(models.some((model) => model.provider === "project-ext")).toBe(false);
+    expect(JSON.stringify(ignoredMutationEntries(logEntries))).not.toContain("late-refresh-secret");
+    await expectNoProviderMutationFeedback(service, ref);
   });
 
-  it("lets a global extension re-register its provider late without warnings", async () => {
-    // The pi-tensorx pattern: register on load, then re-register from
-    // session_start with a refreshed model catalog. Both calls carry the
-    // learned id, so neither is a leak.
-    const agentDir = await agentDirWithExtension(await tempDir("pi-web-policy-agent-"), `
+  it("requires a fresh daemon bootstrap for global extension changes instead of applying them on reload", async () => {
+    const providerId = "reload-global";
+    const variantEnv = "PI_WEB_ACCEPTANCE_PROVIDER_VARIANT";
+    vi.stubEnv(variantEnv, "first");
+    const agentDir = await agentDirWithExtension(`
       export default function (pi) {
-        ${providerRegistrationSource("global-ext")}
-        pi.on("session_start", () => {
-          ${providerRegistrationSource("global-ext")}
+        const variant = process.env[${JSON.stringify(variantEnv)}] ?? "missing";
+        pi.registerProvider(${JSON.stringify(providerId)}, {
+          name: "reload global " + variant,
+          baseUrl: "https://reload-" + variant + ".example.com",
+          apiKey: "sk-reload-" + variant,
+          api: "openai-completions",
+          models: [{
+            id: "model-" + variant,
+            name: "Reload " + variant,
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 1000,
+            maxTokens: 100
+          }]
         });
       }
     `);
-    const { service, runtime } = await policyHarness({ agentDir });
-    const plainCwd = await tempDir("pi-web-policy-project-");
+    const firstDaemon = await policyHarness({ agentDir });
+    const firstBaseline = firstDaemon.runtime.getRegisteredProviderConfig(providerId);
+    const cwd = await tempDir("pi-web-policy-project-");
+    const session = await firstDaemon.service.start(cwd);
+    const ref = { id: session.id, cwd };
 
-    const bystander = await service.start(plainCwd);
-    const status = await service.status({ id: bystander.id, cwd: plainCwd });
-    expect((status.warnings ?? []).filter((warning) => warning.message.includes(POLICY_WORDING))).toEqual([]);
-    const inbox = service.notificationInbox({ id: bystander.id, cwd: plainCwd });
-    expect(inbox.notifications.filter((notification) => notification.message.includes(POLICY_WORDING))).toEqual([]);
-    expect(runtime.getModel("global-ext", "model-1")).toBeDefined();
+    vi.stubEnv(variantEnv, "second");
+    await expect(firstDaemon.service.runCommand(ref, "/reload")).resolves.toMatchObject({ type: "done" });
+
+    expect(firstDaemon.runtime.getRegisteredProviderConfig(providerId)).toBe(firstBaseline);
+    expect(firstDaemon.runtime.getRegisteredProviderConfig(providerId)).toMatchObject({
+      baseUrl: "https://reload-first.example.com",
+    });
+    expect(firstDaemon.runtime.getModel(providerId, "model-first")).toBeDefined();
+    expect(firstDaemon.runtime.getModel(providerId, "model-second")).toBeUndefined();
+
+    const secondDaemon = await policyHarness({ agentDir });
+    expect(secondDaemon.runtime.getRegisteredProviderConfig(providerId)).toMatchObject({
+      baseUrl: "https://reload-second.example.com",
+    });
+    expect(secondDaemon.runtime.getModel(providerId, "model-first")).toBeUndefined();
+    expect(secondDaemon.runtime.getModel(providerId, "model-second")).toBeDefined();
   });
 
-  it("does not let a project-level models.json alter the shared runtime's provider set", async () => {
-    // Spike assertion for plan §2: the shared runtime reads providers from the
-    // agent-dir models.json only. A project-level models.json is not a
-    // scoped-provider vector.
+  it("leaves project-level models.json behavior unchanged", async () => {
     const agentDir = await tempDir("pi-web-policy-agent-");
     await writeFile(join(agentDir, "models.json"), JSON.stringify({
       providers: { "global-acme": providerConfig("global-acme") },
@@ -317,12 +441,11 @@ describe("global provider policy acceptance", () => {
     }));
 
     const session = await service.start(cwd);
+    const ref = { id: session.id, cwd };
 
-    // The globally configured provider is honored; the project-level one is not.
-    expect(runtime.getModel("global-acme", "model-1")).toBeDefined();
-    expect(runtime.getModel("project-acme", "model-1")).toBeUndefined();
+    expect(runtime.getModel("global-acme", modelId("global-acme", "baseline"))).toBeDefined();
+    expect(runtime.getModel("project-acme", modelId("project-acme", "baseline"))).toBeUndefined();
     expect(runtime.getRegisteredProviderIds()).toEqual([]);
-    const status = await service.status({ id: session.id, cwd });
-    expect((status.warnings ?? []).filter((warning) => warning.message.includes(POLICY_WORDING))).toEqual([]);
+    await expectNoProviderMutationFeedback(service, ref);
   });
 });
