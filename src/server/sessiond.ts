@@ -7,6 +7,7 @@ import { WorkspaceActivityService } from "./activity/workspaceActivityService.js
 import { registerWorkspaceActivityRoutes } from "./activity/workspaceActivityRoutes.js";
 import { SessionEventHub } from "./realtime/sessionEventHub.js";
 import { AuthService } from "./sessions/authService.js";
+import { installGlobalProviderPolicy } from "./sessions/globalProviderPolicy.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
@@ -69,6 +70,9 @@ await runSessionDaemonStartup({
       }),
     });
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    // PI WEB only supports globally configured providers: reject every
+    // extension provider registration against the shared daemon-wide runtime.
+    installGlobalProviderPolicy(auth.runtime, (providerId) => { sessions.noteRejectedProviderRegistration(providerId); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const runtimeComponent = Object.freeze({
       ...getPiWebRuntimeComponent("sessiond", SESSIOND_RUNTIME_CAPABILITIES),

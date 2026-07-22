@@ -65,6 +65,7 @@ import {
   type SessionNotificationMutation,
 } from "./sessionNotificationStore.js";
 import { plainTextTheme } from "./plainTextTheme.js";
+import { providerRejectionMessage } from "./globalProviderPolicy.js";
 import { SessionUnreadStore, type SessionUnreadMutation } from "./sessionUnreadStore.js";
 
 /**
@@ -580,14 +581,38 @@ export function createPiWebCustomToolDefinitions(
   ];
 }
 
+/**
+ * Correlates provider registrations rejected by the global provider policy
+ * with the services load that triggered them. `begin` returns the mutable list
+ * the policy listener appends to while the load is in flight; `end` detaches
+ * it. Implemented by {@link PiSessionService}, which owns the in-flight set.
+ */
+interface ProviderRejectionTracker {
+  begin(): string[];
+  end(rejectedProviderIds: string[]): void;
+}
+
 function createDefaultRuntimeFactory(
   modelRuntime: ModelRuntime,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
+  providerRejections?: ProviderRejectionTracker,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
-    const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+    const rejectedProviderIds = providerRejections?.begin();
+    let services: AgentSessionServices;
+    try {
+      services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+    } finally {
+      if (rejectedProviderIds !== undefined) providerRejections?.end(rejectedProviderIds);
+    }
+    // Surface each provider the policy rejected during this load as a session
+    // warning, through the same diagnostics pipeline as other runtime setup
+    // issues. The registration was ignored; nothing else about the load changes.
+    for (const providerId of new Set(rejectedProviderIds ?? [])) {
+      services.diagnostics.push({ type: "warning", message: providerRejectionMessage(providerId, cwd) });
+    }
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
@@ -704,6 +729,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly now: () => Date;
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
+  /** Rejection lists of in-flight services loads; see {@link noteRejectedProviderRegistration}. */
+  private readonly pendingProviderRejectionLoads = new Set<string[]>();
   private readonly unreadStore: SessionUnreadStore;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -741,6 +768,16 @@ export class PiSessionService implements SessionRouteService {
         list: (parentSessionId, parentSessionFile) => this.listSubsessions(parentSessionId, parentSessionFile),
         check: (parentSessionId, sessionId, parentSessionFile) => this.checkSubsession(parentSessionId, sessionId, parentSessionFile),
         read: (parentSessionId, sessionId, query, parentSessionFile) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile),
+      },
+      {
+        begin: () => {
+          const rejectedProviderIds: string[] = [];
+          this.pendingProviderRejectionLoads.add(rejectedProviderIds);
+          return rejectedProviderIds;
+        },
+        end: (rejectedProviderIds) => {
+          this.pendingProviderRejectionLoads.delete(rejectedProviderIds);
+        },
       },
     );
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
@@ -784,6 +821,34 @@ export class PiSessionService implements SessionRouteService {
 
   notificationCatalog(): SessionNotificationCatalogSnapshot {
     return this.notificationStore.catalogSnapshot();
+  }
+
+  /**
+   * Handle a provider registration rejected by the daemon-wide global provider
+   * policy (installed on the shared model runtime by sessiond).
+   *
+   * A rejection raised while at least one services load is in flight is
+   * recorded onto every in-flight load, which surfaces it as that session's
+   * load warning. The shim cannot attribute a registration to a specific
+   * extension or load, so overlapping loads may each report the same provider
+   * id; that over-reports but never drops a rejection.
+   *
+   * With no load in flight this is a late registration from a bound session's
+   * extension event handler. It cannot be attributed to a session either, so
+   * the notice is broadcast to every active session's notification inbox.
+   */
+  noteRejectedProviderRegistration(providerId: string): void {
+    if (this.pendingProviderRejectionLoads.size > 0) {
+      for (const load of this.pendingProviderRejectionLoads) load.push(providerId);
+      return;
+    }
+    const message = providerRejectionMessage(providerId);
+    for (const record of this.active.values()) {
+      const generation = this.notificationGenerationBySession.get(record.runtime.session);
+      if (generation === undefined) continue;
+      const added = this.notificationStore.addNotification(generation, message, "warning");
+      this.publishNotificationMutations(added.mutations);
+    }
   }
 
   async unreadCatalog(): Promise<SessionUnreadCatalogSnapshot> {
