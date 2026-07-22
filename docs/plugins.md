@@ -27,9 +27,9 @@ Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB brows
 
 ## Extension provider registrations
 
-PI WEB only supports globally configured providers: Pi built-ins, environment credentials, and providers declared in the agent directory's `models.json` (the directory selected by `agent.dir`; see [Configuration](https://pi-web.dev/config)). All sessions share one daemon-wide provider set, so extensions cannot add their own: if a Pi extension calls `pi.registerProvider(...)`, PI WEB ignores the registration and shows a warning in the session naming the provider. The extension itself still loads and everything else it registers keeps working; only the ignored provider's models never appear, so an extension that requires its own provider may load but remain unusable.
+PI WEB providers come from global sources only: Pi built-ins, environment credentials, providers declared in the agent directory's `models.json` (the directory selected by `agent.dir`; see [Configuration](https://pi-web.dev/config)), and providers registered by globally installed (agent-dir) extensions. Global extensions load identically for every session, so their providers are safe on the shared daemon-wide runtime; project extensions differ per workspace and cannot add providers. If a project extension calls `pi.registerProvider(...)`, PI WEB ignores the registration and shows a warning in the session naming the provider. The extension itself still loads and everything else it registers keeps working; only the ignored provider's models never appear, so a project extension that requires its own provider may load but remain unusable.
 
-To use such a provider, configure it globally in the agent directory's `models.json` instead. Project-level `models.json` files do not add providers to PI WEB sessions.
+To use a project extension's provider, move it to a global source: declare it in the agent directory's `models.json`, or install the extension globally in the agent directory. Project-level `models.json` files do not add providers to PI WEB sessions. This policy guards against accidental cross-workspace leakage; it is not a security boundary, since extensions run as trusted code inside the daemon.
 
 ## Trust model
 

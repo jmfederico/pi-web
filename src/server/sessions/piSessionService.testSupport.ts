@@ -208,7 +208,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     setSessionName: (name: string) => { session.sessionName = name; },
     compact: () => Promise.resolve({ summary: "", tokensBefore: 0 }),
     getUserMessagesForForking: () => [],
-    agent: { streamFn: () => { throw new Error("streamFn should not be called in this test"); } },
+    agent: { streamFunction: () => { throw new Error("streamFunction should not be called in this test"); } },
     ...patch,
   };
   const runtime: PiSessionRuntime = {

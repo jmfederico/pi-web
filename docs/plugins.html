@@ -163,11 +163,12 @@
                 PI WEB browser plugins. A routine session daemon restart is not required.
               </p>
               <p>
-                One exception applies to Pi package extensions: PI WEB supports only globally configured providers
-                (Pi built-ins, environment credentials, and the agent directory's <code>models.json</code>). If an
-                extension calls <code>pi.registerProvider</code>, PI WEB ignores the registration and warns in the
-                session; everything else the extension registers keeps working. Configure such providers globally in
-                the agent directory's <code>models.json</code> instead.
+                One exception applies to Pi package extensions: PI WEB providers come from global sources only
+                (Pi built-ins, environment credentials, the agent directory's <code>models.json</code>, and providers
+                registered by globally installed, agent-dir extensions). If a project extension calls
+                <code>pi.registerProvider</code>, PI WEB ignores the registration and warns in the session; everything
+                else the extension registers keeps working. Move such a provider to a global source: declare it in
+                the agent directory's <code>models.json</code>, or install the extension globally.
               </p>
             </section>
 

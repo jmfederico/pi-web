@@ -4,22 +4,24 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { installGlobalProviderPolicy, providerRejectionMessage } from "./globalProviderPolicy.js";
+import { installGlobalProviderPolicy, learnGlobalExtensionProviderIds, providerRejectionMessage } from "./globalProviderPolicy.js";
 import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, createTestModelRuntime, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from "./piSessionService.testSupport.js";
 
 /**
  * Acceptance tests for the global provider policy, wired exactly as sessiond
- * wires it in production: one shared ModelRuntime per daemon, the policy shim
- * installed on it, and rejections fed into the session service. Sessions are
- * created through the real default runtime factory, so project extensions in a
- * temp cwd are genuinely loaded by Pi's `createAgentSessionServices`.
+ * wires it in production: one shared ModelRuntime per daemon, the global
+ * extensions' provider ids learned at startup, the policy shim installed on
+ * the runtime, and rejections fed into the session service. Sessions are
+ * created through the real default runtime factory, so extensions in a temp
+ * cwd or temp agent dir are genuinely loaded by Pi's
+ * `createAgentSessionServices`.
  *
  * These tests are also the tripwire for the shim's one piece of machinery
- * (instance-method shadowing of `registerProvider`): if a Pi upgrade changes
- * how registrations reach the runtime, the load-time and late-registration
- * tests here fail loudly.
+ * (instance-method shadowing of `registerProvider` / `registerNativeProvider`
+ * / `unregisterProvider`): if a Pi upgrade changes how registrations reach
+ * the runtime, the load-time and late-registration tests here fail loudly.
  */
 
 const tempDirs: string[] = [];
@@ -56,9 +58,19 @@ async function policyHarness(options: { runtime?: ModelRuntime; agentDir?: strin
     heartbeatIntervalMs: 60_000,
   });
   services.push(service);
-  // The exact sessiond wiring: policy on the shared runtime, rejections to the service.
-  installGlobalProviderPolicy(runtime, (providerId) => { service.noteRejectedProviderRegistration(providerId); });
+  // The exact sessiond wiring: learn the agent dir's global-extension
+  // providers first, then the policy on the shared runtime, rejections to the
+  // service.
+  const allowedProviderIds = await learnGlobalExtensionProviderIds(runtime, agentDir);
+  installGlobalProviderPolicy(runtime, allowedProviderIds, (providerId) => { service.noteRejectedProviderRegistration(providerId); });
   return { service, runtime, agentDir };
+}
+
+/** Write a global extension into `<agentDir>/extensions/` (agent-dir extensions load for every session). */
+async function agentDirWithExtension(agentDir: string, source: string): Promise<string> {
+  await mkdir(join(agentDir, "extensions"), { recursive: true });
+  await writeFile(join(agentDir, "extensions", "global-probe.js"), source);
+  return agentDir;
 }
 
 /** Write a project extension into `<cwd>/.pi/extensions/` and return the cwd. */
@@ -97,7 +109,7 @@ function providerRegistrationSource(providerId: string): string {
   return `pi.registerProvider(${JSON.stringify(providerId)}, ${providerConfigJson(providerId)});`;
 }
 
-const POLICY_WORDING = "PI WEB only supports globally configured providers";
+const POLICY_WORDING = "PI WEB providers must come from global configuration";
 
 describe("global provider policy acceptance", () => {
   it("rejects a load-time provider registration while the extension's tool and command keep working", async () => {
@@ -229,6 +241,59 @@ describe("global provider policy acceptance", () => {
     ]);
     expect(runtime.getRegisteredProviderIds()).toEqual([]);
     expect(runtime.getModel("collide-acme", "model-1")).toBeUndefined();
+  });
+
+  it("allows providers from global (agent-dir) extensions while still rejecting project extensions", async () => {
+    const agentDir = await agentDirWithExtension(await tempDir("pi-web-policy-agent-"), `
+      export default function (pi) {
+        ${providerRegistrationSource("global-ext")}
+      }
+    `);
+    const { service, runtime } = await policyHarness({ agentDir });
+    const cwd = await projectWithExtension(`
+      export default function (pi) {
+        ${providerRegistrationSource("project-ext")}
+      }
+    `);
+
+    const session = await service.start(cwd);
+    const ref = { id: session.id, cwd };
+
+    // The global extension's provider reached the shared runtime at daemon
+    // startup and stays usable; the project extension's is rejected.
+    expect(runtime.getModel("global-ext", "model-1")).toBeDefined();
+    expect(runtime.getModel("project-ext", "model-1")).toBeUndefined();
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-ext"]);
+    const status = await service.status(ref);
+    expect(status.warnings).toEqual([
+      { severity: "warning", message: providerRejectionMessage("project-ext", cwd), source: "runtime" },
+    ]);
+    const models = await service.availableModels(ref);
+    expect(models.some((model) => model.provider === "global-ext")).toBe(true);
+    expect(models.some((model) => model.provider === "project-ext")).toBe(false);
+  });
+
+  it("lets a global extension re-register its provider late without warnings", async () => {
+    // The pi-tensorx pattern: register on load, then re-register from
+    // session_start with a refreshed model catalog. Both calls carry the
+    // learned id, so neither is a leak.
+    const agentDir = await agentDirWithExtension(await tempDir("pi-web-policy-agent-"), `
+      export default function (pi) {
+        ${providerRegistrationSource("global-ext")}
+        pi.on("session_start", () => {
+          ${providerRegistrationSource("global-ext")}
+        });
+      }
+    `);
+    const { service, runtime } = await policyHarness({ agentDir });
+    const plainCwd = await tempDir("pi-web-policy-project-");
+
+    const bystander = await service.start(plainCwd);
+    const status = await service.status({ id: bystander.id, cwd: plainCwd });
+    expect((status.warnings ?? []).filter((warning) => warning.message.includes(POLICY_WORDING))).toEqual([]);
+    const inbox = service.notificationInbox({ id: bystander.id, cwd: plainCwd });
+    expect(inbox.notifications.filter((notification) => notification.message.includes(POLICY_WORDING))).toEqual([]);
+    expect(runtime.getModel("global-ext", "model-1")).toBeDefined();
   });
 
   it("does not let a project-level models.json alter the shared runtime's provider set", async () => {

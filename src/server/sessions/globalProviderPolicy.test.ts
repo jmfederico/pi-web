@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Provider } from "@earendil-works/pi-ai";
 import { installGlobalProviderPolicy, providerRejectionMessage } from "./globalProviderPolicy.js";
 import { createTestModelRuntime, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from "./piSessionService.testSupport.js";
 
@@ -8,15 +9,33 @@ import { createTestModelRuntime, TEST_MODEL_ID, TEST_MODEL_PROVIDER } from "./pi
  * every test builds a dedicated runtime rather than touching the shared
  * `testModelRuntime` from testSupport.
  */
-async function policyRuntime(): Promise<{ runtime: ModelRuntime; rejections: string[] }> {
+async function policyRuntime(
+  allowedExtensionProviderIds: ReadonlySet<string> = new Set(),
+): Promise<{ runtime: ModelRuntime; rejections: string[] }> {
   const runtime = await createTestModelRuntime();
   const rejections: string[] = [];
-  installGlobalProviderPolicy(runtime, (providerId) => { rejections.push(providerId); });
+  installGlobalProviderPolicy(runtime, allowedExtensionProviderIds, (providerId) => { rejections.push(providerId); });
   return { runtime, rejections };
 }
 
+function nativeProvider(providerId: string): Provider {
+  return {
+    id: providerId,
+    name: providerId,
+    auth: {
+      apiKey: {
+        name: `${providerId} API key`,
+        resolve: () => Promise.resolve(undefined),
+      },
+    },
+    getModels: () => [],
+    stream: () => { throw new Error("stream should not be called in this test"); },
+    streamSimple: () => { throw new Error("streamSimple should not be called in this test"); },
+  };
+}
+
 describe("installGlobalProviderPolicy", () => {
-  it("swallows registrations and records each rejection", async () => {
+  it("rejects non-allowed registrations and records each rejection", async () => {
     const { runtime, rejections } = await policyRuntime();
 
     runtime.registerProvider("acme", { baseUrl: "https://acme.example.com" });
@@ -28,11 +47,37 @@ describe("installGlobalProviderPolicy", () => {
     expect(runtime.getRegisteredProviderConfig("acme")).toBeUndefined();
   });
 
-  it("makes unregisterProvider a no-op that cannot remove global providers", async () => {
-    const { runtime, rejections } = await policyRuntime();
+  it("lets allowed (global-extension) providers through to the runtime", async () => {
+    const { runtime, rejections } = await policyRuntime(new Set(["tensorx"]));
+
+    runtime.registerProvider("tensorx", { baseUrl: "https://tensorx.example.com" });
+    runtime.registerProvider("acme", { baseUrl: "https://acme.example.com" });
+
+    expect(rejections).toEqual(["acme"]);
+    expect(runtime.getRegisteredProviderIds()).toEqual(["tensorx"]);
+    expect(runtime.getRegisteredProviderConfig("tensorx")).toEqual({ baseUrl: "https://tensorx.example.com" });
+  });
+
+  it("applies the same allow rule to native provider registrations", async () => {
+    const { runtime, rejections } = await policyRuntime(new Set(["native-global"]));
+
+    runtime.registerNativeProvider(nativeProvider("native-global"));
+    runtime.registerNativeProvider(nativeProvider("native-project"));
+
+    expect(rejections).toEqual(["native-project"]);
+    expect(runtime.getRegisteredProviderIds()).toEqual(["native-global"]);
+    expect(runtime.getRegisteredNativeProvider("native-global")).toBeDefined();
+  });
+
+  it("unregisters only allowed providers; other unregisters are a no-op", async () => {
+    const { runtime, rejections } = await policyRuntime(new Set(["tensorx"]));
+    runtime.registerProvider("tensorx", { baseUrl: "https://tensorx.example.com" });
 
     runtime.unregisterProvider("acme");
     runtime.unregisterProvider(TEST_MODEL_PROVIDER);
+    expect(runtime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID)).toBeDefined();
+
+    runtime.unregisterProvider("tensorx");
 
     expect(rejections).toEqual([]);
     expect(runtime.getRegisteredProviderIds()).toEqual([]);
@@ -56,7 +101,8 @@ describe("providerRejectionMessage", () => {
 
     expect(message).toContain('Provider "acme"');
     expect(message).toContain("in /workspace/project");
-    expect(message).toContain("PI WEB only supports globally configured providers");
+    expect(message).toContain("PI WEB providers must come from global configuration");
+    expect(message).toContain("globally installed extension");
     expect(message).toContain("All other extension features are unaffected.");
   });
 
