@@ -25,6 +25,12 @@ When machine federation is enabled, **Settings → Pi packages** targets the cur
 
 Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. In a federated setup, this plugin enablement surface targets the currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB server does not advertise selected-machine settings support, PI WEB reports the plugin settings as unsupported or unavailable instead of silently falling back to the gateway. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A routine session daemon restart is not required.
 
+## Extension provider registrations
+
+PI WEB only supports globally configured providers: Pi built-ins, environment credentials, and providers declared in the agent directory's `models.json` (the directory selected by `agent.dir`; see [Configuration](https://pi-web.dev/config)). All sessions share one daemon-wide provider set, so extensions cannot add their own: if a Pi extension calls `pi.registerProvider(...)`, PI WEB ignores the registration and shows a warning in the session naming the provider. The extension itself still loads and everything else it registers keeps working; only the ignored provider's models never appear, so an extension that requires its own provider may load but remain unusable.
+
+To use such a provider, configure it globally in the agent directory's `models.json` instead. Project-level `models.json` files do not add providers to PI WEB sessions.
+
 ## Trust model
 
 Plugins run as JavaScript in the browser app. Treat them as trusted code:
