@@ -13,27 +13,21 @@ Plugins can currently:
 
 They do **not** run in the session daemon, do not get a server-side hook API, and are not sandboxed.
 
-## Pi packages vs PI WEB plugins
+## Pi packages, Pi extensions, and PI WEB plugins
 
-**Pi packages** are packages managed by Pi (`pi install`, `pi remove`, `pi update`). A Pi package can provide extensions, skills, prompt templates, themes, context/system prompt files, and/or PI WEB browser plugins. Many Pi packages do not include a PI WEB plugin.
+**Pi packages** are distribution bundles managed by Pi (`pi install`, `pi remove`, `pi update`). A Pi package can provide Pi extensions, skills, prompt templates, themes, context/system prompt files, and/or PI WEB browser plugins. Many Pi packages do not include a PI WEB plugin.
 
-**PI WEB plugins** are browser-side PI WEB UI modules discovered from bundled, local, dev, and installed Pi-package sources. Enabling or disabling a PI WEB plugin is a PI WEB config task; installing, removing, or updating a Pi package is a Pi package-manager task.
+**Pi extensions** are runtime modules loaded by the session daemon. They can register Pi tools, hooks, commands, and model providers. They are not PI WEB plugins.
+
+**PI WEB plugins** are browser-side UI modules discovered from bundled, local, dev, and installed Pi-package sources. They cannot register model providers or server-side hooks. Enabling or disabling a PI WEB plugin is a PI WEB config task; installing, removing, or updating a Pi package is a separate Pi package-manager task.
 
 Use **Settings → Pi packages** to view configured Pi packages or install/remove/update a package. Enter only the package source, such as `npm:@scope/package`, a git/URL source, or a local path. PI WEB uses Pi's default package location, equivalent to `pi install <source>`, and does not ask for an install location.
 
 When machine federation is enabled, **Settings → Pi packages** targets the currently selected machine. The panel labels whether changes will run on the local/gateway machine or on a selected remote PI WEB machine. If an older or unavailable remote PI WEB server does not expose package-management routes, PI WEB reports the package management operation as unsupported or unavailable instead of silently falling back to the gateway.
 
-Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. In a federated setup, this plugin enablement surface targets the currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB server does not advertise selected-machine settings support, PI WEB reports the plugin settings as unsupported or unavailable instead of silently falling back to the gateway. After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. For these ordinary resources, a routine session daemon restart is not required. Extension-provided global provider changes are the exception described below.
+Use **Settings → PI WEB plugins** to enable or disable discovered PI WEB browser plugins before the browser imports them. In a federated setup, this plugin enablement surface targets the currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB server does not advertise selected-machine settings support, PI WEB reports the plugin settings as unsupported or unavailable instead of silently falling back to the gateway.
 
-## Extension provider registrations
-
-PI WEB builds one provider baseline for the lifetime of the session daemon. At daemon startup, before any project resources load, it initializes globally installed (agent-dir) extensions through Pi's session-services factory. Both config-form registrations (`pi.registerProvider("id", config)`) and native-provider registrations (`pi.registerProvider(provider)`) made during that initialization join the shared baseline, alongside Pi built-ins, environment credentials, and providers declared in the agent directory's `models.json` (the directory selected by `agent.dir`; see [Configuration](https://pi-web.dev/config)).
-
-After startup capture, every extension provider registration, native registration, and unregistration is a no-op, regardless of source or provider ID. This includes global extensions replayed while sessions load, project extensions adding a provider or replacing a global provider with the same ID, late lifecycle calls such as `session_start`, and `/reload`. The captured provider remains unchanged, while non-provider extension features continue to load and reload normally.
-
-Ignored mutations are written to the session-daemon log once per operation and provider ID. These entries contain no provider configuration or credentials, and PI WEB does not show a session warning or notification. The policy prevents accidental provider, configuration, or credential contamination between projects; it is not a security boundary, because extensions remain trusted daemon code.
-
-Configure providers globally before the daemon starts: use the agent directory's `models.json`, or install the extension globally in the agent directory. Project-level `models.json` files do not add providers to PI WEB sessions. **Restart required:** after updating PI WEB, or after installing, removing, or updating a globally installed extension that registers providers, manually restart `pi-web-sessiond.service` (`systemctl --user restart pi-web-sessiond`). Restarting only the web/API service and running `/reload` do not recapture the baseline.
+After installing, removing, or updating a Pi package, type `/reload` in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for newly discovered or changed PI WEB browser plugins. A provider-registering Pi extension follows a separate daemon-start policy; see [Pi extension provider baseline](https://pi-web.dev/config#pi-extension-provider-baseline).
 
 ## Trust model
 
@@ -179,9 +173,9 @@ If a remote plugin constructs absolute asset URLs, it should use the `pluginId` 
 
 ## Manage PI WEB plugins
 
-Open **Settings → PI WEB plugins** to review discovered bundled, local, dev, and Pi package plugins for the selected PI WEB machine. When the local machine is selected, this is the gateway plugin list; when a remote machine is selected, the list comes from that remote PI WEB server and includes disabled discovered plugins it exposes. PI WEB can disable any discovered selected-machine plugin before the browser imports it. Core app contributions such as the built-in command palette, base workspace tools, and themes are not managed through this plugin list.
+Open **Settings → PI WEB plugins** to review discovered bundled, local, dev, and Pi-package-supplied PI WEB plugins for the selected PI WEB machine. When the local machine is selected, this is the gateway plugin list; when a remote machine is selected, the list comes from that remote PI WEB server and includes disabled discovered plugins it exposes. PI WEB can disable any discovered selected-machine plugin before the browser imports it. Core app contributions such as the built-in command palette, base workspace tools, and themes are not managed through this plugin list.
 
-This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide plugins or other Pi resources, use **Settings → Pi packages**. In a federated setup, both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement still writes the PI WEB `plugins` config key rather than changing Pi package-manager settings.
+This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may provide PI WEB plugins or other Pi resources, use **Settings → Pi packages**. In a federated setup, both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement still writes the PI WEB `plugins` config key rather than changing Pi package-manager settings.
 
 Plugin preferences are stored under the top-level `plugins` config key in the PI WEB config file:
 
