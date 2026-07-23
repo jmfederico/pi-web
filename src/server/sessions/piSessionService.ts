@@ -345,13 +345,13 @@ export interface PiAgentSession {
   setSessionName(name: string): void;
   /**
    * Narrow re-expression of `AgentSession.agent` (an `@earendil-works/pi-agent-core`
-   * `Agent`), exposing only `streamFn` — the resolved-auth/headers/retry "call this
-   * model" function pi's own compaction/branch-summarization code uses internally.
-   * Lets callers (e.g. session title generation) issue one-off model calls without
-   * depending on pi-ai's deprecated `/compat` provider registry or leaking the full
-   * `Agent`/`AgentSession` surface.
+   * `Agent`), exposing only `streamFunction` — the resolved-auth/headers/retry "call
+   * this model" function pi's own compaction/branch-summarization code uses
+   * internally. Lets callers (e.g. session title generation) issue one-off model
+   * calls without depending on pi-ai's deprecated `/compat` provider registry or
+   * leaking the full `Agent`/`AgentSession` surface.
    */
-  agent: { streamFn: StreamFn };
+  agent: { streamFunction: StreamFn };
 }
 
 export interface PiSessionRuntime {
@@ -587,7 +587,7 @@ function createDefaultRuntimeFactory(
   subsessions?: SubsessionToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
-    const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+    const services: AgentSessionServices = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
@@ -2696,7 +2696,7 @@ export class PiSessionService implements SessionRouteService {
     const model = session.model;
     if (model === undefined) return;
 
-    void generateShortSessionName(session.agent.streamFn, model, firstMessage).then((name) => {
+    void generateShortSessionName(session.agent.streamFunction, model, firstMessage).then((name) => {
       this.applyGeneratedSessionName(session, name ?? fallbackSessionName(firstMessage));
     }).catch(() => {
       this.applyGeneratedSessionName(session, fallbackSessionName(firstMessage));

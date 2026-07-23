@@ -90,7 +90,7 @@
           <aside class="toc" aria-label="Plugin page contents">
             <strong>On this page</strong>
             <a href="#extend">What can be extended</a>
-            <a href="#packages-vs-plugins">Pi packages vs PI WEB plugins</a>
+            <a href="#packages-vs-plugins">Pi packages, extensions, and plugins</a>
             <a href="#ask-ai">What to ask AI to build</a>
             <a href="#example">Canonical example</a>
             <a href="#built-in-plugins">Built-in plugins</a>
@@ -127,16 +127,22 @@
             </section>
 
             <section id="packages-vs-plugins">
-              <h2>Pi packages vs PI WEB plugins</h2>
+              <h2>Pi packages, Pi extensions, and PI WEB plugins</h2>
               <p>
-                <strong>Pi packages</strong> are packages managed by Pi (<code>pi install</code>, <code>pi remove</code>,
-                <code>pi update</code>). A Pi package can provide extensions, skills, prompt templates, themes,
-                context/system prompt files, and/or PI WEB browser plugins. Many Pi packages do not include a PI WEB plugin.
+                <strong>Pi packages</strong> are distribution bundles managed by Pi (<code>pi install</code>,
+                <code>pi remove</code>, <code>pi update</code>). A Pi package can provide Pi extensions, skills, prompt
+                templates, themes, context/system prompt files, and/or PI WEB browser plugins. Many Pi packages do not
+                include a PI WEB plugin.
+              </p>
+              <p>
+                <strong>Pi extensions</strong> are runtime modules loaded by the session daemon. They can register Pi
+                tools, hooks, commands, and model providers. They are not PI WEB plugins.
               </p>
               <p>
                 <strong>PI WEB plugins</strong> are browser-side UI modules discovered from bundled, local, dev, and
-                installed Pi-package sources. Enabling or disabling a PI WEB plugin is a PI WEB config task; installing,
-                removing, or updating a Pi package is a Pi package-manager task.
+                installed Pi-package sources. They cannot register model providers or server-side hooks. Enabling or
+                disabling a PI WEB plugin is a PI WEB config task; installing, removing, or updating a Pi package is a
+                separate Pi package-manager task.
               </p>
               <p>
                 Use <strong>Settings → Pi packages</strong> to view configured Pi packages or install/remove/update a
@@ -156,11 +162,15 @@
                 before the browser imports them. In a federated setup, this plugin enablement surface targets the
                 currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB
                 server does not advertise selected-machine settings support, PI WEB reports the plugin settings as
-                unsupported or unavailable instead of silently falling back to the gateway. After installing, removing, or
-                updating a Pi package, type <code>/reload</code> in each idle PI WEB session on the target machine to
-                refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system
-                prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed
-                PI WEB browser plugins. A routine session daemon restart is not required.
+                unsupported or unavailable instead of silently falling back to the gateway.
+              </p>
+              <p>
+                After installing, removing, or updating a Pi package, type <code>/reload</code> in each idle PI WEB
+                session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt
+                templates, themes, and context/system prompt files. Reload the browser page separately for newly
+                discovered or changed PI WEB browser plugins. A provider-registering Pi extension follows a separate
+                daemon-start policy; see
+                <a href="config#pi-extension-provider-baseline">Pi extension provider baseline</a>.
               </p>
             </section>
 
@@ -329,17 +339,18 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
             <section id="manage-plugins">
               <h2>Manage PI WEB plugins</h2>
               <p>
-                Open <strong>Settings → PI WEB plugins</strong> to review discovered bundled, local, dev, and Pi package
-                plugins for the selected PI WEB machine. When the local machine is selected, this is the gateway plugin
-                list; when a remote machine is selected, the list comes from that remote PI WEB server and includes
+                Open <strong>Settings → PI WEB plugins</strong> to review discovered bundled, local, dev, and
+                Pi-package-supplied PI WEB plugins for the selected PI WEB machine. When the local machine is selected,
+                this is the gateway plugin list; when a remote machine is selected, the list comes from that remote PI WEB
+                server and includes
                 disabled discovered plugins it exposes. PI WEB can disable any discovered selected-machine plugin before
                 the browser imports it. Core app contributions such as the command palette, base workspace tools, and
                 themes are not managed through this plugin list.
               </p>
               <p>
                 This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may
-                provide plugins or other Pi resources, use <strong>Settings → Pi packages</strong>. In a federated setup,
-                both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement
+                provide PI WEB plugins or other Pi resources, use <strong>Settings → Pi packages</strong>. In a federated
+                setup, both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement
                 still writes the PI WEB <code>plugins</code> config key rather than changing Pi package-manager settings.
               </p>
               <div class="code-card">

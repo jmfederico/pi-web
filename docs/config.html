@@ -99,6 +99,7 @@
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#agent-runtime">Agent profile and companion CLI</a>
+            <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#session-tools">Session tools</a>
             <a href="#completion-tools">Completion tools</a>
           </aside>
@@ -175,7 +176,7 @@
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
-                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system prompt files as supported by Pi. Reload the browser page separately for PI WEB browser plugin changes. A routine session daemon restart is not required.</li>
+                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for PI WEB browser plugin changes. If a global Pi extension adds, removes, or changes a provider, manually restart <code>pi-web-sessiond.service</code>; <code>/reload</code> cannot change the startup provider baseline. See <a href="#pi-extension-provider-baseline">Pi extension provider baseline</a>.</li>
                 <li><code>shortcuts</code>: saved settings apply in the browser after config refresh/save.</li>
               </ul>
             </section>
@@ -347,7 +348,7 @@
                       <td><code>PI_WEB_AGENT_DIR</code> (<code>PI_CODING_AGENT_DIR</code> for Pi compatibility)</td>
                       <td>Global/session daemon</td>
                       <td>Not supported locally</td>
-                      <td>Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and package-backed plugins</td>
+                      <td>Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and Pi-package-backed PI WEB plugins</td>
                     </tr>
                     <tr>
                       <td>Agent can spawn sessions</td>
@@ -583,17 +584,61 @@
                 secret-free active profile stays fixed for the daemon lifetime. <strong>Settings → Session daemon</strong>
                 saves command and directory together as desired configuration and shows whether the profile is active,
                 needs a restart, or cannot be compared. Until the daemon restarts, sessions, Pi package operations,
-                package-backed plugin discovery, status/install detection, and update planning continue to use the
-                daemon-owned active profile; a web/API restart recovers that same active profile instead of applying the
-                newly saved values.
+                Pi-package-backed PI WEB plugin discovery, status/install detection, and update planning continue to use
+                the daemon-owned active profile; a web/API restart recovers that same active profile instead of applying
+                the newly saved values.
               </p>
               <div class="callout warning">
-                If the session daemon cannot report a valid active profile, profile-dependent package and plugin
+                If the session daemon cannot report a valid active profile, profile-dependent Pi package and PI WEB plugin
                 operations report unavailable instead of falling back to independently resolved config. A package-managed
                 update command is shown only when PI WEB can preserve the active profile with a recognized, safe Pi
                 companion CLI; otherwise the command is omitted. Remote profile editing likewise requires advertised
                 support, and the gateway rejects a remote save if the target does not return the requested profile.
                 Restart the session daemon on the selected machine to establish the next active profile.
+              </div>
+            </section>
+
+            <section id="pi-extension-provider-baseline">
+              <h2>Pi extension provider baseline</h2>
+              <p>
+                This policy applies to <strong>Pi runtime extensions</strong>, not PI WEB browser plugins. Pi extensions
+                are runtime modules loaded by the session daemon and can call <code>pi.registerProvider(...)</code>;
+                PI WEB plugins are browser-side UI modules and never run in the session daemon.
+              </p>
+              <p>
+                PI WEB shares one model runtime across all sessions. When the session daemon starts, before any project
+                resources load, it initializes global Pi extensions from the active agent profile
+                (<code>agent.dir</code>), including extensions supplied by globally configured Pi packages. Provider
+                registrations made by synchronous or awaited asynchronous extension factories during this bootstrap join
+                the shared baseline. PI WEB captures both config-form registrations
+                (<code>pi.registerProvider("id", config)</code>) and native-provider registrations
+                (<code>pi.registerProvider(provider)</code>), alongside Pi built-ins, environment credentials, and
+                providers from the active agent directory's <code>models.json</code>.
+              </p>
+              <p>
+                After startup capture, every later Pi extension provider registration, native registration, and
+                unregistration is a no-op, regardless of source or provider ID. This includes global extensions replayed
+                while sessions load, project extensions attempting to add or replace a provider, same-ID replacement or
+                unregistration, lifecycle callbacks such as <code>session_start</code>, and <code>/reload</code>. The
+                captured provider stays unchanged while non-provider Pi extension features continue to load and reload
+                normally.
+              </p>
+              <p>
+                Ignored mutations are written to the session-daemon log once per operation and provider ID. The log entry
+                contains no provider configuration or credentials, and PI WEB does not show a session warning or
+                notification. This prevents accidental provider, configuration, or credential contamination between
+                projects; it is not a security boundary because Pi extensions remain trusted daemon code.
+              </p>
+              <p>
+                Configure providers before the daemon starts: use the active agent directory's
+                <code>models.json</code>, or install the Pi extension globally in that agent profile. Project Pi extensions
+                and project-level <code>models.json</code> files cannot add providers to PI WEB's shared baseline.
+              </p>
+              <div class="callout warning">
+                <strong>Restart required:</strong> after updating PI WEB—or after installing, removing, or updating a
+                global Pi extension that registers providers—manually restart <code>pi-web-sessiond.service</code>
+                (<code>systemctl --user restart pi-web-sessiond</code>). Restarting only the web/API service and running
+                <code>/reload</code> do not rebuild the baseline.
               </div>
             </section>
 

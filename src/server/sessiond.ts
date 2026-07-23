@@ -7,6 +7,7 @@ import { WorkspaceActivityService } from "./activity/workspaceActivityService.js
 import { registerWorkspaceActivityRoutes } from "./activity/workspaceActivityRoutes.js";
 import { SessionEventHub } from "./realtime/sessionEventHub.js";
 import { AuthService } from "./sessions/authService.js";
+import { bootstrapAndFreezeGlobalExtensionProviders } from "./sessions/globalProviderPolicy.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
@@ -50,6 +51,10 @@ await runSessionDaemonStartup({
     await unreadStore.load();
     const workspaceActivity = new WorkspaceActivityService(eventHub);
     const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, logger: app.log });
+    // Capture providers registered by global extensions while the runtime is
+    // still mutable, then freeze every later extension-provider mutation before
+    // any real session can load project resources.
+    await bootstrapAndFreezeGlobalExtensionProviders(auth.runtime, activeAgentProfile.dir, app.log);
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
