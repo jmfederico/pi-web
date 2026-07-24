@@ -269,13 +269,18 @@ export class SessionController {
     }
   }
 
-  async loadEarlierMessages() {
+  async loadEarlierMessages(options?: { waitForScrollIdle?: (() => Promise<void>) | undefined }) {
     const state = this.getState();
     const session = state.selectedSession;
     if (!session || state.isLoadingEarlierMessages || state.messagePageStart <= 0) return;
     this.setState({ isLoadingEarlierMessages: true });
     try {
       const page = await this.api.messages(session, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
+      if (this.getState().selectedSession?.id !== session.id) return;
+      // Applying the page prepends DOM nodes and forces scrollTop corrections,
+      // which cancel an in-flight touch/momentum scroll. The fetch above already
+      // hides the latency, so hold the page until the chat scroll is idle.
+      await options?.waitForScrollIdle?.();
       if (this.getState().selectedSession?.id !== session.id) return;
       const history = this.transcripts.mergeHistory(this.sessionCacheKey(session.id), page);
       this.setState(history);
