@@ -6,7 +6,7 @@ import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
-import { PluginRegistry } from "./registry";
+import { installWorkspacePanelScope, PluginRegistry } from "./registry";
 import { themePackPlugin } from "./themes";
 import type { PluginRuntimeContext, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "./types";
 
@@ -90,6 +90,26 @@ describe("PluginRegistry", () => {
 
     expect(panel?.icon).toBeDefined();
     expect(panel?.render(createWorkspacePanelContext("local"))).toBeDefined();
+  });
+
+  it("scopes context-aware workspace panel titles to the owning plugin", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 1,
+        name: "Example",
+        activate: () => ({
+          contributions: {
+            workspacePanels: [{ id: "workspace.title", title: "Fallback", titleFor: (context) => context.workspace.label, render: () => html`<p>Panel</p>` }],
+          },
+        }),
+      },
+    });
+    const baseContext = createWorkspacePanelContext("local");
+    const context = installWorkspacePanelScope(baseContext, (pluginId) => ({ ...baseContext, workspace: { ...baseContext.workspace, label: pluginId } }));
+
+    expect(registry.getWorkspacePanels()[0]?.titleFor?.(context)).toBe("example");
   });
 
   it("exposes the prompt helper to workspace panel callbacks", () => {

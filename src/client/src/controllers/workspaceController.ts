@@ -96,10 +96,6 @@ export class WorkspaceController {
   }
 }
 
-export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
-  return workspace !== undefined && workspace.isGitWorktree && !workspace.isMain;
-}
-
 function selectFallbackWorkspace(workspaces: Workspace[]): Workspace | undefined {
   return workspaces.find((workspace) => workspace.isMain) ?? workspaces[0];
 }

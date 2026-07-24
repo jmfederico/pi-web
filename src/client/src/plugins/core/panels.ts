@@ -15,11 +15,12 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
     },
     {
       id: "workspace.git",
-      title: "Git",
+      title: "Changes",
+      titleFor: ({ workspace }) => workspace.vcs === "jj" ? "Jujutsu" : "Git",
       icon: renderBuiltinTabIcon("git"),
       order: 20,
-      visible: ({ workspace }) => workspace.isGitRepo,
-      render: renderGit,
+      visible: ({ workspace }) => workspace.isGitRepo || workspace.vcs === "jj",
+      render: renderChanges,
     },
     {
       id: "workspace.terminal",
@@ -41,18 +42,19 @@ function renderTerminal(context: WorkspacePanelContext): TemplateResult {
   return html`<terminal-panel .workspace=${context.workspace} .machineId=${context.machine.id} .selectedTerminalId=${context.selectedTerminalId} .autoStart=${context.terminalAutoStart} .onSelectTerminal=${context.onSelectTerminal}></terminal-panel>`;
 }
 
-function renderGit(context: WorkspacePanelContext): TemplateResult {
+function renderChanges(context: WorkspacePanelContext): TemplateResult {
   const status = context.gitStatus;
+  const vcsLabel = context.workspace.vcs === "jj" ? "Jujutsu" : "Git";
   return html`
     <section class="toolbar">
-      <strong>Git</strong>
+      <strong>${vcsLabel}</strong>
       ${context.gitStale ? html`<span class="stale">stale</span>` : null}
       <button @click=${context.onRefreshGit}>Refresh</button>
     </section>
     <section class="split">
       <div class="list">
-        ${status === undefined ? html`<p class="muted">No status loaded.</p>` : !status.isGitRepo ? html`<p class="muted">Not a git repository.</p>` : html`
-          <p class="summary">${gitSummary(status)}</p>
+        ${status === undefined ? html`<p class="muted">No status loaded.</p>` : status.vcs !== "jj" && !status.isGitRepo ? html`<p class="muted">Not a Git repository.</p>` : html`
+          <p class="summary">${changesSummary(status)}</p>
           ${status.files.length === 0 ? html`<p class="muted">No changes.</p>` : status.files.map((file) => html`
             <button class="row ${context.selectedDiffPath === file.path ? "selected" : ""}" @click=${() => { context.onSelectDiff(file.path); }}>
               <span>${stateLabel(file.index, file.workingTree)}</span>
@@ -86,7 +88,7 @@ function renderDiffSection(diff: GitDiffResponse): TemplateResult {
   loadUnifiedDiffViewer();
   return html`
     <section class="diff-section">
-      <div class="viewer-header"><strong>${diff.path ?? "diff"}</strong><small>${diff.staged ? "staged" : "unstaged"}${diff.truncated ? " · truncated" : ""}</small></div>
+      <div class="viewer-header"><strong>${diff.path ?? "diff"}</strong><small>${diff.vcs === "jj" ? "working copy" : diff.staged ? "staged" : "unstaged"}${diff.truncated ? " · truncated" : ""}</small></div>
       <unified-diff-viewer .diff=${diff.diff}></unified-diff-viewer>
     </section>
   `;
@@ -100,7 +102,7 @@ function loadTerminalPanel(): void {
   void import("../../components/TerminalPanel");
 }
 
-function gitSummary(status: GitStatusResponse): string {
+function changesSummary(status: GitStatusResponse): string {
   const branch = status.branch ?? "detached";
   const ahead = status.ahead ?? 0;
   const behind = status.behind ?? 0;

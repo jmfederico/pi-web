@@ -452,6 +452,8 @@ describe("API parsers", () => {
       path: "/repo",
       label: "main",
       branch: "main",
+      vcs: "jj",
+      vcsWorkspaceName: "default",
       isMain: true,
       isGitRepo: true,
       isGitWorktree: false,
@@ -462,11 +464,26 @@ describe("API parsers", () => {
       path: "/repo",
       label: "main",
       branch: "main",
+      vcs: "jj",
+      vcsWorkspaceName: "default",
       isMain: true,
       isGitRepo: true,
       isGitWorktree: false,
       effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
     });
+  });
+
+  it("rejects unknown workspace VCS values", () => {
+    expect(() => parseWorkspace({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo",
+      label: "main",
+      vcs: "svn",
+      isMain: true,
+      isGitRepo: false,
+      isGitWorktree: false,
+    })).toThrow("Invalid workspace VCS");
   });
 
   it("accepts legacy workspace responses without effective config", () => {
@@ -496,6 +513,16 @@ describe("API parsers", () => {
     })).toEqual({
       generatedAt: "now",
       workspaces: [{ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false, updatedAt: "later" }],
+    });
+  });
+
+  it("parses Jujutsu changes responses", () => {
+    expect(parseGitStatusResponse({ isGitRepo: false, vcs: "jj", hash: "h", branch: "abcdefgh", files: [] })).toEqual({
+      isGitRepo: false,
+      vcs: "jj",
+      hash: "h",
+      branch: "abcdefgh",
+      files: [],
     });
   });
 

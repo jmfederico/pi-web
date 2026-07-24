@@ -5,6 +5,7 @@ import type { AppAction } from "../actions";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
+import { isDeletableWorkspace } from "../../../shared/workspaces";
 import { ActivityController } from "../controllers/activityController";
 import { AuthController } from "../controllers/authController";
 import { FileExplorerController } from "../controllers/fileExplorerController";
@@ -15,7 +16,7 @@ import { ProjectActivityOwnershipCoordinator } from "../controllers/projectActiv
 import { PiWebStatusController } from "../controllers/piWebStatusController";
 import { SessionController } from "../controllers/sessionController";
 import { SessionNotificationController } from "../controllers/sessionNotificationController";
-import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
+import { WorkspaceController } from "../controllers/workspaceController";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
 import { SessionStorageSessionSelectionMemory } from "../controllers/sessionSelection";
 import { SessionStorageTerminalSelectionMemory } from "../controllers/terminalSelection";
@@ -1809,13 +1810,16 @@ export class PiWebApp extends LitElement {
 
   private async deleteWorkspace(workspace = this.state.selectedWorkspace): Promise<void> {
     if (workspace === undefined) return;
-    if (!canDeleteWorkspace(workspace)) {
-      this.setState({ error: "Only secondary Git worktrees can be deleted" });
+    if (!isDeletableWorkspace(workspace)) {
+      this.setState({ error: "Only secondary Git worktrees or Jujutsu workspaces can be deleted" });
       return;
     }
     if (isWorkspaceDeletionPending(this.state, workspace)) return;
     const label = workspace.branch ?? workspace.label;
-    const confirmed = confirm(`Delete workspace ${label}?\n\nThis will run git worktree remove and delete:\n${workspace.path}\n\nThe Git branch will not be deleted.`);
+    const detail = workspace.vcs === "jj"
+      ? `This will forget the Jujutsu workspace. Its files will remain on disk at:\n${workspace.path}\n\nThe workspace commit will remain in the repository.`
+      : `This will run git worktree remove and delete:\n${workspace.path}\n\nThe Git branch will not be deleted.`;
+    const confirmed = confirm(`Delete workspace ${label}?\n\n${detail}`);
     if (!confirmed) return;
 
     const machineId = selectedMachineId(this.state);
@@ -2168,6 +2172,7 @@ export class PiWebApp extends LitElement {
       activities: this.state.sessionActivities,
       sending: this.state.sendingPrompts,
     });
+    const workspacePanelContext = this.state.selectedWorkspace === undefined ? undefined : this.createWorkspacePanelContext(this.state.selectedWorkspace);
     return [
       {
         id: "navigation",
@@ -2181,7 +2186,7 @@ export class PiWebApp extends LitElement {
         const icon = panel.icon ?? this.mobilePanelIcon(panel);
         return {
           id: panel.id,
-          label: panel.title,
+          label: workspacePanelContext === undefined ? panel.title : panel.titleFor?.(workspacePanelContext) ?? panel.title,
           ...(icon === undefined ? {} : { icon }),
           badge: this.mobilePanelBadge(panel),
         };

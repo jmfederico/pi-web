@@ -134,17 +134,26 @@ export function parseProject(value: unknown): Project {
 export function parseWorkspace(value: unknown): Workspace {
   const record = requireRecord(value);
   const branch = optionalString(record, "branch");
+  const vcs = parseVcs(record["vcs"]);
+  const vcsWorkspaceName = optionalString(record, "vcsWorkspaceName");
   return {
     id: requireString(record, "id"),
     projectId: requireString(record, "projectId"),
     path: requireString(record, "path"),
     label: requireString(record, "label"),
     ...(branch === undefined ? {} : { branch }),
+    ...(vcs === undefined ? {} : { vcs }),
+    ...(vcsWorkspaceName === undefined ? {} : { vcsWorkspaceName }),
     isMain: requireBoolean(record, "isMain"),
     isGitRepo: requireBoolean(record, "isGitRepo"),
     isGitWorktree: requireBoolean(record, "isGitWorktree"),
     ...optionalField("effectiveConfig", optionalWorkspaceEffectiveConfig(record["effectiveConfig"])),
   };
+}
+
+function parseVcs(value: unknown): Workspace["vcs"] {
+  if (value === undefined || value === "git" || value === "jj") return value;
+  throw new Error("Invalid workspace VCS");
 }
 
 function optionalWorkspaceEffectiveConfig(value: unknown): Workspace["effectiveConfig"] | undefined {
@@ -818,7 +827,7 @@ function optionalFileMediaType(value: unknown): FileContentResponse["mediaType"]
 
 export function parseGitStatusResponse(value: unknown): GitStatusResponse {
   const record = requireRecord(value);
-  return { isGitRepo: requireBoolean(record, "isGitRepo"), hash: requireString(record, "hash"), ...optionalField("branch", optionalString(record, "branch")), ...optionalField("upstream", optionalString(record, "upstream")), ...optionalField("ahead", optionalNumber(record, "ahead")), ...optionalField("behind", optionalNumber(record, "behind")), files: arrayOf(parseGitStatusFile)(record["files"]) };
+  return { isGitRepo: requireBoolean(record, "isGitRepo"), ...optionalField("vcs", parseVcs(record["vcs"])), hash: requireString(record, "hash"), ...optionalField("branch", optionalString(record, "branch")), ...optionalField("upstream", optionalString(record, "upstream")), ...optionalField("ahead", optionalNumber(record, "ahead")), ...optionalField("behind", optionalNumber(record, "behind")), files: arrayOf(parseGitStatusFile)(record["files"]) };
 }
 
 function parseGitStatusFile(value: unknown): GitStatusFile {
@@ -845,7 +854,7 @@ function parseGitFileState(value: unknown): GitFileState {
 
 export function parseGitDiffResponse(value: unknown): GitDiffResponse {
   const record = requireRecord(value);
-  return { ...optionalField("path", optionalString(record, "path")), staged: requireBoolean(record, "staged"), hash: requireString(record, "hash"), diff: requireString(record, "diff"), truncated: requireBoolean(record, "truncated") };
+  return { ...optionalField("path", optionalString(record, "path")), ...optionalField("vcs", parseVcs(record["vcs"])), staged: requireBoolean(record, "staged"), hash: requireString(record, "hash"), diff: requireString(record, "diff"), truncated: requireBoolean(record, "truncated") };
 }
 
 export function parseTerminalInfo(value: unknown): TerminalInfo {
