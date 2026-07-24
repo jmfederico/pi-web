@@ -125,6 +125,10 @@ export interface Workspace {
   path: string;
   label: string;
   branch?: string;
+  /** VCS used to discover and manage this workspace. */
+  vcs?: "git" | "jj";
+  /** VCS-native workspace name, when it differs from a Git branch. */
+  vcsWorkspaceName?: string;
   isMain: boolean;
   isGitRepo: boolean;
   isGitWorktree: boolean;
@@ -182,6 +186,8 @@ export type WorkspacePanelIcon = TemplateResult;
 export interface WorkspacePanelContribution {
   id: LocalContributionId;
   title: string;
+  /** Optional context-aware title, for example to distinguish Git and Jujutsu workspaces. */
+  titleFor?: (context: WorkspacePanelContext) => string;
   icon?: WorkspacePanelIcon;
   order?: number;
   visible?: (context: WorkspacePanelContext) => boolean;

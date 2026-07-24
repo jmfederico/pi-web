@@ -15,11 +15,12 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
     },
     {
       id: "workspace.git",
-      title: "Git",
+      title: "Changes",
+      titleFor: ({ workspace }) => workspace.vcs === "jj" ? "Jujutsu" : "Git",
       icon: renderBuiltinTabIcon("git"),
       order: 20,
-      visible: ({ workspace }) => workspace.isGitRepo,
-      render: renderGit,
+      visible: ({ workspace }) => workspace.isGitRepo || workspace.vcs === "jj",
+      render: renderChanges,
     },
     {
       id: "workspace.terminal",
@@ -41,7 +42,7 @@ function renderTerminal(context: WorkspacePanelContext): TemplateResult {
   return html`<terminal-panel .workspace=${context.workspace} .machineId=${context.machine.id} .selectedTerminalId=${context.selectedTerminalId} .autoStart=${context.terminalAutoStart} .onSelectTerminal=${context.onSelectTerminal}></terminal-panel>`;
 }
 
-function renderGit(context: WorkspacePanelContext): TemplateResult {
+function renderChanges(context: WorkspacePanelContext): TemplateResult {
   return html`<workspace-git-panel .context=${context}></workspace-git-panel>`;
 }
 

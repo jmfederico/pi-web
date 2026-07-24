@@ -69,10 +69,11 @@ export class WorkspacePanel extends LitElement {
                 ${visiblePanels.map((panel) => {
                   const selected = selectedPanel?.id === panel.id;
                   const badge = panel.badge?.(context);
-                  const ariaLabel = this.panelTabAriaLabel(panel, badge);
+                  const title = panel.titleFor?.(context) ?? panel.title;
+                  const ariaLabel = this.panelTabAriaLabel(title, badge);
                   return html`
                     <button class=${this.panelTabClass(panel, selected)} title=${ariaLabel} aria-label=${ariaLabel} aria-pressed=${String(selected)} @click=${() => { this.onSelectTool(panel.id); }}>
-                      ${this.renderPanelTabContent(panel, badge)}
+                      ${this.renderPanelTabContent(panel, title, badge)}
                     </button>
                   `;
                 })}
@@ -99,16 +100,16 @@ export class WorkspacePanel extends LitElement {
     ].join(" ");
   }
 
-  private panelTabAriaLabel(panel: QualifiedWorkspacePanelContribution, badge: WorkspacePanelBadge): string {
-    if (typeof badge !== "string" && typeof badge !== "number") return panel.title;
+  private panelTabAriaLabel(title: string, badge: WorkspacePanelBadge): string {
+    if (typeof badge !== "string" && typeof badge !== "number") return title;
     const trimmedBadge = String(badge).trim();
-    return trimmedBadge === "" ? panel.title : `${panel.title}, ${trimmedBadge}`;
+    return trimmedBadge === "" ? title : `${title}, ${trimmedBadge}`;
   }
 
-  private renderPanelTabContent(panel: QualifiedWorkspacePanelContribution, badge: WorkspacePanelBadge): TemplateResult {
+  private renderPanelTabContent(panel: QualifiedWorkspacePanelContribution, title: string, badge: WorkspacePanelBadge): TemplateResult {
     return html`
       ${panel.icon === undefined ? null : html`<span class="tab-custom-icon" aria-hidden="true">${panel.icon}</span>`}
-      <span class="tab-label">${panel.title}</span>
+      <span class="tab-label">${title}</span>
       ${this.isEmptyBadge(badge) ? null : html`<span class="tab-badge">${badge}</span>`}
     `;
   }

@@ -179,6 +179,7 @@ export type WorkspacePanelIcon = TemplateResult;
 export interface WorkspacePanelContribution {
   id: LocalContributionId;
   title: string;
+  titleFor?: (context: WorkspacePanelContext) => string;
   icon?: WorkspacePanelIcon;
   order?: number;
   visible?: (context: WorkspacePanelContext) => boolean;

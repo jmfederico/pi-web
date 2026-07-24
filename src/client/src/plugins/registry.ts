@@ -107,6 +107,7 @@ export class PluginRegistry {
   private qualifyWorkspacePanel(pluginId: string, panel: WorkspacePanelContribution, machineId: string | undefined, sourcePluginId: string | undefined): QualifiedWorkspacePanelContribution {
     const id = this.qualify(pluginId, panel.id);
     const badge = panel.badge;
+    const titleFor = panel.titleFor;
     const visible = panel.visible;
     return {
       ...panel,
@@ -115,6 +116,7 @@ export class PluginRegistry {
       localId: panel.id,
       ...(machineId === undefined ? {} : { machineId }),
       visible: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) && (visible?.(workspacePanelContextFor(context, pluginId)) ?? true),
+      ...(titleFor === undefined ? {} : { titleFor: (context: WorkspacePanelContext) => titleFor(workspacePanelContextFor(context, pluginId)) }),
       ...(badge === undefined ? {} : { badge: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? badge(workspacePanelContextFor(context, pluginId)) : undefined }),
       render: (context: WorkspacePanelContext) => panel.render(workspacePanelContextFor(context, pluginId)),
     };

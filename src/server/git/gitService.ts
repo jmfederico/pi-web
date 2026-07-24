@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse } from "../../shared/apiTypes.js";
+import { parseJsonString } from "../vcsOutput.js";
 import { normalizeRelativePath } from "../workspaces/pathSafety.js";
 import { sanitizedGitEnv } from "./gitEnv.js";
 
@@ -35,6 +36,15 @@ interface ParsedStatus {
   submodules: SubmoduleRecord[];
 }
 
+interface CommandResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+}
+
+type JjRunner = (cwd: string, args: string[]) => Promise<CommandResult>;
+
 export async function gitStatus(cwd: string): Promise<GitStatusResponse> {
   const result = await runGit(cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]);
   if (result.code !== 0) return { isGitRepo: false, hash: hash(result.stdout + result.stderr), files: [], submodules: [] };
@@ -66,6 +76,7 @@ async function expandSubmodules(cwd: string, parsed: ParsedStatus, topRaw: strin
 
   return {
     isGitRepo: true,
+    vcs: "git",
     hash: hash(topRaw + extraForHash),
     ...(parsed.branch === undefined ? {} : { branch: parsed.branch }),
     ...(parsed.upstream === undefined ? {} : { upstream: parsed.upstream }),
@@ -116,6 +127,17 @@ async function resolveSubmoduleToCommit(cwd: string, sub: SubmoduleRecord): Prom
   return head.code === 0 && resolved !== "" ? resolved : sub.indexOid;
 }
 
+export async function jjStatus(cwd: string, isGitRepo: boolean, run: JjRunner = runJj): Promise<GitStatusResponse> {
+  const summary = await run(cwd, ["diff", "--color=never", "-T", 'status_char ++ "\\0" ++ json(path) ++ "\\0" ++ if(target.conflict(), "1", "0") ++ "\\0"']);
+  if (summary.code !== 0) throw new Error(summary.stderr.trim() || "jj diff failed");
+  if (summary.truncated) throw new Error("Jujutsu status exceeds the 2 MiB output limit");
+  const commit = await run(cwd, ["--ignore-working-copy", "--color=never", "log", "--no-graph", "-r", "@", "-T", 'change_id.short(8) ++ "\\0" ++ description.first_line()']);
+  if (commit.code !== 0) throw new Error(commit.stderr.trim() || "jj log failed");
+  const [changeId = "@", description = ""] = commit.stdout.split("\0");
+  const branch = description === "" ? changeId : `${changeId} · ${description}`;
+  return { isGitRepo, vcs: "jj", hash: hash(summary.stdout + commit.stdout), branch, files: parseJjSummary(summary.stdout), submodules: [] };
+}
+
 export async function gitDiff(cwd: string, options: { path?: string; staged?: boolean }): Promise<GitDiffResponse> {
   const staged = options.staged === true;
   let path: string | undefined;
@@ -135,9 +157,20 @@ export async function gitDiff(cwd: string, options: { path?: string; staged?: bo
   if (!staged && path !== undefined && result.stdout === "" && await isUntracked(cwd, path)) {
     const untracked = await runGit(cwd, ["diff", "--no-ext-diff", "--color=never", "--no-index", "/dev/null", "--", path]);
     if (untracked.code !== 0 && untracked.code !== 1) throw new Error(untracked.stderr.trim() || "git diff failed");
-    return { path, staged, hash: hash(untracked.stdout), diff: untracked.stdout, truncated: untracked.truncated };
+    return { path, vcs: "git", staged, hash: hash(untracked.stdout), diff: untracked.stdout, truncated: untracked.truncated };
   }
-  return { ...(path === undefined ? {} : { path }), staged, hash: hash(result.stdout), diff: result.stdout, truncated: result.truncated };
+  return { ...(path === undefined ? {} : { path }), vcs: "git", staged, hash: hash(result.stdout), diff: result.stdout, truncated: result.truncated };
+}
+
+export async function jjDiff(cwd: string, options: { path?: string; staged?: boolean }, run: JjRunner = runJj): Promise<GitDiffResponse> {
+  const staged = options.staged === true;
+  let path: string | undefined;
+  if (options.path !== undefined && options.path !== "") path = normalizeRelativePath(options.path);
+  if (staged) return { ...(path === undefined ? {} : { path }), vcs: "jj", staged, hash: hash(""), diff: "", truncated: false };
+
+  const result = await run(cwd, ["diff", "--git", "--color=never", ...(path === undefined ? [] : ["--", `root-file:${JSON.stringify(path)}`])]);
+  if (result.code !== 0) throw new Error(result.stderr.trim() || "jj diff failed");
+  return { ...(path === undefined ? {} : { path }), vcs: "jj", staged, hash: hash(result.stdout), diff: result.stdout, truncated: result.truncated };
 }
 
 /**
@@ -262,6 +295,32 @@ function parseStatus(raw: string, options: { deferSubmodules: boolean }): Parsed
   return { isGitRepo: true, ...(branch === undefined ? {} : { branch }), ...(upstream === undefined ? {} : { upstream }), ...(ahead === undefined ? {} : { ahead }), ...(behind === undefined ? {} : { behind }), files, submodules };
 }
 
+function parseJjSummary(raw: string): GitStatusFile[] {
+  const fields = raw.split("\0").filter((field) => field !== "");
+  const files: GitStatusFile[] = [];
+  for (let index = 0; index < fields.length; index += 3) {
+    const code = fields[index];
+    const encodedPath = fields[index + 1];
+    const conflicted = fields[index + 2];
+    if (encodedPath === undefined) continue;
+    const path = parseJsonString(encodedPath, "Invalid Jujutsu diff path");
+    files.push({ path, index: "unmodified", workingTree: conflicted === "1" ? "conflicted" : jjStateFor(code) });
+  }
+  return files;
+}
+
+function jjStateFor(code: string | undefined): GitFileState {
+  switch (code) {
+    case undefined: return "unmodified";
+    case "M": return "modified";
+    case "A": return "added";
+    case "D": return "deleted";
+    case "C": return "copied";
+    case "R": return "renamed";
+    default: return "unmodified";
+  }
+}
+
 function stateFor(code: string | undefined): GitFileState {
   if (code === undefined) return "unmodified";
   switch (code) {
@@ -293,9 +352,17 @@ function hash(value: string): string {
   return createHash("sha1").update(value).digest("hex");
 }
 
-async function runGit(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string; truncated: boolean }> {
+async function runGit(cwd: string, args: string[]): Promise<CommandResult> {
+  return runCommand("git", cwd, args, sanitizedGitEnv());
+}
+
+async function runJj(cwd: string, args: string[]): Promise<CommandResult> {
+  return runCommand("jj", cwd, args, process.env);
+}
+
+async function runCommand(command: string, cwd: string, args: string[], env: NodeJS.ProcessEnv): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd, env: sanitizedGitEnv(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
     const timer = setTimeout(() => { child.kill("SIGKILL"); }, 10000);
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);

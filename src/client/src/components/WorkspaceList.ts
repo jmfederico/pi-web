@@ -1,5 +1,6 @@
 import { LitElement, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { isDeletableWorkspace } from "../../../shared/workspaces";
 import type { Workspace, WorkspaceActivity } from "../api";
 import type { WorkspaceLabelItem } from "../plugins/types";
 import { workspaceActivityFor, workspaceActivityIndicator } from "../workspaceActivity";
@@ -135,7 +136,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   }
 
   private renderWorkspaceActions(workspace: Workspace): TemplateResult | undefined {
-    if (!canDeleteWorkspace(workspace)) return undefined;
+    if (!isDeletableWorkspace(workspace)) return undefined;
     const deleting = this.isDeleting(workspace);
     return html`
       <div class="workspace-menu-actions">
@@ -208,10 +209,6 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
 
 function workspacePrimaryLabel(workspace: Workspace): string {
   return `${workspace.branch ?? workspace.label}${workspace.isMain ? " · main" : ""}`;
-}
-
-function canDeleteWorkspace(workspace: Workspace): boolean {
-  return workspace.isGitWorktree && !workspace.isMain;
 }
 
 function workspaceMenuId(workspaceId: string): string {

@@ -36,16 +36,29 @@ const targetWorkspace: Workspace = {
   path: "/repo/feature path",
   label: "feature",
   branch: "feature/branch",
+  vcs: "git",
   isMain: false,
   isGitRepo: true,
   isGitWorktree: true,
+};
+
+const jjWorkspace: Workspace = {
+  id: "jj-feature",
+  projectId: project.id,
+  path: "/repo/jj feature",
+  label: "agent feature",
+  vcs: "jj",
+  vcsWorkspaceName: "agent feature",
+  isMain: false,
+  isGitRepo: false,
+  isGitWorktree: false,
 };
 
 beforeEach(() => {
   app = Fastify({ logger: false });
   daemonRequests = [];
   closeStatusCode = 200;
-  registerWorkspaceDeletionRoutes(app, fakeProjects(), fakeWorkspaces([mainWorkspace, targetWorkspace]), fakeDaemon(), "/api");
+  registerWorkspaceDeletionRoutes(app, fakeProjects(), fakeWorkspaces([mainWorkspace, targetWorkspace, jjWorkspace]), fakeDaemon(), "/api", { validateDeletion: () => Promise.resolve() });
 });
 
 afterEach(async () => {
@@ -80,6 +93,19 @@ describe("workspace deletion routes", () => {
     ]);
   });
 
+  it("forgets and removes a secondary Jujutsu workspace", async () => {
+    const response = await app.inject({ method: "DELETE", url: "/api/projects/p1/workspaces/jj-feature" });
+
+    expect(response.statusCode).toBe(200);
+    expect(daemonRequests[0]).toEqual({ method: "DELETE", path: `/terminals?cwd=${encodeURIComponent(jjWorkspace.path)}` });
+    expect(daemonRequests[1]).toMatchObject({ method: "POST", path: "/terminal-command-runs" });
+    expect(daemonRequests[1]?.body).toMatchObject({
+      cwd: "/repo",
+      title: "Delete workspace: agent feature",
+      command: "jj -R '/repo' workspace forget 'agent feature'",
+    });
+  });
+
   it("does not start deletion when terminal cleanup fails", async () => {
     closeStatusCode = 500;
 
@@ -94,7 +120,7 @@ describe("workspace deletion routes", () => {
     const response = await app.inject({ method: "DELETE", url: "/api/projects/p1/workspaces/main" });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({ error: "Only secondary Git worktrees can be deleted" });
+    expect(response.json()).toEqual({ error: "Only secondary Git worktrees or Jujutsu workspaces can be deleted" });
     expect(daemonRequests).toEqual([]);
   });
 });

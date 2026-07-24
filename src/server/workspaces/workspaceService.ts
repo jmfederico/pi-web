@@ -1,29 +1,42 @@
 import { createHash } from "node:crypto";
-import type { Project } from "../types.js";
-import type { Workspace } from "../types.js";
-import { discoverGitWorktrees, isGitRepository, type GitWorktreeInfo } from "./gitWorktreeDiscovery.js";
+import type { Project, Workspace } from "../types.js";
+import { discoverGitWorkspaceRoot, discoverGitWorktrees, isGitRepository, type GitWorktreeInfo } from "./gitWorktreeDiscovery.js";
+import { discoverJjWorkspaces, isJjRepository, type JjWorkspaceInfo } from "./jjWorkspaceDiscovery.js";
 
 const idFor = (value: string) => createHash("sha1").update(value).digest("hex").slice(0, 12);
 
-/** The git facts this service needs, injectable so workspace policy is testable without a real repo. */
-export interface WorkspaceGitPort {
+export interface WorkspaceDiscovery {
   isGitRepository(path: string): Promise<boolean>;
+  discoverGitWorkspaceRoot(path: string): Promise<string>;
   discoverGitWorktrees(path: string): Promise<GitWorktreeInfo[]>;
+  isJjRepository(path: string): Promise<boolean>;
+  discoverJjWorkspaces(path: string): Promise<JjWorkspaceInfo[]>;
 }
 
-const realGit: WorkspaceGitPort = { isGitRepository, discoverGitWorktrees };
+const defaultDiscovery: WorkspaceDiscovery = {
+  isGitRepository,
+  discoverGitWorkspaceRoot,
+  discoverGitWorktrees,
+  isJjRepository,
+  discoverJjWorkspaces,
+};
 
 export class WorkspaceService {
-  constructor(private readonly git: WorkspaceGitPort = realGit) {}
+  constructor(private readonly discovery: WorkspaceDiscovery = defaultDiscovery) {}
 
   async list(project: Project): Promise<Workspace[]> {
-    const isGitRepo = await this.git.isGitRepository(project.path);
-    if (!isGitRepo) {
-      return [this.single(project, false)];
-    }
+    const isJjRepo = await this.discovery.isJjRepository(project.path);
+    if (isJjRepo) return this.listJjWorkspaces(project);
 
-    const worktrees = this.selectable(await this.git.discoverGitWorktrees(project.path), project);
-    if (worktrees.length === 0) return [this.single(project, true)];
+    const isGitRepo = await this.discovery.isGitRepository(project.path);
+    if (!isGitRepo) return [this.single(project, false)];
+
+    const [discoveredWorktrees, currentRoot] = await Promise.all([
+      this.discovery.discoverGitWorktrees(project.path),
+      this.discovery.discoverGitWorkspaceRoot(project.path),
+    ]);
+    const worktrees = this.selectable(discoveredWorktrees, project);
+    if (worktrees.length === 0) return [this.single(project, true, "git")];
 
     return worktrees.map((worktree) => {
       const leafName = worktree.path.split("/").filter((part) => part !== "").at(-1);
@@ -33,29 +46,46 @@ export class WorkspaceService {
         path: worktree.path,
         label: worktree.branch ?? (worktree.detached === true ? "detached" : leafName ?? worktree.path),
         ...(worktree.branch === undefined ? {} : { branch: worktree.branch }),
-        isMain: worktree.path === project.path,
+        vcs: "git",
+        isMain: worktree.path === currentRoot,
         isGitRepo: true,
         isGitWorktree: true,
       };
     });
   }
 
-  /**
-   * Git keeps listing a linked worktree after its checkout directory is deleted outside PI WEB,
-   * marking it `prunable`. Such an entry is not a usable workspace, so it is hidden rather than
-   * offered as a selectable ghost. Listing stays read-only: we never run `git worktree prune`.
-   * The project's own path is always kept so a project cannot end up with no workspace at all.
-   */
+  /** Hide stale linked worktrees without mutating the repository's worktree metadata. */
   private selectable(worktrees: GitWorktreeInfo[], project: Project): GitWorktreeInfo[] {
     return worktrees.filter((worktree) => worktree.prunable !== true || worktree.path === project.path);
   }
 
-  private single(project: Project, isGitRepo: boolean): Workspace {
+  private async listJjWorkspaces(project: Project): Promise<Workspace[]> {
+    const [workspaces, isGitRepo] = await Promise.all([
+      this.discovery.discoverJjWorkspaces(project.path),
+      this.discovery.isGitRepository(project.path),
+    ]);
+    if (workspaces.length === 0) return [this.single(project, isGitRepo, "jj")];
+
+    return workspaces.map((workspace) => ({
+      id: idFor(`${project.id}:${workspace.path}`),
+      projectId: project.id,
+      path: workspace.path,
+      label: workspace.name,
+      vcs: "jj",
+      vcsWorkspaceName: workspace.name,
+      isMain: workspace.isCurrent,
+      isGitRepo,
+      isGitWorktree: false,
+    }));
+  }
+
+  private single(project: Project, isGitRepo: boolean, vcs?: Workspace["vcs"]): Workspace {
     return {
       id: idFor(`${project.id}:${project.path}`),
       projectId: project.id,
       path: project.path,
       label: project.name,
+      ...(vcs === undefined ? {} : { vcs }),
       isMain: true,
       isGitRepo,
       isGitWorktree: false,

@@ -21,7 +21,7 @@ const plugin: PiWebPlugin = {
         {
           id: "workspace.kind-label",
           order: 100,
-          items: (context) => [{ type: "text", text: context.workspace.isGitRepo ? "git" : "folder", title: context.workspace.path }],
+          items: (context) => [{ type: "text", text: context.workspace.vcs ?? (context.workspace.isGitRepo ? "git" : "folder"), title: context.workspace.path }],
         },
       ],
       workspacePanels: [
