@@ -20,6 +20,11 @@ export async function isGitRepository(path: string): Promise<boolean> {
   }
 }
 
+export async function discoverGitWorkspaceRoot(path: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", path, "rev-parse", "--show-toplevel"], { env: sanitizedGitEnv() });
+  return stdout.trim();
+}
+
 export async function discoverGitWorktrees(path: string): Promise<GitWorktreeInfo[]> {
   const { stdout } = await execFileAsync("git", ["-C", path, "worktree", "list", "--porcelain"], { env: sanitizedGitEnv() });
   const chunks = stdout.trim().split(/\n\s*\n/).filter(Boolean);

@@ -187,12 +187,18 @@ export interface WorkspaceEffectiveConfig {
   uploads?: PiWebUploadsConfig;
 }
 
+export type WorkspaceVcs = "git" | "jj";
+
 export interface Workspace {
   id: string;
   projectId: string;
   path: string;
   label: string;
   branch?: string;
+  /** VCS used to discover and manage this workspace. */
+  vcs?: WorkspaceVcs;
+  /** VCS-native workspace name, when it differs from a Git branch. */
+  vcsWorkspaceName?: string;
   isMain: boolean;
   isGitRepo: boolean;
   isGitWorktree: boolean;
@@ -685,6 +691,8 @@ export interface GitStatusFile {
 
 export interface GitStatusResponse {
   isGitRepo: boolean;
+  /** VCS that produced this status. Defaults to Git for legacy responses. */
+  vcs?: WorkspaceVcs;
   hash: string;
   branch?: string;
   upstream?: string;
@@ -695,6 +703,8 @@ export interface GitStatusResponse {
 
 export interface GitDiffResponse {
   path?: string;
+  /** VCS that produced this diff. Defaults to Git for legacy responses. */
+  vcs?: WorkspaceVcs;
   staged: boolean;
   hash: string;
   diff: string;

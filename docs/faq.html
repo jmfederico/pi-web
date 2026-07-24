@@ -92,6 +92,7 @@
             <a href="#is-this-linux-only">What platforms are supported?</a>
             <a href="#is-pi-web-a-web-ui">Is PI WEB a Pi web UI?</a>
             <a href="#tools-are-not-found">Tools are failing / node not found</a>
+            <a href="#jj-not-found">Jujutsu workspaces report jj not found</a>
             <a href="#doctor-fails">What does doctor check?</a>
             <a href="#nvm-fnm-asdf">nvm, fnm, or asdf issues</a>
             <a href="#node-pty-native-module">node-pty native module is missing</a>
@@ -152,6 +153,19 @@
                 Avoid relying only on prompt hooks, shell integrations that rewrite PATH while rendering a prompt, or
                 interactive-only shell files for tools needed by services. Version-manager shims are usually the most
                 reliable option for service environments.
+              </p>
+            </article>
+
+            <article id="jj-not-found" class="faq-item">
+              <h2>Jujutsu workspaces report <code>jj</code> not found</h2>
+              <p>
+                PI WEB discovers a Jujutsu repository from its <code>.jj</code> metadata, then runs <code>jj</code> for
+                workspace status and diffs. Install a compatible Jujutsu CLI and make sure <code>jj</code> is available
+                to both the web/API service and session daemon through the service login-shell <code>PATH</code>.
+              </p>
+              <p>
+                Check the service login shell with <code>"$SHELL" -lc 'command -v jj'</code> and inspect
+                <code>pi-web logs</code>. After changing <code>PATH</code>, restart both PI WEB services.
               </p>
             </article>
 
