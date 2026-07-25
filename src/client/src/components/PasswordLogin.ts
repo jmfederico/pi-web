@@ -28,51 +28,51 @@ export class PasswordLogin extends LitElement {
       display: flex;
       align-items: center;
       justify-content: center;
-      background: var(--surface-1, #1a1a2e);
+      background: var(--pi-bg);
       font-family: system-ui, -apple-system, sans-serif;
     }
     .card {
-      background: var(--surface-2, #16213e);
-      border: 1px solid var(--border-1, #334);
+      background: var(--pi-bg);
+      border: 1px solid var(--pi-border);
       border-radius: 12px;
       padding: 2.5rem;
       width: 360px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      box-shadow: 0 8px 32px var(--pi-shadow);
     }
     h1 {
       margin: 0 0 0.25rem;
       font-size: 1.4rem;
-      color: var(--text-1, #eef);
+      color: var(--pi-text);
     }
     p {
       margin: 0 0 1.5rem;
       font-size: 0.85rem;
-      color: var(--text-2, #8899aa);
+      color: var(--pi-text-secondary);
     }
     label {
       display: block;
       margin-bottom: 0.35rem;
       font-size: 0.8rem;
       font-weight: 600;
-      color: var(--text-2, #8899aa);
+      color: var(--pi-muted);
     }
     input {
       width: 100%;
       padding: 0.6rem 0.75rem;
       margin-bottom: 1rem;
-      border: 1px solid var(--border-1, #334);
+      border: 1px solid var(--pi-border);
       border-radius: 6px;
-      background: var(--surface-3, #0f3460);
-      color: var(--text-1, #eef);
+      background: var(--pi-surface);
+      color: var(--pi-text);
       font-size: 0.9rem;
       box-sizing: border-box;
       outline: none;
     }
     input:focus {
-      border-color: var(--accent, #4a9eff);
+      border-color: var(--pi-accent);
     }
     .error {
-      color: #e55;
+      color: var(--pi-danger);
       font-size: 0.8rem;
       margin-bottom: 0.75rem;
     }
@@ -81,22 +81,15 @@ export class PasswordLogin extends LitElement {
       padding: 0.65rem;
       border: none;
       border-radius: 6px;
-      background: var(--accent, #4a9eff);
-      color: #fff;
+      background: var(--pi-accent);
+      color: var(--pi-bg);
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: opacity 0.15s;
     }
-    button:hover { background: var(--accent-hover, #3a8eef); }
+    button:hover { opacity: 0.85; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .buttons { display: flex; gap: 0.5rem; }
-    .buttons button { flex: 1; }
-    .buttons .secondary {
-      background: var(--surface-3, #0f3460);
-      border: 1px solid var(--border-1, #334);
-    }
-    .buttons .secondary:hover { background: var(--surface-2, #16213e); }
   `;
 
   @state() private username = "";
