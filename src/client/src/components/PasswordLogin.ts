@@ -79,16 +79,15 @@ export class PasswordLogin extends LitElement {
     button {
       width: 100%;
       padding: 0.65rem;
-      border: none;
-      border-radius: 6px;
-      background: var(--pi-accent);
-      color: var(--pi-bg);
+      border: 1px solid var(--pi-border);
+      border-radius: 8px;
+      background: var(--pi-surface);
+      color: var(--pi-text);
       font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
-      transition: opacity 0.15s;
     }
-    button:hover { opacity: 0.85; }
+    button:hover { background: var(--pi-surface-hover); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
   `;
 
