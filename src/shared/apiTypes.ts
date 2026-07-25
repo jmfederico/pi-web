@@ -76,6 +76,15 @@ export interface PiWebAgentConfig {
   dir?: string;
 }
 
+export interface PiWebAuthConfig {
+  /** Enables username/password protection for the web interface. */
+  enabled?: boolean;
+  /** Username for basic auth login. */
+  username?: string;
+  /** Password (plain text, stored in config file or env). */
+  password?: string;
+}
+
 export interface PiWebConfigValues {
   host?: string;
   port?: number;
@@ -97,6 +106,8 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
+  /** Username/password authentication for the web interface. */
+  auth?: PiWebAuthConfig;
   /** Desired Pi-compatible agent profile and companion CLI (Pi by default). */
   agent?: PiWebAgentConfig;
 }

@@ -155,7 +155,40 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
     config.subsessions = subsessions;
   }
   if (agent !== undefined) config.agent = parseAgentRequest(agent, agentPathHost);
+  const auth = value["auth"];
+  if (auth !== undefined) config.auth = parseAuthRequest(auth);
   return config;
+}
+
+const AUTH_REQUEST_KEYS = new Set(["enabled", "username", "password"]);
+
+function parseAuthRequest(value: unknown): NonNullable<PiWebConfig["auth"]> {
+  if (!isRecord(value)) throw new Error("PI WEB config auth must be an object");
+  const unknownKey = Object.keys(value).find((key) => !AUTH_REQUEST_KEYS.has(key));
+  if (unknownKey !== undefined) throw new Error(`PI WEB config auth contains unknown key ${JSON.stringify(unknownKey)}`);
+  const enabled = value["enabled"];
+  const username = value["username"];
+  const password = value["password"];
+  return {
+    ...(enabled !== undefined ? { enabled: parseAuthEnabled(enabled) } : {}),
+    ...(username !== undefined ? { username: parseAuthUsername(username) } : {}),
+    ...(password !== undefined ? { password: parseAuthPassword(password) } : {}),
+  };
+}
+
+function parseAuthEnabled(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("PI WEB config auth.enabled must be a boolean");
+  return value;
+}
+
+function parseAuthUsername(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error("PI WEB config auth.username must be a non-empty string");
+  return value.trim();
+}
+
+function parseAuthPassword(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error("PI WEB config auth.password must be a non-empty string");
+  return value.trim();
 }
 
 function pickSelectedMachineConfig(config: PiWebConfigValues): PiWebConfig {

@@ -35,6 +35,7 @@ import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
+import { registerPasswordAuth } from "./sessions/passwordAuth.js";
 import type { Project, Workspace } from "./types.js";
 
 export interface AppDependencies {
@@ -47,6 +48,8 @@ export interface AppDependencies {
   piPackages?: PiPackageService;
   piWebStatusCache?: PiWebStatusCache;
   config?: PiWebConfigService;
+  /** Pre-resolved auth config (username, password, enabled). */
+  resolvedAuth?: { enabled: boolean; username: string; password: string };
   clientDist?: string | false;
   logger?: FastifyServerOptions["logger"];
   /** Maximum accepted HTTP request body size in bytes. */
@@ -161,6 +164,12 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     threshold: 1024,
   });
   await app.register(fastifyWebsocket);
+
+  // Register password auth (preHandler hook) before any routes.
+  const passwordAuthConfig = deps.resolvedAuth !== undefined
+    ? { enabled: deps.resolvedAuth.enabled, username: deps.resolvedAuth.username, password: deps.resolvedAuth.password }
+    : { enabled: false, username: "", password: "" };
+  registerPasswordAuth(app, passwordAuthConfig);
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const workspaces = deps.workspaces ?? new WorkspaceService();

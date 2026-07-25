@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, resolve } from "node:path";
-import type { PiWebAgentDirEnvSource, PiWebConfigValues } from "./shared/apiTypes.js";
+import type { PiWebAgentDirEnvSource, PiWebAuthConfig, PiWebConfigValues } from "./shared/apiTypes.js";
 import { isPiCompanionCommand, usesPiCodingAgentStateCompatibility } from "./shared/activeAgentProfile.js";
 import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
 
@@ -48,6 +48,9 @@ export function defaultPiWebDataDir(): string {
 export const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 export const DEFAULT_UPLOADS_FOLDER = ".pi-web/uploads";
+
+export const PI_WEB_AUTH_USERNAME_ENV = "PI_WEB_AUTH_USERNAME";
+export const PI_WEB_AUTH_PASSWORD_ENV = "PI_WEB_AUTH_PASSWORD";
 
 export const DEFAULT_AGENT_COMMAND = "pi";
 export const PI_WEB_AGENT_COMMAND_ENV = "PI_WEB_AGENT_COMMAND";
@@ -156,6 +159,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
       // Beta capability, resolved off by default.
       subsessions: subsessionsEnabled(env, loaded.config),
+      auth: effectiveAuthConfig(env, loaded.config),
       agent: { command: agent.command, dir: agent.dir },
     },
   };
@@ -178,6 +182,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["maxUploadBytes"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
+  delete existing["auth"];
   delete existing["agent"];
   const merged = { ...existing, ...piWebConfigRecord(normalized) };
   mkdirSync(dirname(path), { recursive: true });
@@ -204,6 +209,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
+    ...(config.auth !== undefined ? { auth: config.auth } : {}),
     ...(config.agent !== undefined ? { agent: config.agent } : {}),
   };
 }
@@ -220,6 +226,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
+    ...(value["auth"] !== undefined ? { auth: parseAuthConfig(value["auth"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
 }
@@ -329,6 +336,40 @@ function resolveAgentDirPath(value: string, env: NodeJS.ProcessEnv, key: string,
     throw new Error(`PI WEB config ${key} must resolve to a host-absolute path: ${path}`);
   }
   return normalize(expanded);
+}
+
+export function effectiveAuthConfig(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): Required<PiWebAuthConfig> {
+  const username = env[PI_WEB_AUTH_USERNAME_ENV] ?? config.auth?.username ?? "";
+  const password = env[PI_WEB_AUTH_PASSWORD_ENV] ?? config.auth?.password ?? "";
+  const enabled = config.auth?.enabled ?? (username !== "" && password !== "");
+  return { enabled, username, password };
+}
+
+export function parseAuthConfig(value: unknown, path: string): NonNullable<PiWebConfig["auth"]> {
+  if (!isRecord(value)) throw new Error(`PI WEB config auth must be an object: ${path}`);
+  const enabled = value["enabled"];
+  const username = value["username"];
+  const password = value["password"];
+  return {
+    ...(enabled !== undefined ? { enabled: parseAuthEnabled(enabled, path) } : {}),
+    ...(username !== undefined ? { username: parseAuthUsername(username, path) } : {}),
+    ...(password !== undefined ? { password: parseAuthPassword(password, path) } : {}),
+  };
+}
+
+function parseAuthEnabled(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`PI WEB config auth.enabled must be a boolean: ${path}`);
+  return value;
+}
+
+function parseAuthUsername(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`PI WEB config auth.username must be a non-empty string: ${path}`);
+  return value.trim();
+}
+
+function parseAuthPassword(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`PI WEB config auth.password must be a non-empty string: ${path}`);
+  return value.trim();
 }
 
 export function isSafeAgentCommandForHost(value: string): boolean {
@@ -478,6 +519,16 @@ function isNonEmptyStringArray(value: unknown): value is string[] {
 }
 
 export function examplePiWebConfig(config: PiWebConfig = {}): string {
-  return `${JSON.stringify({ host: config.host ?? "127.0.0.1", port: config.port ?? 8504, allowedHosts: config.allowedHosts ?? [] }, null, 2)}\n`;
+  const auth = config.auth?.enabled === true ? { username: config.auth.username ?? "", password: config.auth.password ?? "" } : undefined;
+  return `${JSON.stringify(
+    {
+      host: config.host ?? "127.0.0.1",
+      port: config.port ?? 8504,
+      allowedHosts: config.allowedHosts ?? [],
+      ...(auth !== undefined ? { auth } : {}),
+    },
+    null,
+    2
+  )}\n`;
 }
 

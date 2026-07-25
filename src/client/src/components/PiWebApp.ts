@@ -2,6 +2,8 @@ import { LitElement, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { configApi, effectiveWorkspaceUploadFolder, sessionsApi, terminalsApi, workspacesApi, workspaceEffectiveUploadFolder, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type TerminalUiEvent, type Workspace } from "../api";
 import type { AppAction } from "../actions";
+import { clearToken } from "../passwordAuth";
+import { request } from "../api/http";
 import { initialAppState, type AppState } from "../appState";
 import { isSessionActive } from "../../../shared/activity";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
@@ -63,6 +65,7 @@ import "./AuthDialog";
 import "./ProjectDialog";
 import "./MachineDialog";
 import type { MachineDialogSubmit } from "./MachineDialog";
+import "./PasswordLogin";
 import "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
@@ -243,10 +246,15 @@ export class PiWebApp extends LitElement {
   @state() private activeThemeId: QualifiedContributionId = CLASSIC_THEME_ID;
   @state() private isRefreshingApp = false;
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
+  @state() private passwordAuthRequired = false;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(undefined);
   private sessionWarningVisibility = initialSessionWarningVisibilityState();
+  private readonly onAuthRequired = () => {
+    this.passwordAuthRequired = true;
+  };
+
   private readonly onPopState = () => void this.withChatScrollTransition(async () => {
     this.restoreSettingsRoute();
     await this.restoreRoute(false);
@@ -360,6 +368,10 @@ export class PiWebApp extends LitElement {
     void this.loadClientConfig();
     void this.ensureGatewayPluginsLoaded();
     void this.loadProjectsAndRestoreRoute().finally(() => { this.schedulePiWebStatusRefresh(); });
+    // Listen for 401 responses that require password login
+    window.addEventListener("pi-web:auth-required", this.onAuthRequired);
+    // Check auth status on load
+    this.checkPasswordAuth();
   }
 
   override disconnectedCallback(): void {
@@ -374,6 +386,7 @@ export class PiWebApp extends LitElement {
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.removeEventListener("change", this.onSystemLightThemeChange);
     this.keyboard.reset();
+    window.removeEventListener("pi-web:auth-required", this.onAuthRequired);
     this.auth.dispose();
     this.sessions.dispose();
     this.notifications.dispose();
@@ -467,6 +480,35 @@ export class PiWebApp extends LitElement {
         .filter((machine) => shouldRefreshMachineActivity(machine, this.state.machineStatuses[machine.id]))
         .map((machine) => machine.id);
     await Promise.all(machineIds.map((machineId) => this.refreshWorkspaceActivity(machineId)));
+  }
+
+  private checkPasswordAuth(): void {
+    void request<{ authEnabled: boolean; authenticated: boolean }>(
+      "api/auth/check",
+      parseAuthCheck,
+    ).then(({ authEnabled, authenticated }) => {
+      if (authEnabled && !authenticated) {
+        this.passwordAuthRequired = true;
+      }
+    }).catch(() => {
+      // Server not reachable or auth check failed; app shows as normal
+    });
+  }
+
+  private handlePasswordLoginSuccess(): void {
+    this.passwordAuthRequired = false;
+    // Retry loading data now that we have auth
+    void this.loadClientConfig();
+    void this.loadProjectsAndRestoreRoute().finally(() => { this.schedulePiWebStatusRefresh(); });
+  }
+
+  private handleLogout(): void {
+    clearToken();
+    // Best-effort server-side token revocation
+    void request("api/auth/logout", () => ({}), { method: "POST" }).catch(() => {
+      // Token already cleared locally
+    });
+    this.passwordAuthRequired = true;
   }
 
   private async loadClientConfig(): Promise<void> {
@@ -1614,7 +1656,7 @@ export class PiWebApp extends LitElement {
   }
 
   private getDefaultActions(): AppAction[] {
-    return [...this.plugins.getActions(this.createPluginRuntimeContext()), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
+    return [...this.plugins.getActions(this.createPluginRuntimeContext()), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions(), ...this.authActions()];
   }
 
   private sessionActions(): AppAction[] {
@@ -1629,6 +1671,21 @@ export class PiWebApp extends LitElement {
         run: () => { this.openSessionCleanupDialog(); },
       },
     ];
+  }
+
+  private authActions(): AppAction[] {
+    if (!this.passwordAuthRequired) {
+      return [
+        {
+          id: "app.auth.logout",
+          title: "Log Out",
+          description: "Sign out of the password-protected web interface",
+          group: "Account",
+          run: () => { this.handleLogout(); },
+        },
+      ];
+    }
+    return [];
   }
 
   private panelLayoutActions(): AppAction[] {
@@ -2224,6 +2281,7 @@ export class PiWebApp extends LitElement {
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
         ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
+      ${this.passwordAuthRequired ? html`<pi-web-password-login @login-success=${() => { this.handlePasswordLoginSuccess(); }}></pi-web-password-login>` : null}
     `;
   }
 
@@ -2311,6 +2369,15 @@ function omitWorkspaceDeletionRun(runs: Record<string, TerminalCommandRun>, work
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => { resolve(); }));
+}
+
+function parseAuthCheck(value: unknown): { authEnabled: boolean; authenticated: boolean } {
+  if (!isRecord(value)) return { authEnabled: false, authenticated: false };
+  return { authEnabled: Boolean(value["authEnabled"]), authenticated: Boolean(value["authenticated"]) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function thinkingDescription(level: string): string | undefined {
