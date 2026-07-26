@@ -11,19 +11,35 @@ export interface MarkerMeasurement {
 
 export const PREPEND_RESTORE_SETTLE_FRAMES = 30;
 
+// Programmatic scrollTop writes cancel in-flight touch/momentum scrolling, so
+// the prepend settle loop must only write when the anchor actually drifted.
+const MIN_ANCHOR_WRITE_DELTA_PX = 0.5;
+
 export function capturePrependScrollAnchor(scroller: HTMLElement, markers: HTMLElement[]): PrependScrollAnchor {
   const marker = selectPrependMarker(measureMarkers(scroller, markers));
   const base = { distanceFromBottom: scroller.scrollHeight - scroller.scrollTop };
   return marker === undefined ? base : { ...base, markerId: marker.id, markerOffset: marker.offset };
 }
 
-export function restorePrependScrollAnchor(scroller: HTMLElement, anchor: PrependScrollAnchor, marker: HTMLElement | undefined): void {
+export interface PrependScrollViewport {
+  scrollTop: number;
+  readonly scrollHeight: number;
+  getBoundingClientRect(): Pick<DOMRectReadOnly, "top">;
+}
+
+export interface PrependScrollMarkerElement {
+  getBoundingClientRect(): Pick<DOMRectReadOnly, "top">;
+}
+
+export function restorePrependScrollAnchor(scroller: PrependScrollViewport, anchor: PrependScrollAnchor, marker: PrependScrollMarkerElement | undefined): void {
   if (marker !== undefined && anchor.markerOffset !== undefined) {
     const markerOffset = marker.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    scroller.scrollTop += scrollDeltaForMarker(markerOffset, anchor.markerOffset);
+    const delta = scrollDeltaForMarker(markerOffset, anchor.markerOffset);
+    if (Math.abs(delta) >= MIN_ANCHOR_WRITE_DELTA_PX) scroller.scrollTop += delta;
     return;
   }
-  scroller.scrollTop = scrollTopForBottomDistance(scroller.scrollHeight, anchor.distanceFromBottom);
+  const nextScrollTop = scrollTopForBottomDistance(scroller.scrollHeight, anchor.distanceFromBottom);
+  if (Math.abs(nextScrollTop - scroller.scrollTop) >= MIN_ANCHOR_WRITE_DELTA_PX) scroller.scrollTop = nextScrollTop;
 }
 
 export function selectPrependMarker(markers: MarkerMeasurement[]): MarkerMeasurement | undefined {
