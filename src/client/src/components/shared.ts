@@ -86,9 +86,10 @@ export interface CompletionItem {
 export const appStyles = css`
   /* Mobile browsers already subtract browser controls from 100dvh; reserve bottom safe area only in standalone PWA modes. */
   :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px system-ui, sans-serif; }
-  :host([pwa-display-mode]) { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
+  /* On Android standalone PWAs (Chromium edge-to-edge) env(safe-area-inset-bottom) often resolves to 0 even though the gesture nav bar overlaps content, clipping the composer (model picker + send). Floor it so bottom controls clear the gesture bar; devices with a real inset (e.g. iOS home indicator) still win. */
+  :host([pwa-display-mode]) { --pi-app-safe-area-bottom: max(env(safe-area-inset-bottom, 0px), 20px); }
   @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
-    :host { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
+    :host { --pi-app-safe-area-bottom: max(env(safe-area-inset-bottom, 0px), 20px); }
   }
   .shell { --navigation-panel-size: 340px; --workspace-panel-size: minmax(360px, 42vw); --navigation-panel-width: var(--navigation-panel-size); --workspace-panel-width: var(--workspace-panel-size); display: grid; grid-template-columns: var(--navigation-panel-width) 1px minmax(320px, 1fr) 1px var(--workspace-panel-width); height: 100%; min-height: 0; }
   aside { grid-column: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
