@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerMiniMaxProviders } from "./lib/minimax.js";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliPath = join(packageRoot, "dist", "cli.js");
@@ -88,6 +89,8 @@ async function boundedLogs(): Promise<{ code: number; output: string }> {
 }
 
 export default function piWebExtension(pi: ExtensionAPI): void {
+  registerMiniMaxProviders(pi);
+
   pi.registerCommand("pi-web", {
     description: "Manage PI WEB services: install, status, logs, restart, start, stop, doctor, version, open",
     getArgumentCompletions(prefix: string): { value: string; label: string }[] | null {
