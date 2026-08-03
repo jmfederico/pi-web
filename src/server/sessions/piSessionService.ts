@@ -82,6 +82,7 @@ import {
 } from "./sessionNotificationStore.js";
 import { plainTextTheme } from "./plainTextTheme.js";
 import { SessionUnreadStore, type SessionUnreadMutation } from "./sessionUnreadStore.js";
+import { ThroughputTracker } from "./throughputTracker.js";
 
 /**
  * Minimal structured-logging seam, shaped like Fastify's logger so sessiond can
@@ -845,6 +846,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly extensionDialogsTimeoutMs: number;
   /** The parked extension Promise resolvers behind the store's open dialogs. */
   private readonly dialogWaiters = new ExtensionDialogWaiters();
+  /** Per-session average tokens/second, accumulated across completed turns. */
+  private readonly throughputTracker = new ThroughputTracker();
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -2012,6 +2015,7 @@ export class PiSessionService implements SessionRouteService {
   private submitPrompt(session: PiAgentSession, text: string, behavior: QueuedPromptKind | undefined, images: ImageContent[] = [], echoUserMessage = true): Promise<void> {
     this.publishActivity(session, behavior === "steer" ? "steering queued" : behavior === "followUp" ? "message queued" : "prompt accepted", "active");
     if (behavior === undefined && echoUserMessage) this.events.publish(session.sessionId, { type: "message.append", message: userMessage(text, images) });
+    this.throughputTracker.beginTurn(session.sessionId, session.getSessionStats().tokens, this.now().getTime());
     const promptOptions = buildPromptOptions(behavior, images);
     const promptPromise = this.runSessionEntryMutation(session, "send a prompt", () => session.prompt(text, promptOptions)).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -2618,6 +2622,7 @@ export class PiSessionService implements SessionRouteService {
     this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
+    this.throughputTracker.clear(sessionId);
     // Disarm subsession notification before teardown so the abort below cannot
     // emit a "stopped working" event that notifies the parent (e.g. on archive).
     // The parent/children link is kept so the parent can still see the child.
@@ -3133,7 +3138,10 @@ export class PiSessionService implements SessionRouteService {
       this.events.publish(session.sessionId, toClientEvent(event, session.thinkingLevel));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
-      if (eventType === "agent_end") this.abortRunScopedExtensionDialogs(session.sessionId);
+      if (eventType === "agent_end") {
+        this.abortRunScopedExtensionDialogs(session.sessionId);
+        this.throughputTracker.completeTurn(session.sessionId, session.getSessionStats().tokens, this.now().getTime());
+      }
       if (eventType === "compaction_end") this.scheduleCompactionQueueDrain(session.sessionId);
       if (eventType === "agent_start" || eventType === "agent_end") this.scheduleCompactionQueueDrain(session.sessionId);
       this.publishStatus(session);
@@ -3532,6 +3540,7 @@ export class PiSessionService implements SessionRouteService {
     const warnings = this.warningsForSession(session);
     const pendingAsk = this.pendingAskStore.pendingAsk(session.sessionId);
     const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
+    const throughput = this.throughputTracker.throughput(session.sessionId);
     return {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
@@ -3546,6 +3555,7 @@ export class PiSessionService implements SessionRouteService {
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(throughput === undefined ? {} : { throughput }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingAsk === undefined ? {} : { pendingAsk }),
       ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),

@@ -2,7 +2,7 @@ import type { TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionStatus } from "../api";
 import { templateEventHandlerAfterMarker } from "../templateInspection.testSupport";
-import { StatusBar, statusBarWarningControlContent } from "./StatusBar";
+import { StatusBar, statusBarWarningControlContent, throughputStatusText } from "./StatusBar";
 
 describe("statusBarWarningControlContent", () => {
   it("provides an action label for both states while keeping only the count visible", () => {
@@ -62,3 +62,17 @@ function status(): SessionStatus {
     cost: 0,
   };
 }
+
+describe("throughputStatusText", () => {
+  it("omits text when throughput is absent", () => {
+    expect(throughputStatusText(undefined)).toBeUndefined();
+  });
+
+  it("shows both rates with the out/s and total/s labels", () => {
+    expect(throughputStatusText({ total: 2000, output: 800, measuredTurns: 2 })).toBe("⇶800/s · ⟳2000/s");
+  });
+
+  it("rounds fractional rates", () => {
+    expect(throughputStatusText({ total: 1234.5, output: 432.1, measuredTurns: 1 })).toBe("⇶432/s · ⟳1235/s");
+  });
+});

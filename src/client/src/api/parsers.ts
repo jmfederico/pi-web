@@ -461,6 +461,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     cost: requireNumber(record, "cost"),
     ...optionalModel(record["model"]),
     ...optionalContextUsage(record["contextUsage"]),
+    ...optionalThroughput(record["throughput"]),
     ...optionalField("thinkingLevel", optionalString(record, "thinkingLevel")),
     ...optionalWarnings(record["warnings"]),
     ...optionalPendingAsk(record["pendingAsk"]),
@@ -1198,6 +1199,12 @@ function optionalContextUsage(value: unknown): Pick<SessionStatus, "contextUsage
   if (value === undefined) return {};
   const record = requireRecord(value);
   return { contextUsage: { tokens: numberOrNull(record, "tokens"), contextWindow: requireNumber(record, "contextWindow"), percent: numberOrNull(record, "percent") } };
+}
+
+function optionalThroughput(value: unknown): Pick<SessionStatus, "throughput"> | object {
+  if (value === undefined) return {};
+  const record = requireRecord(value);
+  return { throughput: { total: requireNumber(record, "total"), output: requireNumber(record, "output"), measuredTurns: requireNumber(record, "measuredTurns") } };
 }
 
 export function parseSlashCommand(value: unknown): SlashCommand {

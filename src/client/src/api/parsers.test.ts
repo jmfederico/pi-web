@@ -440,6 +440,31 @@ describe("API parsers", () => {
     });
   });
 
+  it("parses optional throughput and omits it when absent", () => {
+    expect(parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+      throughput: { total: 2000, output: 800, measuredTurns: 3 },
+    }).throughput).toEqual({ total: 2000, output: 800, measuredTurns: 3 });
+
+    expect(parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+    }).throughput).toBeUndefined();
+  });
+
   it("parses live session warnings including optional source and path", () => {
     const parsed = parseSessionStatus({
       sessionId: "s1",

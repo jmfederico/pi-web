@@ -840,6 +840,15 @@ export interface SessionWarning {
   dismiss?: { id: string };
 }
 
+/** Average tokens/second across completed turns (see {@link SessionStatus.throughput}). */
+export interface SessionThroughput {
+  /** All tokens (input + output + cache) per second, weighted across turns. */
+  total: number;
+  /** Output tokens per second, weighted across turns. */
+  output: number;
+  measuredTurns: number;
+}
+
 export interface SessionStatus {
   sessionId: string;
   /** True when the server has verified a backing session file exists; false when known transient. */
@@ -855,6 +864,14 @@ export interface SessionStatus {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   cost: number;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  /**
+   * Average tokens/second across completed turns, accumulated in the session
+   * daemon. `total` is all tokens over wall-clock (end-to-end throughput, with
+   * tool/bash time dragging the rate down as intended); `output` is output
+   * tokens only over the same interval (raw model emission rate). Absent until
+   * at least one turn has completed. Resets on sessiond restart.
+   */
+  throughput?: SessionThroughput;
   /**
    * Live, runtime-scoped warnings for this session (skill/resource diagnostics,
    * extension load errors, Anthropic subscription-auth billing notice, etc.).
