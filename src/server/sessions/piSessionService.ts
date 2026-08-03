@@ -850,6 +850,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly throughputTracker = new ThroughputTracker();
   /** Open assistant-message streaming windows per session, for throughput model-rate timing. */
   private readonly streamingMessageStarts = new Map<string, number>();
+  /** Fallback output count for stale session stats read at agent_end. */
+  private readonly lastKnownOutput = new Map<string, number>();
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -2625,6 +2627,7 @@ export class PiSessionService implements SessionRouteService {
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
     this.throughputTracker.clear(sessionId);
+    this.lastKnownOutput.delete(sessionId);
     this.streamingMessageStarts.delete(sessionId);
     // Disarm subsession notification before teardown so the abort below cannot
     // emit a "stopped working" event that notifies the parent (e.g. on archive).
@@ -3143,6 +3146,7 @@ export class PiSessionService implements SessionRouteService {
       const eventType = getString(event, "type");
       if (eventType === "message_start") this.streamingMessageStarts.set(session.sessionId, this.now().getTime());
       if (eventType === "message_end") {
+        this.lastKnownOutput.set(session.sessionId, session.getSessionStats().tokens.output);
         const startedAt = this.streamingMessageStarts.get(session.sessionId);
         if (startedAt !== undefined) {
           this.streamingMessageStarts.delete(session.sessionId);
@@ -3152,7 +3156,9 @@ export class PiSessionService implements SessionRouteService {
       if (eventType === "agent_end") {
         this.abortRunScopedExtensionDialogs(session.sessionId);
         this.streamingMessageStarts.delete(session.sessionId);
-        this.throughputTracker.completeTurn(session.sessionId, session.getSessionStats().tokens, this.now().getTime());
+        const currentOutput = session.getSessionStats().tokens.output;
+        const lastOutput = this.lastKnownOutput.get(session.sessionId) ?? currentOutput;
+        this.throughputTracker.completeTurn(session.sessionId, { output: Math.max(currentOutput, lastOutput) }, this.now().getTime());
       }
       if (eventType === "compaction_end") this.scheduleCompactionQueueDrain(session.sessionId);
       if (eventType === "agent_start" || eventType === "agent_end") this.scheduleCompactionQueueDrain(session.sessionId);
