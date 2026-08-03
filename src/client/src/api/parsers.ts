@@ -1204,7 +1204,8 @@ function optionalContextUsage(value: unknown): Pick<SessionStatus, "contextUsage
 function optionalThroughput(value: unknown): Pick<SessionStatus, "throughput"> | object {
   if (value === undefined) return {};
   const record = requireRecord(value);
-  return { throughput: { total: requireNumber(record, "total"), output: requireNumber(record, "output"), measuredTurns: requireNumber(record, "measuredTurns") } };
+  const model = numberOrNull(record, "model");
+  return { throughput: { overall: requireNumber(record, "overall"), ...(model === null ? {} : { model }), measuredTurns: requireNumber(record, "measuredTurns") } };
 }
 
 export function parseSlashCommand(value: unknown): SlashCommand {

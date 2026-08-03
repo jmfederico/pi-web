@@ -20,12 +20,14 @@ export function statusBarWarningControlContent(count: number, expanded: boolean)
 
 /**
  * Status-bar text for session throughput, or `undefined` when no turn has
- * completed yet. `output` is the raw model emission rate; `total` is end-to-end
- * throughput (tool time drags it down, by design). See {@link SessionThroughput}.
+ * completed yet. `overall` is output tokens over the full turn (tools included);
+ * `model` is output tokens over streaming-only time (raw model emission).
+ * See {@link SessionThroughput}.
  */
-export function throughputStatusText(throughput: { total: number; output: number; measuredTurns: number } | undefined): string | undefined {
+export function throughputStatusText(throughput: { overall: number; model: number | undefined; measuredTurns: number } | undefined): string | undefined {
   if (throughput === undefined) return undefined;
-  return `⇶${String(Math.round(throughput.output))}/s · ⟳${String(Math.round(throughput.total))}/s`;
+  const model = throughput.model === undefined ? "–" : String(Math.round(throughput.model));
+  return `⇶${String(Math.round(throughput.overall))}/s · ⊡${model}/s`;
 }
 
 @customElement("status-bar")
@@ -70,7 +72,7 @@ export class StatusBar extends LitElement {
         <span>↓${formatTokenCount(tokens.output)}</span>
         <span class="context">${contextText}</span>
         <span>${formatCost(status.cost)}</span>
-        ${throughput === undefined ? null : html`<span class="throughput" title="Average tokens/sec across ${String(status.throughput?.measuredTurns ?? 0)} turn(s) — ⇶ output rate, ⟳ processed rate (input+output, excluding cache)">${throughput}</span>`}
+        ${throughput === undefined ? null : html`<span class="throughput" title="Average output tokens/sec across ${String(status.throughput?.measuredTurns ?? 0)} turn(s) — ⇶ overall rate (tools included), ⊡ model rate (streaming only)">${throughput}</span>`}
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}
       </div>
     `;

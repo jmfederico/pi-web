@@ -848,6 +848,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly dialogWaiters = new ExtensionDialogWaiters();
   /** Per-session average tokens/second, accumulated across completed turns. */
   private readonly throughputTracker = new ThroughputTracker();
+  /** Open assistant-message streaming windows per session, for throughput model-rate timing. */
+  private readonly streamingMessageStarts = new Map<string, number>();
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -2623,6 +2625,7 @@ export class PiSessionService implements SessionRouteService {
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
     this.throughputTracker.clear(sessionId);
+    this.streamingMessageStarts.delete(sessionId);
     // Disarm subsession notification before teardown so the abort below cannot
     // emit a "stopped working" event that notifies the parent (e.g. on archive).
     // The parent/children link is kept so the parent can still see the child.
@@ -3138,8 +3141,17 @@ export class PiSessionService implements SessionRouteService {
       this.events.publish(session.sessionId, toClientEvent(event, session.thinkingLevel));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
+      if (eventType === "message_start") this.streamingMessageStarts.set(session.sessionId, this.now().getTime());
+      if (eventType === "message_end") {
+        const startedAt = this.streamingMessageStarts.get(session.sessionId);
+        if (startedAt !== undefined) {
+          this.streamingMessageStarts.delete(session.sessionId);
+          this.throughputTracker.addStreamingMs(session.sessionId, this.now().getTime() - startedAt);
+        }
+      }
       if (eventType === "agent_end") {
         this.abortRunScopedExtensionDialogs(session.sessionId);
+        this.streamingMessageStarts.delete(session.sessionId);
         this.throughputTracker.completeTurn(session.sessionId, session.getSessionStats().tokens, this.now().getTime());
       }
       if (eventType === "compaction_end") this.scheduleCompactionQueueDrain(session.sessionId);

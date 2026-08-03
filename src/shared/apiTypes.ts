@@ -842,10 +842,10 @@ export interface SessionWarning {
 
 /** Average tokens/second across completed turns (see {@link SessionStatus.throughput}). */
 export interface SessionThroughput {
-  /** All tokens (input + output + cache) per second, weighted across turns. */
-  total: number;
-  /** Output tokens per second, weighted across turns. */
-  output: number;
+  /** Output tokens per second over the full turn wall-clock (tools included). */
+  overall: number;
+  /** Output tokens per second over streaming-only time (tools excluded). Absent when no streaming time recorded. */
+  model: number | undefined;
   measuredTurns: number;
 }
 
@@ -866,10 +866,10 @@ export interface SessionStatus {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   /**
    * Average tokens/second across completed turns, accumulated in the session
-   * daemon. `total` is all tokens over wall-clock (end-to-end throughput, with
-   * tool/bash time dragging the rate down as intended); `output` is output
-   * tokens only over the same interval (raw model emission rate). Absent until
-   * at least one turn has completed. Resets on sessiond restart.
+   * daemon. `overall` is output tokens over the full turn wall-clock (tool/bash
+   * time included, so tool-heavy turns look slow); `model` is output tokens over
+   * streaming-only time (raw model emission rate, excluding tool execution).
+   * Absent until at least one turn has completed. Resets on sessiond restart.
    */
   throughput?: SessionThroughput;
   /**

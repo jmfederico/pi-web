@@ -68,11 +68,15 @@ describe("throughputStatusText", () => {
     expect(throughputStatusText(undefined)).toBeUndefined();
   });
 
-  it("shows both rates with the out/s and total/s labels", () => {
-    expect(throughputStatusText({ total: 2000, output: 800, measuredTurns: 2 })).toBe("⇶800/s · ⟳2000/s");
+  it("shows overall and model rates with the /s labels", () => {
+    expect(throughputStatusText({ overall: 400, model: 2000, measuredTurns: 2 })).toBe("⇶400/s · ⊡2000/s");
+  });
+
+  it("shows a dash for model rate when no streaming time was recorded", () => {
+    expect(throughputStatusText({ overall: 400, model: undefined, measuredTurns: 1 })).toBe("⇶400/s · ⊡–/s");
   });
 
   it("rounds fractional rates", () => {
-    expect(throughputStatusText({ total: 1234.5, output: 432.1, measuredTurns: 1 })).toBe("⇶432/s · ⟳1235/s");
+    expect(throughputStatusText({ overall: 432.1, model: 1234.5, measuredTurns: 1 })).toBe("⇶432/s · ⊡1235/s");
   });
 });
