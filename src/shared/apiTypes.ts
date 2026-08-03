@@ -869,7 +869,9 @@ export interface SessionStatus {
    * daemon. `overall` is output tokens over the full turn wall-clock (tool/bash
    * time included, so tool-heavy turns look slow); `model` is output tokens over
    * streaming-only time (raw model emission rate, excluding tool execution).
-   * Absent until at least one turn has completed. Resets on sessiond restart.
+   * Absent until at least one turn has completed. Persisted across sessiond
+   * restarts; the in-flight turn is not, so the first turn after a restart may
+   * not be reflected until it completes.
    */
   throughput?: SessionThroughput;
   /**

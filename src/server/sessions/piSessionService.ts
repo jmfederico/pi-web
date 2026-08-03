@@ -776,6 +776,12 @@ export interface PiSessionServiceDependencies {
   notificationStore?: SessionNotificationStore;
   /** Durable daemon-owned unread state; defaults to an in-memory store in tests. */
   unreadStore?: SessionUnreadStore;
+  /**
+   * Per-session throughput accumulator. Injected so sessiond can pre-load the
+   * persisted state from disk before the first prompt lands. Defaults to an
+   * in-memory tracker (no file path) for tests.
+   */
+  throughputTracker?: ThroughputTracker;
   /** Initial retry delay for durable unread publication failures. */
   unreadPublicationRetryDelayMs?: number;
   /**
@@ -847,7 +853,7 @@ export class PiSessionService implements SessionRouteService {
   /** The parked extension Promise resolvers behind the store's open dialogs. */
   private readonly dialogWaiters = new ExtensionDialogWaiters();
   /** Per-session average tokens/second, accumulated across completed turns. */
-  private readonly throughputTracker = new ThroughputTracker();
+  private readonly throughputTracker: ThroughputTracker;
   /** Open assistant-message streaming windows per session, for throughput model-rate timing. */
   private readonly streamingMessageStarts = new Map<string, number>();
   /** Fallback output count for stale session stats read at agent_end. */
@@ -873,6 +879,7 @@ export class PiSessionService implements SessionRouteService {
     this.now = deps.now ?? (() => new Date());
     this.notificationStore = deps.notificationStore ?? new SessionNotificationStore();
     this.unreadStore = deps.unreadStore ?? new SessionUnreadStore();
+    this.throughputTracker = deps.throughputTracker ?? new ThroughputTracker();
     this.pendingAskStore = deps.pendingAskStore ?? new PendingAskStore();
     this.pendingExtensionDialogStore = deps.pendingExtensionDialogStore ?? new PendingExtensionDialogStore();
     this.extensionDialogsTimeoutMs = deps.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS;

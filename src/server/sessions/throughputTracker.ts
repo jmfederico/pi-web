@@ -24,9 +24,18 @@
  * The average is **weighted** (`Σoutput / Σtime`), not a simple mean of
  * per-turn rates: a 2-token fluke turn cannot dominate a 5000-token turn.
  *
- * In-memory only; resets on sessiond restart. Add persistence when a restart
- * wiping the average becomes bothersome.
+ * State is persisted to a single JSON file at the configured path. The
+ * accumulator totals are written after every completed turn and every
+ * `clear()`; the in-flight `pendingTurn` is intentionally not persisted —
+ * its streaming time is folded into the totals on the next `agent_end`,
+ * so persisting it would require a write on every `message_end` for one
+ * value that the next turn replaces anyway. The tracker is in-memory only
+ * when constructed without a `filePath`.
  */
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { piWebDataDir } from "../../config.js";
+
 export interface TurnTokenSnapshot {
   output: number;
 }
@@ -53,8 +62,27 @@ interface Accumulator {
   measuredTurns: number;
 }
 
+interface PersistedTotals {
+  totalOutputTokens: number;
+  totalWallMs: number;
+  totalStreamingMs: number;
+  measuredTurns: number;
+}
+
+interface PersistedFile {
+  sessions: Record<string, PersistedTotals>;
+}
+
+export function defaultThroughputFilePath(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
+  return join(piWebDataDir(env, cwd), "throughput.json");
+}
+
 export class ThroughputTracker {
   private readonly sessions = new Map<string, Accumulator>();
+  /** Most recent in-flight save. `save()` awaits it so tests and explicit flushes see the latest write. */
+  private lastSave: Promise<void> = Promise.resolve();
+
+  constructor(private readonly filePath?: string) {}
 
   beginTurn(sessionId: string, snapshot: TurnTokenSnapshot, now: number): void {
     this.accumulator(sessionId).pendingTurn = { startMs: now, outputAtStart: snapshot.output, streamingMs: 0 };
@@ -83,6 +111,7 @@ export class ThroughputTracker {
     acc.totalWallMs += wallMs;
     acc.totalStreamingMs += pending.streamingMs;
     acc.measuredTurns += 1;
+    this.scheduleSave();
     return this.throughput(sessionId);
   }
 
@@ -104,6 +133,96 @@ export class ThroughputTracker {
 
   clear(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.scheduleSave();
+  }
+
+  /**
+   * Hydrate accumulated totals from disk. A missing file is a no-op; a corrupt
+   * file is logged and treated as empty so a transient write error cannot
+   * permanently brick the indicator. Called once at sessiond startup, before
+   * the tracker is handed to `PiSessionService`.
+   */
+  async load(): Promise<void> {
+    if (this.filePath === undefined) return;
+    let raw: string;
+    try {
+      raw = await readFile(this.filePath, "utf8");
+    } catch (error: unknown) {
+      if (isNodeErrorWithCode(error, "ENOENT")) return;
+      // ponytail: skip a dedicated onError callback; the persistence path is
+      // single-purpose and a console.error is enough for an operator. Replace
+      // with structured logging when this tracker gains more than one caller.
+      console.error("throughput persistence read failed; starting fresh", error);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      console.error("throughput persistence file is corrupt; starting fresh", error);
+      return;
+    }
+    if (!isRecord(parsed) || !isRecord(parsed["sessions"])) return;
+    for (const [sessionId, totals] of Object.entries(parsed["sessions"])) {
+      if (!isRecord(totals)) continue;
+      const totalOutputTokens = numberOrZero(totals["totalOutputTokens"]);
+      const totalWallMs = numberOrZero(totals["totalWallMs"]);
+      const totalStreamingMs = numberOrZero(totals["totalStreamingMs"]);
+      const measuredTurns = numberOrZero(totals["measuredTurns"]);
+      // A row without a valid wall-clock or turn count is the same as a row
+      // the running tracker already rejects in `throughput()`; drop it.
+      if (totalWallMs <= 0 || measuredTurns <= 0) continue;
+      this.sessions.set(sessionId, {
+        pendingTurn: undefined,
+        totalOutputTokens,
+        totalWallMs,
+        totalStreamingMs,
+        measuredTurns,
+      });
+    }
+  }
+
+  /**
+   * Write the current totals to disk. Awaits any in-flight save first, so
+   * callers (tests, shutdown flushes) can rely on the file reflecting the
+   * latest state by the time the returned Promise resolves. No-op when the
+   * tracker was constructed without a `filePath`.
+   */
+  async save(): Promise<void> {
+    if (this.filePath === undefined) return;
+    await this.lastSave;
+    const promise = this.writeToDisk();
+    this.lastSave = promise;
+    await promise;
+  }
+
+  private scheduleSave(): void {
+    if (this.filePath === undefined) return;
+    this.lastSave = this.writeToDisk().catch((error: unknown) => {
+      // ponytail: swallow save errors and let the next turn overwrite the file.
+      // The worst case is losing a few turns of history to a transient I/O
+      // error, which the next successful save repairs. Upgrade to a retry
+      // queue or an error channel when the operator needs alerting.
+      console.error("throughput persistence write failed", error);
+    });
+  }
+
+  private async writeToDisk(): Promise<void> {
+    if (this.filePath === undefined) return;
+    const data: PersistedFile = { sessions: {} };
+    for (const [sessionId, acc] of this.sessions) {
+      // Skip sessions that only have a pending turn — those will be written
+      // when (or if) the turn completes.
+      if (acc.measuredTurns === 0) continue;
+      data.sessions[sessionId] = {
+        totalOutputTokens: acc.totalOutputTokens,
+        totalWallMs: acc.totalWallMs,
+        totalStreamingMs: acc.totalStreamingMs,
+        measuredTurns: acc.measuredTurns,
+      };
+    }
+    await mkdir(dirname(this.filePath), { recursive: true });
+    await writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   }
 
   private accumulator(sessionId: string): Accumulator {
@@ -114,4 +233,16 @@ export class ThroughputTracker {
     }
     return acc;
   }
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }

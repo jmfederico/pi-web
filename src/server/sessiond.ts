@@ -15,6 +15,7 @@ import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGatewa
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
 import { FileSessionUnreadPersistence, SessionUnreadStore } from "./sessions/sessionUnreadStore.js";
+import { ThroughputTracker, defaultThroughputFilePath } from "./sessions/throughputTracker.js";
 import { ProjectScopedSpawnTargetResolver } from "./sessions/spawnTargetResolver.js";
 import { RegisteredProjectWorkspaceCwds } from "./workspaces/projectWorkspaceCwds.js";
 import { ProjectService } from "./projects/projectService.js";
@@ -55,6 +56,10 @@ async function createSessionDaemonRuntime() {
     },
   });
   await unreadStore.load();
+  // Hydrate the throughput history before any session can finish a turn, so
+  // the first `agent_end` after startup already has prior averages to fold in.
+  const throughputTracker = new ThroughputTracker(defaultThroughputFilePath());
+  await throughputTracker.load();
   const workspaceActivity = new WorkspaceActivityService(eventHub);
   const auth = await AuthService.create({ agentDir: activeAgentProfile.dir, logger: app.log });
   // Capture providers registered by global extensions while the runtime is
@@ -90,6 +95,7 @@ async function createSessionDaemonRuntime() {
     extensionDialogsTimeoutMs: config.extensionDialogsTimeoutMs,
     notificationStore,
     unreadStore,
+    throughputTracker,
     catalogRefreshStatus: catalogRefresher,
     sessionManager: createPiSessionManagerGateway({
       agentDir: activeAgentProfile.dir,

@@ -15,6 +15,8 @@ export interface SessionServiceDependencyInput {
   logger: NonNullable<PiSessionServiceDependencies["logger"]>;
   notificationStore: NonNullable<PiSessionServiceDependencies["notificationStore"]>;
   unreadStore: NonNullable<PiSessionServiceDependencies["unreadStore"]>;
+  /** Throughput accumulator with persisted history already hydrated from disk. */
+  throughputTracker: NonNullable<PiSessionServiceDependencies["throughputTracker"]>;
   /** Read-only view of the background refresher; see the assembly below. */
   catalogRefreshStatus: NonNullable<PiSessionServiceDependencies["catalogRefreshStatus"]>;
   /** Omitted when the operator has not enabled session spawning. */
@@ -53,6 +55,7 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     extensionDialogsTimeoutMs: input.extensionDialogsTimeoutMs,
     notificationStore: input.notificationStore,
     unreadStore: input.unreadStore,
+    throughputTracker: input.throughputTracker,
     // Read-only, so session startup can tell a waiting user that provider
     // model lists are refreshing at the same time.
     catalogRefreshStatus: input.catalogRefreshStatus,
