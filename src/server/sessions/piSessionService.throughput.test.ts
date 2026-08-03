@@ -5,7 +5,7 @@ import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreat
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
 interface MutableStats {
-  total: number;
+  input: number;
   output: number;
 }
 
@@ -16,7 +16,7 @@ function throughputService(stats: MutableStats) {
     getSessionStats: () => ({
       sessionId: "session-1",
       totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0,
-      tokens: { input: 0, output: stats.output, cacheRead: 0, cacheWrite: 0, total: stats.total },
+      tokens: { input: stats.input, output: stats.output, cacheRead: 0, cacheWrite: 0, total: stats.input + stats.output },
       cost: 0,
     }),
   });
@@ -35,14 +35,14 @@ describe("PiSessionService throughput", () => {
   it("publishes throughput in session status after a completed turn", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const stats: MutableStats = { total: 0, output: 0 };
+    const stats: MutableStats = { input: 0, output: 0 };
     const { fake, service } = throughputService(stats);
 
     await service.status(sessionRef("session-1")); // bring session online
 
-    // Turn: prompt submitted at t=0, turn ends at t=1s with 2000 total / 800 output tokens
+    // Turn: prompt submitted at t=0, turn ends at t=1s with 2000 processed (input+output) / 800 output tokens
     await service.prompt(sessionRef("session-1"), "hello");
-    stats.total = 2000;
+    stats.input = 1200;
     stats.output = 800;
     vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
     fake.emit({ type: "agent_end" });
@@ -57,27 +57,27 @@ describe("PiSessionService throughput", () => {
   it("accumulates throughput across multiple turns as a weighted average", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const stats: MutableStats = { total: 0, output: 0 };
+    const stats: MutableStats = { input: 0, output: 0 };
     const { fake, service } = throughputService(stats);
 
     await service.status(sessionRef("session-1"));
 
-    // Turn 1: 1000 total / 500 output in 1000ms
-    stats.total = 0; stats.output = 0;
+    // Turn 1: 1000 processed / 500 output in 1000ms
+    stats.input = 0; stats.output = 0;
     await service.prompt(sessionRef("session-1"), "first");
-    stats.total = 1000; stats.output = 500;
+    stats.input = 500; stats.output = 500;
     vi.setSystemTime(new Date("2026-01-01T00:00:01.000Z"));
     fake.emit({ type: "agent_end" });
 
-    // Turn 2: +3000 total / +300 output in 1000ms
-    stats.total = 1000; stats.output = 500;
+    // Turn 2: +3000 processed / +300 output in 1000ms
+    stats.input = 500; stats.output = 500;
     await service.prompt(sessionRef("session-1"), "second");
-    stats.total = 4000; stats.output = 800;
+    stats.input = 3200; stats.output = 800;
     vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
     fake.emit({ type: "agent_end" });
 
     const status = await service.status(sessionRef("session-1"));
-    // Weighted: 4000 total / 2000ms * 1000 = 2000 tps; 800 output / 2000ms * 1000 = 400 tps
+    // Weighted: 4000 processed / 2000ms * 1000 = 2000 tps; 800 output / 2000ms * 1000 = 400 tps
     expect(status.throughput).toEqual({ total: 2000, output: 400, measuredTurns: 2 });
 
     await service.dispose();
@@ -87,13 +87,13 @@ describe("PiSessionService throughput", () => {
   it("does not count agent_end without a preceding prompt (compaction, spurious events)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
-    const stats: MutableStats = { total: 0, output: 0 };
+    const stats: MutableStats = { input: 0, output: 0 };
     const { fake, service } = throughputService(stats);
 
     await service.status(sessionRef("session-1")); // bring session online
 
     // Tokens grew (e.g. compaction ran) but no prompt was submitted, so no turn was begun
-    stats.total = 500;
+    stats.input = 500;
     vi.setSystemTime(new Date("2026-01-01T00:00:05.000Z"));
     fake.emit({ type: "agent_end" });
 

@@ -70,7 +70,7 @@ export class StatusBar extends LitElement {
         <span>↓${formatTokenCount(tokens.output)}</span>
         <span class="context">${contextText}</span>
         <span>${formatCost(status.cost)}</span>
-        ${throughput === undefined ? null : html`<span class="throughput" title="Average tokens/sec across ${String(status.throughput?.measuredTurns ?? 0)} turn(s) — ⇶ output rate, ⟳ total rate">${throughput}</span>`}
+        ${throughput === undefined ? null : html`<span class="throughput" title="Average tokens/sec across ${String(status.throughput?.measuredTurns ?? 0)} turn(s) — ⇶ output rate, ⟳ processed rate (input+output, excluding cache)">${throughput}</span>`}
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}
       </div>
     `;

@@ -8,9 +8,11 @@
  * messages that never reach the browser.
  *
  * Two rates are tracked over the same wall-clock interval:
- * - `total` — all tokens (input + output + cache) / elapsed seconds. Tool/bash
- *   time is in the denominator, so a tool-heavy turn looks slow. This is the
- *   "how is the system performing end to end" signal.
+ * - `total` — processed tokens (input + output, **excluding cache**) / elapsed
+ *   seconds. Tool/bash time is in the denominator, so a tool-heavy turn looks
+ *   slow. This is the "how is the system performing end to end" signal. Cache
+ *   reads/writes are excluded because they are near-instant cache hits that
+ *   would inflate the rate far beyond real processing speed.
  * - `output` — output tokens only / elapsed seconds. This isolates the raw
  *   model emission rate, the "how fast is the model" signal.
  *
@@ -21,12 +23,13 @@
  * wiping the average becomes bothersome.
  */
 export interface TurnTokenSnapshot {
-  total: number;
+  /** Uncached input tokens (excludes cache read/creation). */
+  input: number;
   output: number;
 }
 
 export interface SessionThroughput {
-  /** Total tokens (input + output + cache) per second, weighted across turns. */
+  /** Processed tokens (input + output, excluding cache) per second, weighted across turns. */
   total: number;
   /** Output tokens per second, weighted across turns. */
   output: number;
@@ -35,13 +38,13 @@ export interface SessionThroughput {
 
 interface PendingTurn {
   startMs: number;
-  totalAtStart: number;
+  processedAtStart: number;
   outputAtStart: number;
 }
 
 interface Accumulator {
   pendingTurn: PendingTurn | undefined;
-  totalTokens: number;
+  totalProcessedTokens: number;
   totalOutputTokens: number;
   totalMs: number;
   measuredTurns: number;
@@ -51,7 +54,7 @@ export class ThroughputTracker {
   private readonly sessions = new Map<string, Accumulator>();
 
   beginTurn(sessionId: string, snapshot: TurnTokenSnapshot, now: number): void {
-    this.accumulator(sessionId).pendingTurn = { startMs: now, totalAtStart: snapshot.total, outputAtStart: snapshot.output };
+    this.accumulator(sessionId).pendingTurn = { startMs: now, processedAtStart: snapshot.input + snapshot.output, outputAtStart: snapshot.output };
   }
 
   /** Finalises the current turn. Returns updated throughput, or `undefined` if no turn was in progress or the turn produced no data. */
@@ -61,14 +64,14 @@ export class ThroughputTracker {
     if (acc === undefined || pending === undefined) return undefined;
     acc.pendingTurn = undefined;
     const elapsedMs = now - pending.startMs;
-    const totalDelta = snapshot.total - pending.totalAtStart;
+    const processedDelta = (snapshot.input + snapshot.output) - pending.processedAtStart;
     const outputDelta = snapshot.output - pending.outputAtStart;
     // ponytail: skip zero-token / zero-time turns rather than tracking errors
     // explicitly. Covers most error/abort cases; a turn that errored after
     // producing some tokens is still real throughput data, so counting it is
     // acceptable. Upgrade to explicit error detection if that distinction matters.
-    if (elapsedMs <= 0 || totalDelta <= 0) return this.throughput(sessionId);
-    acc.totalTokens += totalDelta;
+    if (elapsedMs <= 0 || processedDelta <= 0) return this.throughput(sessionId);
+    acc.totalProcessedTokens += processedDelta;
     acc.totalOutputTokens += outputDelta;
     acc.totalMs += elapsedMs;
     acc.measuredTurns += 1;
@@ -85,7 +88,7 @@ export class ThroughputTracker {
     const acc = this.sessions.get(sessionId);
     if (acc === undefined || acc.measuredTurns === 0 || acc.totalMs <= 0) return undefined;
     return {
-      total: (acc.totalTokens / acc.totalMs) * 1000,
+      total: (acc.totalProcessedTokens / acc.totalMs) * 1000,
       output: (acc.totalOutputTokens / acc.totalMs) * 1000,
       measuredTurns: acc.measuredTurns,
     };
@@ -98,7 +101,7 @@ export class ThroughputTracker {
   private accumulator(sessionId: string): Accumulator {
     let acc = this.sessions.get(sessionId);
     if (acc === undefined) {
-      acc = { pendingTurn: undefined, totalTokens: 0, totalOutputTokens: 0, totalMs: 0, measuredTurns: 0 };
+      acc = { pendingTurn: undefined, totalProcessedTokens: 0, totalOutputTokens: 0, totalMs: 0, measuredTurns: 0 };
       this.sessions.set(sessionId, acc);
     }
     return acc;
