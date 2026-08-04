@@ -18,6 +18,18 @@ export function statusBarWarningControlContent(count: number, expanded: boolean)
   };
 }
 
+/**
+ * Status-bar text for session throughput, or `undefined` when no turn has
+ * completed yet. `overall` is output tokens over the full turn (tools included);
+ * `model` is output tokens over streaming-only time (raw model emission).
+ * See {@link SessionThroughput}.
+ */
+export function throughputStatusText(throughput: { overall: number; model: number | undefined; measuredTurns: number } | undefined): string | undefined {
+  if (throughput === undefined) return undefined;
+  const model = throughput.model === undefined ? "–" : String(Math.round(throughput.model));
+  return `⇶${String(Math.round(throughput.overall))}/s · ⊡${model}/s`;
+}
+
 @customElement("status-bar")
 export class StatusBar extends LitElement {
   @property({ attribute: false }) status?: SessionStatus;
@@ -39,6 +51,7 @@ export class StatusBar extends LitElement {
         : `${context.percent.toFixed(1)}%/${formatTokenCount(context.contextWindow)}`
       : "context unknown";
     const tokens = status.tokens;
+    const throughput = throughputStatusText(status.throughput);
     const warningControl = statusBarWarningControlContent(this.warningCount, this.warningsExpanded);
     return html`
       <div class="bar">
@@ -59,6 +72,7 @@ export class StatusBar extends LitElement {
         <span>↓${formatTokenCount(tokens.output)}</span>
         <span class="context">${contextText}</span>
         <span>${formatCost(status.cost)}</span>
+        ${throughput === undefined ? null : html`<span class="throughput" title="Average output tokens/sec across ${String(status.throughput?.measuredTurns ?? 0)} turn(s) — ⇶ overall rate (tools included), ⊡ model rate (streaming only)">${throughput}</span>`}
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}
       </div>
     `;

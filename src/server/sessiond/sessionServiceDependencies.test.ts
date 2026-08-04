@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { SessionNotificationStore } from "../sessions/sessionNotificationStore.js";
 import { SessionUnreadStore } from "../sessions/sessionUnreadStore.js";
+import { ThroughputTracker } from "../sessions/throughputTracker.js";
 import { PiSessionService, type PiSessionServiceDependencies } from "../sessions/piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, sessionGateway, testModelRuntime } from "../sessions/piSessionService.testSupport.js";
 import { sessionServiceDependencies, type SessionServiceDependencyInput } from "./sessionServiceDependencies.js";
@@ -22,6 +23,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     logger: { info() { /* no-op */ } },
     notificationStore: new SessionNotificationStore(),
     unreadStore: new SessionUnreadStore(),
+    throughputTracker: new ThroughputTracker(),
     catalogRefreshStatus: { isRefreshInFlight: () => false },
     subsessionsEnabled: false,
     askUserEnabled: true,
