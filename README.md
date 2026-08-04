@@ -78,7 +78,7 @@ PI WEB organizes work like this:
 ```text
 Machine     a local or remote PI WEB runtime endpoint
 Project     a folder on that machine
-Workspace   a git worktree, or the project folder for non-git projects
+Workspace   a provider-owned working folder; bundled Git discovers worktrees, otherwise the project folder
 Session     a Pi Coding Agent chat running inside a workspace
 ```
 
@@ -110,9 +110,9 @@ Read more: [Fleet and machines guide](https://pi-web.dev/machines)
 
 ## PI WEB plugins
 
-PI WEB supports trusted browser-side plugins that can add actions, workspace panels, and workspace metadata. Use **Settings → PI WEB plugins** to enable or disable them on the selected machine.
+PI WEB supports trusted browser plugins plus optional sessiond-backed workspace providers. Bundled Git uses the same public provider and backend contracts available to installed plugins. Use **Settings → PI WEB plugins** to manage desired state on the selected machine.
 
-Pi packages are a separate Pi package-manager concept. A Pi package may include a PI WEB browser plugin, but installing a package and enabling its browser plugin are different operations.
+Pi packages are a separate Pi package-manager concept. A Pi package may include a PI WEB plugin, but installing a package and enabling it are different operations. Server-backed changes require a session-daemon restart; see the plugin guide for lifecycle and recovery details.
 
 Read more: [PI WEB plugin guide and API](https://pi-web.dev/plugins)
 

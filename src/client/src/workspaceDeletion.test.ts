@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TerminalCommandRun, Workspace } from "./api";
-import { isWorkspaceDeletionPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, workspaceDeleteOperation, workspaceDeletionMetadata } from "./workspaceDeletion";
+import { canDeleteWorkspace, isWorkspaceDeletionPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, workspaceDeleteOperation, workspaceDeletionMetadata, workspaceRemovalConfirmation } from "./workspaceDeletion";
 
 const workspace: Workspace = {
   id: "w1",
@@ -8,9 +8,12 @@ const workspace: Workspace = {
   path: "/repo/worktree",
   label: "worktree",
   isMain: false,
-  isGitRepo: true,
-  isGitWorktree: true,
   effectiveConfig: {},
+  removal: {
+    actionLabel: "Disconnect view",
+    confirmation: "Disconnect this view without deleting files?",
+    precondition: "removal-v1",
+  },
 };
 
 function run(id: string, workspaceId: string, createdAt: string, status: TerminalCommandRun["status"]): TerminalCommandRun {
@@ -29,6 +32,15 @@ function run(id: string, workspaceId: string, createdAt: string, status: Termina
 }
 
 describe("workspace deletion state", () => {
+  it("derives provider-neutral eligibility and confirmation only from removal presentation", () => {
+    expect(canDeleteWorkspace(workspace)).toBe(true);
+    expect(workspaceRemovalConfirmation(workspace)).toBe("Disconnect this view without deleting files?");
+    expect(canDeleteWorkspace({ ...workspace, isMain: true })).toBe(false);
+    const withoutRemoval = { ...workspace };
+    delete withoutRemoval.removal;
+    expect(canDeleteWorkspace(withoutRemoval)).toBe(false);
+  });
+
   it("builds command-run metadata for workspace deletion", () => {
     expect(workspaceDeletionMetadata(workspace)).toEqual({
       "pi.operation": "workspace.delete",

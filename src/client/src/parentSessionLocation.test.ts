@@ -112,8 +112,6 @@ const mainWorkspace: Workspace = {
   label: "main",
   branch: "main",
   isMain: true,
-  isGitRepo: true,
-  isGitWorktree: true,
   effectiveConfig: {},
 };
 
@@ -124,8 +122,6 @@ const featureWorkspace: Workspace = {
   label: "feature/parent-links",
   branch: "feature/parent-links",
   isMain: false,
-  isGitRepo: true,
-  isGitWorktree: true,
   effectiveConfig: {},
 };
 

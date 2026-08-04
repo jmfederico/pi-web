@@ -1,7 +1,6 @@
 import { html, type TemplateResult } from "lit";
 import { renderBuiltinTabIcon } from "../../components/tabIcons";
 import "../../components/WorkspaceFilesPanel";
-import "../../components/WorkspaceGitPanel";
 import type { WorkspacePanelContribution, WorkspacePanelContext } from "../types";
 
 export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
@@ -11,15 +10,8 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
       title: "Files",
       icon: renderBuiltinTabIcon("files"),
       order: 10,
+      routeAliases: ["files"],
       render: renderFiles,
-    },
-    {
-      id: "workspace.git",
-      title: "Git",
-      icon: renderBuiltinTabIcon("git"),
-      order: 20,
-      visible: ({ workspace }) => workspace.isGitRepo,
-      render: renderGit,
     },
     {
       id: "workspace.terminal",
@@ -39,10 +31,6 @@ function renderFiles(context: WorkspacePanelContext): TemplateResult {
 function renderTerminal(context: WorkspacePanelContext): TemplateResult {
   loadTerminalPanel();
   return html`<terminal-panel .workspace=${context.workspace} .machineId=${context.machine.id} .selectedTerminalId=${context.selectedTerminalId} .autoStart=${context.terminalAutoStart} .onSelectTerminal=${context.onSelectTerminal}></terminal-panel>`;
-}
-
-function renderGit(context: WorkspacePanelContext): TemplateResult {
-  return html`<workspace-git-panel .context=${context}></workspace-git-panel>`;
 }
 
 function loadTerminalPanel(): void {

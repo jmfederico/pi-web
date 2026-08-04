@@ -80,8 +80,8 @@
           <h1>Configure PI WEB where your agents work.</h1>
           <p>
             PI WEB configuration covers the machine-local and project-local settings you usually need: bind address,
-            trusted development-host settings, UI preferences, PI WEB plugin enablement, file-explorer path access,
-            manual upload defaults, upload limits, Pi-compatible agent profiles and companion CLIs, and session-daemon tools.
+            trusted development-host settings, UI preferences, desired PI WEB plugin state, server-plugin recovery,
+            file-explorer path access, manual upload defaults, upload limits, Pi-compatible agent profiles and companion CLIs, and session-daemon tools.
           </p>
         </div>
       </section>
@@ -102,6 +102,7 @@
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#catalog-refresh">Model catalog refresh</a>
             <a href="#session-tools">Session tools</a>
+            <a href="#plugin-config">Plugin config and recovery</a>
             <a href="#extension-dialogs">Extension dialogs</a>
             <a href="#prompt-completions">Prompt completions</a>
             <a href="#completion-tools">Completion tools</a>
@@ -118,16 +119,16 @@
               <p>
                 Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected
                 machine for config that affects work running there: the Pi-compatible agent profile and companion CLI,
-                session daemon tools, PI WEB plugin enablement, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
+                session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
                 keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts.
               </p>
               <p>
                 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the
                 target machine and are managed by Pi (<code>pi install</code>, <code>pi remove</code>, <code>pi update</code>) or
                 <strong>Settings → Pi packages</strong>. In a federated setup, <strong>Settings → Pi packages</strong>
-                targets the currently selected machine. The PI WEB <code>plugins</code> config key only enables or
-                disables discovered PI WEB browser plugins on the machine whose config you are editing; it does not
-                install, remove, or update Pi packages.
+                targets the currently selected machine. The PI WEB <code>plugins</code> config key controls desired
+                enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that
+                machine; it does not install, remove, or update Pi packages.
               </p>
               <p>
                 If you installed services with a custom config path, rerun
@@ -176,8 +177,9 @@
                 <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
-                <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
-                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for PI WEB browser plugin changes. If a global Pi extension adds or removes a provider, or changes a provider's connection settings, manually restart <code>pi-web-sessiond.service</code>; <code>/reload</code> cannot change the startup provider baseline. A known provider refreshing only its own model list is applied without a restart. See <a href="#pi-extension-provider-baseline">Pi extension provider baseline</a>.</li>
+                <li><code>plugins</code>: browser-only changes apply after a tab reload. Any enablement, settings, source, or package-revision change affecting a <code>serverModule</code> requires a manual sessiond restart, then a tab reload for its paired UI.</li>
+                <li><code>serverPlugins.safeStart</code>: offline recovery state applied before server-plugin discovery/import on the next sessiond start; manage it with <code>pi-web plugins safe-start ...</code>.</li>
+                <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with <code>serverModule</code>, manually restart <code>pi-web-sessiond.service</code>, then reload the browser. If a global Pi extension changes model-provider registration/settings, the same manual restart is required; <code>/reload</code> cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See <a href="#pi-extension-provider-baseline">Pi extension provider baseline</a>.</li>
                 <li><code>shortcuts</code>: saved settings apply in the browser after config refresh/save.</li>
               </ul>
             </section>
@@ -385,12 +387,20 @@
                       <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
-                      <td>PI WEB plugin enablement/settings</td>
+                      <td>PI WEB plugin desired enablement/settings</td>
                       <td><code>plugins.&lt;id&gt;.enabled</code>, <code>plugins.&lt;id&gt;.settings</code></td>
                       <td>—</td>
-                      <td>Global</td>
+                      <td>Global + sessiond startup snapshot for server entries</td>
                       <td>Not core local config; plugins may read their own project files</td>
-                      <td>Reload browser tab</td>
+                      <td>Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab</td>
+                    </tr>
+                    <tr>
+                      <td>Server-plugin safe start</td>
+                      <td><code>serverPlugins.safeStart</code></td>
+                      <td>—</td>
+                      <td>Global/offline recovery</td>
+                      <td>Not supported locally; manage with <code>pi-web plugins safe-start ...</code></td>
+                      <td>Applied before discovery/import on next sessiond start</td>
                     </tr>
                     <tr>
                       <td>Keyboard shortcuts</td>
@@ -629,9 +639,11 @@
             <section id="pi-extension-provider-baseline">
               <h2>Pi extension provider baseline</h2>
               <p>
-                This policy applies to <strong>Pi runtime extensions</strong>, not PI WEB browser plugins. Pi extensions
-                are runtime modules loaded by the session daemon and can call <code>pi.registerProvider(...)</code>;
-                PI WEB plugins are browser-side UI modules and never run in the session daemon.
+                This policy applies to <strong>Pi runtime extensions that register model providers</strong>, not PI WEB
+                workspace-provider plugins. Pi extensions can call <code>pi.registerProvider(...)</code> through Pi's API.
+                A PI WEB plugin may declare a browser <code>module</code> and/or sessiond <code>serverModule</code>, but its
+                server entry follows <code>@jmfederico/pi-web/server-plugin-api</code> and cannot register Pi model providers
+                or arbitrary hooks. See the <a href="plugins">PI WEB plugin guide</a>.
               </p>
               <p>
                 PI WEB shares one model runtime across all sessions. When the session daemon starts, before any project
@@ -859,6 +871,100 @@
               </div>
             </section>
 
+            <section id="plugin-config">
+              <h2>PI WEB plugin config and recovery</h2>
+              <p>
+                The global <code>plugins</code> key controls desired enablement and JSON settings for browser-only,
+                server-only, and dual-entry plugins. It does not install packages. Plugins default to enabled;
+                <code>plugins.&lt;id&gt;.enabled: false</code> hides a browser-only entry on the next page load. For a
+                server-backed entry, desired disablement takes effect on the next sessiond start, and its paired browser
+                entry continues to follow the still-active backend until then.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Plugin desired config</strong>
+                  <button class="copy-button" data-copy="#plugin-config-example">Copy</button>
+                </div>
+                <pre id="plugin-config-example"><code>{
+  "plugins": {
+    "git": { "enabled": true, "settings": {} },
+    "updates": { "enabled": false }
+  }
+}</code></pre>
+              </div>
+              <h3>Desired versus active state</h3>
+              <p>
+                Sessiond is the single workspace authority and captures one immutable server-plugin/provider snapshot at
+                startup. Saving config or replacing package files changes desired state only. The old provider and its
+                paired browser entry can remain active until a restart after desired disablement. A paired browser entry
+                is withheld for mismatched source, scope, settings fingerprint, or revisions, and for unsuitable active
+                health/lifecycle compatibility. Web/API restart and browser reload do not replace the active registry.
+              </p>
+              <p>
+                <strong>Settings → PI WEB plugins</strong> shows active, failed, incompatible, disabled, not-active,
+                unknown, conflict, stale-revision, health, safe-mode, and restart-required state. Desired config remains
+                editable when sessiond is unavailable if the config endpoint works, but active state stays explicitly
+                unavailable. In Fleet, desired and active state both come from the selected target; incompatible settings,
+                lifecycle, manifest, or backend support never silently falls back to the gateway.
+              </p>
+              <p>
+                Mixed-version plugin/provider operation is unsupported in either upgrade order. A newer gateway rejects
+                an older target's entire remote plugin manifest, including browser-only contributions, when the target
+                lacks the lifecycle contract; its Git panel is unavailable. An older gateway still calls legacy core Git
+                routes removed by an updated target, so remote Git status/diff returns <code>404</code>. Upgrade gateway
+                and target together, restart their updated web/API processes and the target session daemon, then reload
+                the browser. Other selected-machine features keep their own capability negotiation.
+              </p>
+              <ol>
+                <li>Install or update the package on the target machine.</li>
+                <li>Save desired enablement/settings.</li>
+                <li>For browser-only code, reload the tab.</li>
+                <li>For server-backed code, restart target sessiond, wait for it, then reload the tab.</li>
+              </ol>
+              <div class="callout warning">
+                <strong>Manual restart warning:</strong> run
+                <code>systemctl --user restart pi-web-sessiond</code> for the native
+                <code>pi-web-sessiond.service</code>. Restarting sessiond may interrupt active sessions and runtime
+                ownership. Web/UI autoreload, web/API-only restart, browser reload, and Pi's <code>/reload</code> do not
+                activate server-plugin state.
+              </div>
+              <h3>Offline disable and safe start</h3>
+              <p>
+                Run recovery on the affected machine. These commands edit config without contacting sessiond,
+                discovering packages, importing code, or carrying machine credentials. Add
+                <code>--config /path/to/config.json</code> for a custom service config.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Server-plugin recovery commands</strong>
+                  <button class="copy-button" data-copy="#config-plugin-recovery">Copy</button>
+                </div>
+                <pre id="config-plugin-recovery"><code><span class="prompt">$</span> pi-web plugins disable &lt;plugin-id&gt; --restart
+<span class="prompt">$</span> pi-web plugins safe-start show
+<span class="prompt">$</span> pi-web plugins safe-start set bundled-only --restart
+<span class="prompt">$</span> pi-web plugins safe-start set none --restart
+<span class="prompt">$</span> pi-web plugins safe-start clear --restart</code></pre>
+              </div>
+              <p>
+                <code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config.
+                Safe-start state lives at <code>serverPlugins.safeStart</code>. <code>bundled-only</code> filters external
+                server packages before discovery/import. <code>none</code> imports no server plugins and retains the
+                kernel folder workspace. <code>clear</code> restores ordinary configured discovery on the next start. An
+                unsupported safe-start shape or value in otherwise valid JSON fails closed as effective <code>none</code>;
+                use <code>show</code>, then <code>set</code> or <code>clear</code>, to repair it offline.
+              </p>
+              <p>
+                <code>--restart</code> acts only for a recognized safe installation; otherwise it prints manual guidance.
+                Config is durable before the restart attempt, so restart sessiond manually if that attempt fails. Any
+                restart can interrupt active sessions/runtime ownership.
+              </p>
+              <p>
+                Ordinary catchable failures are quarantined, but server plugins are trusted in-process code, share
+                sessiond's event loop, and are not crash-isolated. <code>bundled-only</code> bypasses external plugin
+                failures; <code>none</code> also bypasses bundled server plugins.
+              </p>
+            </section>
+
             <section id="extension-dialogs">
               <h2>Extension dialogs</h2>
               <p>
@@ -884,7 +990,6 @@
                 <code>systemctl --user restart pi-web-sessiond</code>.
               </div>
             </section>
-
 
             <section id="prompt-completions">
               <h2>Prompt completions</h2>

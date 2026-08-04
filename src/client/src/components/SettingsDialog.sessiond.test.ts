@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { configApi, pluginsApi, type PiWebConfigResponse, type PiWebPluginsResponse } from "../api";
 import { SettingsDialog } from "./SettingsDialog";
-import { callDialogPromise, callDialogUpdated, configResponse, deferred, getDialogProperty, remoteMachine, secondRemoteMachine, setDialogProperty, stubWindowTimers } from "./SettingsDialog.testSupport";
+import { callDialogPromise, callDialogUpdated, configResponse, deferred, getDialogProperty, pluginsResponse, remoteMachine, secondRemoteMachine, setDialogProperty, stubWindowTimers } from "./SettingsDialog.testSupport";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -11,7 +11,7 @@ afterEach(() => {
 describe("settings-dialog session daemon machine targeting", () => {
   it("keeps gateway settings loads on the gateway config/plugin endpoints", async () => {
     const config = configResponse({ host: "127.0.0.1" });
-    const plugins: PiWebPluginsResponse = { plugins: [] };
+    const plugins: PiWebPluginsResponse = pluginsResponse([]);
     const configSpy = vi.spyOn(configApi, "config").mockResolvedValue(config);
     const pluginsSpy = vi.spyOn(pluginsApi, "plugins").mockResolvedValue(plugins);
     const dialog = new SettingsDialog();

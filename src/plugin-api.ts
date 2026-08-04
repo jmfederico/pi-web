@@ -1,11 +1,14 @@
 import type { TemplateResult } from "lit";
-import type { FileContentResponse, FileTreeResponse, MachineKind, PiWebStatusResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse } from "./shared/apiTypes.js";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, MachineKind, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebStatusResponse, TerminalCommandRunHandle, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "./shared/apiTypes.js";
 
 export type {
   FileContentMediaType,
   FileContentResponse,
   FileTreeEntry,
   FileTreeResponse,
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
   MachineKind,
   PiWebComponentStatus,
   PiWebDockerMode,
@@ -21,6 +24,9 @@ export type {
   TerminalCommandRunFilter,
   TerminalCommandRunHandle,
   TerminalCommandRunStatus,
+  WorkspaceProviderCapabilities,
+  WorkspaceProviderMetadata,
+  WorkspaceRemovalPresentation,
   WriteWorkspaceFileOptions,
   WriteWorkspaceFileResponse,
   DeleteWorkspaceFileResponse,
@@ -99,7 +105,8 @@ export interface PluginRuntimeContext {
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
   refreshFiles: () => void | Promise<void>;
-  refreshGit: () => void | Promise<void>;
+  /** Invalidate plugin workspace-panel data for the selected workspace, optionally targeting one qualified panel id. */
+  refreshWorkspacePanels: (panelId?: QualifiedContributionId) => void | Promise<void>;
   refreshAppData: () => void | Promise<void>;
   /** Force a fresh PI WEB release check on the selected machine. Optional for compatibility with older hosts. */
   checkForPiWebUpdates?: () => void | Promise<void>;
@@ -114,6 +121,8 @@ export interface PluginAction {
   title: string;
   description?: string;
   shortcut?: string;
+  /** Former qualified action ids whose saved shortcut preference should still apply. */
+  shortcutAliases?: QualifiedContributionId[];
   group?: string;
   enabled?: (context: PluginRuntimeContext) => boolean;
   /** Explain why a disabled action is visible but unavailable. */
@@ -126,10 +135,11 @@ export interface Workspace {
   projectId: string;
   path: string;
   label: string;
+  /** @deprecated Provider-neutral browser integrations should use provider metadata. */
   branch?: string;
   isMain: boolean;
-  isGitRepo: boolean;
-  isGitWorktree: boolean;
+  provider?: WorkspaceProviderMetadata;
+  removal?: WorkspaceRemovalPresentation;
 }
 
 export interface WorkspaceFiles {
@@ -152,6 +162,11 @@ export interface WorkspaceFiles {
 
 export type WorkspacePanelFiles = WorkspaceFiles;
 
+/** JSON-only request path to the server module that currently owns this workspace. */
+export interface WorkspaceBackend {
+  request(operation: string, input: JsonValue): Promise<JsonValue>;
+}
+
 export interface WorkspaceHost {
   requestRender(): void;
 }
@@ -163,6 +178,8 @@ export interface WorkspaceContext {
   workspace: Workspace;
   state?: PluginRuntimeState;
   files: WorkspaceFiles;
+  /** Present only when this browser entry has a paired active server backend. */
+  backend?: WorkspaceBackend;
   host: WorkspaceHost;
 }
 
@@ -190,8 +207,12 @@ export interface WorkspacePanelContribution {
   title: string;
   icon?: WorkspacePanelIcon;
   order?: number;
+  /** Former URL tool/view values that should resolve to this panel. */
+  routeAliases?: string[];
   visible?: (context: WorkspacePanelContext) => boolean;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
+  /** Called when the host invalidates workspace-panel data. */
+  onInvalidate?: (context: WorkspacePanelContext) => void | Promise<void>;
   render: (context: WorkspacePanelContext) => TemplateResult;
 }
 

@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeEntry, FileTreeResponse, GitDiffResponse, GitStatusResponse, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
@@ -14,7 +14,14 @@ export interface PiWebPluginRegistration {
   plugin: PiWebPlugin;
   machineId?: string;
   sourcePluginId?: PluginId;
+  backendRevision?: string;
   machineSpecific?: boolean;
+}
+
+export interface WorkspacePluginBinding {
+  registrationPluginId: PluginId;
+  sourcePluginId: PluginId;
+  backendRevision?: string;
 }
 
 export interface PiWebPlugin {
@@ -56,6 +63,10 @@ export interface WorkspaceFiles {
   moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
 }
 
+export interface WorkspaceBackend {
+  request(operation: string, input: JsonValue): Promise<JsonValue>;
+}
+
 export interface WorkspaceHost {
   requestRender(): void;
 }
@@ -65,6 +76,7 @@ export interface WorkspaceContext {
   workspace: Workspace;
   state: AppState;
   files: WorkspaceFiles;
+  backend?: WorkspaceBackend;
   host: WorkspaceHost;
 }
 
@@ -113,7 +125,8 @@ export interface PluginRuntimeContext {
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
   refreshFiles: () => void | Promise<void>;
-  refreshGit: () => void | Promise<void>;
+  /** Invalidate plugin workspace-panel data for the selected workspace. */
+  refreshWorkspacePanels: (panelId?: QualifiedContributionId) => void | Promise<void>;
   refreshAppData: () => void | Promise<void>;
   checkForPiWebUpdates?: () => void | Promise<void>;
   reloadPage: () => void;
@@ -130,6 +143,8 @@ export interface PluginAction {
   title: string;
   description?: string;
   shortcut?: string;
+  /** Former qualified action ids whose saved shortcut preference should still apply. */
+  shortcutAliases?: QualifiedContributionId[];
   group?: string;
   enabled?: (context: PluginRuntimeContext) => boolean;
   /** Explain why a disabled action is visible but unavailable. */
@@ -157,11 +172,6 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   selectedFilePath: string | undefined;
   selectedFileContent: FileContentResponse | undefined;
   fileTreeStale: boolean;
-  gitStatus: GitStatusResponse | undefined;
-  selectedDiffPath: string | undefined;
-  selectedDiff: GitDiffResponse | undefined;
-  selectedStagedDiff: GitDiffResponse | undefined;
-  gitStale: boolean;
   activeTerminalCount: number;
   selectedTerminalId: string | undefined;
   terminalAutoStart: boolean;
@@ -172,8 +182,6 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   onStartWorkspaceUpload: (files: readonly File[], options: { destinationFolder: string; createDirs?: boolean; overwrite?: boolean; selectUploadedFile?: boolean }) => { batchId: string; done: Promise<void> } | undefined;
   onCancelWorkspaceUpload: (batchId: string) => void;
   onClearWorkspaceUpload: (batchId: string) => void;
-  onRefreshGit: () => void;
-  onSelectDiff: (path: string) => void;
   onSelectTerminal: (terminalId: string | undefined, options?: { replace?: boolean | undefined }) => void;
 }
 
@@ -184,8 +192,11 @@ export interface WorkspacePanelContribution {
   title: string;
   icon?: WorkspacePanelIcon;
   order?: number;
+  /** Former URL tool/view values that should resolve to this panel. */
+  routeAliases?: string[];
   visible?: (context: WorkspacePanelContext) => boolean;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
+  onInvalidate?: (context: WorkspacePanelContext) => void | Promise<void>;
   render: (context: WorkspacePanelContext) => TemplateResult;
 }
 
@@ -194,6 +205,7 @@ export interface QualifiedWorkspacePanelContribution extends WorkspacePanelContr
   pluginId: PluginId;
   localId: LocalContributionId;
   machineId?: string;
+  sourcePluginId?: PluginId;
 }
 
 export interface WorkspaceLabelContext extends WorkspaceContext {

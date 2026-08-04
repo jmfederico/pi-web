@@ -71,6 +71,24 @@ describe("settings-shortcuts-panel shortcut row actions", () => {
       [{ shortcuts: { "core:other": "mod+o" } }],
     ]);
   });
+
+  it("shows and rewrites shortcut preferences migrated from a former action id", () => {
+    const onSave = vi.fn<SaveHandler>();
+    const migratedAction = shortcutAction({ id: "git:view.git", shortcutAliases: ["core:view.git"], shortcut: "mod+3" });
+    const config = { shortcuts: { "core:view.git": "mod+8", "core:other": "mod+o" } };
+    const nonePanel = panelWithShortcuts(config, onSave, migratedAction);
+
+    expectTextOrder(flattenTemplateContent(nonePanel.render()), ["Open palette", "Ctrl+8", "Custom"]);
+    findTemplateEventHandler<Event>(nonePanel.render(), ">None</button>")(new Event("click"));
+
+    const resetPanel = panelWithShortcuts(config, onSave, migratedAction);
+    findTemplateEventHandler<Event>(resetPanel.render(), ">Reset</button>")(new Event("click"));
+
+    expect(onSave.mock.calls).toEqual([
+      [{ shortcuts: { "core:other": "mod+o", "git:view.git": null } }],
+      [{ shortcuts: { "core:other": "mod+o" } }],
+    ]);
+  });
 });
 
 function frameNotices(template: TemplateResult): readonly SettingsNotice[] {
@@ -175,15 +193,15 @@ function isStringArray(value: unknown): value is string[] {
 type SaveHandler = (config: PiWebConfigValues) => void | Promise<void>;
 type TemplateEventHandler<E extends Event> = (event: E) => void;
 
-function panelWithShortcuts(config: PiWebConfigValues, onSave: SaveHandler): SettingsShortcutsPanel {
+function panelWithShortcuts(config: PiWebConfigValues, onSave: SaveHandler, action = shortcutAction()): SettingsShortcutsPanel {
   const panel = new SettingsShortcutsPanel();
-  panel.actions = [shortcutAction()];
+  panel.actions = [action];
   panel.configResponse = configResponse(config);
   panel.onSave = onSave;
   return panel;
 }
 
-function shortcutAction(): AppAction {
+function shortcutAction(patch: Partial<AppAction> = {}): AppAction {
   return {
     id: "core:open-palette",
     title: "Open palette",
@@ -191,6 +209,7 @@ function shortcutAction(): AppAction {
     shortcut: "mod+k",
     group: "Navigation",
     run: vi.fn(),
+    ...patch,
   };
 }
 

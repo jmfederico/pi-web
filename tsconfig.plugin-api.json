@@ -11,6 +11,7 @@
   "include": [
     "src/plugin-api.ts",
     "src/plugin-api/**/*.ts",
+    "src/server-plugin-api.ts",
     "src/shared/apiTypes.ts"
   ]
 }

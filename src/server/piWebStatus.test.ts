@@ -90,14 +90,14 @@ describe("PI WEB status", () => {
     }
   });
 
-  it("advertises no capabilities while the capability registry is empty", async () => {
+  it("advertises plugin lifecycle as a web-owned effective capability", async () => {
     const daemon = daemonWithRuntime(runningSessiondRuntime());
 
     const runtime = await getPiWebRuntime(daemon);
 
-    expect(runtime.components.web.capabilities).toEqual([]);
+    expect(runtime.components.web.capabilities).toEqual(["plugins.lifecycle"]);
     expect(runtime.components.sessiond.capabilities).toEqual([]);
-    expect(runtime.capabilities).toEqual([]);
+    expect(runtime.capabilities).toEqual(["plugins.lifecycle"]);
   });
 
   it("carries the daemon-owned active agent profile through the web runtime response", async () => {

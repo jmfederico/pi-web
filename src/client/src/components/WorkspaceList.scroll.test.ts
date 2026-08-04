@@ -91,8 +91,6 @@ function workspace(id: string, overrides: Partial<Workspace> = {}): Workspace {
     path: `/workspaces/${id}`,
     label: id,
     isMain: false,
-    isGitRepo: true,
-    isGitWorktree: true,
     effectiveConfig: {},
     ...overrides,
   };

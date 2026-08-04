@@ -1,18 +1,22 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { machineScopedPluginId, parseMachineScopedPluginId, type MachineScopedPluginIdParts } from "../../shared/machinePluginIds.js";
+import { PI_WEB_PLUGIN_LIFECYCLE_VERSION } from "../../shared/apiTypes.js";
 import { isPiWebPluginId } from "../../shared/pluginIds.js";
+import { requirePluginBackendRevision } from "../../shared/pluginBackendProtocol.js";
 import { RemoteMachineRequestError, type MachineClient } from "./machineClient.js";
 import { MachineService } from "./machineService.js";
 
 interface RemotePluginManifestEntry {
   id: string;
   module: string;
+  backendRevision?: string;
   source?: string;
   scope?: string;
   machineSpecific?: boolean;
 }
 
 interface RemotePluginManifest {
+  lifecycleVersion: typeof PI_WEB_PLUGIN_LIFECYCLE_VERSION;
   plugins: RemotePluginManifestEntry[];
 }
 
@@ -34,17 +38,22 @@ const SAFE_RESPONSE_HEADERS = new Set([
 
 export function registerMachinePluginProxyRoutes(app: FastifyInstance, machines: MachinePluginProxyMachines = new MachineService()): void {
   app.get<{ Params: { machineId: string } }>("/api/machines/:machineId/pi-web-plugins/manifest.json", async (request, reply) => {
-    if (request.params.machineId === "local") return { plugins: [] };
+    if (request.params.machineId === "local") return { lifecycleVersion: PI_WEB_PLUGIN_LIFECYCLE_VERSION, plugins: [] };
 
     const client = await machines.remoteClient(request.params.machineId);
     if (client === undefined) return reply.code(404).send({ error: "Machine not found" });
 
     try {
       const response = await client.requestJson("GET", "/pi-web-plugins/manifest.json", undefined, { timeoutMs: MACHINE_PLUGIN_MANIFEST_TIMEOUT_MS });
-      if (response.statusCode === 404) return { plugins: [] };
+      if (response.statusCode === 404) {
+        return await sendLifecycleCompatibilityError(reply, request.params.machineId, "The remote machine does not expose a versioned plugin manifest. Update and restart PI WEB on the remote machine.");
+      }
       if (response.statusCode < 200 || response.statusCode >= 300) return await reply.code(response.statusCode).send(response.body);
       return rewriteRemotePluginManifest(request.params.machineId, parseRemoteManifest(response.body));
     } catch (error) {
+      if (error instanceof RemotePluginLifecycleCompatibilityError) {
+        return sendLifecycleCompatibilityError(reply, request.params.machineId, error.message);
+      }
       return sendGatewayError(reply, request.params.machineId, error);
     }
   });
@@ -81,6 +90,7 @@ export async function proxyMachinePluginAsset(machines: MachinePluginProxyMachin
 
 function rewriteRemotePluginManifest(machineId: string, manifest: RemotePluginManifest): RemotePluginManifest {
   return {
+    lifecycleVersion: manifest.lifecycleVersion,
     plugins: manifest.plugins.flatMap((plugin) => {
       const modulePath = remotePluginModulePath(plugin.id, plugin.module);
       if (modulePath === undefined) return [];
@@ -152,20 +162,49 @@ function hasControlCharacter(value: string): boolean {
 
 function parseRemoteManifest(value: unknown): RemotePluginManifest {
   if (!isRecord(value) || !Array.isArray(value["plugins"])) throw new Error("Invalid remote PI WEB plugin manifest");
-  return {
-    plugins: value["plugins"].map((entry) => {
-      if (!isRecord(entry) || typeof entry["id"] !== "string" || !isPiWebPluginId(entry["id"]) || typeof entry["module"] !== "string" || entry["module"] === "") {
-        throw new Error("Invalid remote PI WEB plugin manifest entry");
-      }
-      return {
-        id: entry["id"],
-        module: entry["module"],
-        ...(typeof entry["source"] === "string" ? { source: entry["source"] } : {}),
-        ...(typeof entry["scope"] === "string" ? { scope: entry["scope"] } : {}),
-        ...(parseRemoteMachineSpecific(entry["machineSpecific"])),
-      };
-    }),
-  };
+  const lifecycleVersion = parseRemoteLifecycleVersion(value["lifecycleVersion"]);
+  const plugins = value["plugins"].map((entry) => {
+    if (!isRecord(entry) || typeof entry["id"] !== "string" || !isPiWebPluginId(entry["id"]) || typeof entry["module"] !== "string" || entry["module"] === "") {
+      throw new Error("Invalid remote PI WEB plugin manifest entry");
+    }
+    return {
+      id: entry["id"],
+      module: entry["module"],
+      ...(parseRemoteBackendRevision(entry["backendRevision"])),
+      ...(typeof entry["source"] === "string" ? { source: entry["source"] } : {}),
+      ...(typeof entry["scope"] === "string" ? { scope: entry["scope"] } : {}),
+      ...(parseRemoteMachineSpecific(entry["machineSpecific"])),
+    };
+  });
+  const ids = new Set<string>();
+  for (const plugin of plugins) {
+    if (ids.has(plugin.id)) throw new Error(`Duplicate remote PI WEB plugin id: ${plugin.id}`);
+    ids.add(plugin.id);
+  }
+  return { lifecycleVersion, plugins };
+}
+
+function parseRemoteLifecycleVersion(value: unknown): typeof PI_WEB_PLUGIN_LIFECYCLE_VERSION {
+  if (value === undefined) {
+    throw new RemotePluginLifecycleCompatibilityError("The remote plugin manifest has no lifecycle version. Update and restart PI WEB on the remote machine.");
+  }
+  if (value !== PI_WEB_PLUGIN_LIFECYCLE_VERSION) {
+    throw new RemotePluginLifecycleCompatibilityError(`Unsupported remote plugin lifecycle version: ${formatUnknownValue(value)}`);
+  }
+  return value;
+}
+
+class RemotePluginLifecycleCompatibilityError extends Error {
+  override name = "RemotePluginLifecycleCompatibilityError";
+}
+
+function parseRemoteBackendRevision(value: unknown): { backendRevision?: string } {
+  if (value === undefined) return {};
+  try {
+    return { backendRevision: requirePluginBackendRevision(value) };
+  } catch {
+    throw new Error("Invalid remote PI WEB plugin manifest entry");
+  }
 }
 
 function parseRemoteMachineSpecific(value: unknown): { machineSpecific?: boolean } {
@@ -182,6 +221,15 @@ function applySafeHeaders(reply: FastifyReply, headers: Record<string, string | 
   }
 }
 
+function sendLifecycleCompatibilityError(reply: FastifyReply, machineId: string, detail: string): FastifyReply {
+  return reply.code(409).send({
+    error: "Remote machine plugin lifecycle is incompatible",
+    code: "plugin-lifecycle-incompatible",
+    machineId,
+    detail,
+  });
+}
+
 function sendGatewayError(reply: FastifyReply, machineId: string, error: unknown): FastifyReply {
   const statusCode = error instanceof RemoteMachineRequestError ? error.statusCode : 502;
   const label = statusCode === 504 ? "Remote machine timeout" : "Remote machine unavailable";
@@ -191,6 +239,15 @@ function sendGatewayError(reply: FastifyReply, machineId: string, error: unknown
     statusCode,
     detail: error instanceof Error ? error.message : String(error),
   });
+}
+
+function formatUnknownValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" || typeof value === "symbol" || typeof value === "function" || value === null || value === undefined) return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

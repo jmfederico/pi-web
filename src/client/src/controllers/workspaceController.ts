@@ -7,15 +7,18 @@ import type { SessionController } from "./sessionController";
 import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
 import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type WorkspaceSelectionMemory } from "./workspaceSelection";
 
+const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
+
 export interface WorkspaceControllerDependencies {
   api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
   onBackgroundError?: (message: string, error: unknown) => void;
+  topologyRefreshDebounceMs?: number;
 }
 
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
-  private readonly topologyRefreshes = new TrailingRefreshCoordinator<string>();
+  private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
 
   constructor(
     private readonly getState: GetState,
@@ -27,6 +30,9 @@ export class WorkspaceController {
   ) {
     this.api = deps.api ?? defaultApi;
     this.onBackgroundError = deps.onBackgroundError ?? ((message, error) => { console.warn(message, error); });
+    this.topologyRefreshes = new TrailingRefreshCoordinator(
+      deps.topologyRefreshDebounceMs ?? WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS,
+    );
   }
 
   clearSelection(options?: { updateUrl?: boolean | undefined }) {
@@ -90,7 +96,7 @@ export class WorkspaceController {
    * Deliberately never routes through `selectWorkspace`: that has no already-selected
    * guard, so re-picking the same workspace would still call `clearActiveSession()` and
    * `resetWorkspaceScopedState()`, closing the session socket and blanking chat, file
-   * tree, git status, and terminal selection. Callers run this on every browser resume,
+   * tree, plugin-owned panel state, and terminal selection. Callers run this on every browser resume,
    * so applying the list through `applyProjectWorkspaces` alone is the invariant.
    *
    * If the selected workspace disappeared, the selection is left alone: the user is
@@ -138,9 +144,9 @@ export class WorkspaceController {
   }
 
   /**
-   * Re-points `selectedWorkspace` at its refreshed entry when metadata changed outside PI WEB
-   * (a branch switched in the worktree, say), so the workspace list and the surfaces that read
-   * the selected workspace cannot disagree. Keyed by id, which is derived from the path, so
+   * Re-points `selectedWorkspace` at its refreshed entry when any browser-visible field changed
+   * outside PI WEB (owner metadata, effective config, a branch switch, and so on), so the
+   * workspace list and surfaces reading the selection cannot disagree. Keyed by id, so
    * this never changes *which* workspace is selected and never triggers the session/terminal
    * teardown in `handleWorkspaceChange`. Returns nothing when the entry is gone or unchanged,
    * so an unchanged refresh does not churn object identity into state.
@@ -148,25 +154,38 @@ export class WorkspaceController {
   private refreshedSelection(selected: Workspace | undefined, workspaces: Workspace[]): Pick<AppState, "selectedWorkspace"> | undefined {
     if (selected === undefined) return undefined;
     const refreshed = workspaces.find((candidate) => candidate.id === selected.id);
-    if (refreshed === undefined || sameWorkspaceMetadata(selected, refreshed)) return undefined;
+    if (refreshed === undefined || sameWorkspaceSnapshot(selected, refreshed)) return undefined;
     return { selectedWorkspace: refreshed };
   }
-}
-
-export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
-  return workspace !== undefined && workspace.isGitWorktree && !workspace.isMain;
 }
 
 function selectFallbackWorkspace(workspaces: Workspace[]): Workspace | undefined {
   return workspaces.find((workspace) => workspace.isMain) ?? workspaces[0];
 }
 
-function sameWorkspaceMetadata(left: Workspace, right: Workspace): boolean {
-  return left.path === right.path
-    && left.label === right.label
-    && left.branch === right.branch
-    && left.isMain === right.isMain
-    && left.isGitRepo === right.isGitRepo
-    && left.isGitWorktree === right.isGitWorktree;
+function sameWorkspaceSnapshot(left: Workspace, right: Workspace): boolean {
+  return sameBrowserObservableValue(left, right);
+}
+
+/** Compare the complete parsed workspace payload, including future additive fields. */
+function sameBrowserObservableValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => sameBrowserObservableValue(value, right[index]));
+  }
+  if (!isBrowserObservableRecord(left) || !isBrowserObservableRecord(right)) return false;
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key)
+      && sameBrowserObservableValue(left[key], right[key]));
+}
+
+function isBrowserObservableRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

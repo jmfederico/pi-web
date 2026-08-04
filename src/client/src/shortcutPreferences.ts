@@ -1,6 +1,6 @@
 import type { AppAction } from "./actions";
 import type { PiWebShortcutConfig } from "./api";
-import { resolveShortcutBindings } from "./keyboardShortcuts";
+import { resolveShortcutBindings, shortcutPreferenceForAction } from "./keyboardShortcuts";
 
 export function applyShortcutPreferences(actions: AppAction[], shortcuts: PiWebShortcutConfig | undefined): AppAction[] {
   if (shortcuts === undefined) return actions;
@@ -15,8 +15,7 @@ export function applyActiveShortcutPreferences(actions: AppAction[], shortcuts: 
 }
 
 export function applyShortcutPreference(action: AppAction, shortcuts: PiWebShortcutConfig): AppAction {
-  if (!Object.hasOwn(shortcuts, action.id)) return action;
-  const shortcut = shortcuts[action.id];
+  const shortcut = shortcutPreferenceForAction(action, shortcuts);
   if (shortcut === undefined) return action;
   if (shortcut === null) return withoutShortcut(action);
   return { ...action, shortcut };

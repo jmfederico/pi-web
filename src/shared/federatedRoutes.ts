@@ -1,3 +1,13 @@
+import {
+  PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+  PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+  PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+} from "./pluginBackendProtocol.js";
+import { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
+
+export { PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS } from "./pluginBackendProtocol.js";
+export { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
+
 export type FederatedHttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export const PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS = 5 * 60_000;
@@ -7,6 +17,10 @@ export interface FederatedHttpRouteSpec {
   method: FederatedHttpMethod;
   path: string;
   timeoutMs?: number;
+  bodyLimit?: number;
+  responseBodyLimit?: number;
+  /** Propagate an inbound disconnect through the remote request. */
+  propagateCancellation?: boolean;
 }
 
 export const FEDERATED_HTTP_ROUTES = [
@@ -23,7 +37,19 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "DELETE", path: "/projects/:projectId" },
   { method: "GET", path: "/project-directories" },
   { method: "GET", path: "/projects/:projectId/workspaces" },
-  { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId" },
+  {
+    method: "POST",
+    path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation",
+    timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+    bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+    responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+  },
+  {
+    method: "DELETE",
+    path: "/projects/:projectId/workspaces/:workspaceId",
+    timeoutMs: WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS,
+    propagateCancellation: true,
+  },
   { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/tree" },
   { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/file" },
   { method: "PUT", path: "/projects/:projectId/workspaces/:workspaceId/file" },
@@ -31,8 +57,6 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/file/move" },
   { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/file/preview" },
   { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/files" },
-  { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/git/status" },
-  { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/git/diff" },
   { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
   { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },
   { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId/terminals" },

@@ -67,7 +67,7 @@ describe("SessionStorageWorkspaceSelectionMemory", () => {
 });
 
 function testWorkspace(id: string): Workspace {
-  return { id, projectId: "project", path: `/tmp/project/${id}`, label: id, isMain: id === "main", isGitRepo: true, isGitWorktree: id !== "main", effectiveConfig: {} };
+  return { id, projectId: "project", path: `/tmp/project/${id}`, label: id, isMain: id === "main", effectiveConfig: {} };
 }
 
 function memoryStorage(seed: Record<string, string> = {}): KeyValueStorage {

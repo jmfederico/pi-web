@@ -176,7 +176,7 @@ function projection(summaries: SessionUnreadSummary[] = [], status: "fresh" | "s
 }
 
 function workspace(id: string, projectId: string, path: string): Workspace {
-  return { id, projectId, path, label: id, isMain: false, isGitRepo: true, isGitWorktree: false, effectiveConfig: {} };
+  return { id, projectId, path, label: id, isMain: false, effectiveConfig: {} };
 }
 
 function project(id: string, path = `/${id}`): Project {

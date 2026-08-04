@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
 import type { Machine, Project, SessionInfo, Workspace } from "../api";
@@ -13,12 +13,25 @@ function project(id: string, path: string): Project {
   return { id, name: id, path, createdAt: "now" };
 }
 
-function workspace(projectId: string, path: string, options: { isMain?: boolean } = {}): Workspace {
-  return { id: path, projectId, path, label: path, isMain: options.isMain ?? false, isGitRepo: true, isGitWorktree: true, effectiveConfig: {} };
+function workspace(projectId: string, path: string, options: Partial<Workspace> = {}): Workspace {
+  return {
+    id: path,
+    projectId,
+    path,
+    label: path,
+    isMain: false,
+    effectiveConfig: {},
+    ...options,
+  };
 }
 
 function session(cwd: string, id = "s1"): SessionInfo {
   return { id, cwd, path: `${cwd}/.sessions/${id}`, created: "now", modified: "now", messageCount: 1, firstMessage: "hello" };
+}
+
+function requireWorkspaceProvider(workspace: Workspace): NonNullable<Workspace["provider"]> {
+  if (workspace.provider === undefined) throw new Error("Expected workspace provider");
+  return workspace.provider;
 }
 
 type LoadWorkspaces = (projectId: string, machineId?: string) => Promise<Workspace[]>;
@@ -32,7 +45,11 @@ interface Harness {
   setState: (patch: Partial<AppState>) => void;
 }
 
-function harness(initial: Partial<AppState>, loadWorkspaces: LoadWorkspaces): Harness {
+function harness(
+  initial: Partial<AppState>,
+  loadWorkspaces: LoadWorkspaces,
+  options: { topologyRefreshDebounceMs?: number } = {},
+): Harness {
   let state: AppState = { ...initialAppState(), ...initial };
   const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
   const clearActiveSession = vi.fn();
@@ -52,10 +69,15 @@ function harness(initial: Partial<AppState>, loadWorkspaces: LoadWorkspaces): Ha
     {
       api: { workspaces: loadWorkspaces, sessions: vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>().mockResolvedValue([]) },
       onBackgroundError: (message, error) => { backgroundErrors.push({ message, error }); },
+      topologyRefreshDebounceMs: options.topologyRefreshDebounceMs ?? 0,
     },
   );
   return { controller, state: () => state, clearActiveSession, updateUrl, backgroundErrors, setState };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("WorkspaceController.refreshSelectedProjectTopology", () => {
   it("surfaces a worktree created outside PI WEB in both the selected list and the per-project cache", async () => {
@@ -248,12 +270,136 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(test.clearActiveSession).not.toHaveBeenCalled();
   });
 
-  it("leaves the selected workspace object untouched when the refresh returns identical metadata", async () => {
+  it.each([
+    {
+      field: "provider id",
+      refresh: (selected: Workspace): Workspace => ({
+        ...selected,
+        provider: { ...requireWorkspaceProvider(selected), pluginId: "replacement" },
+      }),
+    },
+    {
+      field: "provider request capability",
+      refresh: (selected: Workspace): Workspace => ({
+        ...selected,
+        provider: {
+          ...requireWorkspaceProvider(selected),
+          capabilities: { ...requireWorkspaceProvider(selected).capabilities, request: true },
+        },
+      }),
+    },
+    {
+      field: "provider remove capability",
+      refresh: (selected: Workspace): Workspace => ({
+        ...selected,
+        provider: {
+          ...requireWorkspaceProvider(selected),
+          capabilities: { ...requireWorkspaceProvider(selected).capabilities, remove: true },
+        },
+      }),
+    },
+    {
+      field: "provider public metadata",
+      refresh: (selected: Workspace): Workspace => ({
+        ...selected,
+        provider: {
+          ...requireWorkspaceProvider(selected),
+          metadata: { nested: { marker: "current" }, list: [1, true] },
+        },
+      }),
+    },
+    {
+      field: "effective config",
+      refresh: (selected: Workspace): Workspace => ({
+        ...selected,
+        effectiveConfig: { uploads: { defaultFolder: "current-uploads" } },
+      }),
+    },
+  ])("refreshes changed $field without resetting the selected session", async ({ refresh }) => {
     const repo = project("p1", "/repo");
     const main = workspace(repo.id, repo.path, { isMain: true });
-    const selected = workspace(repo.id, "/repo-feature");
-    // A fresh, equal object, exactly what a real HTTP response produces every resume.
-    const loadWorkspaces = vi.fn().mockResolvedValue([{ ...main }, { ...selected }]);
+    const selected = workspace(repo.id, "/repo-feature", {
+      provider: {
+        pluginId: "owner",
+        capabilities: { request: false, remove: false },
+        metadata: { nested: { marker: "old" }, list: [1, true] },
+      },
+      effectiveConfig: { uploads: { defaultFolder: "old-uploads" } },
+    });
+    const refreshed = refresh(selected);
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: selected,
+        workspaces: [main, selected],
+        workspacesByProjectId: { [repo.id]: [main, selected] },
+        selectedSession: session(selected.path),
+      },
+      vi.fn().mockResolvedValue([main, refreshed]),
+    );
+
+    await test.controller.refreshSelectedProjectTopology();
+
+    expect(test.state().selectedWorkspace).toBe(refreshed);
+    expect(test.state().selectedSession).toBeDefined();
+    expect(test.clearActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a changed removal precondition without resetting the selected session", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const selected = workspace(repo.id, "/repo-feature", {
+      removal: { actionLabel: "Disconnect", confirmation: "Disconnect old view?", precondition: "old-removal" },
+    });
+    const refreshed = {
+      ...selected,
+      removal: { actionLabel: "Disconnect", confirmation: "Disconnect old view?", precondition: "current-removal" },
+    };
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: selected,
+        workspaces: [main, selected],
+        workspacesByProjectId: { [repo.id]: [main, selected] },
+        selectedSession: session(selected.path),
+      },
+      vi.fn().mockResolvedValue([main, refreshed]),
+    );
+
+    await test.controller.refreshSelectedProjectTopology();
+
+    expect(test.state().selectedWorkspace).toEqual(refreshed);
+    expect(test.state().selectedSession).toBeDefined();
+    expect(test.clearActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("leaves the selected workspace object untouched when the refresh returns an identical snapshot", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const selected = workspace(repo.id, "/repo-feature", {
+      provider: {
+        pluginId: "owner",
+        capabilities: { request: true, remove: true },
+        metadata: { nested: [1, { ready: true }] },
+      },
+      removal: { actionLabel: "Disconnect", confirmation: "Disconnect?", precondition: "v1.current" },
+      effectiveConfig: { uploads: { defaultFolder: "uploads" } },
+    });
+    // Fresh, deeply equal objects, exactly what a real HTTP response produces every resume.
+    const equalSelected = workspace(repo.id, "/repo-feature", {
+      provider: {
+        pluginId: "owner",
+        capabilities: { request: true, remove: true },
+        metadata: { nested: [1, { ready: true }] },
+      },
+      removal: { actionLabel: "Disconnect", confirmation: "Disconnect?", precondition: "v1.current" },
+      effectiveConfig: { uploads: { defaultFolder: "uploads" } },
+    });
+    const loadWorkspaces = vi.fn().mockResolvedValue([{ ...main }, equalSelected]);
     const test = harness(
       {
         selectedMachine: machine("local"),
@@ -271,6 +417,38 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     // Identity preserved: an unchanged resume must not churn selected-workspace identity
     // into state, or every focus would re-render surfaces keyed on this object.
     expect(test.state().selectedWorkspace).toBe(selected);
+  });
+
+  it("debounces rapid topology refresh bursts before opening a request", async () => {
+    vi.useFakeTimers();
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const loadWorkspaces = vi.fn().mockResolvedValue([main]);
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: main,
+        workspaces: [main],
+        workspacesByProjectId: { [repo.id]: [main] },
+      },
+      loadWorkspaces,
+      { topologyRefreshDebounceMs: 25 },
+    );
+
+    const resumeRefresh = test.controller.refreshSelectedProjectTopology();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(20);
+    const appDataRefresh = test.controller.refreshSelectedProjectTopology();
+    await vi.advanceTimersByTimeAsync(24);
+
+    expect(loadWorkspaces).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.all([resumeRefresh, appDataRefresh]);
+
+    expect(loadWorkspaces).toHaveBeenCalledOnce();
   });
 
   it("serializes overlapping refreshes so an earlier response cannot overwrite a newer list", async () => {

@@ -63,6 +63,57 @@ describe("buildApp active profile composition", () => {
     }
   });
 
+  it("keeps desired plugin config editable when sessiond is unavailable and a desired agent profile is configured", async () => {
+    const agentDir = join(tempDir, "desired-agent");
+    const packageDir = join(tempDir, "offline-package");
+    await writePackagePlugin(packageDir, "offline-browser");
+    await writePiPackageSettings(agentDir, [packageDir]);
+    let config: PiWebConfigResponse["config"] = { plugins: { "offline-browser": { enabled: true } }, agent: { command: "pi", dir: agentDir } };
+    const configService: PiWebConfigService = {
+      read: () => Promise.resolve(configResponse(config)),
+      write: (next) => {
+        config = { ...config, ...next };
+        return Promise.resolve(configResponse(config));
+      },
+    };
+    const app = await buildApp({
+      agentProfileProvider: { getActiveAgentProfile: () => Promise.resolve({ status: "unavailable", error: "sessiond is offline" }) },
+      config: configService,
+      sessionDaemon: {
+        request: () => Promise.reject(new Error("connect ECONNREFUSED")),
+        connectWebSocket: () => { throw new Error("sessiond is offline"); },
+      },
+      clientDist: false,
+      logger: false,
+    });
+
+    try {
+      const before = await app.inject({ method: "GET", url: "/api/plugins" });
+      expect(before.statusCode).toBe(200);
+      const beforeBody = before.json<{ plugins: unknown[]; serverRuntime: { status: string } }>();
+      expect(beforeBody.plugins).toEqual(expect.arrayContaining([expect.objectContaining({ id: "offline-browser", enabled: true })]));
+      expect(beforeBody.serverRuntime).toMatchObject({ status: "unavailable" });
+
+      const saved = await app.inject({
+        method: "PUT",
+        url: "/api/machines/local/config",
+        payload: { config: { plugins: { "offline-browser": { enabled: false } } } },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json()).toMatchObject({ config: { plugins: { "offline-browser": { enabled: false } } } });
+
+      const after = await app.inject({ method: "GET", url: "/api/plugins" });
+      const manifest = await app.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });
+      expect(after.statusCode).toBe(200);
+      expect(after.json<{ plugins: unknown[] }>().plugins).toEqual(expect.arrayContaining([expect.objectContaining({ id: "offline-browser", enabled: false })]));
+      const manifestBody = manifest.json<{ lifecycleVersion: number; plugins: { id: string }[] }>();
+      expect(manifestBody.lifecycleVersion).toBe(1);
+      expect(manifestBody.plugins.map(({ id }) => id)).not.toContain("offline-browser");
+    } finally {
+      await app.close();
+    }
+  });
+
   it.each(["unavailable", "invalid"] as const)("returns 503 instead of falling back when the active profile is %s", async (status) => {
     const provider: ActiveAgentProfileProvider = {
       getActiveAgentProfile: () => Promise.resolve({ status, error: `${status} daemon profile` }),
@@ -114,6 +165,26 @@ async function writePackagePlugin(root: string, pluginId: string): Promise<void>
     piWeb: { plugins: [{ id: pluginId, module: "pi-web-plugin.js" }] },
   }, null, 2)}\n`, "utf8");
   await writeFile(join(root, "pi-web-plugin.js"), "export default {};\n", "utf8");
+}
+
+function configResponse(config: PiWebConfigResponse["config"]): PiWebConfigResponse {
+  return {
+    path: join(tempDir, "config.json"),
+    exists: true,
+    config,
+    effectiveConfig: config,
+    envOverrides: {
+      host: false,
+      port: false,
+      allowedHosts: false,
+      spawnSessions: false,
+      subsessions: false,
+      askUser: false,
+      agentCommand: false,
+      agentDir: false,
+      agentSessionDir: false,
+    },
+  };
 }
 
 function emptyConfigService(): PiWebConfigService {

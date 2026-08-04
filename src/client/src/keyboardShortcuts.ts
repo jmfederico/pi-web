@@ -181,7 +181,7 @@ export function isShortcutSequenceStarter(token: string): boolean {
 }
 
 function shortcutBindingForAction(action: AppAction, shortcuts: ShortcutPreferenceConfig | undefined, order: number): ShortcutBinding | undefined {
-  const configured = shortcutPreference(action.id, shortcuts);
+  const configured = shortcutPreferenceForAction(action, shortcuts);
   if (configured === null) return undefined;
   const shortcut = configured ?? action.shortcut;
   if (shortcut === undefined || shortcut === "") return undefined;
@@ -198,9 +198,12 @@ function shortcutBindingForAction(action: AppAction, shortcuts: ShortcutPreferen
   };
 }
 
-function shortcutPreference(actionId: string, shortcuts: ShortcutPreferenceConfig | undefined): string | null | undefined {
-  if (shortcuts === undefined || !Object.hasOwn(shortcuts, actionId)) return undefined;
-  return shortcuts[actionId];
+export function shortcutPreferenceForAction(action: Pick<AppAction, "id" | "shortcutAliases">, shortcuts: ShortcutPreferenceConfig | undefined): string | null | undefined {
+  if (shortcuts === undefined) return undefined;
+  for (const actionId of [action.id, ...(action.shortcutAliases ?? [])]) {
+    if (Object.hasOwn(shortcuts, actionId)) return shortcuts[actionId];
+  }
+  return undefined;
 }
 
 function shortcutBindingKey(tokens: string[]): string {

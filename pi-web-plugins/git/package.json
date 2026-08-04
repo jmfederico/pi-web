@@ -1,0 +1,15 @@
+{
+  "name": "@pi-web/git-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "git",
+        "module": "pi-web-plugin.js",
+        "serverModule": "server-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

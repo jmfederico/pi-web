@@ -326,7 +326,7 @@ describe("development native service planning", () => {
           prerequisites: [
             { id: "sessiond.node", kind: "node-version", minimumVersion: "22.19.0" },
             { id: "sessiond.command.npm", kind: "command-available", command: "npm" },
-            { id: "sessiond.package-scripts", kind: "package-scripts", scripts: ["start:sessiond"] },
+            { id: "sessiond.package-scripts", kind: "package-scripts", scripts: ["build:plugins", "start:sessiond"] },
           ],
         },
         {

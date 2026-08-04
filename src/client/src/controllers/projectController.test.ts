@@ -9,7 +9,7 @@ function project(id: string, path: string): Project {
 }
 
 function workspace(projectId: string, path: string): Workspace {
-  return { id: path, projectId, path, label: path, isMain: true, isGitRepo: true, isGitWorktree: true, effectiveConfig: {} };
+  return { id: path, projectId, path, label: path, isMain: true, effectiveConfig: {} };
 }
 
 describe("ProjectController", () => {

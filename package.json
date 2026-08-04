@@ -5,6 +5,19 @@
   "license": "MIT",
   "author": "Federico Jaramillo Martinez",
   "type": "module",
+  "typesVersions": {
+    "*": {
+      "plugin-api": [
+        "dist/plugin-api.d.ts"
+      ],
+      "plugin-api/unstable": [
+        "dist/plugin-api/unstable.d.ts"
+      ],
+      "server-plugin-api": [
+        "dist/server-plugin-api.d.ts"
+      ]
+    }
+  },
   "bin": {
     "pi-web": "dist/cli.js",
     "pi-web-server": "dist/server/index.js",
@@ -21,11 +34,12 @@
     "docs/config.md",
     "docs/assets",
     "plugin-api.d.ts",
-    "plugin-api/unstable.d.ts"
+    "plugin-api/unstable.d.ts",
+    "server-plugin-api.d.ts"
   ],
   "scripts": {
     "dev": "bash -c 'trap \"kill 0\" EXIT; npm run dev:sessiond & npm run dev:web & npm run dev:client & wait'",
-    "dev:sessiond": "tsx watch src/server/sessiond.ts",
+    "dev:sessiond": "npm run build:plugins && tsx watch src/server/sessiond.ts",
     "dev:web": "bash -c 'set -e; npm run build:plugins; trap \"kill 0\" EXIT; npm run dev:plugins & tsx watch src/server/index.ts & wait'",
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
@@ -42,7 +56,7 @@
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
     "verify:staged": "node scripts/verify-staged.mjs",
     "start": "tsx src/server/index.ts",
-    "start:sessiond": "tsx src/server/sessiond.ts",
+    "start:sessiond": "npm run build:plugins && tsx src/server/sessiond.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",

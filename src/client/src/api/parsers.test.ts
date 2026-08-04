@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
-import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse, parseWorkspaceProviderResolution } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves interactive API-key flow hints and defaults providers without one", () => {
@@ -198,12 +198,91 @@ describe("API parsers", () => {
     })).toThrow("Invalid PI WEB Docker mode");
   });
 
-  it("parses PI WEB plugin status responses", () => {
-    expect(parsePiWebPluginsResponse({
-      plugins: [{ id: "info", module: "/pi-web-plugins/info/pi-web-plugin.js?v=1", source: "bundled", scope: "bundled", machineSpecific: true, enabled: false }],
-    })).toEqual({
-      plugins: [{ id: "info", module: "/pi-web-plugins/info/pi-web-plugin.js?v=1", source: "bundled", scope: "bundled", machineSpecific: true, enabled: false }],
+  it("parses desired and active PI WEB plugin lifecycle responses", () => {
+    const recovery = {
+      showSafeStart: "pi-web plugins safe-start show",
+      bundledOnly: "pi-web plugins safe-start set bundled-only --restart",
+      noServerPlugins: "pi-web plugins safe-start set none --restart",
+      clearSafeStart: "pi-web plugins safe-start clear --restart",
+    };
+    const response = {
+      lifecycleVersion: 1,
+      plugins: [
+        {
+          id: "info",
+          module: "/pi-web-plugins/info/pi-web-plugin.js?v=1",
+          source: "bundled",
+          scope: "bundled",
+          machineSpecific: true,
+          enabled: false,
+          discovered: true,
+          conflict: true,
+          server: {
+            state: "active",
+            desiredRevision: "2",
+            activeRevision: "1",
+            health: { status: "degraded", message: "tool unavailable" },
+            staleRevision: true,
+            restartRequired: true,
+            disableCommand: "pi-web plugins disable info --restart",
+          },
+        },
+        { id: "workspace-provider", source: "local", scope: "user", enabled: true, discovered: false, conflict: false },
+      ],
+      diagnostics: [{ kind: "conflict", snapshot: "desired", source: "local", message: "Duplicate id", pluginId: "info" }],
+      serverRuntime: { status: "available", safeStart: "bundled-only", desiredSafeStart: "off", restartRequired: true, recovery },
+    };
+
+    expect(parsePiWebPluginsResponse(response)).toEqual({
+      ...response,
+      plugins: [response.plugins[0], { ...response.plugins[1], machineSpecific: false }],
     });
+  });
+
+  it("marks legacy plugin-list responses as lifecycle-incompatible without losing browser plugins", () => {
+    const parsed = parsePiWebPluginsResponse({
+      plugins: [{ id: "info", module: "/pi-web-plugins/info/pi-web-plugin.js?v=1", source: "bundled", scope: "bundled", enabled: true }],
+    });
+
+    expect(parsed.plugins).toEqual([expect.objectContaining({ id: "info", enabled: true, discovered: true, conflict: false })]);
+    expect(parsed.serverRuntime).toMatchObject({ status: "incompatible", restartRequired: false });
+    expect(parsed.serverRuntime.message).toContain("Update and restart PI WEB");
+  });
+
+  it("rejects malformed plugin lifecycle versions and recovery state", () => {
+    expect(() => parsePiWebPluginsResponse({ lifecycleVersion: 2, plugins: [], diagnostics: [], serverRuntime: {} }))
+      .toThrow("Unsupported PI WEB plugin lifecycle version");
+    expect(() => parsePiWebPluginsResponse({
+      lifecycleVersion: 1,
+      plugins: [],
+      diagnostics: [],
+      serverRuntime: {
+        status: "available",
+        desiredSafeStart: "future",
+        restartRequired: false,
+        recovery: {
+          showSafeStart: "show",
+          bundledOnly: "bundled",
+          noServerPlugins: "none",
+          clearSafeStart: "clear",
+        },
+      },
+    })).toThrow("Invalid desired PI WEB server-plugin safe-start state");
+    expect(() => parsePiWebPluginsResponse({
+      lifecycleVersion: 1,
+      plugins: [],
+      diagnostics: [],
+      serverRuntime: {
+        status: "available",
+        restartRequired: false,
+        recovery: {
+          showSafeStart: "pi-web plugins safe-start show --token secret",
+          bundledOnly: "pi-web plugins safe-start set bundled-only --restart",
+          noServerPlugins: "pi-web plugins safe-start set none --restart",
+          clearSafeStart: "pi-web plugins safe-start clear --restart",
+        },
+      },
+    })).toThrow("Invalid PI WEB server plugin recovery commands");
   });
 
   it("parses paged message responses and rejects legacy array message pages", () => {
@@ -501,8 +580,6 @@ describe("API parsers", () => {
       label: "main",
       branch: "main",
       isMain: true,
-      isGitRepo: true,
-      isGitWorktree: false,
       effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
     })).toEqual({
       id: "w1",
@@ -511,10 +588,135 @@ describe("API parsers", () => {
       label: "main",
       branch: "main",
       isMain: true,
-      isGitRepo: true,
-      isGitWorktree: false,
       effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
     });
+  });
+
+  it("parses generic workspace provider and removal metadata", () => {
+    expect(parseWorkspace({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo/secondary",
+      label: "secondary",
+      isMain: false,
+      provider: {
+        pluginId: "workspace-provider",
+        capabilities: { request: true, remove: true },
+        metadata: { changeId: "abc", nested: [1, true, null] },
+      },
+      removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?", precondition: "v1.confirmed" },
+      effectiveConfig: {},
+    })).toEqual({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo/secondary",
+      label: "secondary",
+      isMain: false,
+      provider: {
+        pluginId: "workspace-provider",
+        capabilities: { request: true, remove: true },
+        metadata: { changeId: "abc", nested: [1, true, null] },
+      },
+      removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?", precondition: "v1.confirmed" },
+      effectiveConfig: {},
+    });
+  });
+
+  it("parses provider-neutral workspace resolution ownership and diagnostics", () => {
+    expect(parseWorkspaceProviderResolution({
+      status: "degraded",
+      projectId: "p1",
+      ownerPluginId: "replacement",
+      workspaces: [{
+        id: "w1",
+        projectId: "p1",
+        path: "/repo",
+        label: "main",
+        isMain: true,
+        effectiveConfig: {},
+      }],
+      diagnostics: [{
+        code: "claim-conflict",
+        message: "Two primary providers claimed the project",
+        tier: "primary",
+        pluginIds: ["one", "two"],
+      }],
+    })).toEqual({
+      status: "degraded",
+      projectId: "p1",
+      ownerPluginId: "replacement",
+      workspaces: [expect.objectContaining({ id: "w1", projectId: "p1" })],
+      diagnostics: [{
+        code: "claim-conflict",
+        message: "Two primary providers claimed the project",
+        tier: "primary",
+        pluginIds: ["one", "two"],
+      }],
+    });
+  });
+
+  it("rejects malformed workspace resolution ownership and diagnostics", () => {
+    const workspace = {
+      id: "w1",
+      projectId: "p1",
+      path: "/repo",
+      label: "main",
+      isMain: true,
+      effectiveConfig: {},
+    };
+
+    expect(() => parseWorkspaceProviderResolution({
+      status: "provider",
+      projectId: "p1",
+      workspaces: [workspace],
+      diagnostics: [],
+    })).toThrow("missing ownerPluginId");
+    expect(() => parseWorkspaceProviderResolution({
+      status: "folder",
+      projectId: "p1",
+      workspaces: [workspace],
+      diagnostics: [{ code: "future", message: "bad", tier: "primary" }],
+    })).toThrow("diagnostic code");
+  });
+
+  it("rejects removal metadata without a host-issued precondition", () => {
+    expect(() => parseWorkspace({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo/secondary",
+      label: "secondary",
+      isMain: false,
+      removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?" },
+      effectiveConfig: {},
+    })).toThrow("Expected string field: precondition");
+  });
+
+  it("rejects empty workspace removal wording", () => {
+    expect(() => parseWorkspace({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo/secondary",
+      label: "secondary",
+      isMain: false,
+      removal: { actionLabel: "", confirmation: "Remove secondary?", precondition: "v1.confirmed" },
+      effectiveConfig: {},
+    })).toThrow("Expected non-empty string field: actionLabel");
+  });
+
+  it("rejects non-JSON workspace provider metadata", () => {
+    expect(() => parseWorkspace({
+      id: "w1",
+      projectId: "p1",
+      path: "/repo",
+      label: "main",
+      isMain: true,
+      provider: {
+        pluginId: "workspace-provider",
+        capabilities: { request: false, remove: false },
+        metadata: { invalid: undefined },
+      },
+      effectiveConfig: {},
+    })).toThrow("Invalid workspace provider metadata field");
   });
 
   it("rejects workspace responses without effective config", () => {
@@ -524,8 +726,6 @@ describe("API parsers", () => {
       path: "/repo",
       label: "main",
       isMain: true,
-      isGitRepo: false,
-      isGitWorktree: false,
     })).toThrow("Expected workspace effectiveConfig field");
   });
 
@@ -542,29 +742,6 @@ describe("API parsers", () => {
   it("rejects invalid enum-like fields", () => {
     expect(() => parseSlashCommand({ name: "bad", source: "remote" })).toThrow("Invalid command source");
     expect(() => parseFileSuggestion({ path: "a", kind: "deleted" })).toThrow("Invalid file kind");
-    expect(() => parseGitStatusResponse({ isGitRepo: true, hash: "h", files: [{ path: "a", index: "weird", workingTree: "modified" }] })).toThrow("Invalid git file state");
-  });
-
-  it("parses submodule paths and pointer commit fields", () => {
-    const parsed = parseGitStatusResponse({
-      isGitRepo: true,
-      hash: "h",
-      branch: "main",
-      files: [
-        { path: "HARL", index: "unmodified", workingTree: "modified", submoduleFromCommit: "1111111", submoduleToCommit: "2222222" },
-        { path: "HARL/inner.txt", index: "modified", workingTree: "modified" },
-      ],
-      submodules: ["HARL"],
-    });
-    expect(parsed.submodules).toEqual(["HARL"]);
-    expect(parsed.files[0]?.submoduleFromCommit).toBe("1111111");
-    expect(parsed.files[0]?.submoduleToCommit).toBe("2222222");
-    expect(parsed.files[1]?.submoduleFromCommit).toBeUndefined();
-  });
-
-  it("defaults submodules to an empty list when absent", () => {
-    const parsed = parseGitStatusResponse({ isGitRepo: true, hash: "h", files: [] });
-    expect(parsed.submodules).toEqual([]);
   });
 
   it("validates file content responses", () => {

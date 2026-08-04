@@ -7,7 +7,7 @@ function project(id: string, path: string): Project {
 }
 
 function workspace(projectId: string, path: string): WorkspaceListing {
-  return { id: `${projectId}:${path}`, projectId, path, label: path, isMain: false, isGitRepo: true, isGitWorktree: true };
+  return { id: `${projectId}:${path}`, projectId, path, label: path, isMain: false };
 }
 
 function resolverFor(projects: Project[], workspacesByProject: Record<string, WorkspaceListing[]>): ProjectScopedSpawnTargetResolver {

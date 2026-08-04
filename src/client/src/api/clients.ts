@@ -1,4 +1,4 @@
-import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionBulkMutationRef, SessionCleanupRequest, SessionNotificationDismissThrough, SessionRef, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, TerminalCommandRun, TerminalCommandRunFilter, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
+import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionBulkMutationRef, SessionCleanupRequest, SessionNotificationDismissThrough, SessionRef, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, TerminalCommandRun, TerminalCommandRunFilter, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
 import {
@@ -16,8 +16,6 @@ import {
   parseFileContentResponse,
   parseFileSuggestion,
   parseFileTreeResponse,
-  parseGitDiffResponse,
-  parseGitStatusResponse,
   parseMachine,
   parseMachineHealth,
   parseMachineRuntime,
@@ -52,10 +50,10 @@ import {
   parseTerminalInfo,
   parseThinkingLevelsResponse,
   parseWriteWorkspaceFileResponse,
-  parseWorkspace,
   parseWorkspaceActivityResponse,
+  parseWorkspaceProviderResolution,
 } from "./parsers";
-import { machineGitDiffPath, messagePath } from "./urls";
+import { messagePath } from "./urls";
 
 const machinePrefix = (machineId = "local") => `api/machines/${encodeURIComponent(machineId)}`;
 
@@ -154,9 +152,30 @@ export const projectsApi = {
   projectDirectories: (query: string, machineId = "local") => request(`${machinePrefix(machineId)}/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
 };
 
+function workspaceResolution(projectId: string, machineId = "local") {
+  return request(
+    `${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces`,
+    (value) => {
+      const resolution = parseWorkspaceProviderResolution(value);
+      if (resolution.projectId !== projectId) throw new Error("Workspace resolution did not match the requested project");
+      return resolution;
+    },
+  );
+}
+
 export const workspacesApi = {
-  workspaces: (projectId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces`, arrayOf(parseWorkspace)),
-  deleteWorkspace: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}`, parseTerminalCommandRun, { method: "DELETE" }),
+  workspaceResolution,
+  workspaces: async (projectId: string, machineId = "local") => [
+    ...(await workspaceResolution(projectId, machineId)).workspaces,
+  ],
+  deleteWorkspace: (projectId: string, workspaceId: string, precondition: string, machineId = "local") => {
+    const body: WorkspaceRemovalRequest = { precondition };
+    return request(
+      `${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}`,
+      parseTerminalCommandRun,
+      { method: "DELETE", body: JSON.stringify(body) },
+    );
+  },
   workspaceTree: (projectId: string, workspaceId: string, path = "", machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/tree?path=${encodeURIComponent(path)}`, parseFileTreeResponse),
   workspaceFile: (projectId: string, workspaceId: string, path: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file?path=${encodeURIComponent(path)}`, parseFileContentResponse),
   writeWorkspaceFile: (projectId: string, workspaceId: string, path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions, machineId = "local") => {
@@ -312,11 +331,6 @@ export const filesApi = {
   },
 };
 
-export const gitApi = {
-  gitStatus: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/status`, parseGitStatusResponse),
-  gitDiff: (projectId: string, workspaceId: string, options?: { path?: string; staged?: boolean }, machineId = "local") => request(machineGitDiffPath(machineId, projectId, workspaceId, options), parseGitDiffResponse),
-};
-
 export const api = {
   ...piWebApi,
   ...machinesApi,
@@ -329,5 +343,4 @@ export const api = {
   ...sessionsApi,
   ...terminalsApi,
   ...filesApi,
-  ...gitApi,
 };

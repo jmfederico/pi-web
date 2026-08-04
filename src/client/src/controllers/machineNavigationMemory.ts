@@ -5,7 +5,6 @@ import { browserSessionStorage, PersistentValueMap, type KeyValueStorage } from 
 
 export interface WorkspaceRouteSurface {
   selectedFilePath?: string | undefined;
-  selectedDiffPath?: string | undefined;
   selectedTerminalId?: string | undefined;
 }
 
@@ -80,7 +79,6 @@ export function machineNavigationSnapshotFromState(state: AppState): MachineNavi
     view: state.mainView,
     surface: {
       selectedFilePath: hasWorkspace ? state.selectedFilePath : undefined,
-      selectedDiffPath: hasWorkspace ? state.selectedDiffPath : undefined,
       selectedTerminalId: hasWorkspace ? state.selectedTerminalId : undefined,
     },
   };
@@ -125,7 +123,6 @@ function parseWorkspaceRouteSurface(value: unknown): WorkspaceRouteSurface {
   if (!isRecord(value)) return {};
   return {
     selectedFilePath: optionalStringField(value, "selectedFilePath"),
-    selectedDiffPath: optionalStringField(value, "selectedDiffPath"),
     selectedTerminalId: optionalStringField(value, "selectedTerminalId"),
   };
 }

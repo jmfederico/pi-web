@@ -61,6 +61,22 @@ describe("SessionStorageMachineNavigationMemory", () => {
     expect(memory.latest("local")?.surface.selectedFilePath).toBe("README.md");
     expect(memory.latest("remote")).toBeUndefined();
   });
+
+  it("retains qualified legacy panel ids for plugin route migration", () => {
+    const storage = memoryStorage({
+      "pi-web:machine-navigation:v1": JSON.stringify({ version: 1, entries: [["local", {
+        machineId: "local",
+        tool: "core:workspace.git",
+        view: "core:workspace.git",
+        surface: {},
+      }]] }),
+    });
+
+    const snapshot = new SessionStorageMachineNavigationMemory(storage).latest("local");
+
+    expect(snapshot?.tool).toBe("core:workspace.git");
+    expect(snapshot?.view).toBe("core:workspace.git");
+  });
 });
 
 describe("machineNavigationSnapshotFromState", () => {
@@ -74,7 +90,6 @@ describe("machineNavigationSnapshotFromState", () => {
       workspaceTool: "core:workspace.files",
       mainView: "core:workspace.files",
       selectedFilePath: "src/main.ts",
-      selectedDiffPath: "README.md",
       selectedTerminalId: "terminal-1",
     };
 
@@ -87,7 +102,6 @@ describe("machineNavigationSnapshotFromState", () => {
       view: "core:workspace.files",
       surface: {
         selectedFilePath: "src/main.ts",
-        selectedDiffPath: "README.md",
         selectedTerminalId: "terminal-1",
       },
     });
@@ -97,13 +111,11 @@ describe("machineNavigationSnapshotFromState", () => {
     const state: AppState = {
       ...initialAppState(),
       selectedFilePath: "src/main.ts",
-      selectedDiffPath: "README.md",
       selectedTerminalId: "terminal-1",
     };
 
     expect(machineNavigationSnapshotFromState(state).surface).toEqual({
       selectedFilePath: undefined,
-      selectedDiffPath: undefined,
       selectedTerminalId: undefined,
     });
   });
@@ -116,7 +128,7 @@ describe("routeFromMachineNavigationSnapshot", () => {
       projectId: "project",
       workspaceId: "workspace",
       sessionId: "session",
-      tool: "core:workspace.git",
+      tool: "git:workspace.git",
       view: "navigation",
       surface: {},
     })).toEqual({
@@ -124,7 +136,7 @@ describe("routeFromMachineNavigationSnapshot", () => {
       projectId: "project",
       workspaceId: "workspace",
       sessionId: "session",
-      tool: "core:workspace.git",
+      tool: "git:workspace.git",
       view: undefined,
     });
   });
@@ -143,7 +155,7 @@ function project(id: string): Project {
 }
 
 function workspace(id: string, projectId: string): Workspace {
-  return { id, projectId, path: `/tmp/${projectId}/${id}`, label: id, isMain: true, isGitRepo: true, isGitWorktree: false, effectiveConfig: {} };
+  return { id, projectId, path: `/tmp/${projectId}/${id}`, label: id, isMain: true, effectiveConfig: {} };
 }
 
 function session(id: string): SessionInfo {

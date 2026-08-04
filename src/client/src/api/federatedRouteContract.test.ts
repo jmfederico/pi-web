@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
-import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
-import { activityApi, configApi, filesApi, gitApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
+import { PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { activityApi, configApi, filesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { workspaceImagePreviewUrl } from "./urls";
+import { requestPluginBackend } from "./pluginBackends";
 
 const machineId = "remote-a";
 const workspace: Workspace = {
@@ -12,8 +14,6 @@ const workspace: Workspace = {
   path: "/repo",
   label: "repo",
   isMain: true,
-  isGitRepo: true,
-  isGitWorktree: true,
   effectiveConfig: {},
 };
 const session = { id: "s 1", cwd: workspace.path };
@@ -71,6 +71,26 @@ describe("federated route contract", () => {
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("tree"))).toBe(false);
   });
 
+  it("gives workspace removal a bounded cancellable federation hop", () => {
+    expect(FEDERATED_HTTP_ROUTES.find((route) => route.path === "/projects/:projectId/workspaces/:workspaceId")).toEqual({
+      method: "DELETE",
+      path: "/projects/:projectId/workspaces/:workspaceId",
+      timeoutMs: WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS,
+      propagateCancellation: true,
+    });
+  });
+
+  it("allowlists exactly one bounded workspace provider backend route", () => {
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([{
+      method: "POST",
+      path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation",
+      timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+      bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+      responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+    }]);
+    expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("plugin-backends"))).toBe(false);
+  });
+
   it("covers machine-scoped client HTTP calls with remote proxy routes", async () => {
     const fetchMock = vi.fn<FetchLike>(() => Promise.resolve(jsonResponse({})));
     vi.stubGlobal("fetch", fetchMock);
@@ -91,15 +111,14 @@ describe("federated route contract", () => {
       ignoreParseFailure(projectsApi.closeProject("p 1", machineId)),
       ignoreParseFailure(projectsApi.projectDirectories("/r", machineId)),
       ignoreParseFailure(workspacesApi.workspaces("p 1", machineId)),
-      ignoreParseFailure(workspacesApi.deleteWorkspace("p 1", "w 1", machineId)),
+      ignoreParseFailure(workspacesApi.deleteWorkspace("p 1", "w 1", "v1.confirmed", machineId)),
       ignoreParseFailure(workspacesApi.workspaceTree("p 1", "w 1", "src", machineId)),
       ignoreParseFailure(workspacesApi.workspaceFile("p 1", "w 1", "README.md", machineId)),
       ignoreParseFailure(workspacesApi.writeWorkspaceFile("p 1", "w 1", "README.md", "hello", { overwrite: false }, machineId)),
       ignoreParseFailure(workspacesApi.deleteWorkspaceFile("p 1", "w 1", "README.md", machineId)),
       ignoreParseFailure(workspacesApi.moveWorkspaceFile("p 1", "w 1", "README.md", "docs/README.md", { overwrite: false }, machineId)),
+      ignoreParseFailure(requestPluginBackend({ pluginId: "board-tools", backendRevision: "server-r1", machineId, projectId: "p 1", workspaceId: "w 1" }, "cards.summary", { includeClosed: false })),
       ignoreParseFailure(filesApi.files("README", { kind: "tracked", mode: "file", projectId: "p 1", workspaceId: "w 1", machineId })),
-      ignoreParseFailure(gitApi.gitStatus("p 1", "w 1", machineId)),
-      ignoreParseFailure(gitApi.gitDiff("p 1", "w 1", { path: "README.md", staged: true }, machineId)),
       ignoreParseFailure(sessionsApi.sessions("/repo", machineId)),
       ignoreParseFailure(sessionsApi.unreadCatalog(machineId)),
       ignoreParseFailure(sessionsApi.acknowledgeUnread(session, "catalog-a", 7, machineId)),

@@ -22,8 +22,7 @@ describe("Info plugin copy-diagnostics action", () => {
           label: "pi-web",
           branch: "main",
           isMain: true,
-          isGitRepo: true,
-          isGitWorktree: false,
+          provider: { pluginId: "git", capabilities: { request: true, remove: true } },
         },
       },
     });
@@ -35,7 +34,7 @@ describe("Info plugin copy-diagnostics action", () => {
     expect(summary).toContain("PI WEB diagnostics");
     expect(summary).toContain("Status: unavailable");
     expect(summary).toContain("Machine: devbox (local machine)");
-    expect(summary).toContain("Workspace: pi-web — /srv/dev/pi-web (branch main, git repo, main workspace)");
+    expect(summary).toContain("Workspace: pi-web — /srv/dev/pi-web (branch main, provider: git, main workspace)");
   });
 });
 
@@ -60,7 +59,7 @@ function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntim
     selectWorkspaceTool: noop,
     openTerminal: noop,
     refreshFiles: noop,
-    refreshGit: noop,
+    refreshWorkspacePanels: noop,
     refreshAppData: noop,
     reloadPage: noop,
     startSession: noop,

@@ -12,6 +12,41 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+describe("workspace-list removal actions", () => {
+  it("shows provider wording for neutral removal metadata and no removal action without it", async () => {
+    const removable = workspace("neutral", {
+      isMain: false,
+      removal: {
+        actionLabel: "Disconnect view",
+        confirmation: "Disconnect this view without deleting files?",
+        precondition: "removal-v1",
+      },
+    });
+    const withoutRemoval = workspace("plain");
+    const onDelete = vi.fn();
+    const list = new WorkspaceList();
+    list.workspaces = [removable, withoutRemoval];
+    list.onDelete = onDelete;
+    document.body.append(list);
+    await list.updateComplete;
+
+    const toggles = list.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-menu-toggle");
+    toggles?.[0]?.click();
+    await list.updateComplete;
+
+    const action = list.shadowRoot?.querySelector<HTMLButtonElement>(".workspace-menu-actions .danger");
+    expect(action?.textContent).toBe("Disconnect view");
+    expect(action?.title).toBe("Disconnect view");
+    action?.click();
+    expect(onDelete).toHaveBeenCalledWith(removable);
+    await list.updateComplete;
+
+    list.shadowRoot?.querySelectorAll<HTMLButtonElement>(".action-menu-toggle")[1]?.click();
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".workspace-menu-actions")).toBeNull();
+  });
+});
+
 describe("workspace unread indicator", () => {
   it("shows an unread dot only on workspaces tracked as unread", async () => {
     const list = await mountWorkspaceList([workspace("ws-a"), workspace("ws-b")], new Set(["ws-b"]));
@@ -153,6 +188,6 @@ function workspaceActivity(cwd: string, hasSessionActivity: boolean, hasTerminal
   return { cwd, hasSessionActivity, hasTerminalActivity, updatedAt: "2026-06-04T00:00:00.000Z" };
 }
 
-function workspace(id: string): Workspace {
-  return { id, projectId: "project-1", path: `/repo/${id}`, label: id, isMain: true, isGitRepo: true, isGitWorktree: false, effectiveConfig: {} };
+function workspace(id: string, patch: Partial<Workspace> = {}): Workspace {
+  return { id, projectId: "project-1", path: `/repo/${id}`, label: id, isMain: true, effectiveConfig: {}, ...patch };
 }

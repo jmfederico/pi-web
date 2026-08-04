@@ -1,13 +1,15 @@
 import { html } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, MoveWorkspaceFileResponse, SessionInfo, SessionStatus, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, MoveWorkspaceFileResponse, SessionInfo, SessionStatus, WriteWorkspaceFileResponse, Workspace } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
-import { PluginRegistry } from "./registry";
+import { PluginRegistry, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
 import { themePackPlugin } from "./themes";
-import type { PluginRuntimeContext, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "./types";
+import type { PiWebPlugin, PluginRuntimeContext, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "./types";
+import { createPluginWorkspaceBackend } from "./workspaceBackend";
+import type { PluginBackendRequestTarget } from "../api/pluginBackends";
 
 function createContext(statePatch: Partial<AppState> = {}) {
   const calls: string[] = [];
@@ -43,7 +45,7 @@ function createContext(statePatch: Partial<AppState> = {}) {
     selectWorkspaceTool: vi.fn((tool: AppState["workspaceTool"]) => { calls.push(`selectWorkspaceTool:${tool}`); }),
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),
     refreshFiles: vi.fn(() => { calls.push("refreshFiles"); }),
-    refreshGit: vi.fn(() => { calls.push("refreshGit"); }),
+    refreshWorkspacePanels: vi.fn(() => { calls.push("refreshWorkspacePanels"); }),
     refreshAppData: vi.fn(() => { calls.push("refreshAppData"); }),
     reloadPage: vi.fn(() => { calls.push("reloadPage"); }),
     deleteWorkspace: vi.fn(() => { calls.push("deleteWorkspace"); }),
@@ -62,7 +64,29 @@ describe("PluginRegistry", () => {
     registry.register({ id: "core", plugin: corePlugin });
 
     expect(registry.getActions(createContext().context).some((action) => action.id === "core:actions.show")).toBe(true);
-    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.git", "core:workspace.terminal"]);
+    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.terminal"]);
+  });
+
+  it("resolves panel and shortcut migrations to the active machine-scoped contribution", () => {
+    const registry = new PluginRegistry();
+    const plugin: PiWebPlugin = {
+      apiVersion: 1,
+      name: "VCS",
+      activate: () => ({
+        contributions: {
+          actions: [{ id: "view.vcs", title: "View VCS", shortcutAliases: ["core:view.vcs"], run: () => undefined }],
+          workspacePanels: [{ id: "workspace.vcs", title: "VCS", routeAliases: ["vcs", "core:workspace.vcs"], render: () => html`<p>VCS</p>` }],
+        },
+      }),
+    };
+    registry.register({ id: "vcs", plugin, machineSpecific: true });
+    const remotePluginId = machineScopedPluginId("remote-1", "vcs");
+    registry.register({ id: remotePluginId, sourcePluginId: "vcs", machineId: "remote-1", plugin, machineSpecific: true });
+
+    expect(registry.resolveWorkspacePanelRouteId("core:workspace.vcs", "local")).toBe("vcs:workspace.vcs");
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBe(`${remotePluginId}:workspace.vcs`);
+    expect(registry.getActions(createContext({ selectedMachine: testMachine("remote-1") }).context)[0]?.shortcutAliases)
+      .toEqual(["core:view.vcs", "vcs:view.vcs"]);
   });
 
   it("provides html and svg helpers to plugin activation and callbacks", () => {
@@ -146,6 +170,71 @@ describe("PluginRegistry", () => {
     }).toThrow("Duplicate contribution id: example:duplicate");
   });
 
+  it("rolls back every contribution when registration fails and allows a clean retry", () => {
+    const registry = new PluginRegistry();
+    let fail = true;
+    const plugin = {
+      apiVersion: 1 as const,
+      name: "Retryable",
+      activate: () => ({
+        contributions: {
+          actions: fail
+            ? [
+                { id: "action", title: "Partial", run: () => undefined },
+                { id: "action", title: "Duplicate", run: () => undefined },
+              ]
+            : [{ id: "action", title: "Ready", run: () => undefined }],
+        },
+      }),
+    };
+
+    expect(() => { registry.register({ id: "retryable", plugin }); }).toThrow("Duplicate contribution id: retryable:action");
+    expect(registry.hasPlugin("retryable")).toBe(false);
+    expect(registry.getActions(createContext().context)).toEqual([]);
+    expect(registry.shouldLoadRemotePlugin("retryable")).toBe(true);
+
+    fail = false;
+    registry.register({ id: "retryable", plugin });
+
+    expect(registry.hasPlugin("retryable")).toBe(true);
+    expect(registry.getActions(createContext().context).map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: "retryable:action", title: "Ready" },
+    ]);
+    expect(registry.shouldLoadRemotePlugin("retryable")).toBe(false);
+  });
+
+  it("isolates workspace-panel invalidation failures", async () => {
+    const registry = new PluginRegistry();
+    const invalidated = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 1,
+        name: "Example",
+        activate: () => ({
+          contributions: {
+            workspacePanels: [
+              { id: "broken", title: "Broken", onInvalidate: () => { throw new Error("broken refresh"); }, render: () => html`<p>Broken</p>` },
+              { id: "healthy", title: "Healthy", onInvalidate: invalidated, render: () => html`<p>Healthy</p>` },
+            ],
+          },
+        }),
+      },
+    });
+
+    await registry.invalidateWorkspacePanels(createWorkspacePanelContext("local"));
+
+    expect(invalidated).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith("Failed to invalidate PI WEB plugin panel example:broken", expect.objectContaining({ message: "broken refresh" }));
+
+    invalidated.mockClear();
+    warning.mockClear();
+    await registry.invalidateWorkspacePanels(createWorkspacePanelContext("local"), "example:healthy");
+    expect(invalidated).toHaveBeenCalledOnce();
+    expect(warning).not.toHaveBeenCalled();
+  });
+
   it("evaluates core action enablement against runtime state", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
@@ -159,14 +248,22 @@ describe("PluginRegistry", () => {
     expect(active.find((action) => action.id === "core:view.terminal")?.enabled).toBe(true);
     expect(active.find((action) => action.id === "core:workspace.delete")?.enabled).toBe(false);
 
-    const deletable = registry.getActions(createContext({ selectedWorkspace: testWorkspace({ isMain: false, isGitWorktree: true }) }).context);
-    expect(deletable.find((action) => action.id === "core:workspace.delete")?.enabled).toBe(true);
+    const deletable = registry.getActions(createContext({ selectedWorkspace: testWorkspace({
+      isMain: false,
+      removal: { actionLabel: "Disconnect view", confirmation: "Disconnect this view?", precondition: "removal-v1" },
+    }) }).context);
+    const removalAction = deletable.find((action) => action.id === "core:workspace.delete");
+    expect(removalAction?.enabled).toBe(true);
+    expect(removalAction?.title).toBe("Remove Workspace");
   });
 
   it("routes workspace delete through the runtime context", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
-    const { context, calls } = createContext({ selectedWorkspace: testWorkspace({ isMain: false, isGitWorktree: true }) });
+    const { context, calls } = createContext({ selectedWorkspace: testWorkspace({
+      isMain: false,
+      removal: { actionLabel: "Disconnect view", confirmation: "Disconnect this view?", precondition: "removal-v1" },
+    }) });
     const action = registry.getActions(context).find((candidate) => candidate.id === "core:workspace.delete");
 
     if (action !== undefined) void action.run();
@@ -306,20 +403,6 @@ describe("PluginRegistry", () => {
     expect(calls).toEqual(["openModelPicker", "openThinkingLevelPicker"]);
   });
 
-  it("routes refresh current to the active core workspace panel", () => {
-    const registry = new PluginRegistry();
-    registry.register({ id: "core", plugin: corePlugin });
-    const { context, calls } = createContext({
-      selectedWorkspace: testWorkspace(),
-      workspaceTool: "core:workspace.git",
-    });
-    const action = registry.getActions(context).find((candidate) => candidate.id === "core:workspace.refresh-current");
-
-    if (action !== undefined) void action.run();
-
-    expect(calls).toEqual(["refreshGit"]);
-  });
-
   it("routes app reload and settings actions through the runtime context", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
@@ -358,11 +441,8 @@ describe("PluginRegistry", () => {
       ["core:settings.open", "mod+,"],
       ["core:view.chat", "mod+1"],
       ["core:view.files", "mod+2"],
-      ["core:view.git", "mod+3"],
       ["core:view.terminal", "mod+4"],
       ["core:workspace.refresh-files", "mod+shift+f"],
-      ["core:workspace.refresh-git", "mod+shift+g"],
-      ["core:workspace.refresh-current", "mod+shift+r"],
       ["core:session.start", "mod+enter"],
       ["core:session.stop", "mod+."],
     ]);
@@ -504,6 +584,133 @@ describe("PluginRegistry", () => {
     expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("local", workspace))).toEqual([]);
     expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("remote-1", workspace))).toEqual([{ type: "text", text: "remote" }]);
     expect(registry.getThemes()).toEqual([]);
+  });
+
+  it("binds backend helpers to source identity rather than the machine-scoped registration id", () => {
+    const registry = new PluginRegistry();
+    const registrationPluginId = machineScopedPluginId("remote-1", "board-tools");
+    const observedBindings: WorkspacePluginBinding[] = [];
+    const observedRequests: { target: PluginBackendRequestTarget; operation: string; input: JsonValue }[] = [];
+    registry.register({
+      id: registrationPluginId,
+      machineId: "remote-1",
+      sourcePluginId: "board-tools",
+      backendRevision: "server-r7",
+      plugin: {
+        apiVersion: 1,
+        name: "Board Tools",
+        activate: ({ pluginId }) => {
+          expect(pluginId).toBe(registrationPluginId);
+          return {
+            contributions: {
+              workspacePanels: [{
+                id: "workspace.board",
+                title: "Board",
+                render: (context) => {
+                  void requiredBackend(context.backend).request("cards.summary", { includeClosed: false });
+                  return html`<p>Board</p>`;
+                },
+              }],
+              workspaceLabels: [{
+                id: "board-count",
+                items: (context) => {
+                  void requiredBackend(context.backend).request("cards.count", null);
+                  return [{ type: "text", text: "2 cards" }];
+                },
+              }],
+            },
+          };
+        },
+      },
+    });
+    const panelBase = createWorkspacePanelContext("remote-1");
+    const panelContext = installWorkspacePanelScope(panelBase, (binding) => ({
+      ...panelBase,
+      backend: requiredBackend(createPluginWorkspaceBackend(binding, panelBase.workspace, panelBase.machine.id, (target, operation, input) => {
+        observedBindings.push(binding);
+        observedRequests.push({ target, operation, input });
+        return Promise.resolve(null);
+      })),
+    }));
+    const labelBase = createWorkspaceLabelContext("remote-1");
+    const labelContext = installWorkspaceLabelScope(labelBase, (binding) => ({
+      ...labelBase,
+      backend: requiredBackend(createPluginWorkspaceBackend(binding, labelBase.workspace, labelBase.machine.id, (target, operation, input) => {
+        observedBindings.push(binding);
+        observedRequests.push({ target, operation, input });
+        return Promise.resolve(null);
+      })),
+    }));
+
+    registry.getWorkspacePanels().find(({ localId }) => localId === "workspace.board")?.render(panelContext);
+    expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([{ type: "text", text: "2 cards" }]);
+
+    expect(observedBindings).toEqual([
+      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7" },
+      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7" },
+    ]);
+    expect(observedRequests).toEqual([
+      {
+        target: { pluginId: "board-tools", backendRevision: "server-r7", machineId: "remote-1", projectId: "p1", workspaceId: "w1" },
+        operation: "cards.summary",
+        input: { includeClosed: false },
+      },
+      {
+        target: { pluginId: "board-tools", backendRevision: "server-r7", machineId: "remote-1", projectId: "p1", workspaceId: "w1" },
+        operation: "cards.count",
+        input: null,
+      },
+    ]);
+  });
+
+  it("pairs machine-specific gateway and remote contributions with their own active backend revisions", () => {
+    const registry = new PluginRegistry();
+    const remotePluginId = machineScopedPluginId("remote-1", "pair-tools");
+    const pairedPlugin = (name: string) => ({
+      apiVersion: 1 as const,
+      name,
+      activate: () => ({
+        contributions: {
+          workspacePanels: [{
+            id: "workspace.pair",
+            title: name,
+            render: (context: WorkspacePanelContext) => {
+              void requiredBackend(context.backend).request("pair.check", null);
+              return html`<p>${name}</p>`;
+            },
+          }],
+        },
+      }),
+    });
+    registry.register({ id: "pair-tools", machineSpecific: true, backendRevision: "gateway-r1", plugin: pairedPlugin("Gateway pair") });
+    registry.register({
+      id: remotePluginId,
+      machineId: "remote-1",
+      sourcePluginId: "pair-tools",
+      machineSpecific: true,
+      backendRevision: "remote-r2",
+      plugin: pairedPlugin("Remote pair"),
+    });
+    const requests: PluginBackendRequestTarget[] = [];
+
+    for (const machineId of ["local", "remote-1"]) {
+      const base = createWorkspacePanelContext(machineId);
+      const context = installWorkspacePanelScope(base, (binding) => ({
+        ...base,
+        backend: requiredBackend(createPluginWorkspaceBackend(binding, base.workspace, machineId, (target) => {
+          requests.push(target);
+          return Promise.resolve(null);
+        })),
+      }));
+      const visible = registry.getWorkspacePanels().filter((panel) => panel.visible?.(context) !== false);
+      expect(visible).toHaveLength(1);
+      visible[0]?.render(context);
+    }
+
+    expect(requests).toEqual([
+      { pluginId: "pair-tools", backendRevision: "gateway-r1", machineId: "local", projectId: "p1", workspaceId: "w1" },
+      { pluginId: "pair-tools", backendRevision: "remote-r2", machineId: "remote-1", projectId: "p1", workspaceId: "w1" },
+    ]);
   });
 
   it("prefers gateway plugins over remote plugins with the same source id", () => {
@@ -656,7 +863,7 @@ describe("PluginRegistry", () => {
 });
 
 function testWorkspace(patch: Partial<Workspace> = {}): Workspace {
-  return { id: "w1", projectId: "p1", path: "/tmp/project", label: "main", isMain: true, isGitRepo: true, isGitWorktree: false, effectiveConfig: {}, ...patch };
+  return { id: "w1", projectId: "p1", path: "/tmp/project", label: "main", isMain: true, effectiveConfig: {}, ...patch };
 }
 
 function createWorkspaceLabelContext(machineId: string, workspace = testWorkspace(), helpers: Partial<Pick<WorkspaceLabelContext, "files" | "host">> = {}): WorkspaceLabelContext {
@@ -667,6 +874,7 @@ function createWorkspaceLabelContext(machineId: string, workspace = testWorkspac
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
     files,
+    backend: { request: vi.fn(() => Promise.resolve(null)) },
     host,
   };
 }
@@ -678,6 +886,7 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
     files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
+    backend: { request: vi.fn(() => Promise.resolve(null)) },
     prompt,
     terminal: { open: vi.fn(), runCommand: vi.fn() },
     host: { requestRender: vi.fn() },
@@ -686,11 +895,6 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     selectedFilePath: undefined,
     selectedFileContent: undefined,
     fileTreeStale: false,
-    gitStatus: undefined,
-    selectedDiffPath: undefined,
-    selectedDiff: undefined,
-    selectedStagedDiff: undefined,
-    gitStale: false,
     activeTerminalCount: 0,
     selectedTerminalId: undefined,
     terminalAutoStart: false,
@@ -701,10 +905,13 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     onStartWorkspaceUpload: vi.fn(),
     onCancelWorkspaceUpload: vi.fn(),
     onClearWorkspaceUpload: vi.fn(),
-    onRefreshGit: vi.fn(),
-    onSelectDiff: vi.fn(),
     onSelectTerminal: vi.fn(),
   };
+}
+
+function requiredBackend(backend: WorkspacePanelContext["backend"]): NonNullable<WorkspacePanelContext["backend"]> {
+  if (backend === undefined) throw new Error("Expected a paired workspace backend");
+  return backend;
 }
 
 function testFileContent(path = "README.md"): FileContentResponse {

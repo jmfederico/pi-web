@@ -44,7 +44,7 @@ describe("MachineController", () => {
 
   it("selects a newly added machine and clears stale workspace state", async () => {
     const project = { id: "p1", name: "Project", path: "/repo", createdAt: "now" };
-    const workspace = { id: "w1", projectId: project.id, path: "/repo", label: "main", isMain: true, isGitRepo: true, isGitWorktree: false, effectiveConfig: {} };
+    const workspace = { id: "w1", projectId: project.id, path: "/repo", label: "main", isMain: true, effectiveConfig: {} };
     const session = { id: "s1", cwd: "/repo", path: "/repo/.pi/sessions/s1.json", created: "now", modified: "now", messageCount: 1, firstMessage: "hello" };
     let state: AppState = {
       ...initialAppState(),
@@ -58,7 +58,6 @@ describe("MachineController", () => {
       selectedSession: session,
       fileTree: [{ name: "index.ts", path: "src/index.ts", type: "file" }],
       selectedFilePath: "src/index.ts",
-      gitStatus: { isGitRepo: true, hash: "abc123", branch: "main", files: [{ path: "src/index.ts", index: "modified", workingTree: "modified" }], submodules: [] },
       activeTerminalCount: 2,
       error: "stale error",
     };
@@ -87,7 +86,6 @@ describe("MachineController", () => {
     expect(state.selectedSession).toBeUndefined();
     expect(state.fileTree).toEqual([]);
     expect(state.selectedFilePath).toBeUndefined();
-    expect(state.gitStatus).toBeUndefined();
     expect(state.activeTerminalCount).toBe(0);
     expect(state.error).toBe("");
     expect(projects.loadProjects).toHaveBeenCalledOnce();

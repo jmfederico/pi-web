@@ -8,13 +8,14 @@ import { listWorkspaceTree } from "./workspaces/fileTreeService.js";
 import { readWorkspaceImagePreview } from "./workspaces/imagePreviewService.js";
 import { resolveWorkspaceContext } from "./workspaces/workspaceContext.js";
 import { pathAccessForWorkspaceContext } from "./workspaces/effectivePathAccess.js";
-import type { WorkspaceService } from "./workspaces/workspaceService.js";
+import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
+import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
 
 export interface WorkspaceExplorerRouteOptions {
   config?: Pick<PiWebConfigService, "read">;
 }
 
-export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService, prefix = "/api", options: WorkspaceExplorerRouteOptions = {}): void {
+export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceCatalog, prefix = "/api", options: WorkspaceExplorerRouteOptions = {}): void {
   registerWorkspaceFileContentParsers(app);
 
   app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/tree`, async (request, reply) => {
@@ -22,7 +23,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       return await listWorkspaceTree(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config));
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -31,7 +32,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       return await readWorkspaceFile(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config));
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -44,7 +45,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       };
       return await writeWorkspaceFile(context.root, request.query.path, request.body, writeOptions);
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -53,7 +54,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       return await deleteWorkspaceFile(context.root, request.query.path);
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -65,7 +66,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
         overwrite: request.query.overwrite === "true",
       });
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -82,7 +83,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
         .header("X-Content-Type-Options", "nosniff")
         .send(preview.stream);
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 
@@ -94,7 +95,7 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       if (request.query.mode === "path") return await listPathSuggestions(context.root, query, pathAccess);
       return await listFileSuggestions(context.root, query, { kind: request.query.kind, scope: request.query.scope, pathAccess });
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 400);
     }
   });
 }

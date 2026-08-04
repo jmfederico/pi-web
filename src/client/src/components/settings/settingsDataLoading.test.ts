@@ -10,7 +10,21 @@ const configResponse: PiWebConfigResponse = {
   envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false, agentCommand: false, agentDir: false, agentSessionDir: false },
 };
 
-const pluginsResponse: PiWebPluginsResponse = { plugins: [] };
+const pluginsResponse: PiWebPluginsResponse = {
+  lifecycleVersion: 1,
+  plugins: [],
+  diagnostics: [],
+  serverRuntime: {
+    status: "available",
+    restartRequired: false,
+    recovery: {
+      showSafeStart: "pi-web plugins safe-start show",
+      bundledOnly: "pi-web plugins safe-start set bundled-only --restart",
+      noServerPlugins: "pi-web plugins safe-start set none --restart",
+      clearSafeStart: "pi-web plugins safe-start clear --restart",
+    },
+  },
+};
 const packagesResponse: PiPackagesResponse = { packages: [{ source: "npm:@acme/tools", scope: "user", filtered: false }] };
 
 const remoteTarget = { id: "remote-a", name: "Lab Mac", kind: "remote" } as const;

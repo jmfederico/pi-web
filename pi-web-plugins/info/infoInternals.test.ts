@@ -59,7 +59,7 @@ describe("diagnosticsSummary", () => {
       "Release: Update available: 1.1.0 (checked 2025-01-02T03:04:05Z)",
       "Status generated: 2025-01-02T03:04:06Z",
       "Machine: devbox (local machine)",
-      "Workspace: pi-web — /srv/dev/pi-web (branch main, git worktree, main workspace)",
+      "Workspace: pi-web — /srv/dev/pi-web (branch main, provider: git, main workspace)",
     ].join("\n"));
   });
 
@@ -94,16 +94,14 @@ describe("small formatters", () => {
     expect(machineKindLabel("remote")).toBe("remote machine");
   });
 
-  it("describes workspaces without git metadata", () => {
+  it("describes folder workspaces", () => {
     expect(workspaceFlags({
       id: "ws-1",
       projectId: "proj-1",
       path: "/srv/dev/plain",
       label: "plain",
       isMain: false,
-      isGitRepo: false,
-      isGitWorktree: false,
-    })).toEqual(["not a git repo"]);
+    })).toEqual(["folder workspace"]);
   });
 });
 
@@ -155,8 +153,7 @@ function workspaceFixture(patch: Partial<Workspace> = {}): Workspace {
     label: "pi-web",
     branch: "main",
     isMain: true,
-    isGitRepo: true,
-    isGitWorktree: true,
+    provider: { pluginId: "git", capabilities: { request: true, remove: true } },
     ...patch,
   };
 }

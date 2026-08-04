@@ -7,7 +7,7 @@ function project(id = "p1", path = "/repo"): Project {
 }
 
 function workspace(projectId: string, path: string): Workspace {
-  return { id: path, projectId, path, label: path, isMain: path === "/repo", isGitRepo: true, isGitWorktree: true, effectiveConfig: {} };
+  return { id: path, projectId, path, label: path, isMain: path === "/repo", effectiveConfig: {} };
 }
 
 function activity(cwd: string, patch: Partial<WorkspaceActivity> = {}): WorkspaceActivity {

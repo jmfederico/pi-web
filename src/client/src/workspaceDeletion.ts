@@ -4,6 +4,15 @@ import type { TerminalCommandRun, Workspace } from "./api";
 
 export { targetWorkspaceIdMetadataKey, workspaceDeleteOperation, workspaceDeleteOperationMetadataKey, workspaceDeletionMetadata } from "../../shared/workspaceDeletion";
 
+/** Removal availability and wording come from the current owner, never Git fields. */
+export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
+  return workspace?.removal !== undefined && !workspace.isMain;
+}
+
+export function workspaceRemovalConfirmation(workspace: Workspace): string | undefined {
+  return workspace.removal?.confirmation;
+}
+
 export function workspaceDeletionRunFilter(projectId?: string): { projectId?: string; metadata: Record<string, string> } {
   return {
     ...(projectId === undefined ? {} : { projectId }),

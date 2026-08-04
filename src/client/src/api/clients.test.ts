@@ -8,8 +8,6 @@ const workspace: Workspace = {
   path: "/repo",
   label: "repo",
   isMain: true,
-  isGitRepo: true,
-  isGitWorktree: true,
   effectiveConfig: {},
 };
 
@@ -417,26 +415,44 @@ describe("machine-scoped file suggestion API", () => {
 });
 
 describe("machine-scoped workspace API", () => {
-  it("keeps project ids in one encoded route segment when listing workspaces", async () => {
-    const fetchMock = stubJsonFetch([]);
+  it("keeps project ids in one encoded route segment and preserves provider diagnostics", async () => {
+    const projectId = "../p /?";
+    const listedWorkspace = { ...workspace, projectId };
+    const response = {
+      status: "degraded",
+      projectId,
+      ownerPluginId: "replacement",
+      workspaces: [listedWorkspace],
+      diagnostics: [{ code: "list-failed", message: "backend unavailable", tier: "primary", pluginId: "replacement" }],
+    };
+    const fetchMock = stubSequenceFetch([jsonResponse(response), jsonResponse(response)]);
 
-    await workspacesApi.workspaces("../p /?", "remote a");
+    const resolution = await workspacesApi.workspaceResolution(projectId, "remote a");
+    const listed = await workspacesApi.workspaces(projectId, "remote a");
 
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/projects/..%2Fp%20%2F%3F/workspaces");
+    expect(fetchCall(fetchMock, 1)[0]).toBe(fetchCall(fetchMock, 0)[0]);
+    expect(resolution).toMatchObject({
+      status: "degraded",
+      ownerPluginId: "replacement",
+      diagnostics: [{ code: "list-failed", pluginId: "replacement" }],
+    });
+    expect(listed).toEqual([listedWorkspace]);
   });
 });
 
 describe("machine-scoped terminal command-run API", () => {
-  it("deletes workspaces through the selected machine scope", async () => {
+  it("deletes workspaces through the selected machine scope with the confirmed host precondition", async () => {
     const fetchMock = stubJsonFetch(commandRun);
 
-    await workspacesApi.deleteWorkspace("p 1", "w/1", "remote a");
+    await workspacesApi.deleteWorkspace("p 1", "w/1", "v1.confirmed", "remote a");
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchCall(fetchMock, 0);
     expect(url).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1");
     expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBe(JSON.stringify({ precondition: "v1.confirmed" }));
   });
 
   it("creates command runs through the selected machine scope", async () => {
@@ -619,7 +635,22 @@ function piWebConfigResponse(config: PiWebConfigValues) {
 }
 
 function piWebPluginsResponse() {
-  return { plugins: [{ id: "info", module: "/pi-web-plugins/info/plugin.js", source: "test", scope: "local", machineSpecific: false, enabled: true }] };
+  return {
+    lifecycleVersion: 1,
+    plugins: [{ id: "info", module: "/pi-web-plugins/info/plugin.js", source: "test", scope: "local", machineSpecific: false, enabled: true, discovered: true, conflict: false }],
+    diagnostics: [],
+    serverRuntime: {
+      status: "available",
+      desiredSafeStart: "off",
+      restartRequired: false,
+      recovery: {
+        showSafeStart: "pi-web plugins safe-start show",
+        bundledOnly: "pi-web plugins safe-start set bundled-only --restart",
+        noServerPlugins: "pi-web plugins safe-start set none --restart",
+        clearSafeStart: "pi-web plugins safe-start clear --restart",
+      },
+    },
+  };
 }
 
 function jsonResponse(value: unknown): Response {

@@ -17,6 +17,7 @@ export interface MachineJsonResponse {
 export interface MachineRequestOptions {
   timeoutMs?: number;
   contentType?: string;
+  signal?: AbortSignal;
 }
 
 export interface MachineClient {
@@ -83,7 +84,15 @@ export class RemoteMachineClient implements MachineClient {
 
   private async fetchResponse(method: string, path: string, body: unknown, options: MachineRequestOptions): Promise<Response> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => { controller.abort(); }, options.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS);
+    const abortFromParent = (): void => {
+      if (!controller.signal.aborted) controller.abort(abortReason(options.signal));
+    };
+    if (options.signal?.aborted === true) abortFromParent();
+    else options.signal?.addEventListener("abort", abortFromParent, { once: true });
+
+    const timeoutError = new RemoteMachineRequestError("Remote machine request timed out", 504);
+    const timeout = setTimeout(() => { controller.abort(timeoutError); }, options.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS);
+    timeout.unref();
     try {
       const requestBody = serializeRequestBody(method, body);
       const init: RequestInit = {
@@ -95,10 +104,15 @@ export class RemoteMachineClient implements MachineClient {
       if (requestBody !== undefined) init.body = requestBody;
       return await this.fetchImpl(this.remoteUrl(path), init);
     } catch (error) {
-      if (isAbortError(error)) throw new RemoteMachineRequestError("Remote machine request timed out", 504);
+      const reason: unknown = controller.signal.reason;
+      if (reason instanceof RemoteMachineRequestError) throw reason;
+      if (options.signal?.aborted === true || controller.signal.aborted || isAbortError(error)) {
+        throw new RemoteMachineRequestError("Remote machine request cancelled", 502);
+      }
       throw new RemoteMachineRequestError(error instanceof Error ? error.message : String(error), 502);
     } finally {
       clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abortFromParent);
     }
   }
 
@@ -194,5 +208,10 @@ function readableFromWebResponseBody(body: Response["body"]): NodeJS.ReadableStr
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function abortReason(signal: AbortSignal | undefined): Error {
+  const reason: unknown = signal?.reason;
+  return reason instanceof Error ? reason : new DOMException("Remote machine request cancelled", "AbortError");
 }

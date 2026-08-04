@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentCommandForChecks,
   commandWithVersionCheck,
@@ -11,6 +11,7 @@ import {
   nodeVersionCheck,
   regularFileExists,
   serviceBackendForPlatform,
+  sessionDaemonRestartPlan,
 } from "./cli.js";
 
 const originalShell = process.env["SHELL"];
@@ -125,6 +126,84 @@ describe("native-service doctor CLI contracts", () => {
       detail: "exited (last exit code 127)",
       pid: undefined,
     });
+  });
+});
+
+describe("server plugin recovery restart planning", () => {
+  it("uses the Docker control command inside runtime and development containers", () => {
+    const runCommand = vi.fn();
+    const plan = sessionDaemonRestartPlan({
+      env: { PI_WEB_DOCKER_RUNTIME: "1", PI_WEB_DOCKER_MODE: "dev" },
+      platform: "linux",
+      runCommand,
+    });
+
+    expect(plan).toMatchObject({
+      kind: "automatic",
+      command: "pi-web-docker --dev restart-sessiond",
+    });
+    plan.perform?.();
+    expect(runCommand).toHaveBeenCalledWith("pi-web-docker", ["--dev", "restart-sessiond"]);
+  });
+
+  it("uses the installed native sessiond service without contacting it", () => {
+    const runCommand = vi.fn();
+    const plan = sessionDaemonRestartPlan({
+      env: {},
+      platform: "linux",
+      serviceFileExists: () => true,
+      runCommand,
+    });
+
+    expect(plan).toMatchObject({
+      kind: "automatic",
+      command: "systemctl --user restart pi-web-sessiond.service",
+    });
+    plan.perform?.();
+    expect(runCommand).toHaveBeenCalledWith("systemctl", ["--user", "restart", "pi-web-sessiond.service"]);
+  });
+
+  it("uses the installed launchd session daemon target", () => {
+    const runCommand = vi.fn();
+    const plan = sessionDaemonRestartPlan({
+      env: {},
+      platform: "darwin",
+      serviceFileExists: () => true,
+      runCommand,
+      uid: 501,
+    });
+
+    expect(plan).toMatchObject({
+      kind: "automatic",
+      command: "launchctl kickstart -k gui/501/com.pi-web.sessiond",
+    });
+    plan.perform?.();
+    expect(runCommand).toHaveBeenCalledWith("launchctl", ["kickstart", "-k", "gui/501/com.pi-web.sessiond"]);
+  });
+
+  it("does not restart an installed daemon when --config may target another process", () => {
+    const plan = sessionDaemonRestartPlan({
+      env: {},
+      platform: "linux",
+      configPath: "/tmp/alternate-pi-web.json",
+      explicitConfigPath: true,
+      serviceFileExists: () => true,
+    });
+
+    expect(plan.kind).toBe("manual");
+    expect(plan.guidance).toContain('PI_WEB_CONFIG="/tmp/alternate-pi-web.json"');
+    expect(plan.perform).toBeUndefined();
+  });
+
+  it("prints manual process guidance when no managed service is installed", () => {
+    const plan = sessionDaemonRestartPlan({
+      env: {},
+      platform: "linux",
+      serviceFileExists: () => false,
+    });
+
+    expect(plan.kind).toBe("manual");
+    expect(plan.guidance).toContain("npm run start:sessiond");
   });
 });
 

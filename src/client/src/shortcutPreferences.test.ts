@@ -19,6 +19,14 @@ describe("shortcut preferences", () => {
     ]);
   });
 
+  it("migrates saved shortcuts through action aliases while preferring the current id", () => {
+    const migrated = action({ id: "git:view.git", shortcut: "mod+3", shortcutAliases: ["core:view.git"] });
+
+    expect(applyShortcutPreferences([migrated], { "core:view.git": "mod+8" })[0]?.shortcut).toBe("mod+8");
+    expect(applyShortcutPreferences([migrated], { "git:view.git": "mod+9", "core:view.git": "mod+8" })[0]?.shortcut).toBe("mod+9");
+    expect(applyShortcutPreferences([migrated], { "core:view.git": null })[0]?.shortcut).toBeUndefined();
+  });
+
   it("removes shortcuts with null preferences", () => {
     expect(applyShortcutPreferences([
       action({ id: "core:view.chat", shortcut: "mod+1" }),

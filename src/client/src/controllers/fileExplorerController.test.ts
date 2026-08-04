@@ -48,8 +48,6 @@ const workspace: Workspace = {
   path: "/repo",
   label: "repo",
   isMain: true,
-  isGitRepo: true,
-  isGitWorktree: false,
   effectiveConfig: {},
 };
 

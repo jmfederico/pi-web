@@ -262,9 +262,9 @@
               </p>
               <ul>
                 <li>Use NetBird, Tailscale, WireGuard, private LAN, SSH tunnel, or an authenticated reverse proxy.</li>
-                <li>Remote Pi auth, OAuth state, sessions, terminals, repositories, and plugins stay on the target machine.</li>
-                <li>API-key provider configuration can be proxied, but OAuth login should be completed by opening the remote PI WEB directly.</li>
-                <li>Remote plugins are trusted browser code and only appear while that machine is selected.</li>
+                <li>Remote Pi auth, OAuth state, sessions, terminals, repositories, plugin settings, and server providers stay on the target machine.</li>
+                <li>API-key model-provider configuration can be proxied, but OAuth login should be completed by opening the remote PI WEB directly.</li>
+                <li>Remote browser plugins are trusted page code; server entries are trusted in-process target code. Compatible contributions follow the selected machine.</li>
                 <li>If the remote reports offline, check that the gateway server can reach the remote URL and try <strong>Actions → Refresh Selected Machine</strong>.</li>
               </ul>
               <p><a href="machines">Read the fleet guide →</a></p>
@@ -287,9 +287,11 @@
             <article id="plugins" class="faq-item">
               <h2>Can I use local plugins with production PI WEB?</h2>
               <p>
-                Yes. Put trusted browser-side plugins in <code>~/.pi-web/plugins/&lt;plugin-id&gt;/</code>, or symlink a
-                development folder there. Reload the browser tab after edits. If <code>PI_WEB_DATA_DIR</code> is set, use
-                <code>$PI_WEB_DATA_DIR/plugins</code> instead.
+                Yes. Put trusted plugin packages in <code>~/.pi-web/plugins/&lt;plugin-id&gt;/</code>, or symlink a
+                development folder there. If <code>PI_WEB_DATA_DIR</code> is set, use
+                <code>$PI_WEB_DATA_DIR/plugins</code> instead. Browser-only edits need a tab reload. A server-backed edit
+                requires a manual restart of <code>pi-web-sessiond.service</code> followed by the reload; restarting
+                sessiond may interrupt active sessions/runtime ownership.
               </p>
               <p><a href="plugins">Read the plugin guide →</a></p>
             </article>

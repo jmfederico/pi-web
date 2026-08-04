@@ -364,8 +364,9 @@ server {
               <p>
                 Use <strong>Settings → General</strong> for host, port, and external filesystem roots; <strong>Settings → Session daemon</strong>
                 for agent-spawn tools; <strong>Settings → Pi packages</strong> for Pi package install/remove/update;
-                <strong>Settings → PI WEB plugins</strong> for browser plugin enablement; and <strong>Settings → Keyboard</strong>
-                for shortcut overrides.
+                <strong>Settings → PI WEB plugins</strong> for desired plugin state; and <strong>Settings → Keyboard</strong>
+                for shortcut overrides. Browser-only plugin changes need a tab reload; server-backed changes follow the
+                <a href="plugins#lifecycle-recovery">documented sessiond restart and recovery flow</a>.
               </p>
               <div class="callout">
                 Need the full schema, restart rules, project-local <code>.pi-web/config.json</code>, path access details, and

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Machine } from "../../api";
-import { friendlySelectedMachineSettingsErrorMessage, settingsMachineTarget, settingsMachineTargetLabel } from "./settingsMachineTarget";
+import { PI_WEB_CAPABILITIES } from "../../../../shared/capabilities";
+import { friendlySelectedMachineSettingsErrorMessage, pluginLifecycleSupport, pluginLifecycleUnavailableMessage, settingsMachineTarget, settingsMachineTargetLabel } from "./settingsMachineTarget";
 
 const remoteMachine: Machine = {
   id: "remote-a",
@@ -20,6 +21,18 @@ describe("selected-machine settings target helpers", () => {
   it("labels local and remote settings targets factually", () => {
     expect(settingsMachineTargetLabel({ id: "local", name: "local", kind: "local" })).toBe("local (local gateway)");
     expect(settingsMachineTargetLabel(settingsMachineTarget(remoteMachine))).toBe("Lab Mac (remote machine)");
+  });
+
+  it("gates remote plugin lifecycle diagnostics on the advertised capability", () => {
+    const target = settingsMachineTarget(remoteMachine);
+
+    expect(pluginLifecycleSupport({ id: "local", name: "local", kind: "local" }, undefined)).toEqual({ state: "supported" });
+    expect(pluginLifecycleSupport(target, undefined)).toEqual({ state: "unknown" });
+    expect(pluginLifecycleSupport(target, { ok: true, capabilities: [PI_WEB_CAPABILITIES.pluginLifecycle] })).toEqual({ state: "supported" });
+    expect(pluginLifecycleSupport(target, { ok: true, capabilities: [] })).toEqual({
+      state: "unsupported",
+      message: pluginLifecycleUnavailableMessage(target),
+    });
   });
 
   it("scopes remote reachability errors to selected-machine settings", () => {

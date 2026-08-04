@@ -21,8 +21,8 @@ export type SpawnTargetDecision =
 /**
  * Owns the rule that keeps LLM-spawned sessions visible: a spawned session may
  * only target a workspace (worktree, or root) of the registered project that
- * owns the spawning session. The rule is evaluated live so a worktree the agent
- * just created with `git worktree add` is included.
+ * owns the spawning session. The rule is evaluated through the live provider
+ * registry so a workspace the agent just created is included.
  */
 export interface SpawnTargetResolver {
   /**
@@ -36,7 +36,7 @@ export interface SpawnTargetResolver {
 export type ProjectScopedSpawnTargetResolverDeps = ProjectWorkspaceCwdsDeps;
 
 /**
- * Default resolver composing the project registry and live worktree discovery.
+ * Default resolver composing the project registry and live provider resolution.
  * It finds the registered project whose current workspace set contains the
  * spawning session's cwd, then validates the requested target against that set.
  */

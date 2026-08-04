@@ -6,6 +6,8 @@ import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultPiWebConfigPath, defaultPiWebDataDir, effectivePiWebConfig, examplePiWebConfig } from "./config.js";
+import { piWebDockerCommand, type PiWebDockerMode } from "./docker/piWebDockerCommandPlan.js";
+import { runPluginRecoveryCli, type SessionDaemonRestartPlan } from "./pluginRecoveryCli.js";
 import { packageVersion, printPiWebVersionReport } from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
 import { checkNodePtyNativeModule, formatNodePtyNativeModuleCheck } from "./server/diagnostics/nodePtyNativeModule.js";
@@ -750,6 +752,76 @@ function serviceAction(action: "start" | "stop" | "restart" | "status"): void {
   else launchdServiceAction(action, refs);
 }
 
+export interface SessionDaemonRestartPlanOptions {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  configPath?: string;
+  explicitConfigPath?: boolean;
+  serviceFileExists?: (path: string) => boolean;
+  runCommand?: (command: string, args: string[]) => void;
+  uid?: number;
+}
+
+/** Offline restart guidance used only after a recovery config mutation. */
+export function sessionDaemonRestartPlan(options: SessionDaemonRestartPlanOptions = {}): SessionDaemonRestartPlan {
+  const env = options.env ?? process.env;
+  if (options.explicitConfigPath === true && options.configPath !== undefined) {
+    return {
+      kind: "manual",
+      guidance: `Restart the session daemon process configured with PI_WEB_CONFIG=${JSON.stringify(options.configPath)}.`,
+    };
+  }
+  const dockerMode = activeDockerMode(env);
+  const runCommand = options.runCommand ?? ((command, args) => { run(command, args, { check: true }); });
+  if (dockerMode !== undefined) {
+    const command = piWebDockerCommand(dockerMode, "restart-sessiond");
+    return {
+      kind: "automatic",
+      command,
+      guidance: "Run the Docker control command from the PI WEB Docker host.",
+      perform: () => {
+        runCommand("pi-web-docker", [...(dockerMode === "dev" ? ["--dev"] : []), "restart-sessiond"]);
+      },
+    };
+  }
+
+  const backend = serviceBackendForPlatform(options.platform ?? process.platform);
+  const fileExists = options.serviceFileExists ?? existsSync;
+  if (backend?.kind === "systemd" && fileExists(systemdServicePath(serviceRefs.sessiond))) {
+    const args = ["--user", "restart", serviceRefs.sessiond.systemdName];
+    return {
+      kind: "automatic",
+      command: `systemctl ${args.join(" ")}`,
+      guidance: "Run:",
+      perform: () => { runCommand("systemctl", args); },
+    };
+  }
+  if (backend?.kind === "launchd" && fileExists(launchdPlistPath(serviceRefs.sessiond))) {
+    const target = `gui/${String(options.uid ?? userInfo().uid)}/${serviceRefs.sessiond.launchdLabel}`;
+    const args = ["kickstart", "-k", target];
+    return {
+      kind: "automatic",
+      command: `launchctl ${args.join(" ")}`,
+      guidance: "Run:",
+      perform: () => { runCommand("launchctl", args); },
+    };
+  }
+  return {
+    kind: "manual",
+    guidance: "Stop and rerun the process that owns sessiond (from a checkout: `npm run start:sessiond`).",
+  };
+}
+
+function activeDockerMode(env: NodeJS.ProcessEnv): PiWebDockerMode | undefined {
+  if (!truthyEnvValue(env["PI_WEB_DOCKER_RUNTIME"])) return undefined;
+  if (env["PI_WEB_DOCKER_MODE"] === "dev") return "dev";
+  return "runtime";
+}
+
+function truthyEnvValue(value: string | undefined): boolean {
+  return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
+}
+
 function logs(): void {
   const backend = requireServiceBackend("pi-web logs");
   const refs = installedServiceRefs(backend);
@@ -1058,6 +1130,8 @@ Usage:
   pi-web install [--dev] [--host 127.0.0.1] [--port 8504] [--config ~/.config/pi-web/config.json]
   pi-web uninstall
   pi-web start|stop|restart|status|logs
+  pi-web plugins disable <plugin-id> [--config <path>] [--restart]
+  pi-web plugins safe-start show|clear|set <bundled-only|none> [--config <path>] [--restart]
   pi-web doctor
   pi-web version
 
@@ -1076,6 +1150,7 @@ async function main(): Promise<void> {
   else if (command === "uninstall") await uninstall();
   else if (command === "start" || command === "stop" || command === "restart" || command === "status") serviceAction(command);
   else if (command === "logs") logs();
+  else if (command === "plugins") runPluginRecoveryCli(args, { restartPlan: (context) => sessionDaemonRestartPlan(context) });
   else if (command === "doctor") await doctor();
   else if (command === "version") await printPiWebVersionReport();
   else if (command === "--version" || command === "-v") console.log(packageVersion());
