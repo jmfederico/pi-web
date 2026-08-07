@@ -12,6 +12,7 @@ export const REMOTE_WEBSOCKET_ROUTES = FEDERATED_WEBSOCKET_ROUTES;
 const SAFE_RESPONSE_HEADERS = new Set([
   "content-type",
   "content-length",
+  "content-disposition",
   "cache-control",
   "last-modified",
   "etag",

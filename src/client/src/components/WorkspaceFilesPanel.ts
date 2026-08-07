@@ -1,10 +1,10 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { FileContentResponse, FileTreeEntry } from "../api";
-import { workspaceImagePreviewUrl } from "../api/urls";
+import { workspaceFilePreviewUrl } from "../api/urls";
 import { workspaceUploadPath } from "../api/workspaceUploads";
 import type { WorkspaceUploadBatchState, WorkspaceUploadFileState } from "../workspaceUploadState";
-import { MAX_IMAGE_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_LABEL } from "../../../shared/workspaceFiles";
+import { MAX_INLINE_PREVIEW_BYTES, MAX_INLINE_PREVIEW_LABEL } from "../../../shared/workspaceFiles";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { workspacePanelStyles } from "./shared";
 
@@ -98,31 +98,91 @@ export class WorkspaceFilesPanel extends LitElement {
     const status = workspaceFileViewerStatusLabel(context);
     if (status !== undefined) return html`<p class="muted">${status}</p>`;
     const file = context.selectedFileContent;
-    // workspaceFileViewerStatusLabel already returned for the undefined/binary
-    // cases above; this guard only narrows the type for the code viewer path.
+    // workspaceFileViewerStatusLabel already returned for the no-selection and
+    // loading cases above; this guard only narrows the type for the branches.
     if (file === undefined) return html`<p class="muted">Select a file.</p>`;
-    if (file.mediaType === "image") return this.renderImageViewer(context, file);
-    loadCodeViewer();
+    switch (workspaceFilePreviewKind(file)) {
+      case "image": return this.renderImageViewer(context, file);
+      case "html": return this.renderFramePreview(context, file, "html");
+      case "pdf": return this.renderFramePreview(context, file, "pdf");
+      case "download": return this.renderDownloadViewer(context, file);
+      case "code": {
+        loadCodeViewer();
+        const metadata = `${file.language ?? "text"}${file.truncated ? " · truncated" : ""}`;
+        return html`
+          ${this.renderViewerHeader(context, file, metadata, { canOpen: false })}
+          <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+        `;
+      }
+    }
+  }
+
+  // Shared header for every viewer: file path + metadata, plus per-file actions.
+  // "Open ↗" loads the inline preview in a new browser tab — the reliable way to
+  // view a PDF at full size (the sandboxed inline iframe can't run the browser's
+  // PDF viewer) — and is offered only for types with an inline preview URL.
+  // "Download" fetches the raw bytes as an attachment and is offered for any file.
+  private renderViewerHeader(context: WorkspacePanelContext, file: FileContentResponse, metadata: string, options: { canOpen: boolean }): TemplateResult {
+    const name = fileBaseName(file.path);
+    const previewOptions = { modifiedAt: file.modifiedAt, machineId: context.machine.id };
+    const openUrl = workspaceFilePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, previewOptions);
+    const downloadUrl = workspaceFilePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { ...previewOptions, download: true });
     return html`
-      <div class="viewer-header"><strong>${file.path}</strong><small>${file.language ?? "text"}${file.truncated ? " · truncated" : ""}</small></div>
-      <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+      <div class="viewer-header">
+        <strong>${file.path}</strong>
+        <div class="viewer-actions">
+          <small>${metadata}</small>
+          ${options.canOpen ? html`<a class="viewer-action" href=${openUrl} target="_blank" rel="noopener noreferrer" title="Open in new window">Open ↗</a>` : null}
+          <a class="viewer-action" href=${downloadUrl} download=${name} title=${`Download ${name}`}>Download</a>
+        </div>
+      </div>
     `;
   }
 
   private renderImageViewer(context: WorkspacePanelContext, file: FileContentResponse): TemplateResult {
     const metadata = `${file.mimeType ?? "image"} · ${formatFileSize(file.size)}`;
-    if (file.size > MAX_IMAGE_PREVIEW_BYTES) {
-      return html`
-        <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
-        <p class="muted">Image too large to preview: ${formatFileSize(file.size)} · limit ${MAX_IMAGE_PREVIEW_LABEL}</p>
-      `;
-    }
-    const src = workspaceImagePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.machine.id });
+    if (file.size > MAX_INLINE_PREVIEW_BYTES) return this.renderPreviewTooLarge(context, file, metadata);
+    const src = workspaceFilePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.machine.id });
     return html`
-      <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
+      ${this.renderViewerHeader(context, file, metadata, { canOpen: true })}
       <div class="image-preview">
         <img src=${src} alt=${file.path} decoding="async" />
       </div>
+    `;
+  }
+
+  private renderFramePreview(context: WorkspacePanelContext, file: FileContentResponse, kind: "html" | "pdf"): TemplateResult {
+    const metadata = `${file.mimeType ?? kind} · ${formatFileSize(file.size)}`;
+    if (file.size > MAX_INLINE_PREVIEW_BYTES) return this.renderPreviewTooLarge(context, file, metadata);
+    const src = workspaceFilePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.machine.id });
+    // HTML renders in a fully-restricted sandbox (no scripts, no same-origin).
+    // PDF needs `allow-same-origin` so the browser's built-in viewer can load
+    // the document; scripts stay blocked either way. When a browser won't render
+    // the sandboxed PDF inline, the header's "Open ↗" opens it full-size instead.
+    const sandbox = kind === "pdf" ? "allow-same-origin" : "";
+    return html`
+      ${this.renderViewerHeader(context, file, metadata, { canOpen: true })}
+      <iframe class="file-frame-preview" src=${src} sandbox=${sandbox} title=${file.path}></iframe>
+    `;
+  }
+
+  private renderDownloadViewer(context: WorkspacePanelContext, file: FileContentResponse): TemplateResult {
+    const metadata = `${file.mimeType ?? "binary"} · ${formatFileSize(file.size)}`;
+    const name = fileBaseName(file.path);
+    const href = workspaceFilePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.machine.id, download: true });
+    return html`
+      ${this.renderViewerHeader(context, file, metadata, { canOpen: false })}
+      <div class="download-preview">
+        <p class="muted">Preview isn't available for this file type.</p>
+        <a class="download-link" href=${href} download=${name}>Download ${name} · ${formatFileSize(file.size)}</a>
+      </div>
+    `;
+  }
+
+  private renderPreviewTooLarge(context: WorkspacePanelContext, file: FileContentResponse, metadata: string): TemplateResult {
+    return html`
+      ${this.renderViewerHeader(context, file, metadata, { canOpen: false })}
+      <p class="muted">File too large to preview: ${formatFileSize(file.size)} · limit ${MAX_INLINE_PREVIEW_LABEL}. Use Download above.</p>
     `;
   }
 
@@ -402,19 +462,39 @@ export function workspaceUploadReviewDefaults(destinationFolder: string): { dest
 }
 
 /**
- * The muted status message the file viewer shows instead of file content, or
- * `undefined` when a real image/code viewer renders. Pure seam so tests can
- * assert viewer messaging (empty/loading/binary) without scraping Lit markup.
+ * The muted status message the file viewer shows instead of a viewer, or
+ * `undefined` once a real viewer/download renders. Pure seam so tests can
+ * assert the no-selection/loading messaging without scraping Lit markup. Files
+ * with content always resolve to a viewer (see `workspaceFilePreviewKind`),
+ * including binaries, which now offer a download instead of a dead-end message.
  */
 export function workspaceFileViewerStatusLabel(
   context: Pick<WorkspacePanelContext, "selectedFilePath" | "selectedFileContent">,
 ): string | undefined {
-  const file = context.selectedFileContent;
   if (context.selectedFilePath === undefined || context.selectedFilePath === "") return "Select a file.";
-  if (file === undefined) return `Loading ${context.selectedFilePath}…`;
-  if (file.mediaType === "image") return undefined;
-  if (file.binary) return `Binary file: ${file.path} · ${formatFileSize(file.size)}`;
+  if (context.selectedFileContent === undefined) return `Loading ${context.selectedFilePath}…`;
   return undefined;
+}
+
+export type WorkspaceFilePreviewKind = "image" | "html" | "pdf" | "download" | "code";
+
+/**
+ * Which viewer the file panel renders for a loaded file. Pure seam mirroring
+ * `workspaceFileViewerStatusLabel` so the branch selection is unit-testable
+ * without rendering. Inline media types render in the browser; other binaries
+ * fall back to a download link; text renders in the code viewer.
+ */
+export function workspaceFilePreviewKind(file: FileContentResponse): WorkspaceFilePreviewKind {
+  if (file.mediaType === "image") return "image";
+  if (file.mediaType === "html") return "html";
+  if (file.mediaType === "pdf") return "pdf";
+  if (file.binary) return "download";
+  return "code";
+}
+
+function fileBaseName(path: string): string {
+  const name = path.split("/").pop();
+  return name === undefined || name === "" ? path : name;
 }
 
 export function startDirectWorkspaceUpload(

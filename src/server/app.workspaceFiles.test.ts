@@ -1,7 +1,7 @@
 import { mkdir, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MAX_IMAGE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
+import { MAX_INLINE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
 import type { Project, Workspace } from "./types.js";
 import { appTestContext, registerAppTestHooks } from "./app.testSupport.js";
 
@@ -19,7 +19,7 @@ describe("buildApp workspace file routes", () => {
     await writeFile(join(appTestContext.projectDir, "diagram.svg"), svg);
     await writeFile(join(appTestContext.projectDir, "note.txt"), "hello");
     await writeFile(join(appTestContext.projectDir, "huge.png"), "");
-    await truncate(join(appTestContext.projectDir, "huge.png"), MAX_IMAGE_PREVIEW_BYTES + 1);
+    await truncate(join(appTestContext.projectDir, "huge.png"), MAX_INLINE_PREVIEW_BYTES + 1);
 
     const workspacesResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
     const workspace = workspacesResponse.json<Workspace[]>()[0];
@@ -31,16 +31,75 @@ describe("buildApp workspace file routes", () => {
     expect(previewResponse.headers["content-type"]).toContain("image/svg+xml");
     expect(previewResponse.headers["cache-control"]).toBe("private, max-age=3600");
     expect(previewResponse.headers["content-security-policy"]).toContain("sandbox");
+    // Inline, but still carries the real filename so saving from the viewer names it correctly.
+    expect(previewResponse.headers["content-disposition"]).toContain("inline");
+    expect(previewResponse.headers["content-disposition"]).toContain(`filename="diagram.svg"`);
     expect(previewResponse.headers["x-content-type-options"]).toBe("nosniff");
     expect(previewResponse.body).toBe(svg);
 
     const rejectedResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("note.txt")}` });
     expect(rejectedResponse.statusCode).toBe(400);
-    expect(rejectedResponse.json()).toEqual({ error: "Image preview is not supported for this file type" });
+    expect(rejectedResponse.json()).toEqual({ error: "Inline preview is not supported for this file type" });
 
     const tooLargeResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("huge.png")}` });
     expect(tooLargeResponse.statusCode).toBe(400);
-    expect(tooLargeResponse.json()).toEqual({ error: "Image is too large to preview (limit 10 MB)" });
+    expect(tooLargeResponse.json()).toEqual({ error: "File is too large to preview (limit 10 MB)" });
+  });
+
+  it("serves HTML and PDF inline with type-appropriate sandbox policies", async () => {
+    const addResponse = await appTestContext.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "Docs", path: appTestContext.projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    const htmlBody = "<h1>Report</h1><script>alert(1)</script>";
+    await writeFile(join(appTestContext.projectDir, "report.html"), htmlBody);
+    await writeFile(join(appTestContext.projectDir, "spec.pdf"), "%PDF-1.4\n%mock\n");
+
+    const workspacesResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    const htmlResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("report.html")}` });
+    expect(htmlResponse.statusCode).toBe(200);
+    expect(htmlResponse.headers["content-type"]).toContain("text/html");
+    expect(htmlResponse.headers["content-disposition"]).toContain("inline");
+    expect(htmlResponse.headers["content-disposition"]).toContain(`filename="report.html"`);
+    // HTML must be fully sandboxed: opaque origin + no script execution.
+    expect(htmlResponse.headers["content-security-policy"]).toContain("sandbox");
+    expect(htmlResponse.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(htmlResponse.body).toBe(htmlBody);
+
+    const pdfResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("spec.pdf")}` });
+    expect(pdfResponse.statusCode).toBe(200);
+    expect(pdfResponse.headers["content-type"]).toContain("application/pdf");
+    expect(pdfResponse.headers["content-disposition"]).toContain("inline");
+    expect(pdfResponse.headers["content-disposition"]).toContain(`filename="spec.pdf"`);
+    // PDF must NOT use the sandbox directive (it breaks the native viewer).
+    expect(pdfResponse.headers["content-security-policy"]).not.toContain("sandbox");
+    expect(pdfResponse.headers["content-security-policy"]).toContain("object-src 'self'");
+  });
+
+  it("serves any file as an attachment download regardless of type", async () => {
+    const addResponse = await appTestContext.app.inject({
+      method: "POST",
+      url: "/api/projects",
+      payload: { name: "Downloads", path: appTestContext.projectDir, create: true },
+    });
+    const project = addResponse.json<Project>();
+    await writeFile(join(appTestContext.projectDir, "notes.txt"), "just text");
+
+    const workspacesResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = workspacesResponse.json<Workspace[]>()[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+
+    const downloadResponse = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent("notes.txt")}&download=1` });
+    expect(downloadResponse.statusCode).toBe(200);
+    expect(downloadResponse.headers["content-type"]).toContain("application/octet-stream");
+    expect(downloadResponse.headers["content-disposition"]).toContain("attachment");
+    expect(downloadResponse.headers["content-disposition"]).toContain(`filename="notes.txt"`);
+    expect(downloadResponse.body).toBe("just text");
   });
 
   it("keeps normal file suggestions workspace-local when path access config is invalid", async () => {

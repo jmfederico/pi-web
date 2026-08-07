@@ -1,7 +1,7 @@
 import { lstat, mkdir, open, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebPathAccessConfig, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "../../shared/apiTypes.js";
-import { imageMimeTypeForPath } from "./imagePreviewService.js";
+import type { DeleteWorkspaceFileResponse, FileContentMediaType, FileContentResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebPathAccessConfig, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "../../shared/apiTypes.js";
+import { previewMediaForPath } from "./filePreviewService.js";
 import { resolveWorkspacePathAccessTarget } from "./pathAccessPolicy.js";
 import { ensureInside, isNodeErrorWithCode, resolveInsideWorkspace, resolveParentInsideWorkspace } from "./pathSafety.js";
 
@@ -15,7 +15,10 @@ export async function readWorkspaceFile(rootPath: string, path: string | undefin
   const bytesToRead = Math.min(s.size, MAX_BYTES);
   const buffer = await readFilePrefix(target, bytesToRead);
   const media = mediaForPath(displayPath);
-  const binary = media.mediaType === "image" || isProbablyBinary(buffer);
+  // Any file with an inline preview media type (image/html/pdf) is served via
+  // the byte-streaming preview endpoint, so we don't ship its bytes inline as
+  // JSON text — treat it like a binary the same way images already are.
+  const binary = media.mediaType !== undefined || isProbablyBinary(buffer);
   return {
     path: displayPath,
     ...languageForPath(displayPath),
@@ -173,7 +176,7 @@ function languageForPath(path: string): { language?: string } {
   return language === undefined ? {} : { language };
 }
 
-function mediaForPath(path: string): { mediaType?: "image"; mimeType?: string } {
-  const mimeType = imageMimeTypeForPath(path);
-  return mimeType === undefined ? {} : { mediaType: "image", mimeType };
+function mediaForPath(path: string): { mediaType?: FileContentMediaType; mimeType?: string } {
+  const media = previewMediaForPath(path);
+  return media === undefined ? {} : { mediaType: media.mediaType, mimeType: media.mimeType };
 }

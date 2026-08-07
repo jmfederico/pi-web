@@ -25,10 +25,11 @@ export function workspaceFileWriteUrl(projectId: string, workspaceId: string, pa
   return resolveAppUrl(`${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file?${params.toString()}`);
 }
 
-export function workspaceImagePreviewUrl(projectId: string, workspaceId: string, path: string, options?: { modifiedAt?: string; machineId?: string }): string {
+export function workspaceFilePreviewUrl(projectId: string, workspaceId: string, path: string, options?: { modifiedAt?: string; machineId?: string; download?: boolean }): string {
   const params = new URLSearchParams();
   params.set("path", path);
   if (options?.modifiedAt !== undefined) params.set("v", options.modifiedAt);
+  if (options?.download === true) params.set("download", "1");
   const prefix = `api/machines/${encodeURIComponent(options?.machineId ?? "local")}`;
   return resolveAppUrl(`${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`);
 }

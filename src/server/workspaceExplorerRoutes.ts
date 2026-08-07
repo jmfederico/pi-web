@@ -5,7 +5,7 @@ import type { ProjectService } from "./projects/projectService.js";
 import { deleteWorkspaceFile, moveWorkspaceFile, readWorkspaceFile, writeWorkspaceFile } from "./workspaces/fileContentService.js";
 import { isAbsoluteishFileSuggestionQuery, listFileSuggestions, listPathSuggestions } from "./workspaces/fileSuggestions.js";
 import { listWorkspaceTree } from "./workspaces/fileTreeService.js";
-import { readWorkspaceImagePreview } from "./workspaces/imagePreviewService.js";
+import { readWorkspaceFilePreview, type WorkspaceFilePreview } from "./workspaces/filePreviewService.js";
 import { resolveWorkspaceContext } from "./workspaces/workspaceContext.js";
 import { pathAccessForWorkspaceContext } from "./workspaces/effectivePathAccess.js";
 import type { WorkspaceService } from "./workspaces/workspaceService.js";
@@ -69,15 +69,17 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
     }
   });
 
-  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file/preview`, async (request, reply) => {
+  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string; download?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file/preview`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
-      const preview = await readWorkspaceImagePreview(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config));
+      const download = request.query.download === "1" || request.query.download === "true";
+      const preview = await readWorkspaceFilePreview(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config), { download });
       return await reply
         .type(preview.mimeType)
         .header("Cache-Control", "private, max-age=3600")
         .header("Content-Length", String(preview.size))
-        .header("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'")
+        .header("Content-Disposition", previewContentDisposition(preview))
+        .header("Content-Security-Policy", previewContentSecurityPolicy(preview))
         .header("Last-Modified", new Date(preview.modifiedAt).toUTCString())
         .header("X-Content-Type-Options", "nosniff")
         .send(preview.stream);
@@ -97,6 +99,36 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
+}
+
+// The preview endpoint streams raw workspace bytes back to the browser, so the
+// Content-Security-Policy is the primary guard against a hostile file running
+// script against our origin. Each inline-rendered type gets the tightest policy
+// that still lets the browser display it.
+function previewContentSecurityPolicy(preview: WorkspaceFilePreview): string {
+  if (preview.mediaType === "image") return "sandbox; default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'";
+  // `sandbox` (no tokens) forces an opaque origin: inline scripts and same-origin
+  // access are both blocked, so a malicious HTML file cannot reach the session
+  // cookie or the app's own DOM.
+  if (preview.mediaType === "html") return "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+  // The browser's built-in PDF viewer needs a same-origin document, which the
+  // `sandbox` directive (opaque origin) breaks — so omit it here and rely on the
+  // octet-safe `application/pdf` type + nosniff + iframe sandbox.
+  if (preview.mediaType === "pdf") return "default-src 'none'; object-src 'self'; frame-ancestors 'self'";
+  // Download: served as an attachment and never rendered, so lock it down.
+  return "sandbox; default-src 'none'";
+}
+
+function previewContentDisposition(preview: WorkspaceFilePreview): string {
+  // Always advertise the real filename — even on inline responses — so saving
+  // from the browser's own viewer (the PDF viewer's download button, right-click
+  // "Save image", or "Open ↗" then save) yields the real name instead of one the
+  // browser derives from the opaque /file/preview URL. Sanitize the quoted-string
+  // form (strip non-printable-ASCII and quoting characters so the filename can't
+  // break out of the header) and add the RFC 5987 encoded form for clients that
+  // honor it.
+  const asciiName = preview.filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  return `${preview.disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(preview.filename)}`;
 }
 
 function registerWorkspaceFileContentParsers(app: FastifyInstance): void {

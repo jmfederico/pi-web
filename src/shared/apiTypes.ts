@@ -913,7 +913,7 @@ export interface FileTreeResponse {
   truncated: boolean;
 }
 
-export type FileContentMediaType = "image";
+export type FileContentMediaType = "image" | "html" | "pdf";
 
 export interface FileContentResponse {
   path: string;

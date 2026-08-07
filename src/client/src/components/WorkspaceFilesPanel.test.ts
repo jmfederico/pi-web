@@ -9,7 +9,7 @@ import type { WorkspaceUploadBatchState } from "../workspaceUploadState";
 // rationale. Viewer content messaging is asserted via the public
 // workspaceFileViewerStatusLabel seam instead of scraping Lit markup.
 import { findOptionalTemplateEventHandlerAfterMarker, templateClickHandlerForText, templateEventHandlerAfterMarker } from "../templateInspection.testSupport";
-import { WorkspaceFilesPanel, startDirectWorkspaceUpload, uploadBatchProgressValue, uploadBatchStatusLabel, workspaceFileViewerStatusLabel, workspaceUploadBatchesForScope, workspaceUploadReviewDefaults, workspaceUploadReviewError } from "./WorkspaceFilesPanel";
+import { WorkspaceFilesPanel, startDirectWorkspaceUpload, uploadBatchProgressValue, uploadBatchStatusLabel, workspaceFilePreviewKind, workspaceFileViewerStatusLabel, workspaceUploadBatchesForScope, workspaceUploadReviewDefaults, workspaceUploadReviewError } from "./WorkspaceFilesPanel";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -47,6 +47,9 @@ describe("workspace-files-panel upload review", () => {
 
 describe("workspace-files-panel file tree boundary", () => {
   it("renders expanded tree and selected-file state while wiring row clicks", () => {
+    // The selected binary file now renders a download link, which resolves an
+    // app URL against document.baseURI; stub it as the URL contract test does.
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/" });
     const onExpandDir = vi.fn<WorkspacePanelContext["onExpandDir"]>();
     const onSelectFile = vi.fn<WorkspacePanelContext["onSelectFile"]>();
     const panel = new WorkspaceFilesPanel();
@@ -72,17 +75,17 @@ describe("workspace-files-panel file tree boundary", () => {
     expect(onSelectFile).toHaveBeenCalledWith("src/main.ts");
     expect(onSelectFile).toHaveBeenCalledWith("README.md");
 
-    // Viewer messaging (selected binary file) is a content concern; assert it
-    // through the public seam rather than the rendered template.
+    // A loaded binary file now defers to a real viewer (a download link), so
+    // the status seam returns no message; assert it through the public seam.
     expect(workspaceFileViewerStatusLabel(workspacePanelContext({
       selectedFilePath: "README.md",
       selectedFileContent: binaryFileContent("README.md", 4096),
-    }))).toBe("Binary file: README.md · 4.0 KB");
+    }))).toBeUndefined();
   });
 });
 
 describe("workspaceFileViewerStatusLabel", () => {
-  it("messages empty, loading, and binary viewer states while deferring to real viewers", () => {
+  it("messages only empty and loading states, deferring every loaded file to a real viewer", () => {
     expect(workspaceFileViewerStatusLabel(workspacePanelContext({ selectedFilePath: undefined }))).toBe("Select a file.");
     expect(workspaceFileViewerStatusLabel(workspacePanelContext({ selectedFilePath: "" }))).toBe("Select a file.");
     expect(workspaceFileViewerStatusLabel(workspacePanelContext({ selectedFilePath: "notes.md", selectedFileContent: undefined }))).toBe("Loading notes.md…");
@@ -90,6 +93,20 @@ describe("workspaceFileViewerStatusLabel", () => {
       selectedFilePath: "logo.png",
       selectedFileContent: { ...binaryFileContent("logo.png", 10), mediaType: "image" },
     }))).toBeUndefined();
+    expect(workspaceFileViewerStatusLabel(workspacePanelContext({
+      selectedFilePath: "archive.zip",
+      selectedFileContent: binaryFileContent("archive.zip", 10),
+    }))).toBeUndefined();
+  });
+});
+
+describe("workspaceFilePreviewKind", () => {
+  it("routes inline media types to their viewers, other binaries to download, and text to code", () => {
+    expect(workspaceFilePreviewKind({ ...binaryFileContent("logo.png", 10), mediaType: "image" })).toBe("image");
+    expect(workspaceFilePreviewKind({ ...binaryFileContent("report.html", 10), mediaType: "html" })).toBe("html");
+    expect(workspaceFilePreviewKind({ ...binaryFileContent("spec.pdf", 10), mediaType: "pdf" })).toBe("pdf");
+    expect(workspaceFilePreviewKind(binaryFileContent("archive.zip", 10))).toBe("download");
+    expect(workspaceFilePreviewKind(textFileContent("main.ts"))).toBe("code");
   });
 });
 
@@ -232,6 +249,19 @@ function binaryFileContent(path: string, size: number): FileContentResponse {
     content: "",
     truncated: false,
     binary: true,
+  };
+}
+
+function textFileContent(path: string): FileContentResponse {
+  return {
+    path,
+    language: "typescript",
+    encoding: "utf8",
+    size: 12,
+    modifiedAt: "2026-06-25T00:00:00.000Z",
+    content: "const x = 1;",
+    truncated: false,
+    binary: false,
   };
 }
 
