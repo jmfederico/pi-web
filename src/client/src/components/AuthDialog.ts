@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing, type PropertyValues, type TemplateResul
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { AuthDialogState } from "../appState";
 import type { AuthProviderOption, OAuthFlowState } from "../api";
+import { LOCAL_MACHINE_ID } from "../machineKeys";
 import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEventTarget";
 import "./ModalSurface";
 import type { ModalSurface } from "./ModalSurface";
@@ -136,6 +137,10 @@ export class AuthDialog extends LitElement {
     const prompt = flow.prompt;
     const select = flow.select;
     const promptInputType = prompt === undefined ? undefined : oauthPromptInputType(prompt.promptType);
+    const showPasteNote = isBrowserRemoteOAuthMachine(state.machineId, window.location.hostname)
+      && flow.status === "running"
+      && flow.auth !== undefined
+      && flow.auth.deviceCode === undefined;
     return html`
       <div class="form">
         ${flow.auth !== undefined ? html`
@@ -144,6 +149,7 @@ export class AuthDialog extends LitElement {
           ${flow.auth.deviceCode !== undefined ? html`
             <p class="warning">Enter code: <code>${flow.auth.deviceCode.userCode}</code></p>
           ` : flow.auth.instructions !== undefined ? html`<p class="warning">${flow.auth.instructions}</p>` : null}
+          ${showPasteNote ? html`<p class="warning">After you approve, the redirect page will probably fail to load — that is expected. Copy the full URL from your browser's address bar and paste it below.</p>` : null}
         ` : html`<p>Starting login flow…</p>`}
         ${flow.progress.length > 0 ? html`<ul class="progress">${flow.progress.map((line) => html`<li>${line}</li>`)}</ul>` : null}
         ${flow.info?.map((item) => item.links === undefined || item.links.length === 0 ? null : html`
@@ -241,6 +247,24 @@ export class AuthDialog extends LitElement {
 
 export function oauthPromptInputType(promptType: NonNullable<OAuthFlowState["prompt"]>["promptType"]): "text" | "password" {
   return promptType === "secret" ? "password" : "text";
+}
+
+const loopbackHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
+
+/** True when `hostname` names the machine the browser itself runs on. */
+export function isLoopbackHostname(hostname: string): boolean {
+  // Browsers report IPv6 hostnames bracketed, e.g. "[::1]".
+  return loopbackHostnames.has(hostname.trim().replace(/^\[|\]$/g, "").toLowerCase());
+}
+
+/**
+ * True when the OAuth loopback redirect (`http://localhost:<port>/callback`) cannot
+ * reach the runtime from this browser: the flow runs on a federated machine, or the
+ * gateway host is not loopback-local to the browser. The user must then paste the
+ * redirect URL manually.
+ */
+export function isBrowserRemoteOAuthMachine(machineId: string, hostname: string): boolean {
+  return machineId !== LOCAL_MACHINE_ID || !isLoopbackHostname(hostname);
 }
 
 function authTypeLabel(authType: "oauth" | "api_key"): string {
