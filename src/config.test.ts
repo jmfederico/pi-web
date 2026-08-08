@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, askUserEnabled, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, askUserEnabled, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, respectProjectTrustEnabled, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -248,6 +248,48 @@ describe("extensionDialogsTimeoutMs", () => {
     await writeFile(configPath, `${JSON.stringify({ extensionDialogsTimeoutMs: 0 }, null, 2)}\n`, "utf8");
 
     expect(effectivePiWebConfig(testOptions()).config.extensionDialogsTimeoutMs).toBe(0);
+  });
+});
+
+describe("respectProjectTrust", () => {
+  it("resolves off by default so project-local resources stay loaded (backward compatible)", () => {
+    expect(effectivePiWebConfig(testOptions()).config.respectProjectTrust).toBe(false);
+  });
+
+  it("resolves a configured opt-in, with the env var overriding the config", async () => {
+    await writeFile(configPath, `${JSON.stringify({ respectProjectTrust: true }, null, 2)}\n`, "utf8");
+
+    expect(effectivePiWebConfig(testOptions()).config.respectProjectTrust).toBe(true);
+    expect(effectivePiWebConfig({ ...testOptions(), env: { ...testOptions().env, PI_WEB_RESPECT_PROJECT_TRUST: "0" } }).config.respectProjectTrust).toBe(false);
+  });
+
+  it("keeps a hand-edited respectProjectTrust across settings saves", async () => {
+    await writeFile(configPath, `${JSON.stringify({ respectProjectTrust: true }, null, 2)}\n`, "utf8");
+
+    savePiWebConfig({ host: "127.0.0.1" }, testOptions());
+
+    expect(loadPiWebConfig(testOptions()).config.respectProjectTrust).toBe(true);
+  });
+
+  it("rejects a non-boolean respectProjectTrust key", async () => {
+    await writeFile(configPath, `${JSON.stringify({ respectProjectTrust: "yes" }, null, 2)}\n`, "utf8");
+
+    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config respectProjectTrust must be a boolean");
+  });
+});
+
+describe("respectProjectTrustEnabled", () => {
+  it("is off by default so the historical behavior is preserved", () => {
+    expect(respectProjectTrustEnabled({}, {})).toBe(false);
+  });
+
+  it("honors an explicit config opt-in", () => {
+    expect(respectProjectTrustEnabled({}, { respectProjectTrust: true })).toBe(true);
+  });
+
+  it("lets the env var override the config in both directions", () => {
+    expect(respectProjectTrustEnabled({ PI_WEB_RESPECT_PROJECT_TRUST: "1" }, { respectProjectTrust: false })).toBe(true);
+    expect(respectProjectTrustEnabled({ PI_WEB_RESPECT_PROJECT_TRUST: "0" }, { respectProjectTrust: true })).toBe(false);
   });
 });
 

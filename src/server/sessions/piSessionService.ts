@@ -9,8 +9,11 @@ import {
   createAgentSessionServices,
   createEditToolDefinition,
   defineTool,
+  hasTrustRequiringProjectResources,
+  ProjectTrustStore,
   readStoredCredential,
   SessionManager,
+  SettingsManager,
   type AgentSessionRuntimeDiagnostic,
   type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
@@ -709,15 +712,44 @@ export function createPiWebCustomToolDefinitions(
   ];
 }
 
+/**
+ * Resolve whether a workspace's project-local `.pi/` resources may load, the
+ * way `pi` does when it has no trust prompt to show. PI WEB has no browser
+ * trust prompt yet, so this mirrors the SDK's non-interactive resolution:
+ * nothing trust-requiring under `cwd` is trivially trusted, a saved decision in
+ * the agent dir's `trust.json` wins, and otherwise `defaultProjectTrust`
+ * decides (`always` trusts, `never`/`ask` do not — `ask` cannot prompt here).
+ */
+function resolveWebProjectTrusted(cwd: string, agentDir: string): boolean {
+  if (!hasTrustRequiringProjectResources(cwd)) return true;
+  const saved = new ProjectTrustStore(agentDir).get(cwd);
+  if (saved !== null) return saved;
+  return SettingsManager.create(cwd, agentDir).getDefaultProjectTrust() === "always";
+}
+
 function createDefaultRuntimeFactory(
   modelRuntime: ModelRuntime,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
   askUser?: AskUserToolDeps,
+  respectProjectTrust = false,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
-    const services: AgentSessionServices = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
+    // When enabled, resolve project trust and hand `createAgentSessionServices`
+    // a SettingsManager pre-set to that trust: the resource loader gates every
+    // project-local resource (extensions, packages, settings) on it. Off by
+    // default, the SDK's own SettingsManager trusts the project (historical
+    // behavior).
+    const settingsManager = respectProjectTrust
+      ? SettingsManager.create(cwd, agentDir, { projectTrusted: resolveWebProjectTrusted(cwd, agentDir) })
+      : undefined;
+    const services: AgentSessionServices = await createAgentSessionServices({
+      cwd,
+      agentDir,
+      modelRuntime,
+      ...(settingsManager === undefined ? {} : { settingsManager }),
+    });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions, askUser);
@@ -785,6 +817,15 @@ export interface PiSessionServiceDependencies {
    * questions reach the user of the asking session, not another session.
    */
   askUserEnabled?: boolean;
+  /**
+   * When true, PI WEB honors pi's project-trust settings (`defaultProjectTrust`
+   * and saved `trust.json` decisions) before loading a workspace's
+   * project-local `.pi/` extensions, packages, and settings. Defaults to
+   * `false`, loading project-local resources unconditionally (backward
+   * compatible). Only consulted for the default runtime factory; an injected
+   * `createRuntime` owns its own trust handling.
+   */
+  respectProjectTrust?: boolean;
   /** Daemon-lifetime open-ask state; defaults to an in-memory store in tests. */
   pendingAskStore?: PendingAskStore;
   /** Daemon-lifetime open-dialog state; defaults to an in-memory store in tests. */
@@ -913,6 +954,7 @@ export class PiSessionService implements SessionRouteService {
         read: (parentSessionId, sessionId, query, parentSessionFile) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile),
       },
       deps.askUserEnabled === true ? { open: (input) => this.openAsk(input) } : undefined,
+      deps.respectProjectTrust === true,
     );
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;

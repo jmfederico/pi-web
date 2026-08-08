@@ -26,6 +26,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     catalogRefreshStatus: { isRefreshInFlight: () => false },
     subsessionsEnabled: false,
     askUserEnabled: true,
+    respectProjectTrust: false,
     extensionDialogsTimeoutMs: 300_000,
     ...patch,
   };
@@ -97,5 +98,10 @@ describe("sessiond session service dependency assembly", () => {
 
   it("passes the extension-dialog timeout through to the session service", () => {
     expect(sessionServiceDependencies(daemonCollaborators({ extensionDialogsTimeoutMs: 60_000 })).extensionDialogsTimeoutMs).toBe(60_000);
+  });
+
+  it("passes the project-trust preference through to the session service", () => {
+    expect(sessionServiceDependencies(daemonCollaborators({ respectProjectTrust: true })).respectProjectTrust).toBe(true);
+    expect(sessionServiceDependencies(daemonCollaborators({ respectProjectTrust: false })).respectProjectTrust).toBe(false);
   });
 });

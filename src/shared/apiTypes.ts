@@ -95,6 +95,15 @@ export interface PiWebConfigValues {
    */
   askUser?: boolean;
   /**
+   * When true, PI WEB honors pi's project-trust settings before loading a
+   * workspace's project-local `.pi/` extensions, packages, and settings:
+   * `defaultProjectTrust` and saved decisions in the agent dir's `trust.json`
+   * apply, and (with no browser trust prompt) an untrusted project's resources
+   * are skipped — matching `pi` run without a UI. Off by default, which loads
+   * project-local resources unconditionally (backward compatible).
+   */
+  respectProjectTrust?: boolean;
+  /**
    * How long an extension dialog may wait for an answer before the daemon
    * auto-cancels it, in milliseconds. Applies only when the extension set no
    * `timeout` of its own (the sooner of the two wins); `0` waits forever.

@@ -15,11 +15,12 @@ export interface LoadedPiWebConfig {
   config: PiWebConfig;
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "spawnSessions" | "subsessions" | "askUser" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "spawnSessions" | "subsessions" | "askUser" | "respectProjectTrust" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
   spawnSessions: boolean;
   subsessions: boolean;
   askUser: boolean;
+  respectProjectTrust: boolean;
   extensionDialogsTimeoutMs: number;
   agent: Required<NonNullable<PiWebConfig["agent"]>>;
 }
@@ -168,6 +169,9 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       subsessions: subsessionsEnabled(env, loaded.config),
       // Always resolved (on by default); the user is present for every ask.
       askUser: askUserEnabled(env, loaded.config),
+      // Always resolved (off by default) so honoring pi's project-trust
+      // settings is opt-in and the default stays backward compatible.
+      respectProjectTrust: respectProjectTrustEnabled(env, loaded.config),
       // Always resolved; the unattended-dialog safety valve, not a gate.
       extensionDialogsTimeoutMs: loaded.config.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS,
       agent: { command: agent.command, dir: agent.dir },
@@ -237,6 +241,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
+    ...(value["respectProjectTrust"] !== undefined ? { respectProjectTrust: parseRespectProjectTrust(value["respectProjectTrust"], path) } : {}),
     ...(value["extensionDialogsTimeoutMs"] !== undefined ? { extensionDialogsTimeoutMs: parseExtensionDialogsTimeoutMs(value["extensionDialogsTimeoutMs"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
@@ -289,6 +294,11 @@ function parseAskUser(value: unknown, path: string): boolean {
   return value;
 }
 
+function parseRespectProjectTrust(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`PI WEB config respectProjectTrust must be a boolean: ${path}`);
+  return value;
+}
+
 function parseExtensionDialogsTimeoutMs(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     throw new Error(`PI WEB config extensionDialogsTimeoutMs must be a non-negative integer: ${path}`);
@@ -307,6 +317,22 @@ export function askUserEnabled(env: NodeJS.ProcessEnv = process.env, config: PiW
   const fromEnv = env["PI_WEB_ASK_USER"];
   if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv.toLowerCase() === "true";
   return config.askUser ?? true;
+}
+
+/**
+ * Whether PI WEB honors pi's project-trust settings (`defaultProjectTrust` and
+ * saved `trust.json` decisions) before loading a workspace's project-local
+ * `.pi/` extensions, packages, and settings. Off by default so the historical
+ * behavior — loading project-local resources unconditionally — is preserved;
+ * enable with the env var `PI_WEB_RESPECT_PROJECT_TRUST` or the
+ * `respectProjectTrust` config key. The env var takes precedence over the
+ * config file. With no browser trust prompt, an untrusted project's resources
+ * are skipped (matching `pi` run without a UI).
+ */
+export function respectProjectTrustEnabled(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): boolean {
+  const fromEnv = env["PI_WEB_RESPECT_PROJECT_TRUST"];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv.toLowerCase() === "true";
+  return config.respectProjectTrust ?? false;
 }
 
 const OFFLINE_ENV_KEYS = ["PI_WEB_OFFLINE", "PI_OFFLINE"] as const;

@@ -102,6 +102,7 @@ async function createSessionDaemonRuntime() {
     ...(spawnTargets === undefined ? {} : { spawnTargets }),
     subsessionsEnabled: config.subsessions,
     askUserEnabled: config.askUser,
+    respectProjectTrust: config.respectProjectTrust,
     extensionDialogsTimeoutMs: config.extensionDialogsTimeoutMs,
     notificationStore,
     unreadStore,
