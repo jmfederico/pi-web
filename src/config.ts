@@ -15,8 +15,9 @@ export interface LoadedPiWebConfig {
   config: PiWebConfig;
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "spawnSessions" | "subsessions" | "askUser" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "automations" | "spawnSessions" | "subsessions" | "askUser" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
+  automations: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
   askUser: boolean;
@@ -161,6 +162,9 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       ...(allowedHosts !== undefined && allowedHosts !== "" ? { allowedHosts: parseAllowedHostsEnv(allowedHosts) } : {}),
       ...(maxUpload !== undefined && maxUpload !== "" ? { maxUploadBytes: parseMaxUploadBytes(maxUpload, "PI_WEB_MAX_UPLOAD_BYTES") } : {}),
       uploads: effectiveUploadsConfig(loaded.config),
+      // Always resolved (on by default) so the daemon can omit the complete
+      // automation subsystem when disabled.
+      automations: automationsEnabled(loaded.config),
       // Always resolved (on by default) so the effective config is the single
       // source of truth for the runtime state and the settings UI toggle.
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
@@ -190,6 +194,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["pathAccess"];
   delete existing["uploads"];
   delete existing["maxUploadBytes"];
+  delete existing["automations"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
   delete existing["askUser"];
@@ -217,6 +222,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
+    ...(config.automations !== undefined ? { automations: config.automations } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
     ...(config.askUser !== undefined ? { askUser: config.askUser } : {}),
@@ -234,6 +240,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["pathAccess"] !== undefined ? { pathAccess: parsePathAccessConfig(value["pathAccess"], path) } : {}),
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
+    ...(value["automations"] !== undefined ? { automations: parseAutomations(value["automations"], path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
@@ -246,6 +253,19 @@ function parseMaxUploadBytes(value: unknown, key: string, path = "environment"):
   const bytes = typeof value === "number" ? value : typeof value === "string" && value !== "" ? Number(value) : NaN;
   if (!Number.isInteger(bytes) || bytes < 1) throw new Error(`PI WEB config ${key} must be a positive integer: ${path}`);
   return bytes;
+}
+
+function parseAutomations(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`PI WEB config automations must be a boolean: ${path}`);
+  return value;
+}
+
+/**
+ * Whether the session daemon owns workspace automation persistence and
+ * scheduling. On by default; when disabled the subsystem is not loaded.
+ */
+export function automationsEnabled(config: PiWebConfig = {}): boolean {
+  return config.automations ?? true;
 }
 
 function parseSpawnSessions(value: unknown, path: string): boolean {

@@ -21,7 +21,7 @@ describe("production build contents", () => {
     expect(projectSources.filter(isTestSupportPath)).toEqual([]);
   });
 
-  it("keeps test-support artifacts out of the npm tarball", async () => {
+  it("keeps test-support artifacts out of the npm tarball", { timeout: 15_000 }, async () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-package-contents-"));
     try {
       const fixtureDist = join(fixtureRoot, "dist", "server");

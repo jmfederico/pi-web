@@ -9,13 +9,21 @@ export type { PiWebCapability };
 export const KNOWN_PI_WEB_CAPABILITIES: PiWebCapability[] = Object.values(PI_WEB_CAPABILITIES);
 const knownPiWebCapabilities: ReadonlySet<string> = new Set(KNOWN_PI_WEB_CAPABILITIES);
 
-export const WEB_RUNTIME_CAPABILITIES = [] as const satisfies readonly PiWebCapability[];
+export const WEB_RUNTIME_CAPABILITIES = [
+  PI_WEB_CAPABILITIES.automations,
+] as const satisfies readonly PiWebCapability[];
 
-export const SESSIOND_RUNTIME_CAPABILITIES = [] as const satisfies readonly PiWebCapability[];
+export const SESSIOND_RUNTIME_CAPABILITIES = [
+  PI_WEB_CAPABILITIES.automations,
+] as const satisfies readonly PiWebCapability[];
 
-// `Record<never, …>` while the registry is empty; populated entries map each
-// capability to the components that must both advertise it.
-const EFFECTIVE_CAPABILITY_REQUIREMENTS: Record<PiWebCapability, readonly PiWebServiceComponent[]> = {};
+export function sessiondRuntimeCapabilities(automationsEnabled: boolean): readonly PiWebCapability[] {
+  return automationsEnabled ? SESSIOND_RUNTIME_CAPABILITIES : [];
+}
+
+const EFFECTIVE_CAPABILITY_REQUIREMENTS = {
+  [PI_WEB_CAPABILITIES.automations]: ["web", "sessiond"],
+} as const satisfies Record<PiWebCapability, readonly PiWebServiceComponent[]>;
 
 export function isPiWebCapability(value: unknown): value is PiWebCapability {
   return typeof value === "string" && knownPiWebCapabilities.has(value);

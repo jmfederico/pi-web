@@ -41,6 +41,11 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions/*`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/automations`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/automations/*`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/automation-runs`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/automation-runs/*`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/automation-models`, (request, reply) => proxy(request, reply));
 }
 
 function stripPrefix(url: string, prefix: string): string {

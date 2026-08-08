@@ -24,6 +24,7 @@ PI WEB lets you:
 - keep Pi Coding Agent sessions alive after browser disconnects;
 - run agents inside real repositories and git worktrees;
 - supervise multiple sessions in parallel;
+- schedule workspace automations with model, timeout, cancellation, token, and estimated-cost visibility;
 - switch between laptop, phone, tablet, and desktop;
 - use a server, workstation, or remote dev box as your agent runtime;
 - manage projects, workspaces, files, terminals, sessions, and remote machines from one web UI.
@@ -176,6 +177,7 @@ It is not a sandbox, permission system, or multi-tenant platform. Do not expose 
 - [Install](https://pi-web.dev/install)
 - [Remote-first development](https://pi-web.dev/remote-first)
 - [Machines / fleet](https://pi-web.dev/machines)
+- [Automations](https://pi-web.dev/automations)
 - [Configuration](https://pi-web.dev/config)
 - [Plugins](https://pi-web.dev/plugins)
 - [FAQ](https://pi-web.dev/faq)

@@ -1374,6 +1374,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("uploads", optionalUploads(record["uploads"])),
     ...optionalField("maxUploadBytes", optionalNumber(record, "maxUploadBytes")),
     ...optionalField("agent", optionalAgent(record["agent"])),
+    ...optionalField("automations", optionalBoolean(record, "automations")),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),

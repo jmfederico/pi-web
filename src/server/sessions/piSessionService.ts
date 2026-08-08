@@ -2,6 +2,7 @@ import { statSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
   createAgentSessionFromServices,
@@ -827,6 +828,7 @@ interface CachedSessionHeader {
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
+  private readonly automationOwnedSessionIds = new Set<string>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
   /**
    * Sessions whose extension binding is still in flight. A `session_start`
@@ -1235,6 +1237,27 @@ export class PiSessionService implements SessionRouteService {
 
   async start(cwd: string, options: StartSessionOptions = {}): Promise<ClientSession> {
     return this.startSession(cwd, options);
+  }
+
+  async startAutomation(cwd: string): Promise<ClientSession> {
+    const created = await this.startSession(cwd, {});
+    this.automationOwnedSessionIds.add(created.id);
+    return created;
+  }
+
+  releaseAutomationSession(ref: PiSessionRef): void {
+    const sessionId = this.activeForRef(ref)?.runtime.session.sessionId;
+    if (sessionId !== undefined) this.automationOwnedSessionIds.delete(sessionId);
+  }
+
+  automationModels(): ClientSessionModel[] {
+    // Attach each model's supported thinking levels (from pi's own capability
+    // rules) so the automation editor can offer only levels the model accepts
+    // instead of the full known set.
+    return this.modelRuntime.getAvailableSnapshot().map((model) => ({
+      ...modelToClientModel(model),
+      thinkingLevels: getSupportedThinkingLevels(model),
+    }));
   }
 
   private async startSession(cwd: string, options: InternalStartSessionOptions): Promise<ClientSession> {
@@ -1983,6 +2006,15 @@ export class PiSessionService implements SessionRouteService {
 
   async setModel(ref: PiSessionRef, provider: string, modelId: string): Promise<ClientSessionStatus> {
     await this.assertWritable(ref);
+    return this.applyModel(ref, provider, modelId);
+  }
+
+  async setAutomationModel(ref: PiSessionRef, provider: string, modelId: string): Promise<ClientSessionStatus> {
+    this.assertAutomationOwned(ref);
+    return this.applyModel(ref, provider, modelId);
+  }
+
+  private async applyModel(ref: PiSessionRef, provider: string, modelId: string): Promise<ClientSessionStatus> {
     const session = await this.getOrOpen(ref);
     this.assertTreeNavigationInactive(session, "change models");
     const candidates = await this.sessionModelCandidates(session);
@@ -2013,6 +2045,15 @@ export class PiSessionService implements SessionRouteService {
 
   async setThinkingLevel(ref: PiSessionRef, level: string): Promise<ClientSessionStatus> {
     await this.assertWritable(ref);
+    return this.applyThinkingLevel(ref, level);
+  }
+
+  async setAutomationThinkingLevel(ref: PiSessionRef, level: string): Promise<ClientSessionStatus> {
+    this.assertAutomationOwned(ref);
+    return this.applyThinkingLevel(ref, level);
+  }
+
+  private async applyThinkingLevel(ref: PiSessionRef, level: string): Promise<ClientSessionStatus> {
     const session = await this.getOrOpen(ref);
     this.assertTreeNavigationInactive(session, "change the thinking level");
     // pi owns the valid set; validate against the session's live levels rather
@@ -2085,17 +2126,38 @@ export class PiSessionService implements SessionRouteService {
     void this.submitPrompt(session, promptText, behavior, images, echoUserMessage);
   }
 
+  async promptAndWait(ref: PiSessionRef, text: string): Promise<ClientSessionStatus> {
+    const promptText = requirePromptText(text);
+    this.assertAutomationOwned(ref);
+    const session = await this.getOrOpen(ref);
+    if (session.isStreaming || session.isCompacting || this.pendingMessageCount(session) > 0) {
+      throw new Error("Automation session is already busy");
+    }
+    this.maybeGenerateSessionName(session, promptText);
+    await this.submitPromptAwaitable(session, promptText);
+    this.publishStatus(session);
+    return this.statusFromSession(session);
+  }
+
   private submitPrompt(session: PiAgentSession, text: string, behavior: QueuedPromptKind | undefined, images: ImageContent[] = [], echoUserMessage = true): Promise<void> {
+    return this.submitPromptAwaitable(session, text, behavior, images, echoUserMessage).catch(() => {
+      // Interactive prompt submission remains fire-and-forget. The error was
+      // already projected to activity and session events by submitPromptAwaitable.
+    });
+  }
+
+  private async submitPromptAwaitable(session: PiAgentSession, text: string, behavior?: QueuedPromptKind, images: ImageContent[] = [], echoUserMessage = true): Promise<void> {
     this.publishActivity(session, behavior === "steer" ? "steering queued" : behavior === "followUp" ? "message queued" : "prompt accepted", "active");
     if (behavior === undefined && echoUserMessage) this.events.publish(session.sessionId, { type: "message.append", message: userMessage(text, images) });
     const promptOptions = buildPromptOptions(behavior, images);
-    const promptPromise = this.runSessionEntryMutation(session, "send a prompt", () => session.prompt(text, promptOptions)).catch((error: unknown) => {
+    try {
+      await this.runSessionEntryMutation(session, "send a prompt", () => session.prompt(text, promptOptions));
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, "error", "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
-    });
-    void promptPromise;
-    return promptPromise;
+      throw error;
+    }
   }
 
   private enqueuePromptDuringCompaction(session: PiAgentSession, text: string, kind: QueuedPromptKind, images: ImageContent[] = [], echoUserMessage = true): void {
@@ -2591,6 +2653,16 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async abort(ref: PiSessionRef): Promise<void> {
+    this.assertNotAutomationOwned(ref);
+    await this.abortActive(ref);
+  }
+
+  async abortAutomation(ref: PiSessionRef): Promise<void> {
+    this.assertAutomationOwned(ref);
+    await this.abortActive(ref);
+  }
+
+  private async abortActive(ref: PiSessionRef): Promise<void> {
     const active = this.activeForRef(ref);
     if (active === undefined) return;
     const sessionId = active.runtime.session.sessionId;
@@ -2615,6 +2687,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async stop(ref: PiSessionRef): Promise<void> {
+    this.assertNotAutomationOwned(ref);
     const active = this.activeForRef(ref);
     if (active !== undefined) {
       await this.closeActive(active.runtime.session.sessionId);
@@ -2629,6 +2702,27 @@ export class PiSessionService implements SessionRouteService {
       return;
     }
     this.publishNotificationMutations(this.notificationStore.clearSessionIdentity(ref.id, canonicalizeStoredCwd(ref.cwd), "runtime-close"));
+  }
+
+  async stopAndWait(ref: PiSessionRef): Promise<void> {
+    this.assertNotAutomationOwned(ref);
+    const active = this.activeForRef(ref);
+    if (active === undefined) return;
+    await this.closeActive(active.runtime.session.sessionId);
+  }
+
+  async stopAutomationAndWait(ref: PiSessionRef): Promise<void> {
+    this.assertAutomationOwned(ref);
+    const active = this.activeForRef(ref);
+    if (active === undefined) return;
+    await this.closeActive(active.runtime.session.sessionId);
+  }
+
+  async forceStopAndWait(ref: PiSessionRef): Promise<void> {
+    this.assertAutomationOwned(ref);
+    const active = this.activeForRef(ref);
+    if (active === undefined) return;
+    await this.forceCloseActive(active.runtime.session.sessionId);
   }
 
   private async bulkSessionRefContext(refs: readonly SessionBulkMutationRef[]): Promise<BulkSessionRefContext> {
@@ -2750,40 +2844,8 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async closeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<void> {
-    // A session whose open is parked on a `session_start` dialog holds its
-    // pending open until the dialog settles; settle it first so closing cannot
-    // block behind the dialog timeout (which `0` makes infinite).
-    if (this.startupSessions.has(sessionId)) this.endSessionExtensionDialogs(sessionId);
-    const pendingOpens = this.pendingSessionOpenPromises(sessionId);
-    if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
-    const active = this.active.get(sessionId);
-    if (notificationPolicy.kind === "clear") {
-      const generation = active === undefined ? undefined : this.notificationGenerationBySession.get(active.runtime.session);
-      const mutations = generation === undefined
-        ? this.notificationStore.clearSession(sessionId, notificationPolicy.reason)
-        : this.notificationStore.clearGeneration(generation, notificationPolicy.reason);
-      this.publishNotificationMutations(mutations);
-    }
-    if (!active) return;
-    this.forgetUnreadActivity(active.runtime.session);
-    // An open ask is meaningful only while the runtime that posted it exists: no
-    // one is left to receive the answers, so it is dropped without an outcome.
-    this.pendingAskStore.forgetSession(sessionId);
-    // Open dialogs share that stance, but their extension waiters are parked
-    // Promises inside the dying runtime: settle them rather than dropping them.
-    this.endSessionExtensionDialogs(sessionId);
-    this.active.delete(sessionId);
-    this.activities.delete(sessionId);
-    this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
-    this.clearAuthLossWarningsForSession(sessionId);
-    this.clearCompactionPromptQueue(sessionId);
-    // Disarm subsession notification before teardown so the abort below cannot
-    // emit a "stopped working" event that notifies the parent (e.g. on archive).
-    // The parent/children link is kept so the parent can still see the child.
-    if (this.subsessionLinkForActiveChild(active.runtime.session) !== undefined) this.subsessionNotifyArmed.delete(sessionId);
-    clearSessionQueue(active.runtime.session);
-    active.unsubscribe();
-    active.runtime.setRebindSession(undefined);
+    const active = await this.takeActive(sessionId, notificationPolicy);
+    if (active === undefined) return;
     try {
       await this.abortSessionOperations(active.runtime.session);
     } finally {
@@ -2812,8 +2874,69 @@ export class PiSessionService implements SessionRouteService {
     if (branchSummaryAbortFailed) throw branchSummaryAbortError;
   }
 
+  private async forceCloseActive(sessionId: string): Promise<void> {
+    const active = await this.takeActive(sessionId);
+    if (active === undefined) return;
+    // This is the bounded escape hatch used after a soft abort deadline. The
+    // runtime is detached immediately; disposal remains best effort because it
+    // may internally wait on the same provider operation that failed to abort.
+    void active.runtime.dispose().catch(() => undefined);
+  }
+
+  private async takeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<ActiveSession<PiSessionRuntime> | undefined> {
+    // A session whose open is parked on a `session_start` dialog holds its
+    // pending open until the dialog settles; settle it first so closing cannot
+    // block behind the dialog timeout (which `0` makes infinite).
+    if (this.startupSessions.has(sessionId)) this.endSessionExtensionDialogs(sessionId);
+    const pendingOpens = this.pendingSessionOpenPromises(sessionId);
+    if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
+    const active = this.active.get(sessionId);
+    if (notificationPolicy.kind === "clear") {
+      const generation = active === undefined ? undefined : this.notificationGenerationBySession.get(active.runtime.session);
+      const mutations = generation === undefined
+        ? this.notificationStore.clearSession(sessionId, notificationPolicy.reason)
+        : this.notificationStore.clearGeneration(generation, notificationPolicy.reason);
+      this.publishNotificationMutations(mutations);
+    }
+    if (active === undefined) return undefined;
+    this.forgetUnreadActivity(active.runtime.session);
+    // An open ask is meaningful only while the runtime that posted it exists: no
+    // one is left to receive the answers, so it is dropped without an outcome.
+    this.pendingAskStore.forgetSession(sessionId);
+    // Open dialogs share that stance, but their extension waiters are parked
+    // Promises inside the dying runtime: settle them rather than dropping them.
+    this.endSessionExtensionDialogs(sessionId);
+    this.active.delete(sessionId);
+    this.automationOwnedSessionIds.delete(sessionId);
+    this.activities.delete(sessionId);
+    this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
+    this.clearAuthLossWarningsForSession(sessionId);
+    this.clearCompactionPromptQueue(sessionId);
+    // Disarm subsession notification before teardown so the abort below cannot
+    // emit a "stopped working" event that notifies the parent (e.g. on archive).
+    // The parent/children link is kept so the parent can still see the child.
+    if (this.subsessionLinkForActiveChild(active.runtime.session) !== undefined) this.subsessionNotifyArmed.delete(sessionId);
+    clearSessionQueue(active.runtime.session);
+    active.unsubscribe();
+    active.runtime.setRebindSession(undefined);
+    return active;
+  }
+
   private async assertWritable(ref: PiSessionRef): Promise<void> {
+    this.assertNotAutomationOwned(ref);
     if (await this.getArchived(ref) !== undefined) throw new Error("Archived sessions are read-only. Restore the session to continue.");
+  }
+
+  private assertNotAutomationOwned(ref: PiSessionRef): void {
+    const sessionId = this.activeForRef(ref)?.runtime.session.sessionId;
+    if (sessionId !== undefined && this.automationOwnedSessionIds.has(sessionId)) {
+      throw new Error("Automation-owned sessions are read-only while their run is active");
+    }
+  }
+
+  private assertAutomationOwned(ref: PiSessionRef): void {
+    const sessionId = this.activeForRef(ref)?.runtime.session.sessionId;
+    if (sessionId === undefined || !this.automationOwnedSessionIds.has(sessionId)) throw new Error("Automation session is not active");
   }
 
   private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
@@ -3490,7 +3613,8 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private hasActiveWork(session: PiAgentSession): boolean {
-    return this.treeNavigations.has(session)
+    return this.automationOwnedSessionIds.has(session.sessionId)
+      || this.treeNavigations.has(session)
       || this.isSessionEntryMutationActive(session)
       || this.isTreeExclusiveOperationActive(session)
       || sessionHasActiveWork(session, this.compactionQueuedMessages(session.sessionId).length);

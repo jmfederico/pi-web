@@ -99,6 +99,7 @@ function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebCo
     ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
+    ...(baseConfig.automations === undefined ? {} : { automations: baseConfig.automations }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
     ...(baseConfig.askUser === undefined ? {} : { askUser: baseConfig.askUser }),

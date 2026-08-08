@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, MoveWorkspaceFileResponse, SessionInfo, SessionStatus, WriteWorkspaceFileResponse, Workspace } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { markCachedNewSessionInfo } from "../cachedNewSessions";
+import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
 import { PluginRegistry } from "./registry";
@@ -62,7 +63,24 @@ describe("PluginRegistry", () => {
     registry.register({ id: "core", plugin: corePlugin });
 
     expect(registry.getActions(createContext().context).some((action) => action.id === "core:actions.show")).toBe(true);
-    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.git", "core:workspace.terminal"]);
+    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.git", "core:workspace.automations", "core:workspace.terminal"]);
+  });
+
+  it("shows Automations only when the selected machine advertises the negotiated capability", () => {
+    const registry = new PluginRegistry();
+    registry.register({ id: "core", plugin: corePlugin });
+    const panel = registry.getWorkspacePanels().find((candidate) => candidate.id === "core:workspace.automations");
+    const unsupported = createWorkspacePanelContext("local");
+    const supported = {
+      ...unsupported,
+      state: {
+        ...unsupported.state,
+        machineRuntimes: { local: { machineId: "local", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.automations] } },
+      },
+    };
+
+    expect(panel?.visible?.(unsupported)).toBe(false);
+    expect(panel?.visible?.(supported)).toBe(true);
   });
 
   it("provides html and svg helpers to plugin activation and callbacks", () => {

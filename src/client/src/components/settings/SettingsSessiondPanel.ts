@@ -4,7 +4,7 @@ import type { ActiveAgentProfileDescriptor, PiWebConfigResponse, PiWebConfigValu
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import { agentProfileConfigPatchFromDraft, agentProfileDraftFromConfig, agentProfileDraftMatchesConfig, emptyAgentProfileConfigDraft, type AgentProfileConfigDraft } from "./settingsConfigDraft";
-import { agentDirFieldOverridden, agentProfileActivationState, askUserConfigPatch, spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
+import { agentDirFieldOverridden, agentProfileActivationState, askUserConfigPatch, automationsConfigPatch, spawnSessionsConfigPatch, subsessionsConfigPatch } from "./settingsSessiondConfig";
 
 @customElement("settings-sessiond-panel")
 export class SettingsSessiondPanel extends LitElement {
@@ -38,6 +38,7 @@ export class SettingsSessiondPanel extends LitElement {
 
   override render(): TemplateResult {
     const config = this.configResponse;
+    const effectiveAutomations = config?.effectiveConfig.automations !== false;
     const spawnOverridden = config?.envOverrides.spawnSessions === true;
     // On by default: the effective config is the source of truth for the toggle
     // state, so an unset config file still shows the feature as enabled.
@@ -108,6 +109,22 @@ export class SettingsSessiondPanel extends LitElement {
           </form>
           <div class="field">
             <span class="field-heading">
+              <span>Workspace automations</span>
+            </span>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                aria-label="Enable Workspace Automations"
+                .checked=${effectiveAutomations}
+                ?disabled=${this.loading || this.saving}
+                @change=${(event: Event) => { void this.toggleAutomations(event); }}
+              >
+              <span>Enable scheduled and manual automation runs</span>
+            </label>
+            <small>When disabled, the session daemon does not load the automation database or scheduler, and the Automations workspace panel is hidden. Restart the session daemon to apply this setting. On by default.</small>
+          </div>
+          <div class="field">
+            <span class="field-heading">
               <span>Allow agents to start sessions</span>
               ${spawnOverridden ? html`<span class="override-badge">environment override</span>` : null}
             </span>
@@ -164,6 +181,7 @@ export class SettingsSessiondPanel extends LitElement {
               <div><dt>Active command</dt><dd>${this.activeAgentProfile?.command ?? html`<span class="muted">Unavailable</span>`}</dd></div>
               <div><dt>Active state</dt><dd>${this.activeAgentProfile?.dir ?? html`<span class="muted">Unavailable</span>`}</dd></div>
               <div><dt>Profile status</dt><dd>${profileActivationLabel(profileActivation)}</dd></div>
+              <div><dt>Automations</dt><dd>${effectiveAutomations ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
               <div><dt>Spawn sessions</dt><dd>${effectiveSpawn ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
               <div><dt>Subsessions</dt><dd>${effectiveSubsessions ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
               <div><dt>Ask questions</dt><dd>${effectiveAskUser ? "Enabled" : html`<span class="muted">Disabled</span>`}</dd></div>
@@ -201,6 +219,11 @@ export class SettingsSessiondPanel extends LitElement {
     this.agentDraft = { ...this.agentDraft, ...patch };
     this.agentDraftDirty = true;
     this.agentLocalError = "";
+  }
+
+  private async toggleAutomations(event: Event): Promise<void> {
+    const enabled = event.target instanceof HTMLInputElement && event.target.checked;
+    await this.onSave?.(automationsConfigPatch(enabled));
   }
 
   private async toggleSpawnSessions(event: Event): Promise<void> {

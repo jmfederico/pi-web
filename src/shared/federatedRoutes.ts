@@ -1,4 +1,4 @@
-export type FederatedHttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+export type FederatedHttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export const PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS = 5 * 60_000;
@@ -44,6 +44,14 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "GET", path: "/terminal-command-runs/:runId" },
   { method: "POST", path: "/terminal-command-runs/:runId/cancel" },
   { method: "GET", path: "/activity" },
+  { method: "GET", path: "/automations" },
+  { method: "POST", path: "/automations" },
+  { method: "PATCH", path: "/automations/:automationId" },
+  { method: "DELETE", path: "/automations/:automationId" },
+  { method: "POST", path: "/automations/:automationId/run" },
+  { method: "GET", path: "/automation-runs" },
+  { method: "POST", path: "/automation-runs/:runId/cancel" },
+  { method: "GET", path: "/automation-models" },
   { method: "GET", path: "/sessions" },
   { method: "POST", path: "/sessions" },
   { method: "GET", path: "/sessions/unread" },

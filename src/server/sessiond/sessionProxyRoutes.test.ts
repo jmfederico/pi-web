@@ -85,6 +85,16 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "POST", path: "/auth/api-key/interactive", body: { providerId: "p" } }]);
   });
 
+  it("forwards automation updates and cancellation to the session daemon", async () => {
+    await app.inject({ method: "PATCH", url: "/api/machines/local/automations/job%2F1", payload: { projectId: "p", workspaceId: "w", expectedRevision: 1, enabled: false } });
+    await app.inject({ method: "POST", url: "/api/machines/local/automation-runs/run%2F1/cancel", payload: { projectId: "p", workspaceId: "w" } });
+
+    expect(daemon.requests).toEqual([
+      { method: "PATCH", path: "/automations/job%2F1", body: { projectId: "p", workspaceId: "w", expectedRevision: 1, enabled: false } },
+      { method: "POST", path: "/automation-runs/run%2F1/cancel", body: { projectId: "p", workspaceId: "w" } },
+    ]);
+  });
+
   it("forwards sessiond health and runtime aliases to daemon endpoints", async () => {
     const healthResponse = await app.inject({ method: "GET", url: "/api/machines/local/sessiond/health" });
     const runtimeResponse = await app.inject({ method: "GET", url: "/api/machines/local/sessiond/runtime" });

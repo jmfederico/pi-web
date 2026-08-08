@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { SessionNotificationStore } from "../sessions/sessionNotificationStore.js";
 import { SessionUnreadStore } from "../sessions/sessionUnreadStore.js";
 import { PiSessionService, type PiSessionServiceDependencies } from "../sessions/piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, sessionGateway, testModelRuntime } from "../sessions/piSessionService.testSupport.js";
+import { loadOptionalSessiondAutomationRuntime } from "./optionalSessiondAutomationRuntime.js";
 import { sessionServiceDependencies, type SessionServiceDependencyInput } from "./sessionServiceDependencies.js";
+import type { SessiondAutomationRuntime, SessiondAutomationRuntimeDependencies } from "./sessiondAutomationRuntime.js";
 
 const AGENT_DIR = "/tmp/pi-web-test-agent";
 
@@ -55,6 +57,39 @@ async function startupDetails(deps: PiSessionServiceDependencies): Promise<strin
   );
 }
 
+const automationDependencies: SessiondAutomationRuntimeDependencies = {
+  env: {},
+  projects: { requireProject: () => Promise.reject(new Error("not used")) },
+  workspaces: { list: () => Promise.reject(new Error("not used")) },
+  sessions: {
+    startAutomation: () => Promise.reject(new Error("not used")),
+    automationModels: () => [],
+    setAutomationModel: () => Promise.reject(new Error("not used")),
+    setAutomationThinkingLevel: () => Promise.reject(new Error("not used")),
+    status: () => Promise.reject(new Error("not used")),
+    promptAndWait: () => Promise.reject(new Error("not used")),
+    abortAutomation: () => Promise.reject(new Error("not used")),
+    forceStopAndWait: () => Promise.reject(new Error("not used")),
+    releaseAutomationSession: () => undefined,
+  },
+  events: { publishRealtime: () => undefined },
+  logger: {
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  },
+};
+
+function automationRuntime(): SessiondAutomationRuntime {
+  return {
+    registerRoutes: vi.fn(),
+    acquireOwnership: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(() => Promise.resolve()),
+    dispose: vi.fn(),
+  };
+}
+
 describe("sessiond session service dependency assembly", () => {
   it("reports a concurrent provider model list refresh to a waiting user", async () => {
     // The note is only reachable in the product because the assembly hands the
@@ -97,5 +132,26 @@ describe("sessiond session service dependency assembly", () => {
 
   it("passes the extension-dialog timeout through to the session service", () => {
     expect(sessionServiceDependencies(daemonCollaborators({ extensionDialogsTimeoutMs: 60_000 })).extensionDialogsTimeoutMs).toBe(60_000);
+  });
+});
+
+describe("optional session daemon automation runtime", () => {
+  it("does not load or construct the automation subsystem when disabled", async () => {
+    const load = vi.fn(() => Promise.resolve({ createSessiondAutomationRuntime: vi.fn(() => automationRuntime()) }));
+
+    await expect(loadOptionalSessiondAutomationRuntime(false, automationDependencies, load)).resolves.toBeUndefined();
+
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("loads and constructs the automation subsystem when enabled", async () => {
+    const created = automationRuntime();
+    const createSessiondAutomationRuntime = vi.fn(() => created);
+    const load = vi.fn(() => Promise.resolve({ createSessiondAutomationRuntime }));
+
+    await expect(loadOptionalSessiondAutomationRuntime(true, automationDependencies, load)).resolves.toBe(created);
+
+    expect(load).toHaveBeenCalledOnce();
+    expect(createSessiondAutomationRuntime).toHaveBeenCalledWith(automationDependencies);
   });
 });

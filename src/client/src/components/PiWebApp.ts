@@ -1006,7 +1006,9 @@ export class PiWebApp extends LitElement {
     else if (isTerminalEvent(event)) {
       this.applyTerminalEvent(event);
       if (event.type === "terminal.exited") void this.refreshWorkspaceDeletionRuns();
-    } else this.sessions.applyGlobalEvent(event);
+    } else if (event.type !== "automation.changed" && event.type !== "automation.run.changed") {
+      this.sessions.applyGlobalEvent(event);
+    }
   }
 
   private applyTerminalEvent(event: TerminalUiEvent): void {

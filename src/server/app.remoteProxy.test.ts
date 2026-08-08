@@ -25,6 +25,33 @@ describe("buildApp remote machine proxy routes", () => {
     expect(request).toHaveBeenCalledWith("GET", "/api/projects?active=true", undefined);
   });
 
+  it("keeps automation ownership on the selected remote machine", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((method, path, body) => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ method, path, body })]),
+    }));
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const runsResponse = await appTestContext.app.inject({
+      method: "GET",
+      url: `/api/machines/${remote.id}/automation-runs?projectId=p1&workspaceId=w1&limit=25`,
+    });
+    const updateBody = { projectId: "p1", workspaceId: "w1", expectedRevision: 3, enabled: false };
+    const updateResponse = await appTestContext.app.inject({
+      method: "PATCH",
+      url: `/api/machines/${remote.id}/automations/automation-1`,
+      payload: updateBody,
+    });
+
+    expect(runsResponse.json()).toEqual({ method: "GET", path: "/api/automation-runs?projectId=p1&workspaceId=w1&limit=25" });
+    expect(updateResponse.json()).toEqual({ method: "PATCH", path: "/api/automations/automation-1", body: updateBody });
+    expect(request).toHaveBeenNthCalledWith(1, "GET", "/api/automation-runs?projectId=p1&workspaceId=w1&limit=25", undefined);
+    expect(request).toHaveBeenNthCalledWith(2, "PATCH", "/api/automations/automation-1", updateBody);
+  });
+
   it("preserves the force-refresh query when proxying update checks", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

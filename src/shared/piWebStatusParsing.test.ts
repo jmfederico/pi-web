@@ -1,22 +1,23 @@
 import { describe, expect, it } from "vitest";
+import { PI_WEB_CAPABILITIES } from "./capabilities";
 import { parsePiWebComponentStatus, parsePiWebInstallationInfo, parsePiWebRuntimeResponse, parsePiWebVersionResponse } from "./piWebStatusParsing";
 
 describe("PI WEB status parsing", () => {
-  it("drops every advertised capability string while the registry is empty", () => {
+  it("keeps known capabilities while dropping retired and unknown strings", () => {
     expect(parsePiWebRuntimeResponse({
       packageName: "@jmfederico/pi-web",
       generatedAt: "now",
       components: {
-        web: { component: "web", label: "Web/UI", runtimeVersion: "1.0.0", available: true, capabilities: ["piPackages.manage", "future.capability"] },
-        sessiond: { component: "sessiond", label: "Session daemon", runtimeVersion: "1.0.0", available: true, capabilities: ["future.sessiondCapability"] },
+        web: { component: "web", label: "Web/UI", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.automations, "piPackages.manage", "future.capability"] },
+        sessiond: { component: "sessiond", label: "Session daemon", runtimeVersion: "1.0.0", available: true, capabilities: [PI_WEB_CAPABILITIES.automations, "future.sessiondCapability"] },
       },
-      capabilities: ["piPackages.manage", "future.capability"],
+      capabilities: [PI_WEB_CAPABILITIES.automations, "piPackages.manage", "future.capability"],
     })).toMatchObject({
       components: {
-        web: { capabilities: [] },
-        sessiond: { capabilities: [] },
+        web: { capabilities: [PI_WEB_CAPABILITIES.automations] },
+        sessiond: { capabilities: [PI_WEB_CAPABILITIES.automations] },
       },
-      capabilities: [],
+      capabilities: [PI_WEB_CAPABILITIES.automations],
     });
   });
 

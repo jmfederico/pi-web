@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, askUserEnabled, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, agentDirEnvSource, agentSessionDirEnvKeys, askUserEnabled, automationsEnabled, effectiveAgentConfig, effectivePiWebConfig, hasAgentDirEnvOverride, hasAgentSessionDirEnvOverride, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -198,6 +198,20 @@ describe("PI WEB config persistence", () => {
     expect(effectivePiWebConfig(testOptions()).config.uploads).toEqual({ defaultFolder: DEFAULT_UPLOADS_FOLDER });
   });
 
+  it("resolves automations in the effective config and round-trips an opt-out", () => {
+    expect(effectivePiWebConfig(testOptions()).config.automations).toBe(true);
+
+    expect(savePiWebConfig({ automations: false }, testOptions()).config).toEqual({ automations: false });
+    expect(loadPiWebConfig(testOptions()).config).toEqual({ automations: false });
+    expect(effectivePiWebConfig(testOptions()).config.automations).toBe(false);
+  });
+
+  it("rejects a non-boolean automations key", async () => {
+    await writeFile(configPath, `${JSON.stringify({ automations: "yes" }, null, 2)}\n`, "utf8");
+
+    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config automations must be a boolean");
+  });
+
   it("resolves askUser in the effective config so the runtime has a single source of truth", async () => {
     expect(effectivePiWebConfig(testOptions()).config.askUser).toBe(true);
 
@@ -248,6 +262,13 @@ describe("extensionDialogsTimeoutMs", () => {
     await writeFile(configPath, `${JSON.stringify({ extensionDialogsTimeoutMs: 0 }, null, 2)}\n`, "utf8");
 
     expect(effectivePiWebConfig(testOptions()).config.extensionDialogsTimeoutMs).toBe(0);
+  });
+});
+
+describe("automationsEnabled", () => {
+  it("is on by default and honors an explicit opt-out", () => {
+    expect(automationsEnabled({})).toBe(true);
+    expect(automationsEnabled({ automations: false })).toBe(false);
   });
 });
 

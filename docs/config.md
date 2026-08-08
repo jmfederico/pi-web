@@ -39,7 +39,7 @@ Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `agent.command` / `agent.dir` / `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs`: restart the session daemon on that machine.
+- `agent.command` / `agent.dir` / `automations` / `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `plugins`: reload the browser tab after changing PI WEB plugin enablement.
@@ -63,6 +63,7 @@ Process restarts depend on the key:
     "command": "pi",
     "dir": "~/agent-profiles/research"
   },
+  "automations": true,
   "spawnSessions": true,
   "subsessions": false,
   "askUser": true,
@@ -144,7 +145,7 @@ worktree_path="$1"
 
 ## Configuration matrix
 
-Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `agent`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine registry/tokens stay local.
+Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `agent`, `automations`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine registry/tokens stay local.
 
 | Config | JSON key | Env var | Scope | Project-local behavior | Applies / restart |
 | --- | --- | --- | --- | --- | --- |
@@ -157,6 +158,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
 | Companion CLI command | `agent.command` | `PI_WEB_AGENT_COMMAND` | Global/session daemon | Not supported locally | Restart session daemon on that machine; affects doctor/status/update checks |
 | Agent profile state directory | `agent.dir` | `PI_WEB_AGENT_DIR` (`PI_CODING_AGENT_DIR` for Pi compatibility) | Global/session daemon | Not supported locally | Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and Pi-package-backed PI WEB plugins |
+| Workspace automations | `automations` | — | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions (beta) | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
@@ -303,6 +305,12 @@ Each run is bounded: it is aborted after **60 seconds**, and a run that times ou
 Models fetched by a background refresh appear the next time a client asks for the model list, so a model selector left open across a refresh may need to be reopened.
 
 To turn the background refresh off entirely, set `PI_WEB_OFFLINE` or `PI_OFFLINE` in the session daemon's environment and restart it. In offline mode PI WEB performs no provider catalog network requests, including after logins, and sessions use the catalogs already stored in the agent profile. The `PI_WEB_SKIP_VERSION_CHECK` and `PI_SKIP_VERSION_CHECK` keys do **not** affect this refresh; they only suppress PI WEB release checks.
+
+### Workspace automations
+
+`automations` controls whether the selected machine's session daemon loads workspace automation support. It defaults to `true`. Use **Settings → Session daemon → Workspace automations** to disable it, then restart the session daemon.
+
+When disabled, the daemon does not load the automation runtime or SQLite native binding, open `automations.sqlite`, acquire its ownership record, register automation routes, or start scheduler polling. It also stops advertising the automation capability, which hides the workspace Automations panel. Existing definitions and run history stay on disk unchanged. Re-enabling the feature resumes from that durable state and applies the normal missed-occurrence behavior described in the [Automations reference](automations.md).
 
 ### Session daemon tools
 

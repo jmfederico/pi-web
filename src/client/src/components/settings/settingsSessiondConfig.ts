@@ -3,6 +3,10 @@ import type { ActiveAgentProfileDescriptor, PiWebConfigEnvOverrides, PiWebConfig
 
 export type AgentProfileActivationState = "active" | "restart-required" | "unavailable";
 
+export function automationsConfigPatch(enabled: boolean): PiWebConfigValues {
+  return { automations: enabled };
+}
+
 export function spawnSessionsConfigPatch(enabled: boolean): PiWebConfigValues {
   return { spawnSessions: enabled };
 }

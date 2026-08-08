@@ -102,6 +102,7 @@
             <a href="#agent-runtime">Agent profile and companion CLI</a>
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#catalog-refresh">Model catalog refresh</a>
+            <a href="#workspace-automations">Workspace automations</a>
             <a href="#session-tools">Session tools</a>
             <a href="#extension-dialogs">Extension dialogs</a>
             <a href="#prompt-completions">Prompt completions</a>
@@ -174,7 +175,7 @@
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
-                <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code>: restart the session daemon on that machine.</li>
+                <li><code>agent.command</code> / <code>agent.dir</code> / <code>automations</code> / <code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
@@ -211,6 +212,7 @@
     "command": "pi",
     "dir": "~/agent-profiles/research"
   },
+  "automations": true,
   "spawnSessions": true,
   "subsessions": false,
   "askUser": true,
@@ -331,7 +333,7 @@ worktree_path="$1"
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
-                <code>maxUploadBytes</code>, <code>agent</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
+                <code>maxUploadBytes</code>, <code>agent</code>, <code>automations</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
                 are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
                 registry/tokens stay local.
               </p>
@@ -412,6 +414,14 @@ worktree_path="$1"
                       <td>Global/session daemon</td>
                       <td>Not supported locally</td>
                       <td>Restart session daemon on that machine; affects auth, models, settings, sessions, Pi packages, and Pi-package-backed PI WEB plugins</td>
+                    </tr>
+                    <tr>
+                      <td>Workspace automations</td>
+                      <td><code>automations</code></td>
+                      <td>—</td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
                       <td>Agent can spawn sessions</td>
@@ -823,6 +833,24 @@ worktree_path="$1"
                 network requests, including after logins, and sessions use the catalogs already stored in the agent
                 profile. The <code>PI_WEB_SKIP_VERSION_CHECK</code> and <code>PI_SKIP_VERSION_CHECK</code> keys do
                 <strong>not</strong> affect this refresh; they only suppress PI WEB release checks.
+              </p>
+            </section>
+
+            <section id="workspace-automations">
+              <h2>Workspace automations</h2>
+              <p>
+                <code>automations</code> controls whether the selected machine's session daemon loads workspace
+                automation support. It defaults to <code>true</code>. Use
+                <strong>Settings → Session daemon → Workspace automations</strong> to disable it, then restart the
+                session daemon.
+              </p>
+              <p>
+                When disabled, the daemon does not load the automation runtime or SQLite native binding, open
+                <code>automations.sqlite</code>, acquire its ownership record, register automation routes, or start
+                scheduler polling. It also stops advertising the automation capability, which hides the workspace
+                Automations panel. Existing definitions and run history stay on disk unchanged. Re-enabling resumes
+                from that durable state and applies the normal missed-occurrence behavior in the
+                <a href="automations">Automations reference</a>.
               </p>
             </section>
 

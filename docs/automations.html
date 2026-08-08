@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PI WEB Automations — scheduled Pi sessions, timeouts, and usage</title>
+    <meta name="description" content="Create durable PI WEB automations with schedules, fixed models, timeouts, cancellation, run history, token usage, and estimated-cost visualizations." />
+    <link rel="canonical" href="https://pi-web.dev/automations" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PI WEB" />
+    <meta property="og:title" content="PI WEB Automations" />
+    <meta property="og:description" content="Schedule fresh Pi sessions and supervise their duration, model, token usage, and estimated cost." />
+    <meta property="og:url" content="https://pi-web.dev/automations" />
+    <meta property="og:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
+    <meta property="og:image:alt" content="PI WEB browser UI for persistent Pi Coding Agent sessions" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PI WEB Automations" />
+    <meta name="twitter:description" content="Schedule fresh Pi sessions and supervise their duration, model, token usage, and estimated cost." />
+    <meta name="twitter:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+    <script>
+      (() => {
+        const theme = window.localStorage.getItem("pi-web-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="container nav" aria-label="Main navigation">
+        <a class="brand" href="./" aria-label="PI WEB home">PI WEB</a>
+        <div class="nav-links">
+          <div class="nav-pages">
+            <a href="remote-first">Remote-first</a>
+            <a href="machines">Fleet</a>
+            <a href="automations" aria-current="page">Automations</a>
+            <a href="install">Install</a>
+            <a href="config">Config</a>
+            <a href="plugins">Plugins</a>
+            <a href="faq">FAQ</a>
+          </div>
+          <div class="nav-actions">
+            <a class="github-link" href="https://github.com/jmfederico/pi-web" aria-label="PI WEB on GitHub"><span>GitHub</span></a>
+            <button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle light and dark theme"><span data-theme-icon aria-hidden="true">◐</span><span data-theme-label>Theme</span></button>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main>
+      <section class="page-hero">
+        <div class="container">
+          <p class="eyebrow"><span class="pulse"></span> Durable agent work</p>
+          <h1>Schedule Pi sessions. Keep control of every run.</h1>
+          <p>Create workspace automations with explicit models and deadlines, then inspect which jobs ran, how long they took, and how many tokens and estimated dollars they consumed.</p>
+        </div>
+      </section>
+
+      <section class="section compact">
+        <div class="container doc-layout">
+          <aside class="toc" aria-label="Automations page contents">
+            <strong>On this page</strong>
+            <a href="#workflow">Create and test</a>
+            <a href="#disable">Disable automations</a>
+            <a href="#federation">Machine federation</a>
+            <a href="#triggers">Triggers</a>
+            <a href="#models">Models</a>
+            <a href="#timeouts">Timeouts and cancellation</a>
+            <a href="#history">History and usage</a>
+            <a href="#restarts">Restarts</a>
+            <a href="#security">Security</a>
+          </aside>
+
+          <div class="doc-content">
+            <section id="workflow">
+              <h2>Create, test, then enable</h2>
+              <p>Select a machine, project, and workspace, then open <strong>Automations</strong> in the workspace panel. New definitions are saved disabled. Use <strong>Run now</strong> to test the exact revision before enabling its schedule.</p>
+              <p>Editing a job creates a new revision, pauses it, and requires another completed manual test. Each run gets a fresh, independent Pi session.</p>
+            </section>
+
+            <section id="disable">
+              <h2>Disable automations on a machine</h2>
+              <p>Automations are enabled by default. To turn the feature off for the selected machine, disable <strong>Settings → Session daemon → Workspace automations</strong>, then restart that machine's session daemon.</p>
+              <p>While disabled, the daemon does not load the automation runtime or SQLite native binding, open the automation database, acquire its ownership record, register automation routes, or poll for due work. The workspace Automations panel is hidden. Definitions and history stay unchanged on disk; re-enabling resumes from that durable state and applies the normal missed-occurrence rules.</p>
+            </section>
+
+            <section id="federation">
+              <h2>Machine-owned, federation-aware</h2>
+              <p>Automations belong to the machine that owns the selected workspace. For a federated machine, the controlling gateway forwards automation requests while the remote <code>pi-web-sessiond</code> stores definitions and history, resolves its own models and workspace, and runs the schedule locally.</p>
+              <p>The browser and controlling gateway may disconnect or restart without stopping the remote schedule. The unversioned <code>automations</code> capability is the stable baseline federation contract; future optional operations will use separate feature capabilities. Definitions are not replicated and do not fail over automatically. To move one, recreate it against a destination workspace so that machine can validate its model and settings.</p>
+            </section>
+
+            <section id="triggers">
+              <h2>Manual and scheduled triggers</h2>
+              <ul>
+                <li><strong>Manual:</strong> run only on demand.</li>
+                <li><strong>One shot:</strong> run once at a future timestamp.</li>
+                <li><strong>Interval:</strong> use a fixed cadence of at least one minute.</li>
+                <li><strong>Cron:</strong> use a six-field expression and an explicit IANA timezone.</li>
+              </ul>
+              <p>The same automation never overlaps itself. Colliding scheduled occurrences are recorded as skipped instead of starting another session.</p>
+            </section>
+
+            <section id="models">
+              <h2>Visible model and thinking settings</h2>
+              <p>Every automation card shows its model, provider, thinking policy, and timeout. Fixed models are validated again at dispatch and never silently replaced. Historical runs preserve the actual model and thinking level that were used.</p>
+            </section>
+
+            <section id="timeouts">
+              <h2>Hard deadlines and durable cancellation</h2>
+              <p>The default execution timeout is 60 minutes and can be set from one minute through 24 hours. PI WEB records cancellation intent before aborting the Pi session. If a soft abort does not settle within 15 seconds, it force-closes the runtime.</p>
+              <p>Runs become <code>unknown</code> when PI WEB cannot prove termination. Cancellation cannot undo external effects that already completed.</p>
+            </section>
+
+            <section id="history">
+              <h2>Run inbox and visual analytics</h2>
+              <p>The workspace view includes a run timeline, median and p95 duration, outcomes, root-session tokens, estimated spend, per-automation usage totals, and links to resulting sessions.</p>
+              <p>Costs are model-pricing estimates unless a provider reports an authoritative charge. Unknown and partial usage stays visibly unknown rather than becoming zero. Current totals cover the fresh root session and do not silently include untracked subagents or paid external tools.</p>
+            </section>
+
+            <section id="restarts">
+              <h2>Daemon-owned persistence</h2>
+              <p>Definitions, revisions, occurrences, attempts, cancellation, and terminal usage live in <code>automations.sqlite</code> under <code>$PI_WEB_DATA_DIR</code>. The daemon acquires an exclusive runtime-owner record before listening or recovering work, so a second live daemon using the same database refuses to start. Browser and web/API restarts reconstruct state from the long-lived session daemon.</p>
+              <p>After an unexpected daemon restart, queued runs remain eligible, while ambiguous starting or running attempts become unknown and are never blindly repeated.</p>
+              <p>The unreleased schedule-plugin prototype's <code>.pi-web/scheduled-sessions.json</code> format is not imported because it lacks the revision, attempt, cancellation, and accounting records required by this runtime. Development-branch prototype definitions must be recreated.</p>
+            </section>
+
+            <section id="security">
+              <h2>Know the boundary</h2>
+              <p>A fresh session isolates conversational context, not the host. Automations run with the target machine's Pi configuration and OS-user permissions. PI WEB revalidates the registered project and workspace before dispatch, but prompts and tools can still exercise the permissions granted to Pi.</p>
+              <div class="doc-actions"><a class="button primary" href="automations.md">Complete Markdown reference</a><a class="button" href="config">Configuration</a></div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span>PI WEB docs</span>
+        <div class="footer-links">
+          <a href="./">Home</a><a href="remote-first">Remote-first</a><a href="machines">Fleet</a><a href="automations">Automations</a><a href="install">Install</a><a href="config">Config</a><a href="plugins">Plugins</a><a href="faq">FAQ</a><a href="https://github.com/jmfederico/pi-web">GitHub</a>
+        </div>
+      </div>
+    </footer>
+    <script src="site.js"></script>
+  </body>
+</html>

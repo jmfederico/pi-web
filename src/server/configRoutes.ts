@@ -13,6 +13,7 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "pathAccess",
   "uploads",
   "maxUploadBytes",
+  "automations",
   "spawnSessions",
   "subsessions",
   "askUser",
@@ -130,6 +131,7 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   const pathAccess = value["pathAccess"];
   const uploads = value["uploads"];
   const maxUploadBytes = value["maxUploadBytes"];
+  const automations = value["automations"];
   const spawnSessions = value["spawnSessions"];
   const subsessions = value["subsessions"];
   const askUser = value["askUser"];
@@ -148,6 +150,10 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   if (pathAccess !== undefined) config.pathAccess = parsePathAccessRequest(pathAccess);
   if (uploads !== undefined) config.uploads = parseUploadsConfig(uploads, "request");
   if (maxUploadBytes !== undefined) config.maxUploadBytes = parseMaxUploadBytesRequest(maxUploadBytes);
+  if (automations !== undefined) {
+    if (typeof automations !== "boolean") throw new Error("PI WEB config automations must be a boolean");
+    config.automations = automations;
+  }
   if (spawnSessions !== undefined) {
     if (typeof spawnSessions !== "boolean") throw new Error("PI WEB config spawnSessions must be a boolean");
     config.spawnSessions = spawnSessions;
@@ -170,6 +176,7 @@ function pickSelectedMachineConfig(config: PiWebConfigValues): PiWebConfig {
     ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
+    ...(config.automations !== undefined ? { automations: config.automations } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
     ...(config.askUser !== undefined ? { askUser: config.askUser } : {}),

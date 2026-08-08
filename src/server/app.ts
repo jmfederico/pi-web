@@ -209,7 +209,6 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
   registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon);
   registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
-
   registerMachineProxyRoutes(app, machines);
 
   const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");

@@ -39,6 +39,7 @@ describe("config routes", () => {
       host: "0.0.0.0",
       port: 9000,
       allowedHosts: true,
+      automations: false,
       spawnSessions: true,
       subsessions: true,
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
@@ -145,6 +146,7 @@ describe("config routes", () => {
     const selectedMachinePatch: PiWebConfigValues = {
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads\\manual" },
+      automations: false,
       spawnSessions: true,
       agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
     };
@@ -159,6 +161,7 @@ describe("config routes", () => {
       ...fullConfig(),
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads/manual" },
+      automations: false,
       spawnSessions: true,
       agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
     };
@@ -170,6 +173,7 @@ describe("config routes", () => {
       pathAccess: { allowedPaths: ["/srv/repos"] },
       uploads: { defaultFolder: "uploads/manual" },
       maxUploadBytes: 1024,
+      automations: false,
       spawnSessions: true,
       subsessions: false,
       agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
@@ -229,15 +233,18 @@ describe("config routes", () => {
     expect(service.write).not.toHaveBeenCalled();
   });
 
-  it("rejects invalid local selected-machine config values before writing", async () => {
+  it.each([
+    { config: { automations: "yes" }, error: "automations must be a boolean" },
+    { config: { spawnSessions: "yes" }, error: "spawnSessions must be a boolean" },
+  ])("rejects invalid local selected-machine config values before writing: $error", async ({ config, error }) => {
     const response = await app.inject({
       method: "PUT",
       url: "/api/machines/local/config",
-      payload: { config: { spawnSessions: "yes" } },
+      payload: { config },
     });
 
     expect(response.statusCode).toBe(400);
-    expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config spawnSessions must be a boolean");
+    expect(response.json<{ error: string }>().error).toContain(`PI WEB selected-machine config ${error}`);
     expect(service.write).not.toHaveBeenCalled();
   });
 });
@@ -252,6 +259,7 @@ function fullConfig(): PiWebConfigValues {
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
     maxUploadBytes: 1024,
+    automations: false,
     spawnSessions: false,
     subsessions: false,
     agent: { command: "agent-lab", dir: "/srv/agent-lab" },
@@ -264,6 +272,7 @@ function selectedMachineConfig(): PiWebConfigValues {
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
     maxUploadBytes: 1024,
+    automations: false,
     spawnSessions: false,
     subsessions: false,
     agent: { command: "agent-lab", dir: "/srv/agent-lab" },
