@@ -44,6 +44,9 @@ interface PolicyHarness {
 const tempDirs: string[] = [];
 const services: PiSessionService[] = [];
 
+/** Pi's built-in extension (llama.cpp) registers a native provider in every bootstrap. */
+const BUILTIN_LLAMA_PROVIDER_ID = "llama.cpp";
+
 const IGNORED_MUTATION_MESSAGE = "ignored provider mutation after global bootstrap";
 
 function modelId(providerId: string, variant: string): string {
@@ -258,7 +261,7 @@ describe("immutable global provider bootstrap acceptance", () => {
     });
     expect(logEntries).toContainEqual({
       level: "info",
-      details: { context: "global-provider-bootstrap", providerIds: ["global-config", "global-native"] },
+      details: { context: "global-provider-bootstrap", providerIds: ["global-config", "global-native", BUILTIN_LLAMA_PROVIDER_ID] },
       message: "global extension provider baseline bootstrapped and frozen",
     });
 
@@ -266,7 +269,7 @@ describe("immutable global provider bootstrap acceptance", () => {
     const session = await service.start(cwd);
     const ref = { id: session.id, cwd };
 
-    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native"]);
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native", BUILTIN_LLAMA_PROVIDER_ID]);
     expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
     expect(runtime.getRegisteredNativeProvider("global-native")).toBe(baselineNative);
     expect(runtime.getModel("global-config", modelId("global-config", "baseline"))).toMatchObject({
@@ -285,6 +288,7 @@ describe("immutable global provider bootstrap acceptance", () => {
     expectIgnoredMutations(logEntries, [
       { operation: "registerProvider", providerId: "global-config" },
       { operation: "registerNativeProvider", providerId: "global-native" },
+      { operation: "registerNativeProvider", providerId: BUILTIN_LLAMA_PROVIDER_ID },
     ]);
     await expectNoProviderMutationFeedback(service, ref);
   });
@@ -335,7 +339,7 @@ describe("immutable global provider bootstrap acceptance", () => {
     const session = await service.start(cwd);
     const ref = { id: session.id, cwd };
 
-    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native"]);
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config", "global-native", BUILTIN_LLAMA_PROVIDER_ID]);
     expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
     expect(runtime.getRegisteredNativeProvider("global-native")).toBe(baselineNative);
     expect(runtime.getRegisteredProviderConfig("project-config")).toBeUndefined();
@@ -360,6 +364,7 @@ describe("immutable global provider bootstrap acceptance", () => {
       { operation: "registerProvider", providerId: "project-config" },
       { operation: "registerNativeProvider", providerId: "global-native" },
       { operation: "registerNativeProvider", providerId: "project-native" },
+      { operation: "registerNativeProvider", providerId: BUILTIN_LLAMA_PROVIDER_ID },
       { operation: "unregisterProvider", providerId: "global-config" },
       { operation: "unregisterProvider", providerId: "global-native" },
     ]);
@@ -399,7 +404,10 @@ describe("immutable global provider bootstrap acceptance", () => {
     ]));
     // The extension body replays its unchanged startup config when the session
     // loads it; that is not a catalog change and stays an ignored no-op.
-    expectIgnoredMutations(logEntries, [{ operation: "registerProvider", providerId }]);
+    expectIgnoredMutations(logEntries, [
+      { operation: "registerProvider", providerId },
+      { operation: "registerNativeProvider", providerId: BUILTIN_LLAMA_PROVIDER_ID },
+    ]);
     expect(logEntries).toContainEqual({
       level: "info",
       details: {
@@ -438,6 +446,7 @@ describe("immutable global provider bootstrap acceptance", () => {
     expect(runtime.getModel(providerId, modelId(providerId, "late-refresh-secret"))).toBeUndefined();
     expectIgnoredMutations(logEntries, [
       { operation: "registerProvider", providerId },
+      { operation: "registerNativeProvider", providerId: BUILTIN_LLAMA_PROVIDER_ID },
     ]);
     expect(JSON.stringify(ignoredMutationEntries(logEntries))).not.toContain("late-refresh-secret");
     await expectNoProviderMutationFeedback(service, ref);
@@ -513,7 +522,7 @@ describe("immutable global provider bootstrap acceptance", () => {
 
     expect(runtime.getModel("global-acme", modelId("global-acme", "baseline"))).toBeDefined();
     expect(runtime.getModel("project-acme", modelId("project-acme", "baseline"))).toBeUndefined();
-    expect(runtime.getRegisteredProviderIds()).toEqual([]);
+    expect(runtime.getRegisteredProviderIds()).toEqual([BUILTIN_LLAMA_PROVIDER_ID]);
     await expectNoProviderMutationFeedback(service, ref);
   });
 });

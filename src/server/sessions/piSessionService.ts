@@ -21,13 +21,19 @@ import {
   type EditToolDetails,
   type ExtensionUIDialogOptions,
   type ExtensionUIContext,
+  type InlineExtension,
   type ModelRuntime,
   type ProjectTrustContext,
   type ProjectTrustEvent,
   type ProjectTrustEventResult,
   type ResourceDiagnostic,
 } from "@earendil-works/pi-coding-agent";
+<<<<<<< HEAD
 import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionModelCatalogEntry, ClientSessionStatus, ClientSessionTreeForkRequest, ClientSessionTreeForkResult, ClientSessionTreeNavigateRequest, ClientSessionTreeNavigateResult, ClientThinkingLevel, SessionStreamSnapshot, SessionUiEvent } from "../types.js";
+=======
+import { loadPiBuiltinExtensions } from "./piBuiltinExtensions.js";
+import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionStatus, ClientSessionTreeForkRequest, ClientSessionTreeForkResult, ClientSessionTreeNavigateRequest, ClientSessionTreeNavigateResult, ClientThinkingLevel, SessionStreamSnapshot, SessionUiEvent } from "../types.js";
+>>>>>>> 9328422 (Add support for llama cpp provider)
 import { projectBrowserMessage } from "../browserMessageProjection.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -910,6 +916,14 @@ export function piWebResourceLoaderOptions(
   return { appendSystemPromptOverride: (base) => [...base, ...appendSystemPromptSections] };
 }
 
+function mergeResourceLoaderOptions(
+  base: CreateAgentSessionServicesOptions["resourceLoaderOptions"],
+  extensionFactories: InlineExtension[],
+): CreateAgentSessionServicesOptions["resourceLoaderOptions"] | undefined {
+  if (extensionFactories.length === 0) return base;
+  return { extensionFactories, ...base };
+}
+
 function createDefaultRuntimeFactory(
   modelRuntime: ModelRuntime,
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
@@ -920,6 +934,10 @@ function createDefaultRuntimeFactory(
 ): PiWebCreateAgentSessionRuntimeFactory {
   const resourceLoaderOptions = piWebResourceLoaderOptions(appendSystemPromptSections);
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
+    // Pi's built-in extensions (llama.cpp provider) are only injected by the
+    // SDK CLI; sessions load them explicitly so the provider is registered
+    // even when the daemon-side bootstrap degraded without them.
+    const extensionFactories = await loadPiBuiltinExtensions();
     // PI WEB always honors pi's project-trust model. When the workspace ships
     // trust-requiring resources, trust is resolved exactly once, mirroring the
     // SDK's flow: the resource loader first loads the pre-trust extension set
@@ -936,12 +954,13 @@ function createDefaultRuntimeFactory(
     // land in the runtime diagnostics next to the services diagnostics,
     // exactly as the CLI appends its project-trust diagnostics.
     const projectTrustDiagnostics: AgentSessionRuntimeDiagnostic[] = [];
+    const mergedResourceLoaderOptions = mergeResourceLoaderOptions(resourceLoaderOptions, extensionFactories);
     const services: AgentSessionServices = await createAgentSessionServices({
       cwd,
       agentDir,
       modelRuntime,
       settingsManager,
-      ...(resourceLoaderOptions === undefined ? {} : { resourceLoaderOptions }),
+      ...(mergedResourceLoaderOptions === undefined ? {} : { resourceLoaderOptions: mergedResourceLoaderOptions }),
       ...(projectTrustRequiring
         ? {
             resourceLoaderReloadOptions: {

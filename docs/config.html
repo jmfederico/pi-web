@@ -784,6 +784,39 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
               </div>
             </section>
 
+            <section id="llama-cpp">
+              <h2>Local models with llama.cpp</h2>
+              <p>
+                PI WEB registers Pi's built-in <strong>llama.cpp</strong> provider alongside your other global
+                providers, so a local <a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> router works like
+                any other provider.
+              </p>
+              <ol>
+                <li>
+                  Run <code>llama-server</code> in router mode on the machine where PI WEB's session daemon runs, for
+                  example:
+                  <pre><code>llama-server --router --port 8080</code></pre>
+                </li>
+                <li>
+                  In the PI WEB browser, open the auth dialog for the <code>llama.cpp</code> provider (the model
+                  selector's auth control, or <code>/login llama.cpp</code> in a session). It asks for the server URL
+                  (defaults to <code>http://127.0.0.1:8080</code>, overridable with the <code>LLAMA_BASE_URL</code>
+                  environment variable) and an optional API key, then verifies the server responds.
+                </li>
+                <li>
+                  After login, the models the router reports as loaded appear in the model selector and are refreshed
+                  by the <a href="#catalog-refresh">background catalog refresh</a>. Models the router has not loaded do
+                  not appear.
+                </li>
+              </ol>
+              <p>
+                Model load/unload/download management stays in Pi's interactive TUI (<code>/llama</code> in a terminal
+                <code>pi</code> session); PI WEB has no UI for it yet. Like every provider, the llama.cpp registration
+                is part of the daemon-startup baseline: changing your server setup takes effect after
+                <code>pi-web-sessiond</code> restarts.
+              </p>
+            </section>
+
             <section id="catalog-refresh">
               <h2>Background model catalog refresh</h2>
               <p>

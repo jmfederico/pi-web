@@ -287,6 +287,21 @@ This prevents accidental provider, configuration, or credential contamination be
 
 Configure providers before the daemon starts: use the active agent directory's `models.json`, or install the Pi extension globally in that agent directory. Project Pi extensions and project-level `models.json` files cannot add providers to PI WEB's shared baseline. After updating PI WEB—or after installing, removing, or updating a global Pi extension that registers providers—manually restart `pi-web-sessiond.service` (`systemctl --user restart pi-web-sessiond`). Restarting only the web/API service and running `/reload` do not rebuild the baseline.
 
+### Local models with llama.cpp
+
+PI WEB registers Pi's built-in **llama.cpp** provider alongside your other global providers, so a local [llama.cpp](https://github.com/ggml-org/llama.cpp) router works like any other provider.
+
+1. Run `llama-server` in router mode on the machine where PI WEB's session daemon runs, for example:
+
+   ```bash
+   llama-server --router --port 8080
+   ```
+
+2. In the PI WEB browser, open the auth dialog for the `llama.cpp` provider (the model selector's auth control, or `/login llama.cpp` in a session). It asks for the server URL (defaults to `http://127.0.0.1:8080`, overridable with the `LLAMA_BASE_URL` environment variable) and an optional API key, then verifies the server responds.
+3. After login, the models the router reports as loaded appear in the model selector and are refreshed by the [background catalog refresh](#background-model-catalog-refresh). Models the router has not loaded do not appear.
+
+Model load/unload/download management stays in Pi's interactive TUI (`/llama` in a terminal `pi` session); PI WEB has no UI for it yet. Like every provider, the llama.cpp registration is part of the daemon-startup baseline: changing your server setup takes effect after `pi-web-sessiond` restarts.
+
 ### Background model catalog refresh
 
 PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Requests never start a catalog fetch of their own, so a slow or unreachable provider cannot stall opening the model selector, starting a session, or the auth dialogs on its own account.

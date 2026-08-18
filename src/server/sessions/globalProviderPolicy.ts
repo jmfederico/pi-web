@@ -8,6 +8,7 @@ import {
   type AgentSessionServices,
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
+import { loadPiBuiltinExtensions } from "./piBuiltinExtensions.js";
 
 /** Structured logging boundary supplied by the session daemon. */
 export interface GlobalProviderBootstrapLogger {
@@ -65,7 +66,15 @@ function isModelsOnlyProviderUpdate(baseline: RegisteredProviderConfig, incoming
 async function loadGlobalExtensionServices(runtime: ModelRuntime, agentDir: string): Promise<AgentSessionServices> {
   const scratchCwd = await mkdtemp(join(tmpdir(), "pi-web-global-ext-"));
   try {
-    return await createAgentSessionServices({ cwd: scratchCwd, agentDir, modelRuntime: runtime });
+    // Pi's built-in extensions (llama.cpp provider) are only injected by the
+    // SDK CLI, so the daemon loads them explicitly against the shared runtime.
+    const extensionFactories = await loadPiBuiltinExtensions();
+    return await createAgentSessionServices({
+      cwd: scratchCwd,
+      agentDir,
+      modelRuntime: runtime,
+      ...(extensionFactories.length === 0 ? {} : { resourceLoaderOptions: { extensionFactories } }),
+    });
   } finally {
     await rm(scratchCwd, { recursive: true, force: true });
   }
