@@ -336,5 +336,3 @@ export function parseAuthSlashCommand(text: string): { command: "login" | "logou
   const providerId = match[2];
   return providerId === undefined || providerId === "" ? { command } : { command, providerId };
 }
-
-export type { AuthDialogState } from "../appState";

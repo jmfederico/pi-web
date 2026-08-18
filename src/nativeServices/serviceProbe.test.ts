@@ -180,7 +180,7 @@ describe("spawn probe command runner", () => {
 describe("launchd authoritative native-service probe", () => {
   it("bootstraps a uniquely labelled one-shot agent in gui/<uid> and always cleans it up", async () => {
     const runner = queuedRunner([completed(0), completed(0)]);
-    const fileSystem = launchdFileSystem({
+    const { fileSystem, writeFile, removeDirectory } = launchdFileSystem({
       "/tmp/probe/result.log": marker("sessiond.command.npm", "satisfied"),
     });
     let now = 0;
@@ -201,27 +201,27 @@ describe("launchd authoritative native-service probe", () => {
       ["launchctl", "bootstrap", "gui/501", "/tmp/probe/probe.plist"],
       ["launchctl", "bootout", "gui/501/com.pi-web.authoritative-probe.501.fixed"],
     ]);
-    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+    expect(writeFile).toHaveBeenCalledWith(
       "/tmp/probe/probe.plist",
       expect.stringContaining("<string>/bin/zsh</string>"),
       0o600,
     );
-    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+    expect(writeFile).toHaveBeenCalledWith(
       "/tmp/probe/probe.plist",
       expect.stringContaining("<key>WorkingDirectory</key>\n  <string>/checkout with space</string>"),
       0o600,
     );
-    expect(fileSystem.writeFile).toHaveBeenCalledWith(
+    expect(writeFile).toHaveBeenCalledWith(
       "/tmp/probe/probe.plist",
       expect.stringContaining("/bin/mv &apos;/tmp/probe/result.pending&apos; &apos;/tmp/probe/result.log&apos;"),
       0o600,
     );
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("times out deterministically, boots out the agent, and removes temporary files", async () => {
     const runner = queuedRunner([completed(0), completed(0)]);
-    const fileSystem = launchdFileSystem({});
+    const { fileSystem, removeDirectory } = launchdFileSystem({});
     let now = 0;
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
@@ -243,13 +243,13 @@ describe("launchd authoritative native-service probe", () => {
       command: "launchctl",
       args: ["bootout", "gui/502/com.pi-web.authoritative-probe.502.fixed"],
     });
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("bounds a stalled result-file read before cleaning up", async () => {
     const runner = queuedRunner([completed(0), completed(0)]);
-    const fileSystem = launchdFileSystem({});
-    fileSystem.readOptionalFile.mockReturnValueOnce(new Promise(() => undefined));
+    const { fileSystem, readOptionalFile, removeDirectory } = launchdFileSystem({});
+    readOptionalFile.mockReturnValueOnce(new Promise(() => undefined));
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -267,12 +267,12 @@ describe("launchd authoritative native-service probe", () => {
       reason: "timeout",
     });
     expect(runner.calls.map(({ args }) => args[0])).toEqual(["bootstrap", "bootout"]);
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("surfaces cleanup failure instead of returning an otherwise successful probe", async () => {
     const runner = queuedRunner([completed(0), completed(1, "", "bootout denied")]);
-    const fileSystem = launchdFileSystem({
+    const { fileSystem, removeDirectory } = launchdFileSystem({
       "/tmp/probe/result.log": marker("sessiond.command.npm", "satisfied"),
     });
     const probe = new LaunchdNativeServiceProbe({
@@ -290,7 +290,7 @@ describe("launchd authoritative native-service probe", () => {
     const result = await probe.run(request("launchd"));
     expect(result).toMatchObject({ kind: "infrastructure-failure", reason: "cleanup" });
     expect(result.kind === "infrastructure-failure" && result.message).toContain("bootout denied");
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("boots out a label when bootstrap itself times out", async () => {
@@ -298,7 +298,7 @@ describe("launchd authoritative native-service probe", () => {
       { kind: "timeout", stdout: "", stderr: "" },
       completed(0),
     ]);
-    const fileSystem = launchdFileSystem({});
+    const { fileSystem, removeDirectory } = launchdFileSystem({});
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -316,7 +316,7 @@ describe("launchd authoritative native-service probe", () => {
       reason: "timeout",
     });
     expect(runner.calls.map(({ args }) => args[0])).toEqual(["bootstrap", "bootout"]);
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("treats an explicit not-loaded bootout response as successful cleanup after bootstrap fails", async () => {
@@ -324,7 +324,7 @@ describe("launchd authoritative native-service probe", () => {
       completed(1, "", "bootstrap denied"),
       completed(3, "", "Could not find service in domain"),
     ]);
-    const fileSystem = launchdFileSystem({});
+    const { fileSystem, removeDirectory } = launchdFileSystem({});
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -341,12 +341,12 @@ describe("launchd authoritative native-service probe", () => {
     expect(result).toMatchObject({ kind: "infrastructure-failure", reason: "manager" });
     expect(result.kind === "infrastructure-failure" && result.message).toContain("bootstrap denied");
     expect(runner.calls.map(({ args }) => args[0])).toEqual(["bootstrap", "bootout"]);
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("cleans a loaded label after malformed private result output", async () => {
     const runner = queuedRunner([completed(0), completed(0)]);
-    const fileSystem = launchdFileSystem({ "/tmp/probe/result.log": "malformed result" });
+    const { fileSystem, removeDirectory } = launchdFileSystem({ "/tmp/probe/result.log": "malformed result" });
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -364,13 +364,13 @@ describe("launchd authoritative native-service probe", () => {
       reason: "malformed-output",
     });
     expect(runner.calls.at(-1)?.args[0]).toBe("bootout");
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("cleans a loaded label when the private result cannot be read", async () => {
     const runner = queuedRunner([completed(0), completed(0)]);
-    const fileSystem = launchdFileSystem({});
-    fileSystem.readOptionalFile.mockRejectedValueOnce(new Error("read denied"));
+    const { fileSystem, readOptionalFile, removeDirectory } = launchdFileSystem({});
+    readOptionalFile.mockRejectedValueOnce(new Error("read denied"));
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -387,7 +387,7 @@ describe("launchd authoritative native-service probe", () => {
     expect(result).toMatchObject({ kind: "infrastructure-failure", reason: "manager" });
     expect(result.kind === "infrastructure-failure" && result.message).toContain("Could not read launchd probe result");
     expect(runner.calls.at(-1)?.args[0]).toBe("bootout");
-    expect(fileSystem.removeDirectory).toHaveBeenCalledWith("/tmp/probe");
+    expect(removeDirectory).toHaveBeenCalledWith("/tmp/probe");
   });
 
   it("reports temporary-file cleanup failures", async () => {
@@ -395,8 +395,8 @@ describe("launchd authoritative native-service probe", () => {
       completed(1, "", "bootstrap denied"),
       completed(3, "", "Could not find service in domain"),
     ]);
-    const fileSystem = launchdFileSystem({});
-    fileSystem.removeDirectory.mockRejectedValueOnce(new Error("rm denied"));
+    const { fileSystem, removeDirectory } = launchdFileSystem({});
+    removeDirectory.mockRejectedValueOnce(new Error("rm denied"));
     const probe = new LaunchdNativeServiceProbe({
       commandRunner: runner,
       fileSystem,
@@ -481,16 +481,24 @@ describe("probe service definitions", () => {
   });
 });
 
-function launchdFileSystem(contents: Record<string, string>): LaunchdProbeFileSystem & {
+interface LaunchdFileSystemMocks {
+  fileSystem: LaunchdProbeFileSystem;
   writeFile: ReturnType<typeof vi.fn<LaunchdProbeFileSystem["writeFile"]>>;
   readOptionalFile: ReturnType<typeof vi.fn<LaunchdProbeFileSystem["readOptionalFile"]>>;
   removeDirectory: ReturnType<typeof vi.fn<LaunchdProbeFileSystem["removeDirectory"]>>;
-} {
+}
+
+function launchdFileSystem(contents: Record<string, string>): LaunchdFileSystemMocks {
   const writeFileMock = vi.fn<LaunchdProbeFileSystem["writeFile"]>(() => Promise.resolve());
   const readOptionalFileMock = vi.fn<LaunchdProbeFileSystem["readOptionalFile"]>((path) => Promise.resolve(contents[path] ?? null));
   const removeDirectoryMock = vi.fn<LaunchdProbeFileSystem["removeDirectory"]>(() => Promise.resolve());
   return {
-    createTemporaryDirectory: () => Promise.resolve("/tmp/probe"),
+    fileSystem: {
+      createTemporaryDirectory: () => Promise.resolve("/tmp/probe"),
+      writeFile: writeFileMock,
+      readOptionalFile: readOptionalFileMock,
+      removeDirectory: removeDirectoryMock,
+    },
     writeFile: writeFileMock,
     readOptionalFile: readOptionalFileMock,
     removeDirectory: removeDirectoryMock,

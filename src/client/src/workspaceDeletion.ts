@@ -2,7 +2,7 @@ import { workspaceDeleteOperation, workspaceDeleteOperationMetadataKey, targetWo
 import type { AppState } from "./appState";
 import type { TerminalCommandRun, Workspace } from "./api";
 
-export { targetWorkspaceIdMetadataKey, workspaceDeleteOperation, workspaceDeleteOperationMetadataKey, workspaceDeletionMetadata } from "../../shared/workspaceDeletion";
+export { workspaceDeleteOperation, workspaceDeletionMetadata } from "../../shared/workspaceDeletion";
 
 /** Removal availability and wording come from the current owner, never Git fields. */
 export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {

@@ -10,20 +10,11 @@ import {
 import { reconcilePiWebPluginLifecycle, type ProviderRuntimeLoadResult } from "./piWebPluginLifecycle.js";
 import { WorkspaceCatalogProtocolError, type WorkspaceProviderRuntimeReader } from "./workspaces/workspaceCatalog.js";
 
-export type { PiWebPluginInfo, PiWebPluginsResponse, PiWebPluginScope } from "../shared/apiTypes.js";
+export type { PiWebPluginsResponse, PiWebPluginScope } from "../shared/apiTypes.js";
 export {
-  DefaultPiPackageProvider,
   PiWebPluginCatalog,
-  type ConfiguredPiPackage,
-  type LocalPluginRoot,
   type PiPackageProvider,
-  type PiWebPluginCatalogDiagnostic,
-  type PiWebPluginCatalogBrowserRoot,
-  type PiWebPluginCatalogDiagnosticCode,
-  type PiWebPluginCatalogEntry,
-  type PiWebPluginCatalogModule,
   type PiWebPluginCatalogOptions,
-  type PiWebPluginCatalogSnapshot,
   type PiWebPluginPackageEntry,
 } from "./piWebPluginCatalog.js";
 

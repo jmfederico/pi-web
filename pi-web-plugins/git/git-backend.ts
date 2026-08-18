@@ -18,7 +18,7 @@ import {
 } from "./browser/git-contract.js";
 
 export { GIT_DIFF_OPERATION, GIT_STATUS_OPERATION } from "./browser/git-contract.js";
-export type { GitDiffResponse, GitFileState, GitStatusFile, GitStatusResponse } from "./browser/git-contract.js";
+export type { GitDiffResponse, GitStatusResponse } from "./browser/git-contract.js";
 
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const GIT_LOCAL_ENV_VARS = Object.freeze([
