@@ -41,6 +41,43 @@ describe("groupChatMessages", () => {
     ]);
   });
 
+  it("keeps image content visible outside collapsed event groups", () => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "QUJD" };
+    const messages: ChatLine[] = [
+      { role: "tool", parts: [{ type: "toolResult", toolName: "read", text: "Read image file [image/png]", isError: false }, image] },
+    ];
+
+    expect(groupChatMessages(messages)).toEqual([
+      {
+        kind: "group",
+        startIndex: 0,
+        endIndex: 0,
+        messages: [{ role: "tool", parts: [{ type: "toolResult", toolName: "read", text: "Read image file [image/png]", isError: false }] }],
+      },
+      { kind: "tool-image", index: 0, message: { role: "tool", parts: [image] }, toolName: "read" },
+    ]);
+  });
+
+  it("preserves image metadata when splitting technical and readable parts", () => {
+    const meta = { timestamp: "2026-07-13T22:00:00.000Z" };
+    const image = { type: "image" as const, mimeType: "image/webp", data: "QUJD" };
+    const message: ChatLine = { role: "tool", parts: [{ type: "toolResult", toolName: "read", text: "ok", isError: false }, image], meta };
+
+    expect(groupChatMessages([message])).toEqual([
+      { kind: "group", startIndex: 0, endIndex: 0, messages: [{ role: "tool", parts: [message.parts[0]], meta }] },
+      { kind: "tool-image", index: 0, message: { role: "tool", parts: [image], meta }, toolName: "read" },
+    ]);
+  });
+
+  it("keeps user images as ordinary messages", () => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "QUJD" };
+    const message: ChatLine = { role: "user", parts: [image] };
+
+    expect(groupChatMessages([message])).toEqual([
+      { kind: "message", index: 0, message },
+    ]);
+  });
+
   it("preserves message metadata when grouping", () => {
     const message: ChatLine = { role: "assistant", parts: [{ type: "thinking", text: "hidden" }, { type: "text", text: "shown" }], meta: { timestamp: "2026-05-09T12:00:00.000Z", model: { provider: "test", id: "model" } } };
 

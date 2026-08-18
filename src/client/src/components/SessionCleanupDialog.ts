@@ -2,11 +2,10 @@ import { LitElement, css, html, type PropertyValues, type TemplateResult } from 
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupRequest } from "../api";
 import { canRunSessionCleanup, confirmSessionCleanup, DEFAULT_SESSION_CLEANUP_DRAFT, selectedSessionCleanupProjectCwds, sessionCleanupPreviewForSelectedProjects, sessionCleanupPreviewHasTargets, sessionCleanupRequestKey, validateSessionCleanupDraft, type SessionCleanupDraft } from "../sessionCleanupUi";
+import "./ModalSurface";
 
 @customElement("session-cleanup-dialog")
 export class SessionCleanupDialog extends LitElement {
-  @property({ type: Boolean }) canCleanup = true;
-  @property({ type: String }) unavailableMessage = "Update and restart Pi-Web on this machine to clean up sessions.";
   @property({ attribute: false }) preview?: SessionCleanupPreviewResponse;
   @property({ attribute: false }) previewRequest?: SessionCleanupRequest;
   @property({ attribute: false }) result?: SessionCleanupExecuteResponse;
@@ -28,32 +27,30 @@ export class SessionCleanupDialog extends LitElement {
   override render(): TemplateResult {
     const validation = validateSessionCleanupDraft(this.draft);
     const selectedPreview = this.selectedPreview();
-    const runEnabled = canRunSessionCleanup({ canCleanup: this.canCleanup, draft: this.draft, preview: selectedPreview, previewRequest: this.previewRequest, loading: this.loading, running: this.running });
+    const runEnabled = canRunSessionCleanup({ draft: this.draft, preview: selectedPreview, previewRequest: this.previewRequest, loading: this.loading, running: this.running });
     const runTitle = runEnabled ? "Run cleanup" : selectedPreview !== undefined && !sessionCleanupPreviewHasTargets(selectedPreview) ? "Select at least one project to run cleanup" : "Preview cleanup before running it";
     return html`
-      <div class="backdrop" @mousedown=${() => { this.onClose?.(); }}>
-        <section role="dialog" aria-modal="true" aria-label="Clean up sessions" @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>
-          <header>
-            <div>
-              <span class="eyebrow">Sessions</span>
-              <h1>Clean up sessions</h1>
-            </div>
-            <button class="close-button" title="Close cleanup" aria-label="Close cleanup" @click=${() => { this.onClose?.(); }}>×</button>
-          </header>
-          <div class="body">
-            <p class="intro">Preview manual cleanup for this machine before archiving idle sessions or permanently deleting old archived sessions.</p>
-            ${this.canCleanup ? this.renderForm(validation.ok ? "" : validation.error) : this.renderUnavailable()}
-            ${this.renderMessage()}
-            ${this.preview === undefined ? null : this.renderPreview(this.preview)}
-            ${this.result === undefined ? null : this.renderResult(this.result)}
+      <modal-surface .onClose=${() => { this.onClose?.(); }} .label=${"Clean up sessions"}>
+        <header>
+          <div>
+            <span class="eyebrow">Sessions</span>
+            <h1>Clean up sessions</h1>
           </div>
-          <footer>
-            <button @click=${() => { this.onClose?.(); }}>${this.result === undefined ? "Cancel" : "Close"}</button>
-            <button ?disabled=${!this.canCleanup || this.loading || this.running} @click=${() => { this.previewCleanup(); }}>${this.loading ? "Previewing…" : "Preview"}</button>
-            <button class="danger" ?disabled=${!runEnabled} title=${runTitle} @click=${() => { this.runCleanup(); }}>${this.running ? "Running…" : "Run cleanup"}</button>
-          </footer>
-        </section>
-      </div>
+          <button class="close-button" title="Close cleanup" aria-label="Close cleanup" @click=${() => { this.onClose?.(); }}>×</button>
+        </header>
+        <div class="body">
+          <p class="intro">Preview manual cleanup for this machine before archiving idle sessions or permanently deleting old archived sessions.</p>
+          ${this.renderForm(validation.ok ? "" : validation.error)}
+          ${this.renderMessage()}
+          ${this.preview === undefined ? null : this.renderPreview(this.preview)}
+          ${this.result === undefined ? null : this.renderResult(this.result)}
+        </div>
+        <footer>
+          <button @click=${() => { this.onClose?.(); }}>${this.result === undefined ? "Cancel" : "Close"}</button>
+          <button ?disabled=${this.loading || this.running} @click=${() => { this.previewCleanup(); }}>${this.loading ? "Previewing…" : "Preview"}</button>
+          <button class="danger" ?disabled=${!runEnabled} title=${runTitle} @click=${() => { this.runCleanup(); }}>${this.running ? "Running…" : "Run cleanup"}</button>
+        </footer>
+      </modal-surface>
     `;
   }
 
@@ -80,10 +77,6 @@ export class SessionCleanupDialog extends LitElement {
       ${validationError === "" ? null : html`<div class="dialog-error" role="alert">${validationError}</div>`}
       ${previewOutOfDate ? html`<div class="hint" role="status">Thresholds changed. Preview again before running cleanup.</div>` : null}
     `;
-  }
-
-  private renderUnavailable(): TemplateResult {
-    return html`<div class="unavailable" role="status">${this.unavailableMessage}</div>`;
   }
 
   private renderMessage(): TemplateResult | null {
@@ -202,7 +195,7 @@ export class SessionCleanupDialog extends LitElement {
     }
     const selectedPreview = this.selectedPreview();
     const selectedProjectCwds = this.selectedProjectCwdsForPreview();
-    if (!canRunSessionCleanup({ canCleanup: this.canCleanup, draft: this.draft, preview: selectedPreview, previewRequest: this.previewRequest })) {
+    if (!canRunSessionCleanup({ draft: this.draft, preview: selectedPreview, previewRequest: this.previewRequest })) {
       this.formError = selectedPreview !== undefined && !sessionCleanupPreviewHasTargets(selectedPreview) ? "Select at least one project to run cleanup." : "Preview cleanup before running it.";
       return;
     }
@@ -211,20 +204,12 @@ export class SessionCleanupDialog extends LitElement {
     void this.onRun?.({ ...validation.request, projectCwds: selectedProjectCwds });
   }
 
-  private handleKeyDown(event: KeyboardEvent): void {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
-    this.onClose?.();
-  }
-
   static override styles = css`
     :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    .backdrop { box-sizing: border-box; width: 100%; height: 100dvh; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: var(--pi-overlay); overflow: hidden; }
-    section[role="dialog"] { width: min(760px, 100%); max-height: min(760px, 100%); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid var(--pi-border); border-radius: 14px; background: var(--pi-bg); box-shadow: 0 20px 60px var(--pi-shadow-strong); overflow: hidden; }
+    modal-surface { --modal-surface-backdrop-padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); --modal-surface-width: min(760px, 100%); --modal-surface-max-height: min(760px, 100%); --modal-surface-radius: 14px; }
     header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--pi-border); }
     footer { border-top: 1px solid var(--pi-border); border-bottom: 0; justify-content: end; }
-    .body { min-height: 0; overflow: auto; display: grid; gap: 14px; padding: 16px; }
+    .body { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; gap: 14px; padding: 16px; }
     .eyebrow { display: block; color: var(--pi-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
     h1, h2, p { margin: 0; }
     h1 { font-size: 20px; line-height: 1.2; }
@@ -235,9 +220,8 @@ export class SessionCleanupDialog extends LitElement {
     input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--pi-accent); }
     input.days { box-sizing: border-box; width: 88px; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 8px 9px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
     input.days:disabled { opacity: .55; }
-    .warning, .unavailable, .dialog-error, .result { border: 1px solid var(--pi-border); border-radius: 10px; padding: 10px 12px; }
+    .warning, .dialog-error, .result { border: 1px solid var(--pi-border); border-radius: 10px; padding: 10px 12px; }
     .warning { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); color: var(--pi-text); }
-    .unavailable { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); color: var(--pi-warning); }
     .dialog-error { border-color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); color: var(--pi-danger); }
     .result { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
     .preview { display: grid; gap: 10px; min-width: 0; }
@@ -260,8 +244,7 @@ export class SessionCleanupDialog extends LitElement {
     .close-button:hover, .close-button:focus { color: var(--pi-text); background: var(--pi-surface-hover); }
 
     @media (max-width: 680px) {
-      .backdrop { padding: 0; place-items: stretch; }
-      section[role="dialog"] { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+      modal-surface { --modal-surface-backdrop-padding: 0; --modal-surface-place-items: stretch; --modal-surface-width: 100%; --modal-surface-max-height: none; --modal-surface-border: 0; --modal-surface-radius: 0; }
       .toggle-row { grid-template-columns: auto minmax(0, 1fr); }
       .toggle-row input.days { grid-column: 2; }
       .toggle-row span:last-child { grid-column: 2; }

@@ -1,27 +1,32 @@
+// Skeleton of a PI WEB plugin: metadata plus contribution definitions.
+//
+// Everything the bundled Info panel and action actually render lives in
+// infoInternals.ts. That file is replaceable implementation detail — when
+// copying this plugin as a starting point, keep this file's shape and swap
+// the internals for your own.
+
 import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
+import { copyDiagnostics, renderInfoPanel } from "./infoInternals.js";
 
 const plugin: PiWebPlugin = {
-  apiVersion: 1,
+  apiVersion: 2,
   name: "Info Plugin",
   activate: ({ html, svg }) => ({
     contributions: {
       actions: [
         {
-          id: "workspace.show-path",
-          title: "Show Current Workspace Path",
+          id: "copy-diagnostics",
+          title: "Copy PI WEB Diagnostics",
+          description: "Copy version, installation, and status details for this machine, ready to paste into a bug report",
           group: "Info",
-          enabled: (context) => context.state.selectedWorkspace !== undefined,
-          run: (context) => {
-            const path = context.state.selectedWorkspace?.path ?? "No workspace selected";
-            window.alert(path);
-          },
+          run: (context) => copyDiagnostics(context),
         },
       ],
       workspaceLabels: [
         {
           id: "workspace.kind-label",
           order: 100,
-          items: (context) => [{ type: "text", text: context.workspace.isGitRepo ? "git" : "folder", title: context.workspace.path }],
+          items: (context) => [{ type: "text", text: context.workspace.provider?.pluginId ?? "folder", title: context.workspace.path }],
         },
       ],
       workspacePanels: [
@@ -36,14 +41,7 @@ const plugin: PiWebPlugin = {
             </svg>
           `,
           order: 1000,
-          render: (context) => html`
-            <section class="toolbar"><strong>Info</strong></section>
-            <section class="viewer">
-              <p><strong>Workspace</strong></p>
-              <p class="muted">${context.workspace.label}</p>
-              <p class="muted">${context.workspace.path}</p>
-            </section>
-          `,
+          render: (context) => renderInfoPanel(html, context),
         },
       ],
     },

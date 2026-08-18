@@ -31,7 +31,7 @@ describe("buildApp active profile composition", () => {
       writePiPackageSettings(secondAgentDir, [secondPackageDir]),
     ]);
 
-    let result: SessionDaemonAgentProfileResult = { status: "available", profile: activeProfile("a", "first-agent", firstAgentDir) };
+    let result: SessionDaemonAgentProfileResult = { status: "available", profile: activeProfile(firstAgentDir) };
     const getActiveAgentProfile = vi.fn(() => Promise.resolve(result));
     const app = await buildApp({
       agentProfileProvider: { getActiveAgentProfile },
@@ -48,7 +48,7 @@ describe("buildApp active profile composition", () => {
       expect(pluginIds(firstPlugins.json())).toContain("profile-first");
       expect(pluginIds(firstPlugins.json())).not.toContain("profile-second");
 
-      result = { status: "available", profile: activeProfile("b", "second-agent", secondAgentDir) };
+      result = { status: "available", profile: activeProfile(secondAgentDir) };
 
       const secondPackages = await app.inject({ method: "GET", url: "/api/pi-packages" });
       const secondPlugins = await app.inject({ method: "GET", url: "/api/plugins" });
@@ -58,6 +58,57 @@ describe("buildApp active profile composition", () => {
       expect(pluginIds(secondPlugins.json())).toContain("profile-second");
       expect(pluginIds(secondPlugins.json())).not.toContain("profile-first");
       expect(getActiveAgentProfile).toHaveBeenCalledTimes(4);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("keeps desired plugin config editable when sessiond is unavailable and a desired agent profile is configured", async () => {
+    const agentDir = join(tempDir, "desired-agent");
+    const packageDir = join(tempDir, "offline-package");
+    await writePackagePlugin(packageDir, "offline-browser");
+    await writePiPackageSettings(agentDir, [packageDir]);
+    let config: PiWebConfigResponse["config"] = { plugins: { "offline-browser": { enabled: true } }, agent: { command: "pi", dir: agentDir } };
+    const configService: PiWebConfigService = {
+      read: () => Promise.resolve(configResponse(config)),
+      write: (next) => {
+        config = { ...config, ...next };
+        return Promise.resolve(configResponse(config));
+      },
+    };
+    const app = await buildApp({
+      agentProfileProvider: { getActiveAgentProfile: () => Promise.resolve({ status: "unavailable", error: "sessiond is offline" }) },
+      config: configService,
+      sessionDaemon: {
+        request: () => Promise.reject(new Error("connect ECONNREFUSED")),
+        connectWebSocket: () => { throw new Error("sessiond is offline"); },
+      },
+      clientDist: false,
+      logger: false,
+    });
+
+    try {
+      const before = await app.inject({ method: "GET", url: "/api/plugins" });
+      expect(before.statusCode).toBe(200);
+      const beforeBody = before.json<{ plugins: unknown[]; serverRuntime: { status: string } }>();
+      expect(beforeBody.plugins).toEqual(expect.arrayContaining([expect.objectContaining({ id: "offline-browser", enabled: true })]));
+      expect(beforeBody.serverRuntime).toMatchObject({ status: "unavailable" });
+
+      const saved = await app.inject({
+        method: "PUT",
+        url: "/api/machines/local/config",
+        payload: { config: { plugins: { "offline-browser": { enabled: false } } } },
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json()).toMatchObject({ config: { plugins: { "offline-browser": { enabled: false } } } });
+
+      const after = await app.inject({ method: "GET", url: "/api/plugins" });
+      const manifest = await app.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });
+      expect(after.statusCode).toBe(200);
+      expect(after.json<{ plugins: unknown[] }>().plugins).toEqual(expect.arrayContaining([expect.objectContaining({ id: "offline-browser", enabled: false })]));
+      const manifestBody = manifest.json<{ lifecycleVersion: number; plugins: { id: string }[] }>();
+      expect(manifestBody.lifecycleVersion).toBe(1);
+      expect(manifestBody.plugins.map(({ id }) => id)).not.toContain("offline-browser");
     } finally {
       await app.close();
     }
@@ -91,13 +142,10 @@ describe("buildApp active profile composition", () => {
   });
 });
 
-function activeProfile(revisionCharacter: string, command: string, dir: string): ActiveAgentProfileDescriptor {
+function activeProfile(dir: string): ActiveAgentProfileDescriptor {
   return {
-    schemaVersion: 1,
-    revision: `sha256:${revisionCharacter.repeat(64)}`,
-    command,
+    schemaVersion: 2,
     dir,
-    sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
   };
 }
 
@@ -111,9 +159,26 @@ async function writePackagePlugin(root: string, pluginId: string): Promise<void>
   await writeFile(join(root, "package.json"), `${JSON.stringify({
     name: `@test/${pluginId}`,
     version: "1.0.0",
-    piWeb: { plugins: [{ id: pluginId, module: "pi-web-plugin.js" }] },
+    piWeb: { plugins: [{ id: pluginId, browserRoot: ".", module: "pi-web-plugin.js" }] },
   }, null, 2)}\n`, "utf8");
   await writeFile(join(root, "pi-web-plugin.js"), "export default {};\n", "utf8");
+}
+
+function configResponse(config: PiWebConfigResponse["config"]): PiWebConfigResponse {
+  return {
+    path: join(tempDir, "config.json"),
+    exists: true,
+    config,
+    effectiveConfig: config,
+    envOverrides: {
+      host: false,
+      port: false,
+      allowedHosts: false,
+      spawnSessions: false,
+      subsessions: false,
+      askUser: false,
+    },
+  };
 }
 
 function emptyConfigService(): PiWebConfigService {
@@ -128,9 +193,7 @@ function emptyConfigService(): PiWebConfigService {
       allowedHosts: false,
       spawnSessions: false,
       subsessions: false,
-      agentCommand: false,
-      agentDir: false,
-      agentSessionDir: false,
+      askUser: false,
     },
   };
   return {

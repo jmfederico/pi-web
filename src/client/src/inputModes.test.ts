@@ -31,4 +31,11 @@ describe("input mode helpers", () => {
     expect(inputModeForDraft("open !@\"vendor/file.ts")).toEqual({ kind: "file" });
     expect(inputModeForDraft("open \"src/main.ts")).toEqual({ kind: "normal" });
   });
+
+  it("collapses # model completion tokens to model mode", () => {
+    expect(inputModeForDraft("#anthropic/claude-opus")).toEqual({ kind: "model" });
+    expect(inputModeForDraft("use #gpt-5.2")).toEqual({ kind: "model" });
+    expect(inputModeForDraft("use #gpt-5.2 please")).toEqual({ kind: "normal" });
+    expect(inputModeForDraft("# ")).toEqual({ kind: "normal" });
+  });
 });

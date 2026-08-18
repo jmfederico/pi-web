@@ -30,6 +30,34 @@ describe("RemoteMachineClient", () => {
     expect(init.body).toBe(JSON.stringify({ cwd: "/repo" }));
   });
 
+  it("propagates caller cancellation into the remote fetch", async () => {
+    let fetchSignal: AbortSignal | null | undefined;
+    const fetchImpl = vi.fn<typeof fetch>((_input, init) => {
+      fetchSignal = init?.signal;
+      return new Promise<Response>((_resolve, rejectPromise) => {
+        init?.signal?.addEventListener("abort", () => {
+          const reason: unknown = init.signal?.reason;
+          rejectPromise(reason instanceof Error ? reason : new DOMException("Cancelled", "AbortError"));
+        }, { once: true });
+      });
+    });
+    const client = new RemoteMachineClient({ baseUrl: "https://remote.example.test/" }, fetchImpl);
+    const controller = new AbortController();
+
+    const pending = client.request("DELETE", "/api/projects/p1/workspaces/w1", { precondition: "v1.confirmed" }, {
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+    const expectation = expect(pending).rejects.toMatchObject({
+      statusCode: 502,
+      message: "Remote machine request cancelled",
+    });
+    controller.abort(new DOMException("Gateway request cancelled", "AbortError"));
+    await expectation;
+
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
   it("requests compression for the remote hop even when configured headers use different casing", async () => {
     const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(new Response("ok", { status: 200 })));
     const client = new RemoteMachineClient({

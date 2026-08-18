@@ -20,8 +20,7 @@ export function projectBrowserMessage(message: unknown): unknown {
   return content === originalContent ? message : { ...message, content };
 }
 
-export function projectBrowserMessageResponse(response: unknown[] | MessagePage): unknown[] | MessagePage {
-  if (Array.isArray(response)) return mapChanged(response, projectBrowserMessage);
+export function projectBrowserMessageResponse(response: MessagePage): MessagePage {
   const messages = mapChanged(response.messages, projectBrowserMessage);
   return messages === response.messages ? response : { ...response, messages };
 }

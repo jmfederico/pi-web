@@ -26,6 +26,8 @@ function escapeHtml(text: string): string {
     .replaceAll(">", "&gt;");
 }
 
+const TABLE_SCROLL_CLASS = "table-scroll";
+
 function sanitizeHtml(html: string): string {
   const template = document.createElement("template");
   template.innerHTML = html;
@@ -41,7 +43,23 @@ function sanitizeHtml(html: string): string {
       element.setAttribute("rel", "noreferrer noopener");
     }
   });
+  wrapTablesInScrollRegions(template.content);
   return template.innerHTML;
+}
+
+// Markdown tables stay at their natural width and scroll horizontally instead of
+// being squeezed into the chat column, which is unreadable on narrow screens.
+function wrapTablesInScrollRegions(root: DocumentFragment): void {
+  root.querySelectorAll("table").forEach((table) => {
+    if (table.parentElement?.classList.contains(TABLE_SCROLL_CLASS) === true) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = TABLE_SCROLL_CLASS;
+    wrapper.setAttribute("role", "region");
+    wrapper.setAttribute("aria-label", "Table");
+    wrapper.setAttribute("tabindex", "0");
+    table.before(wrapper);
+    wrapper.append(table);
+  });
 }
 
 function isSafeUrl(url: string): boolean {

@@ -2,7 +2,7 @@ import { css, html, LitElement, type PropertyValues, type TemplateResult } from 
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../../actions";
 import type { PiWebConfigResponse, PiWebConfigValues, PiWebShortcutConfig } from "../../api";
-import { formatShortcut, isShortcutSequenceStarter, parseShortcutInput, resolveShortcutBindings, shortcutSequenceTimeoutMs, shortcutTokenFromEvent, type ShortcutBindingResolution } from "../../keyboardShortcuts";
+import { formatShortcut, isShortcutSequenceStarter, parseShortcutInput, resolveShortcutBindings, shortcutPreferenceForAction, shortcutSequenceTimeoutMs, shortcutTokenFromEvent, type ShortcutBindingResolution } from "../../keyboardShortcuts";
 import { readPromptEnterPreference, writePromptEnterPreference, type PromptEnterPreference } from "../../promptEnterBehavior";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
@@ -165,7 +165,7 @@ export class SettingsShortcutsPanel extends LitElement {
 
   private renderShortcutRow(action: AppAction, resolution: ShortcutBindingResolution | undefined): TemplateResult {
     const shortcuts = this.configResponse?.config.shortcuts;
-    const configured = shortcutPreference(action.id, shortcuts);
+    const configured = shortcutPreferenceForAction(action, shortcuts);
     const state = shortcutState(action, shortcuts);
     const inputText = this.shortcutInputText(action);
     const parsedInput = inputText.trim() === "" ? undefined : parseShortcutInput(inputText);
@@ -207,8 +207,8 @@ export class SettingsShortcutsPanel extends LitElement {
           <div class="shortcut-actions">
             <button class="primary" ?disabled=${this.loading || this.saving || !hasDraft || inputText.trim() === ""} @click=${() => { void this.saveShortcut(action); }}>Save</button>
             <button ?disabled=${this.loading || this.saving} @click=${() => { void this.toggleRecording(action.id); }}>${this.recording?.actionId === action.id ? "Cancel recording" : "Record"}</button>
-            <button ?disabled=${this.loading || this.saving || configured === null} @click=${() => { void this.setShortcutNone(action.id); }}>None</button>
-            <button ?disabled=${this.loading || this.saving || !hasConfiguredShortcut} @click=${() => { void this.resetShortcut(action.id); }}>Reset</button>
+            <button ?disabled=${this.loading || this.saving || configured === null} @click=${() => { void this.setShortcutNone(action); }}>None</button>
+            <button ?disabled=${this.loading || this.saving || !hasConfiguredShortcut} @click=${() => { void this.resetShortcut(action); }}>Reset</button>
           </div>
         </div>
       </article>
@@ -218,7 +218,7 @@ export class SettingsShortcutsPanel extends LitElement {
   private shortcutInputText(action: AppAction): string {
     const draft = this.drafts[action.id];
     if (draft !== undefined) return draft;
-    const configured = shortcutPreference(action.id, this.configResponse?.config.shortcuts);
+    const configured = shortcutPreferenceForAction(action, this.configResponse?.config.shortcuts);
     if (configured === null) return "";
     return configured ?? action.shortcut ?? "";
   }
@@ -244,25 +244,26 @@ export class SettingsShortcutsPanel extends LitElement {
       return;
     }
     this.localError = "";
-    await this.saveShortcutPreference(action.id, parsed.shortcut);
+    await this.saveShortcutPreference(action, parsed.shortcut);
   }
 
-  private async setShortcutNone(actionId: string): Promise<void> {
+  private async setShortcutNone(action: AppAction): Promise<void> {
     this.stopRecording();
     this.localError = "";
-    await this.saveShortcutPreference(actionId, null);
+    await this.saveShortcutPreference(action, null);
   }
 
-  private async resetShortcut(actionId: string): Promise<void> {
+  private async resetShortcut(action: AppAction): Promise<void> {
     this.stopRecording();
     this.localError = "";
-    await this.saveShortcutPreference(actionId, undefined);
+    await this.saveShortcutPreference(action, undefined);
   }
 
-  private async saveShortcutPreference(actionId: string, shortcut: string | null | undefined): Promise<void> {
+  private async saveShortcutPreference(action: AppAction, shortcut: string | null | undefined): Promise<void> {
     const config: PiWebConfigValues = { ...(this.configResponse?.config ?? {}) };
     const currentShortcuts = config.shortcuts ?? {};
-    const shortcuts = shortcut === undefined ? withoutShortcutPreference(currentShortcuts, actionId) : { ...currentShortcuts, [actionId]: shortcut };
+    const migratedShortcuts = withoutShortcutPreferences(currentShortcuts, [action.id, ...(action.shortcutAliases ?? [])]);
+    const shortcuts = shortcut === undefined ? migratedShortcuts : { ...migratedShortcuts, [action.id]: shortcut };
     if (Object.keys(shortcuts).length === 0) {
       delete config.shortcuts;
     } else {
@@ -440,23 +441,19 @@ function compareActions(left: AppAction, right: AppAction): number {
   return (left.group ?? "Other").localeCompare(right.group ?? "Other") || left.title.localeCompare(right.title);
 }
 
-function shortcutPreference(actionId: string, shortcuts: PiWebShortcutConfig | undefined): string | null | undefined {
-  if (shortcuts === undefined || !Object.hasOwn(shortcuts, actionId)) return undefined;
-  return shortcuts[actionId];
-}
-
-function withoutShortcutPreference(shortcuts: PiWebShortcutConfig, actionId: string): PiWebShortcutConfig {
-  return Object.fromEntries(Object.entries(shortcuts).filter(([shortcutActionId]) => shortcutActionId !== actionId));
+function withoutShortcutPreferences(shortcuts: PiWebShortcutConfig, actionIds: readonly string[]): PiWebShortcutConfig {
+  const removed = new Set(actionIds);
+  return Object.fromEntries(Object.entries(shortcuts).filter(([shortcutActionId]) => !removed.has(shortcutActionId)));
 }
 
 function effectiveShortcut(action: AppAction, shortcuts: PiWebShortcutConfig | undefined): string | undefined {
-  const configured = shortcutPreference(action.id, shortcuts);
+  const configured = shortcutPreferenceForAction(action, shortcuts);
   if (configured === null) return undefined;
   return configured ?? action.shortcut;
 }
 
 function shortcutState(action: AppAction, shortcuts: PiWebShortcutConfig | undefined): ShortcutState {
-  const configured = shortcutPreference(action.id, shortcuts);
+  const configured = shortcutPreferenceForAction(action, shortcuts);
   if (configured === null) return "disabled";
   if (configured !== undefined) return "custom";
   return action.shortcut === undefined || action.shortcut === "" ? "unassigned" : "default";

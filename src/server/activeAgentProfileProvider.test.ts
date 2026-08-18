@@ -7,8 +7,8 @@ import {
   SessionDaemonActiveAgentProfileProvider,
 } from "./activeAgentProfileProvider.js";
 
-const firstProfile = activeProfile("a", "first-agent", "/state/first");
-const secondProfile = activeProfile("b", "second-agent", "/state/second");
+const firstProfile = activeProfile("/state/first");
+const secondProfile = activeProfile("/state/second");
 
 describe("SessionDaemonActiveAgentProfileProvider", () => {
   it("queries sessiond on every read and observes a new daemon profile epoch", async () => {
@@ -57,13 +57,10 @@ describe("requireActiveAgentProfile", () => {
   });
 });
 
-function activeProfile(revisionCharacter: string, command: string, dir: string): ActiveAgentProfileDescriptor {
+function activeProfile(dir: string): ActiveAgentProfileDescriptor {
   return {
-    schemaVersion: 1,
-    revision: `sha256:${revisionCharacter.repeat(64)}`,
-    command,
+    schemaVersion: 2,
     dir,
-    sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
   };
 }
 

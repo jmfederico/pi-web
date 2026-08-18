@@ -1,9 +1,12 @@
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { MachineRuntime, SessionInfo, SessionStatus } from "../api";
+import type { SessionInfo, SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { SessionController } from "../controllers/sessionController";
-import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
+// Template inspection here is the escape hatch for verifying the Clear-queue
+// callback wiring in a node environment (no DOM harness). See
+// templateInspection.testSupport for the proportionality rationale.
+import { templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";
 
 afterEach(() => {
@@ -12,9 +15,9 @@ afterEach(() => {
 });
 
 describe("PiWebApp queued-message clear wiring", () => {
-  it("passes a stable supported-runtime callback through to SessionController", () => {
+  it("passes a stable clear-queue callback through to SessionController", () => {
     const app = createApp();
-    const state = stateWithRuntime(runtimeWithCapabilities([PI_WEB_CAPABILITIES.sessionsClearQueue]));
+    const state = stateWithQueuedSession();
     setAppState(app, state);
     const controller = appSessionController(app);
     const clearServerQueue = vi.spyOn(controller, "clearServerQueue").mockResolvedValue(undefined);
@@ -24,25 +27,9 @@ describe("PiWebApp queued-message clear wiring", () => {
     const firstCallback = templateCallbackAfterMarker(firstRender, ".onClearServerQueue=");
     const secondCallback = templateCallbackAfterMarker(secondRender, ".onClearServerQueue=");
 
-    expect(templateValueAfterMarker(firstRender, ".canClearServerQueue=")).toBe(true);
     expect(secondCallback).toBe(firstCallback);
     firstCallback();
     expect(clearServerQueue).toHaveBeenCalledOnce();
-  });
-
-  it("passes false when runtime discovery is unavailable, unhealthy, or lacks the capability", () => {
-    const app = createApp();
-    const runtimes: (MachineRuntime | undefined)[] = [
-      undefined,
-      { ...runtimeWithCapabilities([PI_WEB_CAPABILITIES.sessionsClearQueue]), ok: false },
-      runtimeWithCapabilities([PI_WEB_CAPABILITIES.sessionsReload]),
-    ];
-
-    for (const runtime of runtimes) {
-      const state = stateWithRuntime(runtime);
-      setAppState(app, state);
-      expect(templateValueAfterMarker(renderChatView(app, state), ".canClearServerQueue=")).toBe(false);
-    }
   });
 });
 
@@ -59,7 +46,7 @@ function createApp(): PiWebApp {
   return new PiWebApp();
 }
 
-function stateWithRuntime(runtime: MachineRuntime | undefined): AppState {
+function stateWithQueuedSession(): AppState {
   const session: SessionInfo = {
     id: "session-1",
     cwd: "/repo",
@@ -73,12 +60,7 @@ function stateWithRuntime(runtime: MachineRuntime | undefined): AppState {
     ...initialAppState(),
     selectedSession: session,
     status: queuedStatus(),
-    machineRuntimes: runtime === undefined ? {} : { local: runtime },
   };
-}
-
-function runtimeWithCapabilities(capabilities: NonNullable<MachineRuntime["capabilities"]>): MachineRuntime {
-  return { machineId: "local", ok: true, checkedAt: "2026-07-14T00:00:00.000Z", capabilities };
 }
 
 function queuedStatus(): SessionStatus {
@@ -124,28 +106,4 @@ function templateCallbackAfterMarker(template: TemplateResult, marker: string): 
 
 function isClearServerQueueCallback(value: unknown): value is ClearServerQueueCallback {
   return typeof value === "function";
-}
-
-function templateValueAfterMarker(template: TemplateResult, marker: string): unknown {
-  const strings = templateStrings(template);
-  const values = templateValues(template);
-  const index = strings.findIndex((part) => part.includes(marker));
-  if (index < 0) throw new Error(`Expected template marker ${marker}`);
-  return values[index];
-}
-
-function templateStrings(template: TemplateResult): readonly string[] {
-  const strings = Reflect.get(template, "strings");
-  if (!isStringArray(strings)) throw new Error("TemplateResult strings were unavailable");
-  return strings;
-}
-
-function templateValues(template: TemplateResult): readonly unknown[] {
-  const values = Reflect.get(template, "values");
-  if (!Array.isArray(values)) throw new Error("TemplateResult values were unavailable");
-  return values.map((value: unknown) => value);
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
 }

@@ -1,12 +1,13 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { FileContentResponse, FileTreeEntry } from "../api";
-import { workspaceImagePreviewUrl } from "../api/urls";
+import type { FileTreeEntry } from "../api";
 import { workspaceUploadPath } from "../api/workspaceUploads";
 import type { WorkspaceUploadBatchState, WorkspaceUploadFileState } from "../workspaceUploadState";
-import { MAX_IMAGE_PREVIEW_BYTES, MAX_IMAGE_PREVIEW_LABEL } from "../../../shared/workspaceFiles";
 import type { WorkspacePanelContext } from "../plugins/types";
+import { formatFileSize } from "../utils/format";
+import { registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
 import { workspacePanelStyles } from "./shared";
+import "./WorkspaceFileViewer";
 
 interface PendingWorkspaceUploadReview {
   files: File[];
@@ -22,6 +23,8 @@ export interface WorkspaceUploadScope {
 export class WorkspaceFilesPanel extends LitElement {
   @property({ attribute: false }) context: WorkspacePanelContext | undefined;
   @query("#workspace-upload-input") private uploadInput?: HTMLInputElement;
+  @query(".dialog-backdrop") private uploadDialogBackdrop?: HTMLElement | null;
+  @query(".upload-dialog") private uploadDialog?: HTMLElement | null;
   @state() private pendingUpload: PendingWorkspaceUploadReview | undefined;
   @state() private destinationFolder = "";
   @state() private overwrite = false;
@@ -29,11 +32,21 @@ export class WorkspaceFilesPanel extends LitElement {
   @state() private formError = "";
   @state() private dragActive = false;
   private dragDepth = 0;
+  private uploadModalRegistration: RenderedModalRegistration | undefined;
 
   protected override willUpdate(changedProperties: PropertyValues<this>): void {
     if (!changedProperties.has("context")) return;
     const previous = changedProperties.get("context");
     if (previous !== undefined && this.context !== undefined && workspaceContextKey(previous) !== workspaceContextKey(this.context)) this.resetPendingUpload();
+  }
+
+  protected override updated(): void {
+    this.syncUploadModal();
+  }
+
+  override disconnectedCallback(): void {
+    this.releaseUploadModal();
+    super.disconnectedCallback();
   }
 
   override render(): TemplateResult {
@@ -62,7 +75,14 @@ export class WorkspaceFilesPanel extends LitElement {
             ${context.fileTree.length === 0 ? html`<p class="muted">No files loaded.</p>` : context.fileTree.map((entry) => this.renderTreeEntry(context, entry, 0))}
           </div>
           <div class="viewer">
-            ${this.renderFileViewer(context)}
+            <workspace-file-viewer
+              .machineId=${context.machine.id}
+              .projectId=${context.workspace.projectId}
+              .workspaceId=${context.workspace.id}
+              .selectedPath=${context.selectedFilePath}
+              .file=${context.selectedFileContent}
+              .loadError=${context.selectedFileLoadError}
+            ></workspace-file-viewer>
           </div>
         </section>
         <div class="drop-overlay" aria-hidden=${this.dragActive ? "false" : "true"}>
@@ -92,36 +112,6 @@ export class WorkspaceFilesPanel extends LitElement {
   private selectTreeEntry(context: WorkspacePanelContext, entry: FileTreeEntry): void {
     if (entry.type === "directory") context.onExpandDir(entry.path);
     else context.onSelectFile(entry.path);
-  }
-
-  private renderFileViewer(context: WorkspacePanelContext): TemplateResult {
-    const file = context.selectedFileContent;
-    if (context.selectedFilePath === undefined || context.selectedFilePath === "") return html`<p class="muted">Select a file.</p>`;
-    if (file === undefined) return html`<p class="muted">Loading ${context.selectedFilePath}…</p>`;
-    if (file.mediaType === "image") return this.renderImageViewer(context, file);
-    if (file.binary) return html`<p class="muted">Binary file: ${file.path} · ${formatFileSize(file.size)}</p>`;
-    loadCodeViewer();
-    return html`
-      <div class="viewer-header"><strong>${file.path}</strong><small>${file.language ?? "text"}${file.truncated ? " · truncated" : ""}</small></div>
-      <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
-    `;
-  }
-
-  private renderImageViewer(context: WorkspacePanelContext, file: FileContentResponse): TemplateResult {
-    const metadata = `${file.mimeType ?? "image"} · ${formatFileSize(file.size)}`;
-    if (file.size > MAX_IMAGE_PREVIEW_BYTES) {
-      return html`
-        <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
-        <p class="muted">Image too large to preview: ${formatFileSize(file.size)} · limit ${MAX_IMAGE_PREVIEW_LABEL}</p>
-      `;
-    }
-    const src = workspaceImagePreviewUrl(context.workspace.projectId, context.workspace.id, file.path, { modifiedAt: file.modifiedAt, machineId: context.machine.id });
-    return html`
-      <div class="viewer-header"><strong>${file.path}</strong><small>${metadata}</small></div>
-      <div class="image-preview">
-        <img src=${src} alt=${file.path} decoding="async" />
-      </div>
-    `;
   }
 
   private renderUploadProgress(context: WorkspacePanelContext): TemplateResult | null {
@@ -180,7 +170,7 @@ export class WorkspaceFilesPanel extends LitElement {
     const fileCount = review.files.length;
     return html`
       <div class="dialog-backdrop" @mousedown=${() => { this.closeUploadDialog(); }}>
-        <section class="upload-dialog" role="dialog" aria-modal="true" aria-label="Review file upload" @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${this.handleDialogKeyDown}>
+        <section class="upload-dialog" role="dialog" aria-modal="true" aria-label="Review file upload" tabindex="-1" @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${this.handleDialogKeyDown}>
           <header>
             <div>
               <span class="eyebrow">Upload</span>
@@ -191,7 +181,7 @@ export class WorkspaceFilesPanel extends LitElement {
           <form @submit=${(event: SubmitEvent) => { this.submitUploadReview(event, context, review); }}>
             <label>
               <span>Destination folder</span>
-              <input .value=${this.destinationFolder} placeholder=${context.workspaceUploadDefaultFolder} @input=${this.handleDestinationInput} />
+              <input id="workspace-upload-destination" .value=${this.destinationFolder} placeholder=${context.workspaceUploadDefaultFolder} @input=${this.handleDestinationInput} />
               <small>Workspace-relative. Leave empty to upload at the workspace root.</small>
             </label>
             <div class="dialog-options">
@@ -319,6 +309,45 @@ export class WorkspaceFilesPanel extends LitElement {
     this.formError = "";
   }
 
+  private syncUploadModal(): void {
+    const backdrop = this.uploadDialogBackdrop;
+    const dialog = this.uploadDialog;
+    if (!(backdrop instanceof HTMLElement) || !(dialog instanceof HTMLElement)) {
+      this.releaseUploadModal();
+      return;
+    }
+    if (this.uploadModalRegistration !== undefined) {
+      this.applyUploadModalAccessibility(dialog, this.uploadModalRegistration.isTop);
+      return;
+    }
+
+    const registration = registerRenderedModal({
+      element: backdrop,
+      // The workspace panel establishes the outer stacking context. Its
+      // internal z-index cannot outrank a fixed application dialog outside it.
+      paintElement: workspaceModalLayerHost(this),
+      focus: () => {
+        const destination = this.renderRoot.querySelector<HTMLElement>("#workspace-upload-destination");
+        (destination ?? dialog).focus();
+      },
+      onTopChange: (isTop) => { this.applyUploadModalAccessibility(dialog, isTop); },
+    });
+    this.uploadModalRegistration = registration;
+    registration.focus();
+  }
+
+  private applyUploadModalAccessibility(dialog: HTMLElement, isTop: boolean): void {
+    dialog.setAttribute("aria-modal", isTop ? "true" : "false");
+    if (isTop) dialog.removeAttribute("aria-hidden");
+    else dialog.setAttribute("aria-hidden", "true");
+  }
+
+  private releaseUploadModal(): void {
+    const registration = this.uploadModalRegistration;
+    this.uploadModalRegistration = undefined;
+    registration?.unregister();
+  }
+
   private resetPendingUpload(): void {
     this.closeUploadDialog();
     this.dragDepth = 0;
@@ -329,6 +358,7 @@ export class WorkspaceFilesPanel extends LitElement {
     workspacePanelStyles,
     css`
       :host { flex: 1 1 auto; }
+      workspace-file-viewer { flex: 1 1 auto; min-height: 0; }
       .files-panel { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
       .toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
       .toolbar .toolbar-actions button { margin-left: 0; }
@@ -424,6 +454,11 @@ function isFileDrag(event: DragEvent): boolean {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
 
+function workspaceModalLayerHost(panel: WorkspaceFilesPanel): HTMLElement {
+  const root = panel.getRootNode();
+  return root instanceof ShadowRoot && root.host instanceof HTMLElement ? root.host : panel;
+}
+
 function uploadSummaryLabel(batches: readonly WorkspaceUploadBatchState[]): string {
   const uploading = batches.filter((batch) => batch.status === "uploading").length;
   return uploading === 0 ? `${String(batches.length)} recent` : `${String(uploading)} uploading`;
@@ -471,22 +506,4 @@ function uploadFileDetail(file: WorkspaceUploadFileState): string {
 
 function formatPercent(value: number): string {
   return `${String(Math.round(Math.max(0, Math.min(1, value)) * 100))}%`;
-}
-
-function loadCodeViewer(): void {
-  void import("./CodeViewer");
-}
-
-function formatFileSize(size: number): string {
-  if (!Number.isFinite(size) || size < 0) return "0 B";
-  if (size < 1024) return `${String(size)} B`;
-  const kib = size / 1024;
-  if (kib < 1024) return `${formatScaledFileSize(kib)} KB`;
-  const mib = kib / 1024;
-  if (mib < 1024) return `${formatScaledFileSize(mib)} MB`;
-  return `${formatScaledFileSize(mib / 1024)} GB`;
-}
-
-function formatScaledFileSize(value: number): string {
-  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
 }

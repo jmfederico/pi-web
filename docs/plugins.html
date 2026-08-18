@@ -3,27 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PI WEB plugins — extend the Pi web UI</title>
+    <title>PI WEB plugins — extend the UI and workspace providers</title>
     <meta
       name="description"
-      content="Use built-in PI WEB plugins and develop trusted local UI plugins for the Pi Coding Agent web UI."
+      content="Build trusted PI WEB browser-v2 plugins and server-v1 workspace providers through the public package contracts."
     />
     <link rel="canonical" href="https://pi-web.dev/plugins" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="PI WEB" />
-    <meta property="og:title" content="PI WEB plugins — extend the Pi web UI" />
+    <meta property="og:title" content="PI WEB plugins — extend the UI and workspace providers" />
     <meta
       property="og:description"
-      content="Customize PI WEB with trusted browser-side plugins for actions, workspace panels, labels, terminals, and files."
+      content="Customize PI WEB with trusted browser modules and server-backed workspace providers."
     />
     <meta property="og:url" content="https://pi-web.dev/plugins" />
     <meta property="og:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <meta property="og:image:alt" content="PI WEB browser UI for persistent Pi Coding Agent sessions" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="PI WEB plugins — extend the Pi web UI" />
+    <meta name="twitter:title" content="PI WEB plugins — extend the UI and workspace providers" />
     <meta
       name="twitter:description"
-      content="Customize PI WEB with trusted browser-side plugins for actions, workspace panels, labels, terminals, and files."
+      content="Customize PI WEB with trusted browser modules and server-backed workspace providers."
     />
     <meta name="twitter:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
@@ -77,10 +77,10 @@
       <section class="page-hero">
         <div class="container">
           <p class="eyebrow"><span class="pulse"></span> Plugin development</p>
-          <h1>Customize PI WEB with UI plugins.</h1>
+          <h1>Customize PI WEB with trusted plugins.</h1>
           <p>
-            Plugins are trusted browser-side ES modules. They can add actions, workspace panels, and compact workspace
-            labels to the PI WEB UI.
+            Plugin packages can add browser actions, panels, and labels, provide workspace semantics in sessiond, or
+            pair both entries through versioned public contracts.
           </p>
         </div>
       </section>
@@ -90,11 +90,15 @@
           <aside class="toc" aria-label="Plugin page contents">
             <strong>On this page</strong>
             <a href="#extend">What can be extended</a>
-            <a href="#packages-vs-plugins">Pi packages vs PI WEB plugins</a>
+            <a href="#packages-vs-plugins">Pi packages, extensions, and plugins</a>
+            <a href="#pi-extension-dialogs">Pi extension dialogs</a>
             <a href="#ask-ai">What to ask AI to build</a>
-            <a href="#example">Canonical example</a>
+            <a href="#example">Canonical examples</a>
+            <a href="#author-contract">Authoring contract</a>
+            <a href="#provider-contract">Workspace providers</a>
             <a href="#built-in-plugins">Built-in plugins</a>
             <a href="#manage-plugins">Manage PI WEB plugins</a>
+            <a href="#lifecycle-recovery">Lifecycle and recovery</a>
             <a href="#remote-machine-plugins">Remote machine plugins</a>
             <a href="#production">Production usage</a>
             <a href="#agent-docs">AI-friendly docs</a>
@@ -105,19 +109,20 @@
           <div class="doc-content">
             <section id="extend">
               <h2>What can be extended</h2>
-              <p>Plugins can add small, focused UI extensions to PI WEB:</p>
+              <p>Plugins can add focused UI and workspace integrations to PI WEB:</p>
               <ul>
                 <li><strong>Action palette commands</strong> for custom workflows.</li>
-                <li><strong>Workspace tools and panels</strong> next to Files, Git, and Terminal.</li>
+                <li><strong>Workspace tools and panels</strong> next to Files and Terminal.</li>
                 <li><strong>Workspace labels</strong> in the workspace list, header, and status bar.</li>
-                <li><strong>Static assets</strong> served from the plugin folder.</li>
-                <li><strong>Browser-side integrations</strong> using documented PI WEB plugin context helpers.</li>
+                <li><strong>Browser-public assets</strong> served only from an explicit <code>browserRoot</code>.</li>
+                <li><strong>Browser helpers</strong> for files, terminals, prompts, rendering, and paired backends.</li>
+                <li><strong>One workspace provider</strong> from an optional sessiond server entry.</li>
               </ul>
               <p>
-                Plugins cannot extend the session daemon or add server-side hooks. They run in the browser UI only.
-                Use documented context helpers for the stable API surface. Daring plugins can reach into PI WEB
-                internals, but those private surfaces are experimental: they may graduate into stable helpers, change
-                shape, or disappear.
+                The server API is deliberately narrow: lifecycle callbacks, scoped logging/settings, bounded argv
+                execution, one workspace provider, JSON backend requests, and removal planning. Plugins receive no raw
+                Fastify access, arbitrary routes, concrete services, generic event bus, Pi model-provider registration,
+                or general server hooks.
               </p>
               <div class="callout">
                 The plugin API is intentionally limited and actively developed. Feedback is appreciated: if an extension
@@ -127,16 +132,23 @@
             </section>
 
             <section id="packages-vs-plugins">
-              <h2>Pi packages vs PI WEB plugins</h2>
+              <h2>Pi packages, Pi extensions, and PI WEB plugins</h2>
               <p>
-                <strong>Pi packages</strong> are packages managed by Pi (<code>pi install</code>, <code>pi remove</code>,
-                <code>pi update</code>). A Pi package can provide extensions, skills, prompt templates, themes,
-                context/system prompt files, and/or PI WEB browser plugins. Many Pi packages do not include a PI WEB plugin.
+                <strong>Pi packages</strong> are distribution bundles managed by Pi (<code>pi install</code>,
+                <code>pi remove</code>, <code>pi update</code>). A Pi package can provide Pi extensions, skills, prompt
+                templates, themes, context/system prompt files, and/or PI WEB plugins. Many Pi packages do not
+                include a PI WEB plugin.
               </p>
               <p>
-                <strong>PI WEB plugins</strong> are browser-side UI modules discovered from bundled, local, dev, and
-                installed Pi-package sources. Enabling or disabling a PI WEB plugin is a PI WEB config task; installing,
-                removing, or updating a Pi package is a Pi package-manager task.
+                <strong>Pi extensions</strong> are runtime modules loaded by the session daemon. They can register Pi
+                tools, hooks, commands, and model providers. They are not PI WEB plugins.
+              </p>
+              <p>
+                <strong>PI WEB plugins</strong> are packages discovered from bundled, local, dev, and installed
+                Pi-package sources. They can declare a browser <code>module</code>, a sessiond
+                <code>serverModule</code>, or both. Their server API is separate from Pi extensions and cannot register
+                Pi model providers or arbitrary hooks. Plugin enablement is PI WEB config; package installation is a
+                separate Pi package-manager task.
               </p>
               <p>
                 Use <strong>Settings → Pi packages</strong> to view configured Pi packages or install/remove/update a
@@ -147,20 +159,47 @@
               <p>
                 When machine federation is enabled, <strong>Settings → Pi packages</strong> targets the currently selected
                 machine. The panel labels whether changes will run on the local/gateway machine or on a selected remote
-                PI WEB machine. If an older or unavailable remote PI WEB server does not expose package-management routes,
-                PI WEB reports the package management operation as unsupported or unavailable instead of silently falling
-                back to the gateway.
+                PI WEB machine.
               </p>
               <p>
-                Use <strong>Settings → PI WEB plugins</strong> to enable or disable discovered PI WEB browser plugins
-                before the browser imports them. In a federated setup, this plugin enablement surface targets the
-                currently selected machine and labels where changes are saved. If an older or unavailable remote PI WEB
-                server does not advertise selected-machine settings support, PI WEB reports the plugin settings as
-                unsupported or unavailable instead of silently falling back to the gateway. After installing, removing, or
-                updating a Pi package, type <code>/reload</code> in each idle PI WEB session on the target machine to
-                refresh Pi runtime resources such as extensions, skills, prompt templates, themes, and context/system
-                prompt files as supported by Pi. Reload the browser page separately for newly discovered or changed
-                PI WEB browser plugins. A routine session daemon restart is not required.
+                Use <strong>Settings → PI WEB plugins</strong> to edit desired plugin enablement on the selected
+                machine and compare it with sessiond's active startup snapshot. Browser-only changes apply after a page
+                reload. Server-backed changes require a session-daemon restart and then a page reload. Unsupported or
+                unavailable remote settings are reported instead of silently falling back to the gateway.
+              </p>
+              <p>
+                After installing, removing, or updating a Pi package, type <code>/reload</code> in each idle PI WEB
+                session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt
+                templates, themes, and context/system prompt files. Reload the browser page separately for newly
+                discovered or changed PI WEB browser plugins. If a PI WEB package has a server entry, manually restart
+                sessiond first. A provider-registering Pi extension follows a separate daemon-start policy; see
+                <a href="config#pi-extension-provider-baseline">Pi extension provider baseline</a>.
+              </p>
+            </section>
+
+            <section id="pi-extension-dialogs">
+              <h2>Pi extension dialogs in PI WEB</h2>
+              <p>
+                Pi extensions running under PI WEB's session daemon can ask the user questions with
+                <code>ctx.ui.confirm()</code>, <code>ctx.ui.select()</code>, and <code>ctx.ui.input()</code>. For these
+                three methods <code>ctx.hasUI</code> is true in fact: the call renders a dialog card inline in the
+                session transcript — including from <code>session_start</code> hooks while the session is still starting
+                and from in-flight <code>tool_call</code> hooks — and resolves with the user's actual answer.
+              </p>
+              <p>
+                Answers travel over a dedicated session-daemon channel, never the prompt queue, so a parked
+                <code>tool_call</code> hook cannot deadlock the run. Open dialogs survive browser reloads, the first
+                answer wins across tabs, and unanswered dialogs settle safely: aborting the run or replacing the runtime
+                resolves them immediately with the kind's cancel value (<code>false</code> for confirm,
+                <code>undefined</code> for select and input), and the effective deadline — the sooner of the extension's
+                own <code>timeout</code> and the daemon's <code>extensionDialogsTimeoutMs</code> safety valve (default 5
+                minutes, <code>0</code> waits forever) — does the same when no one answers. Other
+                <code>ExtensionUIContext</code> surfaces (widgets, status, editor, <code>custom</code>) remain no-ops
+                despite <code>hasUI === true</code>.
+              </p>
+              <p>
+                For the full behavior notes and author guidance, read <a href="plugins.md">plugins.md</a>; for the
+                timeout key, see <a href="config#extension-dialogs">Extension dialogs</a> in the configuration reference.
               </p>
             </section>
 
@@ -202,49 +241,153 @@ Before coding, read the PI WEB plugin docs:
 https://pi-web.dev/plugins
 Full API reference:
 https://pi-web.dev/plugins.md
-Keep the plugin compatible with the documented v1 API.
+Keep the browser entry on API v2 and any server entry on API v1.
 After editing, check the manifest endpoint and browser-console failure cases.</code></pre>
               </div>
             </section>
 
             <section id="example">
-              <h2>Canonical example</h2>
+              <h2>Canonical examples</h2>
               <p>
-                PI WEB ships a real bundled <strong>Info</strong> plugin. It is intentionally small while still using all
-                core contribution types: one action, one workspace label, and one workspace panel.
+                The repository and published npm package include a
+                <a href="https://github.com/jmfederico/pi-web/tree/main/examples/workspace-provider-plugin">standalone
+                dual-entry workspace-provider example</a>. Copy <code>examples/workspace-provider-plugin/</code> for
+                package metadata, a strict NodeNext TypeScript build, browser/server source, and concise install guidance.
+                It conservatively claims only projects with an opt-in marker, publishes non-secret metadata, and calls
+                the backend that owns the workspace without Git-specific behavior or PI WEB internal imports.
               </p>
               <p>
-                Bundled PI WEB plugins are developed as TypeScript in the repository, while their package metadata
-                points at the built JavaScript ES modules that the browser loads. <code>npm run dev:web</code> watches and
-                rebuilds bundled plugin TS into <code>dist/pi-web-plugins/</code> during development, and <code>npm run build</code>
-                emits JS before release packaging.
+                Bundled <strong>Info</strong> remains the small browser-only example under
+                <code>pi-web-plugins/info/</code>. Bundled <strong>Git</strong> is the production provider example; its
+                browser entry moved to <code>pi-web-plugins/git/browser/pi-web-plugin.ts</code>, while its server entry is
+                <code>pi-web-plugins/git/server-plugin.ts</code>.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Dual-entry package metadata</strong>
+                  <button class="copy-button" data-copy="#dual-entry-metadata">Copy</button>
+                </div>
+                <pre id="dual-entry-metadata"><code>{
+  "type": "module",
+  "piWeb": {
+    "plugins": [{
+      "id": "workspaces",
+      "browserRoot": "dist/browser",
+      "module": "dist/browser/index.js",
+      "serverModule": "dist/server.js",
+      "machineSpecific": true
+    }]
+  }
+}</code></pre>
+              </div>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Public TypeScript imports</strong>
+                  <button class="copy-button" data-copy="#plugin-public-imports">Copy</button>
+                </div>
+                <pre id="plugin-public-imports"><code>import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
+import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/server-plugin-api";</code></pre>
+              </div>
+            </section>
+
+            <section id="author-contract">
+              <h2>Browser v2, server v1, and the package boundary</h2>
+              <p>
+                Browser entries default-export <code>{ apiVersion: 2, name, activate }</code>. The host rejects v1 with
+                an attributed unsupported-version error; no browser-v1 shim is provided. Server entries remain on
+                <code>apiVersion: 1</code>. During migration, replace browser-v1 Git aliases, including top-level
+                <code>workspace.branch</code>, with provider metadata and
+                <code>refreshWorkspacePanels()</code>/<code>onInvalidate()</code>. Generic presentation uses the
+                provider-authored <code>workspace.label</code>; provider-specific facts belong in
+                <code>workspace.provider.metadata</code> or the owning backend.
+              </p>
+              <p>
+                Browser activation <code>pluginId</code> is the stable package/source id on every machine and matches
+                <code>workspace.provider.pluginId</code>. Use the separate host-unique <code>runtimePluginId</code> only
+                for qualified contribution references. The only supported type entrypoints are the type-only exports
+                <code>@jmfederico/pi-web/plugin-api</code> and
+                <code>@jmfederico/pi-web/server-plugin-api</code>. The former
+                <code>plugin-api/unstable</code> path and private <code>dist/**</code> deep imports are not contracts.
+              </p>
+              <p>
+                Browser and server module paths must use canonical package-relative form; empty or <code>.</code>
+                segments, traversal, backslashes, and absolute or Windows drive-qualified paths are rejected. Each
+                browser entry must declare a safe package-relative <code>browserRoot</code> containing its module;
+                server-only entries must not declare one. Invalid, missing, package-escaping, symlink-escaping, or
+                module-excluding roots fail discovery. Externally declared ids <code>core</code>, <code>themes</code>,
+                and the <code>machine.*</code> namespace are reserved and rejected.
               </p>
               <ul>
-                <li><code>pi-web-plugins/info/package.json</code> shows the required metadata shape.</li>
-                <li><code>pi-web-plugins/info/pi-web-plugin.ts</code> shows the TypeScript source shape.</li>
-                <li><code>dist/pi-web-plugins/info/pi-web-plugin.js</code> is the built browser module in a checkout.</li>
+                <li>Only files logically and canonically inside <code>browserRoot</code> are served; everything else in the package stays outside plugin asset routes.</li>
+                <li><code>browserRoot: "."</code> makes almost the whole scanned package browser-public, so prefer a narrow build directory and put no secrets inside it.</li>
+                <li>The package-wide scan allows at most 4,096 entries and 16 MiB of file content, excluding traversal into <code>.git</code> and <code>node_modules</code>; files outside the browser root still count.</li>
+                <li>Both <code>.js</code> and <code>.mjs</code> are served with executable JavaScript MIME types. Prefer module-relative asset URLs for federation and nested deployments.</li>
               </ul>
+            </section>
+
+            <section id="provider-contract">
+              <h2>Workspace provider contract</h2>
               <p>
-                Read it on GitHub:
-                <a href="https://github.com/jmfederico/pi-web/tree/main/pi-web-plugins/info">pi-web-plugins/info</a>.
-                If you copy it, choose a new plugin id so it does not conflict with the bundled <code>info</code> plugin.
+                Sessiond is the single workspace authority. An enabled server entry can contribute at most one provider.
+                Primary providers probe first; bundled Git probes only as a fallback. Exactly one claimant owns the whole
+                project's workspace semantics. Multiple claimants in the winning tier produce a visible conflict rather
+                than import-order selection. If nobody claims, the kernel project-folder workspace remains available.
               </p>
               <p>
-                The bundled <code>updates</code> plugin demonstrates dynamic <code>visible</code> and <code>badge</code>
-                callbacks for tabs that only appear when the host has status messages or needs extra install visibility.
+                A server module default-exports <code>{ apiVersion: 1, name, activate }</code>. Activation may return
+                cooperative <code>start</code>, <code>stop</code>, and <code>health</code> callbacks plus at most one
+                provider. Every activation, lifecycle, provider, and request signal is scoped to that one invocation and
+                is aborted when it times out or settles; it is not a plugin-lifetime shutdown signal. Release resources
+                in explicit <code>stop()</code>. Server code is never hot-reloaded.
               </p>
+              <p>
+                A provider returns stable workspace keys, accessible absolute directories, labels, exactly one main
+                workspace, optional private JSON data, browser-visible <code>publicMetadata</code>, and optional
+                request/removal capabilities. Public metadata is visible to all browser code and API consumers, so it
+                must never contain secrets. <code>capabilities.remove</code> is true only for a workspace that advertises
+                removal and whose owner implements it.
+              </p>
+              <p>
+                A removal plan approves a visible host-owned terminal run; it does not mean removal has completed. Its
+                command is shell source interpreted by the host's login shell from a host-selected safe non-target
+                working directory. Providers must use and shell-quote the supplied absolute workspace path, keep the
+                operation in the foreground, and treat shell exit 0 as successful completion.
+              </p>
+              <p>
+                Panels and labels receive optional <code>context.backend</code> only when their browser entry has a
+                paired active server backend. PI WEB binds <code>backend.request(operation, input)</code> to the original
+                plugin id, active backend revision, selected machine, project, and workspace, and carries it through
+                federation. Plugins should never construct PI WEB backend or machine API URLs. Panels can implement
+                <code>onInvalidate</code> and actions can call <code>refreshWorkspacePanels()</code>; route aliases and
+                shortcut aliases exist only for browser-v1 migrations.
+              </p>
+              <div class="callout">
+                PI WEB ships only bundled Git as a production provider. Third parties own replacement integrations such
+                as Jujutsu providers. An installed primary provider can claim its projects and suppress fallback Git
+                without PI WEB core changes; no reference replacement is shipped or promised here.
+              </div>
             </section>
 
             <section id="built-in-plugins">
               <h2>Built-in plugins</h2>
               <p>
                 PI WEB ships core, discoverable plugins in the main <code>@jmfederico/pi-web</code> npm package. No
-                separate <code>pi install</code> step is required: update PI WEB, reload the browser tab, and the bundled
-                plugins appear in <code>/pi-web-plugins/manifest.json</code>.
+                separate <code>pi install</code> step is required. After updating PI WEB, restart sessiond so bundled
+                server entries use the installed revision, then reload the browser. Browser-only bundled entries need
+                only the page reload.
               </p>
               <p>
                 Built-in plugins can be managed from <strong>Settings → PI WEB plugins</strong> or with the top-level
                 <code>plugins</code> config key.
+              </p>
+
+              <h3>Git</h3>
+              <p>
+                <strong>Git</strong> is enabled by default and is PI WEB's bundled fallback workspace provider. It
+                discovers worktrees, owns Git removal plans and status/diff requests, and adds the paired Git panel. An
+                enabled primary third-party provider can claim a project before Git. Disabling <code>git</code> and
+                restarting sessiond leaves the kernel folder workspace plus generic Files, Terminal, and Session features;
+                reload the browser so Git contributions disappear.
               </p>
 
               <h3>Updates</h3>
@@ -329,18 +472,15 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
             <section id="manage-plugins">
               <h2>Manage PI WEB plugins</h2>
               <p>
-                Open <strong>Settings → PI WEB plugins</strong> to review discovered bundled, local, dev, and Pi package
-                plugins for the selected PI WEB machine. When the local machine is selected, this is the gateway plugin
-                list; when a remote machine is selected, the list comes from that remote PI WEB server and includes
-                disabled discovered plugins it exposes. PI WEB can disable any discovered selected-machine plugin before
-                the browser imports it. Core app contributions such as the command palette, base workspace tools, and
-                themes are not managed through this plugin list.
+                <strong>Settings → PI WEB plugins</strong> compares desired package/config state with the active sessiond
+                startup snapshot on the selected machine. It reports browser-only, active, failed, incompatible,
+                disabled, not-active, unknown, conflict, stale-revision, health, safe-mode, and restart-required states.
+                Settings values remain private; diagnostics expose only revisions and fingerprints.
               </p>
               <p>
-                This surface is only for PI WEB plugin enablement. To install, remove, or update Pi packages that may
-                provide plugins or other Pi resources, use <strong>Settings → Pi packages</strong>. In a federated setup,
-                both the Pi packages panel and the PI WEB plugins panel target the selected machine; plugin enablement
-                still writes the PI WEB <code>plugins</code> config key rather than changing Pi package-manager settings.
+                Package installation stays under <strong>Settings → Pi packages</strong>. Plugin enablement writes the
+                selected machine's top-level <code>plugins</code> config key and remains editable while sessiond is
+                unavailable, although active state cannot then be verified.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -349,73 +489,108 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
                 </div>
                 <pre id="plugin-config-shape"><code>{
   "plugins": {
-    "workspace-tasks": {
-      "enabled": true,
-      "settings": {}
-    },
-    "info": {
-      "enabled": false
-    }
+    "git": { "enabled": true, "settings": {} },
+    "info": { "enabled": false }
   }
 }</code></pre>
               </div>
               <p>
-                Plugins are enabled by default. Set <code>enabled</code> to <code>false</code> to remove a plugin from
-                <code>/pi-web-plugins/manifest.json</code> so it is not imported or activated on the next page load.
-                The optional <code>settings</code> object is reserved for plugin-specific settings.
+                Plugins default to enabled. A browser-only change applies after a page reload. A server entry captures
+                enablement and JSON settings only at sessiond startup; replacing package files or saving config changes
+                desired state without hot-reloading the active provider registry.
               </p>
+            </section>
+
+            <section id="lifecycle-recovery">
+              <h2>Lifecycle, restart, and offline recovery</h2>
+              <ol>
+                <li>Install or update the plugin package on the target machine.</li>
+                <li>Set its desired enablement/settings.</li>
+                <li>For a browser-only plugin, reload the browser tab.</li>
+                <li>For a server-backed plugin, restart sessiond, wait for it, then reload the browser tab.</li>
+              </ol>
+              <div class="callout warning">
+                <strong>Manual session-daemon restart:</strong> for the native systemd user service, run
+                <code>systemctl --user restart pi-web-sessiond</code> (unit <code>pi-web-sessiond.service</code>).
+                Restarting sessiond may interrupt active sessions and runtime ownership. Web/UI autoreload, restarting
+                only web/API, browser reload, and Pi's <code>/reload</code> do not activate server-plugin changes.
+              </div>
               <p>
-                After changing plugin enablement, reload the PI WEB browser tab. Already-loaded plugin JavaScript is not
-                unloaded from the current page.
+                Offline recovery edits config without contacting sessiond, discovering packages, or importing plugin
+                code. Run these commands on the affected target machine; add
+                <code>--config /path/to/config.json</code> when its services use a custom config.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Server-plugin recovery</strong>
+                  <button class="copy-button" data-copy="#plugin-recovery">Copy</button>
+                </div>
+                <pre id="plugin-recovery"><code><span class="prompt">$</span> pi-web plugins disable &lt;plugin-id&gt; --restart
+<span class="prompt">$</span> pi-web plugins safe-start show
+<span class="prompt">$</span> pi-web plugins safe-start set bundled-only --restart
+<span class="prompt">$</span> pi-web plugins safe-start set none --restart
+<span class="prompt">$</span> pi-web plugins safe-start clear --restart</code></pre>
+              </div>
+              <ul>
+                <li><code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config.</li>
+                <li><code>bundled-only</code> filters discovery before external server packages are considered.</li>
+                <li><code>none</code> imports no server plugins; the kernel folder workspace remains available.</li>
+                <li><code>clear</code> restores ordinary configured discovery on the next start.</li>
+                <li>An unsupported <code>serverPlugins.safeStart</code> shape or value fails closed as effective <code>none</code>; use <code>show</code>, then <code>set</code> or <code>clear</code>, to repair it offline.</li>
+                <li><code>--restart</code> acts automatically only for a recognized safe installation; otherwise PI WEB prints manual guidance. Config is durable before the restart attempt, so restart manually if that attempt fails.</li>
+              </ul>
+              <p>
+                Ordinary plugin failures are attributed and quarantined when the host can catch them. Safe start remains
+                necessary because trusted in-process code can block or terminate sessiond. Every restart can interrupt
+                active sessions/runtime ownership.
               </p>
             </section>
 
             <section id="remote-machine-plugins">
               <h2>Remote machine plugins</h2>
               <p>
-                With <a href="machines">machine federation</a>, PI WEB also loads discovered plugins from the selected
-                remote machine. Remote plugins are trusted browser-side code like local plugins, but their actions,
-                workspace panels, and workspace labels only appear while that machine is selected.
+                With <a href="machines">machine federation</a>, the gateway loads compatible browser entries from the
+                selected remote machine while server entries stay in that target's sessiond. Actions, panels, labels,
+                file/terminal helpers, and <code>context.backend.request()</code> all follow the selected machine.
+                Activation <code>pluginId</code> and workspace-provider ownership keep the stable source id;
+                <code>runtimePluginId</code> may be machine-scoped so qualified contributions remain host-unique.
               </p>
               <ul>
-                <li>File and terminal helpers run against the selected remote machine.</li>
-                <li>Remote plugin code is loaded best-effort through the current gateway and cached for the page lifetime.</li>
-                <li>If the gateway and remote machine both have an enabled plugin with the same original id, <code>machineSpecific</code> metadata decides whether the gateway copy is reused or only the selected-machine copy can appear.</li>
-                <li>Remote theme contributions are ignored for now because themes are app-wide.</li>
-                <li>Mixed PI WEB versions across federated machines are best-effort and not guaranteed compatible.</li>
+                <li>Paired backend requests carry the source plugin id and active target revision through the gateway.</li>
+                <li>Server-backed browser code is served only for an exact active package/source/scope/settings/revision pairing.</li>
+                <li><code>machineSpecific</code> decides whether a browser-only gateway copy is portable; dual entries are always machine-specific.</li>
+                <li>Remote theme contributions remain ignored because themes are app-wide.</li>
+                <li>A current gateway reports missing/unsupported lifecycle or backend capabilities explicitly instead of falling back to gateway code.</li>
               </ul>
               <p>
-                Remote plugin enablement is controlled by the remote machine's PI WEB plugin config. To edit or disable
-                one, select that machine and use <strong>Settings → PI WEB plugins</strong> when the remote server exposes
-                selected-machine settings, or open that machine directly/update its config file.
+                Mixed-version provider/plugin operation is not supported in either upgrade order. A newer gateway rejects
+                an older target's entire remote plugin manifest when it lacks the lifecycle contract, so that target's
+                browser-only contributions and Git panel are unavailable. An older gateway still calls legacy core Git
+                routes removed by an updated target, so remote Git status/diff returns <code>404</code>. Upgrade the
+                gateway and target together, restart their updated web/API processes and the target session daemon, then
+                reload the gateway page. Other machine features use their own capability negotiation.
               </p>
               <p>
-                Plugin package metadata can set <code>machineSpecific: true</code>. Use it for plugins like Updates whose
-                UI should come from the selected PI WEB instance; on remote machines, the gateway copy is hidden unless
-                the remote machine exposes its own copy.
+                Select the remote machine in <strong>Settings → PI WEB plugins</strong> to edit desired state; the
+                panel requires the target machine's plugin lifecycle support. Restart that remote session daemon for a
+                server-backed change, then reload the gateway page.
               </p>
               <p>
-                Current PI WEB manifests publish leading application-root module references. The browser keeps them
-                inside the current application base, so local and federated plugins follow root or nested reverse-proxy
-                deployments without a prefix-specific build while remaining compatible with existing gateways.
-                Federated gateways also accept manifest-relative references such as
-                <code>./&lt;plugin-id&gt;/plugin.js</code> and legacy plugin-root-relative references such as
-                <code>nested/plugin.js</code> from remote machines.
-              </p>
-              <p>
-                For portable plugin assets, prefer URLs relative to the plugin module, such as
-                <code>new URL("./asset.json", import.meta.url)</code>. If a remote plugin constructs absolute asset URLs,
-                it should use the <code>pluginId</code> from <code>activate()</code>; hard-coded
-                <code>/pi-web-plugins/&lt;original-id&gt;/...</code> URLs may point at the gateway instead of the remote machine.
+                Current manifests publish leading application-root module references. The browser keeps them inside the
+                current application base, and the gateway rewrites accepted remote references for root and canonical
+                trailing-slash nested deployments. Prefer module-relative assets such as
+                <code>new URL("./asset.json", import.meta.url)</code>; hard-coded
+                <code>/pi-web-plugins/&lt;original-id&gt;/...</code> paths can point at the gateway copy.
               </p>
             </section>
 
             <section id="production">
               <h2>Production usage</h2>
               <p>
-                Local plugins work with the production native-service install. Put each plugin under
-                <code>~/.pi-web/plugins/&lt;plugin-id&gt;/</code>, or symlink it there while developing. No PI WEB rebuild or
-                session-daemon restart is required.
+                Local plugins work with the production native-service install. Put each package under
+                <code>~/.pi-web/plugins/&lt;plugin-id&gt;/</code>, or symlink it there while developing. No PI WEB rebuild is
+                required. Browser-only entries need a page reload; server-backed entries need a sessiond restart followed
+                by the page reload.
               </p>
               <div class="callout warning">
                 If <code>PI_WEB_DATA_DIR</code> is set, use <code>$PI_WEB_DATA_DIR/plugins</code> instead of
@@ -439,8 +614,9 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
               </p>
               <p>
                 If you want to understand the API yourself, ask an agent to read that file and explain the relevant
-                public extension points for the plugin you want. Private PI WEB internals exist for the daring; treat
-                them as experimental surfaces that may graduate into stable helpers, change shape, or disappear.
+                public extension points for the plugin you want. Browser private routes/runtime fields, source internals,
+                and <code>dist/**</code> declarations are not stable APIs. Use only the two documented type-only package
+                exports for browser and server entries.
               </p>
             </section>
 
@@ -448,9 +624,11 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
               <h2>Develop and debug</h2>
               <ul>
                 <li>Keep the source folder outside <code>~/.pi-web/plugins</code> and symlink it in.</li>
-                <li>After edits, reload or hard-reload the browser tab.</li>
-                <li>Check discovery with the manifest endpoint.</li>
-                <li>Check the browser console if a plugin fails to import or activate.</li>
+                <li>Build entry JavaScript at the exact package-relative paths declared in metadata, and keep the browser module/assets inside a narrow declared <code>browserRoot</code>.</li>
+                <li>Declare <code>"type": "module"</code> for a <code>.js</code> server entry or emit <code>.mjs</code>.</li>
+                <li>After browser-only edits, reload or hard-reload the tab and check its console.</li>
+                <li>After server edits, restart sessiond, reload the tab, and inspect <code>pi-web logs</code>.</li>
+                <li>Use <strong>Settings → PI WEB plugins</strong> for desired/active, health, conflict, and revision diagnostics.</li>
               </ul>
               <div class="code-card">
                 <div class="copy-row">
@@ -468,13 +646,17 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
             <section id="trust">
               <h2>Trust model</h2>
               <p>
-                Plugins are not sandboxed. They run as JavaScript in the browser, can use browser APIs, call documented
-                PI WEB helpers, and render arbitrary UI. If a plugin reaches beyond those helpers into private PI WEB
-                internals, treat that dependency as experimental: it may become stable, change shape, or disappear.
-                Install only plugins you trust.
+                Plugins are not sandboxed. Browser entries can use browser APIs, read/write workspace files through
+                helpers, start terminal commands, and render arbitrary UI. Server entries execute in-process inside
+                sessiond with the service user's filesystem, environment, and process permissions, and share sessiond's
+                event loop. Install only packages you trust.
               </p>
               <p>
-                Plugins do not run inside the session daemon and do not provide server-side hooks.
+                Ordinary import/lifecycle/health failures are quarantined when PI WEB can catch them, but server plugins
+                are not crash-isolated. A CPU-bound, blocking, or deadlocked callback can stall sessions, terminals, and
+                health endpoints. Abort signals and deadlines bound only cooperative asynchronous code and cannot preempt
+                code that ignores them. This is a stability boundary, not a security boundary; offline disable and both
+                safe-start levels are the recovery path.
               </p>
             </section>
           </div>
@@ -493,6 +675,10 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
           <a href="config">Config</a>
           <a href="faq">FAQ</a>
           <a href="https://github.com/jmfederico/pi-web">GitHub</a>
+          <span class="version-switcher" role="group" aria-label="Documentation version">
+            <a class="version-switcher-option" data-version-option="stable" href="https://pi-web.dev/plugins" aria-current="true">Stable</a>
+            <a class="version-switcher-option" data-version-option="dev" href="https://pi-web.dev/dev/plugins">Dev</a>
+          </span>
         </div>
       </div>
     </footer>

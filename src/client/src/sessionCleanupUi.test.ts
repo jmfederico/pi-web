@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionCleanupPreviewResponse } from "./api";
-import { canRunSessionCleanup, confirmSessionCleanup, selectedSessionCleanupProjectCwds, sessionCleanupConfirmationMessage, sessionCleanupPreviewForSelectedProjects, sessionCleanupRequestKey, sessionCleanupUnavailableMessage, validateSessionCleanupDraft, type SessionCleanupDraft } from "./sessionCleanupUi";
+import { canRunSessionCleanup, confirmSessionCleanup, selectedSessionCleanupProjectCwds, sessionCleanupConfirmationMessage, sessionCleanupPreviewForSelectedProjects, sessionCleanupRequestKey, validateSessionCleanupDraft, type SessionCleanupDraft } from "./sessionCleanupUi";
 
 const draft: SessionCleanupDraft = {
   archiveIdleEnabled: true,
@@ -38,10 +38,9 @@ describe("session cleanup UI helpers", () => {
     const validation = validateSessionCleanupDraft(draft);
     if (!validation.ok) throw new Error(validation.error);
 
-    expect(canRunSessionCleanup({ canCleanup: true, draft, preview, previewRequest: validation.request })).toBe(true);
-    expect(canRunSessionCleanup({ canCleanup: true, draft: { ...draft, archiveIdleDays: "31" }, preview, previewRequest: validation.request })).toBe(false);
-    expect(canRunSessionCleanup({ canCleanup: true, draft, preview: { ...preview, totals: { archiveCount: 0, deleteCount: 0 } }, previewRequest: validation.request })).toBe(false);
-    expect(canRunSessionCleanup({ canCleanup: false, draft, preview, previewRequest: validation.request })).toBe(false);
+    expect(canRunSessionCleanup({ draft, preview, previewRequest: validation.request })).toBe(true);
+    expect(canRunSessionCleanup({ draft: { ...draft, archiveIdleDays: "31" }, preview, previewRequest: validation.request })).toBe(false);
+    expect(canRunSessionCleanup({ draft, preview: { ...preview, totals: { archiveCount: 0, deleteCount: 0 } }, previewRequest: validation.request })).toBe(false);
   });
 
   it("normalizes request keys for null, omitted disabled actions, and selected projects", () => {
@@ -70,7 +69,7 @@ describe("session cleanup UI helpers", () => {
     });
   });
 
-  it("uses explicit permanent deletion copy in confirmation and unavailable messages", () => {
+  it("uses explicit permanent deletion copy in the confirmation message", () => {
     const confirmMessages: string[] = [];
     expect(confirmSessionCleanup(preview, (message) => {
       confirmMessages.push(message);
@@ -78,6 +77,5 @@ describe("session cleanup UI helpers", () => {
     })).toBe(true);
     expect(confirmMessages[0]).toContain("permanently delete 1 archived session");
     expect(sessionCleanupConfirmationMessage(preview)).toContain("cannot be undone");
-    expect(sessionCleanupUnavailableMessage("Remote Dev")).toBe("Update and restart Pi-Web on Remote Dev to clean up sessions.");
   });
 });

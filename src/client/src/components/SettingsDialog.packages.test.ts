@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { piPackagesApi, pluginsApi, type PiPackageMutationResponse } from "../api";
 import { SettingsDialog } from "./SettingsDialog";
-import { callDialogPromise, callDialogUpdated, deferred, getDialogProperty, packageInfo, packageMutationResponse, pluginInfo, pluginsResponse, remoteMachine, runtimeWithPackageManagement, secondRemoteMachine } from "./SettingsDialog.testSupport";
+import { callDialogPromise, callDialogUpdated, deferred, getDialogProperty, packageInfo, packageMutationResponse, pluginInfo, pluginsResponse, remoteMachine, secondRemoteMachine } from "./SettingsDialog.testSupport";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -15,7 +15,6 @@ describe("settings-dialog Pi package orchestration", () => {
     const packagesSpy = vi.spyOn(piPackagesApi, "packages").mockReturnValue(staleLoad.promise);
     const dialog = new SettingsDialog();
     dialog.machine = remoteMachine;
-    dialog.machineRuntime = runtimeWithPackageManagement;
 
     const loadPromise = callDialogPromise(dialog, "loadPackagesForTarget");
     expect(packagesSpy.mock.calls).toEqual([["remote-a"]]);
@@ -39,7 +38,6 @@ describe("settings-dialog Pi package orchestration", () => {
     const pluginsSpy = vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([pluginInfo("gateway", true)]));
     const dialog = new SettingsDialog();
     dialog.machine = remoteMachine;
-    dialog.machineRuntime = runtimeWithPackageManagement;
 
     const installPromise = callDialogPromise(dialog, "installPiPackage", "npm:@acme/new-tools");
 

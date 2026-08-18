@@ -38,5 +38,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Smoke test npm 12 global package install
+        if: runner.os == 'Linux'
+        run: npm run smoke:package-install
+
       - name: Check npm package contents
         run: npm run pack:dry

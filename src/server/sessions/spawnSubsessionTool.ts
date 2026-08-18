@@ -8,21 +8,35 @@ export type SubsessionStatus = "working" | "idle" | "error" | "unknown";
 export interface SpawnSubsessionResult {
   sessionId: string;
   cwd: string;
+  /** Model the child session runs with, as `provider/id`; absent when unknown. */
+  model?: string;
 }
 
 export type SpawnSubsessionModel = NonNullable<ExtensionContext["model"]>;
+export type SpawnSubsessionThinkingLevel = NonNullable<ExtensionContext["thinkingLevel"]>;
 
 export interface SpawnSubsessionInvocation {
-  /** cwd of the session that invoked the tool (used for project-scope checks). */
+  /**
+   * cwd of the session that invoked the tool. A tracked child always runs in
+   * this workspace, so it is both the project-scope check input and the target.
+   */
   spawningCwd: string;
   /** Session id of the parent; the spawned session is tracked against it. */
   parentSessionId: string;
   /** Session file of the parent, recorded in the child's `parentSession` header. */
   parentSessionFile: string | undefined;
   prompt: string;
-  cwd: string | undefined;
+  /**
+   * Requested target workspace. The tool never sets it; other callers may, and
+   * anything other than {@link spawningCwd} is refused rather than retargeted.
+   */
+  cwd?: string;
   /** Current model from the dispatching session, used as the spawned session's default. */
   model?: SpawnSubsessionModel;
+  /** Strict `provider/model-id` requested by the parent; overrides {@link model} when set. */
+  modelSpec?: string;
+  /** Parent's current thinking level, inherited by the child session (pi clamps it to the child model's capabilities). */
+  thinkingLevel?: SpawnSubsessionThinkingLevel;
 }
 
 export interface SubsessionSummary {
@@ -69,8 +83,8 @@ const SpawnSubsessionParams = Type.Object({
   prompt: Type.String({
     description: "Initial instruction for the tracked child.",
   }),
-  cwd: Type.Optional(Type.String({
-    description: "Child workspace in the same project (worktree or root); defaults to the parent's directory.",
+  model: Type.Optional(Type.String({
+    description: 'Model for the child session, as an exact "provider/model-id" such as "anthropic/claude-sonnet-4-5". When the user references a model as #provider/model-id in their request, forward it here. An unknown value is rejected. Omit to inherit this session\'s model.',
   })),
 });
 
@@ -120,7 +134,7 @@ function statusLine(summary: SubsessionSummary): string {
 }
 
 function workingInspectionGuidance(sessionId: string): string {
-  return `Subsession ${sessionId} is working; partial output is withheld. Continue independent work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
+  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
 }
 
 function renderEntry(entry: TranscriptEntry): string {
@@ -174,18 +188,18 @@ function renderTranscript(result: SubsessionReadResult): string {
  * Tools that let an agent spawn *tracked* child sessions, inspect them, and
  * explicitly yield at a join point.
  *
- * Unlike `spawn_session` (fire-and-forget peers), a subsession records its
- * parent in its session header, the parent is notified when it stops working,
- * and the parent may read its transcript/result. The tools are constructed
- * per-session, carrying the spawning cwd for project-scope validation; the
- * parent's identity is taken from the live extension context at call time.
+ * A subsession records its parent in its session header, the parent is notified
+ * when it stops working, and the parent may read its transcript/result. The
+ * tools are constructed per-session, carrying the spawning cwd, which is both
+ * the project-scope validation input and the child's workspace; the parent's
+ * identity is taken from the live extension context at call time.
  */
 export function createSubsessionToolDefinitions(spawningCwd: string, deps: SubsessionToolDeps) {
   const spawnTool = defineTool<typeof SpawnSubsessionParams, SpawnSubsessionResult>({
     name: "spawn_subsession",
     label: "Spawn subsession",
-    description: "Start a tracked child and return immediately. Continue independent work, then use yield_to_subsessions at the join point. Completion notices wake you; do not poll.",
-    promptSnippet: "spawn_subsession: tracked parallel work; continue, then join with yield_to_subsessions",
+    description: "Start a tracked child session in this session's working directory to carry out part of the current task and return immediately. Its transcript and result are available here after it finishes.",
+    promptSnippet: "spawn_subsession: tracked child work in this workspace; result available after completion",
     parameters: SpawnSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
@@ -195,11 +209,13 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
         parentSessionId,
         parentSessionFile,
         prompt: params.prompt,
-        cwd: params.cwd,
         ...(ctx.model === undefined ? {} : { model: ctx.model }),
+        ...(params.model === undefined ? {} : { modelSpec: params.model }),
+        ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: ctx.thinkingLevel }),
       });
+      const modelNote = result.model === undefined ? "" : ` using model ${result.model}`;
       return {
-        content: [{ type: "text", text: `Started tracked subsession ${result.sessionId} in ${result.cwd}. Continue independent work, then join with yield_to_subsessions; do not poll.` }],
+        content: [{ type: "text", text: `Started tracked subsession ${result.sessionId} in ${result.cwd}${modelNote}. Continue other work, then join with yield_to_subsessions; do not poll.` }],
         details: result,
       };
     },
@@ -270,9 +286,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
     description: "At a join point, end this run while tracked children work; completion notices wake you. If none work, continue. Call alone and last; do not poll.",
     promptSnippet: "yield_to_subsessions: end the run at a join point; call alone and last",
     promptGuidelines: [
-      "After independent work, yield only at a join point; use spawn_session for fire-and-forget work.",
-      "Call alone and last; a mixed tool batch may continue the run.",
-      "Completion notices wake you; do not poll inspection tools.",
+      "After calling spawn_subsession, you can continue with other work. At the join point, call yield_to_subsessions alone and last; completion notices wake you, so do not poll.",
     ],
     parameters: YieldToSubsessionsParams,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {

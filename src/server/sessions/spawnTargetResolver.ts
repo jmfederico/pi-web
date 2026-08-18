@@ -1,5 +1,5 @@
-import type { Project, Workspace } from "../types.js";
 import { cwdPathsEqual } from "../workingDirectory.js";
+import { RegisteredProjectWorkspaceCwds, type ProjectWorkspaceCwds, type ProjectWorkspaceCwdsDeps } from "../workspaces/projectWorkspaceCwds.js";
 
 /**
  * Decision describing whether a LLM-spawned session may target a given cwd.
@@ -21,8 +21,8 @@ export type SpawnTargetDecision =
 /**
  * Owns the rule that keeps LLM-spawned sessions visible: a spawned session may
  * only target a workspace (worktree, or root) of the registered project that
- * owns the spawning session. The rule is evaluated live so a worktree the agent
- * just created with `git worktree add` is included.
+ * owns the spawning session. The rule is evaluated through the live provider
+ * registry so a workspace the agent just created is included.
  */
 export interface SpawnTargetResolver {
   /**
@@ -33,47 +33,26 @@ export interface SpawnTargetResolver {
   resolveSpawnTarget(spawningCwd: string, requestedCwd: string | undefined): Promise<SpawnTargetDecision>;
 }
 
-interface ProjectLister {
-  list(): Promise<Project[]>;
-}
-
-interface WorkspaceLister {
-  list(project: Project): Promise<Workspace[]>;
-}
-
-export interface ProjectScopedSpawnTargetResolverDeps {
-  projects: ProjectLister;
-  workspaces: WorkspaceLister;
-}
+export type ProjectScopedSpawnTargetResolverDeps = ProjectWorkspaceCwdsDeps;
 
 /**
- * Default resolver composing the project registry and live worktree discovery.
+ * Default resolver composing the project registry and live provider resolution.
  * It finds the registered project whose current workspace set contains the
  * spawning session's cwd, then validates the requested target against that set.
  */
 export class ProjectScopedSpawnTargetResolver implements SpawnTargetResolver {
-  constructor(private readonly deps: ProjectScopedSpawnTargetResolverDeps) {}
+  private readonly projectWorkspaces: ProjectWorkspaceCwds;
+
+  constructor(deps: ProjectScopedSpawnTargetResolverDeps) {
+    this.projectWorkspaces = new RegisteredProjectWorkspaceCwds(deps);
+  }
 
   async resolveSpawnTarget(spawningCwd: string, requestedCwd: string | undefined): Promise<SpawnTargetDecision> {
-    const allowedCwds = await this.allowedSpawnTargets(spawningCwd);
+    const allowedCwds = await this.projectWorkspaces.forCwd(spawningCwd);
     if (allowedCwds === undefined) return { allowed: false, reason: "not-registered" };
     const target = requestedCwd === undefined || requestedCwd === "" ? spawningCwd : requestedCwd;
     const match = allowedCwds.find((path) => cwdPathsEqual(path, target));
     if (match === undefined) return { allowed: false, reason: "out-of-project", allowedCwds };
     return { allowed: true, cwd: match };
-  }
-
-  /**
-   * Workspace paths of the registered project that owns `spawningCwd`, or
-   * `undefined` when no registered project contains it.
-   */
-  private async allowedSpawnTargets(spawningCwd: string): Promise<string[] | undefined> {
-    const projects = await this.deps.projects.list();
-    for (const project of projects) {
-      const workspaces = await this.deps.workspaces.list(project);
-      const paths = workspaces.map((workspace) => workspace.path);
-      if (paths.some((path) => cwdPathsEqual(path, spawningCwd))) return paths;
-    }
-    return undefined;
   }
 }

@@ -3,9 +3,9 @@ import { TASKS_CONFIG_PATH } from "./config.js";
 import { defineTasksPanelElement, tasksPanelBadge } from "./tasksPanelElement.js";
 
 const plugin: PiWebPlugin = {
-  apiVersion: 1,
+  apiVersion: 2,
   name: "Workspace Tasks",
-  activate: ({ pluginId, html, svg }) => {
+  activate: ({ runtimePluginId, html, svg }) => {
     defineTasksPanelElement();
 
     return {
@@ -19,7 +19,7 @@ const plugin: PiWebPlugin = {
             enabled: (context) => context.state.selectedWorkspace !== undefined,
             run: (context) => {
               if (context.state.selectedWorkspace === undefined) return;
-              context.selectWorkspaceTool(`${pluginId}:workspace.tasks`);
+              context.selectWorkspaceTool(`${runtimePluginId}:workspace.tasks`);
             },
           },
         ],

@@ -1,10 +1,48 @@
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
-import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef } from "./piSessionService.testSupport.js";
+import { SessionNotificationStore } from "./sessionNotificationStore.js";
+import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, resolveSessionFileFromList, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
 describe("PiSessionService archive and cleanup", () => {
+  it("clears an active notification inbox when archiving", async () => {
+    const store = new SessionNotificationStore({ daemonInstanceId: "daemon-archive-test" });
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("archive-notification-session", {
+      sessionManager: fakeSessionManager("/workspace", { getSessionId: () => "archive-notification-session" }),
+    });
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      archiveStore: {
+        list: () => Promise.resolve([]),
+        get: () => Promise.resolve(undefined),
+        archive: (input) => Promise.resolve({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }),
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(false),
+      },
+      sessionManager: sessionGateway([sessionRecord("archive-notification-session")]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("archive-notification-session"));
+    const generation = store.currentGeneration("archive-notification-session", resolve("/workspace"));
+    if (generation === undefined) throw new Error("expected active notification generation");
+    store.addNotification(generation, "archive me", "warning");
+
+    await service.archive(sessionRef("archive-notification-session"));
+
+    expect(() => store.inboxSnapshot("archive-notification-session", "/workspace")).toThrow("Session not found");
+    expect(hub.notificationSummaryEvents.at(-1)).toMatchObject({
+      summary: { sessionId: "archive-notification-session", retainedCount: 0 },
+    });
+    await service.dispose();
+  });
+
   it("archives a session subtree within the root workspace", async () => {
     const archivedInputs: string[] = [];
     const root = sessionRecord("root");
@@ -13,8 +51,13 @@ describe("PiSessionService archive and cleanup", () => {
     const grandchild = { ...sessionRecord("grandchild"), path: "/sessions/grandchild.jsonl", parentSessionPath: archivedChild.path };
     const otherWorkspaceChild = { ...sessionRecord("other-child", "/other"), path: "/sessions/other-child.jsonl", parentSessionPath: root.path };
     const fake = fakeRuntime("root", { sessionFile: root.path });
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-tree-test" });
+    const archivedRegistration = notificationStore.registerSession("archived-child", "/workspace");
+    notificationStore.addNotification(archivedRegistration.generation, "residual archived child", "warning");
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
       createAgentRuntime: runtimeCreator(fake.runtime),
       archiveStore: {
         list: () => Promise.resolve([{ sessionId: "archived-child", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", originalPath: archivedChild.path, archivePath: "/archive/archived-child.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 1, firstMessage: "archived", parentSessionPath: root.path }]),
@@ -29,6 +72,9 @@ describe("PiSessionService archive and cleanup", () => {
       sessionManager: {
         create: () => fakeSessionManager(),
         list: (cwd) => Promise.resolve(cwd === "/workspace" ? [root, directChild, archivedChild, grandchild] : [otherWorkspaceChild]),
+        listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: resolveSessionFileFromList((cwd) => Promise.resolve(cwd === "/workspace" ? [root, directChild, archivedChild, grandchild] : [otherWorkspaceChild])),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -41,19 +87,96 @@ describe("PiSessionService archive and cleanup", () => {
       skippedAlreadyArchivedCount: 1,
     });
     expect(archivedInputs).toEqual(["root", "direct-child", "grandchild"]);
+    expect(() => notificationStore.inboxSnapshot("archived-child", "/workspace")).toThrow("Session not found");
 
+    await service.dispose();
+  });
+
+  it("defensively removes residual notification state while listing archived sessions", async () => {
+    const store = new SessionNotificationStore({ daemonInstanceId: "daemon-reconcile-test" });
+    const registration = store.registerSession("archived", "/workspace");
+    store.addNotification(registration.generation, "residual", "error");
+    const hub = new CapturingSessionEventHub();
+    const archivedRecord = {
+      sessionId: "archived",
+      cwd: "/workspace",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+      originalPath: "/sessions/archived.jsonl",
+      archivePath: "/archive/archived.jsonl",
+    };
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore: store,
+      archiveStore: {
+        list: () => Promise.resolve([archivedRecord]),
+        get: () => Promise.resolve(undefined),
+        archive: () => Promise.reject(new Error("archive should not be called")),
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(true),
+      },
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.list("/workspace");
+
+    expect(store.catalogSnapshot().sessions).toEqual([]);
+    expect(() => store.inboxSnapshot("archived", "/workspace")).toThrow("Session not found");
+    expect(hub.notificationSummaryEvents.at(-1)).toMatchObject({ summary: { sessionId: "archived", retainedCount: 0 } });
+    await service.dispose();
+  });
+
+  it("does not register notifications while opening an archived session read-only", async () => {
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-archived-open-test" });
+    const archivedRuntime = fakeRuntime("archived", {
+      bindExtensions: (bindings) => {
+        bindings.uiContext?.notify("archived startup", "error");
+        return Promise.resolve();
+      },
+    });
+    const archivedRecord = { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" };
+    const hub = new CapturingSessionEventHub();
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
+      createAgentRuntime: runtimeCreator(archivedRuntime.runtime),
+      archiveStore: {
+        list: () => Promise.resolve([archivedRecord]),
+        get: () => Promise.resolve(archivedRecord),
+        archive: () => Promise.reject(new Error("archive should not be called")),
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(true),
+      },
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.status(sessionRef("archived"));
+
+    expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
+    expect(() => notificationStore.inboxSnapshot("archived", "/workspace")).toThrow("Session not found");
+    expect(hub.sessionEvents).toContainEqual({
+      sessionId: "archived",
+      event: { type: "command.output", level: "error", message: "archived startup" },
+    });
     await service.dispose();
   });
 
   it("permanently deletes archived sessions through the archive store", async () => {
     const deletedSessionIds: string[] = [];
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-delete-test" });
+    const registration = notificationStore.registerSession("archived", "/workspace");
+    notificationStore.addNotification(registration.generation, "delete me", "info");
+    const archivedRecord = { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
       archiveStore: {
-        list: () => Promise.resolve([]),
-        get: (sessionId) => Promise.resolve(sessionId === "archived" || "archived".startsWith(sessionId)
-          ? { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" }
-          : undefined),
+        list: () => Promise.resolve([archivedRecord]),
+        get: () => Promise.resolve(undefined),
         archive: () => { throw new Error("archive should not be called for records that already have archive files"); },
         restore: () => Promise.resolve(),
         isArchived: () => Promise.resolve(false),
@@ -66,10 +189,39 @@ describe("PiSessionService archive and cleanup", () => {
       heartbeatIntervalMs: 60_000,
     });
 
-    await expect(service.deleteArchived("arch")).resolves.toBeUndefined();
-    await expect(service.deleteArchived("active")).rejects.toThrow("Archived session not found");
+    const result = await service.deleteArchivedMany([{ id: "arch", cwd: "/workspace" }, { id: "active", cwd: "/workspace" }]);
 
+    expect(result.deletedSessionIds).toEqual(["archived"]);
+    expect(result.failures).toEqual([{ sessionId: "active", error: "Archived session not found" }]);
     expect(deletedSessionIds).toEqual(["archived"]);
+    expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
+    await service.dispose();
+  });
+
+  it("clears residual notifications before restoring an archived session", async () => {
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-restore-test" });
+    const registration = notificationStore.registerSession("archived", "/workspace");
+    notificationStore.addNotification(registration.generation, "restore me", "info");
+    const restore = vi.fn(() => Promise.resolve());
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
+      archiveStore: {
+        list: () => Promise.resolve([]),
+        get: () => Promise.resolve({ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" }),
+        archive: () => Promise.reject(new Error("archive should not be called")),
+        restore,
+        isArchived: () => Promise.resolve(true),
+      },
+      sessionManager: sessionGateway([]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    await service.restore(sessionRef("archived"));
+
+    expect(restore).toHaveBeenCalledWith("archived");
+    expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
     await service.dispose();
   });
 
@@ -81,8 +233,15 @@ describe("PiSessionService archive and cleanup", () => {
     const listCalls: string[] = [];
     const open = vi.fn(() => { throw new Error("bulk archive should not open inactive runtimes"); });
     const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }))));
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-bulk-archive-test" });
+    for (const [sessionId, cwd] of [["a", "/one"], ["b", "/one"], ["c", "/two"]] as const) {
+      const registration = notificationStore.registerSession(sessionId, cwd);
+      notificationStore.addNotification(registration.generation, `notice ${sessionId}`, "info");
+    }
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
       archiveStore: {
         list: () => Promise.resolve([]),
         get: () => Promise.resolve(undefined),
@@ -97,6 +256,9 @@ describe("PiSessionService archive and cleanup", () => {
           listCalls.push(cwd);
           return Promise.resolve(recordsByCwd.get(cwd) ?? []);
         },
+        listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: () => Promise.resolve(undefined),
         open,
       },
       heartbeatIntervalMs: 60_000,
@@ -109,6 +271,7 @@ describe("PiSessionService archive and cleanup", () => {
     expect(open).not.toHaveBeenCalled();
     expect(archiveMany).toHaveBeenCalledTimes(1);
     expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["a", "b", "c"]);
+    expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
     await service.dispose();
   });
 
@@ -118,6 +281,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }))));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: () => {
         createCalls += 1;
         return Promise.resolve(busy.runtime);
@@ -133,6 +297,9 @@ describe("PiSessionService archive and cleanup", () => {
       sessionManager: {
         create: () => fakeSessionManager(),
         list: () => Promise.resolve([sessionRecord("busy"), sessionRecord("ok")]),
+        listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: resolveSessionFileFromList(() => Promise.resolve([sessionRecord("busy"), sessionRecord("ok")])),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -159,6 +326,7 @@ describe("PiSessionService archive and cleanup", () => {
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       createAgentRuntime: runtimeCreator(busy.runtime),
       archiveStore: {
         list: () => Promise.resolve([busyRecord, idleRecord]),
@@ -172,6 +340,9 @@ describe("PiSessionService archive and cleanup", () => {
       sessionManager: {
         create: () => fakeSessionManager(),
         list: () => Promise.resolve([sessionRecord("unarchived")]),
+        listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: () => Promise.resolve(undefined),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -190,12 +361,13 @@ describe("PiSessionService archive and cleanup", () => {
     await service.dispose();
   });
 
-  it("bulk delete moves legacy archived records with one workspace scan before deleting", async () => {
-    const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z", archivePath: `/archive/${input.sessionId}.jsonl` }))));
+  it("bulk delete removes records without archive files without re-archiving them", async () => {
+    const archiveMany = vi.fn(() => Promise.resolve([]));
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const listCalls: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([
           { sessionId: "legacy-a", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z" },
@@ -203,7 +375,7 @@ describe("PiSessionService archive and cleanup", () => {
           { sessionId: "moved", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/moved.jsonl" },
         ]),
         get: () => Promise.resolve(undefined),
-        archive: (input) => Promise.resolve({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-01-03T00:00:00.000Z" }),
+        archive: () => { throw new Error("archive should not be called"); },
         archiveMany,
         restore: () => Promise.resolve(),
         isArchived: () => Promise.resolve(false),
@@ -216,6 +388,9 @@ describe("PiSessionService archive and cleanup", () => {
           listCalls.push(cwd);
           return Promise.resolve([sessionRecord("legacy-a"), sessionRecord("legacy-b"), sessionRecord("unarchived")]);
         },
+        listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: () => Promise.resolve(undefined),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -223,8 +398,8 @@ describe("PiSessionService archive and cleanup", () => {
 
     const result = await service.deleteArchivedMany([{ id: "legacy-a", cwd: "/workspace" }, { id: "legacy-b", cwd: "/workspace" }, { id: "moved", cwd: "/workspace" }]);
 
-    expect(listCalls).toEqual(["/workspace"]);
-    expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["legacy-a", "legacy-b"]);
+    expect(listCalls).toEqual([]);
+    expect(archiveMany).not.toHaveBeenCalled();
     expect(deleteArchivedMany).toHaveBeenCalledWith(["legacy-a", "legacy-b", "moved"]);
     expect(result.deletedSessionIds).toEqual(["legacy-a", "legacy-b", "moved"]);
     expect(result.failures).toEqual([]);
@@ -237,8 +412,15 @@ describe("PiSessionService archive and cleanup", () => {
     let listAllCalls = 0;
     const archived = { sessionId: "archived-old", cwd: "/old-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-old.jsonl" };
     const otherArchived = { sessionId: "archived-other", cwd: "/other-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-other.jsonl" };
+    const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-cleanup-test" });
+    for (const sessionId of ["execute-only", "archived-old"]) {
+      const registration = notificationStore.registerSession(sessionId, "/old-project");
+      notificationStore.addNotification(registration.generation, `notice ${sessionId}`, "warning");
+    }
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      notificationStore,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
         list: () => Promise.resolve([archived, otherArchived]),
@@ -266,6 +448,8 @@ describe("PiSessionService archive and cleanup", () => {
             listAllCalls === 1 ? sessionRecord("preview-other", "/other-project") : sessionRecord("execute-other", "/other-project"),
           ]);
         },
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: () => Promise.resolve(undefined),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -276,22 +460,25 @@ describe("PiSessionService archive and cleanup", () => {
     expect(preview.projects).toEqual([{ cwd: "/old-project", archiveCount: 1, deleteCount: 1 }]);
     expect(archivedInputs).toEqual([]);
     expect(deletedSessionIds).toEqual([]);
+    expect(notificationStore.catalogSnapshot().sessions).toHaveLength(2);
 
     const result = await service.cleanup({ thresholds: { archiveIdleDays: 30, deleteArchivedDays: 30 }, projectCwds: ["/old-project"] });
     expect(result.archivedSessionIds).toEqual(["execute-only"]);
     expect(result.deletedSessionIds).toEqual(["archived-old"]);
     expect(archivedInputs).toEqual(["execute-only"]);
     expect(deletedSessionIds).toEqual(["archived-old"]);
+    expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
 
     await service.dispose();
   });
 
-  it("moves legacy cleanup delete records with one workspace scan before batch deleting", async () => {
+  it("cleanup deletes records without archive files without re-archiving them", async () => {
     const listCalls: string[] = [];
-    const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({ sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-06-25T00:00:00.000Z", archivePath: `/archive/${input.sessionId}.jsonl` }))));
+    const archiveMany = vi.fn(() => Promise.resolve([]));
     const deleteArchivedMany = vi.fn((sessionIds: readonly string[]) => Promise.resolve([...sessionIds]));
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
         list: () => Promise.resolve([
@@ -313,6 +500,8 @@ describe("PiSessionService archive and cleanup", () => {
           return Promise.resolve([sessionRecord("legacy-a", cwd), sessionRecord("legacy-b", cwd)]);
         },
         listAll: () => Promise.resolve([]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: () => Promise.resolve(undefined),
         open: () => fakeSessionManager(),
       },
       heartbeatIntervalMs: 60_000,
@@ -320,9 +509,8 @@ describe("PiSessionService archive and cleanup", () => {
 
     const result = await service.cleanup({ thresholds: { deleteArchivedDays: 30 }, projectCwds: ["/old-project"] });
 
-    expect(listCalls).toEqual(["/old-project"]);
-    expect(archiveMany).toHaveBeenCalledTimes(1);
-    expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["legacy-a", "legacy-b"]);
+    expect(listCalls).toEqual([]);
+    expect(archiveMany).not.toHaveBeenCalled();
     expect(deleteArchivedMany).toHaveBeenCalledWith(["legacy-a", "legacy-b"]);
     expect(result.deletedSessionIds).toEqual(["legacy-a", "legacy-b"]);
 
@@ -334,6 +522,7 @@ describe("PiSessionService archive and cleanup", () => {
     const archivedInputs: string[] = [];
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       createAgentRuntime: runtimeCreator(fake.runtime),
       archiveStore: {
@@ -350,12 +539,14 @@ describe("PiSessionService archive and cleanup", () => {
         create: () => fakeSessionManager("/old-project"),
         list: () => Promise.resolve([sessionRecord("busy-open", "/old-project")]),
         listAll: () => Promise.resolve([sessionRecord("busy-open", "/old-project")]),
+        invalidateSessionFile: () => undefined,
+        resolveSessionFile: resolveSessionFileFromList(() => Promise.resolve([sessionRecord("busy-open", "/old-project")])),
         open: () => fakeSessionManager("/old-project"),
       },
       heartbeatIntervalMs: 60_000,
     });
 
-    await service.status("busy-open");
+    await service.status(sessionRef("busy-open", "/old-project"));
     const result = await service.cleanup({ thresholds: { archiveIdleDays: 1 } });
 
     expect(result.archivedSessionIds).toEqual([]);

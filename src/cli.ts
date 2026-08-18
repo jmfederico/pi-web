@@ -5,9 +5,20 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPiWebConfigPath, defaultPiWebDataDir, effectivePiWebConfig, examplePiWebConfig } from "./config.js";
-import { packageVersion, printPiWebVersionReport } from "./piWebVersionReport.js";
+import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
+import { piWebDockerCommand, type PiWebDockerMode } from "./docker/piWebDockerCommandPlan.js";
+import { ownEnvironmentValue } from "./environment.js";
+import { runPluginRecoveryCli, type SessionDaemonRestartPlan } from "./pluginRecoveryCli.js";
+import {
+  packageVersion,
+  printPiWebVersionReport,
+  probeRunningComponentReady,
+  runningComponentsReady,
+  type PiWebVersionReportOptions,
+  type RunningComponentId,
+} from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
+import { checkNodePtyNativeModule, formatNodePtyNativeModuleCheck } from "./server/diagnostics/nodePtyNativeModule.js";
 import {
   installNativeServiceCandidate,
   nativeServiceInstallFailureNeedsPathAdvice,
@@ -15,6 +26,22 @@ import {
   type NativeServiceInstallFailure,
 } from "./nativeServices/serviceInstall.js";
 import {
+  launchdBootoutArgs,
+  launchdServiceTarget,
+  orderServices,
+  performServiceAction,
+  serviceStartOrder,
+  serviceStopOrder,
+  settleLaunchdServiceUnload,
+  startLaunchdService,
+  type LaunchdServiceContext,
+  type ServiceActionDeps,
+  type ServiceActionInput,
+  type ServiceActionResult,
+  type ServiceLifecycleAction,
+} from "./nativeServices/serviceAction.js";
+import {
+  minimumSupportedNodeVersion,
   nativeServiceManagerRefs,
   productionNativeServiceIds,
   type NativeServiceBackend,
@@ -25,12 +52,20 @@ import {
   type ProductionNativeServicePlanInput,
 } from "./nativeServices/servicePlan.js";
 import {
+  inspectInstalledNativeServiceDefinitions,
+  type InstalledNativeServiceDefinitionCommandResult,
+  type InstalledNativeServiceDefinitionPurpose,
+  type InstalledNativeServiceDefinitionSource,
+} from "./nativeServices/installedServiceDefinitions.js";
+import {
   formatNativeServiceDoctorResult,
   inferInstalledNativeServiceMode,
   inspectInstalledDevelopmentServiceInput,
   inspectInstalledProductionServiceContext,
   runNativeServiceDoctor,
+  selectManagedNativeServiceConfig,
   type InstalledNativeServiceDefinition,
+  type InstalledNativeServiceInspection,
   type NativeServiceDoctorReport,
   type NativeServiceDoctorTarget,
 } from "./nativeServices/serviceDoctor.js";
@@ -80,12 +115,6 @@ const serviceRefs: Record<ServiceId, ServiceRef> = {
 };
 
 const productionServiceIds: ServiceId[] = [...productionNativeServiceIds];
-const startServiceOrder: ServiceId[] = ["sessiond", "web", "uiDev"];
-const stopServiceOrder: ServiceId[] = ["web", "uiDev", "sessiond"];
-// Restart web/UI before sessiond: when `pi-web restart` runs in a pi-web
-// terminal (owned by sessiond), restarting sessiond kills the command, so any
-// services handled after it would never be restarted.
-const restartServiceOrder: ServiceId[] = ["web", "uiDev", "sessiond"];
 
 function platformLabel(): string {
   if (process.platform === "darwin") return "macOS";
@@ -108,10 +137,6 @@ function requireServiceBackend(command: string): ServiceBackend {
   const backend = currentServiceBackend();
   if (backend !== undefined) return backend;
   throw new Error(`\`${command}\` requires a supported per-user service manager (systemd user services or LaunchAgents) and is not supported on ${platformLabel()}.\n\n${manualRunAdvice()}`);
-}
-
-function supportsSystemdUserServices(): boolean {
-  return currentServiceBackend()?.kind === "systemd";
 }
 
 function manualRunAdvice(): string {
@@ -146,6 +171,19 @@ function capture(command: string, args: string[]): { status: number; stdout: str
   const errorMessage = result.error instanceof Error ? result.error.message : "";
   const stderr = outputText(result.stderr);
   return { status: result.status ?? 1, stdout: outputText(result.stdout), stderr: stderr === "" ? errorMessage : stderr };
+}
+
+function captureInstalledServiceDefinitionCommand(
+  command: string,
+  args: string[],
+): InstalledNativeServiceDefinitionCommandResult {
+  const result = spawnSync(command, args);
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    spawnError: result.error instanceof Error ? result.error.message : "",
+  };
 }
 
 function runQuiet(command: string, args: string[]): number {
@@ -279,24 +317,12 @@ function productionServiceRefs(): ServiceRef[] {
   return serviceRefList(productionServiceIds);
 }
 
-function orderServiceRefs(refs: ServiceRef[], order: ServiceId[]): ServiceRef[] {
-  const byId = new Map(refs.map((ref) => [ref.id, ref]));
-  return order.flatMap((id) => {
-    const ref = byId.get(id);
-    return ref === undefined ? [] : [ref];
-  });
-}
-
 function startOrder(refs: ServiceRef[]): ServiceRef[] {
-  return orderServiceRefs(refs, startServiceOrder);
+  return orderServices(refs, serviceStartOrder);
 }
 
 function stopOrder(refs: ServiceRef[]): ServiceRef[] {
-  return orderServiceRefs(refs, stopServiceOrder);
-}
-
-function restartOrder(refs: ServiceRef[]): ServiceRef[] {
-  return orderServiceRefs(refs, restartServiceOrder);
+  return orderServices(refs, serviceStopOrder);
 }
 
 function devRootPath(): string {
@@ -379,26 +405,27 @@ function launchdDomain(): string {
   return `gui/${String(userInfo().uid)}`;
 }
 
-function launchdServiceTarget(ref: ServiceRef): string {
-  return `${launchdDomain()}/${ref.launchdLabel}`;
+function currentLaunchdServiceTarget(ref: ServiceRef): string {
+  return launchdServiceTarget(launchdDomain(), ref);
 }
 
-function launchdIsLoaded(ref: ServiceRef): boolean {
-  return capture("launchctl", ["print", launchdServiceTarget(ref)]).status === 0;
+function launchdActionContext(): LaunchdServiceContext {
+  return { domain: launchdDomain(), plistPath: launchdPlistPath };
 }
 
-function launchdBootout(ref: ServiceRef): void {
-  runQuiet("launchctl", ["bootout", launchdServiceTarget(ref)]);
-}
-
-function launchdBootstrap(ref: ServiceRef): void {
-  run("launchctl", ["bootstrap", launchdDomain(), launchdPlistPath(ref)], { check: true });
-  run("launchctl", ["enable", launchdServiceTarget(ref)], { check: true });
-}
-
-function launchdStart(ref: ServiceRef): void {
-  if (!launchdIsLoaded(ref)) launchdBootstrap(ref);
-  run("launchctl", ["kickstart", launchdServiceTarget(ref)], { check: true });
+function serviceActionDeps(
+  backend: ServiceBackend,
+  probeEnvironment: NodeJS.ProcessEnv = process.env,
+): ServiceActionDeps {
+  return {
+    run: (command, args) => run(command, args),
+    runQuiet,
+    sleep: (ms) => new Promise<void>((resolve) => {
+      setTimeout(resolve, ms);
+    }),
+    isServiceRunning: (ref) => runtimeStatus(backend, ref).health === "running",
+    isComponentReady: (component) => probeRunningComponentReady(component, { configEnv: probeEnvironment }),
+  };
 }
 
 async function installLaunchdServices(plan: NativeServicePlan): Promise<void> {
@@ -407,7 +434,9 @@ async function installLaunchdServices(plan: NativeServicePlan): Promise<void> {
   await mkdir(launchdServiceDir, { recursive: true });
   await mkdir(logDir, { recursive: true });
 
-  for (const ref of stopOrder(allServiceRefs())) launchdBootout(ref);
+  for (const ref of stopOrder(allServiceRefs())) {
+    runQuiet("launchctl", launchdBootoutArgs(currentLaunchdServiceTarget(ref)));
+  }
 
   for (const ref of allServiceRefs().filter((candidate) => !selected.has(candidate.id))) {
     await rm(launchdPlistPath(ref), { force: true });
@@ -418,7 +447,16 @@ async function installLaunchdServices(plan: NativeServicePlan): Promise<void> {
     await writeFile(plistPath, renderLaunchdPlist(plan, service, logDir));
   }
 
-  for (const service of plan.services) launchdStart(serviceRefFromPlan(service.id, service.manager));
+  // Settle each bootout before deciding bootstrap vs kickstart: acting on a
+  // label launchd is still asynchronously unloading races the teardown and can
+  // lose the service entirely (the same defect the restart path had).
+  const context = launchdActionContext();
+  const deps = serviceActionDeps(plan.backend);
+  for (const service of plan.services) {
+    const ref = serviceRefFromPlan(service.id, service.manager);
+    await settleLaunchdServiceUnload(currentLaunchdServiceTarget(ref), deps);
+    startLaunchdService(ref, context, deps);
+  }
 }
 
 async function installNativeServices(plan: NativeServicePlan): Promise<void> {
@@ -440,7 +478,7 @@ async function uninstallSystemdServices(): Promise<void> {
 
 async function uninstallLaunchdServices(): Promise<void> {
   for (const ref of stopOrder(allServiceRefs())) {
-    launchdBootout(ref);
+    runQuiet("launchctl", launchdBootoutArgs(currentLaunchdServiceTarget(ref)));
     await rm(launchdPlistPath(ref), { force: true });
   }
 }
@@ -530,7 +568,7 @@ export function launchdRuntimeDetails(output: string): { state: string; detail: 
 }
 
 function launchdRuntimeStatus(backend: ServiceBackend, ref: ServiceRef): ServiceRuntimeStatus {
-  const target = launchdServiceTarget(ref);
+  const target = currentLaunchdServiceTarget(ref);
   const filePath = serviceFilePath(backend, ref);
   if (!serviceFileExists(backend, ref)) return makeServiceRuntimeStatus(ref, "not-installed", "not installed", target, filePath);
 
@@ -663,6 +701,9 @@ async function install(args: string[]): Promise<void> {
   console.log(`Running PI WEB ${options.mode} install preflight checks...`);
   console.log(`Service backend: ${backend.label}`);
   console.log(`Service shell: ${describeServiceShell()}`);
+  if (!printNodePtyNativeModuleCheck()) {
+    throw new Error("Install preflight checks failed without changing config or services. Fix the failure above, then run `pi-web doctor` for more detail.");
+  }
   const result = await installNativeServiceCandidate(candidate, {
     probe: createNativeServiceAuthoritativeProbe(),
     fileExists: regularFileExists,
@@ -709,40 +750,101 @@ async function uninstall(): Promise<void> {
   console.log(`PI WEB ${backend.label} removed. Production and development service files were removed; config and data were left in place.`);
 }
 
-function systemdServiceAction(action: "start" | "stop" | "restart", refs: ServiceRef[]): void {
-  const orderedRefs = action === "stop" ? stopOrder(refs) : action === "restart" ? restartOrder(refs) : startOrder(refs);
-  run("systemctl", ["--user", action, ...orderedRefs.map((ref) => ref.systemdName)], { check: true });
-}
-
-function launchdServiceAction(action: "start" | "stop" | "restart", refs: ServiceRef[]): void {
-  if (action === "stop") {
-    for (const ref of stopOrder(refs)) launchdBootout(ref);
-    return;
-  }
-
-  if (action === "restart") {
-    // Restart each service fully (bootout + start) before moving to the next,
-    // so the web/UI services are back up before sessiond is restarted.
-    for (const ref of restartOrder(refs)) {
-      launchdBootout(ref);
-      launchdStart(ref);
-    }
-    return;
-  }
-
-  for (const ref of startOrder(refs)) launchdStart(ref);
-}
-
-function serviceAction(action: "start" | "stop" | "restart" | "status"): void {
+async function serviceAction(action: "stop" | "status"): Promise<void> {
   const backend = requireServiceBackend(`pi-web ${action}`);
   if (action === "status") {
     if (!printServiceStatusReport(backend)) process.exitCode = 1;
     return;
   }
+  await performLifecycleServiceAction(backend, action, process.env);
+}
 
+async function performLifecycleServiceAction(
+  backend: ServiceBackend,
+  action: ServiceLifecycleAction,
+  probeEnvironment: NodeJS.ProcessEnv,
+): Promise<void> {
   const refs = installedServiceRefs(backend);
-  if (backend.kind === "systemd") systemdServiceAction(action, refs);
-  else launchdServiceAction(action, refs);
+  const input: ServiceActionInput = { backend, action, refs, launchdContext: launchdActionContext() };
+  const result: ServiceActionResult = await performServiceAction(input, serviceActionDeps(backend, probeEnvironment));
+  if (result.unreadyServices.length > 0) {
+    for (const ref of result.unreadyServices) {
+      const target = backend.kind === "systemd" ? ref.systemdName : currentLaunchdServiceTarget(ref);
+      console.log(`✗ ${serviceDisplayName(ref)} did not become ready (${target}).`);
+    }
+    console.log("  Check `pi-web status` and `pi-web logs` for details.");
+    process.exitCode = 1;
+  }
+}
+
+export interface SessionDaemonRestartPlanOptions {
+  env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
+  configPath?: string;
+  explicitConfigPath?: boolean;
+  serviceFileExists?: (path: string) => boolean;
+  runCommand?: (command: string, args: string[]) => void;
+  uid?: number;
+}
+
+/** Offline restart guidance used only after a recovery config mutation. */
+export function sessionDaemonRestartPlan(options: SessionDaemonRestartPlanOptions = {}): SessionDaemonRestartPlan {
+  const env = options.env ?? process.env;
+  if (options.explicitConfigPath === true && options.configPath !== undefined) {
+    return {
+      kind: "manual",
+      guidance: `Restart the session daemon process configured with PI_WEB_CONFIG=${JSON.stringify(options.configPath)}.`,
+    };
+  }
+  const dockerMode = activeDockerMode(env);
+  const runCommand = options.runCommand ?? ((command, args) => { run(command, args, { check: true }); });
+  if (dockerMode !== undefined) {
+    const command = piWebDockerCommand(dockerMode, "restart-sessiond");
+    return {
+      kind: "automatic",
+      command,
+      guidance: "Run the Docker control command from the PI WEB Docker host.",
+      perform: () => {
+        runCommand("pi-web-docker", [...(dockerMode === "dev" ? ["--dev"] : []), "restart-sessiond"]);
+      },
+    };
+  }
+
+  const backend = serviceBackendForPlatform(options.platform ?? process.platform);
+  const fileExists = options.serviceFileExists ?? existsSync;
+  if (backend?.kind === "systemd" && fileExists(systemdServicePath(serviceRefs.sessiond))) {
+    const args = ["--user", "restart", serviceRefs.sessiond.systemdName];
+    return {
+      kind: "automatic",
+      command: `systemctl ${args.join(" ")}`,
+      guidance: "Run:",
+      perform: () => { runCommand("systemctl", args); },
+    };
+  }
+  if (backend?.kind === "launchd" && fileExists(launchdPlistPath(serviceRefs.sessiond))) {
+    const target = `gui/${String(options.uid ?? userInfo().uid)}/${serviceRefs.sessiond.launchdLabel}`;
+    const args = ["kickstart", "-k", target];
+    return {
+      kind: "automatic",
+      command: `launchctl ${args.join(" ")}`,
+      guidance: "Run:",
+      perform: () => { runCommand("launchctl", args); },
+    };
+  }
+  return {
+    kind: "manual",
+    guidance: "Stop and rerun the process that owns sessiond (from a checkout: `npm run start:sessiond`).",
+  };
+}
+
+function activeDockerMode(env: NodeJS.ProcessEnv): PiWebDockerMode | undefined {
+  if (!truthyEnvValue(ownEnvironmentValue(env, "PI_WEB_DOCKER_RUNTIME"))) return undefined;
+  if (ownEnvironmentValue(env, "PI_WEB_DOCKER_MODE") === "dev") return "dev";
+  return "runtime";
+}
+
+function truthyEnvValue(value: string | undefined): boolean {
+  return value !== undefined && value !== "" && value !== "0" && value.toLowerCase() !== "false";
 }
 
 function logs(): void {
@@ -772,24 +874,24 @@ export function commandWithVersionCheck(command: string): string {
   return `${found} && (${commandWord} --version 2>&1 || true)`;
 }
 
-function nodeVersionCheck(): string {
-  return [
-    commandCheck("node"),
-    "node -e \"const major = Number(process.versions.node.split('.')[0]); console.log(process.version); process.exit(major >= 22 ? 0 : 1);\"",
-  ].join(" && ");
+export function nodeVersionCheck(): string {
+  return nativeServicePrerequisiteShellCheck(detectServiceShell().name, {
+    id: "caller.node",
+    kind: "node-version",
+    command: "node",
+    minimumVersion: minimumSupportedNodeVersion,
+    description: `node >= ${minimumSupportedNodeVersion}`,
+  });
 }
 
-export function agentCommandForChecks(env: NodeJS.ProcessEnv = process.env): string {
-  return effectivePiWebConfig({ env }).config.agent.command;
-}
-
-function generalDoctorChecks(): Check[] {
+export function generalDoctorChecks(): Check[] {
   const shell = serviceShellLabel();
-  const agentCommand = agentCommandForChecks();
   return [
-    [`Caller login ${shell} can find node >= 22`, serviceShellCommand(nodeVersionCheck())],
+    [`Caller login ${shell} can find node >= ${minimumSupportedNodeVersion}`, serviceShellCommand(nodeVersionCheck())],
     [`Caller login ${shell} can find npm`, serviceShellCommand(commandWithVersionCheck("npm"))],
-    [`Caller login ${shell} can find ${agentCommand}`, serviceShellCommand(commandWithVersionCheck(agentCommand))],
+    // Sessions run on the bundled pi SDK; the only CLI check is a hardcoded
+    // `pi` PATH probe — nothing names or locates a configurable command.
+    [`Caller login ${shell} can find pi`, serviceShellCommand(commandWithVersionCheck("pi"))],
   ];
 }
 
@@ -840,15 +942,185 @@ function printOptionalDoctorChecks(): void {
 function installedServiceDefinitions(
   backend: ServiceBackend,
   ids: readonly ServiceId[],
-): InstalledNativeServiceDefinition[] {
-  return ids.map((id) => ({
+  purpose: InstalledNativeServiceDefinitionPurpose,
+): InstalledNativeServiceInspection<readonly InstalledNativeServiceDefinition[]> {
+  const sources: InstalledNativeServiceDefinitionSource[] = ids.map((id) => ({
     id,
-    contents: readFileSync(serviceFilePath(backend, serviceRefs[id]), "utf8"),
+    path: serviceFilePath(backend, serviceRefs[id]),
+    systemdName: serviceRefs[id].systemdName,
+    launchdTarget: currentLaunchdServiceTarget(serviceRefs[id]),
   }));
+  return inspectInstalledNativeServiceDefinitions(backend, sources, {
+    readFile: (path) => readFileSync(path),
+    realpath: realpathSync,
+    capture: captureInstalledServiceDefinitionCommand,
+  }, purpose);
 }
 
-function nativeServiceDoctorTarget(backend: ServiceBackend): NativeServiceDoctorTarget {
-  const ids = installedServiceIds(backend);
+/** Build an isolated probe environment without mutating the caller or process. */
+export function managedServiceProbeEnvironment(
+  backend: ServiceBackend,
+  definitions: readonly InstalledNativeServiceDefinition[],
+  callerEnvironment: NodeJS.ProcessEnv,
+): InstalledNativeServiceInspection<NodeJS.ProcessEnv> {
+  const selection = selectManagedNativeServiceConfig(
+    backend,
+    definitions,
+    ownEnvironmentValue(callerEnvironment, "PI_WEB_CONFIG"),
+  );
+  if (!selection.ok) return selection;
+  if (selection.value.source === "installed") {
+    return {
+      ok: true,
+      value: { ...callerEnvironment, PI_WEB_CONFIG: selection.value.configPath },
+    };
+  }
+  if (selection.value.source === "default" && definitions.length > 0) {
+    // An own empty value preserves default resolution while masking any
+    // prototype-inherited PI_WEB_CONFIG from downstream environment lookups.
+    return { ok: true, value: { ...callerEnvironment, PI_WEB_CONFIG: "" } };
+  }
+  return { ok: true, value: callerEnvironment };
+}
+
+function installedServiceProbeEnvironment(
+  backend: ServiceBackend,
+  ids: ReadonlySet<ServiceId>,
+  callerEnvironment: NodeJS.ProcessEnv,
+  purpose: InstalledNativeServiceDefinitionPurpose,
+  inspectDefinitions: (
+    backend: ServiceBackend,
+    ids: readonly ServiceId[],
+    purpose: InstalledNativeServiceDefinitionPurpose,
+  ) => InstalledNativeServiceInspection<readonly InstalledNativeServiceDefinition[]>,
+): InstalledNativeServiceInspection<NodeJS.ProcessEnv> {
+  // The explicit caller override wins without requiring installed definitions
+  // to be readable or canonical.
+  const callerConfigPath = ownEnvironmentValue(callerEnvironment, "PI_WEB_CONFIG");
+  if (callerConfigPath !== undefined && callerConfigPath !== "") {
+    return { ok: true, value: callerEnvironment };
+  }
+  if (ids.size === 0) return { ok: true, value: callerEnvironment };
+
+  const definitions = inspectDefinitions(backend, [...ids], purpose);
+  if (!definitions.ok) return definitions;
+  return managedServiceProbeEnvironment(backend, definitions.value, callerEnvironment);
+}
+
+function managedServiceProbeFailure(backend: ServiceBackend, message: string): string {
+  return [
+    `Could not select managed PI_WEB_CONFIG from installed ${backend.label}: ${message}`,
+    "Repair the reported service-manager override or definition, then re-run `pi-web install` (or `pi-web install --dev`); a nonempty PI_WEB_CONFIG explicitly overrides managed config selection for this command.",
+  ].join("\n");
+}
+
+export type ReadinessCliCommand = "start" | "restart" | "doctor" | "version";
+
+export interface ReadinessDoctorCommandContext {
+  backend: ServiceBackend | undefined;
+  installedIds: ReadonlySet<ServiceId>;
+  environment: NodeJS.ProcessEnv;
+  versionReportOptions: PiWebVersionReportOptions;
+  managedInspectionFailed: boolean;
+}
+
+export interface ReadinessCliCommandDependencies {
+  environment: NodeJS.ProcessEnv;
+  currentBackend: () => ServiceBackend | undefined;
+  requireBackend: (command: string) => ServiceBackend;
+  installedServiceIds: (backend: ServiceBackend) => ReadonlySet<ServiceId>;
+  inspectDefinitions: (
+    backend: ServiceBackend,
+    ids: readonly ServiceId[],
+    purpose: InstalledNativeServiceDefinitionPurpose,
+  ) => InstalledNativeServiceInspection<readonly InstalledNativeServiceDefinition[]>;
+  runLifecycle: (
+    backend: ServiceBackend,
+    action: "start" | "restart",
+    probeEnvironment: NodeJS.ProcessEnv,
+  ) => Promise<void>;
+  runDoctor: (context: ReadinessDoctorCommandContext) => Promise<void>;
+  printVersion: () => Promise<void>;
+}
+
+/**
+ * Dispatch commands whose probes may need managed config. The service-manager,
+ * definition, lifecycle, doctor, and version boundaries are injected so this
+ * exact orchestration can be tested without mutating live services or process
+ * environment.
+ */
+export async function runReadinessCliCommand(
+  command: ReadinessCliCommand,
+  dependencies: ReadinessCliCommandDependencies,
+): Promise<void> {
+  if (command === "version") {
+    await dependencies.printVersion();
+    return;
+  }
+
+  const environment = dependencies.environment;
+  if (command === "start" || command === "restart") {
+    const backend = dependencies.requireBackend(`pi-web ${command}`);
+    const installedIds = dependencies.installedServiceIds(backend);
+    const probeEnvironment = installedServiceProbeEnvironment(
+      backend,
+      installedIds,
+      environment,
+      command,
+      dependencies.inspectDefinitions,
+    );
+    if (!probeEnvironment.ok) throw new Error(managedServiceProbeFailure(backend, probeEnvironment.message));
+    await dependencies.runLifecycle(backend, command, probeEnvironment.value);
+    return;
+  }
+
+  const backend = dependencies.currentBackend();
+  const installedIds = backend === undefined
+    ? new Set<ServiceId>()
+    : dependencies.installedServiceIds(backend);
+  let versionReportOptions: PiWebVersionReportOptions = { configEnv: environment };
+  let managedInspectionFailed = false;
+  if (backend !== undefined && activeDockerMode(environment) === undefined) {
+    const probeEnvironment = installedServiceProbeEnvironment(
+      backend,
+      installedIds,
+      environment,
+      "doctor",
+      dependencies.inspectDefinitions,
+    );
+    if (probeEnvironment.ok) {
+      versionReportOptions = { configEnv: probeEnvironment.value };
+    } else {
+      managedInspectionFailed = true;
+      versionReportOptions = { webEndpointError: managedServiceProbeFailure(backend, probeEnvironment.message) };
+    }
+  }
+  await dependencies.runDoctor({
+    backend,
+    installedIds,
+    environment,
+    versionReportOptions,
+    managedInspectionFailed,
+  });
+}
+
+function readinessCliCommandDependencies(): ReadinessCliCommandDependencies {
+  return {
+    environment: process.env,
+    currentBackend: currentServiceBackend,
+    requireBackend: requireServiceBackend,
+    installedServiceIds,
+    inspectDefinitions: installedServiceDefinitions,
+    runLifecycle: performLifecycleServiceAction,
+    runDoctor: doctor,
+    printVersion: async () => { await printPiWebVersionReport(); },
+  };
+}
+
+function nativeServiceDoctorTarget(
+  backend: ServiceBackend,
+  ids: ReadonlySet<ServiceId>,
+): NativeServiceDoctorTarget {
   const mode = inferInstalledNativeServiceMode(ids);
   if (mode === "ambiguous") {
     return {
@@ -874,27 +1146,17 @@ function nativeServiceDoctorTarget(backend: ServiceBackend): NativeServiceDoctor
     };
   }
 
-  let definitions: InstalledNativeServiceDefinition[];
-  try {
-    definitions = installedServiceDefinitions(
-      backend,
-      expectedIds,
-    );
-  } catch (error: unknown) {
-    return {
-      kind: "inspection-failure",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
+  const definitions = installedServiceDefinitions(backend, expectedIds, "doctor");
+  if (!definitions.ok) return { kind: "inspection-failure", message: definitions.message };
 
   if (mode === "development") {
-    const inspection = inspectInstalledDevelopmentServiceInput(backend, definitions);
+    const inspection = inspectInstalledDevelopmentServiceInput(backend, definitions.value);
     return inspection.ok
       ? { kind: "installed-development", input: inspection.value }
       : { kind: "inspection-failure", message: inspection.message };
   }
 
-  const inspection = inspectInstalledProductionServiceContext(backend, definitions);
+  const inspection = inspectInstalledProductionServiceContext(backend, definitions.value);
   return inspection.ok
     ? {
         kind: "prospective-production",
@@ -904,8 +1166,11 @@ function nativeServiceDoctorTarget(backend: ServiceBackend): NativeServiceDoctor
     : { kind: "inspection-failure", message: inspection.message };
 }
 
-async function printNativeServiceDoctorChecks(backend: ServiceBackend): Promise<NativeServiceDoctorReport> {
-  const result = await runNativeServiceDoctor(nativeServiceDoctorTarget(backend), {
+async function printNativeServiceDoctorChecks(
+  backend: ServiceBackend,
+  installedIds: ReadonlySet<ServiceId>,
+): Promise<NativeServiceDoctorReport> {
+  const result = await runNativeServiceDoctor(nativeServiceDoctorTarget(backend, installedIds), {
     probe: createNativeServiceAuthoritativeProbe(),
     fileExists: regularFileExists,
   });
@@ -960,16 +1225,37 @@ function printPathSetupAdvice(shell: NativeServiceShell = detectServiceShell()):
   }
 }
 
+/**
+ * Running components an installed deployment must keep ready: the API-serving
+ * component whenever the web or UI dev service file is installed (the version
+ * endpoint probes the API port in both modes), and the session daemon whenever
+ * its service file is installed. Docker deployments have no native service
+ * files, so the Docker runtime marker expects both components. A machine with
+ * nothing installed expects nothing: doctor's manual-run guidance stays a
+ * passing outcome there.
+ */
+export function expectedRunningComponents(
+  installedServices: ReadonlySet<NativeServiceId>,
+  env: NodeJS.ProcessEnv,
+): RunningComponentId[] {
+  if (activeDockerMode(env) !== undefined) return ["web", "sessiond"];
+  const expected: RunningComponentId[] = [];
+  if (installedServices.has("web") || installedServices.has("uiDev")) expected.push("web");
+  if (installedServices.has("sessiond")) expected.push("sessiond");
+  return expected;
+}
+
 export function doctorExitCode(
   generalReadinessOk: boolean,
   nativeServicePlanOk: boolean,
-  nodePtySpawnHelperOk: boolean,
+  nodePtyRuntimeOk: boolean,
+  runningComponentsOk: boolean,
 ): 0 | 1 {
-  return generalReadinessOk && nativeServicePlanOk && nodePtySpawnHelperOk ? 0 : 1;
+  return generalReadinessOk && nativeServicePlanOk && nodePtyRuntimeOk && runningComponentsOk ? 0 : 1;
 }
 
-async function doctor(): Promise<void> {
-  const backend = currentServiceBackend();
+async function doctor(context: ReadinessDoctorCommandContext): Promise<void> {
+  const { backend, installedIds, environment, versionReportOptions, managedInspectionFailed } = context;
   console.log(`Platform: ${platformLabel()}`);
   console.log(`Service backend: ${backend?.label ?? "manual run only"}`);
   console.log(`Service shell: ${describeServiceShell()}`);
@@ -977,20 +1263,35 @@ async function doctor(): Promise<void> {
     console.log(`- Native user service plan checks skipped on ${platformLabel()}; no native-service drift is reported.`);
   }
   console.log("");
-  await printPiWebVersionReport();
+
+  const runningVersionInfo = await printPiWebVersionReport(versionReportOptions);
+  const expectedComponents = expectedRunningComponents(installedIds, environment);
+  const runningComponentsOk = runningComponentsReady(runningVersionInfo, expectedComponents);
+  if (!runningComponentsOk) {
+    console.log("\n✗ Installed PI WEB services are unavailable or stale (see \"Running services\" above).");
+    console.log("  Run `pi-web restart`, then check `pi-web status`.");
+  }
 
   console.log("\nGeneral login-shell readiness (separate from native-service requirements):");
   const generalReadinessOk = runChecks(generalDoctorChecks());
   printOptionalDoctorChecks();
-  const nodePtySpawnHelperOk = printNodePtyDarwinSpawnHelperCheck();
+
+  console.log("\nNative terminal runtime readiness:");
+  const nodePtyNativeModuleOk = printNodePtyNativeModuleCheck();
+  const nodePtySpawnHelperOk = nodePtyNativeModuleOk ? printNodePtyDarwinSpawnHelperCheck() : true;
 
   let nativeServiceReport: NativeServiceDoctorReport | null = null;
   if (backend !== undefined) {
     console.log("\nNative service plan checks (service-manager context):");
-    nativeServiceReport = await printNativeServiceDoctorChecks(backend);
+    if (managedInspectionFailed) {
+      console.log("✗ Installed native-service plan could not be inspected consistently with the readiness probe (see \"Running services\" above).");
+      console.log("  Repair the reported service-manager definition before relying on doctor results.");
+    } else {
+      nativeServiceReport = await printNativeServiceDoctorChecks(backend, installedIds);
+    }
   }
 
-  if (supportsSystemdUserServices()) {
+  if (backend?.kind === "systemd") {
     const linger = isLingerEnabled();
     if (linger === true) {
       console.log("✓ systemd user lingering enabled");
@@ -1007,7 +1308,7 @@ async function doctor(): Promise<void> {
     console.log(`- systemd user lingering skipped on ${platformLabel()}`);
   }
 
-  const nativeServicePlanOk = nativeServiceReport?.ok ?? true;
+  const nativeServicePlanOk = !managedInspectionFailed && (nativeServiceReport?.ok ?? true);
   const pathFailure = !generalReadinessOk || nativeServiceReport?.pathAdviceRecommended === true;
   if (pathFailure) {
     console.log("\nIf a command works in your terminal but fails in the service-manager check, compare the caller and manager contexts above.");
@@ -1021,7 +1322,13 @@ async function doctor(): Promise<void> {
     console.log(`\n${manualRunAdvice()}`);
   }
 
-  if (doctorExitCode(generalReadinessOk, nativeServicePlanOk, nodePtySpawnHelperOk) !== 0) process.exitCode = 1;
+  if (doctorExitCode(generalReadinessOk, nativeServicePlanOk, nodePtyNativeModuleOk && nodePtySpawnHelperOk, runningComponentsOk) !== 0) process.exitCode = 1;
+}
+
+function printNodePtyNativeModuleCheck(): boolean {
+  const result = formatNodePtyNativeModuleCheck(checkNodePtyNativeModule());
+  for (const line of result.lines) console.log(line);
+  return result.ok;
 }
 
 function printNodePtyDarwinSpawnHelperCheck(): boolean {
@@ -1041,11 +1348,13 @@ Usage:
   pi-web install [--dev] [--host 127.0.0.1] [--port 8504] [--config ~/.config/pi-web/config.json]
   pi-web uninstall
   pi-web start|stop|restart|status|logs
+  pi-web plugins disable <plugin-id> [--config <path>] [--restart]
+  pi-web plugins safe-start show|clear|set <bundled-only|none> [--config <path>] [--restart]
   pi-web doctor
   pi-web version
 
 Recommended install:
-  npm install -g @jmfederico/pi-web
+  npm install -g @jmfederico/pi-web --allow-scripts=node-pty
   pi-web install
 
 Development service install from a checkout:
@@ -1057,10 +1366,11 @@ async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   if (command === "install") await install(args);
   else if (command === "uninstall") await uninstall();
-  else if (command === "start" || command === "stop" || command === "restart" || command === "status") serviceAction(command);
+  else if (command === "start" || command === "restart" || command === "doctor" || command === "version") {
+    await runReadinessCliCommand(command, readinessCliCommandDependencies());
+  } else if (command === "stop" || command === "status") await serviceAction(command);
   else if (command === "logs") logs();
-  else if (command === "doctor") await doctor();
-  else if (command === "version") await printPiWebVersionReport();
+  else if (command === "plugins") runPluginRecoveryCli(args, { restartPlan: (context) => sessionDaemonRestartPlan(context) });
   else if (command === "--version" || command === "-v") console.log(packageVersion());
   else if (command === "help" || command === "--help" || command === "-h") help();
   else throw new Error(`Unknown command: ${command}`);

@@ -1,10 +1,28 @@
 {
   "name": "@jmfederico/pi-web",
-  "version": "1.202607.0",
+  "version": "1.202608.1",
   "description": "Web UI for persistent Pi Coding Agent sessions in real workspaces.",
   "license": "MIT",
   "author": "Federico Jaramillo Martinez",
   "type": "module",
+  "exports": {
+    "./plugin-api": {
+      "types": "./dist/plugin-api.d.ts"
+    },
+    "./server-plugin-api": {
+      "types": "./dist/server-plugin-api.d.ts"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "plugin-api": [
+        "dist/plugin-api.d.ts"
+      ],
+      "server-plugin-api": [
+        "dist/server-plugin-api.d.ts"
+      ]
+    }
+  },
   "bin": {
     "pi-web": "dist/cli.js",
     "pi-web-server": "dist/server/index.js",
@@ -17,15 +35,16 @@
     "README.md",
     "LICENSE",
     "extensions",
+    "examples/workspace-provider-plugin",
     "docs/plugins.md",
     "docs/config.md",
     "docs/assets",
     "plugin-api.d.ts",
-    "plugin-api/unstable.d.ts"
+    "server-plugin-api.d.ts"
   ],
   "scripts": {
     "dev": "bash -c 'trap \"kill 0\" EXIT; npm run dev:sessiond & npm run dev:web & npm run dev:client & wait'",
-    "dev:sessiond": "tsx watch src/server/sessiond.ts",
+    "dev:sessiond": "npm run build:plugins && tsx watch src/server/sessiond.ts",
     "dev:web": "bash -c 'set -e; npm run build:plugins; trap \"kill 0\" EXIT; npm run dev:plugins & tsx watch src/server/index.ts & wait'",
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
@@ -42,10 +61,11 @@
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
     "verify:staged": "node scripts/verify-staged.mjs",
     "start": "tsx src/server/index.ts",
-    "start:sessiond": "tsx src/server/sessiond.ts",
+    "start:sessiond": "npm run build:plugins && tsx src/server/sessiond.ts",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",
+    "smoke:package-install": "node scripts/smoke-package-install.mjs",
     "prepublishOnly": "npm run verify",
     "publish:npm": "npm publish --access public",
     "prepare": "node scripts/install-git-hooks.mjs",
@@ -68,7 +88,7 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
     "@fastify/compress": "^9.0.0",
-    "@fastify/static": "^9.3.0",
+    "@fastify/static": "^10.1.2",
     "@fastify/websocket": "^11.3.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
@@ -77,19 +97,21 @@
     "lit": "^3.3.3",
     "marked": "^18.0.6",
     "node-pty": "^1.1.0",
-    "typebox": "1.3.6",
+    "typebox": "1.3.7",
+    "undici": "^8.5.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
-    "@earendil-works/pi-agent-core": "^0.80.6",
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@earendil-works/pi-agent-core": "^0.84.1",
+    "@earendil-works/pi-ai": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^0.84.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
     "@types/ws": "^8.18.1",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
+    "happy-dom": "^20.11.1",
     "knip": "^6.25.0",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
@@ -101,7 +123,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "repository": {
     "type": "git",
@@ -113,9 +135,9 @@
   "homepage": "https://pi-web.dev/",
   "packageManager": "npm@11.11.0",
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": ">=0.80.0 <1",
-    "@earendil-works/pi-ai": ">=0.80.0 <1",
-    "@earendil-works/pi-coding-agent": ">=0.80.0 <1"
+    "@earendil-works/pi-agent-core": ">=0.84.0",
+    "@earendil-works/pi-ai": ">=0.84.0",
+    "@earendil-works/pi-coding-agent": ">=0.84.0"
   },
   "keywords": [
     "pi-package",

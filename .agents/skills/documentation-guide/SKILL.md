@@ -81,6 +81,7 @@ If the content needs multiple sentences of caveats, explains how an internal mec
 ## Writing principles
 
 - Lead with the user outcome, then the command or action needed.
+- State what the software does rather than listing what it does not do; reserve "does not" statements for the rare case where behavior genuinely contradicts the most obvious expectation.
 - Prefer concrete guidance over internal type, module, or orchestration terminology.
 - Explain implementation details only when they help users make a decision or recover from a failure.
 - Distinguish supported behavior from recommendations and prospective behavior.

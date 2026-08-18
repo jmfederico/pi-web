@@ -30,14 +30,6 @@ describe("machine-scoped socket urls", () => {
     ]);
   });
 
-  it("keeps legacy session socket urls usable without cwd", () => {
-    sessionEvents("s1");
-
-    expect(webSocketUrls).toEqual([
-      "wss://pi.example.test/api/machines/local/sessions/s1/events",
-    ]);
-  });
-
   it("uses the requested machine scope for terminal sockets", () => {
     terminalSocket("p 1", "w/1", "t?1", { cols: 120, rows: 40 }, "remote-a");
 

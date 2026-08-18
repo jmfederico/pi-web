@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { Project, Workspace } from "../types.js";
+import type { Project, WorkspaceListing } from "../types.js";
 import { ProjectScopedSpawnTargetResolver } from "./spawnTargetResolver.js";
 
 function project(id: string, path: string): Project {
   return { id, name: id, path, createdAt: "2026-01-01T00:00:00.000Z" };
 }
 
-function workspace(projectId: string, path: string): Workspace {
-  return { id: `${projectId}:${path}`, projectId, path, label: path, isMain: false, isGitRepo: true, isGitWorktree: true };
+function workspace(projectId: string, path: string): WorkspaceListing {
+  return { id: `${projectId}:${path}`, projectId, path, label: path, isMain: false };
 }
 
-function resolverFor(projects: Project[], workspacesByProject: Record<string, Workspace[]>): ProjectScopedSpawnTargetResolver {
+function resolverFor(projects: Project[], workspacesByProject: Record<string, WorkspaceListing[]>): ProjectScopedSpawnTargetResolver {
   return new ProjectScopedSpawnTargetResolver({
     projects: { list: () => Promise.resolve(projects) },
     workspaces: { list: (p) => Promise.resolve(workspacesByProject[p.id] ?? []) },

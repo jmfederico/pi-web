@@ -25,8 +25,8 @@ function deferred<T = void>() {
 describe("ActiveProfilePiPackageService", () => {
   it("uses the daemon profile active when each package operation begins", async () => {
     const getActiveAgentProfile = vi.fn<ActiveAgentProfileProvider["getActiveAgentProfile"]>()
-      .mockResolvedValueOnce(availableProfile("a", "/state/first"))
-      .mockResolvedValueOnce(availableProfile("b", "/state/second"));
+      .mockResolvedValueOnce(availableProfile("/state/first"))
+      .mockResolvedValueOnce(availableProfile("/state/second"));
     const firstService = fakePiPackageService("first");
     const secondService = fakePiPackageService("second");
     const serviceForAgentDir = vi.fn((agentDir: string): PiPackageService => agentDir === "/state/first" ? firstService : secondService);
@@ -241,15 +241,12 @@ describe("DefaultPiPackageService", () => {
   });
 });
 
-function availableProfile(revisionCharacter: string, dir: string) {
+function availableProfile(dir: string) {
   return {
     status: "available" as const,
     profile: {
-      schemaVersion: 1 as const,
-      revision: `sha256:${revisionCharacter.repeat(64)}`,
-      command: `${revisionCharacter}-agent`,
+      schemaVersion: 2 as const,
       dir,
-      sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
     },
   };
 }

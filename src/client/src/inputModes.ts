@@ -4,6 +4,7 @@ export type InputMode =
   | { kind: "normal" }
   | { kind: "command" }
   | { kind: "file" }
+  | { kind: "model" }
   | { kind: "shell"; excludeFromContext: boolean };
 
 export function inputModeForDraft(draft: string): InputMode {
@@ -11,7 +12,9 @@ export function inputModeForDraft(draft: string): InputMode {
   if (trimmed.startsWith("!@")) return { kind: "file" };
   if (trimmed.startsWith("!")) return { kind: "shell", excludeFromContext: trimmed.startsWith("!!") };
   if (currentToken(draft).startsWith("/")) return { kind: "command" };
-  if (detectPromptCompletionTrigger(draft)?.kind === "file") return { kind: "file" };
+  const trigger = detectPromptCompletionTrigger(draft);
+  if (trigger?.kind === "file") return { kind: "file" };
+  if (trigger?.kind === "model") return { kind: "model" };
   return { kind: "normal" };
 }
 

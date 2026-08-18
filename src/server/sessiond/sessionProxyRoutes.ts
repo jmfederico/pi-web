@@ -1,9 +1,17 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { WebSocket, type RawData } from "ws";
-import { SessionDaemonClient } from "../../sessiond/sessionDaemonClient.js";
+import {
+  SessionDaemonClient,
+  type SessionDaemonRequestOptions,
+} from "../../sessiond/sessionDaemonClient.js";
 
 export interface SessionProxyDaemon {
-  request(method: string, path: string, body?: unknown): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+  request(
+    method: string,
+    path: string,
+    body?: unknown,
+    options?: SessionDaemonRequestOptions,
+  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
   connectWebSocket(path: string): WebSocket;
 }
 
@@ -36,7 +44,7 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
     bridgeSockets(socket, daemon.connectWebSocket("/events"));
   });
 
-  app.all(`${prefix}/activity`, (request, reply) => proxy(request, reply));
+  app.all(`${prefix}/status`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));

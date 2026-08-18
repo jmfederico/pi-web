@@ -11,14 +11,6 @@ function sessionCwd(session: SessionLookup): string | undefined {
   return typeof session === "string" ? undefined : session.cwd;
 }
 
-export function machineGitDiffPath(machineId: string, projectId: string, workspaceId: string, options?: { path?: string; staged?: boolean }): string {
-  const params = new URLSearchParams();
-  if (options?.path !== undefined) params.set("path", options.path);
-  if (options?.staged === true) params.set("staged", "true");
-  const query = params.toString();
-  return `api/machines/${encodeURIComponent(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/git/diff${query ? `?${query}` : ""}`;
-}
-
 export function messagePath(session: SessionLookup, options?: { limit?: number; before?: number }, machineId = "local"): string {
   const params = new URLSearchParams();
   const cwd = sessionCwd(session);
@@ -37,10 +29,21 @@ export function workspaceFileWriteUrl(projectId: string, workspaceId: string, pa
   return resolveAppUrl(`${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file?${params.toString()}`);
 }
 
-export function workspaceImagePreviewUrl(projectId: string, workspaceId: string, path: string, options?: { modifiedAt?: string; machineId?: string }): string {
+export interface WorkspaceFilePreviewUrlOptions {
+  modifiedAt?: string;
+  machineId?: string;
+  download?: boolean;
+}
+
+export function workspaceFilePreviewPath(projectId: string, workspaceId: string, path: string, options?: WorkspaceFilePreviewUrlOptions): string {
   const params = new URLSearchParams();
   params.set("path", path);
   if (options?.modifiedAt !== undefined) params.set("v", options.modifiedAt);
+  if (options?.download === true) params.set("download", "1");
   const prefix = `api/machines/${encodeURIComponent(options?.machineId ?? "local")}`;
-  return resolveAppUrl(`${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`);
+  return `${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`;
+}
+
+export function workspaceFilePreviewUrl(projectId: string, workspaceId: string, path: string, options?: WorkspaceFilePreviewUrlOptions): string {
+  return resolveAppUrl(workspaceFilePreviewPath(projectId, workspaceId, path, options));
 }

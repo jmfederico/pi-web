@@ -1,11 +1,14 @@
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
-import type { GlobalSessionEvent, SessionUiEvent } from "../../shared/apiTypes.js";
+import { ModelRuntime, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { InMemoryCredentialStore, type Credential, type CredentialStore } from "@earendil-works/pi-ai";
+import type { GlobalSessionEvent, SessionNotificationSummaryEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
-import type { PiAgentSession, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies } from "./piSessionService.js";
+import type { PiAgentSession, PiSessionListEntry, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies, ResolvedSessionFile } from "./piSessionService.js";
 
 export class CapturingSessionEventHub extends SessionEventHub {
   readonly sessionEvents: { sessionId: string; event: SessionUiEvent }[] = [];
   readonly globalEvents: GlobalSessionEvent[] = [];
+  readonly notificationSummaryEvents: SessionNotificationSummaryEvent[] = [];
+  private readonly seqBySessionOverride = new Map<string, number>();
 
   override publish(sessionId: string, event: SessionUiEvent): void {
     this.sessionEvents.push({ sessionId, event });
@@ -14,10 +17,25 @@ export class CapturingSessionEventHub extends SessionEventHub {
   override publishGlobal(event: GlobalSessionEvent): void {
     this.globalEvents.push(event);
   }
+
+  override publishNotificationSummary(event: SessionNotificationSummaryEvent): void {
+    this.notificationSummaryEvents.push(event);
+  }
+
+  /** Test seam: set the per-session watermark returned by {@link currentSeq}. */
+  setSeq(sessionId: string, value: number): void {
+    this.seqBySessionOverride.set(sessionId, value);
+  }
+
+  override currentSeq(sessionId: string): number {
+    return this.seqBySessionOverride.get(sessionId) ?? 0;
+  }
 }
 
 export type SessionGateway = NonNullable<PiSessionServiceDependencies["sessionManager"]>;
 export type RuntimeCreator = NonNullable<PiSessionServiceDependencies["createAgentRuntime"]>;
+
+type TestExtensionBindings = Parameters<PiAgentSession["bindExtensions"]>[0];
 
 export interface TestSession extends PiAgentSession {
   sessionName: string | undefined;
@@ -52,8 +70,65 @@ export function sessionRef(id: string, cwd = "/workspace") {
 export const TEST_MODEL_PROVIDER = "anthropic";
 export const TEST_MODEL_ID = "claude-sonnet-4-5-20250929";
 
+/**
+ * Seed a credential into an {@link InMemoryCredentialStore}. `modify` is the
+ * only write path on the pi-ai `CredentialStore` contract, so tests that need a
+ * pre-populated store go through it rather than mutating internals.
+ */
+export async function seedCredential(store: InMemoryCredentialStore, providerId: string, credential: Credential): Promise<void> {
+  await store.modify(providerId, () => Promise.resolve(credential));
+}
+
+/**
+ * Build a real {@link ModelRuntime} over an in-memory credential store — the
+ * async test seam that replaces the removed `ModelRegistry.create(AuthStorage
+ * .inMemory())`. Pass a pre-seeded store to exercise credential-dependent
+ * behavior (e.g. auth-loss warnings).
+ */
+export function createTestModelRuntime(credentials: CredentialStore = new InMemoryCredentialStore()): Promise<ModelRuntime> {
+  return ModelRuntime.create({ credentials, modelsPath: null, allowModelNetwork: false });
+}
+
+/**
+ * Shared runtime for the common case where a test only needs model catalog
+ * reads and no configured auth. Built once so the many `fakeRuntime` sessions
+ * and `PiSessionService` constructions can inject it synchronously.
+ */
+export const testModelRuntime = await createTestModelRuntime();
+
+const testExtensionUiContext: ExtensionUIContext = {
+  select: () => Promise.resolve(undefined),
+  confirm: () => Promise.resolve(false),
+  input: () => Promise.resolve(undefined),
+  notify() { /* no-op */ },
+  onTerminalInput: () => () => undefined,
+  setStatus() { /* no-op */ },
+  setWorkingMessage() { /* no-op */ },
+  setWorkingVisible() { /* no-op */ },
+  setWorkingIndicator() { /* no-op */ },
+  setHiddenThinkingLabel() { /* no-op */ },
+  setWidget() { /* no-op */ },
+  setFooter() { /* no-op */ },
+  setHeader() { /* no-op */ },
+  setTitle() { /* no-op */ },
+  custom: () => Promise.reject(new Error("Custom extension UI is unavailable in tests")),
+  pasteToEditor() { /* no-op */ },
+  setEditorText() { /* no-op */ },
+  getEditorText: () => "",
+  editor: () => Promise.resolve(undefined),
+  addAutocompleteProvider() { /* no-op */ },
+  setEditorComponent() { /* no-op */ },
+  getEditorComponent: () => undefined,
+  get theme(): ExtensionUIContext["theme"] { throw new Error("Extension UI theme is unavailable in tests"); },
+  getAllThemes: () => [],
+  getTheme: () => undefined,
+  setTheme: () => ({ success: false, error: "Extension UI is unavailable in tests" }),
+  getToolsExpanded: () => false,
+  setToolsExpanded() { /* no-op */ },
+};
+
 export function testModel(): NonNullable<PiAgentSession["model"]> {
-  const model = ModelRegistry.inMemory(AuthStorage.inMemory()).find(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
+  const model = testModelRuntime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID);
   if (model === undefined) throw new Error("test model not found");
   return model;
 }
@@ -61,13 +136,15 @@ export function testModel(): NonNullable<PiAgentSession["model"]> {
 export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession> = {}) {
   const promptCalls: { text: string; options: unknown }[] = [];
   const customMessageCalls: { message: { customType: string; content: string; display: boolean; details?: unknown }; options: unknown }[] = [];
-  const bindExtensionCalls: unknown[] = [];
+  const bindExtensionCalls: TestExtensionBindings[] = [];
   const listeners: ((event: unknown) => void)[] = [];
+  let extensionUiContext = testExtensionUiContext;
   const calls = { abort: 0, bindExtensions: bindExtensionCalls, clearQueue: 0, dispose: 0, prompt: promptCalls, reload: 0, sendCustomMessage: customMessageCalls };
   const session: TestSession = {
     sessionId,
     sessionFile: `/tmp/${sessionId}.jsonl`,
     messages: [],
+    state: {},
     sessionName: undefined,
     model: undefined,
     thinkingLevel: "off",
@@ -76,9 +153,15 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     isBashRunning: false,
     pendingMessageCount: 0,
     sessionManager: fakeSessionManager(),
-    modelRegistry: ModelRegistry.create(AuthStorage.inMemory()),
+    settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined, getEnabledModels: () => undefined, setEnabledModels: () => undefined },
+    modelRuntime: testModelRuntime,
     scopedModels: [],
-    extensionRunner: { getRegisteredCommands: () => [] },
+    setScopedModels: () => undefined,
+    extensionRunner: {
+      getRegisteredCommands: () => [],
+      getUIContext: () => extensionUiContext,
+      setUIContext: (uiContext) => { extensionUiContext = uiContext ?? testExtensionUiContext; },
+    },
     promptTemplates: [],
     resourceLoader: { getSkills: () => ({ skills: [] }) },
     subscribe: (listener: (event: unknown) => void) => {
@@ -88,8 +171,9 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
         if (index !== -1) listeners.splice(index, 1);
       };
     },
-    bindExtensions: (bindings: unknown) => {
+    bindExtensions: (bindings: TestExtensionBindings) => {
       calls.bindExtensions.push(bindings);
+      if (bindings.uiContext !== undefined) extensionUiContext = bindings.uiContext;
       return Promise.resolve();
     },
     getSessionStats: () => ({ sessionId, totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 }),
@@ -125,7 +209,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     setSessionName: (name: string) => { session.sessionName = name; },
     compact: () => Promise.resolve({ summary: "", tokensBefore: 0 }),
     getUserMessagesForForking: () => [],
-    agent: { streamFn: () => { throw new Error("streamFn should not be called in this test"); } },
+    agent: { streamFunction: () => { throw new Error("streamFunction should not be called in this test"); } },
     ...patch,
   };
   const runtime: PiSessionRuntime = {
@@ -150,9 +234,30 @@ export function runtimeCreator(runtime: PiSessionRuntime): RuntimeCreator {
 
 export function sessionGateway(records: ReturnType<typeof sessionRecord>[]): SessionGateway {
   return {
-    create: () => fakeSessionManager(),
+    create: (cwd) => fakeSessionManager(cwd),
     list: () => Promise.resolve(records),
+    listAll: () => Promise.resolve(records),
+    invalidateSessionFile: () => undefined,
+    resolveSessionFile: resolveSessionFileFromList(() => Promise.resolve(records)),
     open: () => fakeSessionManager(),
+  };
+}
+
+/**
+ * Build a gateway `resolveSessionFile` on top of a `list` implementation,
+ * mirroring the real resolver's precedence: an exact id wins over a prefix
+ * match wherever it appears. For test gateways whose `list` fake is the source
+ * of truth, this keeps id resolution consistent with what the fake lists
+ * without letting the fake disagree with the production ordering rule.
+ */
+export function resolveSessionFileFromList(
+  list: (cwd: string) => Promise<PiSessionListEntry[]>,
+): (cwd: string, sessionId: string) => Promise<ResolvedSessionFile | undefined> {
+  return async (cwd, sessionId) => {
+    const records = await list(cwd);
+    const match = records.find((record) => record.id === sessionId)
+      ?? records.find((record) => record.id.startsWith(sessionId));
+    return match === undefined ? undefined : { id: match.id, cwd: match.cwd, path: match.path };
   };
 }
 

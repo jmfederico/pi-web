@@ -74,6 +74,11 @@ describe("sessionNameGenerator", () => {
       .toBe("Relay handoff-check leg 2");
   });
 
+  it.each(["R1a", "G-D1-L09", "phase-2", "R1-a"])("supports structured relay leg identifiers (%s)", (legIdentifier) => {
+    expect(deterministicSessionName(`Relay "handoff-check" leg ${legIdentifier} begins now.`))
+      .toBe(`Relay handoff-check leg ${legIdentifier}`);
+  });
+
   it("preserves the relay leg when truncating deterministic relay names", () => {
     expect(deterministicSessionName('Relay "very-long-relay-name-that-would-otherwise-push-the-leg-number-out-of-view" leg 42 begins now.'))
       .toBe("Relay very-long-relay-name-that-would-otherwise-push leg 42");

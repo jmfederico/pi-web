@@ -5,11 +5,11 @@ import { createSubsessionToolDefinitions, type SubsessionToolDeps } from "./spaw
 
 const dispatchModel = { provider: "anthropic", id: "claude-sonnet" };
 
-function ctxFor(sessionId: string, sessionFile: string | undefined, model?: unknown): ExtensionContext {
+function ctxFor(sessionId: string, sessionFile: string | undefined, model?: unknown, thinkingLevel?: string): ExtensionContext {
   const sessionManager = { getSessionId: () => sessionId, getSessionFile: () => sessionFile };
-  // The subsession tools only read sessionManager.getSessionId/getSessionFile and model.
+  // The subsession tools only read sessionManager.getSessionId/getSessionFile, model, and thinkingLevel.
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- test stub with the minimal surface the tools use.
-  return { sessionManager, ...(model === undefined ? {} : { model }) } as unknown as ExtensionContext;
+  return { sessionManager, ...(model === undefined ? {} : { model }), ...(thinkingLevel === undefined ? {} : { thinkingLevel }) } as unknown as ExtensionContext;
 }
 
 function tools(deps: Partial<SubsessionToolDeps>) {
@@ -35,7 +35,7 @@ function tools(deps: Partial<SubsessionToolDeps>) {
 }
 
 function workingGuidance(sessionId: string): string {
-  return `Subsession ${sessionId} is working; partial output is withheld. Continue independent work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
+  return `Subsession ${sessionId} is working; partial output is withheld. Continue other work, or call yield_to_subsessions alone and last at the join point. Completion notices wake you; do not poll.`;
 }
 
 function firstText(content: readonly (TextContent | ImageContent)[]): string {
@@ -45,33 +45,42 @@ function firstText(content: readonly (TextContent | ImageContent)[]): string {
 
 describe("createSubsessionToolDefinitions", () => {
   it("spawn_subsession forwards parent identity and params from the live context", async () => {
-    const spawn = vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a-feature" }));
+    const spawn = vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a" }));
     const { spawn: spawnTool } = tools({ spawn });
 
-    const result = await spawnTool.execute("call-1", { prompt: "do it", cwd: "/repos/a-feature" }, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl", dispatchModel));
+    const result = await spawnTool.execute("call-1", { prompt: "do it" }, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl", dispatchModel, "max"));
 
     expect(spawn).toHaveBeenCalledWith({
       spawningCwd: "/repos/a",
       parentSessionId: "parent-1",
       parentSessionFile: "/sessions/parent-1.jsonl",
       prompt: "do it",
-      cwd: "/repos/a-feature",
       model: dispatchModel,
+      thinkingLevel: "max",
     });
-    expect(result.details).toEqual({ sessionId: "child-1", cwd: "/repos/a-feature" });
+    expect(result.details).toEqual({ sessionId: "child-1", cwd: "/repos/a" });
     expect(firstText(result.content)).toContain("Started tracked subsession child-1");
   });
 
-  it("guides the parent to continue independent work and use the explicit join action", async () => {
+  it("spawn_subsession offers no way to target another workspace", () => {
+    const { spawn: spawnTool } = tools({});
+
+    expect(spawnTool.parameters).toMatchObject({ type: "object", properties: { prompt: {}, model: {} } });
+    expect(spawnTool.parameters).not.toHaveProperty(["properties", "cwd"]);
+    expect(spawnTool.description).toContain("in this session's working directory");
+  });
+
+  it("describes tracked child work whose result remains available to the parent", async () => {
     const { spawn: spawnTool } = tools({
-      spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a-feature" })),
+      spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/repos/a" })),
     });
 
-    expect(spawnTool.description).toBe("Start a tracked child and return immediately. Continue independent work, then use yield_to_subsessions at the join point. Completion notices wake you; do not poll.");
-    expect(spawnTool.promptSnippet).toBe("spawn_subsession: tracked parallel work; continue, then join with yield_to_subsessions");
+    expect(spawnTool.description).toBe("Start a tracked child session in this session's working directory to carry out part of the current task and return immediately. Its transcript and result are available here after it finishes.");
+    expect(spawnTool.promptSnippet).toBe("spawn_subsession: tracked child work in this workspace; result available after completion");
+    expect(spawnTool.description).not.toMatch(/spawn_session|fully independent/i);
 
     const result = await spawnTool.execute("call-contract", { prompt: "do it" }, undefined, undefined, ctxFor("parent-1", undefined));
-    expect(firstText(result.content)).toBe("Started tracked subsession child-1 in /repos/a-feature. Continue independent work, then join with yield_to_subsessions; do not poll.");
+    expect(firstText(result.content)).toBe("Started tracked subsession child-1 in /repos/a. Continue other work, then join with yield_to_subsessions; do not poll.");
   });
 
   it("distinguishes status inspection from yielding in tool metadata", () => {
@@ -92,9 +101,7 @@ describe("createSubsessionToolDefinitions", () => {
     expect(yieldTool.description).toBe("At a join point, end this run while tracked children work; completion notices wake you. If none work, continue. Call alone and last; do not poll.");
     expect(yieldTool.promptSnippet).toBe("yield_to_subsessions: end the run at a join point; call alone and last");
     expect(yieldTool.promptGuidelines).toEqual([
-      "After independent work, yield only at a join point; use spawn_session for fire-and-forget work.",
-      "Call alone and last; a mixed tool batch may continue the run.",
-      "Completion notices wake you; do not poll inspection tools.",
+      "After calling spawn_subsession, you can continue with other work. At the join point, call yield_to_subsessions alone and last; completion notices wake you, so do not poll.",
     ]);
   });
 
@@ -109,7 +116,35 @@ describe("createSubsessionToolDefinitions", () => {
       parentSessionId: "parent-1",
       parentSessionFile: undefined,
       prompt: "do it",
-      cwd: undefined,
+    });
+  });
+
+  it("spawn_subsession forwards an explicit model as a model spec and names the model used", async () => {
+    const spawn = vi.fn(() => Promise.resolve({ sessionId: "child-3", cwd: "/repos/a", model: "openai/gpt-5" }));
+    const { spawn: spawnTool } = tools({ spawn });
+
+    const result = await spawnTool.execute("call-model", { prompt: "do it", model: "openai/gpt-5" }, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl", dispatchModel));
+
+    expect(spawn).toHaveBeenCalledWith({
+      spawningCwd: "/repos/a",
+      parentSessionId: "parent-1",
+      parentSessionFile: "/sessions/parent-1.jsonl",
+      prompt: "do it",
+      model: dispatchModel,
+      modelSpec: "openai/gpt-5",
+    });
+    expect(result.details).toEqual({ sessionId: "child-3", cwd: "/repos/a", model: "openai/gpt-5" });
+    expect(firstText(result.content)).toBe("Started tracked subsession child-3 in /repos/a using model openai/gpt-5. Continue other work, then join with yield_to_subsessions; do not poll.");
+  });
+
+  it("spawn_subsession teaches the model parameter format and the #provider/model-id reference convention", () => {
+    const { spawn: spawnTool } = tools({});
+
+    expect(spawnTool.parameters).toMatchObject({
+      properties: {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
+        model: { description: expect.stringMatching(/provider\/model-id.*#provider\/model-id.*Omit to inherit/s) },
+      },
     });
   });
 

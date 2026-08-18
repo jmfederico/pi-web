@@ -12,9 +12,9 @@ function page(start: number, total: number, messages: unknown[]) {
 }
 
 describe("message paging", () => {
-  it("returns the raw messages when paging is not requested", () => {
+  it("wraps the full history in a page when paging is not requested", () => {
     const messages = [user("hello")];
-    expect(pageMessagesAtSafeBoundary(messages)).toBe(messages);
+    expect(pageMessagesAtSafeBoundary(messages)).toEqual(page(0, 1, messages));
   });
 
   it("uses normal bounded paging when the requested start is already a turn boundary", () => {

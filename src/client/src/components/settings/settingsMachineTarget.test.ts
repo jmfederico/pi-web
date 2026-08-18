@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Machine, MachineRuntime } from "../../api";
+import type { Machine } from "../../api";
 import { PI_WEB_CAPABILITIES } from "../../../../shared/capabilities";
-import { agentProfileSettingsSupport, friendlySelectedMachineSettingsErrorMessage, isAgentProfileSettingsSupported, isSelectedMachineSettingsUnsupported, selectedMachineSettingsSupport, selectedMachineSettingsSupportKey, selectedMachineSettingsUnavailableMessage, settingsMachineTarget, settingsMachineTargetLabel } from "./settingsMachineTarget";
+import { friendlySelectedMachineSettingsErrorMessage, pluginLifecycleSupport, pluginLifecycleUnavailableMessage, settingsMachineTarget, settingsMachineTargetLabel } from "./settingsMachineTarget";
 
 const remoteMachine: Machine = {
   id: "remote-a",
@@ -23,52 +23,16 @@ describe("selected-machine settings target helpers", () => {
     expect(settingsMachineTargetLabel(settingsMachineTarget(remoteMachine))).toBe("Lab Mac (remote machine)");
   });
 
-  it("gates remote selected-machine settings on advertised runtime support", () => {
-    const target = settingsMachineTarget(remoteMachine);
-    const supportedRuntime: MachineRuntime = { machineId: "remote-a", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.selectedMachineSettings] };
-    const unsupportedRuntime: MachineRuntime = { machineId: "remote-a", ok: true, checkedAt: "now", capabilities: [PI_WEB_CAPABILITIES.piPackagesManage] };
-
-    expect(selectedMachineSettingsSupport({ id: "local", name: "local", kind: "local" }, undefined)).toEqual({ state: "supported" });
-    expect(selectedMachineSettingsSupport(target, undefined)).toEqual({ state: "unknown" });
-    expect(selectedMachineSettingsSupport(target, { ok: false })).toEqual({ state: "unknown" });
-    expect(selectedMachineSettingsSupport(target, supportedRuntime)).toEqual({ state: "supported" });
-
-    const unsupported = selectedMachineSettingsSupport(target, unsupportedRuntime);
-    expect(isSelectedMachineSettingsUnsupported(unsupported)).toBe(true);
-    expect(unsupported.message).toBe(selectedMachineSettingsUnavailableMessage(target));
-    expect(selectedMachineSettingsSupportKey(unsupported)).toBe(`unsupported:${selectedMachineSettingsUnavailableMessage(target)}`);
-  });
-
-  it("gates remote agent profile edits on their granular capability", () => {
+  it("gates remote plugin lifecycle diagnostics on the advertised capability", () => {
     const target = settingsMachineTarget(remoteMachine);
 
-    expect(agentProfileSettingsSupport({ id: "local", name: "local", kind: "local" }, undefined)).toEqual({ state: "supported" });
-    expect(agentProfileSettingsSupport(target, undefined)).toEqual({
-      state: "unknown",
-      message: "Pi-compatible agent profile support could not be verified on Lab Mac. Reload machine status before changing the profile.",
-    });
-    expect(agentProfileSettingsSupport(target, {
-      ok: true,
-      capabilities: [PI_WEB_CAPABILITIES.agentProfileConfig],
-    })).toEqual({ state: "supported" });
-
-    const unsupported = agentProfileSettingsSupport(target, { ok: true, capabilities: [PI_WEB_CAPABILITIES.selectedMachineSettings] });
-    expect(isAgentProfileSettingsSupported(unsupported)).toBe(false);
-    expect(unsupported).toEqual({
+    expect(pluginLifecycleSupport({ id: "local", name: "local", kind: "local" }, undefined)).toEqual({ state: "supported" });
+    expect(pluginLifecycleSupport(target, undefined)).toEqual({ state: "unknown" });
+    expect(pluginLifecycleSupport(target, { ok: true, capabilities: [PI_WEB_CAPABILITIES.pluginLifecycle] })).toEqual({ state: "supported" });
+    expect(pluginLifecycleSupport(target, { ok: true, capabilities: [] })).toEqual({
       state: "unsupported",
-      message: "Pi-compatible agent profile settings are not available on Lab Mac. Update and restart PI WEB on that machine, then try again.",
+      message: pluginLifecycleUnavailableMessage(target),
     });
-  });
-
-  it("turns older remote config route failures into selected-machine compatibility guidance", () => {
-    const target = settingsMachineTarget(remoteMachine);
-
-    expect(selectedMachineSettingsUnavailableMessage(target)).toBe("Selected-machine settings are not available on Lab Mac. Update and restart PI WEB on that machine, then try again.");
-    expect(friendlySelectedMachineSettingsErrorMessage("Not Found", target)).toBe(selectedMachineSettingsUnavailableMessage(target));
-    expect(friendlySelectedMachineSettingsErrorMessage("route GET:/api/config not found", target)).toBe(selectedMachineSettingsUnavailableMessage(target));
-    expect(friendlySelectedMachineSettingsErrorMessage("Cannot PUT /api/config", target)).toBe(selectedMachineSettingsUnavailableMessage(target));
-    expect(friendlySelectedMachineSettingsErrorMessage("route GET:/api/plugins not found", target)).toBe(selectedMachineSettingsUnavailableMessage(target));
-    expect(friendlySelectedMachineSettingsErrorMessage("Cannot GET /api/plugins", target)).toBe(selectedMachineSettingsUnavailableMessage(target));
   });
 
   it("scopes remote reachability errors to selected-machine settings", () => {
@@ -76,6 +40,7 @@ describe("selected-machine settings target helpers", () => {
 
     expect(friendlySelectedMachineSettingsErrorMessage("Remote machine unavailable", target)).toBe("Could not reach Lab Mac for selected-machine settings. Check the machine connection and try again.");
     expect(friendlySelectedMachineSettingsErrorMessage("Remote machine timeout", target)).toBe("Timed out while contacting Lab Mac for selected-machine settings. The operation may still be running remotely; reload before retrying.");
+    expect(friendlySelectedMachineSettingsErrorMessage("Not Found", target)).toBe("Not Found");
     expect(friendlySelectedMachineSettingsErrorMessage("Not Found", { id: "local", name: "local", kind: "local" })).toBe("Not Found");
   });
 });

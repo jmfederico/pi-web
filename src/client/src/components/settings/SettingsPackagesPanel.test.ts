@@ -3,27 +3,11 @@ import type { TemplateResult } from "lit";
 import type { PiPackageInfo } from "../../api";
 import { SettingsPackagesPanel } from "./SettingsPackagesPanel";
 import type { SettingsNotice } from "./SettingsPanelFrame";
-import type { PiPackageManagementSupport, PiPackageTargetContext } from "./piPackageSettings";
+import type { PiPackageTargetContext } from "./piPackageSettings";
 
 const remoteTarget: PiPackageTargetContext = { id: "lab-mac", name: "Lab Mac", kind: "remote" };
-const unsupportedMessage = "Pi package management is not available on Lab Mac. Update and restart Pi-Web on that machine, then try again.";
 
 describe("settings-packages-panel layout", () => {
-  it("suppresses package controls and trust warnings when package management is unsupported", () => {
-    const panel = new SettingsPackagesPanel();
-    panel.targetMachine = remoteTarget;
-    panel.managementSupport = unsupportedPackageManagement();
-    panel.error = unsupportedMessage;
-
-    const rendered = flattenTemplateContent(panel.render());
-
-    expect(rendered).toContain(unsupportedMessage);
-    expect(rendered).not.toContain("Trusted code warning");
-    expect(rendered).not.toContain("Pi package source");
-    expect(rendered).not.toContain("Configured Pi packages");
-    expect(rendered).not.toContain("No Pi packages configured");
-  });
-
   it("shows a load-unavailable state instead of an empty package state when no response loaded", () => {
     const panel = new SettingsPackagesPanel();
     panel.targetMachine = remoteTarget;
@@ -146,10 +130,6 @@ function isSettingsNotice(value: unknown): value is SettingsNotice {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
-}
-
-function unsupportedPackageManagement(): PiPackageManagementSupport {
-  return { state: "unsupported", message: unsupportedMessage };
 }
 
 function packageInfo(source: string): PiPackageInfo {

@@ -12,9 +12,9 @@ export interface MessagePageResult<T> {
   total: number;
 }
 
-export function pageMessagesAtSafeBoundary<T>(messages: T[], page?: MessagePageRequest): T[] | MessagePageResult<T> {
-  if (page?.before === undefined && page?.limit === undefined) return messages;
+export function pageMessagesAtSafeBoundary<T>(messages: T[], page?: MessagePageRequest): MessagePageResult<T> {
   const total = messages.length;
+  if (page?.before === undefined && page?.limit === undefined) return { messages, start: 0, total };
   const before = clampInteger(page.before ?? total, 0, total);
   const limit = clampInteger(page.limit ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
   const requestedStart = Math.max(0, before - limit);

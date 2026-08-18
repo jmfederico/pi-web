@@ -111,6 +111,11 @@ write_initial_dev_config() {
 # PI_WEB_DEV_API_PORT=8504
 # PI_WEB_DEV_PORT=8505
 #
+# PI_WEB_DEV_SESSIOND_SOCKET defaults to /data/pi-web/sessiond-dev.sock so the
+# dev session daemon does not collide with a runtime stack sharing the same
+# data directory. Override only if you intentionally want a different path.
+# PI_WEB_DEV_SESSIOND_SOCKET=/data/pi-web/sessiond-dev.sock
+#
 # Shared Docker/runtime-style defaults may also be set here:
 # PI_WEB_DOCKER_DATA_DIR=/absolute/path/to/pi-web-docker/data
 # PI_WEB_DOCKER_EXTRA_HOST_PATHS="/absolute/path/one /absolute/path/two"
@@ -204,7 +209,12 @@ enforce_non_root_dev_uid() {
 
 enforce_dev_root_safety
 
-if ! pi_web_docker_host_detect_profile; then
+# Dev Compose commands also run inside detached helper containers, which cannot
+# observe the Docker host. Reuse the host facts recorded on the last host run.
+if ! pi_web_docker_host_resolve_profile \
+  "$(generated_env_value PI_WEB_DOCKER_HOST_PROFILE 2>/dev/null || true)" \
+  "$(generated_env_value HOSTEXEC_MODE 2>/dev/null || true)" \
+  "$(generated_env_value PI_WEB_DOCKER_SOCKET_SOURCE 2>/dev/null || true)"; then
   pi_web_docker_host_print_detection_failure
   die "refusing to run Docker Compose for an unsupported or unknown host setup"
 fi
@@ -238,6 +248,7 @@ pi_web_dev_api_bind_addr=$(value_from_config_or_generated_or_env_or_runtime_or_d
 pi_web_dev_bind_addr=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DEV_BIND_ADDR "$default_dev_bind_addr")
 pi_web_dev_api_port=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DEV_API_PORT 8504)
 pi_web_dev_port=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DEV_PORT 8505)
+pi_web_dev_sessiond_socket=$(value_from_config_or_generated_or_env_or_default PI_WEB_DEV_SESSIOND_SOCKET /data/pi-web/sessiond-dev.sock)
 
 require_unsigned_int PI_WEB_UID "$pi_web_uid"
 require_unsigned_int PI_WEB_GID "$pi_web_gid"
@@ -250,6 +261,11 @@ esac
 [ -n "$compose_project_name" ] || die "COMPOSE_PROJECT_NAME must not be empty"
 
 mkdir -p "$pi_web_data_dir" || die "could not create data directory: $pi_web_data_dir"
+
+container_env_file=$pi_web_data_dir/container.env
+if ! pi_web_docker_write_container_env_template "$container_env_file"; then
+  die "could not create container environment file: $container_env_file"
+fi
 
 env_file=$generated_env_file
 override_file=$repo_root/.pi-web/docker-compose-dev.host.generated.yml
@@ -268,6 +284,7 @@ DOCKER_GID=$docker_gid
 PI_WEB_DOCKER_DATA_DIR=$pi_web_data_dir
 PI_WEB_DOCKER_DEV_REPO_ROOT=$repo_root
 PI_WEB_DOCKER_HOST_PROFILE=$PI_WEB_DETECTED_DOCKER_HOST_PROFILE
+PI_WEB_DOCKER_SOCKET_SOURCE=$PI_WEB_DETECTED_DOCKER_SOCKET_SOURCE
 HOSTEXEC_MODE=$PI_WEB_DETECTED_HOSTEXEC_MODE
 PI_WEB_DOCKER_EXTRA_HOST_PATHS=$pi_web_extra_host_paths
 PI_WEB_OPENSUSE_IMAGE=$pi_web_opensuse_image
@@ -282,10 +299,15 @@ PI_WEB_DEV_API_BIND_ADDR=$pi_web_dev_api_bind_addr
 PI_WEB_DEV_BIND_ADDR=$pi_web_dev_bind_addr
 PI_WEB_DEV_API_PORT=$pi_web_dev_api_port
 PI_WEB_DEV_PORT=$pi_web_dev_port
+PI_WEB_DEV_SESSIOND_SOCKET=$pi_web_dev_sessiond_socket
 EOF
 mv "$temp_env" "$env_file"
 
-log "Selected PI WEB Docker host profile: $PI_WEB_DETECTED_DOCKER_HOST_PROFILE"
+if [ "${PI_WEB_DOCKER_HOST_PROFILE_REUSED:-0}" = 1 ]; then
+  log "Reused the recorded PI WEB Docker host profile: $PI_WEB_DETECTED_DOCKER_HOST_PROFILE"
+else
+  log "Selected PI WEB Docker host profile: $PI_WEB_DETECTED_DOCKER_HOST_PROFILE"
+fi
 if [ -f "$runtime_env_file" ]; then
   log "Reused runtime Docker environment defaults from: $runtime_env_file"
 fi
@@ -298,6 +320,7 @@ case "$PI_WEB_DETECTED_DOCKER_HOST_PROFILE" in
     ;;
 esac
 log "User-editable dev config: $dev_config_file"
+log "Container environment (shared with runtime mode): $container_env_file"
 log "Generated dev env: $env_file"
 log "Generated dev Compose override: $override_file"
 

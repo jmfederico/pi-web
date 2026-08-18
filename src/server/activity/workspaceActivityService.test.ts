@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import type { RealtimeEvent, SessionStatus } from "../../shared/apiTypes";
+import { describe, expect, it, vi } from "vitest";
+import type { SessionStatus } from "../../shared/apiTypes";
 import { WorkspaceActivityService } from "./workspaceActivityService";
 
 function status(patch: Partial<SessionStatus> = {}): SessionStatus {
@@ -16,49 +16,63 @@ function status(patch: Partial<SessionStatus> = {}): SessionStatus {
   };
 }
 
+/** The service under test plus the change notifications it reported. */
+function activityRecord() {
+  const onChanged = vi.fn();
+  return { service: new WorkspaceActivityService(onChanged), onChanged };
+}
+
 describe("WorkspaceActivityService", () => {
-  it("publishes and snapshots session activity by cwd", () => {
-    const events: RealtimeEvent[] = [];
-    const service = new WorkspaceActivityService({ publishRealtime: (event) => events.push(event) });
+  it("records session activity by cwd and reports every change", () => {
+    const { service, onChanged } = activityRecord();
 
     service.applySessionStatus("/repo", status({ isStreaming: true }));
 
     expect(service.snapshot().workspaces).toMatchObject([{ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false }]);
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false } });
+    expect(onChanged).toHaveBeenCalledTimes(1);
 
     service.applySessionStatus("/repo", status({ isStreaming: false }));
 
     expect(service.snapshot().workspaces).toEqual([]);
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: false, hasTerminalActivity: false } });
+    expect(onChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not report a workspace active for a session that is only starting up", () => {
+    const { service, onChanged } = activityRecord();
+
+    // Startup progress names a phase the daemon is inside; it is not work, so the
+    // workspace (and the project indicators and remote machines that read it)
+    // must not be reported as busy because of it.
+    service.applySessionActivity("/repo", { sessionId: "s1", phase: "active", label: "Opening session", detail: "Starting the Pi session", at: "now", startup: true });
+
+    expect(service.snapshot().workspaces).toEqual([]);
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it("clears stale active activity when an idle status arrives", () => {
-    const events: RealtimeEvent[] = [];
-    const service = new WorkspaceActivityService({ publishRealtime: (event) => events.push(event) });
+    const { service } = activityRecord();
 
     service.applySessionActivity("/repo", { sessionId: "s1", phase: "active", label: "running tool", detail: "read", at: "now" });
     service.applySessionStatus("/repo", status({ isStreaming: false }));
 
     expect(service.snapshot().workspaces).toEqual([]);
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: false, hasTerminalActivity: false } });
   });
 
-  it("publishes a clear event when removing an already-pruned session with a cwd", () => {
-    const events: RealtimeEvent[] = [];
-    const service = new WorkspaceActivityService({ publishRealtime: (event) => events.push(event) });
+  it("reports a change when removing an already-pruned session with a cwd", () => {
+    const { service, onChanged } = activityRecord();
 
     service.removeSession("missing-session", "/repo");
 
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: false, hasTerminalActivity: false } });
+    expect(onChanged).toHaveBeenCalledTimes(1);
   });
 
   it("reconciles stale session activity for a workspace", () => {
-    const events: RealtimeEvent[] = [];
-    const service = new WorkspaceActivityService({ publishRealtime: (event) => events.push(event) });
+    const { service, onChanged } = activityRecord();
 
     service.applySessionActivity("/repo", { sessionId: "s1", phase: "active", label: "running tool", at: "now" });
     service.applySessionActivity("/repo", { sessionId: "s2", phase: "active", label: "running tool", at: "now" });
     service.applySessionActivity("/other", { sessionId: "s3", phase: "active", label: "running tool", at: "now" });
+    onChanged.mockClear();
 
     service.reconcileSessionActivity("/repo", ["s2"]);
 
@@ -70,12 +84,11 @@ describe("WorkspaceActivityService", () => {
     service.reconcileSessionActivity("/repo", []);
 
     expect(service.snapshot().workspaces).toMatchObject([{ cwd: "/other", hasSessionActivity: true, hasTerminalActivity: false }]);
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: false, hasTerminalActivity: false } });
+    expect(onChanged).toHaveBeenCalled();
   });
 
   it("combines sessions and terminals and clears closed terminals", () => {
-    const events: RealtimeEvent[] = [];
-    const service = new WorkspaceActivityService({ publishRealtime: (event) => events.push(event) });
+    const { service, onChanged } = activityRecord();
 
     service.applySessionActivity("/repo", { sessionId: "s1", phase: "active", label: "running tool", detail: "read", at: "now" });
     service.updateTerminal({ id: "t1", cwd: "/repo", exited: false });
@@ -86,6 +99,14 @@ describe("WorkspaceActivityService", () => {
     service.updateTerminal({ id: "t1", cwd: "/repo", exited: true });
 
     expect(service.snapshot().workspaces).toEqual([]);
-    expect(events.at(-1)).toMatchObject({ type: "workspace.activity", activity: { cwd: "/repo", hasSessionActivity: false, hasTerminalActivity: false } });
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("records activity without a listener, so a store built for a test still works", () => {
+    const service = new WorkspaceActivityService();
+
+    service.updateTerminal({ id: "t1", cwd: "/repo", exited: false });
+
+    expect(service.snapshot().workspaces).toMatchObject([{ cwd: "/repo", hasTerminalActivity: true }]);
   });
 });

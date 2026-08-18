@@ -115,7 +115,7 @@ const piWebLightTokens = {
 } satisfies ThemeTokens;
 
 export const themePackPlugin: PiWebPlugin = {
-  apiVersion: 1,
+  apiVersion: 2,
   name: "PI WEB Themes",
   activate: () => ({
     contributions: {

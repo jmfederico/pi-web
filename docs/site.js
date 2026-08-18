@@ -1,3 +1,17 @@
+const animatedHomePage = document.querySelector(".home-page");
+
+if (animatedHomePage !== null) {
+  const skipIntroAnimation = () => {
+    animatedHomePage.classList.add("intro-skipped");
+  };
+
+  if (window.scrollY !== 0) {
+    skipIntroAnimation();
+  } else {
+    window.addEventListener("scroll", skipIntroAnimation, { passive: true, once: true });
+  }
+}
+
 const themeButtons = document.querySelectorAll("[data-theme-toggle]");
 const themeStorageKey = "pi-web-theme";
 const systemPrefersLight = window.matchMedia("(prefers-color-scheme: light)");
@@ -220,6 +234,20 @@ function setupScreenshotCarousel(carousel) {
 
 for (const carousel of screenshotCarousels) {
   setupScreenshotCarousel(carousel);
+}
+
+const versionSwitchLinks = document.querySelectorAll(".version-switcher-option");
+
+// Carry the current anchor across the stable/dev switch so cross-links land on the
+// same section of the counterpart page. Mutating href on click also covers
+// open-in-new-tab; context-menu "copy link" keeps the hashless canonical URL.
+for (const link of versionSwitchLinks) {
+  link.addEventListener("click", () => {
+    if (window.location.hash === "") return;
+    const url = new URL(link.href);
+    url.hash = window.location.hash;
+    link.href = url.toString();
+  });
 }
 
 const copyButtons = document.querySelectorAll("[data-copy]");

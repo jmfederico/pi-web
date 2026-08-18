@@ -1,10 +1,9 @@
-import { mkdir, truncate, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_IMAGE_PREVIEW_BYTES } from "../../shared/workspaceFiles.js";
+import { MAX_WORKSPACE_FILE_CONTENT_BYTES } from "../../shared/workspaceFiles.js";
 import { readWorkspaceFile } from "./fileContentService.js";
 import { cleanupTempWorkspaces, createTempWorkspace } from "./fileContentService.testSupport.js";
-import { readWorkspaceImagePreview } from "./imagePreviewService.js";
 
 afterEach(async () => {
   await cleanupTempWorkspaces();
@@ -78,30 +77,47 @@ describe("readWorkspaceFile", () => {
     expect(file.size).toBe(9);
   });
 
-  it("opens image preview streams only for supported images within the preview size limit", async () => {
+  it("preserves literal HTML, Markdown, and SVG source while keeping PDF bytes out of JSON", async () => {
     const root = await createTempWorkspace();
-    await writeFile(join(root, "diagram.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
-    await writeFile(join(root, "note.txt"), "hello");
-    await writeFile(join(root, "huge.png"), "");
-    await truncate(join(root, "huge.png"), MAX_IMAGE_PREVIEW_BYTES + 1);
+    const html = "<h1>hi</h1><script>window.top.location = '/stolen'</script>";
+    const markdown = "# Notes\n\n<img src=x onerror=alert(1)>\n";
+    const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"></svg>";
+    await writeFile(join(root, "report.html"), html);
+    await writeFile(join(root, "README.MD"), markdown);
+    await writeFile(join(root, "diagram.SVG"), svg);
+    await writeFile(join(root, "spec.PDF"), Buffer.from("%PDF-1.4\n"));
 
-    const preview = await readWorkspaceImagePreview(root, "diagram.svg");
-    preview.stream.destroy();
+    const htmlFile = await readWorkspaceFile(root, "report.html");
+    const markdownFile = await readWorkspaceFile(root, "README.MD");
+    const svgFile = await readWorkspaceFile(root, "diagram.SVG");
+    const pdfFile = await readWorkspaceFile(root, "spec.PDF");
 
-    expect(preview).toMatchObject({ path: "diagram.svg", mimeType: "image/svg+xml", size: 46 });
-    await expect(readWorkspaceImagePreview(root, "note.txt")).rejects.toThrow("Image preview is not supported");
-    await expect(readWorkspaceImagePreview(root, "huge.png")).rejects.toThrow("Image is too large to preview");
+    expect(svgFile).toMatchObject({ mediaType: "image", mimeType: "image/svg+xml", content: svg, binary: false });
+    expect(htmlFile).toMatchObject({ mediaType: "html", mimeType: "text/html; charset=utf-8", content: html, binary: false });
+    expect(markdownFile).toMatchObject({ mediaType: "markdown", language: "markdown", content: markdown, binary: false });
+    expect(markdownFile.mimeType).toBeUndefined();
+    expect(pdfFile).toMatchObject({ mediaType: "pdf", mimeType: "application/pdf", content: "", binary: true });
   });
 
-  it("truncates large text files", async () => {
+  it("leaves unsupported binaries without a media type so they fall back to download", async () => {
     const root = await createTempWorkspace();
-    await writeFile(join(root, "large.md"), "a".repeat(512 * 1024 + 7));
+    await writeFile(join(root, "archive.zip"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]));
 
-    const file = await readWorkspaceFile(root, "large.md");
+    const file = await readWorkspaceFile(root, "archive.zip");
 
-    expect(file.language).toBe("markdown");
-    expect(file.content).toHaveLength(512 * 1024);
+    expect(file.mediaType).toBeUndefined();
+    expect(file).toMatchObject({ content: "", binary: true });
+  });
+
+  it.each(["large.md", "large.html"])("caps literal source for %s", async (path) => {
+    const root = await createTempWorkspace();
+    await writeFile(join(root, path), "a".repeat(MAX_WORKSPACE_FILE_CONTENT_BYTES + 7));
+
+    const file = await readWorkspaceFile(root, path);
+
+    expect(file.content).toHaveLength(MAX_WORKSPACE_FILE_CONTENT_BYTES);
     expect(file.truncated).toBe(true);
     expect(file.binary).toBe(false);
   });
+
 });

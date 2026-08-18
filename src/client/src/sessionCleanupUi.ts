@@ -51,14 +51,13 @@ export function sessionCleanupRequestKey(request: SessionCleanupRequest | undefi
 }
 
 export function canRunSessionCleanup(input: {
-  canCleanup: boolean;
   draft: SessionCleanupDraft;
   preview: SessionCleanupPreviewResponse | undefined;
   previewRequest: SessionCleanupRequest | undefined;
   loading?: boolean;
   running?: boolean;
 }): boolean {
-  if (!input.canCleanup || input.loading === true || input.running === true || input.preview === undefined) return false;
+  if (input.loading === true || input.running === true || input.preview === undefined) return false;
   const validation = validateSessionCleanupDraft(input.draft);
   if (!validation.ok) return false;
   if (sessionCleanupRequestKey(validation.request) !== sessionCleanupRequestKey(input.previewRequest)) return false;
@@ -101,10 +100,6 @@ export function sessionCleanupConfirmationMessage(preview: Pick<SessionCleanupPr
   if (deleteCount > 0) parts.push(`permanently delete ${String(deleteCount)} archived ${deleteCount === 1 ? "session" : "sessions"}`);
   const action = parts.length === 0 ? "run cleanup" : parts.join(" and ");
   return `Run cleanup and ${action}?\n\nPermanent deletion only applies to archived sessions and cannot be undone.`;
-}
-
-export function sessionCleanupUnavailableMessage(machineName: string | undefined): string {
-  return `Update and restart Pi-Web on ${machineName ?? "this machine"} to clean up sessions.`;
 }
 
 function parseDayThreshold(value: string, label: string): number | string {

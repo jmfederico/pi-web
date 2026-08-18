@@ -1,12 +1,24 @@
-import type { TemplateResult } from "lit";
+// @vitest-environment happy-dom
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FileContentResponse, FileTreeEntry } from "../api";
 import { initialAppState } from "../appState";
 import type { WorkspacePanelContext } from "../plugins/types";
 import type { WorkspaceUploadBatchState } from "../workspaceUploadState";
+// Genuine Lit event-wiring extraction (upload input/form submit and file-tree
+// row clicks) routes through the shared, type-guarded template-inspection escape
+// hatch; see ../templateInspection.testSupport for the proportionality
+// rationale. The extracted stateful viewer has its own happy-dom coverage.
+import { findOptionalTemplateEventHandlerAfterMarker, templateClickHandlerForText, templateEventHandlerAfterMarker } from "../templateInspection.testSupport";
+import { ModalSurface } from "./ModalSurface";
+import { deepActiveElement } from "./modalLayerRegistry";
 import { WorkspaceFilesPanel, startDirectWorkspaceUpload, uploadBatchProgressValue, uploadBatchStatusLabel, workspaceUploadBatchesForScope, workspaceUploadReviewDefaults, workspaceUploadReviewError } from "./WorkspaceFilesPanel";
+import type { WorkspaceFileViewer } from "./WorkspaceFileViewer";
 
 afterEach(() => {
+  document.body.replaceChildren();
+  localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -18,14 +30,14 @@ describe("workspace-files-panel upload review", () => {
     const panel = new WorkspaceFilesPanel();
     panel.context = workspacePanelContext({ workspaceUploadDefaultFolder: "project/uploads", onStartWorkspaceUpload });
 
-    const inputChange = findTemplateEventHandler<Event>(panel.render(), `id="workspace-upload-input"`);
+    const inputChange = templateEventHandlerAfterMarker(panel.render(), `id="workspace-upload-input"`);
     const input = new FakeHTMLInputElement(files);
     inputChange(new EventWithCurrentTarget("change", input));
 
     expect(input.value).toBe("");
     expect(onStartWorkspaceUpload).not.toHaveBeenCalled();
 
-    const submit = findTemplateEventHandler<SubmitEvent>(panel.render(), "<form @submit=");
+    const submit = templateEventHandlerAfterMarker<SubmitEvent>(panel.render(), "<form @submit=");
     const submitEvent = new FakeSubmitEvent("submit", { cancelable: true });
     submit(submitEvent);
 
@@ -36,7 +48,115 @@ describe("workspace-files-panel upload review", () => {
       overwrite: false,
       selectUploadedFile: true,
     });
-    expect(findOptionalTemplateEventHandler<SubmitEvent>(panel.render(), "<form @submit=")).toBeUndefined();
+    expect(findOptionalTemplateEventHandlerAfterMarker<SubmitEvent>(panel.render(), "<form @submit=")).toBeUndefined();
+  });
+
+  it("owns focus while rendered and restores the Upload trigger after Escape and backdrop close", async () => {
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext({ workspaceUploadDefaultFolder: "project/uploads" });
+    document.body.append(panel);
+    await panel.updateComplete;
+    const upload = buttonWithText(panel.shadowRoot, "Upload");
+    const input = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-input"), "workspace upload input");
+
+    upload.focus();
+    openUploadReview(input, new File(["a"], "a.txt"));
+    await panel.updateComplete;
+    const firstDestination = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-destination"), "first upload destination");
+    expect(panel.shadowRoot?.activeElement).toBe(firstDestination);
+    expect(uploadDialog(panel).getAttribute("aria-modal")).toBe("true");
+
+    const escape = pressKey(firstDestination, "Escape");
+    await panel.updateComplete;
+    expect(escape.defaultPrevented).toBe(true);
+    expect(panel.shadowRoot?.querySelector(".upload-dialog")).toBeNull();
+    expect(panel.shadowRoot?.activeElement).toBe(upload);
+
+    openUploadReview(input, new File(["b"], "b.txt"));
+    await panel.updateComplete;
+    const backdrop = requiredElement(panel.shadowRoot?.querySelector<HTMLElement>(".dialog-backdrop"), "upload backdrop");
+    backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, composed: true }));
+    await panel.updateComplete;
+
+    expect(panel.shadowRoot?.querySelector(".upload-dialog")).toBeNull();
+    expect(panel.shadowRoot?.activeElement).toBe(upload);
+  });
+
+  it("takes visual focus ownership from a lower shared modal and restores it on close", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open lower dialog";
+    document.body.append(trigger);
+    trigger.focus();
+    const lower = new ModalSurface();
+    lower.initialFocus = "button";
+    lower.innerHTML = "<button>Lower action</button>";
+    document.body.append(lower);
+    await lower.updateComplete;
+    const lowerButton = requiredElement(lower.querySelector<HTMLButtonElement>("button"), "lower modal button");
+
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext();
+    document.body.append(panel);
+    await panel.updateComplete;
+    const input = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-input"), "workspace upload input");
+    openUploadReview(input, new File(["a"], "a.txt"));
+    await panel.updateComplete;
+    await lower.updateComplete;
+    const destination = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-destination"), "upload destination");
+
+    expect(panel.shadowRoot?.activeElement).toBe(destination);
+    expect(modalSection(lower).getAttribute("aria-modal")).toBe("false");
+    expect(modalSection(lower).getAttribute("aria-hidden")).toBe("true");
+
+    pressKey(destination, "Escape");
+    await panel.updateComplete;
+    await lower.updateComplete;
+
+    expect(document.activeElement).toBe(lowerButton);
+    expect(modalSection(lower).getAttribute("aria-modal")).toBe("true");
+    expect(modalSection(lower).getAttribute("aria-hidden")).toBeNull();
+    lower.remove();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("does not steal focus from a higher shared layer while a file picker resolves", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open upload";
+    document.body.append(trigger);
+    trigger.focus();
+    const higherHost = document.createElement("div");
+    higherHost.style.position = "fixed";
+    higherHost.style.zIndex = "30";
+    const higherRoot = higherHost.attachShadow({ mode: "open" });
+    const higher = new ModalSurface();
+    higher.initialFocus = "button";
+    higher.innerHTML = "<button>Higher action</button>";
+    higherRoot.append(higher);
+    document.body.append(higherHost);
+    await higher.updateComplete;
+    const higherButton = requiredElement(higher.querySelector<HTMLButtonElement>("button"), "higher modal button");
+
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext();
+    document.body.append(panel);
+    await panel.updateComplete;
+    const input = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-input"), "workspace upload input");
+    openUploadReview(input, new File(["a"], "a.txt"));
+    await panel.updateComplete;
+    const destination = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-destination"), "upload destination");
+
+    expect(deepActiveElement(document)).toBe(higherButton);
+    expect(uploadDialog(panel).getAttribute("aria-modal")).toBe("false");
+    expect(uploadDialog(panel).getAttribute("aria-hidden")).toBe("true");
+
+    higherHost.remove();
+    expect(panel.shadowRoot?.activeElement).toBe(destination);
+    expect(uploadDialog(panel).getAttribute("aria-modal")).toBe("true");
+    expect(uploadDialog(panel).getAttribute("aria-hidden")).toBeNull();
+
+    pressKey(destination, "Escape");
+    await panel.updateComplete;
+    expect(document.activeElement).toBe(trigger);
   });
 });
 
@@ -55,20 +175,33 @@ describe("workspace-files-panel file tree boundary", () => {
     });
 
     const rendered = panel.render();
-    const text = collectTemplateText(rendered);
 
-    expect(text).toContain("▾");
-    expect(text).toContain("src");
-    expect(text).toContain("main.ts");
-    expect(text).toContain("README.md");
-    expect(text).toContain("Binary file: README.md · 4.0 KB");
-    expect(text).not.toContain("Select a file.");
-
-    findTemplateClickHandlerForText<Event>(rendered, "src")(new Event("click"));
-    findTemplateClickHandlerForText<Event>(rendered, "README.md")(new Event("click"));
+    // The nested child (main.ts) is only reachable when the expanded directory
+    // actually renders its children, so a working click handler on it proves the
+    // expanded-tree structure without scraping markup for the row text.
+    templateClickHandlerForText(rendered, "main.ts")(new Event("click"));
+    templateClickHandlerForText(rendered, "src")(new Event("click"));
+    templateClickHandlerForText(rendered, "README.md")(new Event("click"));
 
     expect(onExpandDir).toHaveBeenCalledWith("src");
+    expect(onSelectFile).toHaveBeenCalledWith("src/main.ts");
     expect(onSelectFile).toHaveBeenCalledWith("README.md");
+  });
+
+  it("passes the selected workspace file scope into the contained viewer", async () => {
+    const file = textFileContent("README.md");
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext({ selectedFilePath: file.path, selectedFileContent: file });
+    document.body.append(panel);
+    await panel.updateComplete;
+
+    const viewer = requiredElement(panel.shadowRoot?.querySelector<WorkspaceFileViewer>("workspace-file-viewer"), "workspace file viewer");
+    expect(viewer.machineId).toBe("local");
+    expect(viewer.projectId).toBe("project-1");
+    expect(viewer.workspaceId).toBe("workspace-1");
+    expect(viewer.selectedPath).toBe("README.md");
+    expect(viewer.file).toBe(file);
+    expect(viewer.loadError).toBeUndefined();
   });
 });
 
@@ -150,109 +283,33 @@ describe("workspaceUploadReviewError", () => {
   });
 });
 
-type TemplateEventHandler<E extends Event> = (event: E) => void;
-
-function findTemplateEventHandler<E extends Event>(template: TemplateResult, marker: string): TemplateEventHandler<E> {
-  const handler = findOptionalTemplateEventHandler<E>(template, marker);
-  if (handler === undefined) throw new Error(`Expected template event handler after ${marker}`);
-  return handler;
+function openUploadReview(input: HTMLInputElement, file: File): void {
+  Object.defineProperty(input, "files", { configurable: true, value: [file] });
+  input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
 }
 
-function findOptionalTemplateEventHandler<E extends Event>(template: TemplateResult, marker: string): TemplateEventHandler<E> | undefined {
-  return findInTemplate(template);
-
-  function findInTemplate(current: TemplateResult): TemplateEventHandler<E> | undefined {
-    const strings = templateStrings(current);
-    const values = templateValues(current);
-    for (let index = 0; index < values.length; index += 1) {
-      const staticChunk = strings[index];
-      const value = values[index];
-      if (staticChunk !== undefined && staticChunk.includes(marker) && isTemplateEventHandler<E>(value)) return value;
-      const nestedHandler = findInValue(value);
-      if (nestedHandler !== undefined) return nestedHandler;
-    }
-    return undefined;
-  }
-
-  function findInValue(value: unknown): TemplateEventHandler<E> | undefined {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const nestedHandler = findInValue(item);
-        if (nestedHandler !== undefined) return nestedHandler;
-      }
-      return undefined;
-    }
-    if (isTemplateResult(value)) return findInTemplate(value);
-    return undefined;
-  }
+function uploadDialog(panel: WorkspaceFilesPanel): HTMLElement {
+  return requiredElement(panel.shadowRoot?.querySelector<HTMLElement>(".upload-dialog"), "upload dialog");
 }
 
-// Node-based Lit tests cannot click shadow DOM here; keep direct handler extraction
-// anchored to rendered file labels and assert the observable context callbacks.
-function findTemplateClickHandlerForText<E extends Event>(template: TemplateResult, text: string): TemplateEventHandler<E> {
-  const handler = findOptionalTemplateClickHandlerForText<E>(template, text);
-  if (handler === undefined) throw new Error(`Expected click handler near ${text}`);
-  return handler;
+function modalSection(surface: ModalSurface): HTMLElement {
+  return requiredElement(surface.shadowRoot?.querySelector<HTMLElement>("section[role='dialog']"), "modal section");
 }
 
-function findOptionalTemplateClickHandlerForText<E extends Event>(value: unknown, text: string): TemplateEventHandler<E> | undefined {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nestedHandler = findOptionalTemplateClickHandlerForText<E>(item, text);
-      if (nestedHandler !== undefined) return nestedHandler;
-    }
-    return undefined;
-  }
-  if (!isTemplateResult(value)) return undefined;
-
-  for (const item of templateValues(value)) {
-    const nestedHandler = findOptionalTemplateClickHandlerForText<E>(item, text);
-    if (nestedHandler !== undefined) return nestedHandler;
-  }
-  if (!collectTemplateText(value).includes(text)) return undefined;
-
-  const strings = templateStrings(value);
-  const values = templateValues(value);
-  for (let index = 0; index < values.length; index += 1) {
-    const staticChunk = strings[index];
-    const candidate = values[index];
-    if (staticChunk !== undefined && staticChunk.includes("@click") && isTemplateEventHandler<E>(candidate)) return candidate;
-  }
-  return undefined;
+function buttonWithText(root: ParentNode | null | undefined, text: string): HTMLButtonElement {
+  const button = [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((candidate) => candidate.textContent.trim() === text);
+  return requiredElement(button, `${text} button`);
 }
 
-function collectTemplateText(value: unknown): string {
-  if (Array.isArray(value)) return value.map((item) => collectTemplateText(item)).join("");
-  if (isTemplateResult(value)) {
-    const strings = templateStrings(value);
-    const values = templateValues(value);
-    return strings.map((part, index) => `${part}${index < values.length ? collectTemplateText(values[index]) : ""}`).join("");
-  }
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+function pressKey(target: Element, key: string): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, composed: true });
+  target.dispatchEvent(event);
+  return event;
 }
 
-function templateStrings(template: TemplateResult): readonly string[] {
-  const strings = Reflect.get(template, "strings");
-  if (!isStringArray(strings)) throw new Error("TemplateResult strings were unavailable");
-  return strings;
-}
-
-function templateValues(template: TemplateResult): readonly unknown[] {
-  const values = Reflect.get(template, "values");
-  if (!Array.isArray(values)) throw new Error("TemplateResult values were unavailable");
-  return values.map((value: unknown) => value);
-}
-
-function isTemplateResult(value: unknown): value is TemplateResult {
-  return typeof value === "object" && value !== null && isStringArray(Reflect.get(value, "strings")) && Array.isArray(Reflect.get(value, "values"));
-}
-
-function isTemplateEventHandler<E extends Event>(value: unknown): value is TemplateEventHandler<E> {
-  return typeof value === "function";
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
+function requiredElement<T>(value: T | null | undefined, label: string): T {
+  if (value === null || value === undefined) throw new Error(`Expected ${label}`);
+  return value;
 }
 
 class FakeFileList implements FileList {
@@ -319,18 +376,33 @@ function binaryFileContent(path: string, size: number): FileContentResponse {
   };
 }
 
+function textFileContent(path: string): FileContentResponse {
+  return {
+    path,
+    language: "typescript",
+    encoding: "utf8",
+    size: 12,
+    modifiedAt: "2026-06-25T00:00:00.000Z",
+    content: "const x = 1;",
+    truncated: false,
+    binary: false,
+  };
+}
+
 function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): WorkspacePanelContext {
-  const workspace = patch.workspace ?? { id: "workspace-1", projectId: "project-1", path: "/tmp/project", label: "main", isMain: true, isGitRepo: true, isGitWorktree: false };
+  const workspace = patch.workspace ?? { id: "workspace-1", projectId: "project-1", path: "/tmp/project", label: "main", isMain: true, effectiveConfig: {} };
   return {
     machine: patch.machine ?? { id: "local", name: "Local", kind: "local" },
     workspace,
     state: patch.state ?? { ...initialAppState(), workspaceUploadBatches: {} },
     files: patch.files ?? {
       readFile: vi.fn<WorkspacePanelContext["files"]["readFile"]>(() => Promise.reject(new Error("not implemented"))),
+      listFiles: vi.fn<WorkspacePanelContext["files"]["listFiles"]>(() => Promise.reject(new Error("not implemented"))),
       writeFile: vi.fn<WorkspacePanelContext["files"]["writeFile"]>(() => Promise.reject(new Error("not implemented"))),
       deleteFile: vi.fn<WorkspacePanelContext["files"]["deleteFile"]>(() => Promise.reject(new Error("not implemented"))),
       moveFile: vi.fn<WorkspacePanelContext["files"]["moveFile"]>(() => Promise.reject(new Error("not implemented"))),
     },
+    backend: patch.backend ?? { request: vi.fn<NonNullable<WorkspacePanelContext["backend"]>["request"]>(() => Promise.resolve(null)) },
     prompt: patch.prompt ?? { insertText: vi.fn<WorkspacePanelContext["prompt"]["insertText"]>(), getText: vi.fn<WorkspacePanelContext["prompt"]["getText"]>(() => ""), getSelection: vi.fn<WorkspacePanelContext["prompt"]["getSelection"]>(() => null) },
     terminal: patch.terminal ?? { open: vi.fn<WorkspacePanelContext["terminal"]["open"]>(), runCommand: vi.fn<WorkspacePanelContext["terminal"]["runCommand"]>(() => Promise.reject(new Error("not implemented"))) },
     host: patch.host ?? { requestRender: vi.fn<WorkspacePanelContext["host"]["requestRender"]>() },
@@ -338,12 +410,8 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
     expandedDirs: patch.expandedDirs ?? {},
     selectedFilePath: patch.selectedFilePath,
     selectedFileContent: patch.selectedFileContent,
+    selectedFileLoadError: patch.selectedFileLoadError,
     fileTreeStale: patch.fileTreeStale ?? false,
-    gitStatus: patch.gitStatus,
-    selectedDiffPath: patch.selectedDiffPath,
-    selectedDiff: patch.selectedDiff,
-    selectedStagedDiff: patch.selectedStagedDiff,
-    gitStale: patch.gitStale ?? false,
     activeTerminalCount: patch.activeTerminalCount ?? 0,
     selectedTerminalId: patch.selectedTerminalId,
     terminalAutoStart: patch.terminalAutoStart ?? false,
@@ -354,8 +422,6 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
     onStartWorkspaceUpload: patch.onStartWorkspaceUpload ?? vi.fn<WorkspacePanelContext["onStartWorkspaceUpload"]>(() => undefined),
     onCancelWorkspaceUpload: patch.onCancelWorkspaceUpload ?? vi.fn<WorkspacePanelContext["onCancelWorkspaceUpload"]>(),
     onClearWorkspaceUpload: patch.onClearWorkspaceUpload ?? vi.fn<WorkspacePanelContext["onClearWorkspaceUpload"]>(),
-    onRefreshGit: patch.onRefreshGit ?? vi.fn<WorkspacePanelContext["onRefreshGit"]>(),
-    onSelectDiff: patch.onSelectDiff ?? vi.fn<WorkspacePanelContext["onSelectDiff"]>(),
     onSelectTerminal: patch.onSelectTerminal ?? vi.fn<WorkspacePanelContext["onSelectTerminal"]>(),
   };
 }

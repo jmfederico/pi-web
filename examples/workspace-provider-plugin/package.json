@@ -1,0 +1,25 @@
+{
+  "name": "pi-web-example-workspace-provider",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@jmfederico/pi-web": "^1.202608.1",
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.3"
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "example-workspaces",
+        "browserRoot": "dist/browser",
+        "module": "dist/browser/index.js",
+        "serverModule": "dist/server.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

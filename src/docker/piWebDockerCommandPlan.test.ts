@@ -120,11 +120,12 @@ describe("pi-web-docker command planning", () => {
     expect(devHostPlan(["--dev", "shell"])).toEqual({ kind: "compose", args: ["exec", "web", "bash"], usesGeneratedEnv: true });
     expect(devHostPlan(["--dev", "cli", "config", "show"])).toEqual({ kind: "compose", args: ["exec", "web", "pi-web", "config", "show"], usesGeneratedEnv: true });
     expect(devHostPlan(["--dev", "update"])).toEqual({
-      kind: "composeSequence",
+      kind: "updateSequence",
       usesGeneratedEnv: true,
       steps: [
-        { args: ["build", "--pull"] },
-        { args: ["up", "-d", "--force-recreate", "--remove-orphans"] },
+        { kind: "gitFastForward", onFailure: "warn" },
+        { kind: "compose", args: ["build", "--pull"] },
+        { kind: "compose", args: ["up", "-d", "--force-recreate", "--remove-orphans"] },
       ],
     });
   });

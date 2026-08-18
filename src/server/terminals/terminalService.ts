@@ -54,7 +54,8 @@ export class TerminalService {
   }
 
   create(options: { cwd: string; name?: string; cols?: number; rows?: number }): TerminalInfo {
-    return this.createTerminal({ ...options, shellArgs: [] });
+    const shell = process.env["SHELL"] ?? "/bin/bash";
+    return this.createTerminal({ ...options, shellArgs: interactiveShellArgs(shell) });
   }
 
   runCommand(options: RunTerminalCommandOptions): TerminalCommandRun {
@@ -158,12 +159,12 @@ export class TerminalService {
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    record.pty = pty.spawn(shell, [], {
+    record.pty = pty.spawn(shell, interactiveShellArgs(shell), {
       name: "xterm-256color",
       cwd: record.cwd,
       cols: 100,
       rows: 30,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: { ...process.env, TERM: "xterm-256color", PI_WEB_TERMINAL: "1" },
     });
     this.attachPtyEvents(record);
     const info = toInfo(record);
@@ -196,7 +197,7 @@ export class TerminalService {
       cwd: options.cwd,
       cols: options.cols ?? 100,
       rows: options.rows ?? 30,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: { ...process.env, TERM: "xterm-256color", PI_WEB_TERMINAL: "1" },
     });
     const requestedName = options.name?.trim();
     const record: TerminalRecord = {
@@ -273,6 +274,12 @@ function toInfo(record: TerminalRecord): TerminalInfo {
 function trimReplayBuffer(buffer: string): string {
   if (buffer.length <= MAX_REPLAY_BUFFER) return buffer;
   return buffer.slice(buffer.length - MAX_REPLAY_BUFFER);
+}
+
+export function interactiveShellArgs(shell: string): string[] {
+  const executable = shell.split(/[\\/]/).at(-1)?.toLowerCase().replace(/^-/, "").replace(/\.exe$/, "");
+  // Preserve the existing invocation for arbitrary SHELL values rather than guessing at an unsupported login flag.
+  return executable === "bash" || executable === "zsh" || executable === "fish" ? ["-l"] : [];
 }
 
 function commandRunShellScript(command: string): string {

@@ -3,9 +3,10 @@
   "entry": [
     "src/cli.ts",
     "src/plugin-api.ts",
-    "src/plugin-api/unstable.ts",
+    "src/server-plugin-api.ts",
     "extensions/pi-web.ts",
     "pi-web-plugins/**/pi-web-plugin.ts",
+    "pi-web-plugins/**/server-plugin.ts",
     "scripts/*.mjs"
   ],
   "project": [

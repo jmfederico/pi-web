@@ -1,9 +1,9 @@
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { Project, Workspace, WorkspaceActivity } from "../api";
-import { projectActivityIndicator } from "../workspaceActivity";
+import type { Project } from "../api";
+import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator } from "./activityBadge";
+import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -12,8 +12,8 @@ import { listStyles } from "./shared";
 export class ProjectList extends LitElement implements KeyboardNavigableSection {
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selected?: Project;
-  @property({ attribute: false }) activities: Record<string, WorkspaceActivity> = {};
-  @property({ attribute: false }) workspacesByProjectId: Record<string, Workspace[]> = {};
+  /** Status tree of the machine these projects belong to; absent means no indicators. */
+  @property({ attribute: false }) statusSnapshot: MachineStatusSnapshot | undefined;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (project: Project) => void;
@@ -64,7 +64,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                 @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
               >
                 <div class="action-main">
-                  <span class="action-name">${project.name}</span><small>${project.path}</small>
+                  <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span></span><small>${project.path}</small>
                   ${this.renderActivity(project)}
                 </div>
                 <div class="action-menu">
@@ -93,15 +93,17 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderHeading() {
-    if (!this.collapsible) return "Projects";
+    if (!this.collapsible) return html`<span>Projects</span>`;
     const selectedSummary = this.selected?.name ?? "No project selected";
     const selectedTitle = this.selected?.path ?? selectedSummary;
     return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Projects</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${this.projects.length}</small></button>`;
   }
 
   private renderActivity(project: Project) {
-    const kind = projectActivityIndicator(project, this.workspacesByProjectId[project.id] ?? [], this.activities);
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active");
+    const flags = this.statusSnapshot?.projects[project.id];
+    const kind = statusActivityKind(flags);
+    const unreadLabel = hasStatusUnread(flags) ? "Unread sessions in this project" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active", unreadLabel);
   }
 
   private toggleMenu(projectId: string, target: EventTarget | null) {

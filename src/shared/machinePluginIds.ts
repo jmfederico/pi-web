@@ -1,4 +1,4 @@
-import { isPiWebPluginId } from "./pluginIds.js";
+import { isPiWebPluginId, isReservedPiWebPluginId } from "./pluginIds.js";
 
 const MACHINE_PLUGIN_ID_PREFIX = "machine.";
 
@@ -10,6 +10,7 @@ export interface MachineScopedPluginIdParts {
 export function machineScopedPluginId(machineId: string, pluginId: string): string {
   if (machineId === "") throw new Error("Machine id is required");
   if (!isPiWebPluginId(pluginId)) throw new Error(`Invalid PI WEB plugin id: ${pluginId}`);
+  if (isReservedPiWebPluginId(pluginId)) throw new Error(`Reserved PI WEB plugin id: ${pluginId}`);
   return `${MACHINE_PLUGIN_ID_PREFIX}${stringToHex(machineId)}.${pluginId}`;
 }
 
@@ -21,7 +22,7 @@ export function parseMachineScopedPluginId(pluginId: string): MachineScopedPlugi
 
   const encodedMachineId = rest.slice(0, separator);
   const sourcePluginId = rest.slice(separator + 1);
-  if (!isHexString(encodedMachineId) || !isPiWebPluginId(sourcePluginId)) return undefined;
+  if (!isHexString(encodedMachineId) || !isPiWebPluginId(sourcePluginId) || isReservedPiWebPluginId(sourcePluginId)) return undefined;
 
   const machineId = hexToString(encodedMachineId);
   if (machineId === "") return undefined;

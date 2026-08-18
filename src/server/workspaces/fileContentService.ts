@@ -1,21 +1,23 @@
 import { lstat, mkdir, open, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebPathAccessConfig, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "../../shared/apiTypes.js";
-import { imageMimeTypeForPath } from "./imagePreviewService.js";
+import type { DeleteWorkspaceFileResponse, FileContentMediaType, FileContentResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebPathAccessConfig, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "../../shared/apiTypes.js";
+import { classifyWorkspaceFile, MAX_WORKSPACE_FILE_CONTENT_BYTES, type WorkspaceFileClassification } from "../../shared/workspaceFiles.js";
 import { resolveWorkspacePathAccessTarget } from "./pathAccessPolicy.js";
 import { ensureInside, isNodeErrorWithCode, resolveInsideWorkspace, resolveParentInsideWorkspace } from "./pathSafety.js";
-
-const MAX_BYTES = 512 * 1024;
 
 export async function readWorkspaceFile(rootPath: string, path: string | undefined, pathAccess?: PiWebPathAccessConfig): Promise<FileContentResponse> {
   if (path === undefined || path === "") throw new Error("path query parameter is required");
   const { target, displayPath } = await resolveWorkspacePathAccessTarget(rootPath, path, pathAccess);
   const s = await stat(target);
   if (!s.isFile()) throw new Error("Path is not a file");
-  const bytesToRead = Math.min(s.size, MAX_BYTES);
+  const bytesToRead = Math.min(s.size, MAX_WORKSPACE_FILE_CONTENT_BYTES);
   const buffer = await readFilePrefix(target, bytesToRead);
-  const media = mediaForPath(displayPath);
-  const binary = media.mediaType === "image" || isProbablyBinary(buffer);
+  const classification = classifyWorkspaceFile(displayPath);
+  const media = mediaForClassification(classification);
+  // Text-source formats (HTML, Markdown, SVG) retain capped literal UTF-8
+  // source for Raw mode. Raster image and PDF bytes stay out of JSON and are
+  // served only by the preview response.
+  const binary = classification?.source === "stream" || (classification === undefined && isProbablyBinary(buffer));
   return {
     path: displayPath,
     ...languageForPath(displayPath),
@@ -24,7 +26,7 @@ export async function readWorkspaceFile(rootPath: string, path: string | undefin
     size: s.size,
     modifiedAt: s.mtime.toISOString(),
     content: binary ? "" : buffer.toString("utf8"),
-    truncated: s.size > MAX_BYTES,
+    truncated: s.size > MAX_WORKSPACE_FILE_CONTENT_BYTES,
     binary,
   };
 }
@@ -160,7 +162,9 @@ function languageForPath(path: string): { language?: string } {
     jsx: "javascript",
     json: "json",
     md: "markdown",
+    markdown: "markdown",
     css: "css",
+    htm: "html",
     html: "html",
     py: "python",
     rs: "rust",
@@ -173,7 +177,10 @@ function languageForPath(path: string): { language?: string } {
   return language === undefined ? {} : { language };
 }
 
-function mediaForPath(path: string): { mediaType?: "image"; mimeType?: string } {
-  const mimeType = imageMimeTypeForPath(path);
-  return mimeType === undefined ? {} : { mediaType: "image", mimeType };
+function mediaForClassification(classification: WorkspaceFileClassification | undefined): { mediaType?: FileContentMediaType; mimeType?: string } {
+  if (classification === undefined) return {};
+  return {
+    mediaType: classification.mediaType,
+    ...("previewMimeType" in classification ? { mimeType: classification.previewMimeType } : {}),
+  };
 }

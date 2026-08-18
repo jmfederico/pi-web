@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPiWebCustomToolDefinitions, sessionAllowsDelegationTools, type PiSessionManager } from "./piSessionService.js";
 import type { SubsessionToolDeps } from "./spawnSubsessionTool.js";
@@ -14,13 +15,14 @@ afterEach(async () => {
 
 function delegationDeps() {
   const spawn = vi.fn(() => Promise.resolve({ sessionId: "independent-1", cwd: "/workspace" }));
+  const subsessionSpawn = vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace" }));
   const subsessions: SubsessionToolDeps = {
-    spawn: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace" })),
+    spawn: subsessionSpawn,
     list: vi.fn(() => Promise.resolve([])),
     check: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, finalText: "", messageCount: 0 })),
     read: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, entries: [], total: 0, matched: 0, start: 0, hasMore: false })),
   };
-  return { spawn, subsessions };
+  return { spawn, subsessions, subsessionSpawn };
 }
 
 function toolNames(definitions: ReturnType<typeof createPiWebCustomToolDefinitions>): string[] {
@@ -33,6 +35,20 @@ function manager(id: string, file: string | undefined, entries: readonly unknown
     getSessionFile: () => file,
     getEntries: () => entries,
   });
+}
+
+const dispatchModel = { provider: "anthropic", id: "claude-sonnet" };
+
+function ctxFor(sessionId: string, sessionFile: string | undefined, model?: unknown): ExtensionContext {
+  // The delegation tools only read sessionManager and model from the context.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- test stub with the minimal surface the tools read.
+  return { sessionManager: manager(sessionId, sessionFile), ...(model === undefined ? {} : { model }) } as unknown as ExtensionContext;
+}
+
+function findTool(definitions: ReturnType<typeof createPiWebCustomToolDefinitions>, name: string) {
+  const tool = definitions.find((definition) => definition.name === name);
+  if (tool === undefined) throw new Error(`missing tool ${name}`);
+  return tool;
 }
 
 describe("delegation tool capability boundary", () => {
@@ -61,6 +77,38 @@ describe("delegation tool capability boundary", () => {
     const { spawn, subsessions } = delegationDeps();
 
     expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, spawn, subsessions))).toEqual(["edit"]);
+  });
+
+  it("wires the dispatching session identity, inherited model, and model spec into spawn_session", async () => {
+    const { spawn, subsessions } = delegationDeps();
+    const spawnTool = findTool(createPiWebCustomToolDefinitions("/workspace", true, spawn, subsessions), "spawn_session");
+
+    await spawnTool.execute("call-1", { prompt: "go", model: "openai/gpt-5" }, undefined, undefined, ctxFor("spawner-7", "/sessions/spawner-7.jsonl", dispatchModel));
+
+    expect(spawn).toHaveBeenCalledWith({
+      spawningCwd: "/workspace",
+      spawningSessionId: "spawner-7",
+      prompt: "go",
+      cwd: undefined,
+      model: dispatchModel,
+      modelSpec: "openai/gpt-5",
+    });
+  });
+
+  it("wires the parent identity, inherited model, and model spec into spawn_subsession", async () => {
+    const { spawn, subsessions, subsessionSpawn } = delegationDeps();
+    const spawnTool = findTool(createPiWebCustomToolDefinitions("/workspace", true, spawn, subsessions), "spawn_subsession");
+
+    await spawnTool.execute("call-2", { prompt: "go", model: "openai/gpt-5" }, undefined, undefined, ctxFor("parent-9", "/sessions/parent-9.jsonl", dispatchModel));
+
+    expect(subsessionSpawn).toHaveBeenCalledWith({
+      spawningCwd: "/workspace",
+      parentSessionId: "parent-9",
+      parentSessionFile: "/sessions/parent-9.jsonl",
+      prompt: "go",
+      model: dispatchModel,
+      modelSpec: "openai/gpt-5",
+    });
   });
 
   it.each(["human-created", "spawn_session-created"])("allows delegation for a %s session without tracked-child provenance", async () => {

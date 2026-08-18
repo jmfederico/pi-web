@@ -1,9 +1,9 @@
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { Machine, MachineHealth, WorkspaceActivity } from "../api";
-import { machineActivityIndicator } from "../workspaceActivity";
+import type { Machine, MachineHealth } from "../api";
+import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator } from "./activityBadge";
+import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -13,7 +13,8 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selected?: Machine;
   @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};
-  @property({ attribute: false }) activities: Record<string, Record<string, WorkspaceActivity>> = {};
+  /** Per-machine status trees, keyed by machine id; a machine without one shows no indicator. */
+  @property({ attribute: false }) statusSnapshots: Record<string, MachineStatusSnapshot> = {};
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (machine: Machine) => void;
@@ -84,10 +85,13 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderActivity(machine: Machine) {
+    const flags = this.statusSnapshots[machine.id]?.machine;
     const status = this.statuses[machine.id]?.status ?? machine.status;
-    if (status === "offline" || status === "error") return undefined;
-    const kind = machineActivityIndicator(this.activities[machine.id]);
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active");
+    // Unread survives offline: an offline machine keeps its last-known unread
+    // state (stale-but-present still counts), so only the work dot is gated.
+    const kind = status === "offline" || status === "error" ? undefined : statusActivityKind(flags);
+    const unreadLabel = hasStatusUnread(flags) ? "Unread sessions on this machine" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active", unreadLabel);
   }
 
   private renderMachineMenu(machine: Machine) {
@@ -113,7 +117,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderHeading() {
-    if (!this.collapsible) return "Machines";
+    if (!this.collapsible) return html`<span>Machines</span>`;
     const selectedSummary = this.selected?.name ?? "No machine selected";
     const selectedTitle = this.selected?.baseUrl ?? selectedSummary;
     return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Machines</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${this.machines.length}</small></button>`;

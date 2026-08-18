@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
   LaunchdNativeServiceProbe,
@@ -5,6 +6,7 @@ import {
   SystemdNativeServiceProbe,
   launchdProbePlist,
   nativeServicePrerequisiteShellCheck,
+  nodeVersionCheckScript,
   systemdRunArguments,
   type LaunchdProbeFileSystem,
   type ProbeCommandResult,
@@ -433,11 +435,24 @@ describe("probe service definitions", () => {
       id: "sessiond.node",
       kind: "node-version",
       command: "node",
-      minimumMajor: 22,
-      description: "node >= 22",
+      minimumVersion: "22.19.0",
+      description: "node >= 22.19.0",
     });
     expect(check).toContain("\"$pi_web_probe_executable\" '-e'");
+    expect(check).toContain("22.19.0");
     expect(check).not.toContain("&& node -e");
+  });
+
+  it.each([
+    { version: "21.99.99", accepted: false },
+    { version: "22.18.99", accepted: false },
+    { version: "22.19.0", accepted: true },
+    { version: "22.19.1", accepted: true },
+    { version: "23.0.0", accepted: true },
+  ])("checks the complete Node version for $version", ({ version, accepted }) => {
+    const result = spawnSync(process.execPath, ["-e", nodeVersionCheckScript("22.19.0"), version]);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(accepted ? 0 : 1);
   });
 
   it("requires bundled entrypoints to be readable regular files", () => {

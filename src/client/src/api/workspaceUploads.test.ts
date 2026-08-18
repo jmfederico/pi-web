@@ -25,7 +25,7 @@ describe("workspace upload helpers", () => {
     expect(effectiveWorkspaceUploadFolder(undefined)).toBe(".pi-web/uploads");
     expect(effectiveWorkspaceUploadFolder({ uploads: { defaultFolder: "manual/uploads" } })).toBe("manual/uploads");
     expect(workspaceEffectiveUploadFolder({ uploads: { defaultFolder: "project/uploads" } }, "global/uploads")).toBe("project/uploads");
-    expect(workspaceEffectiveUploadFolder(undefined, "global/uploads")).toBe("global/uploads");
+    expect(workspaceEffectiveUploadFolder({}, "global/uploads")).toBe("global/uploads");
     expect(workspaceUploadPath(" uploads\\manual// ", "./report.txt")).toBe("uploads/manual/report.txt");
     expect(workspaceUploadPath("", "report.txt")).toBe("report.txt");
 

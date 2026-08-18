@@ -81,6 +81,8 @@ describe("listWorkspaceTree", () => {
     await expect(listWorkspaceTree(root, "/tmp")).rejects.toThrow("Absolute paths are not allowed");
   });
 
+  // Writing MAX_ENTRIES + 1 files is inherently I/O-heavy; slow filesystems (notably
+  // Windows CI) can exceed Vitest's default 5s timeout, so give this case extra headroom.
   it("marks responses as truncated after the service entry limit", async () => {
     const root = await tempWorkspace();
     await Promise.all(Array.from({ length: 1001 }, (_, index) => writeFile(join(root, `${String(index).padStart(4, "0")}.txt`), "")));
@@ -89,7 +91,7 @@ describe("listWorkspaceTree", () => {
 
     expect(tree.entries).toHaveLength(1000);
     expect(tree.truncated).toBe(true);
-  });
+  }, 30_000);
 });
 
 async function trySymlink(target: string, path: string): Promise<boolean> {

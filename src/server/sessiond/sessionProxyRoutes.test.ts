@@ -28,6 +28,13 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions?cwd=/repo", body: undefined }]);
   });
 
+  it("forwards the machine status snapshot request to the daemon", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/machines/local/status" });
+
+    expect(response.statusCode).toBe(200);
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/status", body: undefined }]);
+  });
+
   it("forwards queue-clear mutations and their status through the session daemon", async () => {
     const status = { sessionId: "session-1", pendingMessageCount: 0, queuedMessages: [] };
     daemon.respondWith({ statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify(status) });
@@ -39,12 +46,50 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([{ method: "POST", path: "/sessions/session-1/queue/clear", body: { cwd: "/repo" } }]);
   });
 
+  it("forwards unread snapshots and acknowledgement cutoffs unchanged", async () => {
+    const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/unread" });
+    const acknowledge = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/unread/acknowledge",
+      payload: { cwd: "/repo", catalogId: "catalog-test", throughCompletionOrder: 9 },
+    });
+
+    expect([catalog.statusCode, acknowledge.statusCode]).toEqual([200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/sessions/unread", body: undefined },
+      { method: "POST", path: "/sessions/session-1/unread/acknowledge", body: { cwd: "/repo", catalogId: "catalog-test", throughCompletionOrder: 9 } },
+    ]);
+  });
+
+  it("forwards notification snapshots and dismissal bodies unchanged", async () => {
+    const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/notifications" });
+    const inbox = await app.inject({ method: "GET", url: `/api/machines/local/sessions/session-1/notifications?cwd=${encodeURIComponent("/repo")}` });
+    const dismiss = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/notifications/dismiss",
+      payload: { cwd: "/repo", daemonInstanceId: "daemon-test", notificationId: "notice-1" },
+    });
+    const dismissAll = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/sessions/session-1/notifications/dismiss-all",
+      payload: { cwd: "/repo", daemonInstanceId: "daemon-test", throughOrder: 7, throughOverflowWatermark: 2 },
+    });
+
+    expect([catalog.statusCode, inbox.statusCode, dismiss.statusCode, dismissAll.statusCode]).toEqual([200, 200, 200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/sessions/notifications", body: undefined },
+      { method: "GET", path: "/sessions/session-1/notifications?cwd=%2Frepo", body: undefined },
+      { method: "POST", path: "/sessions/session-1/notifications/dismiss", body: { cwd: "/repo", daemonInstanceId: "daemon-test", notificationId: "notice-1" } },
+      { method: "POST", path: "/sessions/session-1/notifications/dismiss-all", body: { cwd: "/repo", daemonInstanceId: "daemon-test", throughOrder: 7, throughOverflowWatermark: 2 } },
+    ]);
+  });
+
   it("strips the machine prefix before forwarding auth requests", async () => {
-    const response = await app.inject({ method: "POST", url: "/api/machines/local/auth/api-key", payload: { providerId: "p", key: "k" } });
+    const response = await app.inject({ method: "POST", url: "/api/machines/local/auth/api-key/interactive", payload: { providerId: "p" } });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true });
-    expect(daemon.requests).toEqual([{ method: "POST", path: "/auth/api-key", body: { providerId: "p", key: "k" } }]);
+    expect(daemon.requests).toEqual([{ method: "POST", path: "/auth/api-key/interactive", body: { providerId: "p" } }]);
   });
 
   it("forwards sessiond health and runtime aliases to daemon endpoints", async () => {

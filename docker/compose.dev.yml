@@ -15,7 +15,7 @@ x-pi-web-dev-environment: &pi-web-dev-environment
   HOME: /data/home
   XDG_CONFIG_HOME: /data/config
   PI_WEB_DATA_DIR: /data/pi-web
-  PI_WEB_SESSIOND_SOCKET: /data/pi-web/sessiond.sock
+  PI_WEB_SESSIOND_SOCKET: ${PI_WEB_DEV_SESSIOND_SOCKET:-/data/pi-web/sessiond-dev.sock}
   PI_CODING_AGENT_DIR: /data/pi-agent
   HOSTEXEC_IMAGE: ${HOSTEXEC_IMAGE:-alpine:3.22}
   HOSTEXEC_MODE: ${HOSTEXEC_MODE:-disabled}
@@ -27,9 +27,13 @@ x-pi-web-dev-environment: &pi-web-dev-environment
   PI_WEB_DOCKER_MODE: dev
   PI_WEB_DOCKER_DEV_REPO_ROOT: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}
   PI_WEB_DOCKER_HELPER_IMAGE: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
-  COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-pi-web-dev}
   NPM_CONFIG_UPDATE_NOTIFIER: "false"
   NPM_CONFIG_CACHE: /data/npm-cache
+
+# Same user-owned container environment file as runtime mode: both modes read it
+# from the shared persistent data directory.
+x-pi-web-dev-env-file: &pi-web-dev-env-file
+  - ${PI_WEB_DOCKER_DATA_DIR:-${HOME}/.local/share/pi-web-docker/data}/container.env
 
 x-pi-web-dev-data-volume: &pi-web-dev-data-volume
   type: bind
@@ -78,10 +82,11 @@ services:
       - "${DOCKER_GID:-0}"
     security_opt:
       - label=disable
+    env_file: *pi-web-dev-env-file
     environment: *pi-web-dev-environment
     volumes: *pi-web-dev-volumes
     healthcheck:
-      test: ["CMD-SHELL", "test -S /data/pi-web/sessiond.sock"]
+      test: ["CMD-SHELL", "test -S ${PI_WEB_DEV_SESSIOND_SOCKET:-/data/pi-web/sessiond-dev.sock}"]
       interval: 5s
       timeout: 3s
       retries: 24
@@ -100,6 +105,7 @@ services:
       - "${DOCKER_GID:-0}"
     security_opt:
       - label=disable
+    env_file: *pi-web-dev-env-file
     environment:
       <<: *pi-web-dev-environment
       PI_WEB_HOST: 0.0.0.0

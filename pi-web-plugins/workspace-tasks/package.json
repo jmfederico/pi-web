@@ -3,7 +3,7 @@
   "private": true,
   "piWeb": {
     "plugins": [
-      { "id": "workspace-tasks", "module": "pi-web-plugin.js" }
+      { "id": "workspace-tasks", "browserRoot": ".", "module": "pi-web-plugin.js" }
     ]
   }
 }

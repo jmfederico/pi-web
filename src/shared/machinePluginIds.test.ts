@@ -12,4 +12,12 @@ describe("machine-scoped plugin ids", () => {
   it("leaves normal plugin ids unparsed", () => {
     expect(parseMachineScopedPluginId("project-tools")).toBeUndefined();
   });
+
+  it.each(["core", "themes", "machine.remote.tools"])("does not scope reserved external id %s", (pluginId) => {
+    expect(() => machineScopedPluginId("remote-1", pluginId)).toThrow(`Reserved PI WEB plugin id: ${pluginId}`);
+  });
+
+  it("does not decode nested machine namespaces as source plugin ids", () => {
+    expect(parseMachineScopedPluginId("machine.72656d6f74652d31.machine.remote.tools")).toBeUndefined();
+  });
 });

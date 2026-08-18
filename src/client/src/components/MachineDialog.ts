@@ -1,5 +1,6 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
+import "./ModalSurface";
 
 export interface MachineDialogSubmit {
   name: string;
@@ -17,15 +18,10 @@ export class MachineDialog extends LitElement {
   @state() private name = "";
   @state() private token = "";
   @state() private submitting = false;
-  @query("input[name='baseUrl']") private urlInput?: HTMLInputElement;
   @query("input[name='name']") private nameInput?: HTMLInputElement;
 
   private nameEdited = false;
   private previousSuggestedName = "";
-
-  override firstUpdated(): void {
-    this.urlInput?.focus();
-  }
 
   private handleUrlInput(event: InputEvent): void {
     if (!(event.target instanceof HTMLInputElement)) return;
@@ -47,12 +43,9 @@ export class MachineDialog extends LitElement {
     this.token = event.target.value;
   }
 
+  // Escape and backdrop presses are owned by the modal surface (routed to
+  // `onCancel`); this handler keeps the form's Enter-to-advance behavior.
   private handleKeyDown(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      this.onCancel?.();
-      return;
-    }
     if (event.key === "Enter" && event.target instanceof HTMLInputElement && event.target.name === "baseUrl" && machineBaseUrlValidationMessage(this.url) === undefined) {
       event.preventDefault();
       void this.updateComplete.then(() => {
@@ -91,48 +84,52 @@ export class MachineDialog extends LitElement {
     const urlError = hasUrl ? machineBaseUrlValidationMessage(this.url) : undefined;
     const canSubmit = this.validInput() !== undefined && !this.submitting;
     return html`
-      <div class="backdrop" @click=${() => this.onCancel?.()}>
-        <section @click=${(event: Event) => { event.stopPropagation(); }}>
-          <form @submit=${(event: SubmitEvent) => { this.handleSubmit(event); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>
-            <header>
-              <strong>Add machine</strong>
-              <button type="button" @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
-            </header>
-            <div class="body">
-              ${this.error === "" ? null : html`<div class="dialog-error" role="alert">${this.error}</div>`}
+      <modal-surface
+        .onClose=${() => this.onCancel?.()}
+        .initialFocus=${"input[name='baseUrl']"}
+        .label=${"Add machine"}
+        @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}
+      >
+        <form @submit=${(event: SubmitEvent) => { this.handleSubmit(event); }}>
+          <header>
+            <strong>Add machine</strong>
+            <button type="button" @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+          </header>
+          <div class="body">
+            ${this.error === "" ? null : html`<div class="dialog-error" role="alert">${this.error}</div>`}
+            <label>
+              Remote PI WEB URL
+              <input name="baseUrl" type="url" .value=${this.url} @input=${(event: InputEvent) => { this.handleUrlInput(event); }} placeholder="http://dev-box.local:8504" autocomplete="url" inputmode="url" />
+            </label>
+            <small class=${urlError === undefined ? "hint" : "field-error"}>${urlError ?? "Enter the reachable base URL first, including http:// or https://."}</small>
+            ${hasUrl ? html`
               <label>
-                Remote PI WEB URL
-                <input name="baseUrl" type="url" .value=${this.url} @input=${(event: InputEvent) => { this.handleUrlInput(event); }} placeholder="http://dev-box.local:8504" autocomplete="url" inputmode="url" autofocus />
+                Machine name
+                <input name="name" type="text" .value=${this.name} @input=${(event: InputEvent) => { this.handleNameInput(event); }} placeholder=${this.previousSuggestedName || "Dev Box"} autocomplete="off" />
               </label>
-              <small class=${urlError === undefined ? "hint" : "field-error"}>${urlError ?? "Enter the reachable base URL first, including http:// or https://."}</small>
-              ${hasUrl ? html`
-                <label>
-                  Machine name
-                  <input name="name" type="text" .value=${this.name} @input=${(event: InputEvent) => { this.handleNameInput(event); }} placeholder=${this.previousSuggestedName || "Dev Box"} autocomplete="off" />
-                </label>
-                <small class="hint">Suggested from the URL. Edit it to use a friendlier sidebar label.</small>
-                <label>
-                  Bearer token <span class="optional">optional</span>
-                  <input name="token" type="password" .value=${this.token} @input=${(event: InputEvent) => { this.handleTokenInput(event); }} placeholder="Leave blank if the remote machine does not require one" autocomplete="off" />
-                </label>
-                <small class="hint">Paste only the token value; PI WEB sends it as an Authorization: Bearer header.</small>
-              ` : html`<p class="hint intro">After you enter a URL, PI WEB will suggest a machine name and let you add an optional bearer token.</p>`}
-            </div>
-            <footer>
-              <button type="button" @click=${() => { this.onCancel?.(); }}>Cancel</button>
-              <button class="primary" type="submit" ?disabled=${!canSubmit}>${this.submitting ? "Adding…" : "Add machine"}</button>
-            </footer>
-          </form>
-        </section>
-      </div>
+              <small class="hint">Suggested from the URL. Edit it to use a friendlier sidebar label.</small>
+              <label>
+                Bearer token <span class="optional">optional</span>
+                <input name="token" type="password" .value=${this.token} @input=${(event: InputEvent) => { this.handleTokenInput(event); }} placeholder="Leave blank if the remote machine does not require one" autocomplete="off" />
+              </label>
+              <small class="hint">Paste only the token value; PI WEB sends it as an Authorization: Bearer header.</small>
+            ` : html`<p class="hint intro">After you enter a URL, PI WEB will suggest a machine name and let you add an optional bearer token.</p>`}
+          </div>
+          <footer>
+            <button type="button" @click=${() => { this.onCancel?.(); }}>Cancel</button>
+            <button class="primary" type="submit" ?disabled=${!canSubmit}>${this.submitting ? "Adding…" : "Add machine"}</button>
+          </footer>
+        </form>
+      </modal-surface>
     `;
   }
 
   static override styles = css`
     :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    .backdrop { display: grid; place-items: start center; width: 100%; height: 100%; padding-top: min(12vh, 90px); box-sizing: border-box; background: var(--pi-overlay); }
-    section { width: min(560px, calc(100vw - 40px)); max-height: min(640px, calc(100vh - 40px)); border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg); box-shadow: 0 20px 60px var(--pi-shadow-strong); overflow: hidden; }
-    form { display: flex; flex-direction: column; max-height: inherit; min-height: 0; }
+    modal-surface { --modal-surface-place-items: start center; --modal-surface-backdrop-padding: min(12vh, 90px) 0 0; --modal-surface-width: min(560px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100vh - 40px)); }
+    /* The form is the surface's single slotted child: the section's flex column
+       constrains it (min-height: 0 so the body can shrink and scroll). */
+    form { display: flex; flex-direction: column; min-height: 0; }
     header, footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     footer { border-top: 1px solid var(--pi-border); border-bottom: 0; justify-content: end; }
     .body { display: grid; gap: 8px; padding: 12px; min-height: 0; overflow: auto; }

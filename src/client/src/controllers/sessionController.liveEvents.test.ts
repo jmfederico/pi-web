@@ -59,6 +59,7 @@ describe("SessionController live events", () => {
       ...defaultApi,
       messages: () => Promise.resolve(emptyPage),
       status: () => Promise.resolve(status(oldSession.id)),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
     };
     const controller = new SessionController(
       () => state,

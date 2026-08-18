@@ -98,6 +98,44 @@ pi_web_docker_host_detect_docker_gid() {
   printf '0\n'
 }
 
+# True when running inside a PI WEB Docker container. The Compose environment
+# sets this marker for the services, and detached helper containers pass it on.
+pi_web_docker_host_in_container() {
+  case "${PI_WEB_DOCKER_RUNTIME:-}" in
+    ""|0|false|FALSE|False) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Host facts are detected once on the host and then persisted. A container
+# cannot observe the host it runs on: from inside a Linux container, a Docker
+# Desktop for Mac host is indistinguishable from native Linux Docker. Reuse the
+# persisted facts there instead of detecting them again, and detect only when
+# running on the host itself.
+pi_web_docker_host_resolve_profile() {
+  pi_web_persisted_profile=${1:-}
+  pi_web_persisted_hostexec=${2:-}
+  pi_web_persisted_socket=${3:-}
+
+  if pi_web_docker_host_in_container && [ -n "$pi_web_persisted_profile" ]; then
+    PI_WEB_DETECTED_DOCKER_HOST_PROFILE=$pi_web_persisted_profile
+    if [ -n "$pi_web_persisted_hostexec" ]; then
+      PI_WEB_DETECTED_HOSTEXEC_MODE=$pi_web_persisted_hostexec
+    else
+      case "$pi_web_persisted_profile" in
+        linux-native-docker) PI_WEB_DETECTED_HOSTEXEC_MODE=nsenter ;;
+        *) PI_WEB_DETECTED_HOSTEXEC_MODE=disabled ;;
+      esac
+    fi
+    PI_WEB_DETECTED_DOCKER_SOCKET_SOURCE=${pi_web_persisted_socket:-/var/run/docker.sock}
+    PI_WEB_DOCKER_HOST_PROFILE_REUSED=1
+    return 0
+  fi
+
+  PI_WEB_DOCKER_HOST_PROFILE_REUSED=0
+  pi_web_docker_host_detect_profile
+}
+
 pi_web_docker_host_detect_profile() {
   PI_WEB_DETECTED_HOST_OS=$(uname -s 2>/dev/null || printf 'unknown')
   PI_WEB_DETECTED_DOCKER_CONTEXT=
@@ -257,6 +295,53 @@ pi_web_docker_host_write_extra_volumes() {
 
     pi_web_docker_host_write_volume "$extra_path" "$extra_path" false
   done
+}
+
+# Create the user-owned container environment file once, without ever
+# rewriting an existing one. Runtime and development mode share this file
+# because they share the persistent /data mount.
+pi_web_docker_write_container_env_template() {
+  pi_web_container_env_target=$1
+  [ ! -e "$pi_web_container_env_target" ] || return 0
+  pi_web_container_env_dir=$(dirname "$pi_web_container_env_target")
+  mkdir -p "$pi_web_container_env_dir" || return 1
+  pi_web_container_env_temp=$pi_web_container_env_target.$$
+  pi_web_container_env_umask=$(umask)
+  umask 077
+  cat >"$pi_web_container_env_temp" <<'EOF'
+# PI WEB Docker container environment. Safe to edit.
+#
+# Every KEY=value line here is added to the environment of the PI WEB
+# sessiond and web containers, in both runtime and development mode, and is
+# inherited by agent sessions, terminals, and the processes they start.
+#
+# This file is created once and is never rewritten. It is not the same as the
+# generated .env and .pi-web/docker-compose-dev.generated.env files: those only
+# give values to Docker Compose itself and never reach the container process
+# environment.
+#
+# Apply changes by recreating the containers:
+#   pi-web-docker start                (development: pi-web-docker --dev start)
+# The restart commands reuse the existing containers and do not re-read this
+# file.
+#
+# The values PI WEB sets for a container stay authoritative, so HOME,
+# XDG_CONFIG_HOME, PI_WEB_DATA_DIR, PI_WEB_SESSIOND_SOCKET, PI_CODING_AGENT_DIR,
+# PI_WEB_MAX_UPLOAD_BYTES, HOSTEXEC_MODE, HOSTEXEC_IMAGE, the PI_WEB_DOCKER_*
+# keys, and the web server's PI_WEB_HOST and PI_WEB_PORT keep their generated
+# values. Change those through installer flags, .env, or
+# .pi-web/docker-compose-dev.local.env instead.
+#
+# Use one KEY=value per line. Docker Compose dotenv rules apply, so $VAR and
+# ${VAR} expand; write $$ for a literal dollar sign.
+#
+# Examples:
+# HTTPS_PROXY=http://proxy.example.internal:3128
+# NO_PROXY=localhost,127.0.0.1
+# PI_WEB_OFFLINE=1
+EOF
+  umask "$pi_web_container_env_umask"
+  mv "$pi_web_container_env_temp" "$pi_web_container_env_target" || return 1
 }
 
 pi_web_docker_host_write_compose_override() {

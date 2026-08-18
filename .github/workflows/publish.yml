@@ -34,5 +34,29 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Smoke test npm 12 global package install
+        run: npm run smoke:package-install
+
       - name: Publish
         run: npm publish --access public --provenance
+
+  deploy-docs:
+    name: Deploy stable docs to pi-web.dev
+    # Stable docs only move on GitHub Releases; the dev variant at pi-web.dev/dev/
+    # deploys from main via docs-dev.yml. Skipped on manual workflow_dispatch runs.
+    if: github.event_name == 'release'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      # Release events check out the published tag, so docs match the npm release.
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Deploy stable docs worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          # Keep in sync with docs-dev.yml so both sites deploy with the same wrangler.
+          wranglerVersion: "4.119.0"
+          command: deploy --config docs/wrangler.jsonc

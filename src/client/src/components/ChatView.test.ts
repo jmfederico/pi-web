@@ -1,8 +1,25 @@
 import type { TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { QueuedSessionMessage, SessionStatus } from "../api";
+import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
+import {
+  notificationTargetKey,
+  notificationTrayIsCollapsed,
+  type SelectedSessionNotificationView,
+} from "../sessionNotifications";
 import type { ChatLine } from "./shared";
-import { ChatView, chatMessageMetadataLabel, chatQueuedMessageSections } from "./ChatView";
+import {
+  ChatView,
+  chatEventAnchorKey,
+  chatGroupAnchorKey,
+  chatGroupScrollMarkerId,
+  chatMessageGroupClassName,
+  chatMessageGroupLabel,
+  chatMessageMetadataLabel,
+  chatQueuedMessageSections,
+  chatQueuedSectionShowsClearAction,
+  chatSessionWarningRows,
+} from "./ChatView";
+import { templateEventHandlerAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 
 describe("chatQueuedMessageSections", () => {
   it("labels client-side pending-start sends separately from server queued messages", () => {
@@ -28,43 +45,201 @@ describe("chatQueuedMessageSections", () => {
   });
 });
 
-describe("ChatView queued-message clear action", () => {
-  // Direct handler extraction keeps this node-environment test focused on the
-  // Clear queue template wiring without introducing a component-wide DOM shim.
-  it("renders an accessible server-queue action and invokes its callback", () => {
+describe("chatQueuedSectionShowsClearAction", () => {
+  // The show/hide decision for the server clear-queue button is content/layout,
+  // so it lives in a pure exported seam instead of scraping rendered markup.
+  const serverSection = requireSection(chatQueuedMessageSections([], [{ kind: "steer", text: "server queued" }])[0]);
+  const clientSection = requireSection(chatQueuedMessageSections([{ kind: "followUp", text: "waiting" }], [])[0]);
+
+  it("shows the action for the server queue when a clear handler is wired", () => {
+    expect(chatQueuedSectionShowsClearAction(serverSection, true)).toBe(true);
+  });
+
+  it("hides the action when no clear handler is wired", () => {
+    expect(chatQueuedSectionShowsClearAction(serverSection, false)).toBe(false);
+  });
+
+  it("never shows the server action for the separate client pending-start queue", () => {
+    expect(chatQueuedSectionShowsClearAction(clientSection, true)).toBe(false);
+  });
+});
+
+describe("ChatView queued-message clear wiring", () => {
+  // Escape hatch: this case verifies the Clear queue button's Lit event wiring,
+  // whose only observable effect is invoking the injected callback. Vitest runs
+  // with no DOM environment here, so a shadow-DOM click harness would add
+  // disproportionate setup; handler extraction anchored to the user-facing
+  // "Clear queue" button text is proportionate.
+  it("invokes onClearServerQueue when the server-queue action is activated", () => {
     const view = new ChatView();
     const onClearServerQueue = vi.fn();
     view.status = queuedStatus([{ kind: "steer", text: "server queued" }]);
-    view.canClearServerQueue = true;
     view.onClearServerQueue = onClearServerQueue;
 
-    const rendered = renderQueuedMessages(view);
-    const markup = templateStaticMarkup(rendered);
+    templateEventHandlerNearMarker(renderQueuedMessages(view), "Clear queue")(new Event("click"));
 
-    expect(markup).toContain('type="button"');
-    expect(markup).toContain('title="Clear queued messages without stopping active work"');
-    expect(markup).toContain(">Clear queue</button>");
-    templateEventHandler(rendered, "Clear queue")(new Event("click"));
     expect(onClearServerQueue).toHaveBeenCalledOnce();
   });
+});
 
-  it("hides the action when the selected runtime does not support clearing", () => {
-    const view = new ChatView();
-    view.status = queuedStatus([{ kind: "followUp", text: "server queued" }]);
-    view.canClearServerQueue = false;
-    view.onClearServerQueue = vi.fn();
+describe("chatSessionWarningRows", () => {
+  // Warning-row content (severity class, message, path, source, dismiss
+  // capability, ordering) is derived by a pure exported seam rather than scraped
+  // from rendered `TemplateResult` markup, per the testing-guide rule that
+  // TemplateResult inspection is not for general content assertions.
+  it("derives one severity-tagged row per warning with optional path and source", () => {
+    const rows = chatSessionWarningRows(warningStatus([
+      { severity: "error", message: "skill failed to load", source: "skill", path: "/skills/a.md" },
+      { severity: "warning", message: "subscription auth is active" },
+      { severity: "info", message: "heads up", source: "runtime" },
+    ]));
 
-    expect(templateStaticMarkup(renderQueuedMessages(view))).not.toContain("Clear queue");
+    expect(rows).toEqual([
+      { severity: "error", severityClass: "session-warning error", message: "skill failed to load", source: "skill", path: "/skills/a.md", dismissId: undefined },
+      { severity: "warning", severityClass: "session-warning warning", message: "subscription auth is active", source: undefined, path: undefined, dismissId: undefined },
+      { severity: "info", severityClass: "session-warning info", message: "heads up", source: "runtime", path: undefined, dismissId: undefined },
+    ]);
   });
 
-  it("does not expose the server action for the separate client pending-start queue", () => {
-    const view = new ChatView();
-    view.status = queuedStatus([]);
-    view.clientQueuedMessages = [{ kind: "followUp", text: "waiting for session start" }];
-    view.canClearServerQueue = true;
-    view.onClearServerQueue = vi.fn();
+  it("exposes a dismiss id only for warnings carrying a dismiss capability", () => {
+    const rows = chatSessionWarningRows(warningStatus([
+      { severity: "error", message: "skill failed to load", source: "skill" },
+      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+    ]));
 
-    expect(templateStaticMarkup(renderQueuedMessages(view))).not.toContain("Clear queue");
+    expect(rows.map((row) => row.dismissId)).toEqual([undefined, "anthropicExtraUsage"]);
+  });
+
+  it("derives no rows when there are no warnings or status is unset", () => {
+    expect(chatSessionWarningRows(warningStatus([]))).toEqual([]);
+    expect(chatSessionWarningRows(undefined)).toEqual([]);
+  });
+});
+
+describe("ChatView session-warning dismiss wiring", () => {
+  // Escape hatch: this case verifies the dismiss button's Lit event wiring,
+  // whose observable effect is invoking onDismissWarning with the warning's
+  // dismiss id. No DOM environment is available, so handler extraction anchored
+  // to the stable `session-warning-dismiss` class marker is proportionate.
+  it("invokes onDismissWarning with the warning's dismiss id", () => {
+    const view = new ChatView();
+    const onDismissWarning = vi.fn();
+    view.onDismissWarning = onDismissWarning;
+    view.status = warningStatus([
+      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+    ]);
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    templateEventHandlerAfterMarker(rendered, "session-warning-dismiss")(new Event("click"));
+
+    expect(onDismissWarning).toHaveBeenCalledExactlyOnceWith("anthropicExtraUsage");
+  });
+
+  // Escape hatch: this verifies the minimise chevron's Lit callback wiring in
+  // the node test environment, anchored to its stable semantic class marker.
+  // The chevron is wired to the unified onToggleWarnings (toggle ≡ collapse in
+  // the expanded state), so this also proves the single visibility mutation.
+  it("invokes onToggleWarnings from the visible warning area", () => {
+    const view = withStatus(new ChatView(), warningStatus([
+      { severity: "warning", message: "subscription auth is active" },
+    ]));
+    const onToggleWarnings = vi.fn();
+    view.onToggleWarnings = onToggleWarnings;
+
+    const rendered = renderWarnings(view);
+    if (rendered === null) throw new Error("expected a warnings banner");
+    templateEventHandlerAfterMarker(rendered, "session-warnings-collapse")(new Event("click"));
+
+    expect(onToggleWarnings).toHaveBeenCalledOnce();
+  });
+
+  it("removes the warning area while presentation is collapsed or there are no warnings", () => {
+    const view = withStatus(new ChatView(), warningStatus([
+      { severity: "warning", message: "subscription auth is active" },
+    ]));
+    view.warningsVisible = false;
+
+    expect(renderWarnings(view)).toBeNull();
+    expect(renderWarnings(withStatus(new ChatView(), warningStatus([])))).toBeNull();
+  });
+});
+
+describe("ChatView notification tray wiring", () => {
+  // Escape hatch: these cases verify only the tray buttons' Lit callback wiring.
+  // Content and identity decisions use pure seams; Vitest has no shadow-DOM
+  // harness, so stable semantic class markers keep handler extraction narrow.
+  // A minimal render-root fake verifies the resulting focus move without
+  // recreating a browser DOM harness.
+  it("wires individual dismissal and recovers header focus after the final row", () => {
+    const view = withNotificationInbox(new ChatView());
+    const onDismissNotification = vi.fn();
+    const headerFocus = installNotificationFocusRoot(view);
+    view.onDismissNotification = onDismissNotification;
+
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+    templateEventHandlerAfterMarker(rendered, "notification-row-dismiss")(new Event("click"));
+    view.notificationInbox = emptyNotificationInbox(requireNotificationInbox(view));
+
+    expect(renderNotificationTray(view)).not.toBeNull();
+    focusPendingNotificationTarget(view);
+    expect(onDismissNotification).toHaveBeenCalledExactlyOnceWith("daemon-a:1");
+    expect(headerFocus).toHaveBeenCalledOnce();
+  });
+
+  it("wires clear-all and recovers header focus while the emptied tray is retained", () => {
+    const view = withNotificationInbox(new ChatView());
+    const onDismissAllNotifications = vi.fn();
+    const headerFocus = installNotificationFocusRoot(view);
+    view.onDismissAllNotifications = onDismissAllNotifications;
+
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+    templateEventHandlerAfterMarker(rendered, "notification-clear")(new Event("click"));
+    view.notificationInbox = emptyNotificationInbox(requireNotificationInbox(view));
+
+    expect(renderNotificationTray(view)).not.toBeNull();
+    focusPendingNotificationTarget(view);
+    expect(onDismissAllNotifications).toHaveBeenCalledOnce();
+    expect(headerFocus).toHaveBeenCalledOnce();
+  });
+
+  it("does not move pending dismissal focus into another exact chat", () => {
+    const view = withNotificationInbox(new ChatView());
+    const headerFocus = installNotificationFocusRoot(view);
+    view.onDismissAllNotifications = vi.fn();
+
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+    templateEventHandlerAfterMarker(rendered, "notification-clear")(new Event("click"));
+    view.notificationInbox = { ...requireNotificationInbox(view), machineId: "remote" };
+    focusPendingNotificationTarget(view);
+
+    expect(headerFocus).not.toHaveBeenCalled();
+  });
+
+  it("keeps a collapsed tray closed for new arrivals and isolates matching session ids by exact chat", () => {
+    const view = withNotificationInbox(new ChatView());
+    const inbox = requireNotificationInbox(view);
+    const rendered = renderNotificationTray(view);
+    if (rendered === null) throw new Error("expected a notification tray");
+
+    templateEventHandlerAfterMarker(rendered, "notification-toggle")(new Event("click"));
+
+    const collapsedTargetKeys: unknown = Reflect.get(view, "collapsedNotificationTargetKeys");
+    if (!(collapsedTargetKeys instanceof Set)) throw new Error("Expected collapsed notification target keys");
+    const firstNotification = inbox.notifications[0];
+    if (firstNotification === undefined) throw new Error("expected a retained notification");
+    const newArrival = {
+      ...inbox,
+      notifications: [{ ...firstNotification, id: "daemon-a:2", order: 2 }, ...inbox.notifications],
+      retainedCount: 2,
+    };
+    expect(notificationTrayIsCollapsed(collapsedTargetKeys, newArrival)).toBe(true);
+    expect(notificationTrayIsCollapsed(collapsedTargetKeys, { ...newArrival, cwd: "/other" })).toBe(false);
+    expect(notificationTrayIsCollapsed(collapsedTargetKeys, { ...newArrival, machineId: "remote" })).toBe(false);
+    expect(collapsedTargetKeys.has(notificationTargetKey(inbox))).toBe(true);
   });
 });
 
@@ -79,52 +254,52 @@ describe("chatMessageMetadataLabel", () => {
       meta: { timestamp, model: { provider: "provider", id: "model" } },
     })).toBe(`${formattedTimestamp} · provider/model`);
   });
+
+  it("appends the thinking level after the model when present", () => {
+    const timestamp = "2026-07-10T19:15:30.000Z";
+    const formattedTimestamp = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" }).format(new Date(timestamp));
+
+    expect(chatMessageMetadataLabel({
+      role: "assistant",
+      parts: [],
+      meta: { timestamp, model: { provider: "provider", id: "model" }, thinkingLevel: "high" },
+    })).toBe(`${formattedTimestamp} · provider/model · high`);
+  });
 });
 
-describe("ChatView technical-event groups", () => {
+describe("chat event-group content seams", () => {
+  // Group scroll-anchor keys, marker ids, class list, and disclosure label are
+  // content/structure derived from pure exported seams rather than scraped from
+  // rendered markup.
+  it("derives stable group and event scroll-anchor keys and marker ids", () => {
+    expect(chatGroupAnchorKey(40)).toBe("g:40");
+    expect(chatEventAnchorKey(40)).toBe("e:40");
+    expect(chatEventAnchorKey(41)).toBe("e:41");
+    expect(chatGroupScrollMarkerId(41)).toBe("g:41");
+  });
+
+  it("distinguishes the live tail group by class and disclosure label", () => {
+    expect(chatMessageGroupClassName(true)).toBe("msg event-group live");
+    expect(chatMessageGroupClassName(false)).toBe("msg event-group");
+    expect(chatMessageGroupLabel(true)).toBe("live events");
+    expect(chatMessageGroupLabel(false)).toBe("events");
+  });
+});
+
+describe("ChatView event-group disclosure wiring", () => {
   const messages: ChatLine[] = [
     { role: "assistant", parts: [{ type: "toolCall", toolName: "read", summary: "inspect a file" }] },
     { role: "tool", parts: [{ type: "toolExecution", toolName: "read", summary: "inspect a file", status: "success", resultText: "large result" }] },
   ];
 
-  it("defers a closed body while retaining native disclosure and group scroll anchors", () => {
+  it("defers a closed group body until it is opened", () => {
     const view = new ChatView();
     view.sessionId = "session-1";
     const bodyCalls = observeGroupBodyRenders(view);
 
-    const closed = renderMessageGroup(view, messages, 40, 41, false);
+    renderMessageGroup(view, messages, 40, 41, false);
 
     expect(bodyCalls).toEqual([]);
-    expect(templateStaticMarkup(closed)).toContain("<details");
-    expect(templateStaticMarkup(closed)).toContain("<summary>");
-    expect(templateStaticMarkup(closed)).toContain('aria-hidden="true"');
-    expect(templateValuesAfterMarker(closed, "?open=")).toEqual([false]);
-    expect(templateValuesAfterMarker(closed, "data-scroll-anchor-id=")).toEqual(["g:40"]);
-    expect(templateValuesAfterMarker(closed, "data-marker-id=")).toEqual(["g:41"]);
-  });
-
-  // Direct handler extraction keeps this node-environment test focused on the
-  // native details toggle wiring without introducing a component-wide DOM shim.
-  it("renders an opened body with event anchors and removes it when closed again", () => {
-    const view = new ChatView();
-    view.sessionId = "session-1";
-    const bodyCalls = observeGroupBodyRenders(view);
-    const initiallyClosed = renderMessageGroup(view, messages, 40, 41, false);
-
-    dispatchDetailsToggle(templateEventHandler(initiallyClosed, "@toggle="), true);
-    const opened = renderMessageGroup(view, messages, 40, 41, false);
-
-    expect(bodyCalls).toEqual([{ messages, startIndex: 40 }]);
-    expect(templateValuesAfterMarker(opened, "?open=")).toEqual([true]);
-    expect(templateValuesAfterMarker(opened, "data-scroll-anchor-id=")).toEqual(["g:40", "e:40", "e:41"]);
-
-    bodyCalls.length = 0;
-    dispatchDetailsToggle(templateEventHandler(opened, "@toggle="), false);
-    const closedAgain = renderMessageGroup(view, messages, 40, 41, false);
-
-    expect(bodyCalls).toEqual([]);
-    expect(templateValuesAfterMarker(closedAgain, "?open=")).toEqual([false]);
-    expect(templateValuesAfterMarker(closedAgain, "data-scroll-anchor-id=")).toEqual(["g:40"]);
   });
 
   it("renders a live tail body by default", () => {
@@ -132,12 +307,32 @@ describe("ChatView technical-event groups", () => {
     view.sessionId = "session-1";
     const bodyCalls = observeGroupBodyRenders(view);
 
-    const live = renderMessageGroup(view, messages, 40, 41, true);
+    renderMessageGroup(view, messages, 40, 41, true);
 
     expect(bodyCalls).toEqual([{ messages, startIndex: 40 }]);
-    expect(templateValuesAfterMarker(live, "?open=")).toEqual([true]);
-    expect(templateValues(live)).toContain("msg event-group live");
-    expect(templateValues(live)).toContain("live events");
+  });
+
+  // Escape hatch: this case verifies the native `<details>` `@toggle` wiring,
+  // whose observable effect is that a re-render renders (or defers) the group
+  // body. No DOM environment is available for a real disclosure interaction, so
+  // handler extraction anchored to the stable `@toggle=` attribute marker plus
+  // an injected details-toggle event is proportionate.
+  it("renders the body after a toggle-open and removes it when closed again", () => {
+    const view = new ChatView();
+    view.sessionId = "session-1";
+    const bodyCalls = observeGroupBodyRenders(view);
+    const initiallyClosed = renderMessageGroup(view, messages, 40, 41, false);
+
+    dispatchDetailsToggle(templateEventHandlerAfterMarker(initiallyClosed, "@toggle="), true);
+    renderMessageGroup(view, messages, 40, 41, false);
+
+    expect(bodyCalls).toEqual([{ messages, startIndex: 40 }]);
+
+    bodyCalls.length = 0;
+    dispatchDetailsToggle(templateEventHandlerAfterMarker(initiallyClosed, "@toggle="), false);
+    renderMessageGroup(view, messages, 40, 41, false);
+
+    expect(bodyCalls).toEqual([]);
   });
 });
 
@@ -149,6 +344,9 @@ interface GroupBodyRenderCall {
 type RenderQueuedMessages = (this: ChatView) => TemplateResult;
 type RenderMessageGroup = (this: ChatView, messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean) => TemplateResult;
 type RenderMessageGroupBody = (this: ChatView, messages: ChatLine[], startIndex: number) => TemplateResult;
+type RenderWarnings = (this: ChatView) => TemplateResult | null;
+type RenderNotificationTray = (this: ChatView) => TemplateResult | null;
+type FocusPendingNotificationTarget = (this: ChatView) => void;
 type TemplateEventHandler = (event: Event) => void;
 
 function renderQueuedMessages(view: ChatView): TemplateResult {
@@ -161,6 +359,24 @@ function renderMessageGroup(view: ChatView, messages: ChatLine[], startIndex: nu
   const method: unknown = Reflect.get(view, "renderMessageGroup");
   if (!isRenderMessageGroup(method)) throw new Error("ChatView.renderMessageGroup is not callable");
   return method.call(view, messages, startIndex, endIndex, defaultOpen);
+}
+
+function renderWarnings(view: ChatView): TemplateResult | null {
+  const method: unknown = Reflect.get(view, "renderWarnings");
+  if (!isRenderWarnings(method)) throw new Error("ChatView.renderWarnings is not callable");
+  return method.call(view);
+}
+
+function renderNotificationTray(view: ChatView): TemplateResult | null {
+  const method: unknown = Reflect.get(view, "renderNotificationTray");
+  if (!isRenderNotificationTray(method)) throw new Error("ChatView.renderNotificationTray is not callable");
+  return method.call(view);
+}
+
+function focusPendingNotificationTarget(view: ChatView): void {
+  const method: unknown = Reflect.get(view, "focusPendingNotificationTarget");
+  if (!isFocusPendingNotificationTarget(method)) throw new Error("ChatView.focusPendingNotificationTarget is not callable");
+  method.call(view);
 }
 
 function observeGroupBodyRenders(view: ChatView): GroupBodyRenderCall[] {
@@ -187,34 +403,15 @@ function isRenderMessageGroupBody(value: unknown): value is RenderMessageGroupBo
   return typeof value === "function";
 }
 
-function templateEventHandler(template: TemplateResult, marker: string): TemplateEventHandler {
-  let handler: TemplateEventHandler | undefined;
-  visit(template);
-  if (handler === undefined) throw new Error(`Expected template event handler near ${marker}`);
-  return handler;
-
-  function visit(value: unknown): void {
-    if (handler !== undefined) return;
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isTemplateResult(value)) return;
-    const strings = templateStrings(value);
-    const values = templateValues(value);
-    for (let index = 0; index < values.length; index += 1) {
-      const candidate = values[index];
-      const isNearMarker = strings[index]?.includes(marker) === true || strings[index + 1]?.includes(marker) === true;
-      if (isNearMarker && isTemplateEventHandler(candidate)) {
-        handler = candidate;
-        return;
-      }
-      visit(candidate);
-    }
-  }
+function isRenderWarnings(value: unknown): value is RenderWarnings {
+  return typeof value === "function";
 }
 
-function isTemplateEventHandler(value: unknown): value is TemplateEventHandler {
+function isRenderNotificationTray(value: unknown): value is RenderNotificationTray {
+  return typeof value === "function";
+}
+
+function isFocusPendingNotificationTarget(value: unknown): value is FocusPendingNotificationTarget {
   return typeof value === "function";
 }
 
@@ -237,60 +434,76 @@ function dispatchDetailsToggle(handler: TemplateEventHandler, open: boolean): vo
   }
 }
 
-function templateStaticMarkup(template: TemplateResult): string {
-  const chunks: string[] = [];
-  visit(template);
-  return chunks.join("");
-
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isTemplateResult(value)) return;
-    chunks.push(...templateStrings(value));
-    for (const child of templateValues(value)) visit(child);
-  }
+function requireSection(section: ReturnType<typeof chatQueuedMessageSections>[number] | undefined): ReturnType<typeof chatQueuedMessageSections>[number] {
+  if (section === undefined) throw new Error("expected a queued-message section");
+  return section;
 }
 
-function templateValuesAfterMarker(template: TemplateResult, marker: string): unknown[] {
-  const matches: unknown[] = [];
-  visit(template);
-  return matches;
-
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item);
-      return;
-    }
-    if (!isTemplateResult(value)) return;
-    const strings = templateStrings(value);
-    const values = templateValues(value);
-    for (let index = 0; index < values.length; index += 1) {
-      if (strings[index]?.includes(marker) === true) matches.push(values[index]);
-      visit(values[index]);
-    }
-  }
+function withStatus(view: ChatView, status: SessionStatus): ChatView {
+  view.status = status;
+  return view;
 }
 
-function templateStrings(template: TemplateResult): readonly string[] {
-  const strings = Reflect.get(template, "strings");
-  if (!isStringArray(strings)) throw new Error("TemplateResult strings were unavailable");
-  return strings;
+function withNotificationInbox(view: ChatView): ChatView {
+  const notificationInbox: SelectedSessionNotificationView = {
+    machineId: "local",
+    sessionId: "session-1",
+    cwd: "/repo",
+    daemonInstanceId: "daemon-a",
+    notifications: [{
+      id: "daemon-a:1",
+      message: "plain <strong>text</strong>\nsecond line",
+      truncated: false,
+      severity: "warning",
+      receivedAt: "2026-07-18T00:00:00.000Z",
+      order: 1,
+    }],
+    retainedCount: 1,
+    discardedCount: 0,
+    highestSeverity: "warning",
+    dismissThrough: { order: 1, overflowWatermark: 0 },
+    pendingDismissedIds: new Set(),
+    dismissAllPending: false,
+    announcements: [],
+  };
+  view.sessionId = notificationInbox.sessionId;
+  view.notificationInbox = notificationInbox;
+  return view;
 }
 
-function templateValues(template: TemplateResult): readonly unknown[] {
-  const values = Reflect.get(template, "values");
-  if (!Array.isArray(values)) throw new Error("TemplateResult values were unavailable");
-  return values.map((value: unknown) => value);
+function requireNotificationInbox(view: ChatView): SelectedSessionNotificationView {
+  if (view.notificationInbox === undefined) throw new Error("expected a notification inbox");
+  return view.notificationInbox;
 }
 
-function isTemplateResult(value: unknown): value is TemplateResult {
-  return typeof value === "object" && value !== null && isStringArray(Reflect.get(value, "strings")) && Array.isArray(Reflect.get(value, "values"));
+function emptyNotificationInbox(inbox: SelectedSessionNotificationView): SelectedSessionNotificationView {
+  const empty: SelectedSessionNotificationView = {
+    ...inbox,
+    notifications: [],
+    retainedCount: 0,
+    discardedCount: 0,
+    pendingDismissedIds: new Set(),
+    dismissAllPending: false,
+  };
+  delete empty.highestSeverity;
+  return empty;
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
+function installNotificationFocusRoot(view: ChatView): ReturnType<typeof vi.fn> {
+  const headerFocus = vi.fn();
+  const renderRoot = {
+    querySelector: (selector: string) => selector === "[data-notification-focus='header']" ? { focus: headerFocus } : null,
+    querySelectorAll: () => [],
+  };
+  if (!Reflect.set(view, "renderRoot", renderRoot)) throw new Error("Could not install notification focus root");
+  return headerFocus;
+}
+
+function warningStatus(warnings: SessionWarning[]): SessionStatus {
+  return {
+    ...queuedStatus([]),
+    ...(warnings.length === 0 ? {} : { warnings }),
+  };
 }
 
 function queuedStatus(queuedMessages: QueuedSessionMessage[]): SessionStatus {

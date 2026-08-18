@@ -1,6 +1,9 @@
+import type { SessionModel } from "../../shared/apiTypes";
+
 export type PromptCompletionTrigger =
   | { kind: "command"; query: string; from: number; to: number }
-  | { kind: "file"; query: string; from: number; to: number; fileScope?: "tracked" | "all" | undefined; allPrefix?: "@ " | "!@" | undefined; quoted?: boolean };
+  | { kind: "file"; query: string; from: number; to: number; fileScope?: "tracked" | "all" | undefined; allPrefix?: "@ " | "!@" | undefined; quoted?: boolean }
+  | { kind: "model"; query: string; from: number; to: number };
 
 export function detectPromptCompletionTrigger(draft: string, cursor = draft.length): PromptCompletionTrigger | undefined {
   const beforeCursor = draft.slice(0, cursor);
@@ -17,7 +20,44 @@ export function detectPromptCompletionTrigger(draft: string, cursor = draft.leng
   if (token.startsWith("/") && tokenStart === 0) return { kind: "command", query: token.slice(1), from: tokenStart, to: cursor };
   if (token.startsWith("!@")) return { kind: "file", query: token.slice(2), from: tokenStart, to: cursor, fileScope: "all", allPrefix: "!@" };
   if (token.startsWith("@")) return { kind: "file", query: token.slice(1), from: tokenStart, to: cursor, fileScope: "tracked" };
+  if (token.startsWith("#")) return { kind: "model", query: token.slice(1), from: tokenStart, to: cursor };
   return undefined;
+}
+
+export interface ModelCompletionChoice {
+  insertText: string;
+  detail: string;
+  description?: string;
+}
+
+const MODEL_COMPLETION_LIMIT = 12;
+
+export function modelCompletionChoices(models: readonly SessionModel[], query: string): ModelCompletionChoice[] {
+  const needle = query.toLowerCase();
+  const choices: ModelCompletionChoice[] = [];
+  for (const model of models) {
+    // A completion must produce a strict provider/model-id reference, so models
+    // missing either half of the identity can never be inserted.
+    if (!hasQualifiedModelId(model)) continue;
+    if (!modelMatchesQuery(model, needle)) continue;
+    choices.push({
+      insertText: `#${model.provider}/${model.id}`,
+      detail: model.provider,
+      ...(model.name !== undefined && model.name !== "" && model.name !== model.id ? { description: model.name } : {}),
+    });
+    if (choices.length >= MODEL_COMPLETION_LIMIT) break;
+  }
+  return choices;
+}
+
+function hasQualifiedModelId(model: SessionModel): model is SessionModel & { provider: string; id: string } {
+  return typeof model.provider === "string" && model.provider !== "" && typeof model.id === "string" && model.id !== "";
+}
+
+function modelMatchesQuery(model: SessionModel & { provider: string; id: string }, needle: string): boolean {
+  return `${model.provider}/${model.id}`.toLowerCase().includes(needle)
+    || model.id.toLowerCase().includes(needle)
+    || (model.name?.toLowerCase().includes(needle) ?? false);
 }
 
 export function fileCompletionInsertText(path: string, quoted: boolean, allPrefix?: "@ " | "!@"): string {

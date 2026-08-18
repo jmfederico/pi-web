@@ -125,6 +125,17 @@ describe("KeyboardShortcutDispatcher", () => {
     expect(defaultAction.run).not.toHaveBeenCalled();
   });
 
+  it("dispatches a saved shortcut through a migrated action id", () => {
+    const dispatcher = new KeyboardShortcutDispatcher();
+    const migrated = actionWithId("git:view.git", "mod+3");
+    migrated.value.shortcutAliases = ["core:view.git"];
+
+    const handled = dispatcher.handle(keyEvent("8", { ctrlKey: true }), [migrated.value], { shortcuts: { "core:view.git": "mod+8" } });
+
+    expect(handled).toBe(true);
+    expect(migrated.run).toHaveBeenCalledOnce();
+  });
+
   it("uses the same shadowing rules when a standalone shortcut is a sequence prefix", () => {
     const dispatcher = new KeyboardShortcutDispatcher();
     const standalone = actionWithId("plugin:standalone", "mod+g");

@@ -100,6 +100,26 @@ body::after {
   --intro-color: var(--brand-3);
 }
 
+.home-page.intro-skipped .site-header,
+.home-page.intro-skipped .site-footer,
+.home-page.intro-skipped .title-context,
+.home-page.intro-skipped .hero .eyebrow,
+.home-page.intro-skipped .hero-lede,
+.home-page.intro-skipped .hero-manifesto,
+.home-page.intro-skipped .hero-actions,
+.home-page.intro-skipped .hero-stats,
+.home-page.intro-skipped .terminal,
+.home-page.intro-skipped main > section:not(.hero) {
+  opacity: 1;
+  animation: none;
+}
+
+.home-page.intro-skipped .intro-word {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+
 @keyframes word-drop {
   0% {
     opacity: 0;
@@ -1167,7 +1187,38 @@ code .comment,
 .footer-links {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 14px;
+}
+
+.version-switcher {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  color: var(--muted-2);
+  font-size: 0.8125rem;
+  line-height: 1.2;
+}
+
+.version-switcher-option {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+}
+
+.version-switcher-option + .version-switcher-option {
+  border-left: 1px solid var(--line);
+}
+
+.version-switcher-option[aria-current="true"] {
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.version-switcher-option:not([aria-current="true"]):hover {
+  background: var(--panel);
+  color: var(--brand-2);
 }
 
 @media (prefers-color-scheme: light) {

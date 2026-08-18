@@ -3,11 +3,12 @@ import type { ProjectService } from "./projects/projectService.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import type { SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
 import { resolveWorkspaceContext } from "./workspaces/workspaceContext.js";
-import type { WorkspaceService } from "./workspaces/workspaceService.js";
+import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
+import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
 import { terminalSizeQuery } from "./terminals/terminalSize.js";
 import { bridgeSockets } from "./webSocketBridge.js";
 
-export function registerTerminalProxyRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService, daemon: SessionProxyDaemon = new SessionDaemonClient(), prefix = "/api"): void {
+export function registerTerminalProxyRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceCatalog, daemon: SessionProxyDaemon = new SessionDaemonClient(), prefix = "/api"): void {
   app.get<{ Params: { projectId: string; workspaceId: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/terminals`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
@@ -151,6 +152,6 @@ async function proxyJson(daemon: SessionProxyDaemon, method: string, path: strin
 }
 
 function requestFailed(reply: FastifyReply, error: unknown): void {
-  reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+  sendWorkspaceRequestError(reply, error, 400);
 }
 

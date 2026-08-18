@@ -1,6 +1,6 @@
 import http from "node:http";
 import { WebSocket } from "ws";
-import { isHostAbsoluteAgentDir, isSafeAgentCommandForHost } from "../config.js";
+import { isHostAbsoluteAgentDir } from "../config.js";
 import type { ActiveAgentProfileDescriptor } from "../shared/apiTypes.js";
 import { parsePiWebRuntimeComponent } from "../shared/piWebStatusParsing.js";
 import { sessiondHttpUrl, sessiondSocketPath } from "./config.js";
@@ -10,18 +10,34 @@ export type SessionDaemonAgentProfileResult =
   | { status: "unavailable"; error: string }
   | { status: "invalid"; error: string };
 
+export interface SessionDaemonRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface SessionDaemonRequestClient {
-  request(method: string, path: string, body?: unknown): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+  request(
+    method: string,
+    path: string,
+    body?: unknown,
+    options?: SessionDaemonRequestOptions,
+  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
 }
 
 export class SessionDaemonClient {
   private readonly baseUrl = sessiondHttpUrl();
   private readonly socketPath = sessiondSocketPath();
 
-  async request(method: string, path: string, body?: unknown): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    options: SessionDaemonRequestOptions = {},
+  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
-    if (this.baseUrl !== undefined && this.baseUrl !== "") return this.requestUrl(method, path, payload);
-    return this.requestSocket(method, path, payload);
+    if (this.baseUrl !== undefined && this.baseUrl !== "") {
+      return this.requestUrl(method, path, payload, options.signal);
+    }
+    return this.requestSocket(method, path, payload, options.signal);
   }
 
   getActiveAgentProfile(): Promise<SessionDaemonAgentProfileResult> {
@@ -37,8 +53,8 @@ export class SessionDaemonClient {
     return new WebSocket(`ws+unix:${this.socketPath}:${path}`);
   }
 
-  private async requestUrl(method: string, path: string, payload?: string) {
-    const init: RequestInit = { method };
+  private async requestUrl(method: string, path: string, payload?: string, signal?: AbortSignal) {
+    const init: RequestInit = { method, ...(signal === undefined ? {} : { signal }) };
     if (payload !== undefined && payload !== "") {
       init.headers = { "content-type": "application/json" };
       init.body = payload;
@@ -51,13 +67,14 @@ export class SessionDaemonClient {
     };
   }
 
-  private requestSocket(method: string, path: string, payload?: string): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  private requestSocket(method: string, path: string, payload?: string, signal?: AbortSignal): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
           socketPath: this.socketPath,
           path,
           method,
+          ...(signal === undefined ? {} : { signal }),
           headers: payload !== undefined && payload !== ""
             ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
             : undefined,
@@ -109,7 +126,7 @@ export async function getSessionDaemonActiveAgentProfile(client: SessionDaemonRe
   if (runtime.activeAgentProfile === undefined) {
     return { status: "invalid", error: "session daemon runtime response did not include an active agent profile" };
   }
-  if (!isSafeAgentCommandForHost(runtime.activeAgentProfile.command) || !isHostAbsoluteAgentDir(runtime.activeAgentProfile.dir)) {
+  if (!isHostAbsoluteAgentDir(runtime.activeAgentProfile.dir)) {
     return { status: "invalid", error: "session daemon active agent profile was not valid for this host" };
   }
   return { status: "available", profile: runtime.activeAgentProfile };

@@ -11,6 +11,8 @@ export interface AppMobileMainTab {
   label: string;
   icon?: AppMobileMainTabIcon;
   badge?: unknown;
+  badgeLabel?: string | undefined;
+  badgeTone?: "unread" | undefined;
   className?: string | undefined;
 }
 
@@ -53,7 +55,7 @@ export class AppMobileMainTabs extends LitElement {
               <button class=${this.tabClass(tab)} title=${tab.label} aria-label=${this.tabAriaLabel(tab)} aria-pressed=${String(selected)} @click=${() => { this.onSelect?.(tab.id); }}>
                 ${this.renderTabMark(tab, fallbackLabels)}
                 <span class="tab-label">${tab.label}</span>
-                ${this.isEmptyBadge(tab.badge) ? null : html`<span class="tab-badge">${tab.badge}</span>`}
+                ${this.renderBadge(tab.badge, tab.badgeTone)}
               </button>
             `;
           })}
@@ -74,13 +76,13 @@ export class AppMobileMainTabs extends LitElement {
   }
 
   private tabAriaLabel(tab: AppMobileMainTab): string {
-    if (typeof tab.badge !== "string" && typeof tab.badge !== "number") return tab.label;
-    const badge = String(tab.badge).trim();
+    const badge = tab.badgeLabel ?? (typeof tab.badge === "string" || typeof tab.badge === "number" ? String(tab.badge).trim() : "");
     return badge === "" ? tab.label : `${tab.label}, ${badge}`;
   }
 
-  private isEmptyBadge(badge: unknown): boolean {
-    return badge === undefined || badge === "";
+  private renderBadge(badge: unknown, tone: AppMobileMainTab["badgeTone"]) {
+    if (badge === undefined || badge === "") return null;
+    return html`<span class=${`tab-badge${tone === undefined ? "" : ` ${tone}`}`}>${badge}</span>`;
   }
 
   private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppState["mainView"], string>) {
@@ -164,10 +166,11 @@ export class AppMobileMainTabs extends LitElement {
     .tab-fallback { display: none; font-weight: 650; letter-spacing: .01em; pointer-events: none; }
     .tab-label { min-width: 0; }
     .tab-badge { flex: 0 0 auto; display: inline-block; min-width: 14px; margin-left: 0; border: 1px solid var(--pi-success-border); border-radius: 999px; background: var(--pi-success-surface); color: var(--pi-success); padding: 0 5px; font-size: 11px; line-height: 16px; text-align: center; }
+    .tab-badge.unread { border-color: var(--pi-accent-border); background: var(--pi-selection-bg); color: var(--pi-accent); }
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
     @media (max-width: 760px) {
       .mobile-tabs { gap: 4px; padding: 6px 8px; }
-      .mobile-tabs button { min-width: 40px; height: 36px; justify-content: center; gap: 4px; padding: 0 8px; }
+      .mobile-tabs button { min-width: 44px; height: 44px; justify-content: center; gap: 4px; padding: 0 8px; }
       .mobile-tabs .navigation-tab { display: inline-flex; }
       .tab-fallback { display: inline-block; }
       .tab-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }

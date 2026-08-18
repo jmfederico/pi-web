@@ -1,17 +1,24 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
-import { resetWorkspaceScopedState } from "../appState";
+import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
 import type { SessionController } from "./sessionController";
+import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
 import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type WorkspaceSelectionMemory } from "./workspaceSelection";
+
+const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
 
 export interface WorkspaceControllerDependencies {
   api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  onBackgroundError?: (message: string, error: unknown) => void;
+  topologyRefreshDebounceMs?: number;
 }
 
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  private readonly onBackgroundError: (message: string, error: unknown) => void;
+  private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
 
   constructor(
     private readonly getState: GetState,
@@ -22,6 +29,10 @@ export class WorkspaceController {
     deps: WorkspaceControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
+    this.onBackgroundError = deps.onBackgroundError ?? ((message, error) => { console.warn(message, error); });
+    this.topologyRefreshes = new TrailingRefreshCoordinator(
+      deps.topologyRefreshDebounceMs ?? WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS,
+    );
   }
 
   clearSelection(options?: { updateUrl?: boolean | undefined }) {
@@ -78,6 +89,40 @@ export class WorkspaceController {
     return workspaces;
   }
 
+  /**
+   * Re-lists the selected project's workspaces so worktrees created or removed outside
+   * PI WEB become visible, without disturbing the current selection.
+   *
+   * Deliberately never routes through `selectWorkspace`: that has no already-selected
+   * guard, so re-picking the same workspace would still call `clearActiveSession()` and
+   * `resetWorkspaceScopedState()`, closing the session socket and blanking chat, file
+   * tree, plugin-owned panel state, and terminal selection. Callers run this on every browser resume,
+   * so applying the list through `applyProjectWorkspaces` alone is the invariant.
+   *
+   * If the selected workspace disappeared, the selection is left alone: the user is
+   * working there and the existing deletion path owns recovery.
+   */
+  async refreshSelectedProjectTopology(): Promise<void> {
+    const state = this.getState();
+    const project = state.selectedProject;
+    if (project === undefined) return;
+    const machineId = selectedMachineId(state);
+    // Callers are independent (browser resume and the plugin-facing app refresh), so two
+    // refreshes for the same machine+project can overlap. Sharing one request keeps a slow
+    // earlier response from landing last and overwriting a newer list, which would make a
+    // just-created worktree disappear again.
+    await this.topologyRefreshes.request(machineProjectKey(machineId, project.id), async () => {
+      try {
+        const workspaces = await this.api.workspaces(project.id, machineId);
+        const current = this.getState();
+        if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
+        this.applyProjectWorkspaces(project.id, workspaces);
+      } catch (error) {
+        this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
+      }
+    });
+  }
+
   async refreshAfterWorkspaceDeleted(projectId: string, workspaceId: string): Promise<void> {
     const workspaces = await this.refreshProjectWorkspaces(projectId);
     const state = this.getState();
@@ -91,16 +136,56 @@ export class WorkspaceController {
   private applyProjectWorkspaces(projectId: string, workspaces: Workspace[]): void {
     const state = this.getState();
     const workspacesByProjectId = { ...state.workspacesByProjectId, [projectId]: workspaces };
-    if (state.selectedProject?.id === projectId) this.setState({ workspaces, workspacesByProjectId });
-    else this.setState({ workspacesByProjectId });
+    if (state.selectedProject?.id !== projectId) {
+      this.setState({ workspacesByProjectId });
+      return;
+    }
+    this.setState({ workspaces, workspacesByProjectId, ...this.refreshedSelection(state.selectedWorkspace, workspaces) });
   }
-}
 
-export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
-  return workspace !== undefined && workspace.isGitWorktree && !workspace.isMain;
+  /**
+   * Re-points `selectedWorkspace` at its refreshed entry when any browser-visible field changed
+   * outside PI WEB (owner metadata, effective config, a branch switch, and so on), so the
+   * workspace list and surfaces reading the selection cannot disagree. Keyed by id, so
+   * this never changes *which* workspace is selected and never triggers the session/terminal
+   * teardown in `handleWorkspaceChange`. Returns nothing when the entry is gone or unchanged,
+   * so an unchanged refresh does not churn object identity into state.
+   */
+  private refreshedSelection(selected: Workspace | undefined, workspaces: Workspace[]): Pick<AppState, "selectedWorkspace"> | undefined {
+    if (selected === undefined) return undefined;
+    const refreshed = workspaces.find((candidate) => candidate.id === selected.id);
+    if (refreshed === undefined || sameWorkspaceSnapshot(selected, refreshed)) return undefined;
+    return { selectedWorkspace: refreshed };
+  }
 }
 
 function selectFallbackWorkspace(workspaces: Workspace[]): Workspace | undefined {
   return workspaces.find((workspace) => workspace.isMain) ?? workspaces[0];
+}
+
+function sameWorkspaceSnapshot(left: Workspace, right: Workspace): boolean {
+  return sameBrowserObservableValue(left, right);
+}
+
+/** Compare the complete parsed workspace payload, including future additive fields. */
+function sameBrowserObservableValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => sameBrowserObservableValue(value, right[index]));
+  }
+  if (!isBrowserObservableRecord(left) || !isBrowserObservableRecord(right)) return false;
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key)
+      && sameBrowserObservableValue(left[key], right[key]));
+}
+
+function isBrowserObservableRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

@@ -1,9 +1,11 @@
-import { api, type Machine, type MachineHealth } from "../api";
+import { api, type Machine, type MachineHealth, type MachineRuntime } from "../api";
 import { resetWorkspaceScopedState } from "../appState";
 import type { GetState, SetState, UpdateUrl } from "./types";
 import type { ProjectController } from "./projectController";
 
 export class MachineController {
+  private readonly runtimeRefreshSeqByMachine = new Map<string, number>();
+
   constructor(private readonly getState: GetState, private readonly setState: SetState, private readonly updateUrl: UpdateUrl, private readonly projects: Pick<ProjectController, "loadProjects">) {}
 
   async loadMachines(routeMachineId?: string): Promise<void> {
@@ -12,7 +14,12 @@ export class MachineController {
       const machines = await api.machines();
       const selectedMachine = await this.selectInitialMachine(machines, routeMachineId);
       const machineIds = new Set(machines.map((machine) => machine.id));
-      this.setState({ machines, selectedMachine, machineActivities: filterKeys(this.getState().machineActivities, machineIds), machineRuntimes: filterKeys(this.getState().machineRuntimes, machineIds) });
+      this.setState({
+        machines,
+        selectedMachine,
+        machineRuntimes: filterKeys(this.getState().machineRuntimes, machineIds),
+        machineStatusSnapshots: filterKeys(this.getState().machineStatusSnapshots, machineIds),
+      });
       void this.refreshMachineHealthFor(machines);
       void this.refreshMachineRuntimeFor(machines);
     } catch (error) {
@@ -40,7 +47,6 @@ export class MachineController {
       sessionStatuses: {},
       sessionActivities: {},
       sendingPrompts: {},
-      workspaceActivities: {},
       workspacesByProjectId: {},
       workspaceDeletionRuns: {},
       activeTerminalCount: 0,
@@ -76,7 +82,7 @@ export class MachineController {
       await api.deleteMachine(machine.id);
       const machines = this.getState().machines.filter((candidate) => candidate.id !== machine.id);
       const local = machines.find((candidate) => candidate.id === "local") ?? machines[0];
-      this.setState({ machines, machineStatuses: omitKey(this.getState().machineStatuses, machine.id), machineRuntimes: omitKey(this.getState().machineRuntimes, machine.id), machineActivities: omitKey(this.getState().machineActivities, machine.id) });
+      this.setState({ machines, machineStatuses: omitKey(this.getState().machineStatuses, machine.id), machineRuntimes: omitKey(this.getState().machineRuntimes, machine.id), machineStatusSnapshots: omitKey(this.getState().machineStatusSnapshots, machine.id) });
       if (wasSelected && local !== undefined) {
         if (options.selectFallback === false) return local;
         await this.selectMachine(local);
@@ -100,12 +106,17 @@ export class MachineController {
     }
   }
 
-  async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<void> {
+  async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<MachineRuntime | undefined> {
+    const seq = (this.runtimeRefreshSeqByMachine.get(machineId) ?? 0) + 1;
+    this.runtimeRefreshSeqByMachine.set(machineId, seq);
     try {
       const runtime = await api.runtime(machineId, true);
+      if (this.runtimeRefreshSeqByMachine.get(machineId) !== seq) return undefined;
       this.setState({ machineRuntimes: { ...this.getState().machineRuntimes, [runtime.machineId]: runtime } });
+      return runtime;
     } catch (error) {
-      this.setState({ error: String(error) });
+      if (this.runtimeRefreshSeqByMachine.get(machineId) === seq) this.setState({ error: String(error) });
+      return undefined;
     }
   }
 

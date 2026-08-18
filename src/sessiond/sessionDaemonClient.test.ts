@@ -2,11 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { SessionDaemonClient } from "./sessionDaemonClient.js";
 
 const activeAgentProfile = {
-  schemaVersion: 1,
-  revision: `sha256:${"a".repeat(64)}`,
-  command: "acme-agent",
-  dir: "/opt/acme-agent/state",
-  sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
+  schemaVersion: 2,
+  dir: "/opt/pi/state",
 };
 
 describe("SessionDaemonClient active agent profile protocol", () => {
@@ -20,7 +17,6 @@ describe("SessionDaemonClient active agent profile protocol", () => {
     expect(result).toEqual({ status: "available", profile: activeAgentProfile });
     if (result.status === "available") {
       expect(Object.isFrozen(result.profile)).toBe(true);
-      expect(Object.isFrozen(result.profile.sessionDirEnvKeys)).toBe(true);
     }
   });
 
@@ -47,7 +43,7 @@ describe("SessionDaemonClient active agent profile protocol", () => {
     const client = new SessionDaemonClient();
     vi.spyOn(client, "request").mockResolvedValue(runtimeResponse({
       ...activeAgentProfile,
-      dir: "C:\\agent-profiles\\acme",
+      dir: "C:\\pi-profiles\\work",
     }));
 
     await expect(client.getActiveAgentProfile()).resolves.toEqual({

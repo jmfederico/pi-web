@@ -25,7 +25,7 @@ describe("buildApp active agent profile", () => {
       const initialAgentDir = join(appTestContext.tempDir, "initial-agent");
       const updatedAgentDir = join(appTestContext.tempDir, "updated-agent");
       appTestContext.piWebConfig = { agent: { command: "desired-agent", dir: initialAgentDir } };
-      appTestContext.agentProfileResult = { status: "available", profile: activeProfile("a", "active-agent", initialAgentDir) };
+      appTestContext.agentProfileResult = { status: "available", profile: activeProfile(initialAgentDir) };
       await mkdir(initialAgentDir, { recursive: true });
       await installConfiguredPiWebPackage(updatedAgentDir);
       process.env["PI_WEB_AGENT_DIR"] = updatedAgentDir;
@@ -47,7 +47,7 @@ describe("buildApp active agent profile", () => {
       expect(desiredWriteStatus.json<PiWebStatusResponse>().components.web.installation?.kind).not.toBe("pi-package");
       expect(desiredWriteVersion.json<PiWebVersionResponse>().components.web.installation?.kind).not.toBe("pi-package");
 
-      appTestContext.agentProfileResult = { status: "available", profile: activeProfile("b", "next-agent", updatedAgentDir) };
+      appTestContext.agentProfileResult = { status: "available", profile: activeProfile(updatedAgentDir) };
       const restartedStatus = await appTestContext.app.inject({ method: "GET", url: "/api/pi-web/status?refresh=1" });
       const restartedVersion = await appTestContext.app.inject({ method: "GET", url: "/api/pi-web/version" });
 
@@ -68,13 +68,10 @@ describe("buildApp active agent profile", () => {
   });
 });
 
-function activeProfile(revisionCharacter: string, command: string, dir: string): ActiveAgentProfileDescriptor {
+function activeProfile(dir: string): ActiveAgentProfileDescriptor {
   return {
-    schemaVersion: 1,
-    revision: `sha256:${revisionCharacter.repeat(64)}`,
-    command,
+    schemaVersion: 2,
     dir,
-    sessionDirEnvKeys: ["PI_WEB_AGENT_SESSION_DIR"],
   };
 }
 

@@ -1,8 +1,26 @@
-import { describe, expect, it } from "vitest";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RealtimeEvent, TerminalInfo } from "../../shared/apiTypes.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
-import { TerminalService } from "./terminalService";
+import { interactiveShellArgs, TerminalService } from "./terminalService";
+
+describe("interactive shell arguments", () => {
+  it.each([
+    { shell: "bash", expected: ["-l"] },
+    { shell: "/usr/local/bin/zsh", expected: ["-l"] },
+    { shell: "/opt/homebrew/bin/fish", expected: ["-l"] },
+    { shell: String.raw`C:\Program Files\Git\bin\bash.exe`, expected: ["-l"] },
+    { shell: "/bin/dash", expected: [] },
+    { shell: "pwsh", expected: [] },
+    { shell: "powershell.exe", expected: [] },
+    { shell: "cmd.exe", expected: [] },
+  ])("uses login mode only for a supported shell: $shell", ({ shell, expected }) => {
+    expect(interactiveShellArgs(shell)).toEqual(expected);
+  });
+});
 
 // TerminalService spawns a POSIX shell (/bin/bash with -lc and commands like
 // printf/true/exit). The terminal feature is not supported on native Windows,
@@ -20,6 +38,114 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     } finally {
       service.dispose();
     }
+  });
+
+  it("loads login-profile PATH entries in new interactive terminals", async () => {
+    await withBashLoginProfile(async () => {
+      const service = new TerminalService();
+      try {
+        const terminal = service.create({ cwd: process.cwd() });
+        const exit = terminalExit(service, terminal.id);
+
+        service.write(terminal.id, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
+
+        expect(await exit).toContain(LOGIN_PROFILE_OUTPUT);
+      } finally {
+        service.dispose();
+      }
+    });
+  });
+
+  it("loads login-profile PATH entries in continued interactive terminals", async () => {
+    await withBashLoginProfile(async () => {
+      const service = new TerminalService();
+      try {
+        const run = service.runCommand({
+          origin: "core",
+          projectId: "p1",
+          workspaceId: "w1",
+          cwd: process.cwd(),
+          title: "Done command",
+          command: "true",
+        });
+        await terminalExit(service, run.terminalId);
+
+        service.continue(run.terminalId);
+        const exit = terminalExit(service, run.terminalId);
+        service.write(run.terminalId, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
+
+        expect(await exit).toContain(LOGIN_PROFILE_OUTPUT);
+      } finally {
+        service.dispose();
+      }
+    });
+  });
+
+  describe("PI_WEB_TERMINAL propagation", () => {
+    let originalPiWebTerminal: string | undefined;
+
+    beforeEach(() => {
+      originalPiWebTerminal = process.env["PI_WEB_TERMINAL"];
+      process.env["PI_WEB_TERMINAL"] = "conflicting-parent-value";
+    });
+
+    afterEach(() => {
+      if (originalPiWebTerminal === undefined) {
+        delete process.env["PI_WEB_TERMINAL"];
+      } else {
+        process.env["PI_WEB_TERMINAL"] = originalPiWebTerminal;
+      }
+    });
+
+    it("sets PI_WEB_TERMINAL for terminal commands", async () => {
+      const service = new TerminalService();
+      try {
+        const frame = "__PI_WEB_RUN_ENV_7F3A9C__";
+        const run = service.runCommand({
+          origin: "core",
+          projectId: "p1",
+          workspaceId: "w1",
+          cwd: process.cwd(),
+          title: "Environment check",
+          command: `printf '${frame}%s${frame}\\n' "$PI_WEB_TERMINAL"`,
+        });
+
+        expect(await terminalExit(service, run.terminalId)).toContain(`${frame}1${frame}`);
+      } finally {
+        service.dispose();
+      }
+    });
+
+    it("sets PI_WEB_TERMINAL in a continued interactive shell", async () => {
+      const service = new TerminalService();
+      try {
+        const run = service.runCommand({
+          origin: "core",
+          projectId: "p1",
+          workspaceId: "w1",
+          cwd: process.cwd(),
+          title: "Done command",
+          command: "true",
+        });
+        await terminalExit(service, run.terminalId);
+
+        const continued = service.continue(run.terminalId);
+
+        expect(continued).toMatchObject({ id: run.terminalId, exited: false });
+        expect(continued.commandRunId).toBeUndefined();
+        expect(service.get(run.terminalId)?.commandRunId).toBeUndefined();
+
+        const frame = "__PI_WEB_CONTINUE_ENV_42D8B1__";
+        const exit = terminalExit(service, run.terminalId);
+        service.write(run.terminalId, `printf '${frame}%s${frame}\\n' "$PI_WEB_TERMINAL"\nexit\n`);
+
+        const output = await exit;
+        expect(output).toContain("[continued in interactive shell]");
+        expect(output).toContain(`${frame}1${frame}`);
+      } finally {
+        service.dispose();
+      }
+    });
   });
 
   it("tracks dedicated terminal command runs through completion", async () => {
@@ -45,30 +171,6 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
       expect(output).toContain("hello");
       expect(service.getCommandRun(run.id)).toMatchObject({ status: "succeeded", exitCode: 0, terminalId: run.terminalId });
       expect(service.listCommandRuns({ statuses: ["succeeded"] }).map((candidate) => candidate.id)).toEqual([run.id]);
-    } finally {
-      service.dispose();
-    }
-  });
-
-  it("continues an exited command-run terminal as an interactive shell", async () => {
-    const service = new TerminalService();
-    try {
-      const run = service.runCommand({
-        origin: "core",
-        projectId: "p1",
-        workspaceId: "w1",
-        cwd: process.cwd(),
-        title: "Done command",
-        command: "true",
-      });
-      await terminalExit(service, run.terminalId);
-
-      const continued = service.continue(run.terminalId);
-
-      expect(continued).toMatchObject({ id: run.terminalId, exited: false });
-      expect(continued.commandRunId).toBeUndefined();
-      expect(service.get(run.terminalId)?.commandRunId).toBeUndefined();
-      expect(await terminalReplay(service, run.terminalId)).toContain("[continued in interactive shell]");
     } finally {
       service.dispose();
     }
@@ -180,14 +282,34 @@ function requireTerminal(service: TerminalService, terminalId: string): Terminal
   return terminal;
 }
 
-function terminalReplay(service: TerminalService, terminalId: string): Promise<string> {
-  let output = "";
-  const detach = service.attach(terminalId, {
-    output: (data) => { output += data; },
-    exit: () => undefined,
-  });
-  detach();
-  return Promise.resolve(output);
+const LOGIN_PROFILE_COMMAND = "pi-web-test-login-profile-command";
+const LOGIN_PROFILE_OUTPUT = "__PI_WEB_LOGIN_PROFILE_PATH_COMMAND__";
+
+async function withBashLoginProfile(run: () => Promise<void>): Promise<void> {
+  const home = await mkdtemp(join(tmpdir(), "pi-web-terminal-home-"));
+  const profileBin = join(home, "profile-bin");
+  await mkdir(profileBin);
+  const commandPath = join(profileBin, LOGIN_PROFILE_COMMAND);
+  await writeFile(commandPath, `#!/bin/sh\nprintf '%s\\n' '${LOGIN_PROFILE_OUTPUT}'\n`);
+  await chmod(commandPath, 0o755);
+  await writeFile(join(home, ".bash_profile"), `export PATH="$HOME/profile-bin:$PATH"\n`);
+
+  const originalHome = process.env["HOME"];
+  const originalShell = process.env["SHELL"];
+  process.env["HOME"] = home;
+  process.env["SHELL"] = "/bin/bash";
+  try {
+    await run();
+  } finally {
+    restoreEnv("HOME", originalHome);
+    restoreEnv("SHELL", originalShell);
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+function restoreEnv(key: "HOME" | "SHELL", value: string | undefined): void {
+  if (value === undefined) Reflect.deleteProperty(process.env, key);
+  else process.env[key] = value;
 }
 
 function terminalExit(service: TerminalService, terminalId: string): Promise<string> {

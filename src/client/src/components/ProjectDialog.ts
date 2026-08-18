@@ -1,11 +1,22 @@
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import { api, type FileSuggestion } from "../api";
+import { api, trustApi, type FileSuggestion } from "../api";
+import type { ProjectTrustChoice } from "../controllers/projectController";
 import { css } from "lit";
+import "./ModalSurface";
+
+/** Server-resolved trust state for the entered path, keyed on the decided path. */
+interface ProjectTrustState {
+  path: string;
+  decision: boolean | null;
+  trusted: boolean;
+  loading: boolean;
+  error?: string;
+}
 
 @customElement("project-dialog")
 export class ProjectDialog extends LitElement {
-  @property({ attribute: false }) onSubmit?: (path: string, create: boolean) => void;
+  @property({ attribute: false }) onSubmit?: (path: string, create: boolean, trust: ProjectTrustChoice | undefined) => void;
   @property({ attribute: false }) onCancel?: () => void;
   @property() machineId = "local";
   @state() private path = "";
@@ -13,6 +24,8 @@ export class ProjectDialog extends LitElement {
   @state() private suggestions: FileSuggestion[] = [];
   @state() private selected = 0;
   @state() private loading = false;
+  @state() private trust: ProjectTrustState | undefined;
+  @state() private trustTouched = false;
   @query("input") private pathInput?: HTMLInputElement;
 
   private requestId = 0;
@@ -20,10 +33,6 @@ export class ProjectDialog extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     void this.loadSuggestions();
-  }
-
-  override firstUpdated(): void {
-    this.pathInput?.focus();
   }
 
   private async loadSuggestions() {
@@ -44,7 +53,9 @@ export class ProjectDialog extends LitElement {
   private setPath(value: string) {
     this.path = value;
     this.selected = 0;
+    this.trustTouched = false;
     void this.loadSuggestions();
+    void this.loadTrust();
   }
 
   private pick(suggestion: FileSuggestion) {
@@ -53,7 +64,7 @@ export class ProjectDialog extends LitElement {
 
   private submit() {
     if (this.path.trim() === "") return;
-    this.onSubmit?.(this.path, this.createMissing);
+    this.onSubmit?.(this.path, this.createMissing, this.trust === undefined ? undefined : { trusted: this.trust.trusted, changed: this.trustTouched });
   }
 
   private onPathInput(event: InputEvent) {
@@ -66,11 +77,64 @@ export class ProjectDialog extends LitElement {
     this.createMissing = event.target.checked;
   }
 
+  /**
+   * Server-resolved existing trust for the entered path (never the raw path
+   * trusted verbatim). Dropped when a newer path input or an explicit user
+   * toggle supersedes it, so a stale read can not clobber the user's choice.
+   */
+  private async loadTrust() {
+    const requestId = ++this.requestId;
+    const trimmed = this.path.trim();
+    if (trimmed === "") {
+      if (requestId === this.requestId) this.trust = undefined;
+      return;
+    }
+    if (requestId === this.requestId) {
+      // Keep the previous value visible (cosmetic continuity) while the read
+      // for the new path is in flight; the result replaces it either way.
+      this.trust = {
+        ...(this.trust ?? { path: trimmed, decision: null, trusted: false }),
+        path: trimmed,
+        loading: true,
+      };
+    }
+    try {
+      const result = await trustApi.projectTrust(trimmed, this.machineId);
+      if (requestId !== this.requestId || this.trustTouched) return;
+      this.trust = { path: result.path, decision: result.decision, trusted: result.trusted, loading: false };
+    } catch (error) {
+      if (requestId !== this.requestId || this.trustTouched) return;
+      this.trust = { path: trimmed, decision: null, trusted: false, loading: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private onTrustChange(checked: boolean) {
+    this.trustTouched = true;
+    if (this.trust !== undefined) this.trust = { ...this.trust, trusted: checked, loading: false };
+  }
+
+  private renderTrustChoice() {
+    const unavailable = this.trust === undefined || this.trust.loading || this.trust.error !== undefined;
+    return html`
+      <label class="check">
+        <input type="checkbox" .checked=${this.trust?.trusted ?? false} ?disabled=${unavailable} @change=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.onTrustChange(event.target.checked); }} />
+        <span>Trust this project</span>
+      </label>
+      <small class="trust-hint">
+        Trusting lets pi load this project's .pi settings, extensions, skills, and packages.
+        <a href="https://pi.dev/docs/latest/security" target="_blank" rel="noreferrer">Learn about project trust</a>
+      </small>
+      ${this.trust?.error === undefined ? null : html`<small class="trust-error">Trust state unavailable: ${this.trust.error}</small>`}
+    `;
+  }
+
+  // Escape and backdrop presses are owned by the modal surface (routed to
+  // `onCancel`). The remaining keys stay scoped to the path input — their home
+  // before the migration — so Enter/Tab on the footer buttons and checkbox keep
+  // their native behavior.
   private onKeyDown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      this.onCancel?.();
-    } else if (event.key === "Enter") {
+    if (event.target !== this.pathInput) return;
+    if (event.key === "Enter") {
       event.preventDefault();
       this.submit();
     } else if (event.key === "ArrowDown") {
@@ -89,44 +153,47 @@ export class ProjectDialog extends LitElement {
 
   override render() {
     return html`
-      <div class="backdrop" @click=${() => this.onCancel?.()}>
-        <section @click=${(event: Event) => { event.stopPropagation(); }}>
-          <header>
-            <strong>Add project</strong>
-            <button @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
-          </header>
-          <div class="body">
-            <label>
-              Project folder
-              <input .value=${this.path} @input=${(event: InputEvent) => { this.onPathInput(event); }} @keydown=${(event: KeyboardEvent) => { this.onKeyDown(event); }} placeholder="/path/to/project or ~/code/project" autofocus />
-            </label>
-            <div class="suggestions">
-              ${this.loading ? html`<div class="hint">Loading folders…</div>` : null}
-              ${this.suggestions.map((suggestion, index) => html`
-                <button class=${index === this.selected ? "selected" : ""} @click=${() => { this.pick(suggestion); }}>
-                  ${suggestion.path}
-                </button>
-              `)}
-              ${!this.loading && this.suggestions.length === 0 ? html`<div class="hint">No matching folders. Enter a new path to create it.</div>` : null}
-            </div>
-            <label class="check">
-              <input type="checkbox" .checked=${this.createMissing} @change=${(event: InputEvent) => { this.onCreateMissingChange(event); }} />
-              Create the folder if it does not exist
-            </label>
+      <modal-surface
+        .onClose=${() => this.onCancel?.()}
+        .initialFocus=${"input"}
+        .label=${"Add project"}
+        @keydown=${(event: KeyboardEvent) => { this.onKeyDown(event); }}
+      >
+        <header>
+          <strong>Add project</strong>
+          <button @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+        </header>
+        <div class="body">
+          <label>
+            Project folder
+            <input .value=${this.path} @input=${(event: InputEvent) => { this.onPathInput(event); }} placeholder="/path/to/project or ~/code/project" />
+          </label>
+          <div class="suggestions">
+            ${this.loading ? html`<div class="hint">Loading folders…</div>` : null}
+            ${this.suggestions.map((suggestion, index) => html`
+              <button class=${index === this.selected ? "selected" : ""} @click=${() => { this.pick(suggestion); }}>
+                ${suggestion.path}
+              </button>
+            `)}
+            ${!this.loading && this.suggestions.length === 0 ? html`<div class="hint">No matching folders. Enter a new path to create it.</div>` : null}
           </div>
-          <footer>
-            <button @click=${() => { this.onCancel?.(); }}>Cancel</button>
-            <button class="primary" ?disabled=${this.path.trim() === ""} @click=${() => { this.submit(); }}>Add project</button>
-          </footer>
-        </section>
-      </div>
+          <label class="check">
+            <input type="checkbox" .checked=${this.createMissing} @change=${(event: InputEvent) => { this.onCreateMissingChange(event); }} />
+            Create the folder if it does not exist
+          </label>
+          ${this.renderTrustChoice()}
+        </div>
+        <footer>
+          <button @click=${() => { this.onCancel?.(); }}>Cancel</button>
+          <button class="primary" ?disabled=${this.path.trim() === ""} @click=${() => { this.submit(); }}>Add project</button>
+        </footer>
+      </modal-surface>
     `;
   }
 
   static override styles = css`
     :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    .backdrop { display: grid; place-items: start center; width: 100%; height: 100%; padding-top: min(12vh, 90px); box-sizing: border-box; background: var(--pi-overlay); }
-    section { width: min(720px, calc(100vw - 40px)); max-height: min(700px, calc(100vh - 40px)); display: flex; flex-direction: column; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg); box-shadow: 0 20px 60px var(--pi-shadow-strong); overflow: hidden; }
+    modal-surface { --modal-surface-place-items: start center; --modal-surface-backdrop-padding: min(12vh, 90px) 0 0; --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(700px, calc(100vh - 40px)); }
     header, footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     footer { border-top: 1px solid var(--pi-border); border-bottom: 0; justify-content: end; }
     .body { display: grid; gap: 12px; padding: 12px; min-height: 0; }
@@ -137,6 +204,9 @@ export class ProjectDialog extends LitElement {
     .suggestions button { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-bottom: 1px solid var(--pi-border); border-radius: 0; background: transparent; color: var(--pi-text); padding: 8px 10px; text-align: left; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .suggestions button.selected, .suggestions button:hover { background: var(--pi-selection-bg); }
     .hint { padding: 12px; color: var(--pi-muted); }
+    .trust-error { color: var(--pi-danger, #c0392b); }
+    .trust-hint { color: var(--pi-muted); line-height: 1.3; }
+    .trust-hint a { color: var(--pi-accent); }
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
     header button { border: 0; background: transparent; color: var(--pi-muted); font-size: 22px; padding: 0 8px; }
     .primary { border-color: var(--pi-success-border); background: var(--pi-success-border); }

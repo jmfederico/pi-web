@@ -1,16 +1,16 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab, insertNewlineAndIndent } from "@codemirror/commands";
 import { markdown, deleteMarkupBackward, insertNewlineContinueMarkup } from "@codemirror/lang-markdown";
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
-import { EditorView, keymap, placeholder } from "@codemirror/view";
+import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view";
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import { api, type FileSuggestion, type PromptAttachment, type SessionStatus, type SlashCommand } from "../api";
+import { api, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery, type CapturedAttachment } from "../promptAttachmentCapture";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
-import { detectPromptCompletionTrigger, fileCompletionInsertText, type PromptCompletionTrigger } from "../promptCompletions";
+import { detectPromptCompletionTrigger, fileCompletionInsertText, modelCompletionChoices, type PromptCompletionTrigger } from "../promptCompletions";
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
 import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendPromptOnEnterShortcut, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
@@ -29,7 +29,6 @@ export class PromptEditor extends LitElement {
   @property() machineId = "local";
   @property() projectId?: string;
   @property() workspaceId?: string;
-  @property({ type: Boolean }) workspaceScopedFileSuggestions = false;
   @property({ type: Boolean }) canSteer = false;
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
@@ -130,6 +129,28 @@ export class PromptEditor extends LitElement {
 
   focusInput() {
     this.editor?.focus();
+  }
+
+  replaceText(text: string): void {
+    this.draft = text;
+    const key = draftStorageKey(this.machineId, this.sessionId);
+    if (key !== undefined) saveDraft(key, text);
+
+    const editor = this.editor;
+    if (editor !== undefined) {
+      const current = editor.state.doc.toString();
+      editor.dispatch({
+        ...(current === text ? {} : { changes: { from: 0, to: current.length, insert: text } }),
+        selection: EditorSelection.cursor(text.length),
+      });
+    }
+
+    // Invalidate completion requests started for either the previous document or
+    // the replacement dispatch, then return the editor to a clean completion state.
+    this.requestVersion += 1;
+    this.currentInputMode = inputModeForDraft(text);
+    this.completions = [];
+    this.selectedIndex = 0;
   }
 
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
@@ -256,12 +277,13 @@ export class PromptEditor extends LitElement {
           indentUnit.of("  "),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           EditorView.lineWrapping,
+          drawSelection(),
           EditorView.contentAttributes.of((view) => inputAssistanceContentAttributes(view.state.sliceDoc(0, view.state.selection.main.head))),
           EditorView.domEventHandlers({
             keyup: (event) => this.handleEditorKeyUp(event),
             blur: () => this.resetEditorModifierState(),
           }),
-          placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files"),
+          placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
           EditorView.updateListener.of((update) => {
@@ -334,8 +356,8 @@ export class PromptEditor extends LitElement {
           detail: command.source,
           ...(command.description === undefined ? {} : { description: command.description }),
         }));
-    } else if (trigger.kind === "file" && this.cwd !== undefined && this.cwd !== "") {
-      const files = await api.files(this.cwd, trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId, workspaceScoped: this.workspaceScopedFileSuggestions }).catch(emptyFileSuggestions);
+    } else if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
+      const files = await api.files(trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId }).catch(emptyFileSuggestions);
       if (version !== this.requestVersion) return;
       this.completions = files
         .slice(0, 12)
@@ -350,6 +372,15 @@ export class PromptEditor extends LitElement {
             ...(file.path.endsWith("/") && insertText.endsWith("\"") ? { cursorOffset: insertText.length - 1 } : {}),
           };
         });
+    } else if (trigger.kind === "model" && this.sessionId !== undefined && this.sessionId !== "" && this.cwd !== undefined && this.cwd !== "") {
+      const models = await api.models({ id: this.sessionId, cwd: this.cwd }, this.machineId).then((response) => response.models).catch(emptySessionModels);
+      if (version !== this.requestVersion) return;
+      this.completions = modelCompletionChoices(models, trigger.query).map((choice) => ({
+        kind: "model",
+        replaceFrom: trigger.from,
+        replaceTo: trigger.to,
+        ...choice,
+      }));
     }
   }
 
@@ -491,6 +522,10 @@ function emptySlashCommands(): SlashCommand[] {
 }
 
 function emptyFileSuggestions(): FileSuggestion[] {
+  return [];
+}
+
+function emptySessionModels(): SessionModel[] {
   return [];
 }
 

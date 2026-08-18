@@ -106,8 +106,8 @@ export function effectiveWorkspaceUploadFolder(config: WorkspaceUploadFolderConf
   return config?.uploads?.defaultFolder ?? DEFAULT_WORKSPACE_UPLOADS_FOLDER;
 }
 
-export function workspaceEffectiveUploadFolder(config: WorkspaceUploadFolderConfig | undefined, fallbackFolder: string): string {
-  return config?.uploads?.defaultFolder ?? fallbackFolder;
+export function workspaceEffectiveUploadFolder(config: WorkspaceUploadFolderConfig, fallbackFolder: string): string {
+  return config.uploads?.defaultFolder ?? fallbackFolder;
 }
 
 export function workspaceUploadPath(destinationFolder: string, fileName: string): string {

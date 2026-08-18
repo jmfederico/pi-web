@@ -51,7 +51,7 @@ export class WorkspacePanel extends LitElement {
     const workspace = this.workspace;
     if (workspace === undefined) return this.renderEmptyState(this.emptyState ?? {
       title: "Select a workspace",
-      body: "Choose a workspace to inspect files, Git, or terminals.",
+      body: "Choose a workspace to use its tools.",
     });
     const context = this.panelContext;
     if (context === undefined) return this.renderEmptyState({

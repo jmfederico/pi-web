@@ -14,3 +14,6 @@ dist/
 
 # Local runtime attachment uploads (created by the chat composer "save to folder" mode).
 .pi-web/
+
+# Dev docs site staging output (scripts/build-docs-dev.mjs).
+/docs/.deploy/

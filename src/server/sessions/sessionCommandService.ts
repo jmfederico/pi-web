@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
-import type { ClientCommandResult, ClientSession } from "../types.js";
+import type { ClientCommandResult, ClientSession, ClientSessionTreeSnapshot } from "../types.js";
 import { isBuiltinCommand } from "./builtinCommands.js";
 
 export interface CommandSession {
@@ -51,10 +51,19 @@ export interface SessionCommandLifecycle<TSession extends CommandSession = Comma
   onCompactionStart?: (session: TSession) => void;
   onCompactionEnd?: (session: TSession, result: "success" | "error", detail?: string) => void;
   reloadSession?: (session: TSession) => Promise<void>;
+  getSessionTree?: (session: TSession) => ClientSessionTreeSnapshot | undefined;
+  hasActiveWork?: (session: TSession) => boolean;
+  isTreeNavigationActive?: (session: TSession) => boolean;
+  runSessionReplacement?: <T>(session: TSession, operation: () => Promise<T>) => Promise<T>;
 }
 
 export interface SessionCommandNaming {
   listSessionNames?: (cwd: string) => Promise<readonly string[]>;
+}
+
+export interface ForkEntryOptions {
+  /** Rechecked inside the serialized replacement boundary when supplied by /tree. */
+  expectedLeafId: string | null;
 }
 
 type RelatedSessionKind = "fork" | "copy";
@@ -81,6 +90,8 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     const [name = "", ...args] = text.trim().replace(/^\//, "").split(/\s+/);
     const rest = args.join(" ").trim();
 
+    if (this.lifecycle.isTreeNavigationActive?.(session) === true) return treeNavigationActiveUnsupported();
+
     if (!isBuiltinCommand(name)) {
       if (this.isRuntimeCommand(session, name)) {
         // The command is forwarded to the agent, which expands it (e.g. /skill:*
@@ -99,6 +110,7 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     if (name === "reload") return this.reload(session);
     if (name === "clone") return this.clone(active);
     if (name === "fork") return this.fork(active);
+    if (name === "tree") return this.tree(session);
 
     return { type: "unsupported", message: `/${name} is not implemented in the web UI yet` };
   }
@@ -107,13 +119,36 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     const pending = this.pendingSelects.get(requestId);
     if (pending?.sessionId !== sessionId) return { type: "unsupported", message: "Command request expired" };
     this.pendingSelects.delete(requestId);
+    return this.forkEntry(sessionId, value);
+  }
 
+  /**
+   * Forks the session from a specific tree entry into a new session file, leaving
+   * the original session untouched. Shared by the `/fork` select response and the
+   * session-tree fork-from-entry path. User entries fork from "before" so their
+   * text returns as a prompt draft; every other entry forks "at" so the forked
+   * file includes it.
+   */
+  async forkEntry(sessionId: string, entryId: string, options?: ForkEntryOptions): Promise<ClientCommandResult> {
     const active = await this.getActive(sessionId);
-    if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
+    if (this.lifecycle.isTreeNavigationActive?.(active.runtime.session) === true) return treeNavigationActiveUnsupported();
+    if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
     const relatedName = await this.nextRelatedSessionName(active, "fork");
-    const result = await active.runtime.fork(value);
+    if (this.lifecycle.isTreeNavigationActive?.(active.runtime.session) === true) return treeNavigationActiveUnsupported();
+    if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
+    const result = await this.runSessionReplacement(active.runtime, async () => {
+      const session = active.runtime.session;
+      if (options !== undefined && session.sessionManager.getLeafId() !== options.expectedLeafId) {
+        throw new Error("The session changed since /tree was opened. Reopen /tree and try again.");
+      }
+      // Resolve the entry kind from the session state protected by the same
+      // replacement boundary as the fork, not Pi's text-only /fork selector.
+      const position = this.forkPosition(session, entryId);
+      const forkResult = await active.runtime.fork(entryId, { position });
+      if (!forkResult.cancelled) this.tryNameRelatedSession(active.runtime.session, relatedName);
+      return forkResult;
+    });
     if (result.cancelled) return { type: "done", message: "Fork cancelled" };
-    this.tryNameRelatedSession(active.runtime.session, relatedName);
     return { type: "done", message: "Session forked", session: clientSessionFromRuntime(active.runtime), ...promptDraft(result.selectedText) };
   }
 
@@ -145,7 +180,7 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
   }
 
   private async reload(session: TSession): Promise<ClientCommandResult> {
-    if (sessionHasActiveWork(session)) return { type: "unsupported", message: "Cannot reload while the session is active. Stop current activity before reloading." };
+    if (this.hasActiveWork(session)) return { type: "unsupported", message: "Cannot reload while the session is active. Stop current activity before reloading." };
     if (this.lifecycle.reloadSession === undefined) return { type: "unsupported", message: "/reload is not available for this session runtime." };
 
     try {
@@ -158,18 +193,27 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
   }
 
   private async clone(active: CommandActiveSession<TSession>): Promise<ClientCommandResult> {
-    if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("clone");
+    if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("clone");
+    const initialLeafId = active.runtime.session.sessionManager.getLeafId();
+    if (initialLeafId === null || initialLeafId === "") return { type: "unsupported", message: "Cannot clone: no current session entry" };
+    const relatedName = await this.nextRelatedSessionName(active, "copy");
+    if (this.lifecycle.isTreeNavigationActive?.(active.runtime.session) === true) return treeNavigationActiveUnsupported();
+    if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("clone");
+    // The active leaf may have changed while related-session names were loaded.
+    // Clone the position that is current when the serialized replacement begins.
     const leafId = active.runtime.session.sessionManager.getLeafId();
     if (leafId === null || leafId === "") return { type: "unsupported", message: "Cannot clone: no current session entry" };
-    const relatedName = await this.nextRelatedSessionName(active, "copy");
-    const result = await active.runtime.fork(leafId, { position: "at" });
+    const result = await this.runSessionReplacement(active.runtime, async () => {
+      const cloneResult = await active.runtime.fork(leafId, { position: "at" });
+      if (!cloneResult.cancelled) this.tryNameRelatedSession(active.runtime.session, relatedName);
+      return cloneResult;
+    });
     if (result.cancelled) return { type: "done", message: "Clone cancelled" };
-    this.tryNameRelatedSession(active.runtime.session, relatedName);
     return { type: "done", message: "Session cloned", session: clientSessionFromRuntime(active.runtime) };
   }
 
   private fork(active: CommandActiveSession<TSession>): ClientCommandResult {
-    if (sessionHasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
+    if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
     const messages = active.runtime.session.getUserMessagesForForking();
     if (!messages.length) return { type: "unsupported", message: "No user messages to fork from" };
     const requestId = crypto.randomUUID();
@@ -180,6 +224,38 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
       title: "Fork from message",
       options: [...messages].reverse().map((message) => ({ value: message.entryId, label: truncate(message.text, 140) })),
     };
+  }
+
+  private tree(session: TSession): ClientCommandResult {
+    if (this.hasActiveWork(session)) {
+      return { type: "unsupported", message: "Cannot open the session tree while the session is active. Stop current activity and try /tree again." };
+    }
+    if (this.lifecycle.getSessionTree === undefined) return treeUnavailableUnsupported();
+
+    try {
+      const tree = this.lifecycle.getSessionTree(session);
+      if (tree === undefined) return treeUnavailableUnsupported();
+      if (tree.nodes.length === 0) return { type: "unsupported", message: "Cannot navigate an empty session tree." };
+      return { type: "tree", tree };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { type: "unsupported", message: `Unable to open the session tree: ${message}` };
+    }
+  }
+
+  private hasActiveWork(session: TSession): boolean {
+    return sessionHasActiveWork(session) || this.lifecycle.hasActiveWork?.(session) === true;
+  }
+
+  private forkPosition(session: TSession, entryId: string): "before" | "at" {
+    const treeNode = this.lifecycle.getSessionTree?.(session)?.nodes.find((node) => node.id === entryId);
+    if (treeNode !== undefined) return treeNode.kind === "user" ? "before" : "at";
+    return session.getUserMessagesForForking().some((message) => message.entryId === entryId) ? "before" : "at";
+  }
+
+  private runSessionReplacement<T>(runtime: CommandRuntime<TSession>, operation: () => Promise<T>): Promise<T> {
+    const runReplacement = this.lifecycle.runSessionReplacement;
+    return runReplacement === undefined ? operation() : runReplacement(runtime.session, operation);
   }
 
   private async nextRelatedSessionName(active: CommandActiveSession<TSession>, kind: RelatedSessionKind): Promise<string> {
@@ -289,6 +365,14 @@ function sessionHasActiveWork(session: CommandSession): boolean {
 
 function forkActiveUnsupported(command: "fork" | "clone"): ClientCommandResult {
   return { type: "unsupported", message: `Cannot ${command} while the session is active. Stop current activity before ${command === "fork" ? "forking" : "cloning"}.` };
+}
+
+function treeUnavailableUnsupported(): ClientCommandResult {
+  return { type: "unsupported", message: "Session tree navigation is not available with this Pi runtime." };
+}
+
+function treeNavigationActiveUnsupported(): ClientCommandResult {
+  return { type: "unsupported", message: "Cannot run commands while session tree navigation is active. Stop or finish the navigation first." };
 }
 
 function promptDraft(text: string | undefined): Partial<Pick<Extract<ClientCommandResult, { type: "done" }>, "promptDraft">> {

@@ -3,7 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { PiPackageInfo, PiPackageScope, PiPackagesResponse } from "../../api";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
-import { isPiPackageManagementUnsupported, isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageManagementSupport, type PiPackageOperationState, type PiPackageTargetContext } from "./piPackageSettings";
+import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageOperationState, type PiPackageTargetContext } from "./piPackageSettings";
 
 @customElement("settings-packages-panel")
 export class SettingsPackagesPanel extends LitElement {
@@ -11,7 +11,6 @@ export class SettingsPackagesPanel extends LitElement {
   @property({ type: Boolean }) loading = false;
   @property({ attribute: false }) operation: PiPackageOperationState | undefined;
   @property({ attribute: false }) targetMachine: PiPackageTargetContext | undefined;
-  @property({ attribute: false }) managementSupport: PiPackageManagementSupport | undefined;
   @property() error = "";
   @property() operationMessage = "";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
@@ -25,16 +24,15 @@ export class SettingsPackagesPanel extends LitElement {
     const packages = this.packagesResponse?.packages ?? [];
     const target = this.packageTarget;
     const targetLabel = piPackageTargetLabel(target);
-    const packageManagementUnavailable = this.packageManagementUnavailable;
-    const showPackageControls = this.packagesResponse !== undefined && !packageManagementUnavailable;
+    const showPackageControls = this.packagesResponse !== undefined;
     return html`
       <settings-panel-frame
         heading="Pi packages"
         .description=${packagesDescription(targetLabel)}
         actionLabel="Reload"
-        actionTitle=${packageManagementUnavailable ? this.packageManagementUnavailableMessage(targetLabel) : `Reload Pi packages from ${targetLabel}`}
-        .actionDisabled=${this.loading || this.isOperating || packageManagementUnavailable}
-        .notices=${this.panelNotices(targetLabel, showPackageControls)}
+        actionTitle=${`Reload Pi packages from ${targetLabel}`}
+        .actionDisabled=${this.loading || this.isOperating}
+        .notices=${this.panelNotices(showPackageControls)}
         .onAction=${this.onReload}
       >
         ${this.renderPanelContent(packages, target, targetLabel)}
@@ -42,11 +40,9 @@ export class SettingsPackagesPanel extends LitElement {
     `;
   }
 
-  private panelNotices(targetLabel: string, showTrustedCodeWarning: boolean): readonly SettingsNotice[] {
+  private panelNotices(showTrustedCodeWarning: boolean): readonly SettingsNotice[] {
     const notices: SettingsNotice[] = [];
-    if (this.packageManagementUnavailable) {
-      notices.push({ type: "availability", content: this.packageManagementUnavailableMessage(targetLabel) });
-    } else if (this.error !== "") {
+    if (this.error !== "") {
       notices.push({ type: "error", content: this.error });
     }
     if (this.operationMessage !== "") notices.push({ type: "success", content: this.operationMessage });
@@ -60,7 +56,6 @@ export class SettingsPackagesPanel extends LitElement {
   }
 
   private renderPanelContent(packages: PiPackageInfo[], target: PiPackageTargetContext, targetLabel: string): TemplateResult | null {
-    if (this.packageManagementUnavailable) return null;
     if (this.packagesResponse === undefined) {
       return html`<div class="loading-card">${this.loading ? `Loading Pi packages from ${targetLabel}…` : `Pi package list unavailable for ${targetLabel}. Use Reload to try again.`}</div>`;
     }
@@ -86,8 +81,7 @@ export class SettingsPackagesPanel extends LitElement {
 
   private renderPackageList(packages: PiPackageInfo[], target: PiPackageTargetContext): TemplateResult {
     const targetLabel = piPackageTargetLabel(target);
-    const packageManagementUnavailable = this.packageManagementUnavailable;
-    const updateAllReason = packageManagementUnavailable ? this.packageManagementUnavailableMessage(targetLabel) : updateAllPiPackagesDisabledReason(packages);
+    const updateAllReason = updateAllPiPackagesDisabledReason(packages);
     const showUpdateAllReason = updateAllReason !== undefined && packages.length > 0;
     const updateAllTitle = updateAllReason ?? "Update all user-scope Pi packages";
     return html`
@@ -119,10 +113,7 @@ export class SettingsPackagesPanel extends LitElement {
   }
 
   private renderPackage(packageInfo: PiPackageInfo): TemplateResult {
-    const targetLabel = piPackageTargetLabel(this.packageTarget);
-    const packageManagementUnavailable = this.packageManagementUnavailable;
-    const updateReason = packageManagementUnavailable ? this.packageManagementUnavailableMessage(targetLabel) : piPackageUpdateDisabledReason(packageInfo);
-    const removeReason = packageManagementUnavailable ? this.packageManagementUnavailableMessage(targetLabel) : "Remove this Pi package";
+    const updateReason = piPackageUpdateDisabledReason(packageInfo);
     const updating = isPiPackageOperationPending(this.operation, "update", packageInfo.source);
     const removing = isPiPackageOperationPending(this.operation, "remove", packageInfo.source);
     return html`
@@ -135,7 +126,7 @@ export class SettingsPackagesPanel extends LitElement {
         </div>
         <div class="package-actions">
           <button class="secondary" title=${updateReason ?? "Update this Pi package"} ?disabled=${this.isOperating || updateReason !== undefined} @click=${() => { void this.updatePackage(packageInfo.source); }}>${updating ? "Updating…" : "Update"}</button>
-          <button class="danger" title=${removeReason} ?disabled=${this.isOperating || packageManagementUnavailable} @click=${() => { void this.removePackage(packageInfo); }}>${removing ? "Removing…" : "Remove"}</button>
+          <button class="danger" title="Remove this Pi package" ?disabled=${this.isOperating} @click=${() => { void this.removePackage(packageInfo); }}>${removing ? "Removing…" : "Remove"}</button>
         </div>
       </article>
     `;
@@ -182,14 +173,6 @@ export class SettingsPackagesPanel extends LitElement {
 
   private get packageTarget(): PiPackageTargetContext {
     return this.targetMachine ?? piPackageTargetContext(undefined);
-  }
-
-  private get packageManagementUnavailable(): boolean {
-    return isPiPackageManagementUnsupported(this.managementSupport);
-  }
-
-  private packageManagementUnavailableMessage(targetLabel: string): string {
-    return this.managementSupport?.message ?? `Pi package management is not available on ${targetLabel}.`;
   }
 
   private get isOperating(): boolean {

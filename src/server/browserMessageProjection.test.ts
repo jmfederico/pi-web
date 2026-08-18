@@ -34,7 +34,7 @@ describe("browser message projection", () => {
     expect(normalizeMessage(projected)).toEqual(normalizeMessage(message));
   });
 
-  it("projects both paged and legacy array history responses", () => {
+  it("projects paged history responses", () => {
     const message = signedAssistantMessage();
     const page: MessagePage = { messages: [message], start: 4, total: 5 };
 
@@ -43,9 +43,6 @@ describe("browser message projection", () => {
       start: 4,
       total: 5,
     });
-    expect(projectBrowserMessageResponse([message])).toEqual([
-      { ...message, content: [{ type: "thinking", thinking: "private chain", redacted: true }, ...message.content.slice(1)] },
-    ]);
     expect(page.messages[0]).toBe(message);
   });
 

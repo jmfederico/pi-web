@@ -14,7 +14,7 @@ export interface SelectedMachineSettingsSupport {
   message?: string;
 }
 
-export type AgentProfileSettingsSupport = SelectedMachineSettingsSupport;
+export type PluginLifecycleSupport = SelectedMachineSettingsSupport;
 
 export function settingsMachineTarget(machine: Pick<Machine, "id" | "name" | "kind"> | undefined): SettingsMachineTarget {
   if (machine !== undefined) return { id: machine.id, name: machine.name, kind: machine.kind };
@@ -25,26 +25,11 @@ export function settingsMachineTargetLabel(target: SettingsMachineTarget): strin
   return target.kind === "local" ? `${target.name} (local gateway)` : `${target.name} (remote machine)`;
 }
 
-export function selectedMachineSettingsSupport(target: SettingsMachineTarget, runtime: Pick<MachineRuntime, "ok" | "capabilities"> | undefined): SelectedMachineSettingsSupport {
+export function pluginLifecycleSupport(target: SettingsMachineTarget, runtime: Pick<MachineRuntime, "ok" | "capabilities"> | undefined): PluginLifecycleSupport {
   if (target.kind === "local") return { state: "supported" };
   if (runtime?.ok !== true) return { state: "unknown" };
-  if (supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.selectedMachineSettings)) return { state: "supported" };
-  return { state: "unsupported", message: selectedMachineSettingsUnavailableMessage(target) };
-}
-
-export function agentProfileSettingsSupport(target: SettingsMachineTarget, runtime: Pick<MachineRuntime, "ok" | "capabilities"> | undefined): AgentProfileSettingsSupport {
-  if (target.kind === "local") return { state: "supported" };
-  if (runtime?.ok !== true) {
-    return {
-      state: "unknown",
-      message: `Pi-compatible agent profile support could not be verified on ${target.name}. Reload machine status before changing the profile.`,
-    };
-  }
-  if (supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.agentProfileConfig)) return { state: "supported" };
-  return {
-    state: "unsupported",
-    message: `Pi-compatible agent profile settings are not available on ${target.name}. Update and restart PI WEB on that machine, then try again.`,
-  };
+  if (supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.pluginLifecycle)) return { state: "supported" };
+  return { state: "unsupported", message: pluginLifecycleUnavailableMessage(target) };
 }
 
 export function selectedMachineSettingsSupportKey(support: SelectedMachineSettingsSupport): string {
@@ -55,20 +40,13 @@ export function isSelectedMachineSettingsUnsupported(support: SelectedMachineSet
   return support?.state === "unsupported";
 }
 
-export function isAgentProfileSettingsSupported(support: AgentProfileSettingsSupport | undefined): boolean {
-  return support?.state === "supported";
-}
-
-export function selectedMachineSettingsUnavailableMessage(target: SettingsMachineTarget): string {
-  return `Selected-machine settings are not available on ${target.name}. Update and restart PI WEB on that machine, then try again.`;
+export function pluginLifecycleUnavailableMessage(target: SettingsMachineTarget): string {
+  return `Plugin lifecycle diagnostics are not available on ${target.name}. Update and restart PI WEB on that machine before loading server-backed plugins.`;
 }
 
 export function friendlySelectedMachineSettingsErrorMessage(message: string, target: SettingsMachineTarget): string {
   const normalized = message.trim();
   if (target.kind !== "remote") return normalized;
-  if (isUnsupportedRemoteSelectedMachineSettingsRouteMessage(normalized)) {
-    return selectedMachineSettingsUnavailableMessage(target);
-  }
   if (normalized === "Remote machine timeout") {
     return `Timed out while contacting ${target.name} for selected-machine settings. The operation may still be running remotely; reload before retrying.`;
   }
@@ -76,10 +54,4 @@ export function friendlySelectedMachineSettingsErrorMessage(message: string, tar
     return `Could not reach ${target.name} for selected-machine settings. Check the machine connection and try again.`;
   }
   return normalized;
-}
-
-function isUnsupportedRemoteSelectedMachineSettingsRouteMessage(message: string): boolean {
-  return message === "Not Found"
-    || /route\s+(GET|PUT):?\/api\/(config|plugins)\b.*not found/iu.test(message)
-    || /cannot\s+(GET|PUT)\s+.*\/api\/(config|plugins)\b/iu.test(message);
 }

@@ -7,16 +7,16 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
 import { ProjectService } from "./projects/projectService.js";
-import { WorkspaceService } from "./workspaces/workspaceService.js";
-import { isAbsoluteishFileSuggestionQuery, listFileSuggestions, listPathSuggestions } from "./workspaces/fileSuggestions.js";
-import { pathAccessForCwd } from "./workspaces/effectivePathAccess.js";
+import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
+import { SessionDaemonWorkspaceCatalog } from "./workspaces/sessionDaemonWorkspaceCatalog.js";
+import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
 import { loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
-import { normalizeRequestCwd } from "./workingDirectory.js";
 import { listDirectorySuggestions } from "./projects/directorySuggestions.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
+import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { registerSessionProxyRoutes, type SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
 import { registerWorkspaceExplorerRoutes } from "./workspaceExplorerRoutes.js";
-import { registerGitRoutes } from "./gitRoutes.js";
+import { registerProjectTrustRoutes } from "./projectTrustRoutes.js";
 import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { registerWorkspaceDeletionRoutes } from "./workspaces/workspaceDeletionRoutes.js";
 import { createFilePiWebConfigService, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
@@ -34,13 +34,14 @@ import {
 import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
+import { registerPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import { registerSecureInputRoutes, type SecureInputService } from "./secureInputRoutes.js";
-import type { Project, Workspace } from "./types.js";
+import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
 
 export interface AppDependencies {
   projects?: ProjectService;
-  workspaces?: WorkspaceService;
+  workspaceCatalog?: WorkspaceCatalog;
   machines?: MachineService;
   sessionDaemon?: SessionProxyDaemon;
   agentProfileProvider?: ActiveAgentProfileProvider;
@@ -59,7 +60,7 @@ interface LocalProjectRouteOptions {
   config?: Pick<PiWebConfigService, "read">;
 }
 
-function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService, prefix: string, options: LocalProjectRouteOptions = {}): void {
+function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceCatalog, prefix: string, options: LocalProjectRouteOptions = {}): void {
   app.get(`${prefix}/projects`, async () => projects.list());
 
   app.post<{ Body: { name?: string; path: string; create?: boolean } }>(`${prefix}/projects`, async (request, reply) => {
@@ -90,47 +91,49 @@ function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectServi
   app.get<{ Params: { projectId: string } }>(`${prefix}/projects/:projectId/workspaces`, async (request, reply) => {
     try {
       const project = await projects.requireProject(request.params.projectId);
-      return await listWorkspacesWithEffectiveConfig(project, workspaces, options.config);
+      return await resolveWorkspacesWithEffectiveConfig(project, workspaces, options.config);
     } catch (error) {
-      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) });
+      return sendWorkspaceRequestError(reply, error, 404);
     }
   });
 }
 
-async function listWorkspacesWithEffectiveConfig(project: Project, workspaces: WorkspaceService, config?: Pick<PiWebConfigService, "read">): Promise<Workspace[]> {
-  const [workspaceList, effectiveConfig] = await Promise.all([
-    workspaces.list(project),
+async function resolveWorkspacesWithEffectiveConfig(
+  project: Project,
+  workspaces: WorkspaceCatalog,
+  config?: Pick<PiWebConfigService, "read">,
+): Promise<WorkspaceProviderResolution> {
+  const [resolution, effectiveConfig] = await Promise.all([
+    workspaces.resolveProject(project.id),
     workspaceEffectiveConfig(project.path, config),
   ]);
-  return workspaceList.map((workspace) => ({ ...workspace, effectiveConfig }));
+  return {
+    ...resolution,
+    workspaces: resolution.workspaces.map((workspace) => ({ ...workspace, effectiveConfig })),
+  };
 }
 
-async function workspaceEffectiveConfig(projectPath: string, config?: Pick<PiWebConfigService, "read">): Promise<NonNullable<Workspace["effectiveConfig"]>> {
+async function workspaceEffectiveConfig(projectPath: string, config?: Pick<PiWebConfigService, "read">): Promise<WorkspaceEffectiveConfig> {
   const globalConfig = config === undefined ? {} : (await config.read()).effectiveConfig;
   return { uploads: await loadEffectiveProjectUploadsConfig(projectPath, globalConfig) };
 }
 
-interface LocalFileSuggestionRouteOptions {
-  config?: Pick<PiWebConfigService, "read">;
-}
-
-function registerLocalFileSuggestionRoutes(app: FastifyInstance, projects: ProjectService, workspaces: WorkspaceService, prefix: string, options: LocalFileSuggestionRouteOptions = {}): void {
-  app.get<{ Querystring: { cwd?: string; q?: string; kind?: "tracked" | "untracked" | "other"; mode?: "file" | "path"; scope?: "tracked" | "all" } }>(`${prefix}/files`, async (request, reply) => {
-    if (request.query.cwd === undefined || request.query.cwd === "") return reply.code(400).send({ error: "cwd query parameter is required" });
-    try {
-      const cwd = normalizeRequestCwd(request.query.cwd);
-      const query = request.query.q ?? "";
-      const pathAccess = isAbsoluteishFileSuggestionQuery(query) ? await pathAccessForCwd(cwd, projects, workspaces, options.config) : undefined;
-      if (request.query.mode === "path") return await listPathSuggestions(cwd, query, pathAccess);
-      return await listFileSuggestions(cwd, query, { kind: request.query.kind, scope: request.query.scope, pathAccess });
-    } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
-    }
-  });
-}
-
 async function readEffectiveConfig(config: Pick<PiWebConfigService, "read">) {
   return (await config.read()).effectiveConfig;
+}
+
+async function desiredPluginAgentDir(
+  profiles: ActiveAgentProfileProvider,
+  config: Pick<PiWebConfigService, "read">,
+): Promise<string> {
+  try {
+    return (await requireActiveAgentProfile(profiles)).dir;
+  } catch (error) {
+    if (!(error instanceof ActiveAgentProfileAccessError)) throw error;
+    const desiredDir = (await config.read()).effectiveConfig.agent?.dir;
+    if (desiredDir === undefined || desiredDir === "") throw error;
+    return desiredDir;
+  }
 }
 
 function invalidatePiWebStatusOnWrite(config: PiWebConfigService, statusCache: Pick<PiWebStatusCache, "invalidate">): PiWebConfigService {
@@ -165,14 +168,17 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   await app.register(fastifyWebsocket);
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
-  const workspaces = deps.workspaces ?? new WorkspaceService();
   const configService = deps.config ?? createFilePiWebConfigService();
   const readConfig = () => readEffectiveConfig(configService);
   const sessionDaemon = deps.sessionDaemon ?? new SessionDaemonClient();
+  const daemonWorkspaces = new SessionDaemonWorkspaceCatalog(sessionDaemon);
+  const workspaces = deps.workspaceCatalog ?? daemonWorkspaces;
   const agentProfileProvider = deps.agentProfileProvider ?? new SessionDaemonActiveAgentProfileProvider(sessionDaemon);
   const piWebPlugins = deps.piWebPlugins ?? new PiWebPluginService({
     configProvider: readConfig,
-    agentDirProvider: async () => (await requireActiveAgentProfile(agentProfileProvider)).dir,
+    agentDirProvider: () => desiredPluginAgentDir(agentProfileProvider, configService),
+    runtimeProvider: daemonWorkspaces,
+    recoveryProvider: () => loadServerPluginRecoveryConfig(),
   });
   const piPackages = deps.piPackages ?? createActiveProfilePiPackageService(agentProfileProvider);
   const piWebStatusCache = deps.piWebStatusCache ?? createPiWebStatusCache(
@@ -195,7 +201,11 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     if (await proxyMachinePluginAsset(machines, request.params.pluginId, request.params["*"], request.url, reply)) return;
 
     return withProfileDependency(reply, async () => {
-      const asset = await piWebPlugins.readAsset(request.params.pluginId, request.params["*"]);
+      const asset = await piWebPlugins.readAsset(
+        request.params.pluginId,
+        request.params["*"],
+        new URL(request.url, "http://pi-web.local").searchParams.get("v") ?? undefined,
+      );
       if (asset === undefined) return reply.code(404).send({ error: "Plugin asset not found" });
       return reply.type(asset.contentType).send(asset.content);
     });
@@ -226,17 +236,18 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   registerSessionProxyRoutes(app, sessionDaemon);
   registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
+  registerPluginBackendProxyRoutes(app, sessionDaemon);
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api", { config: configService });
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
-  registerGitRoutes(app, projects, workspaces);
-  registerGitRoutes(app, projects, workspaces, "/api/machines/local");
+  const projectTrustDeps = {
+    agentDir: async () => (await requireActiveAgentProfile(agentProfileProvider)).dir,
+  };
+  registerProjectTrustRoutes(app, projects, workspaces, projectTrustDeps);
+  registerProjectTrustRoutes(app, projects, workspaces, projectTrustDeps, "/api/machines/local");
   registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon);
   registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
-  registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon);
-  registerWorkspaceDeletionRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
-
-  registerLocalFileSuggestionRoutes(app, projects, workspaces, "/api", { config: configService });
-  registerLocalFileSuggestionRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
+  registerWorkspaceDeletionRoutes(app, sessionDaemon);
+  registerWorkspaceDeletionRoutes(app, sessionDaemon, "/api/machines/local");
 
   registerMachineProxyRoutes(app, machines);
 

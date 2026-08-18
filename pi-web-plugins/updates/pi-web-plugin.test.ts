@@ -5,7 +5,7 @@ import plugin from "./pi-web-plugin.js";
 
 describe("Updates plugin actions", () => {
   it("forces an update check through the host runtime context", async () => {
-    const action = plugin.activate({ apiVersion: 1, pluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
+    const action = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
     if (action === undefined) throw new Error("Expected update check action");
     const checkForPiWebUpdates = vi.fn(() => Promise.resolve());
     const context = runtimeContext({ checkForPiWebUpdates });
@@ -17,7 +17,7 @@ describe("Updates plugin actions", () => {
   });
 
   it("disables the action on older hosts without the update-check helper", () => {
-    const action = plugin.activate({ apiVersion: 1, pluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
+    const action = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
     if (action === undefined) throw new Error("Expected update check action");
     const context = runtimeContext();
 
@@ -41,7 +41,7 @@ function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntim
     selectWorkspaceTool: noop,
     openTerminal: noop,
     refreshFiles: noop,
-    refreshGit: noop,
+    refreshWorkspacePanels: noop,
     refreshAppData: noop,
     reloadPage: noop,
     startSession: noop,

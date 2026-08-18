@@ -113,8 +113,8 @@ describe("config routes", () => {
   });
 
   it.each([
-    { agent: { command: "./agent", dir: "/srv/agent" }, error: "safe bare executable name or host-absolute executable path" },
-    { agent: { command: "agent", dir: "/srv/agent", futureSetting: true }, error: 'agent contains unknown key "futureSetting"' },
+    { agent: { command: "agent", dir: "relative/agent" }, error: "agent.dir must be a host-absolute path" },
+    { agent: { command: "agent", dir: "/srv/agent", futureSetting: true }, error: 'agent accepts only the deprecated keys "command" and "dir"; unknown key "futureSetting"' },
   ])("rejects unsafe agent profile payloads before writing", async ({ agent, error }) => {
     const response = await app.inject({
       method: "PUT",
@@ -177,7 +177,7 @@ describe("config routes", () => {
   });
 
   it("keeps foreign-platform agent paths portable at federation transport boundaries", () => {
-    const agent = { command: "C:\\tools\\pi.exe", dir: "C:\\agent-profiles\\pi" };
+    const agent = { command: "C:\\tools\\pi.exe", dir: "C:\\pi-profiles\\work" };
     const response = {
       ...responseFor({ agent }, true),
       effectiveConfig: { agent },
@@ -186,37 +186,15 @@ describe("config routes", () => {
     expect(parsePiWebConfigResponseBody(response).config.agent).toEqual(agent);
     expect(parseSelectedMachineConfigRequest({ agent }, "portable").agent).toEqual(agent);
     if (process.platform !== "win32") {
-      expect(() => parseSelectedMachineConfigRequest({ agent })).toThrow("host-absolute executable path");
+      expect(() => parseSelectedMachineConfigRequest({ agent })).toThrow("agent.dir must be a host-absolute path");
     }
   });
 
-  it("defaults missing agent override fields from older config responses", () => {
-    const parsed = parsePiWebConfigResponseBody({
-      path: "/tmp/pi-web/config.json",
-      exists: true,
-      config: {},
-      effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false },
-    });
-
-    expect(parsed.envOverrides).toMatchObject({ agentCommand: false, agentDir: false, agentSessionDir: false });
-  });
-
-  it("retains the agent directory environment source across federation responses", () => {
-    const parsed = parsePiWebConfigResponseBody({
-      ...responseFor({}, false),
-      envOverrides: {
-        ...responseFor({}, false).envOverrides,
-        agentDir: true,
-        agentDirSource: "pi-compatibility",
-      },
-    });
-
-    expect(parsed.envOverrides).toMatchObject({ agentDir: true, agentDirSource: "pi-compatibility" });
-    expect(() => parsePiWebConfigResponseBody({
-      ...responseFor({}, false),
-      envOverrides: { ...responseFor({}, false).envOverrides, agentDirSource: "future-source" },
-    })).toThrow("valid agent directory source");
+  it("rejects config responses missing a required override flag", () => {
+    for (const flag of ["host", "port", "allowedHosts", "spawnSessions", "subsessions", "askUser"] as const) {
+      const envOverrides = Object.fromEntries(Object.entries(responseFor({}, false).envOverrides).filter(([key]) => key !== flag));
+      expect(() => parsePiWebConfigResponseBody({ ...responseFor({}, false), envOverrides })).toThrow(`field must be a boolean: ${flag}`);
+    }
   });
 
   it("rejects unsafe local selected-machine config keys before writing", async () => {
@@ -281,6 +259,6 @@ function responseFor(config: PiWebConfigValues, exists: boolean): PiWebConfigRes
     exists,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, agentCommand: false, agentDir: false, agentSessionDir: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
   };
 }

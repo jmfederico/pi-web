@@ -1,9 +1,7 @@
 import { isSessionActive } from "../../../../shared/activity";
-import { PI_WEB_CAPABILITIES, supportsPiWebCapability, type PiWebCapability } from "../../../../shared/capabilities";
 import type { AppState } from "../../appState";
-import { selectedMachineId } from "../../controllers/types";
-import { isArchivableSessionInfo, isTransientNewSessionInfo, sessionPersistenceOptionsForRuntime } from "../../sessionPersistence";
-import { isWorkspaceDeletionPending } from "../../workspaceDeletion";
+import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../../sessionPersistence";
+import { canDeleteWorkspace, isWorkspaceDeletionPending } from "../../workspaceDeletion";
 import type { PluginAction } from "../types";
 
 export function createCoreActions(): PluginAction[] {
@@ -112,14 +110,6 @@ export function createCoreActions(): PluginAction[] {
       run: (context) => { context.selectMainView("core:workspace.files"); },
     },
     {
-      id: "view.git",
-      title: "Go to Git",
-      shortcut: "mod+3",
-      group: "Navigation",
-      enabled: hasGitWorkspace,
-      run: (context) => { context.selectMainView("core:workspace.git"); },
-    },
-    {
       id: "view.terminal",
       title: "Go to Terminal",
       shortcut: "mod+4",
@@ -136,25 +126,9 @@ export function createCoreActions(): PluginAction[] {
       run: (context) => context.refreshFiles(),
     },
     {
-      id: "workspace.refresh-git",
-      title: "Refresh Git",
-      shortcut: "mod+shift+g",
-      group: "Workspace",
-      enabled: hasGitWorkspace,
-      run: (context) => context.refreshGit(),
-    },
-    {
-      id: "workspace.refresh-current",
-      title: "Refresh Current Panel",
-      shortcut: "mod+shift+r",
-      group: "Workspace",
-      enabled: hasWorkspace,
-      run: (context) => context.state.workspaceTool === "core:workspace.git" && context.state.selectedWorkspace?.isGitRepo === true ? context.refreshGit() : context.refreshFiles(),
-    },
-    {
       id: "workspace.delete",
-      title: "Delete Workspace",
-      description: "Remove the selected Git worktree",
+      title: "Remove Workspace",
+      description: "Run the owning provider's workspace removal operation",
       group: "Workspace",
       enabled: hasDeletableWorkspace,
       run: (context) => context.deleteWorkspace(),
@@ -166,6 +140,22 @@ export function createCoreActions(): PluginAction[] {
       group: "Session",
       enabled: hasWorkspace,
       run: (context) => context.startSession(),
+    },
+    {
+      id: "model.select",
+      title: "Select Model",
+      description: "Choose the model for the selected session",
+      group: "Session",
+      enabled: hasSelectableSession,
+      run: (context) => context.openModelPicker(),
+    },
+    {
+      id: "thinking.select",
+      title: "Select Thinking Level",
+      description: "Choose the thinking level for the selected session",
+      group: "Session",
+      enabled: hasSelectableSession,
+      run: (context) => context.openThinkingLevelPicker(),
     },
     {
       id: "session.archive",
@@ -181,7 +171,6 @@ export function createCoreActions(): PluginAction[] {
       description: "Close and re-open the selected session from its session file. Use /reload in the prompt for Pi runtime resources.",
       group: "Session",
       enabled: hasReloadableSession,
-      disabledReason: reloadSessionDisabledReason,
       run: (context) => context.reloadSession(),
     },
     {
@@ -207,41 +196,25 @@ function hasWorkspace(context: { state: AppState }): boolean {
   return context.state.selectedWorkspace !== undefined;
 }
 
-function hasGitWorkspace(context: { state: AppState }): boolean {
-  return context.state.selectedWorkspace?.isGitRepo === true;
-}
-
 function hasDeletableWorkspace(context: { state: AppState }): boolean {
   const workspace = context.state.selectedWorkspace;
-  return workspace !== undefined && workspace.isGitWorktree && !workspace.isMain && !isWorkspaceDeletionPending(context.state, workspace);
+  return canDeleteWorkspace(workspace) && !isWorkspaceDeletionPending(context.state, workspace);
+}
+
+function hasSelectableSession(context: { state: AppState }): boolean {
+  const session = context.state.selectedSession;
+  return session !== undefined && session.archived !== true;
 }
 
 function hasArchivableSession(context: { state: AppState }): boolean {
-  return isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state));
+  return isArchivableSessionInfo(context.state.selectedSession, context.state.status);
 }
 
 function hasTransientNewSession(context: { state: AppState }): boolean {
-  return isTransientNewSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state));
+  return isTransientNewSessionInfo(context.state.selectedSession, context.state.status);
 }
 
 function hasReloadableSession(context: { state: AppState }): boolean {
-  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state))) return false;
-  if (reloadSessionDisabledReason(context) !== undefined) return false;
+  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status)) return false;
   return !isSessionActive(context.state.status, context.state.activity);
-}
-
-function reloadSessionDisabledReason(context: { state: AppState }): string | undefined {
-  if (!isArchivableSessionInfo(context.state.selectedSession, context.state.status, sessionPersistenceOptions(context.state))) return undefined;
-  if (isSessionActive(context.state.status, context.state.activity)) return undefined;
-  return missingCapabilityReason(context.state, PI_WEB_CAPABILITIES.sessionsReload, "reload sessions from disk");
-}
-
-function sessionPersistenceOptions(state: AppState) {
-  return sessionPersistenceOptionsForRuntime(state.machineRuntimes[selectedMachineId(state)]);
-}
-
-function missingCapabilityReason(state: AppState, capability: PiWebCapability, action: string): string | undefined {
-  const runtime = state.machineRuntimes[selectedMachineId(state)];
-  if (runtime?.ok === true && supportsPiWebCapability(runtime, capability)) return undefined;
-  return `Update and restart Pi-Web on ${state.selectedMachine?.name ?? "this machine"} to ${action}.`;
 }

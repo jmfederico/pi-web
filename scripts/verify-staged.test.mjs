@@ -69,6 +69,13 @@ describe("staged validation planning", () => {
     });
   });
 
+  it("includes both public declaration entrypoints in related type-aware checks", () => {
+    const plan = createValidationPlan(["plugin-api.d.ts", "server-plugin-api.d.ts"], { pathExists: () => true });
+
+    expect(plan.lint).toEqual({ mode: "skip", files: [] });
+    expect(plan.tests).toEqual({ mode: "related", files: ["plugin-api.d.ts", "server-plugin-api.d.ts"] });
+  });
+
   it("runs only the affected full validator when its configuration changes", () => {
     const eslintPlan = createValidationPlan(["eslint.config.js"], { pathExists: () => true });
     expect(eslintPlan.lint).toEqual({ mode: "full", files: [] });

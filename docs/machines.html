@@ -6,7 +6,7 @@
     <title>PI WEB fleet — remote Pi web UI machines</title>
     <meta
       name="description"
-      content="Connect trusted PI WEB runtimes through machine federation so one web UI can supervise local and remote projects, sessions, files, git state, terminals, Pi packages, and plugins."
+      content="Connect trusted PI WEB runtimes through machine federation so one web UI can supervise local and remote projects, sessions, files, provider-owned workspace state, terminals, Pi packages, and plugins."
     />
     <link rel="canonical" href="https://pi-web.dev/machines" />
     <meta property="og:type" content="website" />
@@ -110,8 +110,8 @@
               </p>
               <p>
                 After registration, the browser keeps talking to the current PI WEB origin. The gateway contacts the
-                selected remote PI WEB server and routes that machine's projects, workspaces, sessions, files, git state,
-                activity, terminals, and Pi package-management operations to the browser UI.
+                selected remote PI WEB server and routes that machine's projects, provider-owned workspaces, sessions,
+                files, activity, terminals, Pi package operations, and plugin backend requests to the browser UI.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -167,7 +167,7 @@ PI WEB gateway you opened
                   <strong>Install on each target</strong>
                   <button class="copy-button" data-copy="#target-install">Copy</button>
                 </div>
-                <pre id="target-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web
+                <pre id="target-install"><code><span class="prompt">$</span> npm install -g @jmfederico/pi-web --allow-scripts=node-pty
 <span class="prompt">$</span> pi-web install
 <span class="prompt">$</span> pi-web doctor</code></pre>
               </div>
@@ -211,26 +211,37 @@ PI WEB gateway you opened
               </p>
               <ul>
                 <li>Projects and workspaces.</li>
-                <li>Files, previews, git status, and diffs.</li>
+                <li>Files, previews, and provider-owned workspace features such as bundled Git status and diffs.</li>
                 <li>Pi sessions, transcripts, prompts, model controls, and commands.</li>
                 <li>Activity indicators and realtime updates.</li>
                 <li>Terminals and terminal command runs.</li>
                 <li>Pi package listing, install, remove, and update from <strong>Settings → Pi packages</strong> when supported by the target PI WEB runtime.</li>
-                <li>Remote plugins from the selected machine.</li>
+                <li>Compatible browser plugins and paired workspace-provider backends from the selected machine.</li>
               </ul>
             </section>
 
             <section id="auth-credentials">
               <h2>Credentials stay on the target machine</h2>
               <p>
-                Model-provider credentials, Pi configuration, Pi package-manager settings, OAuth state, repositories, and
-                active session runtimes stay on the selected target machine. The gateway does not copy them into its own
-                Pi configuration.
+                Model-provider credentials, Pi configuration, Pi package-manager settings, plugin settings, OAuth state,
+                repositories, active workspace providers, and session runtimes stay on the selected target machine. The
+                gateway does not copy them into its own Pi configuration.
               </p>
               <ul>
-                <li>API-key provider configuration can be proxied through the gateway.</li>
-                <li>OAuth login should be completed by opening the remote PI WEB directly.</li>
+                <li>API-key model-provider configuration can be proxied through the gateway.</li>
+                <li>Subscription (OAuth) login and logout can be driven from the gateway while the machine is selected; the flow runs on the target machine and the credential is written there.</li>
                 <li>The optional machine bearer token is stored by the gateway and sent to the remote while proxying requests.</li>
+              </ul>
+              <p>
+                To sign in with a subscription, select the machine, open the login dialog, and choose
+                <strong>Use a subscription</strong>. Because the provider flow runs on the target machine, its loopback
+                redirect address (<code>http://localhost:&lt;port&gt;/…</code>) belongs to that machine, so the redirect
+                page will not load in a browser running elsewhere.
+              </p>
+              <ul>
+                <li>When the dialog asks for a code or redirect URL, approve the login in the provider's page, copy the full URL from your browser's address bar, and paste it into the dialog. PI WEB shows that reminder exactly when a paste is expected.</li>
+                <li>When the provider offers a device-code option, choose it. Device-code logins need no paste: enter the displayed code on the provider's page.</li>
+                <li>A provider flow that offers neither a pasted response nor a device code cannot be completed from another machine. Cancel it, then either restart with the device-code option or log in on the target machine directly.</li>
               </ul>
               <p>
                 Use <strong>Actions → Open Selected Machine PI WEB</strong> when you need to authenticate directly on a
@@ -241,15 +252,44 @@ PI WEB gateway you opened
             <section id="plugins">
               <h2>Plugins follow the selected machine</h2>
               <p>
-                When you select a remote machine, PI WEB tries to load that machine's discovered plugins through the
-                gateway. Remote plugin actions, workspace panels, and workspace labels only appear while that machine is
-                selected, and documented file and terminal helpers run against that machine.
+                The selected target's sessiond is the single authority for its workspace/provider snapshot. The gateway
+                does not rediscover remote workspaces locally. It loads compatible browser entries from that target and
+                routes documented file, terminal, and <code>context.backend.request()</code> helpers back to the same
+                machine, project, workspace owner, and active backend revision.
               </p>
               <p>
-                Remote plugins are still trusted browser-side code. Only federate machines whose PI WEB plugins you are
-                comfortable loading in the browser.
+                <strong>Settings → PI WEB plugins</strong> reads and writes desired plugin config for the selected target
+                and compares it with that target sessiond's active startup snapshot. Browser-only changes need a gateway
+                page reload. Server-backed enablement, settings, install, or update changes require a restart of the
+                target session daemon followed by the page reload. Restarting only the gateway web/API cannot activate a
+                remote provider change.
               </p>
-              <p><a href="plugins#remote-machine-plugins">Read the remote machine plugin notes →</a></p>
+              <p>
+                Versioned lifecycle manifests pair remote browser/server package source, scope, settings fingerprint, and
+                revisions. If the target is unavailable, uses an unsupported lifecycle version, lacks the backend route,
+                or has stale active code, a current gateway reports an explicit compatibility/unavailable state instead
+                of falling back to gateway code or an unpaired revision.
+              </p>
+              <p>
+                Mixed-version plugin/provider operation is unsupported in either upgrade order. A newer gateway rejects
+                an older target's entire remote plugin manifest when it lacks the lifecycle contract, so even browser-only
+                remote contributions and that target's Git panel are unavailable. An older gateway still calls legacy
+                core Git routes removed by an updated target, so remote Git status/diff returns <code>404</code>. Upgrade
+                gateway and target together, restart their updated web/API processes and the target session daemon, then
+                reload the gateway page. Other Fleet features use their own capability negotiation.
+              </p>
+              <div class="callout warning">
+                Run offline disable and safe-start commands directly on the affected target machine. A manual restart of
+                its <code>pi-web-sessiond.service</code> may interrupt active sessions and runtime ownership. For the
+                native user service, run <code>systemctl --user restart pi-web-sessiond</code> only after reviewing active work.
+              </div>
+              <p>
+                Browser and server plugin entries are trusted code. A server entry runs in-process with the target
+                sessiond's user permissions, shares its event loop, and is not crash-isolated. CPU-bound, blocking, or
+                deadlocked plugin code can stall that target's sessions, terminals, and health endpoints. Only federate
+                machines whose installed PI WEB plugin packages you trust.
+              </p>
+              <p><a href="plugins#remote-machine-plugins">Read the remote machine plugin and recovery notes →</a></p>
             </section>
 
             <section id="trust-model">
@@ -262,6 +302,7 @@ PI WEB gateway you opened
                 <li>Use private networking, an SSH tunnel, or an authenticated reverse proxy.</li>
                 <li>Do not include credentials in the machine URL itself.</li>
                 <li>Use bearer tokens or proxy authentication when a remote endpoint needs an extra gate.</li>
+                <li>Treat browser and in-process server plugins installed on every federated target as trusted code.</li>
               </ul>
             </section>
 
@@ -274,8 +315,10 @@ PI WEB gateway you opened
               <ul>
                 <li>Use <strong>Actions → Refresh Selected Machine</strong> to re-check health.</li>
                 <li>Make sure the remote URL is reachable from the gateway server.</li>
-                <li>Open the remote PI WEB directly to verify it is running and to complete provider login flows.</li>
-                <li>Check gateway logs with <code>pi-web logs</code> for proxy timeouts or upstream errors.</li>
+                <li>Open the remote PI WEB directly to verify it is running and to complete model-provider login flows.</li>
+                <li>For plugin lifecycle/backend compatibility errors, upgrade the gateway and target together, restart the updated web/API processes, manually restart the target session daemon, then reload the gateway page.</li>
+                <li>Check <code>pi-web logs</code> on both gateway and target for proxy, plugin activation, health, conflict, or revision diagnostics.</li>
+                <li>Use the target's offline <code>pi-web plugins disable</code> or <code>safe-start</code> commands when sessiond cannot start normally.</li>
               </ul>
               <div class="doc-actions">
                 <a class="button primary" href="install#remote-access">Review remote access setup</a>
@@ -298,6 +341,10 @@ PI WEB gateway you opened
           <a href="plugins">Plugins</a>
           <a href="faq">FAQ</a>
           <a href="https://github.com/jmfederico/pi-web">GitHub</a>
+          <span class="version-switcher" role="group" aria-label="Documentation version">
+            <a class="version-switcher-option" data-version-option="stable" href="https://pi-web.dev/machines" aria-current="true">Stable</a>
+            <a class="version-switcher-option" data-version-option="dev" href="https://pi-web.dev/dev/machines">Dev</a>
+          </span>
         </div>
       </div>
     </footer>

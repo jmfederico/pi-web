@@ -1,0 +1,44 @@
+name: Deploy dev docs
+
+# Deploys the docs site from main to pi-web.dev/dev/ (worker pi-web-docs-dev).
+# The stable site at pi-web.dev is deployed separately by publish.yml on GitHub Releases.
+# Requires the CLOUDFLARE_API_TOKEN repository secret and CLOUDFLARE_ACCOUNT_ID variable.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/build-docs-dev.mjs"
+      - ".github/workflows/docs-dev.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Queue deployments instead of cancelling an in-flight wrangler upload.
+  group: docs-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to pi-web.dev/dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Assemble dev docs
+        run: node scripts/build-docs-dev.mjs
+        env:
+          GIT_SHA: ${{ github.sha }}
+
+      - name: Deploy dev docs worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          # Wrangler 4 is required: v3 rejects path-based routes for assets workers.
+          wranglerVersion: "4.119.0"
+          command: deploy --config docs/wrangler.dev.jsonc

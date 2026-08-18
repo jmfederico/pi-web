@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readRoute, writeRoute, type AppRoute } from "./route";
+import { readRoute, resolveAppRoute, writeRoute, type AppRoute } from "./route";
 
 const originalWindow = globalThis.window;
 
@@ -32,24 +32,51 @@ function installWindow(href: string): { pushed: string[]; replaced: string[] } {
   return { pushed, replaced };
 }
 
+const routeAliases: Record<string, AppRoute["tool"]> = {
+  files: "core:workspace.files",
+  "core:workspace.files": "core:workspace.files",
+  git: "git:workspace.git",
+  "core:workspace.git": "git:workspace.git",
+  "git:workspace.git": "git:workspace.git",
+};
+
+function resolveWorkspacePanel(value: string): AppRoute["tool"] {
+  return routeAliases[value];
+}
+
 describe("route helpers", () => {
   it("reads only supported route fields from the current URL", () => {
-    installWindow("http://localhost/app?machine=remote&project=p1&workspace=w1&session=s1&tool=git&view=files&core.workspace.files--file=src%2Fmain.ts&core.workspace.git--diff=README.md");
+    installWindow("http://localhost/app?machine=remote&project=p1&workspace=w1&session=s1&tool=git%3Aworkspace.git&view=files&core.workspace.files--file=src%2Fmain.ts&git.workspace.git--diff=README.md");
 
-    expect(readRoute()).toEqual({
+    expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toEqual({
       machineId: "remote",
       projectId: "p1",
       workspaceId: "w1",
       sessionId: "s1",
-      tool: "core:workspace.git",
+      tool: "git:workspace.git",
       view: "core:workspace.files",
     });
   });
 
-  it("ignores unsupported tool and view values", () => {
+  it("ignores unsupported aliases while retaining qualified ids for retryable plugin loads", () => {
     installWindow("http://localhost/app?tool=terminal&view=settings");
+    expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({ tool: undefined, view: undefined });
 
-    expect(readRoute()).toMatchObject({ tool: undefined, view: undefined });
+    installWindow("http://localhost/app?tool=retryable%3Aworkspace.panel&view=retryable%3Aworkspace.panel");
+    expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({
+      tool: "retryable:workspace.panel",
+      view: "retryable:workspace.panel",
+    });
+  });
+
+  it("keeps legacy workspace-panel values until plugins can migrate them", () => {
+    installWindow("http://localhost/app?tool=git&view=core%3Aworkspace.git");
+
+    expect(readRoute()).toMatchObject({ tool: "git", view: "core:workspace.git" });
+    expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({
+      tool: "git:workspace.git",
+      view: "git:workspace.git",
+    });
   });
 
   it("writes compact URLs with push history and preserves path/hash", () => {
@@ -70,9 +97,9 @@ describe("route helpers", () => {
   });
 
   it("does not write history when the route is unchanged", () => {
-    const { pushed, replaced } = installWindow("http://localhost/app?project=p1&tool=core%3Aworkspace.git");
+    const { pushed, replaced } = installWindow("http://localhost/app?project=p1&tool=git%3Aworkspace.git");
 
-    writeRoute({ machineId: undefined, projectId: "p1", workspaceId: undefined, sessionId: undefined, tool: "core:workspace.git", view: undefined });
+    writeRoute({ machineId: undefined, projectId: "p1", workspaceId: undefined, sessionId: undefined, tool: "git:workspace.git", view: undefined });
 
     expect(pushed).toEqual([]);
     expect(replaced).toEqual([]);

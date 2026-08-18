@@ -1,7 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { textMessage } from "./chatMessages";
-import { applyTranscriptEvent } from "./chatTranscript";
+import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserOutcome } from "../../shared/apiTypes";
+import { groupChatMessages } from "./chatGroups";
+import { normalizeMessages, textMessage } from "./chatMessages";
+import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import type { ChatLine } from "./components/shared";
+
+const askUserOutcome: AskUserOutcome = {
+  askId: "ask-1",
+  reason: "submitted",
+  askedAt: "2026-07-20T10:00:00.000Z",
+  closedAt: "2026-07-20T10:05:00.000Z",
+  questions: [
+    {
+      question: { id: "editor", question: "Which editor?", options: [{ value: "vim", label: "Vim" }] },
+      answered: true,
+      values: ["vim"],
+    },
+    {
+      question: { id: "region", question: "Which region?", options: [{ value: "eu", label: "Europe" }] },
+      answered: false,
+      values: [],
+    },
+  ],
+  answeredCount: 1,
+  unansweredIds: ["region"],
+  summary: "Answered 1 of 2; unanswered: region",
+};
+
+const supersededAskUserOutcome: AskUserOutcome = {
+  ...askUserOutcome,
+  reason: "superseded",
+  questions: askUserOutcome.questions.map((record) => ({ question: record.question, answered: false, values: [] })),
+  answeredCount: 0,
+  unansweredIds: ["editor", "region"],
+  summary: "Answered 0 of 2; unanswered: editor, region",
+};
 
 const finalAssistant = {
   role: "assistant",
@@ -24,6 +57,65 @@ describe("applyTranscriptEvent", () => {
     expect(messages).toEqual([
       { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "text", text: "answer" }] },
     ]);
+  });
+
+  it("projects finalized ask_user answers identically to rehydrated history", () => {
+    const rawMessage = {
+      role: "custom",
+      customType: ASK_USER_ANSWERS_CUSTOM_TYPE,
+      content: "The user submitted answers to your questions.",
+      details: askUserOutcome,
+    };
+    const hydrated = normalizeMessages([rawMessage]);
+    const live = applyTranscriptEvent([], { type: "message.end", message: rawMessage });
+
+    expect(live).toEqual(hydrated);
+    expect(live).toEqual([{
+      role: "system",
+      parts: [{ type: "askUserRecord", outcome: askUserOutcome }],
+    }]);
+    expect(applyTranscriptEvent(live ?? [], { type: "message.end", message: rawMessage })).toEqual(live);
+
+    const nextOutcome = { ...askUserOutcome, askId: "ask-2" };
+    const nextRawMessage = { ...rawMessage, details: nextOutcome };
+    expect(applyTranscriptEvent(live ?? [], { type: "message.end", message: nextRawMessage })).toEqual([
+      ...hydrated,
+      ...normalizeMessages([nextRawMessage]),
+    ]);
+  });
+
+  it("keeps superseded ask records identical across live tool events and hydrated history", () => {
+    const args = { questions: [{ id: "next", question: "Try again?", options: [] }] };
+    const details = { ask: { askId: "ask-2" }, superseded: supersededAskUserOutcome };
+    const finalResult = {
+      role: "toolResult",
+      toolCallId: "ask-call",
+      toolName: "ask_user",
+      content: [{ type: "text", text: "Posted a newer question set." }],
+      details,
+      isError: false,
+    };
+    const hydrated = normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: args }] },
+      finalResult,
+    ]);
+    let live: ChatLine[] = [];
+
+    live = applyTranscriptEvent(live, { type: "tool.start", toolName: "ask_user", toolCallId: "ask-call", summary: "", args }) ?? live;
+    live = applyTranscriptEvent(live, {
+      type: "tool.end",
+      toolName: "ask_user",
+      toolCallId: "ask-call",
+      text: "Posted a newer question set.",
+      content: finalResult.content,
+      details,
+      isError: false,
+    }) ?? live;
+    live = applyTranscriptEvent(live, { type: "message.end", message: finalResult }) ?? live;
+
+    expect(live).toEqual(hydrated);
+    expect(live.filter((line) => line.parts.some((part) => part.type === "askUserRecord"))).toHaveLength(1);
+    expect(groupChatMessages(live).map((group) => group.kind)).toEqual(["group", "message"]);
   });
 
   it("replaces the streamed assistant message with the finalized history shape", () => {
@@ -169,6 +261,183 @@ describe("applyTranscriptEvent", () => {
     ]);
   });
 
+  it("projects live tool-result images and reconciles final content and metadata", () => {
+    const provisionalImage = { type: "image" as const, mimeType: "image/png", data: "UFJFVklFVw==" };
+    const finalImage = { type: "image" as const, mimeType: "image/png", data: "RklOQUw=" };
+    const finalContent = [{ type: "text", text: "Read image file [image/png]" }, finalImage];
+    const timestamp = "2026-07-13T22:00:00.000Z";
+    let messages: ChatLine[] = [];
+
+    messages = applyTranscriptEvent(messages, { type: "tool.start", toolName: "read", toolCallId: "read-image-1", summary: "image.png", args: { path: "image.png" } }) ?? messages;
+    messages = applyTranscriptEvent(messages, {
+      type: "tool.end",
+      toolName: "read",
+      toolCallId: "read-image-1",
+      text: "Read image file [image/png]\n[image]",
+      isError: false,
+      content: [{ type: "text", text: "Read image file [image/png]" }, provisionalImage],
+      details: { source: "tool.end" },
+    }) ?? messages;
+
+    expect(messages[0]?.parts.filter((part) => part.type === "image")).toEqual([provisionalImage]);
+
+    messages = applyTranscriptEvent(messages, {
+      type: "message.end",
+      message: {
+        role: "toolResult",
+        toolCallId: "read-image-1",
+        toolName: "read",
+        content: finalContent,
+        details: { source: "message.end" },
+        isError: false,
+        timestamp,
+      },
+    }) ?? messages;
+    messages = applyTranscriptEvent(messages, { type: "assistant.delta", text: "done" }) ?? messages;
+
+    const finalizedToolLine: ChatLine = {
+      role: "tool",
+      parts: [{
+        type: "toolExecution",
+        toolCallId: "read-image-1",
+        toolName: "read",
+        summary: "image.png",
+        args: { path: "image.png" },
+        status: "success",
+        resultText: "Read image file [image/png]",
+        content: finalContent,
+        details: { source: "message.end" },
+      }, finalImage],
+      meta: { timestamp },
+    };
+    expect(messages).toEqual([finalizedToolLine, textMessage("assistant", "done")]);
+    expect(groupChatMessages(messages)).toEqual([
+      { kind: "group", startIndex: 0, endIndex: 0, messages: [{ ...finalizedToolLine, parts: [finalizedToolLine.parts[0]] }] },
+      { kind: "tool-image", index: 0, message: { ...finalizedToolLine, parts: [finalImage] }, toolName: "read" },
+      { kind: "message", index: 1, message: textMessage("assistant", "done") },
+    ]);
+  });
+
+  it("keeps image-only live tool results visible without inventing text", () => {
+    const image = { type: "image" as const, mimeType: "image/webp", data: "QUJD" };
+    let messages: ChatLine[] = [];
+
+    messages = applyTranscriptEvent(messages, { type: "tool.start", toolName: "capture", toolCallId: "capture-1", summary: "screenshot" }) ?? messages;
+    messages = applyTranscriptEvent(messages, { type: "tool.end", toolName: "capture", toolCallId: "capture-1", text: "[image]", isError: false, content: [image] }) ?? messages;
+    messages = applyTranscriptEvent(messages, {
+      type: "message.end",
+      message: { role: "toolResult", toolCallId: "capture-1", toolName: "capture", content: [image], isError: false },
+    }) ?? messages;
+
+    expect(messages).toEqual([{
+      role: "tool",
+      parts: [{
+        type: "toolExecution",
+        toolCallId: "capture-1",
+        toolName: "capture",
+        summary: "screenshot",
+        status: "success",
+        resultText: "",
+        content: [image],
+      }, image],
+    }]);
+    expect(groupChatMessages(messages).map((group) => group.kind)).toEqual(["group", "tool-image"]);
+  });
+
+  it("keeps repeated final tool-result events idempotent", () => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "RklOQUw=" };
+    const finalEvent = {
+      type: "message.end" as const,
+      message: {
+        role: "toolResult",
+        toolCallId: "read-image-repeat",
+        toolName: "read",
+        content: [{ type: "text", text: "Read image file [image/png]" }, image],
+        isError: false,
+        timestamp: "2026-07-13T22:00:00.000Z",
+      },
+    };
+    let messages: ChatLine[] = [];
+
+    messages = applyTranscriptEvent(messages, { type: "tool.start", toolName: "read", toolCallId: "read-image-repeat", summary: "image.png" }) ?? messages;
+    messages = applyTranscriptEvent(messages, {
+      type: "tool.end",
+      toolName: "read",
+      toolCallId: "read-image-repeat",
+      text: "Read image file [image/png]\n[image]",
+      isError: false,
+      content: finalEvent.message.content,
+    }) ?? messages;
+    messages = applyTranscriptEvent(messages, finalEvent) ?? messages;
+    messages = applyTranscriptEvent(messages, finalEvent) ?? messages;
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.parts.filter((part) => part.type === "toolExecution")).toHaveLength(1);
+    expect(messages[0]?.parts.filter((part) => part.type === "image")).toEqual([image]);
+    expect(messages[0]?.meta).toEqual({ timestamp: "2026-07-13T22:00:00.000Z" });
+  });
+
+  it("matches hydrated history for technical execution and visible image content", () => {
+    const image = { type: "image" as const, mimeType: "image/png", data: "QUJD" };
+    const timestamp = "2026-07-13T22:00:00.000Z";
+    const finalResult = {
+      role: "toolResult",
+      toolCallId: "read-history-parity",
+      toolName: "read",
+      content: [{ type: "text", text: "Read image file [image/png]" }, image],
+      details: { path: "image.png" },
+      isError: false,
+      timestamp,
+    };
+    const historyGroups = groupChatMessages(normalizeMessages([
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "read-history-parity", name: "read", arguments: { path: "image.png" } }],
+      },
+      finalResult,
+    ]));
+    let liveMessages: ChatLine[] = [];
+
+    liveMessages = applyTranscriptEvent(liveMessages, {
+      type: "tool.start",
+      toolName: "read",
+      toolCallId: "read-history-parity",
+      summary: "image.png",
+      args: { path: "image.png" },
+    }) ?? liveMessages;
+    liveMessages = applyTranscriptEvent(liveMessages, {
+      type: "tool.end",
+      toolName: "read",
+      toolCallId: "read-history-parity",
+      text: "Read image file [image/png]\n[image]",
+      isError: false,
+      content: finalResult.content,
+      details: finalResult.details,
+    }) ?? liveMessages;
+    liveMessages = applyTranscriptEvent(liveMessages, { type: "message.end", message: finalResult }) ?? liveMessages;
+
+    const liveGroups = groupChatMessages(liveMessages);
+    const technicalParts = (groups: ReturnType<typeof groupChatMessages>) => groups.flatMap((group) => group.kind === "group"
+      ? group.messages.flatMap((message) => message.parts.filter((part) => part.type === "toolExecution"))
+      : []);
+    const visibleImages = (groups: ReturnType<typeof groupChatMessages>) => groups.flatMap((group) => group.kind !== "group"
+      ? group.message.parts.filter((part) => part.type === "image")
+      : []);
+    const visibleImageMeta = (groups: ReturnType<typeof groupChatMessages>) => {
+      for (const group of groups) {
+        if (group.kind !== "group" && group.message.parts.some((part) => part.type === "image")) return group.message.meta;
+      }
+      return undefined;
+    };
+
+    expect(historyGroups.map((group) => group.kind)).toEqual(["group", "tool-image"]);
+    expect(liveGroups.map((group) => group.kind)).toEqual(["group", "tool-image"]);
+    expect(technicalParts(liveGroups)).toEqual(technicalParts(historyGroups));
+    expect(visibleImages(liveGroups)).toEqual(visibleImages(historyGroups));
+    expect(visibleImageMeta(historyGroups)).toEqual({ timestamp });
+    expect(visibleImageMeta(liveGroups)).toEqual({ timestamp });
+  });
+
   it("does not merge consecutive streamed skill reads", () => {
     let messages: ChatLine[] = [];
     messages = applyTranscriptEvent(messages, { type: "tool.start", toolName: "read", toolCallId: "1", summary: "", args: { path: "/skills/playwright/SKILL.md" } }) ?? messages;
@@ -283,6 +552,42 @@ describe("applyTranscriptEvent", () => {
     expect(applyTranscriptEvent(messages, { type: "message.end", message: { role: "user", content: "new prompt", timestamp: "2026-05-09T12:00:00.000Z" } })).toEqual([
       textMessage("user", "stopped prompt"),
       { ...textMessage("user", "new prompt"), meta: { timestamp: "2026-05-09T12:00:00.000Z" } },
+    ]);
+  });
+
+  it("seeds a null or undefined partial as a no-op", () => {
+    const messages = [textMessage("user", "question")];
+    expect(seedStreamingPartial(messages, null)).toBe(messages);
+    expect(seedStreamingPartial(messages, undefined)).toBe(messages);
+  });
+
+  it("seeds an in-flight assistant partial with text and thinking so live deltas append onto it", () => {
+    const seeded = seedStreamingPartial([textMessage("user", "question")], {
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "plan" }, { type: "text", text: "partial" }],
+    });
+
+    expect(seeded).toEqual([
+      textMessage("user", "question"),
+      { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "text", text: "partial" }] },
+    ]);
+
+    // A live delta continues the seeded assistant message rather than starting a new one.
+    expect(applyTranscriptEvent(seeded, { type: "assistant.delta", text: " answer" })).toEqual([
+      textMessage("user", "question"),
+      { role: "assistant", parts: [{ type: "thinking", text: "plan" }, { type: "text", text: "partial answer" }] },
+    ]);
+  });
+
+  it("seeds an in-progress tool call from the partial as a tool execution line", () => {
+    const seeded = seedStreamingPartial([textMessage("user", "run it")], {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "ls" } }],
+    });
+
+    expect(seeded).toEqual([
+      textMessage("user", "run it"),
+      { role: "tool", parts: [{ type: "toolExecution", toolCallId: "tool-1", toolName: "bash", summary: "ls", args: { command: "ls" }, status: "pending" }] },
     ]);
   });
 

@@ -26,7 +26,11 @@ x-pi-web-environment: &pi-web-environment
   PI_WEB_DOCKER_MODE: runtime
   PI_WEB_DOCKER_INSTALL_DIR: ${PI_WEB_DOCKER_INSTALL_DIR:?set by docker/install.sh}
   PI_WEB_DOCKER_HELPER_IMAGE: ${PI_WEB_IMAGE:-pi-web:local}
-  COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-pi-web}
+
+# User-owned extra container environment, shared with development mode through
+# the persistent data directory. Created by docker/install.sh and pi-web-docker.
+x-pi-web-env-file: &pi-web-env-file
+  - ${PI_WEB_DOCKER_DATA_DIR:-./data}/container.env
 
 x-pi-web-volumes: &pi-web-volumes
   - type: bind
@@ -44,6 +48,7 @@ services:
       - "${DOCKER_GID:-0}"
     security_opt:
       - label=disable
+    env_file: *pi-web-env-file
     environment: *pi-web-environment
     volumes: *pi-web-volumes
     healthcheck:
@@ -66,6 +71,7 @@ services:
       - "${DOCKER_GID:-0}"
     security_opt:
       - label=disable
+    env_file: *pi-web-env-file
     environment:
       <<: *pi-web-environment
       PI_WEB_HOST: 0.0.0.0

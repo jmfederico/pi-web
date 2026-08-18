@@ -18,6 +18,11 @@ const LINTABLE_ROOT_FILES = new Set([
   "vitest.config.ts",
 ]);
 
+const PUBLIC_DECLARATION_FILES = new Set([
+  "plugin-api.d.ts",
+  "server-plugin-api.d.ts",
+]);
+
 const LINTABLE_DIRECTORIES = [
   "extensions/",
   "pi-web-plugins/",
@@ -138,7 +143,7 @@ function isLintablePath(path) {
 }
 
 function isRelatedSourcePath(path) {
-  if (path === "plugin-api.d.ts") return true;
+  if (PUBLIC_DECLARATION_FILES.has(path)) return true;
   if (!/\.(?:[cm]?[jt]s|[jt]sx|json)$/u.test(path)) return false;
   return RELATED_SOURCE_DIRECTORIES.some((directory) => path.startsWith(directory));
 }

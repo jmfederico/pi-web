@@ -24,8 +24,9 @@ Commands:
   restart                 Restart web and sessiond
   restart-web             Restart only the web service
   restart-sessiond        Restart only the session daemon
-  update                  Rebuild/update and recreate the Docker stack
-                          (development mode requires a clean Git checkout)
+  update                  Update and recreate the Docker stack
+                          (development mode fast-forwards the checkout first
+                          and requires it to be clean)
   status                  Show Docker Compose service status
   logs [web|sessiond|data-init]
                           Follow Docker Compose logs
@@ -234,7 +235,10 @@ dev_git_operation() {
   git_dir=$1
   if [ -f "$git_dir/MERGE_HEAD" ]; then
     printf '%s\n' merge
-  elif [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ] || [ -f "$git_dir/REBASE_HEAD" ]; then
+  elif [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+    # REBASE_HEAD is not a valid marker: Git leaves it behind after a rebase
+    # completes. Only the rebase-merge/rebase-apply state directories mean
+    # a rebase is actually in progress.
     printf '%s\n' rebase
   elif [ -f "$git_dir/CHERRY_PICK_HEAD" ]; then
     printf '%s\n' cherry-pick
@@ -361,9 +365,35 @@ require_runtime_compose_assets() {
   [ -f "$root/.env" ] || die_missing_runtime_asset "$root" "$root/.env"
 }
 
+container_env_file_for_data_dir() {
+  container_env_root=$1
+  container_env_data_dir=$2
+  case "$container_env_data_dir" in
+    /*) printf '%s/container.env\n' "$container_env_data_dir" ;;
+    *) printf '%s/%s/container.env\n' "$container_env_root" "$container_env_data_dir" ;;
+  esac
+}
+
+# Compose fails when a declared env_file is absent, so guarantee the user-owned
+# file exists before any Compose command runs.
+ensure_runtime_container_env() {
+  container_env_root=$1
+  container_env_data_dir=$(required_env_file_value "$container_env_root/.env" PI_WEB_DOCKER_DATA_DIR)
+  container_env_path=$(container_env_file_for_data_dir "$container_env_root" "$container_env_data_dir")
+  [ ! -f "$container_env_path" ] || return 0
+  container_env_helper=$container_env_root/internal/host-profile.sh
+  [ -f "$container_env_helper" ] || die_missing_runtime_asset "$container_env_root" "$container_env_helper"
+  # shellcheck source=internal/host-profile.sh
+  # shellcheck disable=SC1091
+  . "$container_env_helper"
+  pi_web_docker_write_container_env_template "$container_env_path" \
+    || die "could not create container environment file: $container_env_path"
+}
+
 runtime_compose() {
   root=$(runtime_root)
   require_runtime_compose_assets "$root"
+  ensure_runtime_container_env "$root"
   project_name=$(required_env_file_value "$root/.env" COMPOSE_PROJECT_NAME)
   (
     cd "$root" || exit 1
@@ -445,7 +475,11 @@ run_restart_all() {
   compose_for_install restart web sessiond
 }
 
-run_runtime_host_update() {
+# Updates always run the installed installer, which refreshes the Docker assets
+# and regenerates the Compose environment before rebuilding and recreating. The
+# installer reuses the recorded host facts when it runs inside a container, so
+# the same path is correct from the host and from a detached helper.
+run_runtime_installer_update() {
   root=$(runtime_root)
   require_runtime_compose_assets "$root"
   installer=$(runtime_installer "$root")
@@ -454,21 +488,50 @@ run_runtime_host_update() {
   exec "$installer" --install-dir "$root"
 }
 
+dev_update_fast_forward() {
+  root=$(dev_root)
+  require_command git
+
+  branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  if [ -z "$branch" ]; then
+    log "pi-web-docker: warning: $root has a detached HEAD, so there is no branch to fast-forward"
+    log "pi-web-docker: rebuilding the current checkout without fetching new commits"
+    return 0
+  fi
+
+  upstream=$(git -C "$root" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)
+  if [ -z "$upstream" ]; then
+    log "pi-web-docker: warning: branch $branch in $root has no upstream, so there is nothing to pull"
+    log "pi-web-docker: rebuilding the current checkout without fetching new commits"
+    return 0
+  fi
+
+  before=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
+  log "Fast-forwarding $branch from $upstream in $root ..."
+  # Never block a detached helper on credential or passphrase prompts.
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$root" pull --ff-only; then
+    log "pi-web-docker: warning: git pull --ff-only failed for $branch from $upstream"
+    log "pi-web-docker: continuing with the existing checkout; integrate $upstream manually to pick up newer commits"
+    return 0
+  fi
+
+  after=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
+  if [ -n "$before" ] && [ "$before" = "$after" ]; then
+    log "Checkout $root is already up to date with $upstream."
+  else
+    log "Updated $branch in $root: $before -> $after"
+  fi
+}
+
 run_update() {
   assert_no_args update "$@"
   require_clean_dev_update_checkout
   case "$(docker_mode)" in
     runtime)
-      if ! is_truthy "${PI_WEB_DOCKER_RUNTIME:-}"; then
-        run_runtime_host_update
-      fi
-      cache_bust=${CACHE_BUST:-pi-web-docker-$(date -u +%Y%m%dT%H%M%SZ)}
-      log "Building PI WEB runtime image with CACHE_BUST=$cache_bust ..."
-      CACHE_BUST=$cache_bust runtime_compose build --pull --no-cache
-      log "Recreating PI WEB runtime services ..."
-      runtime_compose up -d --force-recreate --remove-orphans
+      run_runtime_installer_update
       ;;
     dev)
+      dev_update_fast_forward
       log "Rebuilding PI WEB development image ..."
       dev_compose build --pull
       log "Recreating PI WEB development services ..."
@@ -527,6 +590,12 @@ run_doctor() {
       [ -f "$root/compose.yml" ] && printf 'Runtime Compose file: %s\n' "$root/compose.yml" || printf 'Runtime Compose file: missing (%s/compose.yml)\n' "$root"
       [ -f "$root/compose.override.yml" ] && printf 'Runtime Compose override: %s\n' "$root/compose.override.yml" || printf 'Runtime Compose override: missing (%s/compose.override.yml)\n' "$root"
       [ -x "$root/install.sh" ] && printf 'Runtime installer: %s\n' "$root/install.sh" || printf 'Runtime installer: missing or not executable (%s/install.sh)\n' "$root"
+      if runtime_data_dir=$(env_file_value "$root/.env" PI_WEB_DOCKER_DATA_DIR 2>/dev/null) && [ -n "$runtime_data_dir" ]; then
+        runtime_container_env=$(container_env_file_for_data_dir "$root" "$runtime_data_dir")
+        [ -f "$runtime_container_env" ] && printf 'Container environment: %s\n' "$runtime_container_env" || printf 'Container environment: created on next start (%s)\n' "$runtime_container_env"
+      else
+        printf 'Container environment: unknown (%s/.env has no PI_WEB_DOCKER_DATA_DIR)\n' "$root"
+      fi
       ;;
     dev)
       dev_config=$root/.pi-web/docker-compose-dev.local.env
@@ -539,6 +608,12 @@ run_doctor() {
       [ -f "$dev_override" ] && printf 'Generated dev Compose override: %s\n' "$dev_override" || printf 'Generated dev Compose override: missing (%s)\n' "$dev_override"
       [ -f "$dev_compose_file" ] && printf 'Dev Compose file: %s\n' "$dev_compose_file" || printf 'Dev Compose file: missing (%s)\n' "$dev_compose_file"
       [ -x "$dev_wrapper" ] && printf 'Dev Compose helper: %s\n' "$dev_wrapper" || printf 'Dev Compose helper: missing or not executable (%s)\n' "$dev_wrapper"
+      if dev_data_dir=$(env_file_value "$dev_env" PI_WEB_DOCKER_DATA_DIR 2>/dev/null) && [ -n "$dev_data_dir" ]; then
+        dev_container_env=$(container_env_file_for_data_dir "$root" "$dev_data_dir")
+        [ -f "$dev_container_env" ] && printf 'Container environment: %s\n' "$dev_container_env" || printf 'Container environment: created on next start (%s)\n' "$dev_container_env"
+      else
+        printf 'Container environment: created on next start (data directory not generated yet)\n'
+      fi
       if [ -f "$dev_env" ]; then
         dev_uid=$(env_file_value "$dev_env" PI_WEB_UID 2>/dev/null || true)
         dev_gid=$(env_file_value "$dev_env" PI_WEB_GID 2>/dev/null || true)
@@ -712,7 +787,7 @@ start_detached_helper() {
 
   timestamp=$(date -u +%Y%m%d%H%M%S)
   helper_name=pi-web-docker-$action-$timestamp-$$
-  generated_env_keys="PI_WEB_UID PI_WEB_GID DOCKER_GID PI_WEB_DOCKER_HOST_PROFILE HOSTEXEC_MODE PI_WEB_DOCKER_EXTRA_HOST_PATHS PI_WEB_DOCKER_DATA_DIR PI_WEB_DOCKER_INSTALL_DIR PI_WEB_DOCKER_DEV_REPO_ROOT PI_WEB_DOCKER_REF PI_WEB_BIND_ADDR PI_WEB_PORT PI_WEB_DEV_API_BIND_ADDR PI_WEB_DEV_BIND_ADDR PI_WEB_DEV_API_PORT PI_WEB_DEV_PORT PI_WEB_VERSION PI_WEB_OPENSUSE_IMAGE PI_WEB_NODEJS_MAJOR PI_WEB_NODEJS_REPO PI_WEB_EXTRA_ZYPPER_PACKAGES PI_WEB_IMAGE PI_WEB_DEV_IMAGE COMPOSE_PROJECT_NAME HOSTEXEC_IMAGE PI_WEB_MAX_UPLOAD_BYTES"
+  generated_env_keys="PI_WEB_UID PI_WEB_GID DOCKER_GID PI_WEB_DOCKER_HOST_PROFILE HOSTEXEC_MODE PI_WEB_DOCKER_EXTRA_HOST_PATHS PI_WEB_DOCKER_DATA_DIR PI_WEB_DOCKER_INSTALL_DIR PI_WEB_DOCKER_DEV_REPO_ROOT PI_WEB_DOCKER_REF PI_WEB_BIND_ADDR PI_WEB_PORT PI_WEB_DEV_API_BIND_ADDR PI_WEB_DEV_BIND_ADDR PI_WEB_DEV_API_PORT PI_WEB_DEV_PORT PI_WEB_DEV_SESSIOND_SOCKET PI_WEB_VERSION PI_WEB_OPENSUSE_IMAGE PI_WEB_NODEJS_MAJOR PI_WEB_NODEJS_REPO PI_WEB_EXTRA_ZYPPER_PACKAGES PI_WEB_IMAGE PI_WEB_DEV_IMAGE COMPOSE_PROJECT_NAME HOSTEXEC_IMAGE PI_WEB_MAX_UPLOAD_BYTES"
 
   set -- run -d \
     --env-file "$env_file" \
