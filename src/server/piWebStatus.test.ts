@@ -7,6 +7,7 @@ import { VERSION as PI_CODING_AGENT_VERSION } from "@earendil-works/pi-coding-ag
 import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import type { PiWebRuntimeComponent } from "../shared/apiTypes.js";
+import { PI_WEB_CAPABILITIES, WEB_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 
 const originalSkipVersionCheck = process.env["PI_WEB_SKIP_VERSION_CHECK"];
 const originalHome = process.env["HOME"];
@@ -111,14 +112,28 @@ describe("PI WEB status", () => {
     }
   });
 
-  it("advertises plugin lifecycle as a web-owned effective capability", async () => {
+  it("advertises only the active web-process capability snapshot", async () => {
     const daemon = daemonWithRuntime(runningSessiondRuntime());
 
-    const runtime = await getPiWebRuntime(daemon);
+    const dormantRuntime = await getPiWebRuntime(daemon);
+    const activeRuntime = await getPiWebRuntime(daemon, {
+      webCapabilities: [
+        ...WEB_RUNTIME_CAPABILITIES,
+        PI_WEB_CAPABILITIES.safeTunnel,
+      ],
+    });
 
-    expect(runtime.components.web.capabilities).toEqual(["plugins.lifecycle"]);
-    expect(runtime.components.sessiond.capabilities).toEqual([]);
-    expect(runtime.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(dormantRuntime.components.web.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(dormantRuntime.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(activeRuntime.components.web.capabilities).toEqual([
+      "plugins.lifecycle",
+      "safeTunnel",
+    ]);
+    expect(activeRuntime.components.sessiond.capabilities).toEqual([]);
+    expect(activeRuntime.capabilities).toEqual([
+      "plugins.lifecycle",
+      "safeTunnel",
+    ]);
   });
 
   it("carries the daemon-owned active agent profile through the web runtime response", async () => {

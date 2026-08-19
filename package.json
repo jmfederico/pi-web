@@ -38,6 +38,7 @@
     "examples/workspace-provider-plugin",
     "docs/plugins.md",
     "docs/config.md",
+    "docs/safe-tunnel.md",
     "docs/assets",
     "plugin-api.d.ts",
     "server-plugin-api.d.ts"
@@ -97,6 +98,7 @@
     "lit": "^3.3.3",
     "marked": "^18.0.6",
     "node-pty": "^1.1.0",
+    "smol-toml": "^1.6.1",
     "typebox": "1.3.7",
     "undici": "^8.5.0",
     "ws": "^8.21.0"

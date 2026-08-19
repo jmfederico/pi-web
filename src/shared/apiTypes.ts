@@ -1,4 +1,5 @@
 import type { MachineStatusUiEvent } from "./machineStatus.js";
+import type { SafeTunnelDesiredState } from "./safeTunnelTypes.js";
 import type {
   DeleteWorkspaceFileResponse,
   FileContentMediaType,
@@ -81,6 +82,7 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
  */
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
+  safeTunnel: "safeTunnel",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -172,6 +174,8 @@ export interface PiWebConfigValues {
   uploads?: PiWebUploadsConfig;
   /** Maximum accepted HTTP request body size in bytes (uploads/attachments). */
   maxUploadBytes?: number;
+  /** Experimental, web/API-owned Safe Tunnel availability. Off by default and requires a web/API restart. */
+  safeTunnel?: boolean;
   /** When true, LLMs can start new sessions via the spawn_session tool. */
   spawnSessions?: boolean;
   /**
@@ -315,10 +319,106 @@ export interface PiPackageMutationResponse extends PiPackagesResponse {
   removed?: boolean;
 }
 
+export type SafeTunnelConfigState =
+  | "missing"
+  | "unregistered"
+  | "registered"
+  | "rejected"
+  | "invalid";
+export type SafeTunnelRuntimeState = "stopped" | "running" | "unknown";
+export type SafeTunnelRuntimeDiagnosticCode =
+  | "credentials_rejected"
+  | "heartbeat_failed"
+  | "registration_required"
+  | "runtime_failed"
+  | "state_invalid";
+export type SafeTunnelOperationKind = "enable";
+export type SafeTunnelOperationPhase =
+  | "preparing"
+  | "awaiting_approval"
+  | "registering"
+  | "starting"
+  | "enabled";
+export type SafeTunnelOperationStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface SafeTunnelConfigStatus {
+  exists: boolean;
+  state: SafeTunnelConfigState;
+  localPiWebUrl?: string;
+  frpcPathConfigured?: boolean;
+  machine?: {
+    controlApiBaseUrl: string;
+    machineId: string;
+    machineSlug?: string;
+    publicHostname?: string;
+    publicUrl?: string;
+  };
+  error?: string;
+}
+
+export interface SafeTunnelRuntimeStatus {
+  state: SafeTunnelRuntimeState;
+  /** Stable machine-readable category for browser UI; raw external failures never cross this boundary. */
+  diagnosticCode?: SafeTunnelRuntimeDiagnosticCode;
+  /** PI WEB-authored summary only; provider and child diagnostics stay server-side. */
+  error?: string;
+}
+
+export interface SafeTunnelOperationResponse {
+  id: string;
+  kind: SafeTunnelOperationKind;
+  phase: SafeTunnelOperationPhase;
+  status: SafeTunnelOperationStatus;
+  error?: string;
+  publicUrl?: string;
+  userCode?: string;
+  verificationUriComplete?: string;
+}
+
+export interface SafeTunnelStatusResponse {
+  config: SafeTunnelConfigStatus;
+  /** Persisted user intent; deliberately independent from observed runtime state. */
+  desiredState: SafeTunnelDesiredState;
+  runtime: SafeTunnelRuntimeStatus;
+  activeOperation?: SafeTunnelOperationResponse;
+}
+
+export interface SafeTunnelAdvancedOverrides {
+  /** Self-hosted/development Control API override; production is the server-owned default. */
+  controlApiUrl?: string;
+  /** Development override for the inferred OS hostname. */
+  machineName?: string;
+  /** Development override for the inferred collision-resistant DNS slug. */
+  machineSlug?: string;
+  /** Development override for the running PI WEB listener target. */
+  localPiWebUrl?: string;
+  /** Advanced executable override; omission preserves a saved override or uses managed frpc. */
+  frpcPath?: string;
+}
+
+export interface SafeTunnelEnableRequest {
+  advanced?: SafeTunnelAdvancedOverrides;
+}
+
+export interface SafeTunnelEnableResponse {
+  accepted: true;
+  operation: SafeTunnelOperationResponse;
+  status: SafeTunnelStatusResponse;
+}
+
+export interface SafeTunnelDisableResponse {
+  status: SafeTunnelStatusResponse;
+}
+
 export interface PiWebConfigEnvOverrides {
   host: boolean;
   port: boolean;
   allowedHosts: boolean;
+  safeTunnel: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
   askUser: boolean;

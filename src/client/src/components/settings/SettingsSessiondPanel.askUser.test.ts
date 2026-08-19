@@ -55,6 +55,7 @@ function configResponse(askUser: boolean, askUserOverride = false): PiWebConfigR
       host: false,
       port: false,
       allowedHosts: false,
+      safeTunnel: false,
       spawnSessions: false,
       subsessions: false,
       askUser: askUserOverride,

@@ -97,6 +97,7 @@
             <a href="#project-config">Project config</a>
             <a href="#worktree-pre-remove-hook">Pre-remove hook</a>
             <a href="#keys">Config matrix</a>
+            <a href="#safe-tunnel-availability">Safe Tunnel availability</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#agent-runtime">Agent state directory</a>
@@ -121,7 +122,8 @@
                 Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected
                 machine for config that affects work running there: session daemon tools, desired PI WEB plugin
                 enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway:
-                keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts.
+                keyboard shortcuts, remote machine registry/tokens, gateway host/port/allowed-hosts, and experimental
+                Safe Tunnel availability.
               </p>
               <p>
                 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the
@@ -175,12 +177,14 @@
               </p>
               <p>
                 Environment overrides include <code>PI_WEB_HOST</code>, <code>PI_WEB_PORT</code> / <code>PORT</code>,
-                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_CODING_AGENT_DIR</code>,
-                <code>PI_CODING_AGENT_SESSION_DIR</code>, <code>PI_WEB_SPAWN_SESSIONS</code>,
-                <code>PI_WEB_SUBSESSIONS</code>, <code>PI_WEB_ASK_USER</code>, and <code>PI_WEB_ENVIRONMENT_FACTS</code>.
+                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_SAFE_TUNNEL</code>,
+                <code>PI_CODING_AGENT_DIR</code>, <code>PI_CODING_AGENT_SESSION_DIR</code>,
+                <code>PI_WEB_SPAWN_SESSIONS</code>, <code>PI_WEB_SUBSESSIONS</code>,
+                <code>PI_WEB_ASK_USER</code>, and <code>PI_WEB_ENVIRONMENT_FACTS</code>.
               </p>
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
+                <li><code>safeTunnel</code>: restart the gateway web/API service or process; do not restart the session daemon. Availability remains at the active server startup snapshot until that restart.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
                 <li><code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code> / <code>environmentFacts</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
@@ -216,6 +220,7 @@
     "defaultFolder": ".pi-web/uploads"
   },
   "maxUploadBytes": 67108864,
+  "safeTunnel": false,
   "spawnSessions": true,
   "subsessions": true,
   "askUser": true,
@@ -340,8 +345,8 @@ worktree_path="$1"
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
                 <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
-                are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
-                registry/tokens stay local.
+                are edited for the selected machine; gateway host/port/allowed-hosts, Safe Tunnel availability, keyboard
+                shortcuts, and machine registry/tokens stay local.
               </p>
               <div class="table-scroll" role="region" aria-label="PI WEB configuration matrix" tabindex="0">
                 <table class="config-matrix">
@@ -374,12 +379,20 @@ worktree_path="$1"
                       <td>Restart web/API</td>
                     </tr>
                     <tr>
-                      <td>Dev-server allowed hosts</td>
+                      <td>Dev-server and Safe Tunnel API hosts</td>
                       <td><code>allowedHosts</code></td>
                       <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
                       <td>Global</td>
                       <td>Not supported locally</td>
-                      <td>Restart dev web/UI</td>
+                      <td>Restart dev web/UI; exact Safe Tunnel read/mutation hosts also require a gateway web/API restart</td>
+                    </tr>
+                    <tr>
+                      <td>Experimental Safe Tunnel availability</td>
+                      <td><code>safeTunnel</code></td>
+                      <td><code>PI_WEB_SAFE_TUNNEL</code></td>
+                      <td>Global/gateway web/API</td>
+                      <td>Not supported locally or in selected-machine config</td>
+                      <td>Restart gateway web/API; no session-daemon restart</td>
                     </tr>
                     <tr>
                       <td>External filesystem roots</td>
@@ -601,6 +614,47 @@ worktree_path="$1"
                 <code>environmentFacts</code> config key to <code>false</code>, or
                 <code>PI_WEB_ENVIRONMENT_FACTS=false</code> in the session daemon's environment, to leave environment
                 facts out of session system prompts; they default to on.
+              </p>
+            </section>
+
+            <section id="safe-tunnel-availability">
+              <h2>Experimental Safe Tunnel availability</h2>
+              <p>
+                Safe Tunnel is experimental and completely unavailable by default. Its availability gate is the global,
+                gateway-only <code>safeTunnel</code> key; set it to the JSON boolean <code>true</code> to opt in. This key
+                is not accepted in project-local or selected-machine config, and it is distinct from the durable
+                <strong>Enable Safe Tunnel</strong> / <strong>Disable Safe Tunnel</strong> desired state stored beneath
+                <code>PI_WEB_DATA_DIR</code>.
+              </p>
+              <div class="code-card">
+                <pre><code>{
+  "safeTunnel": true
+}</code></pre>
+              </div>
+              <p>
+                <code>PI_WEB_SAFE_TUNNEL</code> is the environment override. A non-empty value takes precedence over the
+                config file in both directions: <code>1</code> and case-insensitive <code>true</code> enable availability,
+                while <code>0</code>, <code>false</code>, and every other non-empty value disable it. An empty value is
+                treated as unset and falls back to the config file. Config-file values are not coerced: strings, numbers,
+                and <code>null</code> are invalid because <code>safeTunnel</code> must be a JSON boolean.
+              </p>
+              <p>
+                Availability is resolved once when the gateway web/API process starts. Restart that process after
+                changing the key or environment; no session-daemon restart is needed. Making Safe Tunnel available still
+                leaves its durable desired state disabled until the user chooses <strong>Enable Safe Tunnel</strong>.
+                Turning availability off and restarting makes the feature dormant without rewriting that desired state.
+              </p>
+              <p>
+                Any non-empty <code>PI_WEB_OFFLINE</code> or <code>PI_OFFLINE</code> setting dominates both opt-in
+                mechanisms, including values such as <code>0</code>. In that process Safe Tunnel has no routes, UI, state
+                reads or writes, timers, artifact work, child process, or background network activity.
+              </p>
+              <p>
+                When Safe Tunnel is available and used, private state lives at
+                <code>$PI_WEB_DATA_DIR/safe-tunnel/config.json</code>. The one pinned managed <code>frpc</code> executable,
+                when downloaded, lives beneath <code>$PI_WEB_DATA_DIR/safe-tunnel/frpc/versions/0.69.1/</code>. See the
+                <a href="safe-tunnel.md">experimental Safe Tunnel guide</a> for operation, ingress-security requirements,
+                restart behavior, and managed-platform limits.
               </p>
             </section>
 

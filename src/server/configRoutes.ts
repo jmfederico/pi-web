@@ -130,6 +130,7 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   const pathAccess = value["pathAccess"];
   const uploads = value["uploads"];
   const maxUploadBytes = value["maxUploadBytes"];
+  const safeTunnel = value["safeTunnel"];
   const spawnSessions = value["spawnSessions"];
   const subsessions = value["subsessions"];
   const askUser = value["askUser"];
@@ -148,6 +149,10 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   if (pathAccess !== undefined) config.pathAccess = parsePathAccessRequest(pathAccess);
   if (uploads !== undefined) config.uploads = parseUploadsConfig(uploads, "request");
   if (maxUploadBytes !== undefined) config.maxUploadBytes = parseMaxUploadBytesRequest(maxUploadBytes);
+  if (safeTunnel !== undefined) {
+    if (typeof safeTunnel !== "boolean") throw new Error("PI WEB config safeTunnel must be a boolean");
+    config.safeTunnel = safeTunnel;
+  }
   if (spawnSessions !== undefined) {
     if (typeof spawnSessions !== "boolean") throw new Error("PI WEB config spawnSessions must be a boolean");
     config.spawnSessions = spawnSessions;
@@ -246,6 +251,7 @@ function parsePiWebConfigEnvOverridesResponse(value: unknown, source: string): P
     host: requireResponseBoolean(record, "host", source),
     port: requireResponseBoolean(record, "port", source),
     allowedHosts: requireResponseBoolean(record, "allowedHosts", source),
+    safeTunnel: requireResponseBoolean(record, "safeTunnel", source),
     spawnSessions: requireResponseBoolean(record, "spawnSessions", source),
     subsessions: requireResponseBoolean(record, "subsessions", source),
     askUser: requireResponseBoolean(record, "askUser", source),
@@ -274,6 +280,7 @@ function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): PiWebConfigEnvOverride
     host: isEnvSet(env["PI_WEB_HOST"]),
     port: isEnvSet(env["PI_WEB_PORT"]) || isEnvSet(env["PORT"]),
     allowedHosts: isEnvSet(env["PI_WEB_ALLOWED_HOSTS"]),
+    safeTunnel: isEnvSet(env["PI_WEB_SAFE_TUNNEL"]),
     spawnSessions: isEnvSet(env["PI_WEB_SPAWN_SESSIONS"]),
     subsessions: isEnvSet(env["PI_WEB_SUBSESSIONS"]),
     askUser: isEnvSet(env["PI_WEB_ASK_USER"]),

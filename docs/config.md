@@ -11,7 +11,7 @@ PI WEB uses two config files:
 - **Global PI WEB config:** `$PI_WEB_CONFIG`, or `$XDG_CONFIG_HOME/pi-web/config.json`, or `~/.config/pi-web/config.json`.
 - **Project-local PI WEB config:** `<project>/.pi-web/config.json` for commit-able project settings.
 
-Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: keyboard shortcuts, remote machine registry/tokens, and gateway host/port/allowed-hosts.
+Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: keyboard shortcuts, remote machine registry/tokens, gateway host/port/allowed-hosts, and experimental Safe Tunnel availability.
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
@@ -33,11 +33,12 @@ defaults → global config file → environment overrides
 
 Supported project-local settings are then applied for that project's workspaces. For upload defaults, `<project>/.pi-web/config.json` overrides the global value.
 
-Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
+Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_SAFE_TUNNEL`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
 
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
+- `safeTunnel`: restart the gateway web/API service or process; do not restart the session daemon. Availability remains at the active server startup snapshot until that restart.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
@@ -60,6 +61,7 @@ Process restarts depend on the key:
     "defaultFolder": ".pi-web/uploads"
   },
   "maxUploadBytes": 67108864,
+  "safeTunnel": false,
   "spawnSessions": true,
   "subsessions": true,
   "askUser": true,
@@ -143,14 +145,15 @@ worktree_path="$1"
 
 ## Configuration matrix
 
-Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine registry/tokens stay local.
+Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, Safe Tunnel availability, keyboard shortcuts, and machine registry/tokens stay local.
 
 | Config | JSON key | Env var | Scope | Project-local behavior | Applies / restart |
 | --- | --- | --- | --- | --- | --- |
 | **Config-file keys** |  |  |  |  |  |
 | Web/API bind host | `host` | `PI_WEB_HOST` | Global | Not supported locally | Restart web/API |
 | Web/API port | `port` | `PI_WEB_PORT`, `PORT` | Global | Not supported locally | Restart web/API |
-| Dev-server allowed hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Global | Not supported locally | Restart dev web/UI |
+| Dev-server and Safe Tunnel API hosts | `allowedHosts` | `PI_WEB_ALLOWED_HOSTS` | Global | Not supported locally | Restart dev web/UI; exact Safe Tunnel read/mutation hosts also require a gateway web/API restart |
+| Experimental Safe Tunnel availability | `safeTunnel` | `PI_WEB_SAFE_TUNNEL` | Global/gateway web/API | Not supported locally or in selected-machine config | Restart gateway web/API; no session-daemon restart |
 | External filesystem roots | `pathAccess.allowedPaths` | — | Global + project | **Merges**: global roots first, then project roots; duplicates removed | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | — | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
@@ -181,13 +184,29 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 
 ### Managed data directory
 
-`PI_WEB_DATA_DIR` sets the root for PI WEB-managed runtime state and defaults to `~/.pi-web`. Unless a more specific path override is configured, PI WEB stores its project and machine registries, locally discovered plugins, default session-daemon socket, and session archives beneath this root.
+`PI_WEB_DATA_DIR` sets the root for PI WEB-managed runtime state and defaults to `~/.pi-web`. Unless a more specific path override is configured, PI WEB stores its project and machine registries, locally discovered plugins, default session-daemon socket, and session archives beneath this root. When experimental Safe Tunnel is available and used, its private state lives at `safe-tunnel/config.json`; the one pinned managed `frpc` executable, when downloaded, lives beneath `safe-tunnel/frpc/versions/0.69.1/` in the same data directory.
 
 Each data directory is independent: after pointing PI WEB at a new root, it starts there with empty registries and no session archives. To carry session archives over, stop PI WEB, then copy `archived-sessions.json` and the `archived-sessions/` directory from the old data directory into the new one before starting it again.
 
 One live session daemon owns each data directory. At startup the daemon records its ownership in `sessiond-owner.json` inside the data directory; a second session daemon pointed at the same directory while the first is still running fails loudly at startup with an error naming the owning process and the distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT` values a second instance needs. The web/API process of the same instance shares the data directory without claiming it, and a short startup grace covers ordinary service restarts. A marker left behind by a daemon that is no longer running is taken over automatically; if startup still refuses because of a marker whose owner is gone, delete the stale `sessiond-owner.json` as the error message suggests.
 
 This setting does not change the PI WEB config file selected by `PI_WEB_CONFIG` or Pi-owned state such as the active session files selected by `PI_CODING_AGENT_SESSION_DIR`.
+
+### Experimental Safe Tunnel availability
+
+Safe Tunnel is experimental and completely unavailable by default. Its availability gate is the global, gateway-only `safeTunnel` key; set it to the JSON boolean `true` to opt in. This key is not accepted in project-local or selected-machine config, and it is distinct from the durable **Enable Safe Tunnel** / **Disable Safe Tunnel** desired state stored beneath `PI_WEB_DATA_DIR`.
+
+```json
+{
+  "safeTunnel": true
+}
+```
+
+`PI_WEB_SAFE_TUNNEL` is the environment override. A non-empty value takes precedence over the config file in both directions: `1` and case-insensitive `true` enable availability, while `0`, `false`, and every other non-empty value disable it. An empty value is treated as unset and falls back to the config file. Config-file values are not coerced: strings, numbers, and `null` are invalid because `safeTunnel` must be a JSON boolean.
+
+Availability is resolved once when the gateway web/API process starts. Restart that process after changing the key or environment; no session-daemon restart is needed. Making Safe Tunnel available still leaves its durable desired state disabled until the user chooses **Enable Safe Tunnel**. Turning availability off and restarting makes the feature dormant without rewriting that desired state.
+
+Any non-empty `PI_WEB_OFFLINE` or `PI_OFFLINE` setting dominates both opt-in mechanisms, including values such as `0`. In that process Safe Tunnel has no routes, UI, state reads or writes, timers, artifact work, child process, or background network activity. See the [experimental Safe Tunnel guide](safe-tunnel.md) for operation, ingress-security requirements, restart behavior, and managed-platform limits.
 
 ### Agent process environment
 

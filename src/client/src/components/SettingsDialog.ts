@@ -2,7 +2,7 @@ import { css, html, LitElement, type PropertyValues, type TemplateResult } from 
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
 import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineRuntime, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
-import type { SettingsSection } from "../settingsRoute";
+import { normalizeSettingsSection, type SettingsSection } from "../settingsRoute";
 import "./ModalSurface";
 import "./settings/SettingsGeneralPanel";
 import "./settings/SettingsSessiondPanel";
@@ -16,12 +16,19 @@ import { friendlySelectedMachineSettingsErrorMessage, isSelectedMachineSettingsU
 import { mergeSelectedMachinePluginConfig, pluginEnabledConfigPatch } from "./settings/settingsPluginConfig";
 import { mergeSelectedMachineSessiondConfig } from "./settings/settingsSessiondConfig";
 
+export type SafeTunnelPanelModuleLoader = () => Promise<unknown>;
+
+const loadSafeTunnelPanelModule: SafeTunnelPanelModuleLoader = () => import("./settings/SettingsSafeTunnelPanel");
+type SafeTunnelPanelLoadState = "idle" | "loading" | "ready" | "error";
+
 @customElement("settings-dialog")
 export class SettingsDialog extends LitElement {
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) machine: Machine | undefined;
   @property({ attribute: false }) machineRuntime: MachineRuntime | undefined;
+  @property({ attribute: false }) safeTunnelAvailable = false;
+  @property({ attribute: false }) safeTunnelPanelLoader: SafeTunnelPanelModuleLoader = loadSafeTunnelPanelModule;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
   @property({ attribute: false }) onClose?: () => void;
   @property({ attribute: false }) onConfigSaved?: (config: PiWebConfigValues) => void;
@@ -47,6 +54,7 @@ export class SettingsDialog extends LitElement {
   @state() private packageError = "";
   @state() private savedMessage = "";
   @state() private packageMessage = "";
+  @state() private safeTunnelPanelLoadState: SafeTunnelPanelLoadState = "idle";
   private savedMessageTimer: number | undefined;
   private loadRequestSeq = 0;
   private accessLoadRequestSeq = 0;
@@ -62,6 +70,7 @@ export class SettingsDialog extends LitElement {
     void this.reloadSessiondState();
     void this.loadPluginsForTarget();
     void this.loadPackagesForTarget();
+    void this.ensureSafeTunnelPanelLoaded();
   }
 
   override disconnectedCallback(): void {
@@ -71,6 +80,10 @@ export class SettingsDialog extends LitElement {
   }
 
   protected override updated(changed: PropertyValues<this>): void {
+    if (changed.has("section") || changed.has("safeTunnelAvailable")) {
+      void this.ensureSafeTunnelPanelLoaded();
+    }
+
     const currentTarget = this.settingsTarget();
     if (changed.has("machine")) {
       const previousTarget = settingsMachineTarget(changed.get("machine"));
@@ -109,6 +122,7 @@ export class SettingsDialog extends LitElement {
             ${this.renderNavButton("sessiond", "Session daemon", "Selected machine")}
             ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
             ${this.renderNavButton("plugins", "PI WEB plugins", "Selected machine")}
+            ${this.safeTunnelAvailable ? this.renderNavButton("safe-tunnel", "Safe Tunnel", "This gateway") : null}
             ${this.renderNavButton("shortcuts", "Keyboard", "Gateway shortcuts")}
           </nav>
           <main class="settings-content">
@@ -123,7 +137,8 @@ export class SettingsDialog extends LitElement {
     // Keep the section -> panel routing in sync with the public
     // `activeSettingsPanelTag` seam below, which tests assert against instead of
     // scraping this template's markup.
-    if (this.section === "sessiond") {
+    const section = this.activeSection();
+    if (section === "sessiond") {
       return html`
         <settings-sessiond-panel
           .configResponse=${this.sessiondConfigResponse}
@@ -137,7 +152,7 @@ export class SettingsDialog extends LitElement {
         ></settings-sessiond-panel>
       `;
     }
-    if (this.section === "shortcuts") {
+    if (section === "shortcuts") {
       return html`
         <settings-shortcuts-panel
           .actions=${this.actions}
@@ -151,7 +166,7 @@ export class SettingsDialog extends LitElement {
         ></settings-shortcuts-panel>
       `;
     }
-    if (this.section === "packages") {
+    if (section === "packages") {
       return html`
         <settings-packages-panel
           .packagesResponse=${this.packagesResponse}
@@ -167,7 +182,7 @@ export class SettingsDialog extends LitElement {
         ></settings-packages-panel>
       `;
     }
-    if (this.section === "plugins") {
+    if (section === "plugins") {
       return html`
         <settings-plugins-panel
           .configResponse=${this.selectedPluginConfigResponse}
@@ -183,6 +198,7 @@ export class SettingsDialog extends LitElement {
         ></settings-plugins-panel>
       `;
     }
+    if (section === "safe-tunnel") return this.renderSafeTunnelPanel();
     return html`
       <settings-general-panel
         .configResponse=${this.configResponse}
@@ -202,8 +218,44 @@ export class SettingsDialog extends LitElement {
     `;
   }
 
+  private renderSafeTunnelPanel(): TemplateResult {
+    if (this.safeTunnelPanelLoadState === "ready") {
+      return html`<settings-safe-tunnel-panel></settings-safe-tunnel-panel>`;
+    }
+    if (this.safeTunnelPanelLoadState === "error") {
+      return html`
+        <section class="safe-tunnel-load" role="alert">
+          <p>Failed to load Safe Tunnel settings.</p>
+          <button type="button" @click=${() => { void this.retrySafeTunnelPanelLoad(); }}>Retry</button>
+        </section>
+      `;
+    }
+    return html`<p class="safe-tunnel-load" aria-live="polite">Loading Safe Tunnel settings…</p>`;
+  }
+
+  private activeSection(): SettingsSection {
+    return normalizeSettingsSection(this.section, this.safeTunnelAvailable) ?? "general";
+  }
+
+  private async ensureSafeTunnelPanelLoaded(): Promise<void> {
+    if (!this.isConnected || this.activeSection() !== "safe-tunnel") return;
+    if (this.safeTunnelPanelLoadState === "loading" || this.safeTunnelPanelLoadState === "ready") return;
+    this.safeTunnelPanelLoadState = "loading";
+    try {
+      await this.safeTunnelPanelLoader();
+      this.safeTunnelPanelLoadState = "ready";
+    } catch {
+      this.safeTunnelPanelLoadState = "error";
+    }
+  }
+
+  private async retrySafeTunnelPanelLoad(): Promise<void> {
+    this.safeTunnelPanelLoadState = "idle";
+    await this.ensureSafeTunnelPanelLoaded();
+  }
+
   private renderNavButton(section: SettingsSection, label: string, detail: string): TemplateResult {
-    const selected = this.section === section;
+    const selected = this.activeSection() === section;
     return html`
       <button class=${selected ? "selected" : ""} aria-current=${selected ? "page" : "false"} @click=${() => { this.navigate(section); }}>
         <strong>${label}</strong>
@@ -604,6 +656,7 @@ export class SettingsDialog extends LitElement {
     .settings-nav button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
     .settings-nav small { color: var(--pi-muted); }
     .settings-content { min-width: 0; min-height: 0; overflow: auto; padding: 18px; }
+    .safe-tunnel-load { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--pi-muted); }
 
     @media (max-width: 760px) {
       modal-surface { --modal-surface-backdrop-padding: 0; --modal-surface-place-items: stretch; --modal-surface-width: 100%; --modal-surface-max-height: none; --modal-surface-min-height: 0; --modal-surface-border: 0; --modal-surface-radius: 0; }
@@ -625,6 +678,7 @@ export type SettingsPanelTag =
   | "settings-sessiond-panel"
   | "settings-packages-panel"
   | "settings-plugins-panel"
+  | "settings-safe-tunnel-panel"
   | "settings-shortcuts-panel";
 
 /**
@@ -635,14 +689,20 @@ export type SettingsPanelTag =
  * wrapper). Tests assert this mapping instead of inspecting the rendered
  * `TemplateResult`'s markup.
  */
-export function activeSettingsPanelTag(section: SettingsSection): SettingsPanelTag {
-  switch (section) {
+export function activeSettingsPanelTag(
+  section: SettingsSection,
+  safeTunnelAvailable = true,
+): SettingsPanelTag {
+  const activeSection = normalizeSettingsSection(section, safeTunnelAvailable) ?? "general";
+  switch (activeSection) {
     case "sessiond":
       return "settings-sessiond-panel";
     case "packages":
       return "settings-packages-panel";
     case "plugins":
       return "settings-plugins-panel";
+    case "safe-tunnel":
+      return "settings-safe-tunnel-panel";
     case "shortcuts":
       return "settings-shortcuts-panel";
     case "general":

@@ -19,6 +19,7 @@ export const SESSIOND_RUNTIME_CAPABILITIES = [] as const satisfies readonly PiWe
 // advertise it.
 const EFFECTIVE_CAPABILITY_REQUIREMENTS = {
   [PI_WEB_CAPABILITIES.pluginLifecycle]: ["web"],
+  [PI_WEB_CAPABILITIES.safeTunnel]: ["web"],
 } as const satisfies Record<PiWebCapability, readonly PiWebServiceComponent[]>;
 
 export function isPiWebCapability(value: unknown): value is PiWebCapability {

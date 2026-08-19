@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parsePiWebConfigResponseBody, parseSelectedMachineConfigRequest, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
+import { currentPiWebConfigResponse, parsePiWebConfigResponseBody, parseSelectedMachineConfigRequest, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 
 let app: FastifyInstance;
@@ -39,6 +42,7 @@ describe("config routes", () => {
       host: "0.0.0.0",
       port: 9000,
       allowedHosts: true,
+      safeTunnel: true,
       spawnSessions: true,
       subsessions: true,
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
@@ -100,6 +104,18 @@ describe("config routes", () => {
     expect(service.write).not.toHaveBeenCalled();
   });
 
+  it("rejects a non-boolean Safe Tunnel availability value before writing", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: { config: { safeTunnel: "yes" } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("safeTunnel must be a boolean");
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid upload defaults before writing", async () => {
     const response = await app.inject({
       method: "PUT",
@@ -138,6 +154,8 @@ describe("config routes", () => {
       config: selectedMachineConfig(),
       effectiveConfig: selectedMachineConfig(),
     });
+    expect(response.json<PiWebConfigResponse>().config).not.toHaveProperty("safeTunnel");
+    expect(response.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("safeTunnel");
   });
 
   it("merges local selected-machine config updates without dropping gateway-only keys", async () => {
@@ -179,19 +197,36 @@ describe("config routes", () => {
   it("keeps foreign-platform agent paths portable at federation transport boundaries", () => {
     const agent = { command: "C:\\tools\\pi.exe", dir: "C:\\pi-profiles\\work" };
     const response = {
-      ...responseFor({ agent }, true),
-      effectiveConfig: { agent },
+      ...responseFor({ safeTunnel: true, agent }, true),
+      effectiveConfig: { safeTunnel: false, agent },
     };
 
-    expect(parsePiWebConfigResponseBody(response).config.agent).toEqual(agent);
+    expect(parsePiWebConfigResponseBody(response)).toMatchObject({
+      config: { safeTunnel: true, agent },
+      effectiveConfig: { safeTunnel: false, agent },
+    });
     expect(parseSelectedMachineConfigRequest({ agent }, "portable").agent).toEqual(agent);
     if (process.platform !== "win32") {
       expect(() => parseSelectedMachineConfigRequest({ agent })).toThrow("agent.dir must be a host-absolute path");
     }
   });
 
+  it("reports Safe Tunnel environment override metadata from the effective gateway snapshot", () => {
+    const configPath = join(tmpdir(), `pi-web-missing-${randomUUID()}`, "config.json");
+    const enabled = currentPiWebConfigResponse({ env: { PI_WEB_CONFIG: configPath, PI_WEB_SAFE_TUNNEL: "1" } });
+    const offline = currentPiWebConfigResponse({ env: { PI_WEB_CONFIG: configPath, PI_WEB_SAFE_TUNNEL: "1", PI_OFFLINE: "1" } });
+
+    expect(enabled).toMatchObject({
+      config: {},
+      effectiveConfig: { safeTunnel: true },
+      envOverrides: { safeTunnel: true },
+    });
+    expect(offline.effectiveConfig.safeTunnel).toBe(false);
+    expect(offline.envOverrides.safeTunnel).toBe(true);
+  });
+
   it("rejects config responses missing a required override flag", () => {
-    for (const flag of ["host", "port", "allowedHosts", "spawnSessions", "subsessions", "askUser"] as const) {
+    for (const flag of ["host", "port", "allowedHosts", "safeTunnel", "spawnSessions", "subsessions", "askUser"] as const) {
       const envOverrides = Object.fromEntries(Object.entries(responseFor({}, false).envOverrides).filter(([key]) => key !== flag));
       expect(() => parsePiWebConfigResponseBody({ ...responseFor({}, false), envOverrides })).toThrow(`field must be a boolean: ${flag}`);
     }
@@ -208,6 +243,21 @@ describe("config routes", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config key is not allowed: host");
+    expect(savedConfig).toEqual(fullConfig());
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it("rejects gateway-local Safe Tunnel availability on selected-machine writes", async () => {
+    savedConfig = fullConfig();
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/machines/local/config",
+      payload: { config: { safeTunnel: true } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("PI WEB selected-machine config key is not allowed: safeTunnel");
     expect(savedConfig).toEqual(fullConfig());
     expect(service.write).not.toHaveBeenCalled();
   });
@@ -235,6 +285,7 @@ function fullConfig(): PiWebConfigValues {
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
     maxUploadBytes: 1024,
+    safeTunnel: true,
     spawnSessions: false,
     subsessions: false,
     agent: { command: "agent-lab", dir: "/srv/agent-lab" },
@@ -259,6 +310,6 @@ function responseFor(config: PiWebConfigValues, exists: boolean): PiWebConfigRes
     exists,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
   };
 }

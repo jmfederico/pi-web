@@ -49,7 +49,7 @@ describe("settings-shortcuts-panel shortcut row actions", () => {
   it("saves edited shortcuts, disables them with None, and resets overrides", () => {
     vi.stubGlobal("HTMLInputElement", FakeHTMLInputElement);
     const onSave = vi.fn<SaveHandler>();
-    const savePanel = panelWithShortcuts({ shortcuts: { "core:other": "mod+o" } }, onSave);
+    const savePanel = panelWithShortcuts({ safeTunnel: true, shortcuts: { "core:other": "mod+o" } }, onSave);
 
     findTemplateEventHandler<Event>(savePanel.render(), "@input=")(
       new EventWithTarget("input", new FakeHTMLInputElement(" control + shift + p ")),
@@ -59,16 +59,16 @@ describe("settings-shortcuts-panel shortcut row actions", () => {
 
     findTemplateEventHandler<Event>(savePanel.render(), ">Save</button>")(new Event("click"));
 
-    const nonePanel = panelWithShortcuts({ shortcuts: { "core:open-palette": "mod+shift+p", "core:other": "mod+o" } }, onSave);
+    const nonePanel = panelWithShortcuts({ safeTunnel: true, shortcuts: { "core:open-palette": "mod+shift+p", "core:other": "mod+o" } }, onSave);
     findTemplateEventHandler<Event>(nonePanel.render(), ">None</button>")(new Event("click"));
 
-    const resetPanel = panelWithShortcuts({ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } }, onSave);
+    const resetPanel = panelWithShortcuts({ safeTunnel: true, shortcuts: { "core:open-palette": null, "core:other": "mod+o" } }, onSave);
     findTemplateEventHandler<Event>(resetPanel.render(), ">Reset</button>")(new Event("click"));
 
     expect(onSave.mock.calls).toEqual([
-      [{ shortcuts: { "core:other": "mod+o", "core:open-palette": "mod+shift+p" } }],
-      [{ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } }],
-      [{ shortcuts: { "core:other": "mod+o" } }],
+      [{ safeTunnel: true, shortcuts: { "core:other": "mod+o", "core:open-palette": "mod+shift+p" } }],
+      [{ safeTunnel: true, shortcuts: { "core:open-palette": null, "core:other": "mod+o" } }],
+      [{ safeTunnel: true, shortcuts: { "core:other": "mod+o" } }],
     ]);
   });
 
@@ -277,6 +277,6 @@ function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
   };
 }

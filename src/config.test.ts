@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
+import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, safeTunnelAvailable, savePiWebConfig, spawnSessionsEnabled, subsessionsEnabled } from "./config.js";
 
 let tempDir: string;
 let configPath: string;
@@ -233,6 +233,18 @@ describe("PI WEB config persistence", () => {
     expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config environmentFacts must be a boolean");
   });
 
+  it("round-trips and validates the safeTunnel key", async () => {
+    for (const safeTunnel of [true, false]) {
+      expect(savePiWebConfig({ safeTunnel }, testOptions()).config).toEqual({ safeTunnel });
+      expect(loadPiWebConfig(testOptions()).config).toEqual({ safeTunnel });
+    }
+
+    for (const invalid of ["yes", 1, null]) {
+      await writeFile(configPath, `${JSON.stringify({ safeTunnel: invalid }, null, 2)}\n`, "utf8");
+      expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config safeTunnel must be a boolean");
+    }
+  });
+
   it("rejects upload defaults that are not workspace-relative", async () => {
     await writeFile(configPath, `${JSON.stringify({ uploads: { defaultFolder: "../outside" } }, null, 2)}\n`, "utf8");
 
@@ -263,6 +275,36 @@ describe("extensionDialogsTimeoutMs", () => {
     await writeFile(configPath, `${JSON.stringify({ extensionDialogsTimeoutMs: 0 }, null, 2)}\n`, "utf8");
 
     expect(effectivePiWebConfig(testOptions()).config.extensionDialogsTimeoutMs).toBe(0);
+  });
+});
+
+describe("safeTunnelAvailable", () => {
+  it("is off by default in the effective config", () => {
+    expect(safeTunnelAvailable({}, {})).toBe(false);
+    expect(effectivePiWebConfig(testOptions()).config.safeTunnel).toBe(false);
+  });
+
+  it("honors an explicit file opt-in", async () => {
+    await writeFile(configPath, `${JSON.stringify({ safeTunnel: true }, null, 2)}\n`, "utf8");
+
+    expect(effectivePiWebConfig(testOptions()).config.safeTunnel).toBe(true);
+  });
+
+  it("lets a non-empty environment value override config in both directions", () => {
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "1" }, { safeTunnel: false })).toBe(true);
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "true" }, { safeTunnel: false })).toBe(true);
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "0" }, { safeTunnel: true })).toBe(false);
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "false" }, { safeTunnel: true })).toBe(false);
+  });
+
+  it("treats an empty environment value as unset", () => {
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "" }, { safeTunnel: true })).toBe(true);
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "" }, { safeTunnel: false })).toBe(false);
+  });
+
+  it("is suppressed by either offline mode switch", () => {
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "1", PI_WEB_OFFLINE: "1" }, { safeTunnel: true })).toBe(false);
+    expect(safeTunnelAvailable({ PI_WEB_SAFE_TUNNEL: "1", PI_OFFLINE: "offline" }, { safeTunnel: true })).toBe(false);
   });
 });
 
