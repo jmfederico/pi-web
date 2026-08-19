@@ -28,7 +28,11 @@ export class ProjectDialog extends LitElement {
   @state() private trustTouched = false;
   @query("input") private pathInput?: HTMLInputElement;
 
-  private requestId = 0;
+  // Separate staleness counters: setPath fires both loaders, so a shared one
+  // would make the trust read invalidate every in-flight suggestions request
+  // (leaving "Loading folders…" up forever).
+  private suggestionRequestId = 0;
+  private trustRequestId = 0;
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -36,17 +40,17 @@ export class ProjectDialog extends LitElement {
   }
 
   private async loadSuggestions() {
-    const requestId = ++this.requestId;
+    const requestId = ++this.suggestionRequestId;
     this.loading = true;
     try {
       const suggestions = await api.projectDirectories(this.path, this.machineId);
-      if (requestId !== this.requestId) return;
+      if (requestId !== this.suggestionRequestId) return;
       this.suggestions = suggestions;
       this.selected = Math.min(this.selected, Math.max(0, suggestions.length - 1));
     } catch {
-      if (requestId === this.requestId) this.suggestions = [];
+      if (requestId === this.suggestionRequestId) this.suggestions = [];
     } finally {
-      if (requestId === this.requestId) this.loading = false;
+      if (requestId === this.suggestionRequestId) this.loading = false;
     }
   }
 
@@ -83,13 +87,13 @@ export class ProjectDialog extends LitElement {
    * toggle supersedes it, so a stale read can not clobber the user's choice.
    */
   private async loadTrust() {
-    const requestId = ++this.requestId;
+    const requestId = ++this.trustRequestId;
     const trimmed = this.path.trim();
     if (trimmed === "") {
-      if (requestId === this.requestId) this.trust = undefined;
+      if (requestId === this.trustRequestId) this.trust = undefined;
       return;
     }
-    if (requestId === this.requestId) {
+    if (requestId === this.trustRequestId) {
       // Keep the previous value visible (cosmetic continuity) while the read
       // for the new path is in flight; the result replaces it either way.
       this.trust = {
@@ -100,10 +104,10 @@ export class ProjectDialog extends LitElement {
     }
     try {
       const result = await trustApi.projectTrust(trimmed, this.machineId);
-      if (requestId !== this.requestId || this.trustTouched) return;
+      if (requestId !== this.trustRequestId || this.trustTouched) return;
       this.trust = { path: result.path, decision: result.decision, trusted: result.trusted, loading: false };
     } catch (error) {
-      if (requestId !== this.requestId || this.trustTouched) return;
+      if (requestId !== this.trustRequestId || this.trustTouched) return;
       this.trust = { path: trimmed, decision: null, trusted: false, loading: false, error: error instanceof Error ? error.message : String(error) };
     }
   }

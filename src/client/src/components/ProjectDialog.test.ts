@@ -93,6 +93,43 @@ describe("project-dialog modal surface", () => {
     expect(onSubmit).toHaveBeenCalledWith("/work/new-project", true, { trusted: true, changed: true });
   });
 
+  // Regression: the suggestions and trust loaders used to share one staleness
+  // counter, so the trust read fired on every keystroke discarded the in-flight
+  // suggestions request and the loading hint never cleared.
+  it("renders folder suggestions and clears the loading hint after typing a path", async () => {
+    const dialog = await mountDialog();
+    vi.mocked(api.projectDirectories).mockResolvedValue([{ path: "/work/proj/", kind: "other" }]);
+    const input = pathInput(dialog);
+    input.value = "/work/proj";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+
+    await vi.waitFor(() => {
+      expect(dialog.shadowRoot?.querySelectorAll(".suggestions button").length).toBe(1);
+    });
+    await settleRenderedDialog(dialog);
+
+    expect(dialog.shadowRoot?.querySelector(".suggestions button")?.textContent).toContain("/work/proj/");
+    expect(dialog.shadowRoot?.textContent).not.toContain("Loading folders…");
+  });
+
+  it("keeps showing folder suggestions while a slower trust read is still in flight", async () => {
+    const dialog = await mountDialog();
+    vi.mocked(api.projectDirectories).mockResolvedValue([{ path: "/work/proj/", kind: "other" }]);
+    let resolveTrust: ((value: { path: string; decision: boolean | null; trusted: boolean }) => void) | undefined;
+    vi.mocked(trustApi.projectTrust).mockReturnValue(new Promise((resolve) => { resolveTrust = resolve; }));
+    const input = pathInput(dialog);
+    input.value = "/work/proj";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+
+    await vi.waitFor(() => {
+      expect(dialog.shadowRoot?.querySelectorAll(".suggestions button").length).toBe(1);
+    });
+    resolveTrust?.({ path: "/work/proj", decision: null, trusted: false });
+    await settleRenderedDialog(dialog);
+
+    expect(dialog.shadowRoot?.textContent).not.toContain("Loading folders…");
+  });
+
   it("explains what trusting a project means and links to the project-trust documentation", async () => {
     const dialog = await mountDialog();
 
