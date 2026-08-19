@@ -81,6 +81,7 @@ describe("buildApp active profile composition", () => {
       config: configService,
       sessionDaemon: {
         request: () => Promise.reject(new Error("connect ECONNREFUSED")),
+        requestRaw: () => Promise.reject(new Error("connect ECONNREFUSED")),
         connectWebSocket: () => { throw new Error("sessiond is offline"); },
       },
       clientDist: false,

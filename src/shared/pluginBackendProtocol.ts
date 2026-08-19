@@ -2,6 +2,19 @@ import type { JsonValue } from "./apiTypes.js";
 
 /** Maximum UTF-8 JSON input accepted from a browser plugin. */
 export const PLUGIN_BACKEND_JSON_MAX_BYTES = 256 * 1024;
+/**
+ * Maximum raw binary body accepted from a browser plugin on the opt-in binary
+ * request route. Matches the default execFile stdin cap so a payload that
+ * fits the wire also fits the host-bounded command bridge.
+ */
+export const PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES = 1024 * 1024;
+/** Static final path segment of the raw binary body variant of an operation route. */
+export const PLUGIN_BACKEND_BINARY_ROUTE_SUFFIX = "binary";
+/**
+ * Header carrying the active backend revision on binary requests, which have
+ * no JSON envelope to hold it. Sessiond remains the only validator.
+ */
+export const PLUGIN_BACKEND_BINARY_REVISION_HEADER = "x-pi-web-plugin-backend-revision";
 /** Bounded result allowance demonstrated by Git's existing 2 MiB command-output limit. */
 export const PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES = 8 * 1024 * 1024;
 /** Envelope allowance for the active backend revision and JSON field names. */

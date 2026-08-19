@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
-import { PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES, PLUGIN_BACKEND_BINARY_REVISION_HEADER, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import { configApi, filesApi, machineStatusApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, trustApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
 import { requestPluginBackend } from "./pluginBackends";
@@ -97,14 +97,24 @@ describe("federated route contract", () => {
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("preview"))).toBe(false);
   });
 
-  it("allowlists exactly one bounded workspace provider backend route", () => {
-    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([{
-      method: "POST",
-      path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation",
-      timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
-      bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
-      responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
-    }]);
+  it("allowlists exactly the bounded workspace provider backend routes", () => {
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([
+      {
+        method: "POST",
+        path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation",
+        timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+        bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+        responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+      },
+      {
+        method: "POST",
+        path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation/binary",
+        timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+        bodyLimit: PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES,
+        responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+        forwardHeaders: [PLUGIN_BACKEND_BINARY_REVISION_HEADER],
+      },
+    ]);
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("plugin-backends"))).toBe(false);
   });
 

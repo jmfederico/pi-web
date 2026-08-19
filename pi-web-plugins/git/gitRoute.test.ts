@@ -44,7 +44,7 @@ function panelContext(machineId: string, projectId: string, workspaceId: string)
       deleteFile: () => Promise.reject(new Error("not implemented")),
       moveFile: () => Promise.reject(new Error("not implemented")),
     },
-    backend: { request: () => Promise.reject(new Error("not implemented")) },
+    backend: { request: () => Promise.reject(new Error("not implemented")), requestBinary: () => Promise.reject(new Error("not implemented")) },
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },

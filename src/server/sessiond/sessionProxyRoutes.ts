@@ -2,16 +2,10 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { WebSocket, type RawData } from "ws";
 import {
   SessionDaemonClient,
-  type SessionDaemonRequestOptions,
+  type SessionDaemonRawRequestClient,
 } from "../../sessiond/sessionDaemonClient.js";
 
-export interface SessionProxyDaemon {
-  request(
-    method: string,
-    path: string,
-    body?: unknown,
-    options?: SessionDaemonRequestOptions,
-  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+export interface SessionProxyDaemon extends SessionDaemonRawRequestClient {
   connectWebSocket(path: string): WebSocket;
 }
 

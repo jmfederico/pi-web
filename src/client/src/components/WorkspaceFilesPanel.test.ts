@@ -402,7 +402,7 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
       deleteFile: vi.fn<WorkspacePanelContext["files"]["deleteFile"]>(() => Promise.reject(new Error("not implemented"))),
       moveFile: vi.fn<WorkspacePanelContext["files"]["moveFile"]>(() => Promise.reject(new Error("not implemented"))),
     },
-    backend: patch.backend ?? { request: vi.fn<NonNullable<WorkspacePanelContext["backend"]>["request"]>(() => Promise.resolve(null)) },
+    backend: patch.backend ?? { request: vi.fn<NonNullable<WorkspacePanelContext["backend"]>["request"]>(() => Promise.resolve(null)), requestBinary: vi.fn<NonNullable<WorkspacePanelContext["backend"]>["requestBinary"]>(() => Promise.resolve(null)) },
     prompt: patch.prompt ?? { insertText: vi.fn<WorkspacePanelContext["prompt"]["insertText"]>(), getText: vi.fn<WorkspacePanelContext["prompt"]["getText"]>(() => ""), getSelection: vi.fn<WorkspacePanelContext["prompt"]["getSelection"]>(() => null) },
     terminal: patch.terminal ?? { open: vi.fn<WorkspacePanelContext["terminal"]["open"]>(), runCommand: vi.fn<WorkspacePanelContext["terminal"]["runCommand"]>(() => Promise.reject(new Error("not implemented"))) },
     host: patch.host ?? { requestRender: vi.fn<WorkspacePanelContext["host"]["requestRender"]>() },

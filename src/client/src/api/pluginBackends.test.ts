@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import {
+  pluginBackendBinaryRequestPath,
   pluginBackendRequestPath,
   pluginBackendRequestUrl,
   requestPluginBackend,
+  requestPluginBackendBinary,
   type PluginBackendRequestTarget,
 } from "./pluginBackends";
 
@@ -87,5 +89,55 @@ describe("browser plugin backend helper", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(requestPluginBackend(target, "cards.summary", null)).rejects.toThrow("response exceeds");
+  });
+});
+
+describe("browser plugin backend binary helper", () => {
+  it("builds the binary sibling path with encoded dynamic segments", () => {
+    expect(pluginBackendBinaryRequestPath({ ...target, machineId: "local" }, "secrets.store")).toBe(
+      "api/plugin-backends/board.tools/projects/project%20%2F%20one/workspaces/workspace%20%231/secrets.store/binary",
+    );
+    expect(pluginBackendBinaryRequestPath(target, "secrets.store")).toBe(
+      "api/machines/remote%20%2F%20one/plugin-backends/board.tools/projects/project%20%2F%20one/workspaces/workspace%20%231/secrets.store/binary",
+    );
+  });
+
+  it("sends the raw bytes and revision header through the selected machine", async () => {
+    const fetchMock = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ stored: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestPluginBackendBinary(target, "secrets.store", new Uint8Array([0x00, 0xff, 0x73]))).resolves.toEqual({ stored: true });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%20one/plugin-backends/board.tools/projects/project%20%2F%20one/workspaces/workspace%20%231/secrets.store/binary");
+    expect(init).toMatchObject({
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-pi-web-plugin-backend-revision": "server-r1",
+      },
+    });
+    const body = init?.body;
+    if (!(body instanceof ArrayBuffer)) throw new Error("Expected binary request body");
+    expect(Array.from(new Uint8Array(body))).toEqual([0x00, 0xff, 0x73]);
+  });
+
+  it("rejects over-cap payloads before any fetch and maps attributed failures", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      error: "Server plugin board.tools does not provide binary workspace backend operations",
+      code: "operation-unavailable",
+    }), { status: 501, headers: { "content-type": "application/json" } })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(requestPluginBackendBinary(target, "secrets.store", new Uint8Array(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES + 1)))
+      .rejects.toThrow("byte wire limit");
+    await expect(requestPluginBackendBinary(target, "Invalid/Operation", new Uint8Array([0x01]))).rejects.toThrow("operation must match");
+    await expect(requestPluginBackendBinary(target, "secrets.store", new Uint8Array([0x01]))).rejects.toThrow("binary workspace backend operations");
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

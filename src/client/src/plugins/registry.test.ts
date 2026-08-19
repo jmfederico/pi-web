@@ -937,7 +937,7 @@ function createWorkspaceLabelContext(machineId: string, workspace = testWorkspac
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
     files,
-    backend: { request: vi.fn(() => Promise.resolve(null)) },
+    backend: { request: vi.fn(() => Promise.resolve(null)), requestBinary: vi.fn(() => Promise.resolve(null)) },
     host,
   };
 }
@@ -949,7 +949,7 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     workspace,
     state: { ...initialAppState(), selectedMachine: testMachine(machineId) },
     files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    backend: { request: vi.fn(() => Promise.resolve(null)) },
+    backend: { request: vi.fn(() => Promise.resolve(null)), requestBinary: vi.fn(() => Promise.resolve(null)) },
     prompt,
     terminal: { open: vi.fn(), runCommand: vi.fn() },
     host: { requestRender: vi.fn() },

@@ -14,13 +14,39 @@ export interface SessionDaemonRequestOptions {
   signal?: AbortSignal;
 }
 
+export interface SessionDaemonRequestResult {
+  statusCode: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
 export interface SessionDaemonRequestClient {
   request(
     method: string,
     path: string,
     body?: unknown,
     options?: SessionDaemonRequestOptions,
-  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }>;
+  ): Promise<SessionDaemonRequestResult>;
+}
+
+export interface SessionDaemonRawRequestOptions extends SessionDaemonRequestOptions {
+  /** Extra request headers; the content type is always application/octet-stream. */
+  headers?: Record<string, string>;
+}
+
+/** Binary-capable daemon client used by routes that proxy raw byte bodies. */
+export interface SessionDaemonRawRequestClient extends SessionDaemonRequestClient {
+  requestRaw(
+    method: string,
+    path: string,
+    body: Buffer,
+    options?: SessionDaemonRawRequestOptions,
+  ): Promise<SessionDaemonRequestResult>;
+}
+
+interface SessionDaemonTransportBody {
+  payload: string | Buffer;
+  headers: Record<string, string>;
 }
 
 export class SessionDaemonClient {
@@ -32,12 +58,31 @@ export class SessionDaemonClient {
     path: string,
     body?: unknown,
     options: SessionDaemonRequestOptions = {},
-  ): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  ): Promise<SessionDaemonRequestResult> {
     const payload = body === undefined ? undefined : JSON.stringify(body);
+    const transport = payload === undefined || payload === ""
+      ? undefined
+      : { payload, headers: { "content-type": "application/json" } };
     if (this.baseUrl !== undefined && this.baseUrl !== "") {
-      return this.requestUrl(method, path, payload, options.signal);
+      return this.requestUrl(method, path, transport, options.signal);
     }
-    return this.requestSocket(method, path, payload, options.signal);
+    return this.requestSocket(method, path, transport, options.signal);
+  }
+
+  async requestRaw(
+    method: string,
+    path: string,
+    body: Buffer,
+    options: SessionDaemonRawRequestOptions = {},
+  ): Promise<SessionDaemonRequestResult> {
+    const transport: SessionDaemonTransportBody = {
+      payload: body,
+      headers: { ...options.headers, "content-type": "application/octet-stream" },
+    };
+    if (this.baseUrl !== undefined && this.baseUrl !== "") {
+      return this.requestUrl(method, path, transport, options.signal);
+    }
+    return this.requestSocket(method, path, transport, options.signal);
   }
 
   getActiveAgentProfile(): Promise<SessionDaemonAgentProfileResult> {
@@ -53,11 +98,11 @@ export class SessionDaemonClient {
     return new WebSocket(`ws+unix:${this.socketPath}:${path}`);
   }
 
-  private async requestUrl(method: string, path: string, payload?: string, signal?: AbortSignal) {
+  private async requestUrl(method: string, path: string, body?: SessionDaemonTransportBody, signal?: AbortSignal): Promise<SessionDaemonRequestResult> {
     const init: RequestInit = { method, ...(signal === undefined ? {} : { signal }) };
-    if (payload !== undefined && payload !== "") {
-      init.headers = { "content-type": "application/json" };
-      init.body = payload;
+    if (body !== undefined) {
+      init.headers = body.headers;
+      init.body = typeof body.payload === "string" ? body.payload : copyToArrayBuffer(body.payload);
     }
     const response = await fetch(new URL(path, this.baseUrl), init);
     return {
@@ -67,7 +112,7 @@ export class SessionDaemonClient {
     };
   }
 
-  private requestSocket(method: string, path: string, payload?: string, signal?: AbortSignal): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
+  private requestSocket(method: string, path: string, body?: SessionDaemonTransportBody, signal?: AbortSignal): Promise<SessionDaemonRequestResult> {
     return new Promise((resolve, reject) => {
       const request = http.request(
         {
@@ -75,9 +120,9 @@ export class SessionDaemonClient {
           path,
           method,
           ...(signal === undefined ? {} : { signal }),
-          headers: payload !== undefined && payload !== ""
-            ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) }
-            : undefined,
+          headers: body === undefined
+            ? undefined
+            : { ...body.headers, "content-length": Buffer.byteLength(body.payload) },
         },
         (response) => {
           const chunks: Uint8Array[] = [];
@@ -94,7 +139,7 @@ export class SessionDaemonClient {
         },
       );
       request.on("error", reject);
-      if (payload !== undefined && payload !== "") request.write(payload);
+      if (body !== undefined) request.write(body.payload);
       request.end();
     });
   }
@@ -134,4 +179,11 @@ export async function getSessionDaemonActiveAgentProfile(client: SessionDaemonRe
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Fresh ArrayBuffer copy: fetch BodyInit typing excludes view-backed buffers. */
+function copyToArrayBuffer(view: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(view.byteLength);
+  new Uint8Array(buffer).set(view);
+  return buffer;
 }

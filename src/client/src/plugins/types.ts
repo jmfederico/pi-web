@@ -68,6 +68,13 @@ export interface WorkspaceFiles {
 
 export interface WorkspaceBackend {
   request(operation: string, input: JsonValue): Promise<JsonValue>;
+  /**
+   * Raw binary counterpart of {@link WorkspaceBackend.request}: the body is an
+   * opaque bounded byte payload delivered to the owning provider's
+   * `requestBinary()` callback. It is held in memory only, never logged or
+   * persisted by the host, and the result remains bounded JSON.
+   */
+  requestBinary(operation: string, body: Uint8Array): Promise<JsonValue>;
 }
 
 export interface WorkspaceHost {

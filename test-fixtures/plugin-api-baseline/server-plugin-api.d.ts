@@ -39,6 +39,13 @@ export interface ServerPluginExecFileRequest {
     env?: Readonly<Record<string, string>>;
     /** Environment keys removed after host defaults and plugin overrides merge. */
     unsetEnv?: readonly string[];
+    /**
+     * Optional payload piped to the command's standard input; no shell is
+     * involved. Strings are UTF-8 encoded. The host enforces a byte cap, never
+     * logs the payload or includes it in errors, and zeroes its retained copy
+     * once the command settles. Empty payloads behave like an absent stdin.
+     */
+    stdin?: string | Uint8Array;
     /** Requested timeout; the host may apply a lower maximum. */
     timeoutMs?: number;
     signal: AbortSignal;
@@ -81,6 +88,15 @@ export interface WorkspaceProvider {
     probe(project: ProjectInput, signal: AbortSignal): Promise<ProviderClaim>;
     list(project: ProjectInput, signal: AbortSignal): Promise<ProviderWorkspace[]>;
     request?(context: ProviderRequestContext): Promise<ProviderResponse>;
+    /**
+     * Opt-in raw binary counterpart of `request()`. Implement it when an
+     * operation must receive a payload that is not JSON — for example a secret
+     * that should travel as an opaque byte body instead of a logged,
+     * history-prone JSON envelope. The host enforces a byte cap (1 MiB) before
+     * dispatch, holds the body in memory only for the invocation, and never
+     * logs, persists, or echoes it. The result remains a bounded JSON value.
+     */
+    requestBinary?(context: ProviderBinaryRequestContext): Promise<ProviderResponse>;
     prepareRemove?(context: ProviderRemoveContext): Promise<WorkspaceRemovePlan>;
 }
 export type ProviderClaim = "claim" | "pass";
@@ -115,6 +131,21 @@ export interface ProviderRequestContext {
 }
 /** Provider-private JSON result returned through the host's scoped bridge. */
 export type ProviderResponse = JsonValue;
+export interface ProviderBinaryRequestContext {
+    readonly project: ProjectInput;
+    /** Host-validated, frozen projection of one listed provider workspace. */
+    readonly workspace: Readonly<ProviderWorkspace>;
+    readonly operation: string;
+    /**
+     * Bounded raw request body (at most 1 MiB). The host keeps it in memory for
+     * this invocation only, never logs or persists it, and reports bound
+     * failures by byte count only. Treat it as sensitive: do not log it, and
+     * never echo it back through the JSON result, which crosses to browser
+     * callers.
+     */
+    readonly body: Uint8Array;
+    readonly signal: AbortSignal;
+}
 export interface ProviderRemoveContext {
     readonly project: ProjectInput;
     /** Host-validated, frozen projection of one listed provider workspace. */

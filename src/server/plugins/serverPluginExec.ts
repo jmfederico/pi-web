@@ -8,50 +8,68 @@ const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 // Git changes historically bounded command stdout at 2 MiB; keep that ceiling
 // available through the same public helper used by every server plugin.
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2 * 1024 * 1024;
+// Command stdin defaults to a 1 MiB host ceiling: generous for secret and
+// config payloads while still bounding memory per in-flight command.
+const DEFAULT_STDIN_LIMIT_BYTES = 1024 * 1024;
 const FORCE_KILL_GRACE_MS = 250;
 
 export interface ServerPluginExecFileOptions {
   env?: NodeJS.ProcessEnv;
   maxTimeoutMs?: number;
   maxOutputBytes?: number;
+  maxStdinBytes?: number;
 }
 
-/** Creates the argv-only, host-bounded command helper exposed to server plugins. */
+/** Creates the host-bounded command helper exposed to server plugins. */
 export function createServerPluginExecFile(
   options: ServerPluginExecFileOptions = {},
 ): (request: ServerPluginExecFileRequest) => Promise<ServerPluginExecFileResult> {
   const baseEnv = Object.freeze({ ...(options.env ?? process.env) });
   const maxTimeoutMs = positiveInteger(options.maxTimeoutMs, DEFAULT_EXEC_TIMEOUT_MS, "maxTimeoutMs");
   const maxOutputBytes = positiveInteger(options.maxOutputBytes, DEFAULT_OUTPUT_LIMIT_BYTES, "maxOutputBytes");
+  const maxStdinBytes = positiveInteger(options.maxStdinBytes, DEFAULT_STDIN_LIMIT_BYTES, "maxStdinBytes");
 
-  return async (request) => runExecFile(request, { baseEnv, maxTimeoutMs, maxOutputBytes });
+  return async (request) => runExecFile(request, { baseEnv, maxTimeoutMs, maxOutputBytes, maxStdinBytes });
 }
 
 interface ResolvedExecOptions {
   baseEnv: NodeJS.ProcessEnv;
   maxTimeoutMs: number;
   maxOutputBytes: number;
+  maxStdinBytes: number;
 }
 
 function runExecFile(
   request: ServerPluginExecFileRequest,
   options: ResolvedExecOptions,
 ): Promise<ServerPluginExecFileResult> {
-  validateRequest(request);
+  validateRequest(request, options.maxStdinBytes);
   if (request.signal.aborted) return Promise.reject(abortReason(request.signal));
 
+  const stdinPayload = createStdinPayload(request.stdin);
   const timeoutMs = Math.min(request.timeoutMs ?? options.maxTimeoutMs, options.maxTimeoutMs);
   const stdout = new BoundedOutput(options.maxOutputBytes);
   const stderr = new BoundedOutput(options.maxOutputBytes);
 
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(request.file, [...(request.args ?? [])], {
-      ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-      env: commandEnvironment(options.baseEnv, request),
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
+    // The spawn overloads only narrow stream nullability for static stdio
+    // tuples, so each branch keeps its own tuple; the ignore branch preserves
+    // the exact pre-stdin behavior for payload-less commands.
+    const child = stdinPayload === undefined
+      ? spawn(request.file, [...(request.args ?? [])], {
+          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+          env: commandEnvironment(options.baseEnv, request),
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+          detached: process.platform !== "win32",
+        })
+      : spawn(request.file, [...(request.args ?? [])], {
+          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+          env: commandEnvironment(options.baseEnv, request),
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+          detached: process.platform !== "win32",
+        });
     let settled = false;
 
     const timeout = setTimeout(() => {
@@ -62,6 +80,8 @@ function runExecFile(
     const cleanup = (): void => {
       clearTimeout(timeout);
       request.signal.removeEventListener("abort", onAbort);
+      // The host-owned payload copy must not outlive the settled command.
+      if (stdinPayload !== undefined) stdinPayload.fill(0);
     };
     const reject = (error: unknown): void => {
       if (settled) return;
@@ -101,7 +121,21 @@ function runExecFile(
         stderrTruncated: stderr.truncated,
       });
     });
+    if (stdinPayload !== undefined && child.stdin !== null) {
+      // A command may exit before draining stdin; the resulting EPIPE must not
+      // surface as an unhandled stream error. The command's own exit behavior
+      // remains the observable outcome.
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(stdinPayload);
+    }
   });
+}
+
+/** Copies the payload into a host-owned buffer that cleanup can zero after settle. */
+function createStdinPayload(stdin: ServerPluginExecFileRequest["stdin"]): Buffer | undefined {
+  if (stdin === undefined) return undefined;
+  const payload = typeof stdin === "string" ? Buffer.from(stdin, "utf8") : Buffer.from(stdin);
+  return payload.length === 0 ? undefined : payload;
 }
 
 class BoundedOutput {
@@ -138,7 +172,7 @@ class ExecTimeoutError extends Error {
   override name = "TimeoutError";
 }
 
-function validateRequest(request: ServerPluginExecFileRequest): void {
+function validateRequest(request: ServerPluginExecFileRequest, maxStdinBytes: number): void {
   if (typeof request.file !== "string" || request.file === "") throw new Error("Server plugin command file must be a non-empty string");
   if (request.args !== undefined && (!Array.isArray(request.args) || !request.args.every((arg) => typeof arg === "string"))) {
     throw new Error("Server plugin command args must be strings");
@@ -152,10 +186,24 @@ function validateRequest(request: ServerPluginExecFileRequest): void {
   if (request.unsetEnv !== undefined && (!Array.isArray(request.unsetEnv) || !request.unsetEnv.every(isEnvironmentKey))) {
     throw new Error("Server plugin command unsetEnv keys must be non-empty strings without '=' or null bytes");
   }
+  if (request.stdin !== undefined) {
+    const stdinBytes = stdinByteLength(request.stdin);
+    if (stdinBytes === undefined) throw new Error("Server plugin command stdin must be a string or Uint8Array");
+    if (stdinBytes > maxStdinBytes) {
+      // Byte counts only; the payload itself never appears in errors.
+      throw new Error(`Server plugin command stdin of ${String(stdinBytes)} bytes exceeds the host cap of ${String(maxStdinBytes)} bytes`);
+    }
+  }
   if (request.timeoutMs !== undefined && (!Number.isInteger(request.timeoutMs) || request.timeoutMs <= 0)) {
     throw new Error("Server plugin command timeoutMs must be a positive integer");
   }
   if (!isAbortSignal(request.signal)) throw new Error("Server plugin commands require an AbortSignal");
+}
+
+function stdinByteLength(stdin: unknown): number | undefined {
+  if (typeof stdin === "string") return Buffer.byteLength(stdin, "utf8");
+  if (stdin instanceof Uint8Array) return stdin.byteLength;
+  return undefined;
 }
 
 function commandEnvironment(baseEnv: NodeJS.ProcessEnv, request: ServerPluginExecFileRequest): NodeJS.ProcessEnv {

@@ -21,6 +21,7 @@ import type {
 import { isPiWebPluginId } from "../../shared/pluginIds.js";
 import {
   cloneBoundedPluginBackendJson,
+  PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES,
   PLUGIN_BACKEND_DISPATCH_TIMEOUT_MS,
   PLUGIN_BACKEND_REQUEST_TIMEOUT_MS,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
@@ -41,7 +42,7 @@ export type {
 const DEFAULT_PROVIDER_TIMEOUT_MS = PLUGIN_BACKEND_REQUEST_TIMEOUT_MS;
 
 type ProviderTier = WorkspaceProviderTier;
-type ProviderOperation = "probe" | "list" | "request" | "prepareRemove";
+type ProviderOperation = "probe" | "list" | "request" | "requestBinary" | "prepareRemove";
 
 export interface WorkspaceProviderRegistryLogger {
   warn(details: Record<string, unknown>, message: string): void;
@@ -66,6 +67,20 @@ export interface WorkspaceProviderRequest {
   workspaceId: string;
   operation: string;
   input: unknown;
+}
+
+/**
+ * Opt-in raw binary variant of {@link WorkspaceProviderRequest}. The body is a
+ * bounded opaque payload that the host holds in memory only for the request;
+ * it is never logged or persisted.
+ */
+export interface WorkspaceProviderBinaryRequest {
+  pluginId: string;
+  moduleRevision: string;
+  project: Project;
+  workspaceId: string;
+  operation: string;
+  body: Uint8Array;
 }
 
 /** Current owner snapshot used by the host-owned workspace removal orchestrator. */
@@ -267,6 +282,23 @@ export class WorkspaceProviderRegistry {
     }
   }
 
+  /** Binary counterpart of {@link request}; identical ownership and deadline rules. */
+  async requestBinary(request: WorkspaceProviderBinaryRequest): Promise<JsonValue> {
+    try {
+      return await runBoundedProviderOperation(
+        request.pluginId,
+        "requestBinary",
+        this.requestTimeoutMs,
+        (signal) => this.dispatchBinaryRequest(request, signal),
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProviderTimeoutError) {
+        throw providerRequestError("request-timeout", 504, boundedErrorMessage(error), error);
+      }
+      throw error;
+    }
+  }
+
   /** Re-resolve one live owner/target before host safety checks and provider planning. */
   async resolveRemoval(
     project: Project,
@@ -377,6 +409,80 @@ export class WorkspaceProviderRegistry {
   }
 
   private async dispatchRequest(request: WorkspaceProviderRequest, dispatchSignal: AbortSignal): Promise<JsonValue> {
+    const identity = this.requireActiveContribution(request);
+    const { pluginId, operation, contribution } = identity;
+
+    let input: JsonValue;
+    try {
+      input = cloneBoundedPluginBackendJson(request.input, `Server plugin ${pluginId} operation ${operation} input`);
+    } catch (error) {
+      throw providerRequestError("invalid-input", 400, boundedErrorMessage(error), error);
+    }
+
+    const target = await this.resolveRequestTarget(identity, request, dispatchSignal);
+    const callback = contribution.provider.request?.bind(contribution.provider);
+    if (callback === undefined) {
+      throw providerRequestError(
+        "operation-unavailable",
+        501,
+        `Server plugin ${pluginId} does not provide workspace backend operations`,
+      );
+    }
+
+    return await this.runRequestCallback(
+      identity,
+      "request",
+      (signal) => callback(Object.freeze({
+        project: target.project,
+        workspace: target.providerWorkspace,
+        operation,
+        input,
+        signal,
+      })),
+      dispatchSignal,
+    );
+  }
+
+  private async dispatchBinaryRequest(request: WorkspaceProviderBinaryRequest, dispatchSignal: AbortSignal): Promise<JsonValue> {
+    const identity = this.requireActiveContribution(request);
+    const { pluginId, operation, contribution } = identity;
+
+    if (request.body.byteLength > PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES) {
+      throw providerRequestError(
+        "invalid-input",
+        400,
+        `Server plugin ${pluginId} operation ${operation} binary input exceeds the ${String(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES)} byte limit`,
+      );
+    }
+
+    const target = await this.resolveRequestTarget(identity, request, dispatchSignal);
+    const callback = contribution.provider.requestBinary?.bind(contribution.provider);
+    if (callback === undefined) {
+      throw providerRequestError(
+        "operation-unavailable",
+        501,
+        `Server plugin ${pluginId} does not provide binary workspace backend operations`,
+      );
+    }
+
+    return await this.runRequestCallback(
+      identity,
+      "requestBinary",
+      (signal) => callback(Object.freeze({
+        project: target.project,
+        workspace: target.providerWorkspace,
+        operation,
+        body: request.body,
+        signal,
+      })),
+      dispatchSignal,
+    );
+  }
+
+  /** Validate the identity fields shared by JSON and binary dispatch, before any resolution work. */
+  private requireActiveContribution(
+    request: Pick<WorkspaceProviderRequest, "pluginId" | "operation" | "moduleRevision" | "workspaceId">,
+  ): { pluginId: string; operation: string; contribution: ServerPluginProviderContribution } {
     const pluginId = request.pluginId;
     if (!isPiWebPluginId(pluginId)) {
       throw providerRequestError("inactive-plugin", 409, `Server plugin is not active: ${pluginId}`);
@@ -398,14 +504,19 @@ export class WorkspaceProviderRegistry {
     if (request.workspaceId === "") {
       throw providerRequestError("workspace-not-found", 404, `Workspace not found for server plugin ${pluginId} operation ${operation}`);
     }
+    return { pluginId, operation, contribution: activeContribution };
+  }
 
-    let input: JsonValue;
-    try {
-      input = cloneBoundedPluginBackendJson(request.input, `Server plugin ${pluginId} operation ${operation} input`);
-    } catch (error) {
-      throw providerRequestError("invalid-input", 400, boundedErrorMessage(error), error);
-    }
-
+  /**
+   * Re-resolve the current owner and locate the request's workspace target.
+   * Shared by JSON and binary dispatch so both enforce identical ownership.
+   */
+  private async resolveRequestTarget(
+    identity: { pluginId: string; operation: string },
+    request: Pick<WorkspaceProviderRequest, "project" | "workspaceId">,
+    dispatchSignal: AbortSignal,
+  ): Promise<{ project: ProjectInput; providerWorkspace: Readonly<ProviderWorkspace> }> {
+    const { pluginId, operation } = identity;
     const project = snapshotProject(request.project);
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
     for (const tier of ["primary", "fallback"] as const) {
@@ -435,51 +546,7 @@ export class WorkspaceProviderRegistry {
           `Workspace ${request.workspaceId} is stale or unavailable for server plugin ${pluginId} operation ${operation}`,
         );
       }
-      const callback = selection.contribution.provider.request?.bind(selection.contribution.provider);
-      if (callback === undefined) {
-        throw providerRequestError(
-          "operation-unavailable",
-          501,
-          `Server plugin ${pluginId} does not provide workspace backend operations`,
-        );
-      }
-
-      let result: unknown;
-      try {
-        result = await runBoundedProviderOperation(
-          pluginId,
-          "request",
-          this.providerTimeoutMs,
-          (signal) => callback(Object.freeze({
-            project,
-            workspace: target.providerWorkspace,
-            operation,
-            input,
-            signal,
-          })),
-          dispatchSignal,
-        );
-      } catch (error) {
-        if (error instanceof WorkspaceProviderTimeoutError) {
-          throw providerRequestError("request-timeout", 504, boundedErrorMessage(error), error);
-        }
-        throw providerRequestError(
-          "request-failed",
-          502,
-          `Server plugin ${pluginId} operation ${operation} failed: ${boundedErrorMessage(error)}`,
-          error,
-        );
-      }
-
-      try {
-        return cloneBoundedPluginBackendJson(
-          result,
-          `Server plugin ${pluginId} operation ${operation} result`,
-          PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
-        );
-      } catch (error) {
-        throw providerRequestError("invalid-result", 502, boundedErrorMessage(error), error);
-      }
+      return { project, providerWorkspace: target.providerWorkspace };
     }
 
     const failedProbe = diagnostics.find((diagnostic) => diagnostic.pluginId === pluginId && diagnostic.code === "probe-failed");
@@ -495,6 +562,47 @@ export class WorkspaceProviderRegistry {
       409,
       `Server plugin ${pluginId} does not own project ${project.id}`,
     );
+  }
+
+  /** Invoke one provider request callback with shared timeout, failure, and result-bound mapping. */
+  private async runRequestCallback(
+    identity: { pluginId: string; operation: string },
+    providerOperation: ProviderOperation,
+    invoke: (signal: AbortSignal) => Promise<unknown>,
+    dispatchSignal: AbortSignal,
+  ): Promise<JsonValue> {
+    const { pluginId, operation } = identity;
+
+    let result: unknown;
+    try {
+      result = await runBoundedProviderOperation(
+        pluginId,
+        providerOperation,
+        this.providerTimeoutMs,
+        invoke,
+        dispatchSignal,
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProviderTimeoutError) {
+        throw providerRequestError("request-timeout", 504, boundedErrorMessage(error), error);
+      }
+      throw providerRequestError(
+        "request-failed",
+        502,
+        `Server plugin ${pluginId} operation ${operation} failed: ${boundedErrorMessage(error)}`,
+        error,
+      );
+    }
+
+    try {
+      return cloneBoundedPluginBackendJson(
+        result,
+        `Server plugin ${pluginId} operation ${operation} result`,
+        PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
+      );
+    } catch (error) {
+      throw providerRequestError("invalid-result", 502, boundedErrorMessage(error), error);
+    }
   }
 
   private async listRequestWorkspaces(

@@ -164,9 +164,18 @@ export interface WorkspaceFiles {
 
 export type WorkspacePanelFiles = WorkspaceFiles;
 
-/** JSON-only request path to the server module that currently owns this workspace. */
+/** Request paths to the server module that currently owns this workspace. */
 export interface WorkspaceBackend {
   request(operation: string, input: JsonValue): Promise<JsonValue>;
+  /**
+   * Raw binary counterpart of `request()` for operations that must receive an
+   * opaque byte payload rather than a JSON envelope — for example a secret
+   * that must not appear in logged or history-prone JSON. The body is bounded
+   * (1 MiB), held in memory only, and never logged or persisted by the host.
+   * The owning provider must implement `WorkspaceProvider.requestBinary()`;
+   * the result remains a bounded JSON value.
+   */
+  requestBinary(operation: string, body: Uint8Array): Promise<JsonValue>;
 }
 
 export interface WorkspaceHost {

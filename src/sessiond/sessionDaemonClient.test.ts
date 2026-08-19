@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import http from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionDaemonClient } from "./sessionDaemonClient.js";
 
 const activeAgentProfile = {
@@ -75,4 +79,110 @@ function runtimeResponse(profile: unknown) {
       ...(profile === undefined ? {} : { activeAgentProfile: profile }),
     }),
   };
+}
+
+describe("SessionDaemonClient raw binary transport", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("sends the raw body with its headers over the HTTP URL transport", async () => {
+    const { server, nextRequest } = captureDaemonRequest();
+    await new Promise<void>((resolve) => { server.listen(0, "127.0.0.1", resolve); });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Expected TCP server address");
+    vi.stubEnv("PI_WEB_SESSIOND_URL", `http://127.0.0.1:${String(address.port)}`);
+
+    try {
+      const client = new SessionDaemonClient();
+      const [result, captured] = await Promise.all([
+        client.requestRaw(
+          "POST",
+          "/plugin-backends/board/projects/p1/workspaces/w1/secrets.store/binary",
+          Buffer.from([0x00, 0xff, 0x73]),
+          { headers: { "x-pi-web-plugin-backend-revision": "server-r1" } },
+        ),
+        nextRequest(),
+      ]);
+
+      expect(result.statusCode).toBe(200);
+      expect(result.body).toBe(JSON.stringify({ ok: true }));
+      expect(captured.method).toBe("POST");
+      expect(captured.path).toBe("/plugin-backends/board/projects/p1/workspaces/w1/secrets.store/binary");
+      expect(captured.headers["content-type"]).toBe("application/octet-stream");
+      expect(captured.headers["x-pi-web-plugin-backend-revision"]).toBe("server-r1");
+      expect(Array.from(captured.body)).toEqual([0x00, 0xff, 0x73]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("sends the raw body with its headers over the unix socket transport", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-web-sessiond-client-"));
+    const socketPath = join(dir, "sessiond.sock");
+    const { server, nextRequest } = captureDaemonRequest();
+    await new Promise<void>((resolve) => { server.listen(socketPath, resolve); });
+    vi.stubEnv("PI_WEB_SESSIOND_URL", undefined);
+    vi.stubEnv("PI_WEB_SESSIOND_SOCKET", socketPath);
+
+    try {
+      const client = new SessionDaemonClient();
+      const [result, captured] = await Promise.all([
+        client.requestRaw(
+          "POST",
+          "/plugin-backends/board/projects/p1/workspaces/w1/secrets.store/binary",
+          Buffer.from([0x73, 0x65, 0x63]),
+          { headers: { "x-pi-web-plugin-backend-revision": "server-r1" } },
+        ),
+        nextRequest(),
+      ]);
+
+      expect(result.statusCode).toBe(200);
+      expect(captured.headers["content-type"]).toBe("application/octet-stream");
+      expect(captured.headers["x-pi-web-plugin-backend-revision"]).toBe("server-r1");
+      expect(Array.from(captured.body)).toEqual([0x73, 0x65, 0x63]);
+    } finally {
+      await closeServer(server);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+interface CapturedDaemonRequest {
+  method: string | undefined;
+  path: string | undefined;
+  headers: http.IncomingHttpHeaders;
+  body: Buffer;
+}
+
+/** HTTP server that answers each request with a JSON body and records one request. */
+function captureDaemonRequest(): { server: http.Server; nextRequest: () => Promise<CapturedDaemonRequest> } {
+  let pending: ((captured: CapturedDaemonRequest) => void) | undefined;
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer | string) => { chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)); });
+    request.on("end", () => {
+      pending?.({
+        method: request.method,
+        path: request.url,
+        headers: request.headers,
+        body: Buffer.concat(chunks),
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true }));
+    });
+  });
+  return {
+    server,
+    nextRequest: () => new Promise((resolve) => { pending = resolve; }),
+  };
+}
+
+function closeServer(server: http.Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error === undefined) resolve();
+      else reject(error);
+    });
+  });
 }

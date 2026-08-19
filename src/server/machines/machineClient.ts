@@ -17,6 +17,8 @@ export interface MachineJsonResponse {
 export interface MachineRequestOptions {
   timeoutMs?: number;
   contentType?: string;
+  /** Extra spec-listed inbound headers forwarded across the gateway. */
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
@@ -120,6 +122,9 @@ export class RemoteMachineClient implements MachineClient {
     const headers = new Headers(this.remoteHeaders());
     headers.set("accept", "*/*");
     headers.set("accept-encoding", REMOTE_RESPONSE_ACCEPT_ENCODING);
+    if (options.headers !== undefined) {
+      for (const [name, value] of Object.entries(options.headers)) headers.set(name, value);
+    }
     if (body !== undefined) headers.set("content-type", options.contentType ?? defaultContentTypeForBody(body));
     return headers;
   }

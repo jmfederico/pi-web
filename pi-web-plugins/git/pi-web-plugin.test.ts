@@ -313,7 +313,7 @@ function panelContext(request: WorkspaceBackend["request"] | undefined, workspac
       deleteFile: () => Promise.reject(new Error("not implemented")),
       moveFile: () => Promise.reject(new Error("not implemented")),
     },
-    ...(request === undefined ? {} : { backend: { request } }),
+    ...(request === undefined ? {} : { backend: { request, requestBinary: () => Promise.reject(new Error("not implemented")) } }),
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },

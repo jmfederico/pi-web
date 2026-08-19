@@ -17,6 +17,21 @@ describe("RemoteMachineClient", () => {
     expect(Array.from(new Uint8Array(init.body))).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
+  it("forwards spec-listed extra headers while the body content type stays authoritative", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(new Response("ok", { status: 200 })));
+    const client = new RemoteMachineClient({ baseUrl: "https://remote.example.test/" }, fetchImpl);
+
+    await client.request("POST", "/api/plugin-backends/board/projects/p1/workspaces/w1/secrets.store/binary", Buffer.from([0x73]), {
+      contentType: "application/octet-stream",
+      headers: { "x-pi-web-plugin-backend-revision": "server-r1" },
+    });
+
+    const { init } = onlyFetchCall(fetchImpl);
+    const headers = new Headers(init.headers);
+    expect(headers.get("x-pi-web-plugin-backend-revision")).toBe("server-r1");
+    expect(headers.get("content-type")).toBe("application/octet-stream");
+  });
+
   it("serializes structured request bodies as JSON by default", async () => {
     const fetchImpl = vi.fn<typeof fetch>(() => Promise.resolve(new Response("ok", { status: 200 })));
     const client = new RemoteMachineClient({ baseUrl: "https://remote.example.test/base/", token: "secret" }, fetchImpl);
