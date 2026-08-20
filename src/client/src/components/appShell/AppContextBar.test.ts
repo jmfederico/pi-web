@@ -47,6 +47,17 @@ describe("app-context-bar", () => {
     expect(opened).toEqual(["projects"]);
   });
 
+  it("closes the navigation instead of reopening it when it is already open", async () => {
+    const opened: NavigationSection[] = [];
+    let closed = 0;
+    const bar = await mount({ project: project(), workspace: workspace(), session: session("Fix the bug"), navigationOpen: true, onOpenSection: (section) => opened.push(section), onCloseNavigation: () => { closed += 1; } });
+
+    expect(contextButton(bar).getAttribute("aria-expanded")).toBe("true");
+    contextButton(bar).click();
+    expect(closed).toBe(1);
+    expect(opened).toEqual([]);
+  });
+
   it("renders the actions button only when onShowActions is provided", async () => {
     let shown = 0;
     const withActions = await mount({ project: project(), onShowActions: () => { shown += 1; } });
@@ -64,7 +75,9 @@ interface Props {
   project?: Project;
   workspace?: Workspace;
   session?: SessionInfo;
+  navigationOpen?: boolean;
   onOpenSection?: (section: NavigationSection) => void;
+  onCloseNavigation?: () => void;
   onShowActions?: () => void;
 }
 
@@ -73,7 +86,9 @@ async function mount(props: Props): Promise<AppContextBar> {
   if (props.project !== undefined) bar.project = props.project;
   if (props.workspace !== undefined) bar.workspace = props.workspace;
   if (props.session !== undefined) bar.session = props.session;
+  if (props.navigationOpen !== undefined) bar.navigationOpen = props.navigationOpen;
   if (props.onOpenSection !== undefined) bar.onOpenSection = props.onOpenSection;
+  if (props.onCloseNavigation !== undefined) bar.onCloseNavigation = props.onCloseNavigation;
   if (props.onShowActions !== undefined) bar.onShowActions = props.onShowActions;
   document.body.append(bar);
   await bar.updateComplete;

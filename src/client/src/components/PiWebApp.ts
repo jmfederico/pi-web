@@ -106,6 +106,8 @@ export class PiWebApp extends LitElement {
   @query("app-navigation-panel") private navigationPanel?: AppNavigationPanel;
   @query("#navigation-panel") private navigationPanelFrame?: HTMLElement;
   @query("#workspace-panel") private workspacePanelFrame?: HTMLElement;
+  // The content view to restore when the mobile navigation view is dismissed.
+  private navigationReturnView: AppState["mainView"] = "chat";
 
   private readonly sessionUnread = new SessionUnreadController({
     onChange: (machineId) => {
@@ -1250,7 +1252,17 @@ export class PiWebApp extends LitElement {
   }
 
   private openNavigationSection(section: NavigationSection): void {
+    if (this.state.mainView !== "navigation") this.navigationReturnView = this.state.mainView;
     this.navigationSections.open(section, () => { this.selectMainView("navigation"); });
+  }
+
+  // Close the mobile navigation view, returning to the content the user came from
+  // (chat, or a workspace tool while its workspace is still selected).
+  private closeNavigation(): void {
+    if (this.state.mainView !== "navigation") return;
+    let target = this.navigationReturnView;
+    if (target === "navigation" || (target !== "chat" && this.state.selectedWorkspace === undefined)) target = "chat";
+    this.selectMainView(target);
   }
 
   private async selectNavigationItem(section: NavigationSection, nextTarget: NavigationFocusTarget, action: () => Promise<void>): Promise<void> {
@@ -2083,7 +2095,9 @@ export class PiWebApp extends LitElement {
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
         .refreshControl=${this.appShell.shouldShowAppRefreshInContextBar() ? this.renderAppRefresh() : undefined}
+        .navigationOpen=${this.state.mainView === "navigation"}
         .onOpenSection=${(section: NavigationSection) => { this.openNavigationSection(section); }}
+        .onCloseNavigation=${() => { this.closeNavigation(); }}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
       ></app-context-bar>
     `;
