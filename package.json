@@ -94,6 +94,7 @@
     "@fastify/compress": "^9.0.0",
     "@fastify/static": "^10.1.2",
     "@fastify/websocket": "^11.3.0",
+    "@hicaru/pi-rlm": "^0.3.8",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "diff": "^9.0.0",
@@ -105,6 +106,10 @@
     "undici": "^8.5.0",
     "ws": "^8.21.0"
   },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@earendil-works/pi-agent-core": "^1.0.0",
