@@ -555,6 +555,48 @@ describe("PluginRegistry", () => {
     ]);
   });
 
+  it("collects style contributions from gateway plugins in registration order", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: "first",
+      plugin: {
+        apiVersion: 1,
+        name: "First",
+        activate: () => ({ contributions: { styles: ["nav { color: red; }", "  "] } }),
+      },
+    });
+    registry.register({
+      id: "second",
+      plugin: {
+        apiVersion: 1,
+        name: "Second",
+        activate: () => ({ contributions: { styles: ["header { color: blue; }"] } }),
+      },
+    });
+
+    expect(registry.getStyles()).toEqual([
+      { pluginId: "first", css: "nav { color: red; }" },
+      { pluginId: "first", css: "  " },
+      { pluginId: "second", css: "header { color: blue; }" },
+    ]);
+  });
+
+  it("ignores style contributions from machine-scoped remote plugins", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: machineScopedPluginId("remote-1", "restyle"),
+      machineId: "remote-1",
+      sourcePluginId: "restyle",
+      plugin: {
+        apiVersion: 1,
+        name: "Restyle",
+        activate: () => ({ contributions: { styles: ["nav { color: red; }"] } }),
+      },
+    });
+
+    expect(registry.getStyles()).toEqual([]);
+  });
+
   it("collects workspace label items in contribution order", () => {
     const registry = new PluginRegistry();
     const workspace = testWorkspace();
