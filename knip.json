@@ -25,7 +25,6 @@
     "pi-web-plugins/**/*.ts",
     "pi-packages/**/*.ts"
   ],
-<<<<<<< HEAD
   "ignoreBinaries": ["mkfifo"],
   "ignoreDependencies": [
     "@hicaru/pi-rlm",
@@ -34,5 +33,4 @@
     "view"
   ],
   "ignoreExportsUsedInFile": true
->>>>>>> 55681a1e (feat(terminals): add native Bun PTY backend with node-pty fallback)
 }

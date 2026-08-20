@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unused-vars, @typescript-eslint/restrict-template-expressions, @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-extraneous-class */
+/* eslint-disable @typescript-eslint/consistent-type-assertions, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unused-vars, @typescript-eslint/restrict-template-expressions, @typescript-eslint/strict-boolean-expressions, @typescript-eslint/no-extraneous-class */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePTYBackend } from "./backend.js";
@@ -326,6 +326,7 @@ describe("BunPTYBackend", () => {
   let mockTerminalWrite: ReturnType<typeof vi.fn>;
   let mockTerminalResize: ReturnType<typeof vi.fn>;
   let mockTerminalClose: ReturnType<typeof vi.fn>;
+  let storedOnExitCb: ((__sub: unknown, code: number | null) => void) | undefined;
 
   beforeEach(async () => {
     originalBun = (globalThis as Record<string, unknown>)["Bun"];
@@ -362,11 +363,11 @@ describe("BunPTYBackend", () => {
         }
       },
       spawn: vi.fn((cmd, opts) => {
-      if (opts?.onExit) {
-        opts.onExit(null, 0);
-      }
-      return { kill: vi.fn() };
-    }),
+        if (opts?.onExit) {
+          storedOnExitCb = opts.onExit;
+        }
+        return { kill: vi.fn() };
+      }),
     };
 
     const mod = await reimport();
@@ -770,6 +771,102 @@ describe("BunPTYBackend", () => {
 
     freshBackend.dispose();
   });
+
+  it("decodes multi-byte UTF-8 sequences split across data chunks", async () => {
+    let dataCallback: ((terminal: unknown, data: Uint8Array) => void) | undefined;
+
+    (globalThis as Record<string, unknown>)["Bun"] = {
+      Terminal: class {
+        write = vi.fn();
+        resize = vi.fn();
+        close = vi.fn();
+
+        constructor(
+          options: {
+            data?: (terminal: unknown, data: Uint8Array) => void;
+          }
+        ) {
+          dataCallback = options.data;
+        }
+      },
+      spawn: vi.fn(() => ({ kill: vi.fn() })),
+    };
+
+    const mod = await reimport();
+    const freshBackend = new mod.BunPTYBackend();
+
+    const { id } = freshBackend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: [],
+      env: {},
+    });
+
+    const collected: string[] = [];
+    freshBackend.attach(id, {
+      output: (data) => {
+        collected.push(data);
+      },
+      exit: vi.fn(),
+    });
+
+    // "é" is 0xC3 0xA9 — delivered as two separate PTY reads.
+    dataCallback?.(null, new Uint8Array([0xc3]));
+    dataCallback?.(null, new Uint8Array([0xa9]));
+
+    expect(collected.join("")).toBe("é");
+
+    freshBackend.dispose();
+  });
+
+  it("removes the terminal entry when the subprocess exits", async () => {
+    let onExitCb: ((sub: unknown, code: number | null) => void) | undefined;
+
+    (globalThis as Record<string, unknown>)["Bun"] = {
+      Terminal: class {
+        write = vi.fn();
+        resize = vi.fn();
+        close = vi.fn();
+      },
+      spawn: vi.fn((_cmd, opts) => {
+        if (opts?.onExit) onExitCb = opts.onExit;
+        return { kill: vi.fn() };
+      }),
+    };
+
+    const mod = await reimport();
+    const freshBackend = new mod.BunPTYBackend();
+
+    const { id } = freshBackend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: [],
+      env: {},
+    });
+    const map = (freshBackend as unknown as { terminals: Map<string, unknown> }).terminals;
+    expect(map.has(id)).toBe(true);
+
+    onExitCb?.(null, 0);
+
+    expect(map.has(id)).toBe(false);
+
+    freshBackend.dispose();
+  });
+
+  it("removes the terminal entry when killed", () => {
+    const { id } = backend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: [],
+      env: {},
+    });
+    const map = (backend as unknown as { terminals: Map<string, unknown> }).terminals;
+    expect(map.has(id)).toBe(true);
+
+    backend.kill(id);
+
+    expect(map.has(id)).toBe(false);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -999,6 +1096,39 @@ describe("NodePTYBackend", () => {
       .next()
       .value as { kill: ReturnType<typeof vi.fn> };
     expect(proc.kill).toHaveBeenCalledWith("SIGKILL");
+  });
+
+  it("removes the terminal entry when the process exits", () => {
+    const { id } = backend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: [],
+      env: {},
+    });
+    const map = (backend as unknown as { terminals: Map<string, unknown> }).terminals;
+    expect(map.has(id)).toBe(true);
+
+    const proc = mockPtyProcesses.values()
+      .next()
+      .value as { onExitCb: ((code: number | null) => void) | null };
+    proc.onExitCb?.(0);
+
+    expect(map.has(id)).toBe(false);
+  });
+
+  it("removes the terminal entry when killed", () => {
+    const { id } = backend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: [],
+      env: {},
+    });
+    const map = (backend as unknown as { terminals: Map<string, unknown> }).terminals;
+    expect(map.has(id)).toBe(true);
+
+    backend.kill(id);
+
+    expect(map.has(id)).toBe(false);
   });
 });
 

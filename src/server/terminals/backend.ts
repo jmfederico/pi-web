@@ -97,6 +97,8 @@ interface BunTerminalEntry {
   info: TerminalInfo & { cols: number; rows: number };
   outputCb: ((data: string, replay: boolean) => void) | null;
   exitCb: ((code: number | undefined) => void) | null;
+  /** Streaming decoder so multi-byte UTF-8 sequences split across data chunks are not corrupted. */
+  decoder: TextDecoder;
 }
 
 export class BunPTYBackend implements TerminalBackend {
@@ -127,10 +129,9 @@ export class BunPTYBackend implements TerminalBackend {
       rows,
       name: "xterm-256color",
       data: (_term, data: Uint8Array) => {
-        const text = new TextDecoder().decode(data);
         const entry = this.terminals.get(id);
         if (entry?.outputCb) {
-          entry.outputCb(text, false);
+          entry.outputCb(entry.decoder.decode(data, { stream: true }), false);
         }
       },
     });
@@ -148,6 +149,9 @@ export class BunPTYBackend implements TerminalBackend {
         if (entry?.exitCb) {
           entry.exitCb(exitCode ?? undefined);
         }
+        // Release the entry once the spawned process is gone so exited
+        // terminals do not accumulate for the lifetime of the service.
+        this.terminals.delete(id);
       },
     });
 
@@ -167,6 +171,7 @@ export class BunPTYBackend implements TerminalBackend {
       info,
       outputCb: null,
       exitCb: null,
+      decoder: new TextDecoder(),
     });
 
     return { id, info, cols, rows };
@@ -189,6 +194,9 @@ export class BunPTYBackend implements TerminalBackend {
       entry.terminal.close();
       entry.info.exited = true;
     }
+    // The subprocess exit handler also deletes the entry; deleting here covers
+    // the closed-without-exit path and the idempotent re-delete is harmless.
+    this.terminals.delete(id);
   }
 
   attach(
@@ -333,6 +341,9 @@ export class NodePTYBackend implements TerminalBackend {
       if (entry?.exitCb) {
         entry.exitCb(code);
       }
+      // Release the entry once the process is gone so exited terminals do not
+      // accumulate for the lifetime of the service.
+      this.terminals.delete(id);
     });
 
     const info: TerminalInfo & { cols: number; rows: number } = {
@@ -371,6 +382,9 @@ export class NodePTYBackend implements TerminalBackend {
       entry.proc.kill("SIGKILL");
       entry.info.exited = true;
     }
+    // The proc exit event also deletes the entry; deleting here covers the
+    // closed-without-exit path and the idempotent re-delete is harmless.
+    this.terminals.delete(id);
   }
 
   attach(
