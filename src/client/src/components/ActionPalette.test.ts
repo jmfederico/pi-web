@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppAction } from "../actions";
-import { ActionPalette, filterActionPaletteActions } from "./ActionPalette";
+import { ActionPalette, filterActionPaletteActions, orderActionPaletteActions } from "./ActionPalette";
 import { deepActiveElement, dialogSection, dialogSurface, pressKey, pressNativeButtonEnter, requiredElement, settleRenderedDialog, surfaceBackdrop } from "./modalSurfaceTestSupport";
 
 afterEach(() => {
@@ -27,6 +27,23 @@ describe("filterActionPaletteActions", () => {
     ];
 
     expect(filterActionPaletteActions(actions, "support cleanup").map((item) => item.id)).toEqual(["cleanup"]);
+  });
+});
+
+describe("orderActionPaletteActions", () => {
+  const actions: AppAction[] = [
+    action("chat", "Go to Chat", { group: "Navigation" }),
+    action("add-machine", "Add Machine", { group: "Machine" }),
+    action("files", "Go to Files", { group: "Navigation" }),
+    action("settings", "Open Settings", { group: "Preferences" }),
+  ];
+
+  it("floats the leading group to the top while preserving relative order", () => {
+    expect(orderActionPaletteActions(actions, "Navigation").map((item) => item.id)).toEqual(["chat", "files", "add-machine", "settings"]);
+  });
+
+  it("leaves order untouched when no leading group is given", () => {
+    expect(orderActionPaletteActions(actions, undefined).map((item) => item.id)).toEqual(["chat", "add-machine", "files", "settings"]);
   });
 });
 
