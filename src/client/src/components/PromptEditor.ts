@@ -16,7 +16,7 @@ import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, t
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
 import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendPromptOnEnterShortcut, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
 import { promptEditorStyles, type CompletionItem } from "./shared";
-import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
+import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderCaretIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
 
@@ -53,6 +53,11 @@ export class PromptEditor extends LitElement {
   @state() private attachments: readonly PendingAttachment[] = [];
   @state() private attachmentDelivery: PromptAttachmentDelivery = loadAttachmentDelivery();
   @state() private attachmentError: string | undefined = undefined;
+  // While streaming, Send does this behavior; the caret menu switches it. It resets
+  // to "steer" after every send and whenever streaming stops, so queueing is a
+  // deliberate per-message opt-in.
+  @state() private sendMode: "steer" | "followUp" = "steer";
+  @state() private sendMenuOpen = false;
   private attachmentSeq = 0;
   private requestVersion = 0;
   private editor: EditorView | undefined;
@@ -97,6 +102,10 @@ export class PromptEditor extends LitElement {
   protected override updated(changed: PropertyValues) {
     if (changed.has("disabled")) this.updateEditorDisabledState();
     if (changed.has("sessionId") || changed.has("machineId")) this.syncEditorDoc();
+    if (changed.has("canSteer") && !this.canSteer && (this.sendMode !== "steer" || this.sendMenuOpen)) {
+      this.sendMode = "steer";
+      this.sendMenuOpen = false;
+    }
   }
 
   override disconnectedCallback(): void {
@@ -108,7 +117,8 @@ export class PromptEditor extends LitElement {
   override render() {
     const shellInputMode = this.currentInputMode.kind === "shell" ? this.currentInputMode : undefined;
     const shellMode = shellInputMode !== undefined;
-    const queuesInput = this.canSteer || this.isCompacting;
+    const behavior = this.currentSendBehavior();
+    const canSwitchSendMode = this.canSteer && !this.isCompacting;
     const busy = this.disabled || this.sending;
     return html`
       <footer class=${shellMode ? "shell-mode" : ""} @paste=${(event: ClipboardEvent) => { void this.handlePaste(event); }} @dragover=${(event: DragEvent) => { this.handleDragOver(event); }} @drop=${(event: DragEvent) => { void this.handleDrop(event); }}>
@@ -123,9 +133,12 @@ export class PromptEditor extends LitElement {
         </div>
         <div class="actions">
           ${this.renderCompactStatus()}
-          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
-          ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
-          <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
+          ${this.canStop ? html`<button class="icon-button stop-button" ?disabled=${this.disabled} title="Stop current work and clear queued messages" aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>` : null}
+          <div class="send-wrap">
+            <button class="icon-button send-button" ?disabled=${busy} title=${sendActionLabel(behavior)} aria-label=${sendActionLabel(behavior)} @click=${() => { this.send(behavior); }}>${behavior === "followUp" ? renderQueueIcon() : renderSendIcon()}</button>
+            ${canSwitchSendMode ? html`<button class="caret-badge" ?disabled=${busy} aria-haspopup="menu" aria-expanded=${this.sendMenuOpen ? "true" : "false"} title="Change send mode" aria-label="Change send mode" @click=${(event: MouseEvent) => { event.stopPropagation(); this.sendMenuOpen = !this.sendMenuOpen; }}>${renderCaretIcon()}</button>` : null}
+            ${canSwitchSendMode && this.sendMenuOpen ? this.renderSendMenu() : null}
+          </div>
         </div>
       </footer>
     `;
@@ -160,6 +173,29 @@ export class PromptEditor extends LitElement {
   /** Get the underlying CM6 EditorView, or undefined if not yet mounted. */
   get view(): EditorView | undefined {
     return this.editor;
+  }
+
+  private currentSendBehavior(): "steer" | "followUp" | undefined {
+    if (this.isCompacting) return "followUp";
+    if (this.canSteer) return this.sendMode;
+    return undefined;
+  }
+
+  private renderSendMenu() {
+    const pick = (mode: "steer" | "followUp") => { this.sendMode = mode; this.sendMenuOpen = false; };
+    return html`
+      <div class="send-menu-backdrop" @click=${() => { this.sendMenuOpen = false; }}></div>
+      <div class="send-menu" role="menu">
+        <button type="button" role="menuitemradio" aria-checked=${this.sendMode === "steer" ? "true" : "false"} @click=${() => { pick("steer"); }}>
+          <span class="mi-icon">${renderSendIcon()}</span>
+          <span><span class="mi-title">Steer now</span><span class="mi-sub">Redirect the response in progress</span></span>
+        </button>
+        <button type="button" role="menuitemradio" aria-checked=${this.sendMode === "followUp" ? "true" : "false"} @click=${() => { pick("followUp"); }}>
+          <span class="mi-icon">${renderQueueIcon()}</span>
+          <span><span class="mi-title">Queue for after</span><span class="mi-sub">Run once this response finishes</span></span>
+        </button>
+      </div>
+    `;
   }
 
   private renderCompactStatus() {
@@ -439,7 +475,7 @@ export class PromptEditor extends LitElement {
     if (!shouldSendPromptOnEnterShortcut(shiftKey, this.mobilePromptEnterMedia, readPromptEnterPreference())) {
       return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
     }
-    this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
+    this.send(this.currentSendBehavior());
     return true;
   }
 
@@ -497,6 +533,8 @@ export class PromptEditor extends LitElement {
     this.completions = [];
     this.attachments = [];
     this.attachmentError = undefined;
+    this.sendMode = "steer";
+    this.sendMenuOpen = false;
     // `draft` is not reactive, so the cleared text will not flow to CodeMirror
     // via `updated()`; push it to the editor document explicitly.
     this.syncEditorDoc();
@@ -516,6 +554,12 @@ function sessionStatusRenderEqual(a: SessionStatus | undefined, b: SessionStatus
   return a.model?.id === b.model?.id
     && a.model?.provider === b.model?.provider
     && a.thinkingLevel === b.thinkingLevel;
+}
+
+function sendActionLabel(behavior: "steer" | "followUp" | undefined): string {
+  if (behavior === "steer") return "Steer the current response";
+  if (behavior === "followUp") return "Queue until the current activity finishes";
+  return "Send message";
 }
 
 function draftStorageKey(machineId: unknown, sessionId: unknown): string | undefined {
