@@ -49,7 +49,6 @@ import { canDeleteWorkspace, isWorkspaceDeletionPending, isWorkspaceDeletionRunP
 import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
-import { unreadSessionCount } from "./SessionList";
 import "./SessionCleanupDialog";
 import "./SessionTreeNavigator";
 import "./ChatView";
@@ -69,8 +68,6 @@ import "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
 import "./appShell/AppContextBar";
-import "./appShell/AppMobileMainTabs";
-import type { AppMobileMainTab } from "./appShell/AppMobileMainTabs";
 import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
 import "./appShell/AppPanelEdgeControl";
 import "./appShell/AppRefreshControl";
@@ -109,6 +106,8 @@ export class PiWebApp extends LitElement {
   @query("app-navigation-panel") private navigationPanel?: AppNavigationPanel;
   @query("#navigation-panel") private navigationPanelFrame?: HTMLElement;
   @query("#workspace-panel") private workspacePanelFrame?: HTMLElement;
+  // The content view to restore when the mobile navigation view is dismissed.
+  private navigationReturnView: AppState["mainView"] = "chat";
 
   private readonly sessionUnread = new SessionUnreadController({
     onChange: (machineId) => {
@@ -1257,7 +1256,17 @@ export class PiWebApp extends LitElement {
   }
 
   private openNavigationSection(section: NavigationSection): void {
+    if (this.state.mainView !== "navigation") this.navigationReturnView = this.state.mainView;
     this.navigationSections.open(section, () => { this.selectMainView("navigation"); });
+  }
+
+  // Close the mobile navigation view, returning to the content the user came from
+  // (chat, or a workspace tool while its workspace is still selected).
+  private closeNavigation(): void {
+    if (this.state.mainView !== "navigation") return;
+    let target = this.navigationReturnView;
+    if (target === "navigation" || (target !== "chat" && this.state.selectedWorkspace === undefined)) target = "chat";
+    this.selectMainView(target);
   }
 
   private async selectNavigationItem(section: NavigationSection, nextTarget: NavigationFocusTarget, action: () => Promise<void>): Promise<void> {
@@ -1408,12 +1417,6 @@ export class PiWebApp extends LitElement {
     if (this.state.selectedProject !== undefined) return "Select a workspace to start a session.";
     if (this.state.projects.length === 0) return "Add a project to start a session.";
     return "Select a project and workspace to start a session.";
-  }
-
-  private mobilePanelBadge(panel: QualifiedWorkspacePanelContribution): unknown {
-    const workspace = this.state.selectedWorkspace;
-    if (workspace === undefined) return undefined;
-    return panel.badge?.(this.createWorkspacePanelContext(workspace));
   }
 
   private workspaceLabelItems(workspace: Workspace): WorkspaceLabelItem[] {
@@ -2120,49 +2123,16 @@ export class PiWebApp extends LitElement {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
       <app-context-bar
-        .machines=${this.state.machines}
-        .machine=${this.state.selectedMachine}
         .project=${this.state.selectedProject}
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
         .refreshControl=${this.appShell.shouldShowAppRefreshInContextBar() ? this.renderAppRefresh() : undefined}
+        .navigationOpen=${this.state.mainView === "navigation"}
         .onOpenSection=${(section: NavigationSection) => { this.openNavigationSection(section); }}
+        .onCloseNavigation=${() => { this.closeNavigation(); }}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
       ></app-context-bar>
     `;
-  }
-
-  private renderMobileMainTabs() {
-    return html`
-      <app-mobile-main-tabs
-        .tabs=${this.mobileMainTabs()}
-        .selectedView=${this.state.mainView}
-        .onSelect=${(view: AppState["mainView"]) => { this.selectMainView(view); }}
-      ></app-mobile-main-tabs>
-    `;
-  }
-
-  private mobileMainTabs(): AppMobileMainTab[] {
-    const unreadCount = unreadSessionCount(this.state.sessions, this.unreadSessionIds);
-    return [
-      {
-        id: "navigation",
-        label: "Sessions",
-        icon: "navigation",
-        className: "navigation-tab",
-        ...(unreadCount === 0 ? {} : { badge: unreadCount, badgeLabel: `${String(unreadCount)} unread`, badgeTone: "unread" }),
-      },
-      { id: "chat", label: "Chat", icon: "chat" },
-      ...this.visibleWorkspacePanels().map((panel): AppMobileMainTab => {
-        const icon = panel.icon;
-        return {
-          id: panel.id,
-          label: panel.title,
-          ...(icon === undefined ? {} : { icon }),
-          badge: this.mobilePanelBadge(panel),
-        };
-      }),
-    ];
   }
 
   private renderAppRefresh() {
@@ -2177,7 +2147,6 @@ export class PiWebApp extends LitElement {
         ${this.renderNavigationPanelEdgeControl()}
         <main class=${mainViewClass(state.mainView)}>
           ${this.renderContextBar()}
-          ${this.renderMobileMainTabs()}
           ${errorBanner(state.error, () => { this.setState({ error: "" }); })}
           ${deprecatedAgentInputsBanner(deprecatedAgentInputsWarnings(state.machines, state.machineRuntimes))}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
@@ -2193,7 +2162,7 @@ export class PiWebApp extends LitElement {
         ${this.renderWorkspacePanelEdgeControl()}
         ${this.renderWorkspacePanel()}
         ${state.authDialog !== undefined ? html`<auth-dialog .state=${state.authDialog} .onChooseMethod=${(authType: "oauth" | "api_key") => { void this.auth.chooseLoginMethod(authType); }} .onSelectProvider=${(providerId: string, authType: "oauth" | "api_key") => { void this.auth.selectLoginProvider(providerId, authType); }} .onLogoutProvider=${(providerId: string) => { void this.auth.logoutProvider(providerId); }} .onOAuthInput=${(value: string) => { this.auth.updateOAuthInput(value); }} .onOAuthRespond=${(value?: string) => { void this.auth.respondOAuth(value); }} .onOAuthCancel=${() => { void this.auth.cancelOAuth(); }} .onCancel=${() => { this.auth.closeDialog(); }}></auth-dialog>` : null}
-        ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
+        ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .leadingGroup=${this.appShell.isMobileNavigationLayout ? "Navigation" : undefined} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
         ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}

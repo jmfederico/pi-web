@@ -11,9 +11,20 @@ import { copyDiagnostics, renderInfoPanel } from "./infoInternals.js";
 const plugin: PiWebPlugin = {
   apiVersion: 2,
   name: "Info Plugin",
-  activate: ({ html, svg }) => ({
+  activate: ({ runtimePluginId, html, svg }) => ({
     contributions: {
       actions: [
+        {
+          id: "workspace.open-info",
+          title: "Open Workspace Info",
+          description: "Open the workspace Info panel — machine, version, and status details.",
+          group: "Workspace",
+          enabled: (context) => context.state.selectedWorkspace !== undefined,
+          run: (context) => {
+            if (context.state.selectedWorkspace === undefined) return;
+            context.selectWorkspaceTool(`${runtimePluginId}:workspace.info`);
+          },
+        },
         {
           id: "copy-diagnostics",
           title: "Copy PI WEB Diagnostics",

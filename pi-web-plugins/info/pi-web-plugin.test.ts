@@ -41,10 +41,36 @@ describe("Info plugin copy-diagnostics action", () => {
   });
 });
 
-function findCopyDiagnosticsAction() {
-  const action = plugin.activate({ apiVersion: 2, pluginId: "info", runtimePluginId: "info", html, svg }).contributions.actions?.find((candidate) => candidate.id === "copy-diagnostics");
-  if (action === undefined) throw new Error("Expected copy-diagnostics action");
+describe("Info plugin open-info action", () => {
+  it("opens the workspace Info panel when a workspace is selected", () => {
+    const selectWorkspaceTool = vi.fn((tool: string) => { void tool; });
+    const action = findAction("workspace.open-info");
+    const selected = runtimeContext({ state: { selectedWorkspace: { id: "ws-1", projectId: "proj-1", path: "/w", label: "w", isMain: true } }, selectWorkspaceTool });
+
+    expect(action.enabled?.(selected)).toBe(true);
+    void action.run(selected);
+    expect(selectWorkspaceTool).toHaveBeenCalledWith("info:workspace.info");
+  });
+
+  it("is disabled and does nothing without a selected workspace", () => {
+    const selectWorkspaceTool = vi.fn((tool: string) => { void tool; });
+    const action = findAction("workspace.open-info");
+    const context = runtimeContext({ selectWorkspaceTool });
+
+    expect(action.enabled?.(context)).toBe(false);
+    void action.run(context);
+    expect(selectWorkspaceTool).not.toHaveBeenCalled();
+  });
+});
+
+function findAction(id: string) {
+  const action = plugin.activate({ apiVersion: 2, pluginId: "info", runtimePluginId: "info", html, svg }).contributions.actions?.find((candidate) => candidate.id === id);
+  if (action === undefined) throw new Error(`Expected ${id} action`);
   return action;
+}
+
+function findCopyDiagnosticsAction() {
+  return findAction("copy-diagnostics");
 }
 
 function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {
