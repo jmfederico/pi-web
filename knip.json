@@ -7,12 +7,14 @@
     "extensions/pi-web.ts",
     "pi-web-plugins/**/pi-web-plugin.ts",
     "pi-web-plugins/**/server-plugin.ts",
+    "pi-packages/**/pi-web-plugin.ts",
     "scripts/*.mjs"
   ],
   "project": [
     "src/**/*.ts",
     "extensions/**/*.ts",
-    "pi-web-plugins/**/*.ts"
+    "pi-web-plugins/**/*.ts",
+    "pi-packages/**/*.ts"
   ],
   "ignoreExportsUsedInFile": true
 }

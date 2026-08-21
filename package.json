@@ -56,7 +56,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:cached": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/pi-web/typecheck.tsbuildinfo",
     "knip": "knip",
-    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" vite.config.ts vitest.config.ts",
+    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" \"pi-packages/**/*.ts\" vite.config.ts vitest.config.ts",
     "test": "vitest run --config vitest.config.ts",
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
     "verify:staged": "node scripts/verify-staged.mjs",

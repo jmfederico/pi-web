@@ -11,7 +11,9 @@ export class ProjectService {
   }
 
   async add(input: { name?: string; path: string; create?: boolean }): Promise<Project> {
-    const requestedPath = expandUserPath(input.path);
+    // Trim so stray whitespace cannot diverge the stored path from the
+    // trimmed key the trust lookup (projectTrustRoutes) previews decisions for.
+    const requestedPath = expandUserPath(input.path.trim());
     if (input.create === true) await mkdir(requestedPath, { recursive: true });
     const resolved = await realpath(requestedPath);
     const s = await stat(resolved);

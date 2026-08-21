@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import { isCachedNewSessionInfo, loadCachedNewSessions, markCachedNewSessionInfo, rememberCachedNewSession } from "../cachedNewSessions";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
+import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { SessionController } from "./sessionController";
 import { defaultApi, emptyPage, FakeSocket, MemoryStorage, oldSession, replacementSession, sessionKey, sessionLookupId, status, workspace, type AppState } from "./sessionController.testSupport";
 
@@ -62,6 +63,8 @@ describe("SessionController cached-new sessions", () => {
       { api, socket: new FakeSocket() },
     );
     saveDraft(sessionKey(transientSession.id), "discard me");
+    const discardedAttachment: PendingAttachment = { id: "attachment-1", kind: "file", name: "notes.txt", mimeType: "text/plain", data: "aGVsbG8=", size: 5 };
+    saveStagedAttachments(sessionKey(transientSession.id), [discardedAttachment]);
 
     await controller.deleteCachedNewSession(transientSession);
 
@@ -71,6 +74,7 @@ describe("SessionController cached-new sessions", () => {
     expect(state.sessionActivities[transientSession.id]).toBeUndefined();
     expect(state.sendingPrompts[transientSession.id]).toBeUndefined();
     expect(loadDraft(sessionKey(transientSession.id))).toBe("");
+    expect(loadStagedAttachments(sessionKey(transientSession.id))).toEqual([]);
     expect(state.selectedSession?.id).toBe(nextSession.id);
   });
 
@@ -79,6 +83,8 @@ describe("SessionController cached-new sessions", () => {
     Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
     rememberCachedNewSession(oldSession);
     saveDraft(sessionKey(oldSession.id), "draft text");
+    const carriedAttachment: PendingAttachment = { id: "attachment-1", kind: "file", name: "notes.txt", mimeType: "text/plain", data: "aGVsbG8=", size: 5 };
+    saveStagedAttachments(sessionKey(oldSession.id), [carriedAttachment]);
 
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [markCachedNewSessionInfo(oldSession)] };
     const urlUpdates: ({ replace?: boolean | undefined } | undefined)[] = [];
@@ -107,8 +113,17 @@ describe("SessionController cached-new sessions", () => {
     expect(socket.connectedSessionIds).toEqual([oldSession.id, replacementSession.id]);
     expect(loadDraft(sessionKey(oldSession.id))).toBe("");
     expect(loadDraft(sessionKey(replacementSession.id))).toBe("draft text");
+    expect(loadStagedAttachments(sessionKey(oldSession.id))).toEqual([]);
+    expect(loadStagedAttachments(sessionKey(replacementSession.id))).toEqual([carriedAttachment]);
     expect(loadCachedNewSessions().map((session) => session.id)).toEqual([replacementSession.id]);
     expect(urlUpdates).toEqual([{ replace: true }]);
+
+    // `oldSession`/`replacementSession` are shared fixture ids reused by other
+    // tests in this file; the staged-attachment store is an in-memory module
+    // singleton (unlike localStorage-backed drafts, which each test resets by
+    // swapping in a fresh MemoryStorage), so clear explicitly to avoid leaking
+    // this attachment into a later test that reuses the same id.
+    clearStagedAttachments(sessionKey(replacementSession.id));
   });
 
   it("stores command prompt drafts for replacement sessions before selecting them", async () => {

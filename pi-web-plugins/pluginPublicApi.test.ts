@@ -2,7 +2,11 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const pluginRoot = "pi-web-plugins";
+// Bundled PI WEB plugins live in pi-web-plugins/; Pi packages that ship
+// alongside them without being discovered by directory scan (see
+// PiWebPluginCatalog's discovery roots) live in pi-packages/. Both are still
+// loaded as PI WEB plugins once installed, so both stay on the public API.
+const pluginRoots = ["pi-web-plugins", "pi-packages"];
 const forbiddenPatterns = [
   { pattern: /\bfetch\s*\(/u, message: "direct browser fetch" },
   { pattern: /["'`](?:api\/|[^"'`]*\/api\/)/u, message: "direct PI WEB API URL" },
@@ -14,13 +18,15 @@ const forbiddenPatterns = [
   { pattern: /@jmfederico\/pi-web\/(?:dist|src)\//u, message: "imports unpublished PI WEB internals" },
 ];
 
-describe("bundled PI WEB plugins", () => {
+describe("PI WEB plugin packages", () => {
   it("uses public browser and server plugin APIs instead of direct PI WEB internals", async () => {
     const violations: string[] = [];
-    for (const file of await pluginSourceFiles(pluginRoot)) {
-      const content = await readFile(file, "utf8");
-      for (const { pattern, message } of forbiddenPatterns) {
-        if (pattern.test(content)) violations.push(`${file}: ${message}`);
+    for (const root of pluginRoots) {
+      for (const file of await pluginSourceFiles(root)) {
+        const content = await readFile(file, "utf8");
+        for (const { pattern, message } of forbiddenPatterns) {
+          if (pattern.test(content)) violations.push(`${file}: ${message}`);
+        }
       }
     }
 

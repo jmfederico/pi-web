@@ -1,0 +1,11 @@
+{
+  "name": "@jmfederico/pi-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generic Relay method: /relay and /relay-worktree prompts and a relay skill for chaining independent pi sessions.",
+  "piWeb": {
+    "plugins": [
+      { "id": "relays", "browserRoot": ".", "module": "pi-web-plugin.js" }
+    ]
+  }
+}

@@ -10,7 +10,8 @@ Plugins can currently:
 - call browser APIs and documented PI WEB plugin context helpers;
 - read workspace files and start workspace terminal commands through documented helpers;
 - serve browser-public files from an explicitly declared `browserRoot`;
-- contribute one server-side workspace provider, with optional JSON backend requests and workspace-removal planning.
+- contribute one server-side workspace provider, with optional JSON backend requests and workspace-removal planning;
+- ship Pi prompt templates and skills that sessions pick up while the plugin is enabled.
 
 Browser entries run in the PI WEB page through browser plugin API v2. Declared server entries run in the session daemon through the separate server-plugin API v1. Plugins do not get raw Fastify access, arbitrary routes, concrete core services, a generic event bus, Pi model-provider registration, or a general server-hook API. Neither entry is sandboxed.
 
@@ -272,6 +273,8 @@ Use this sequence:
 3. For a browser-only plugin, reload the browser tab.
 4. For a server-backed plugin, manually restart sessiond, wait for it to become available, then reload the browser tab.
 
+Pi prompt templates and skills shipped by a plugin follow the same daemon-startup snapshot even for browser-only plugins; see [Pi prompt templates and skills in plugins](#pi-prompt-templates-and-skills-in-plugins).
+
 > **Manual session-daemon restart:** for the native systemd user service, run `systemctl --user restart pi-web-sessiond` (the unit is `pi-web-sessiond.service`). Restarting sessiond may interrupt active sessions and runtime ownership. Web/UI autoreload, restarting only the web/API service, browser reload, and Pi's `/reload` command do not activate server-plugin changes.
 
 ### Offline disable and safe start
@@ -384,7 +387,7 @@ Review task configs before running them, especially in shared projects. Workspac
 ### Relays
 
 **Plugin id:** `relays`
-**What it does:** adds a read-only **Relays** workspace tab for browsing the workspace's relays, plus an **Open Workspace Relays** action for the selected workspace that opens the same tab.
+**What it does:** ships the generic Relay workflow — the `/relay` and `/relay-worktree` prompt templates and the `relay` skill, added to sessions while the plugin is enabled — and adds a read-only **Relays** workspace tab for browsing the workspace's relays, plus an **Open Workspace Relays** action for the selected workspace that opens the same tab.
 
 A relay is a directory of markdown notes under `.pi-web/relays/<name>/` in the workspace root — the convention used by the Relay method for chaining agent sessions. The tab lists each relay's documents with `status.md`, `charter.md`, and `log.md` first (in that order), followed by any other files alphabetically, and opens `status.md` by default. Markdown documents render as sanitized HTML; other files render as preformatted text, and binary files have no preview. Truncated documents show a notice, and **Refresh** re-scans the workspace and reloads the open document.
 
@@ -392,15 +395,9 @@ Documents in subfolders are listed too. Folders appear as chips in the document 
 
 With several relays, a picker pre-selects the most recently modified one; a single relay opens directly. A workspace without `.pi-web/relays/` shows an empty state explaining the convention. The tab never creates, edits, or deletes relay files.
 
-Relays is enabled by default. To hide it, disable `relays` in **Settings → PI WEB plugins** or set:
+Relays ships as a Pi package rather than a bundled, directory-scanned plugin: its source lives at `pi-packages/relays/` and its built copy ships inside `@jmfederico/pi-web` at `dist/pi-packages/relays/`, alongside (but outside) the bundled plugins in `pi-web-plugins/`/`dist/pi-web-plugins/`. PI WEB does not discover it there by directory scan; it becomes available once its Pi package (`@jmfederico/pi-relay`) is installed for the active Pi agent profile, the same way any other Pi-package-sourced plugin is (see [Discovery and packaging](#discovery-and-packaging) and [Pi packages shipped alongside bundled plugins](#pi-packages-shipped-alongside-bundled-plugins)). Once installed, removing the package removes `relays` — including its prompt templates and skill — from sessions, effective at the next session-daemon start; there is no separate `plugins.relays.enabled` toggle for it.
 
-```json
-{
-  "plugins": {
-    "relays": { "enabled": false }
-  }
-}
-```
+This stays zero-extra-steps out of the box even though it is no longer bundled: sessiond installs `@jmfederico/pi-relay` automatically for the active agent profile at startup if it is not already configured for that profile. Removing it from **Settings → Pi packages** is remembered per profile (see [Pi packages shipped alongside bundled plugins](#pi-packages-shipped-alongside-bundled-plugins)), so a manual removal is not silently reinstalled later; a user who changes their mind can reinstall it again with one click from the same Settings screen, with no path to type.
 
 ## Discovery and packaging
 
@@ -512,6 +509,31 @@ const iconUrl = new URL("./assets/icon.svg", import.meta.url);
 The final installed plugin package must contain `assets/icon.svg` at that path relative to the final built module and inside `browserRoot`. PI WEB serves files that already exist in the package; it does not copy a source `public/` directory or apply Vite-style public-directory semantics. Configure the plugin build and package contents to emit or copy the asset into its final module-relative location.
 
 PI WEB returns executable JavaScript MIME types for both `.js` and `.mjs`. JSON, CSS, HTML, and SVG receive their corresponding content types; unknown file types are served as octet-stream.
+
+## Pi prompt templates and skills in plugins
+
+A bundled or local plugin package can ship Pi prompt templates and skills that join sessions while the plugin is enabled, following pi's package conventions:
+
+- `prompts/<name>.md` — prompt templates, invoked as `/<name>`;
+- `skills/<name>/SKILL.md` — skills the agent loads on demand.
+
+Sessiond collects these directories once per startup from enabled bundled and local plugins and adds them to pi's resource loading for the sessions it hosts. Plugin resources are fallback defaults in pi's load order: a project (`.pi/prompts/`, `.agents/skills/`, …) or user (`~/.pi/agent/`, `~/.agents/skills/`, …) resource with the same name shadows the plugin's, so a project always keeps the final word over a shipped generic. Plugins delivered as Pi packages need nothing here — pi's own package resolution already loads their prompt templates and skills.
+
+Because the set is fixed at session-daemon startup together with the plugin lifecycle snapshot, changing a plugin's enablement moves its session resources at the next session-daemon start; Pi's `/reload` does not revisit it. Safe start withholds these resources exactly as it withholds server entries.
+
+`relays` used to be a bundled example of this while it lived in `pi-web-plugins/`; now that it ships as a Pi package (see [Pi packages shipped alongside bundled plugins](#pi-packages-shipped-alongside-bundled-plugins)), pi's own package resolution loads its `/relay`/`/relay-worktree` prompt templates and `relay` skill directly once installed, and this fallback path does not apply to it.
+
+### Pi packages shipped alongside bundled plugins
+
+`pi-packages/` ships real, independently identified Pi packages inside `@jmfederico/pi-web`'s npm package, built into `dist/pi-packages/<name>/` alongside — but separate from — the bundled PI WEB plugins in `pi-web-plugins/`/`dist/pi-web-plugins/`. A package shipped this way is *not* discovered by PI WEB's bundled/local directory scan; it only becomes an active PI WEB plugin once it is installed as a Pi package for the active agent profile, exactly like an externally published one (see [Discovery and packaging](#discovery-and-packaging)).
+
+`pi-packages/relays/` is shaped this way: its `package.json` carries the real package identity `@jmfederico/pi-relay` alongside its `piWeb.plugins` entry, and its `prompts/` and `skills/` directories already follow pi's package conventions. Installing it as a Pi package — with a plain `pi install <path-to-dist/pi-packages/relays>`, through **Settings → Pi packages**' existing free-text install form, or with the one-click **Available packages** install button described below — makes `/relay`, `/relay-worktree`, and the `relay` skill available in any `pi` session, and makes the Relays PI WEB plugin (its browser tab and workspace action) available once installed for the active agent profile. Publishing the package to npm remains deferred follow-up work; today, installing it uses its local shipped path.
+
+**Automatic install, with opt-out.** For a plain `pi` user this package is only ever installed by explicit `pi install`. For PI WEB, though, the session daemon reconciles a small registry of known auto-installable Pi packages (currently just `@jmfederico/pi-relay`) at startup, for the active agent profile: if a package matching one of these by its own declared `package.json` name is not already configured for that profile, sessiond installs it from its shipped local path automatically, the same way the Settings UI's Install action would. This reconciliation is best-effort — a failure (offline, a read-only agent directory, a package-manager error) is logged and never blocks or crashes session-daemon startup.
+
+**Dismissal is remembered per profile.** Removing a known auto-installable package from **Settings → Pi packages** records that removal in a small store under `$PI_WEB_DATA_DIR` (state, not user-editable configuration — alongside `projects.json`/`machines.json`, not in `$PI_WEB_CONFIG`), keyed by the active agent profile directory and the package's declared name. Once dismissed for a profile, startup reconciliation does not reinstall it again for that profile; only an explicit reinstall brings it back.
+
+**One-click reinstall.** A profile that dismissed (or never installed) a known auto-installable package can install it again from **Settings → Pi packages** without typing its on-disk path: an **Available packages** section lists every known package not currently configured for the selected target, each with an **Install** button that installs it from its shipped location directly. The section disappears once every known package is configured.
 
 ## Browser module shape and v2 migration
 

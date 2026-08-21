@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, truncate, utimes,
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isWithin, PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES, PiWebPluginCatalog, type PiPackageProvider } from "./piWebPluginCatalog.js";
+import { piWebDataDir } from "../config.js";
+import { defaultPluginRoots, isWithin, PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES, PiWebPluginCatalog, type PiPackageProvider } from "./piWebPluginCatalog.js";
 
 let tempDir: string;
 
@@ -744,6 +745,31 @@ describe("PiWebPluginCatalog", () => {
     expect(snapshot.plugins).toEqual([]);
     expect(snapshot.diagnostics).toHaveLength(1);
     expect(snapshot.diagnostics[0]?.message).toContain("escapes its package");
+  });
+});
+
+describe("defaultPluginRoots", () => {
+  it("never scans pi-packages/, so Pi packages shipped there are never bundled/local discovery roots", () => {
+    const roots = defaultPluginRoots(tempDir);
+
+    expect(roots.some((root) => root.path.includes("pi-packages"))).toBe(false);
+  });
+
+  it("keeps a single bundled root at dist/pi-web-plugins, unaffected by Pi packages shipped alongside it", () => {
+    const roots = defaultPluginRoots(tempDir);
+
+    const bundled = roots.filter((root) => root.scope === "bundled");
+    expect(bundled).toHaveLength(1);
+    expect(bundled[0]?.source).toBe("bundled");
+    expect(bundled[0]?.path.endsWith(join("dist", "pi-web-plugins"))).toBe(true);
+  });
+
+  it("keeps a single data-directory local root, distinct from any Pi package install location", () => {
+    const roots = defaultPluginRoots(tempDir);
+
+    const local = roots.filter((root) => root.scope === "local" && root.source === "local");
+    expect(local).toHaveLength(1);
+    expect(local[0]?.path).toBe(join(piWebDataDir(), "plugins"));
   });
 });
 

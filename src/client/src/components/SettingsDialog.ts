@@ -9,7 +9,7 @@ import "./settings/SettingsSessiondPanel";
 import "./settings/SettingsPackagesPanel";
 import "./settings/SettingsPluginsPanel";
 import "./settings/SettingsShortcutsPanel";
-import { friendlyPiPackageErrorMessage, piPackageMutationFollowUpMessage, piPackageTargetLabel, shouldRefreshGatewayPluginsAfterPiPackageMutation, type PiPackageOperationState, type PiPackageTargetContext } from "./settings/piPackageSettings";
+import { friendlyPiPackageErrorMessage, piPackageMutationFollowUpMessage, piPackagesResponseAfterMutation, piPackageTargetLabel, shouldRefreshGatewayPluginsAfterPiPackageMutation, type PiPackageOperationState, type PiPackageTargetContext } from "./settings/piPackageSettings";
 import { loadGatewaySettingsData, loadPiPackagesData } from "./settings/settingsDataLoading";
 import { mergeSelectedMachineAccessConfig } from "./settings/settingsMachineAccessConfig";
 import { friendlySelectedMachineSettingsErrorMessage, isSelectedMachineSettingsUnsupported, pluginLifecycleSupport, selectedMachineSettingsSupportKey, settingsMachineTarget, settingsMachineTargetLabel, type PluginLifecycleSupport, type SettingsMachineTarget } from "./settings/settingsMachineTarget";
@@ -456,7 +456,7 @@ export class SettingsDialog extends LitElement {
     try {
       const response = await mutate();
       if (!this.isCurrentPackageMutation(requestSeq, target)) return;
-      this.packagesResponse = { packages: response.packages };
+      this.packagesResponse = piPackagesResponseAfterMutation(response);
       const pluginRefreshError = shouldRefreshGatewayPluginsAfterPiPackageMutation(target) ? await this.refreshGatewayPlugins() : undefined;
       if (!this.isCurrentPackageMutation(requestSeq, target)) return;
       if (pluginRefreshError !== undefined) this.packageError = pluginRefreshError;

@@ -4,6 +4,7 @@ import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInf
 import { textMessage } from "../chatMessages";
 import { machineSessionKey } from "../machineKeys";
 import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
+import { clearStagedAttachments, moveStagedAttachments } from "../promptAttachmentStaging";
 import { clearAskDraft } from "../askDrafts";
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { isShellInput } from "../inputModes";
@@ -737,6 +738,7 @@ export class SessionController {
     }
     forgetCachedNewSession(session.id, selectedMachineId(this.getState()));
     clearDraft(this.sessionCacheKey(session.id));
+    clearStagedAttachments(this.sessionCacheKey(session.id));
     const state = this.getState();
     const sessions = state.sessions.filter((candidate) => candidate.id !== session.id);
     this.setState({
@@ -1194,6 +1196,7 @@ export class SessionController {
     const releasedCreatedSessions = this.takeSuppressedCreatedSessionsFor(pending.cwd, pending.machineId, session.id);
     if (pending.discarded) {
       clearDraft(machineSessionKey(pending.machineId, tempId));
+      clearStagedAttachments(machineSessionKey(pending.machineId, tempId));
       this.setState({ clientQueuedSessionMessages: omitKey(this.getState().clientQueuedSessionMessages, tempId) });
       this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
       void this.api.stop(session, pending.machineId).catch(() => {
@@ -1204,6 +1207,7 @@ export class SessionController {
 
     rememberCachedNewSession(session, pending.machineId);
     moveDraft(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
+    moveStagedAttachments(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     const cachedSession = markCachedNewSessionInfo(session, pending.machineId);
     if (!this.isCurrentPendingStart(pending)) {
       this.setState({ clientQueuedSessionMessages: omitKey(this.getState().clientQueuedSessionMessages, tempId) });
@@ -1310,6 +1314,7 @@ export class SessionController {
       const replacement = await this.api.startSession(session.cwd, machineId);
       rememberCachedNewSession(replacement, machineId);
       moveDraft(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
+      moveStagedAttachments(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
       forgetCachedNewSession(session.id, machineId);
       const cachedReplacement = markCachedNewSessionInfo(replacement, machineId);
       this.setState({ sessions: [cachedReplacement, ...this.getState().sessions.filter((candidate) => candidate.id !== session.id)], error: "" });

@@ -289,6 +289,25 @@ export interface PiPackageInfo {
 
 export interface PiPackagesResponse {
   packages: PiPackageInfo[];
+  /**
+   * Known Pi packages PI WEB ships and can auto-install (see the
+   * `relay-pi-package-autoinstall` relay) that are not currently configured
+   * for the active profile — omitted or empty once every known package is
+   * configured. Lets the Settings UI offer a one-click (re)install with no
+   * path typing for a package the user dismissed or never installed.
+   */
+  installableKnownPackages?: PiPackageInstallableSuggestion[];
+}
+
+export interface PiPackageInstallableSuggestion {
+  /** The package's own declared `name` (e.g. `@jmfederico/pi-relay`). */
+  id: string;
+  /** Short human-friendly name for display. */
+  label: string;
+  /** Short human-friendly description for display. */
+  description: string;
+  /** Shipped local install source for a one-click install; installs at Pi's default (`user`) scope, same as the free-text install form. */
+  source: string;
 }
 
 export interface PiPackageInstallRequest {

@@ -190,6 +190,22 @@ describe("API parsers", () => {
     expect(() => parsePiPackagesResponse({ packages: [{ source: "npm:@acme/tools", scope: "user", filtered: "no" }] })).toThrow("Expected boolean field: filtered");
   });
 
+  it("parses installable known package suggestions when present and omits the field when absent", () => {
+    const installableKnownPackages = [{ id: "@jmfederico/pi-relay", label: "Relays", description: "Relay method prompts and skill.", source: "/pi-web/dist/pi-packages/relays" }];
+
+    expect(parsePiPackagesResponse({ packages: [], installableKnownPackages })).toEqual({ packages: [], installableKnownPackages });
+    expect(parsePiPackagesResponse({ packages: [] })).toEqual({ packages: [] });
+    expect(parsePiPackageMutationResponse({ action: "install", packages: [], installableKnownPackages })).toEqual({
+      action: "install",
+      packages: [],
+      installableKnownPackages,
+    });
+  });
+
+  it("rejects malformed installable known package suggestions", () => {
+    expect(() => parsePiPackagesResponse({ packages: [], installableKnownPackages: [{ id: "@acme/known", label: "Known", description: "desc" }] })).toThrow("Expected string field: source");
+  });
+
   it("parses Docker PI WEB installation metadata", () => {
     const response = {
       packageName: "@jmfederico/pi-web",

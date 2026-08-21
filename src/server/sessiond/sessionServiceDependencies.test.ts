@@ -28,6 +28,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     subsessionsEnabled: false,
     askUserEnabled: true,
     appendSystemPromptSections: [],
+    pluginSessionResourcePaths: { promptTemplatePaths: [], skillPaths: [] },
     extensionDialogsTimeoutMs: 300_000,
     ...patch,
   };

@@ -1,4 +1,4 @@
-import type { Machine, MachineKind, PiPackageInfo, PiPackageMutationAction } from "../../api";
+import type { Machine, MachineKind, PiPackageInfo, PiPackageMutationAction, PiPackageMutationResponse, PiPackagesResponse } from "../../api";
 
 export type PiPackageOperationKind = PiPackageMutationAction | "update-all";
 
@@ -45,6 +45,19 @@ export function piPackageFilteredLabel(packageInfo: Pick<PiPackageInfo, "filtere
 
 export function piPackageInstalledPathLabel(packageInfo: Pick<PiPackageInfo, "installedPath">): string {
   return packageInfo.installedPath ?? "Installed path not reported by Pi";
+}
+
+/**
+ * Carries a mutation response's refreshed package list, and the refreshed
+ * installable-known-package suggestions if the server reported any, forward
+ * into panel state — so a one-click (re)install or removal updates the
+ * "Available packages" suggestions without a separate reload.
+ */
+export function piPackagesResponseAfterMutation(response: Pick<PiPackageMutationResponse, "packages" | "installableKnownPackages">): PiPackagesResponse {
+  return {
+    packages: response.packages,
+    ...(response.installableKnownPackages === undefined ? {} : { installableKnownPackages: response.installableKnownPackages }),
+  };
 }
 
 export function canUpdatePiPackage(packageInfo: Pick<PiPackageInfo, "scope">): boolean {

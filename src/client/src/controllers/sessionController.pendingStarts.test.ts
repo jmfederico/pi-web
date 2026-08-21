@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import { isCachedNewSessionInfo, loadCachedNewSessions } from "../cachedNewSessions";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
+import { loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { SessionController } from "./sessionController";
 import { defaultApi, deferred, emptyPage, FakeSocket, MemoryStorage, oldSession, sessionKey, sessionLookupId, status, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
 
@@ -218,12 +219,16 @@ describe("SessionController pending starts", () => {
     const temporaryId = state.selectedSession?.id;
     if (temporaryId === undefined) throw new Error("Expected temporary session id");
     saveDraft(sessionKey(temporaryId), "draft text");
+    const attachment: PendingAttachment = { id: "attachment-1", kind: "file", name: "notes.txt", mimeType: "text/plain", data: "aGVsbG8=", size: 5 };
+    saveStagedAttachments(sessionKey(temporaryId), [attachment]);
 
     startRequest.resolve(started);
     await start;
 
     expect(loadDraft(sessionKey(temporaryId))).toBe("");
     expect(loadDraft(sessionKey(started.id))).toBe("draft text");
+    expect(loadStagedAttachments(sessionKey(temporaryId))).toEqual([]);
+    expect(loadStagedAttachments(sessionKey(started.id))).toEqual([attachment]);
     expect(loadCachedNewSessions().map((session) => session.id)).toEqual([started.id]);
     expect(isCachedNewSessionInfo(state.sessions[0])).toBe(true);
   });

@@ -1,28 +1,50 @@
 #!/usr/bin/env node
 import { watch } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
-const rootDir = resolve("pi-web-plugins");
-const outDir = resolve("dist/pi-web-plugins");
+// Two independent source trees ship inside the npm package: bundled PI WEB
+// plugins (discovered by directory scan, see PiWebPluginCatalog) and Pi
+// packages that ship alongside them without being discovered that way (for
+// example a Pi package that is installed rather than scanned). Both are
+// built the same way, just into separate output directories, so neither one
+// becomes a discovery root for the other.
+const buildTargets = [
+  { rootDir: resolve("pi-web-plugins"), outDir: resolve("dist/pi-web-plugins"), label: "plugin" },
+  { rootDir: resolve("pi-packages"), outDir: resolve("dist/pi-packages"), label: "package" },
+];
 const watchMode = process.argv.includes("--watch");
 const cwd = process.cwd();
 
-if (watchMode) {
-  await watchAndBuild();
-} else {
-  await buildAll();
+if (isDirectExecution()) {
+  if (watchMode) {
+    await watchAndBuild();
+  } else {
+    await buildAll();
+  }
 }
 
 async function buildAll() {
-  await rm(outDir, { recursive: true, force: true });
-  const result = await buildDirectory(rootDir, outDir);
-  const suffix = result.transpiled === 1 ? "file" : "files";
-  console.log(`[plugins] built ${String(result.transpiled)} TypeScript plugin ${suffix} into ${relative(cwd, outDir)}`);
+  for (const target of buildTargets) {
+    await rm(target.outDir, { recursive: true, force: true });
+    const result = await buildDirectory(target.rootDir, target.outDir);
+    const suffix = result.transpiled === 1 ? "file" : "files";
+    console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix} into ${relative(cwd, target.outDir)}`);
+  }
 }
 
-async function buildDirectory(sourceDir, targetDir) {
+export async function buildDirectory(sourceDir, targetDir, visited = new Set()) {
+  // Mirrors findWatchDirs's visited-realpath guard below: a symlinked
+  // directory can point at one of its own ancestors, and recursing on the
+  // symlink's own (ever-lengthening) path would never terminate. Resolving
+  // each directory to its realpath before descending catches that cycle
+  // regardless of how many symlink hops produced it.
+  const realSourceDir = await realpath(sourceDir).catch(() => undefined);
+  if (realSourceDir === undefined || visited.has(realSourceDir)) return { copied: 0, transpiled: 0 };
+  visited.add(realSourceDir);
+
   const entries = await readDirectory(sourceDir);
   let copied = 0;
   let transpiled = 0;
@@ -31,15 +53,22 @@ async function buildDirectory(sourceDir, targetDir) {
     const sourcePath = resolve(sourceDir, entry.name);
     const targetPath = resolve(targetDir, entry.name);
 
-    if (entry.isDirectory()) {
+    // Plugin sources may symlink files or directories whose canonical home is
+    // elsewhere in the repository. The build materializes the link target, so
+    // emitted packages contain real files and never carry links that escape
+    // them; a broken link throws here and fails the build instead of silently
+    // dropping the content.
+    const linked = entry.isSymbolicLink() ? await stat(sourcePath) : undefined;
+
+    if (entry.isDirectory() || linked?.isDirectory() === true) {
       if (entry.name === "node_modules") continue;
-      const result = await buildDirectory(sourcePath, targetPath);
+      const result = await buildDirectory(sourcePath, targetPath, visited);
       copied += result.copied;
       transpiled += result.transpiled;
       continue;
     }
 
-    if (!entry.isFile()) continue;
+    if (!entry.isFile() && linked?.isFile() !== true) continue;
     if (entry.name.endsWith(".d.ts") || isTestSource(entry.name)) continue;
 
     if (isPluginSource(entry.name)) {
@@ -80,14 +109,38 @@ async function buildFile(file, outputPath) {
   await writeFile(outputPath, output);
 }
 
-async function findPluginDirs(dir) {
-  const entries = await readDirectory(dir);
-  const dirs = [dir];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === "node_modules") continue;
-    dirs.push(...await findPluginDirs(resolve(dir, entry.name)));
+/**
+ * Directories watch mode listens on: the real plugin tree plus the homes of
+ * symlinked build inputs, so editing a canonical file living outside the
+ * plugin tree still triggers a rebuild.
+ */
+async function findWatchDirs(dir) {
+  const dirs = [];
+  const visited = new Set();
+  const pending = [dir];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    const realCurrent = await realpath(current).catch(() => undefined);
+    if (realCurrent === undefined || visited.has(realCurrent)) continue;
+    visited.add(realCurrent);
+    dirs.push(current);
+    for (const entry of await readDirectory(current)) {
+      if (entry.name === "node_modules") continue;
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(path);
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        const linkedRealpath = await realpath(path).catch(() => undefined);
+        if (linkedRealpath === undefined) continue;
+        const linked = await stat(linkedRealpath).catch(() => undefined);
+        if (linked?.isDirectory()) pending.push(linkedRealpath);
+        else if (linked?.isFile()) dirs.push(dirname(linkedRealpath));
+      }
+    }
   }
-  return dirs.sort((left, right) => left.localeCompare(right));
+  return [...new Set(dirs)].sort((left, right) => left.localeCompare(right));
 }
 
 function isPluginSource(fileName) {
@@ -131,7 +184,7 @@ async function watchAndBuild() {
 
   const refreshWatchers = async () => {
     closeWatchers();
-    const dirs = await findPluginDirs(rootDir);
+    const dirs = (await Promise.all(buildTargets.map((target) => findWatchDirs(target.rootDir)))).flat();
     watchers = dirs.map((dir) => watch(dir, () => scheduleBuild()));
   };
 
@@ -172,7 +225,7 @@ async function watchAndBuild() {
   process.on("SIGTERM", stop);
 
   await runBuild();
-  console.log(`[plugins] watching ${relative(cwd, rootDir)}`);
+  console.log(`[plugins] watching ${buildTargets.map((target) => relative(cwd, target.rootDir)).join(", ")}`);
   await new Promise(() => undefined);
 }
 
@@ -190,4 +243,10 @@ function formatUnknownError(error) {
 
 function isNodeError(error) {
   return error instanceof Error && "code" in error;
+}
+
+function isDirectExecution() {
+  const entryPath = process.argv[1];
+  if (entryPath === undefined) return false;
+  return pathToFileURL(resolve(entryPath)).href === import.meta.url;
 }
