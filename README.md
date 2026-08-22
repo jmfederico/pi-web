@@ -71,6 +71,27 @@ configuration, and operational details in docs/, then link from here. -->
 
 For more install options, including one-line install, Pi package install, WSL/manual usage, and remote access, see the [installation guide](https://pi-web.dev/install).
 
+## Nix
+
+This fork ships a Nix flake that builds pi-web as a pure package and wraps it in a home-manager module for declarative deployment:
+
+```bash
+nix build .#default          # built package: bin/pi-web, bin/pi-web-server, bin/pi-web-sessiond
+nix run .#default -- --help
+```
+
+Consume from another flake:
+
+```nix
+inputs.pi-web.url = "github:jmfederico/pi-web";
+
+home-manager.lib.homeManagerConfiguration {
+  modules = [ inputs.pi-web.homeManagerModules.default { services.pi-web.enable = true; } ];
+}
+```
+
+Available options: `services.pi-web.enable`, `package`, `host`, `port`, `agentDir` (`PI_CODING_AGENT_DIR`, defaults to `~/.pi/agent`), `extraEnvironment`. Two systemd user units are generated (`pi-web-sessiond`, `pi-web`).
+
 ## Core model
 
 PI WEB organizes work like this:
