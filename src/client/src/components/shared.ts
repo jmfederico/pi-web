@@ -531,6 +531,19 @@ export const promptEditorStyles = css`
   .icon-button .prompt-action-icon-filled { fill: currentColor; stroke: none; }
   .send-button:not(:disabled) { color: var(--pi-accent, var(--pi-text)); }
   .stop-button:not(:disabled) { color: var(--pi-danger); }
+  .send-wrap { position: relative; flex: 0 0 auto; display: inline-grid; }
+  .caret-badge { position: absolute; right: -5px; bottom: -5px; z-index: 3; display: grid; place-items: center; width: 17px; height: 17px; padding: 0; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-muted); box-shadow: 0 1px 3px var(--pi-shadow-soft, transparent); }
+  .caret-badge svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .caret-badge:hover, .caret-badge[aria-expanded="true"] { color: var(--pi-accent); border-color: var(--pi-accent-border); background: var(--pi-selection-bg); }
+  .send-menu-backdrop { position: fixed; inset: 0; z-index: 25; }
+  .send-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; min-width: 220px; padding: 6px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); box-shadow: 0 8px 28px var(--pi-shadow-strong, rgba(0, 0, 0, .3)); }
+  .send-menu button { display: flex; gap: 10px; width: 100%; align-items: flex-start; text-align: left; border: 0; border-radius: 7px; background: transparent; padding: 8px 9px; }
+  .send-menu button:hover { background: var(--pi-surface-hover); }
+  .send-menu button[aria-checked="true"] { background: var(--pi-selection-bg); }
+  .send-menu .mi-icon { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; margin-top: 1px; color: var(--pi-accent); }
+  .send-menu .mi-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .send-menu .mi-title { display: block; font-size: 13px; font-weight: 600; }
+  .send-menu .mi-sub { display: block; font-size: 11.5px; color: var(--pi-muted); line-height: 1.35; }
   .select-thinking .prompt-thinking-gauge .gauge-bar { fill: currentColor; stroke: none; opacity: .28; }
   .select-thinking .prompt-thinking-gauge .gauge-bar-active { opacity: 1; }
   .editor-attach { position: absolute; right: 8px; bottom: 8px; z-index: 2; width: 30px; height: 30px; }
@@ -564,8 +577,12 @@ export const promptEditorStyles = css`
   button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
   button:disabled, textarea:disabled, .markdown-editor-disabled .cm-editor { opacity: .5; cursor: not-allowed; }
   @media (max-width: 640px) {
-    footer { gap: 8px; padding: 8px; }
+    footer { gap: 8px; padding: 8px 16px 16px 8px; }
     .actions { gap: 6px; }
+    .actions .send-button, .actions .stop-button { width: 44px; height: 44px; }
+    .actions .send-button .prompt-action-icon, .actions .stop-button .prompt-action-icon { width: 20px; height: 20px; }
+    .caret-badge { width: 20px; height: 20px; right: -6px; bottom: -6px; }
+    .caret-badge svg { width: 12px; height: 12px; }
     .compact-status { flex: 1 1 220px; gap: 4px; }
     .select-model { max-width: min(58vw, 260px); }
     button { padding: 6px 8px; }
