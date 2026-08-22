@@ -1,11 +1,12 @@
 import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { AGENT_SESSION_DIR_ENV_KEYS } from "../../config.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import { readSessionHeaderSummary, type SessionHeaderReader } from "./sessionFileHeader.js";
+import { tryParseEntry } from "./sessionFileFormat.js";
 import { SessionSummaryScanner } from "./sessionSummaryScanner.js";
 import type { PiSessionListEntry, PiSessionManager, PiSessionManagerGateway, ResolvedSessionFile } from "./piSessionService.js";
 
@@ -78,6 +79,8 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
    * in-place rewrites those checks cannot see.
    */
   private readonly summaryScanner = new SessionSummaryScanner();
+  private readonly transcriptBranches = new Map<string, { signature: string; branch: unknown[] }>();
+  private readonly pendingTranscriptBranches = new Map<string, Promise<unknown[]>>();
 
   constructor(private readonly resolver: SessionDirResolver) {}
 
@@ -111,6 +114,23 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
     return SessionManager.create(cwd, resolution.sessionDir, options?.parentSession === undefined ? undefined : { parentSession: options.parentSession });
   }
 
+  async readBranch(path: string): Promise<unknown[]> {
+    const file = await stat(path);
+    const signature = `${String(file.dev)}:${String(file.ino)}:${String(file.size)}:${String(file.mtimeMs)}`;
+    const cached = this.transcriptBranches.get(path);
+    if (cached?.signature === signature) return cached.branch;
+    const pending = this.pendingTranscriptBranches.get(path);
+    if (pending !== undefined) return pending;
+    const read = readTranscriptBranch(path)
+      .then((branch) => {
+        this.transcriptBranches.set(path, { signature, branch });
+        return branch;
+      })
+      .finally(() => { this.pendingTranscriptBranches.delete(path); });
+    this.pendingTranscriptBranches.set(path, read);
+    return read;
+  }
+
   async listAll(): Promise<PiSessionListEntry[]> {
     const envSessionDir = this.resolver.globalEnvSessionDir();
     const [defaultSessions, envSessions] = await Promise.all([
@@ -123,6 +143,33 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
   open(path: string): PiSessionManager {
     return SessionManager.open(path, dirname(path));
   }
+}
+
+/** SDK-compatible active-branch projection with no migration or write side effects. */
+async function readTranscriptBranch(path: string): Promise<unknown[]> {
+  const entries = (await readFile(path, "utf8"))
+    .split("\n")
+    .map(tryParseEntry)
+    .filter((entry): entry is Record<string, unknown> => entry !== undefined && entry["type"] !== "session");
+  const byId = new Map<string, Record<string, unknown>>();
+  let leafId: string | undefined;
+  for (const entry of entries) {
+    const id = entry["id"];
+    if (typeof id !== "string") continue;
+    byId.set(id, entry);
+    leafId = id;
+  }
+  const branch: Record<string, unknown>[] = [];
+  const visited = new Set<string>();
+  let currentId = leafId;
+  while (currentId !== undefined && !visited.has(currentId)) {
+    visited.add(currentId);
+    const entry = byId.get(currentId);
+    if (entry === undefined) break;
+    branch.push(entry);
+    currentId = typeof entry["parentId"] === "string" ? entry["parentId"] : undefined;
+  }
+  return branch.reverse();
 }
 
 export async function listSessionsInDir(sessionDir: string): Promise<PiSessionListEntry[]> {

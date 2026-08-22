@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -183,6 +183,23 @@ describe("Pi session manager gateway", () => {
     await appendFile(path, `${message("m2", "assistant", "hi there")}\n${message("m3", "user", "follow-up")}\n`, "utf8");
 
     await expect(gateway.list(cwd)).resolves.toMatchObject([{ id: "memo-session", cwd, messageCount: 3, firstMessage: "hello" }]);
+  });
+
+  it("opens a fresh transcript snapshot after another process appends", async () => {
+    const sharedSessionDir = join(tempDir, "snapshot-sessions");
+    const path = await writeNamedSessionFile(sharedSessionDir, "snapshot.jsonl", { id: "snapshot-session", cwd });
+    const message = (id: string, parentId: string, role: string, text: string) =>
+      JSON.stringify({ type: "message", id, parentId, timestamp: "2026-01-01T00:01:00.000Z", message: { role, content: [{ type: "text", text }] } });
+    await appendFile(path, `${message("m1", "root", "user", "before")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const before = await readFile(path);
+
+    await expect(gateway.readBranch(path)).resolves.toHaveLength(1);
+    await expect(readFile(path)).resolves.toEqual(before);
+    await appendFile(path, `${message("m2", "m1", "assistant", "after")}\n`, "utf8");
+
+    await expect(gateway.readBranch(path)).resolves.toHaveLength(2);
   });
 
   it("invalidateSessionFile drops the memo for a header rewritten in place", async () => {

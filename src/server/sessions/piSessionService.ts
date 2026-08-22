@@ -360,6 +360,8 @@ export interface PiSessionManagerGateway {
    * told explicitly.
    */
   invalidateSessionFile(sessionFile: string): void;
+  /** Read the active transcript branch without creating a runtime or writing the file. */
+  readBranch?(path: string): Promise<unknown[]>;
   create(cwd: string, options?: { parentSession?: string }): PiSessionManager;
   /**
    * Cross-project listing of Pi's session stores (the default store plus any
@@ -2137,11 +2139,14 @@ export class PiSessionService implements SessionRouteService {
 
   async messages(ref: PiSessionRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage> {
     const session = await this.getOrOpen(ref);
-    return pageMessagesAtSafeBoundary(historyMessages(session), page);
+    return pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
   }
 
   async status(ref: PiSessionRef): Promise<ClientSessionStatus> {
-    return this.statusFromSession(await this.sessionForStatusOrDialogClose(ref));
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    if (this.hasActiveWork(session)) return this.statusFromSession(session);
+    const branch = await this.readableSessionBranch(ref, session);
+    return this.statusFromSession(session, transcriptMessageCount(branch));
   }
 
   /**
@@ -3068,6 +3073,25 @@ export class PiSessionService implements SessionRouteService {
     return (await this.getActive(ref)).runtime.session;
   }
 
+  /**
+   * An idle runtime is only Pi Web's cached control view. Another Pi process may
+   * keep appending to the same JSONL file, so transcript reads must open a fresh
+   * read-only snapshot rather than serving that cached branch forever. Active
+   * runtimes remain authoritative and are never replaced, reloaded, or aborted.
+   */
+  private async readableSessionBranch(ref: PiSessionRef, session: PiAgentSession): Promise<unknown[]> {
+    if (this.hasActiveWork(session) || this.sessionManager.readBranch === undefined) return session.sessionManager.getBranch();
+    const sessionFile = session.sessionFile ?? session.sessionManager.getSessionFile();
+    const match = sessionFile === undefined ? await this.sessionManager.resolveSessionFile(ref.cwd, ref.id) : undefined;
+    if (this.hasActiveWork(session)) return session.sessionManager.getBranch();
+    const path = sessionFile ?? match?.path;
+    if (path === undefined) return session.sessionManager.getBranch();
+    const snapshot = await this.sessionManager.readBranch(path);
+    // Reading also yields. A prompt that started meanwhile must still win over
+    // the completed disk snapshot and its potentially older event watermark.
+    return this.hasActiveWork(session) ? session.sessionManager.getBranch() : snapshot;
+  }
+
   private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
     const active = this.activeForRef(ref);
     if (active !== undefined) return active;
@@ -3940,7 +3964,7 @@ export class PiSessionService implements SessionRouteService {
     this.events.publishGlobal({ type: "activity.update", activity });
   }
 
-  private statusFromSession(session: PiAgentSession): ClientSessionStatus {
+  private statusFromSession(session: PiAgentSession, messageCount = session.messages.length): ClientSessionStatus {
     const stats = session.getSessionStats();
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
@@ -3957,7 +3981,7 @@ export class PiSessionService implements SessionRouteService {
       isBashRunning: session.isBashRunning,
       pendingMessageCount: this.pendingMessageCount(session),
       queuedMessages: queuedMessagesFromSession(session, this.compactionQueuedMessages(session.sessionId)),
-      messageCount: session.messages.length,
+      messageCount,
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
@@ -4471,11 +4495,15 @@ function annotateAssistantThinkingLevel(message: unknown, thinkingLevel: string 
 }
 
 function historyMessages(session: PiAgentSession): unknown[] {
+  return historyMessagesFromEntries(session.sessionManager.getBranch());
+}
+
+function historyMessagesFromEntries(entries: readonly unknown[]): unknown[] {
   const messages: unknown[] = [];
   // Pi records the initial level at session creation and every later change, so
   // walking the branch yields the level in effect for each assistant message.
   let thinkingLevel: string | undefined;
-  for (const entry of session.sessionManager.getBranch()) {
+  for (const entry of entries) {
     if (!isRecord(entry)) continue;
     if (entry["type"] === "message") messages.push(annotateAssistantThinkingLevel(entry["message"], thinkingLevel));
     else if (entry["type"] === "thinking_level_change") {
@@ -4487,6 +4515,14 @@ function historyMessages(session: PiAgentSession): unknown[] {
     else if (entry["type"] === "branch_summary") messages.push({ role: "system", source: "branch_summary", content: `Branch summary:\n\n${stringValue(entry["summary"])}` });
   }
   return messages;
+}
+
+function transcriptMessageCount(entries: readonly unknown[]): number {
+  let count = 0;
+  for (const entry of entries) {
+    if (isRecord(entry) && entry["type"] === "message") count += 1;
+  }
+  return count;
 }
 
 /** custom entry type used to persist parent -> child subsession links outside LLM context. */
