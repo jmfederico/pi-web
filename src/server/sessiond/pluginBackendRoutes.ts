@@ -9,6 +9,7 @@ import {
   type PluginBackendRequestEnvelope,
 } from "../../shared/pluginBackendProtocol.js";
 import type { Project } from "../types.js";
+import type { PluginWorkspaceBackendDispatchResult } from "../workspaces/pluginWorkspaceBackendRegistry.js";
 import {
   WorkspaceProviderRequestError,
   type WorkspaceProviderRequest,
@@ -26,16 +27,17 @@ export interface PluginBackendProjectReader {
 }
 
 export interface PluginBackendDispatcher {
-  request(request: WorkspaceProviderRequest): Promise<unknown>;
+  workspaceTopologyMayChange(pluginId: string): boolean;
+  request(request: WorkspaceProviderRequest): Promise<PluginWorkspaceBackendDispatchResult>;
 }
 
 export interface PluginBackendRouteDependencies {
   projects: PluginBackendProjectReader;
   backends: PluginBackendDispatcher;
   /**
-   * Reports that the project's workspaces may have changed. A provider
-   * operation is opaque here, so every completed request is reported rather
-   * than guessing which operations create or remove a workspace.
+   * Reports that the project's workspaces may have changed. An owner-provider
+   * operation is opaque here, so every dispatch attempt is reported even when
+   * its handler or result serialization fails.
    */
   onWorkspacesMutated: () => void;
 }
@@ -78,6 +80,7 @@ export function registerPluginBackendRoutes(
         );
       }
 
+      const workspaceTopologyMayChange = dependencies.backends.workspaceTopologyMayChange(pluginId);
       try {
         const result = await dependencies.backends.request({
           pluginId,
@@ -88,7 +91,7 @@ export function registerPluginBackendRoutes(
           input: envelope.input,
         });
         const serialized = serializeBoundedPluginBackendJson(
-          result,
+          result.value,
           `Server plugin ${pluginId} operation ${operation} result`,
           PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
         );
@@ -96,7 +99,7 @@ export function registerPluginBackendRoutes(
       } catch (error) {
         return await pluginBackendRequestFailed(reply, error, pluginId, operation);
       } finally {
-        dependencies.onWorkspacesMutated();
+        if (workspaceTopologyMayChange) dependencies.onWorkspacesMutated();
       }
     },
   );

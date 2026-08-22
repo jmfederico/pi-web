@@ -4,7 +4,7 @@ import type { WorkspaceProvider } from "../../server-plugin-api.js";
 import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
 import type { Project } from "../types.js";
 import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
-import { registerPluginBackendRoutes } from "./pluginBackendRoutes.js";
+import { registerPluginBackendRoutes, type PluginBackendDispatcher } from "./pluginBackendRoutes.js";
 
 const project: Project = {
   id: "project one",
@@ -43,7 +43,7 @@ describe("session daemon plugin backend routes", () => {
     const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
     if (workspaceId === undefined) throw new Error("Expected workspace");
     const onWorkspacesMutated = vi.fn();
-    registerPluginBackendRoutes(app, { projects: projectReader(), backends: registry, onWorkspacesMutated });
+    registerPluginBackendRoutes(app, { projects: projectReader(), backends: ownerBackend(registry), onWorkspacesMutated });
 
     const response = await app.inject({
       method: "POST",
@@ -63,7 +63,7 @@ describe("session daemon plugin backend routes", () => {
     expect(onWorkspacesMutated).toHaveBeenCalledTimes(1);
   });
 
-  it("serializes invalid, stale, and thrown operation failures without a stack", async () => {
+  it("serializes invalid, stale, and thrown operation failures without a stack and invalidates failed owner dispatches", async () => {
     const registry = registryFor({
       probe: () => Promise.resolve("claim"),
       list: () => Promise.resolve([{ key: "main", path: "/repo", label: "main", isMain: true }]),
@@ -71,7 +71,8 @@ describe("session daemon plugin backend routes", () => {
     });
     const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
     if (workspaceId === undefined) throw new Error("Expected workspace");
-    registerPluginBackendRoutes(app, { projects: projectReader(), backends: registry, onWorkspacesMutated: vi.fn() });
+    const onWorkspacesMutated = vi.fn();
+    registerPluginBackendRoutes(app, { projects: projectReader(), backends: ownerBackend(registry), onWorkspacesMutated });
     const base = `/plugin-backends/board/projects/${encodeURIComponent(project.id)}/workspaces/${workspaceId}`;
 
     const invalid = await app.inject({ method: "POST", url: `${base}/Invalid`, payload: { revision: "server-r1", input: null } });
@@ -90,11 +91,72 @@ describe("session daemon plugin backend routes", () => {
       operation: "cards.summary",
     });
     expect(failed.body).not.toContain("stack");
+    expect(onWorkspacesMutated).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates owner topology when response serialization fails", async () => {
+    const onWorkspacesMutated = vi.fn();
+    const invalidResult = Object.defineProperty({}, "broken", {
+      enumerable: true,
+      get() { throw new Error("cannot serialize"); },
+    });
+    registerPluginBackendRoutes(app, {
+      projects: projectReader(),
+      backends: {
+        workspaceTopologyMayChange: () => true,
+        request: () => Promise.resolve({ value: invalidResult, workspaceTopologyChanged: true }),
+      },
+      onWorkspacesMutated,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/plugin-backends/board/projects/${encodeURIComponent(project.id)}/workspaces/w1/cards.summary`,
+      payload: { revision: "server-r1", input: null },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(onWorkspacesMutated).toHaveBeenCalledOnce();
+  });
+
+  it("does not invalidate workspace topology for auxiliary backend success or failure", async () => {
+    const onWorkspacesMutated = vi.fn();
+    registerPluginBackendRoutes(app, {
+      projects: projectReader(),
+      backends: {
+        workspaceTopologyMayChange: () => false,
+        request: ({ operation }) => operation === "runs.fail"
+          ? Promise.reject(new Error("auxiliary failed"))
+          : Promise.resolve({ value: { queued: true }, workspaceTopologyChanged: false }),
+      },
+      onWorkspacesMutated,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/plugin-backends/workspace-service/projects/${encodeURIComponent(project.id)}/workspaces/w1/runs.queue`,
+      payload: { revision: "server-r1", input: null },
+    });
+
+    const failed = await app.inject({
+      method: "POST",
+      url: `/plugin-backends/workspace-service/projects/${encodeURIComponent(project.id)}/workspaces/w1/runs.fail`,
+      payload: { revision: "server-r1", input: null },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ queued: true });
+    expect(failed.statusCode).toBe(502);
+    expect(onWorkspacesMutated).not.toHaveBeenCalled();
   });
 
   it("rejects a missing project and malformed request envelope before dispatch", async () => {
-    const request = vi.fn<WorkspaceProviderRegistry["request"]>();
-    registerPluginBackendRoutes(app, { projects: projectReader(), backends: { request }, onWorkspacesMutated: vi.fn() });
+    const request = vi.fn<PluginBackendDispatcher["request"]>();
+    registerPluginBackendRoutes(app, {
+      projects: projectReader(),
+      backends: { workspaceTopologyMayChange: () => true, request },
+      onWorkspacesMutated: vi.fn(),
+    });
     const path = "/plugin-backends/board/projects/missing/workspaces/w1/cards.summary";
 
     const malformed = await app.inject({ method: "POST", url: path, payload: { input: null } });
@@ -122,6 +184,15 @@ function registryFor(provider: WorkspaceProvider): WorkspaceProviderRegistry {
     logger: { warn: vi.fn() },
     pathInspector: () => true,
   });
+}
+
+function ownerBackend(registry: WorkspaceProviderRegistry): PluginBackendDispatcher {
+  return {
+    workspaceTopologyMayChange: () => true,
+    async request(request) {
+      return { value: await registry.request(request), workspaceTopologyChanged: true };
+    },
+  };
 }
 
 function contribution(pluginId: string, provider: WorkspaceProvider): ServerPluginProviderContribution {

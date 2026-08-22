@@ -374,6 +374,7 @@ async function providerFor(execFile: ServerPluginActivationContext["execFile"]):
     apiVersion: 1,
     pluginId: "git",
     packageRoot: resolve("pi-web-plugins/git"),
+    stateDirectory: resolve(".pi-web-plugin-state/git"),
     logger: {
       debug() { /* no-op */ },
       info() { /* no-op */ },

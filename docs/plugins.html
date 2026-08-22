@@ -116,11 +116,13 @@
                 <li><strong>Workspace labels</strong> in the workspace list, header, and status bar.</li>
                 <li><strong>Browser-public assets</strong> served only from an explicit <code>browserRoot</code>.</li>
                 <li><strong>Browser helpers</strong> for files, terminals, prompts, rendering, and paired backends.</li>
-                <li><strong>One workspace provider</strong> from an optional sessiond server entry.</li>
+                <li><strong>One workspace provider and/or auxiliary JSON backend</strong> from an optional sessiond server entry.</li>
+                <li><strong>Long-lived server services</strong> with private durable state and host-managed background Pi sessions.</li>
               </ul>
               <p>
-                The server API is deliberately narrow: lifecycle callbacks, scoped logging/settings, bounded argv
-                execution, one workspace provider, JSON backend requests, and removal planning. Plugins receive no raw
+                The server API is deliberately narrow: staged lifecycle callbacks, host-created plugin state, scoped
+                logging/settings, bounded argv execution, background Pi session leases, one workspace provider, JSON
+                backend requests, and removal planning. Plugins receive no raw
                 Fastify access, arbitrary routes, concrete services, generic event bus, Pi model-provider registration,
                 or general server hooks.
               </p>
@@ -349,11 +351,13 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 than import-order selection. If nobody claims, the kernel project-folder workspace remains available.
               </p>
               <p>
-                A server module default-exports <code>{ apiVersion: 1, name, activate }</code>. Activation may return
-                cooperative <code>start</code>, <code>stop</code>, and <code>health</code> callbacks plus at most one
-                provider. Every activation, lifecycle, provider, and request signal is scoped to that one invocation and
-                is aborted when it times out or settles; it is not a plugin-lifetime shutdown signal. Release resources
-                in explicit <code>stop()</code>. Server code is never hot-reloaded.
+                A server module default-exports <code>{ apiVersion: 1, name, activate }</code>. Its frozen activation
+                context includes a canonical host-created <code>stateDirectory</code> for durable plugin-owned data.
+                Activation may return cooperative <code>start</code>, <code>ready</code>, <code>quiesce</code>,
+                <code>stop</code>, and <code>health</code> callbacks plus at most one provider and one auxiliary backend.
+                <code>ready()</code> runs after workspace and session services exist; <code>quiesce()</code> stops ingress
+                before core sessions are disposed, and <code>stop()</code> releases remaining resources. Every supplied
+                signal is scoped to that one invocation, not the plugin lifetime. Server code is never hot-reloaded.
               </p>
               <p>
                 A provider returns stable workspace keys, accessible absolute directories, labels, exactly one main
@@ -370,11 +374,19 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               </p>
               <p>
                 Panels and labels receive optional <code>context.backend</code> only when their browser entry has a
-                paired active server backend. PI WEB binds <code>backend.request(operation, input)</code> to the original
-                plugin id, active backend revision, selected machine, project, and workspace, and carries it through
-                federation. Plugins should never construct PI WEB backend or machine API URLs. Panels can implement
+                paired active server backend. A provider's <code>request()</code> handles only workspaces it owns; an
+                auxiliary <code>workspaceBackend</code> can handle any current host-authorized workspace without claiming
+                its topology. PI WEB binds <code>backend.request(operation, input)</code> to the original plugin id,
+                active backend revision, selected machine, project, and workspace, and carries it through federation.
+                Plugins should never construct PI WEB backend or machine API URLs. Panels can implement
                 <code>onInvalidate</code> and actions can call <code>refreshWorkspacePanels()</code>; route aliases and
                 shortcut aliases exist only for browser-v1 migrations.
+              </p>
+              <p>
+                The <code>ready()</code> context also exposes host-managed background Pi sessions. A plugin can list
+                models and create a lease for a currently authorized project/workspace, then inspect, prompt, abort,
+                force-stop, or release it. One prompt may run at a time; prompt completion releases the lease, and the
+                host force-stops outstanding leases after quiescing, on readiness failure, and during daemon shutdown.
               </p>
               <div class="callout">
                 PI WEB ships only bundled Git as a production provider. Third parties own replacement integrations such

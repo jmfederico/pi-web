@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type ImageContent } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import {
   createAgentSessionFromServices,
@@ -66,6 +66,7 @@ import type {
   SessionWarning,
 } from "../../shared/apiTypes.js";
 import type { SessionRouteRef, SessionRouteService } from "./sessionService.js";
+import type { BackgroundSessionModel } from "../../server-plugin-api.js";
 
 import { type AuthChange } from "./authService.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
@@ -76,6 +77,7 @@ import { PendingAskStore, renderAskUserAnswersText, type PendingAskCloseResult, 
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
 import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS } from "../../config.js";
+import { isKnownThinkingLevel } from "../../shared/thinkingLevels.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView } from "./subsessionTranscript.js";
@@ -265,6 +267,7 @@ interface StartSessionOptions {
 
 interface InternalStartSessionOptions extends StartSessionOptions {
   creationProvenance?: SessionCreationProvenance;
+  backgroundOwnerPluginId?: string;
 }
 
 function requirePromptText(value: unknown): string {
@@ -484,7 +487,7 @@ interface PendingSessionOpen {
   promise: Promise<ActiveSession<PiSessionRuntime>>;
 }
 
-interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "initialThinkingLevel" | "creationProvenance" | "startupToken"> {
+interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "initialThinkingLevel" | "creationProvenance" | "startupToken" | "backgroundOwnerPluginId"> {
   notificationGeneration?: SessionNotificationGeneration;
   notifications?: "enabled" | "disabled";
   /**
@@ -1072,6 +1075,8 @@ export interface PiSessionServiceDependencies {
 
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
+  /** Active background lease ownership, attributed to the responsible plugin. */
+  private readonly backgroundSessionOwners = new Map<string, string>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
   /**
    * Sessions whose extension binding is still in flight. A `session_start`
@@ -1331,6 +1336,7 @@ export class PiSessionService implements SessionRouteService {
       this.endSessionExtensionDialogs(active.runtime.session.sessionId);
     }
     this.active.clear();
+    this.backgroundSessionOwners.clear();
     this.pendingSessionOpens.clear();
     this.startupSessions.clear();
     this.activities.clear();
@@ -1378,6 +1384,74 @@ export class PiSessionService implements SessionRouteService {
     return this.startSession(cwd, options);
   }
 
+  backgroundSessionModels(): readonly BackgroundSessionModel[] {
+    return Object.freeze(this.modelRuntime.getAvailableSnapshot().map((model) => Object.freeze({
+      provider: model.provider,
+      id: model.id,
+      name: model.name,
+      thinkingLevels: Object.freeze([...getSupportedThinkingLevels(model)]),
+    })));
+  }
+
+  async startBackgroundSession(
+    pluginId: string,
+    cwd: string,
+    selection: { model?: { provider: string; id: string }; thinkingLevel?: string },
+  ): Promise<{ session: ClientSession; status: ClientSessionStatus }> {
+    const initialModel = selection.model === undefined
+      ? undefined
+      : this.modelRuntime.getAvailableSnapshot().find((candidate) => candidate.provider === selection.model?.provider && candidate.id === selection.model.id)
+        ?? this.modelRuntime.getModel(selection.model.provider, selection.model.id);
+    if (selection.model !== undefined && initialModel === undefined) throw new Error(`Configured model is unavailable: ${selection.model.provider}/${selection.model.id}`);
+    const initialThinkingLevel = selection.thinkingLevel;
+    if (initialThinkingLevel !== undefined && !isKnownThinkingLevel(initialThinkingLevel)) throw new Error(`Invalid thinking level: ${initialThinkingLevel}`);
+    if (initialThinkingLevel !== undefined && initialModel !== undefined && !getSupportedThinkingLevels(initialModel).includes(initialThinkingLevel)) {
+      throw new Error(`Invalid thinking level for ${initialModel.provider}/${initialModel.id}: ${initialThinkingLevel}`);
+    }
+    const session = await this.startSession(cwd, {
+      ...(initialModel === undefined ? {} : { initialModel }),
+      ...(initialThinkingLevel === undefined ? {} : { initialThinkingLevel }),
+      backgroundOwnerPluginId: pluginId,
+    });
+    return { session, status: await this.status({ id: session.id, cwd }) };
+  }
+
+  async promptBackgroundSession(pluginId: string, ref: PiSessionRef, text: string): Promise<ClientSessionStatus> {
+    const promptText = requirePromptText(text);
+    this.assertBackgroundOwner(pluginId, ref);
+    const session = await this.getOrOpen(ref);
+    if (session.isStreaming || session.isCompacting || this.pendingMessageCount(session) > 0) throw new Error("Background session is already busy");
+    this.maybeGenerateSessionName(session, promptText);
+    await this.submitPromptAwaitable(session, promptText, undefined);
+    this.publishStatus(session);
+    return this.statusFromSession(session);
+  }
+
+  async backgroundSessionStatus(pluginId: string, ref: PiSessionRef): Promise<ClientSessionStatus> {
+    this.assertBackgroundOwner(pluginId, ref);
+    return this.status(ref);
+  }
+
+  async abortBackgroundSession(pluginId: string, ref: PiSessionRef): Promise<void> {
+    this.assertBackgroundOwner(pluginId, ref);
+    await this.abortActive(ref);
+  }
+
+  async forceStopBackgroundSession(pluginId: string, ref: PiSessionRef): Promise<void> {
+    this.assertBackgroundOwner(pluginId, ref);
+    await this.forceCloseActive(ref.id);
+  }
+
+  releaseBackgroundSession(pluginId: string, ref: PiSessionRef): void {
+    const session = this.activeForRef(ref)?.runtime.session;
+    if (session === undefined) return;
+    const owner = this.backgroundSessionOwners.get(session.sessionId);
+    if (owner === undefined) return;
+    if (owner !== pluginId) throw new Error(`Background session lease is not active for plugin ${pluginId}`);
+    this.backgroundSessionOwners.delete(session.sessionId);
+    this.publishStatus(session);
+  }
+
   private async startSession(cwd: string, options: InternalStartSessionOptions): Promise<ClientSession> {
     const active = await this.create(
       this.sessionManager.create(cwd, options.parentSession === undefined ? undefined : { parentSession: options.parentSession }),
@@ -1388,6 +1462,7 @@ export class PiSessionService implements SessionRouteService {
         ...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
         ...(options.initialThinkingLevel === undefined ? {} : { initialThinkingLevel: options.initialThinkingLevel }),
         ...(options.creationProvenance === undefined ? {} : { creationProvenance: options.creationProvenance }),
+        ...(options.backgroundOwnerPluginId === undefined ? {} : { backgroundOwnerPluginId: options.backgroundOwnerPluginId }),
       },
     );
     const { session } = active.runtime;
@@ -2337,16 +2412,24 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private submitPrompt(session: PiAgentSession, text: string, behavior: QueuedPromptKind | undefined, images: ImageContent[] = [], echoUserMessage = true): Promise<void> {
+    return this.submitPromptAwaitable(session, text, behavior, images, echoUserMessage).catch(() => {
+      // Interactive submission remains fire-and-forget; the awaitable path
+      // already published the attributable failure.
+    });
+  }
+
+  private async submitPromptAwaitable(session: PiAgentSession, text: string, behavior: QueuedPromptKind | undefined, images: ImageContent[] = [], echoUserMessage = true): Promise<void> {
     this.publishActivity(session, behavior === "steer" ? "steering queued" : behavior === "followUp" ? "message queued" : "prompt accepted", "active");
     if (behavior === undefined && echoUserMessage) this.events.publish(session.sessionId, { type: "message.append", message: userMessage(text, images) });
     const promptOptions = buildPromptOptions(behavior, images);
-    const promptPromise = this.runSessionEntryMutation(session, "send a prompt", () => session.prompt(text, promptOptions)).catch((error: unknown) => {
+    try {
+      await this.runSessionEntryMutation(session, "send a prompt", () => session.prompt(text, promptOptions));
+    } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.publishActivity(session, "error", "error", message);
       this.events.publish(session.sessionId, { type: "session.error", message });
-    });
-    void promptPromise;
-    return promptPromise;
+      throw error;
+    }
   }
 
   private enqueuePromptDuringCompaction(session: PiAgentSession, text: string, kind: QueuedPromptKind, images: ImageContent[] = [], echoUserMessage = true): void {
@@ -2808,6 +2891,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async detachParent(ref: PiSessionRef): Promise<void> {
+    this.assertNotBackgroundOwned(ref);
     const session = await this.getOrOpen(ref);
     const sessionFile = session.sessionFile;
     if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
@@ -2832,6 +2916,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async dismissWarning(ref: PiSessionRef, dismissId: string): Promise<ClientSessionStatus> {
+    this.assertNotBackgroundOwned(ref);
     const session = await this.getOrOpen(ref);
     dismissSessionWarning(session, dismissId);
     this.publishStatus(session);
@@ -2839,6 +2924,11 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async abort(ref: PiSessionRef): Promise<void> {
+    this.assertNotBackgroundOwned(ref);
+    await this.abortActive(ref);
+  }
+
+  private async abortActive(ref: PiSessionRef): Promise<void> {
     const active = this.activeForRef(ref);
     if (active === undefined) return;
     const sessionId = active.runtime.session.sessionId;
@@ -2863,6 +2953,11 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async stop(ref: PiSessionRef): Promise<void> {
+    this.assertNotBackgroundOwned(ref);
+    await this.stopActive(ref);
+  }
+
+  private async stopActive(ref: PiSessionRef): Promise<void> {
     const active = this.activeForRef(ref);
     if (active !== undefined) {
       await this.closeActive(active.runtime.session.sessionId);
@@ -2998,9 +3093,24 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async closeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<void> {
-    // A session whose open is parked on a `session_start` dialog holds its
-    // pending open until the dialog settles; settle it first so closing cannot
-    // block behind the dialog timeout (which `0` makes infinite).
+    const active = await this.takeActive(sessionId, notificationPolicy);
+    if (active === undefined) return;
+    try {
+      await this.abortSessionOperations(active.runtime.session);
+    } finally {
+      await active.runtime.dispose();
+    }
+  }
+
+  private async forceCloseActive(sessionId: string): Promise<void> {
+    const active = await this.takeActive(sessionId);
+    if (active === undefined) return;
+    // Detach first: provider disposal may be waiting on the same operation that
+    // ignored soft abort, so force-stop cannot await it.
+    void active.runtime.dispose().catch(() => undefined);
+  }
+
+  private async takeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<ActiveSession<PiSessionRuntime> | undefined> {
     if (this.startupSessions.has(sessionId)) this.endSessionExtensionDialogs(sessionId);
     const pendingOpens = this.pendingSessionOpenPromises(sessionId);
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
@@ -3012,31 +3122,21 @@ export class PiSessionService implements SessionRouteService {
         : this.notificationStore.clearGeneration(generation, notificationPolicy.reason);
       this.publishNotificationMutations(mutations);
     }
-    if (!active) return;
+    if (active === undefined) return undefined;
     this.forgetUnreadActivity(active.runtime.session);
-    // An open ask is meaningful only while the runtime that posted it exists: no
-    // one is left to receive the answers, so it is dropped without an outcome.
     this.pendingAskStore.forgetSession(sessionId);
-    // Open dialogs share that stance, but their extension waiters are parked
-    // Promises inside the dying runtime: settle them rather than dropping them.
     this.endSessionExtensionDialogs(sessionId);
     this.active.delete(sessionId);
+    this.backgroundSessionOwners.delete(sessionId);
     this.activities.delete(sessionId);
     this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
-    // Disarm subsession notification before teardown so the abort below cannot
-    // emit a "stopped working" event that notifies the parent (e.g. on archive).
-    // The parent/children link is kept so the parent can still see the child.
     if (this.subsessionLinkForActiveChild(active.runtime.session) !== undefined) this.subsessionNotifyArmed.delete(sessionId);
     clearSessionQueue(active.runtime.session);
     active.unsubscribe();
     active.runtime.setRebindSession(undefined);
-    try {
-      await this.abortSessionOperations(active.runtime.session);
-    } finally {
-      await active.runtime.dispose();
-    }
+    return active;
   }
 
   private async abortSessionOperations(session: PiAgentSession): Promise<void> {
@@ -3061,7 +3161,19 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async assertWritable(ref: PiSessionRef): Promise<void> {
+    this.assertNotBackgroundOwned(ref);
     if (await this.getArchived(ref) !== undefined) throw new Error("Archived sessions are read-only. Restore the session to continue.");
+  }
+
+  private assertNotBackgroundOwned(ref: PiSessionRef): void {
+    const owner = this.activeForRef(ref)?.runtime.session.sessionId;
+    const pluginId = owner === undefined ? undefined : this.backgroundSessionOwners.get(owner);
+    if (pluginId !== undefined) throw new Error(`Plugin-owned background session is read-only while its ${pluginId} lease is active`);
+  }
+
+  private assertBackgroundOwner(pluginId: string, ref: PiSessionRef): void {
+    const sessionId = this.activeForRef(ref)?.runtime.session.sessionId;
+    if (sessionId === undefined || this.backgroundSessionOwners.get(sessionId) !== pluginId) throw new Error(`Background session lease is not active for plugin ${pluginId}`);
   }
 
   private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
@@ -3285,6 +3397,7 @@ export class PiSessionService implements SessionRouteService {
         }
       });
       this.active.set(runtime.session.sessionId, active);
+      if (options.backgroundOwnerPluginId !== undefined) this.backgroundSessionOwners.set(runtime.session.sessionId, options.backgroundOwnerPluginId);
       if (notificationOwnership === "replacement" && notificationGeneration !== undefined) {
         this.publishNotificationMutations(this.notificationStore.commitReplacement(notificationGeneration));
         notificationOwnership = "external";
@@ -3308,6 +3421,7 @@ export class PiSessionService implements SessionRouteService {
       for (const [sessionId, candidate] of this.active.entries()) {
         if (candidate !== active) continue;
         this.active.delete(sessionId);
+        this.backgroundSessionOwners.delete(sessionId);
         this.activities.delete(sessionId);
         this.clearAuthLossWarningsForSession(sessionId);
         this.clearCompactionPromptQueue(sessionId);
@@ -3744,7 +3858,8 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private hasActiveWork(session: PiAgentSession): boolean {
-    return this.treeNavigations.has(session)
+    return this.backgroundSessionOwners.has(session.sessionId)
+      || this.treeNavigations.has(session)
       || this.isSessionEntryMutationActive(session)
       || this.isTreeExclusiveOperationActive(session)
       || sessionHasActiveWork(session, this.compactionQueuedMessages(session.sessionId).length);

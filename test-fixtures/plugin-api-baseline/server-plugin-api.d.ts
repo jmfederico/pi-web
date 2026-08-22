@@ -12,6 +12,8 @@ export interface ServerPluginActivationContext {
     readonly apiVersion: 1;
     readonly pluginId: string;
     readonly packageRoot: string;
+    /** Canonical host-created durable directory private to this plugin id. */
+    readonly stateDirectory: string;
     readonly logger: ServerPluginLogger;
     readonly settings: JsonObject;
     /**
@@ -58,12 +60,75 @@ export interface ServerPluginExecFileResult {
  */
 export interface ServerPluginActivation {
     workspaceProvider?: WorkspaceProvider;
+    /**
+     * Handle JSON operations for any current host-authorized workspace without
+     * claiming ownership of its topology.
+     */
+    workspaceBackend?: WorkspaceBackend;
     /** Initialize resources within one host-bounded start invocation. */
     start?(signal: AbortSignal): MaybePromise<void>;
+    /** Start background work after authoritative workspace and session services exist. */
+    ready?(context: ServerPluginReadyContext, signal: AbortSignal): MaybePromise<void>;
+    /** Stop background ingress/work before core sessions are disposed. */
+    quiesce?(signal: AbortSignal): MaybePromise<void>;
     /** Release resources within one host-bounded stop invocation. */
     stop?(signal: AbortSignal): MaybePromise<void>;
     /** Inspect health within one host-bounded health invocation. */
     health?(signal: AbortSignal): MaybePromise<ServerPluginHealth>;
+}
+export interface ServerPluginReadyContext {
+    readonly backgroundSessions: BackgroundSessionService;
+}
+export interface BackgroundSessionService {
+    listModels(): readonly BackgroundSessionModel[];
+    create(request: BackgroundSessionCreateRequest): Promise<BackgroundSessionLease>;
+}
+export interface BackgroundSessionModel {
+    readonly provider: string;
+    readonly id: string;
+    readonly name: string;
+    readonly thinkingLevels: readonly string[];
+}
+export interface BackgroundSessionCreateRequest {
+    projectId: string;
+    workspaceId: string;
+    model?: {
+        provider: string;
+        id: string;
+    };
+    thinkingLevel?: string;
+}
+export interface BackgroundSessionUsage {
+    readonly input: number;
+    readonly output: number;
+    readonly cacheRead: number;
+    readonly cacheWrite: number;
+    readonly total: number;
+    readonly estimatedCostUsd?: number;
+}
+export interface BackgroundSessionSnapshot {
+    readonly sessionId: string;
+    readonly status: "idle" | "running";
+    readonly model?: {
+        readonly provider: string;
+        readonly id: string;
+        readonly name: string;
+    };
+    readonly thinkingLevel: string;
+    readonly usage: BackgroundSessionUsage;
+}
+export interface BackgroundSessionPromptResult {
+    readonly status: "completed" | "aborted" | "failed";
+    readonly usage: BackgroundSessionUsage;
+    readonly error?: string;
+}
+export interface BackgroundSessionLease {
+    readonly sessionId: string;
+    prompt(text: string): Promise<BackgroundSessionPromptResult>;
+    snapshot(): Promise<BackgroundSessionSnapshot>;
+    abort(): Promise<void>;
+    forceStop(): Promise<void>;
+    release(): Promise<void>;
 }
 export interface ServerPluginHealth {
     status: "healthy" | "degraded" | "unhealthy";
@@ -75,6 +140,24 @@ export interface ServerPluginHealth {
  * invocation. The host aborts it when the operation times out or settles; it
  * must not be retained as a plugin-lifetime shutdown signal.
  */
+export interface WorkspaceBackend {
+    request(context: WorkspaceBackendRequestContext): Promise<JsonValue>;
+}
+export interface WorkspaceBackendRequestContext {
+    readonly project: ProjectInput;
+    /** Provider-neutral, host-validated current workspace snapshot. */
+    readonly workspace: WorkspaceSnapshot;
+    readonly operation: string;
+    readonly input: JsonValue;
+    readonly signal: AbortSignal;
+}
+export interface WorkspaceSnapshot {
+    readonly id: string;
+    readonly projectId: string;
+    readonly path: string;
+    readonly label: string;
+    readonly isMain: boolean;
+}
 export interface WorkspaceProvider {
     /** Fallback providers are considered only after all primary providers pass. */
     fallback?: boolean;

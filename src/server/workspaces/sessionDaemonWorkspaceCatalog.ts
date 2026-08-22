@@ -256,6 +256,10 @@ function parseRuntimeRecord(value: unknown, index: number): ServerPluginRuntimeR
   const name = optionalString(value, "name", label);
   const message = optionalString(value, "message", label);
   const browserRevision = optionalString(value, "browserRevision", label);
+  const backendAvailable = value["backendAvailable"];
+  if (backendAvailable !== undefined && backendAvailable !== true) {
+    throw protocolError(`${label} backendAvailable is invalid`);
+  }
   return Object.freeze({
     pluginId: requirePluginId(value, "pluginId", label),
     source: requireString(value, "source", label),
@@ -264,6 +268,7 @@ function parseRuntimeRecord(value: unknown, index: number): ServerPluginRuntimeR
     ...(browserRevision === undefined ? {} : { browserRevision }),
     settingsRevision: requireString(value, "settingsRevision", label),
     machineSpecific: requireBoolean(value, "machineSpecific", label),
+    ...(backendAvailable === true ? { backendAvailable: true } : {}),
     state,
     ...(name === undefined ? {} : { name }),
     ...(phase === undefined ? {} : { phase }),

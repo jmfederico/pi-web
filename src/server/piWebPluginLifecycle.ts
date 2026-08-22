@@ -22,6 +22,9 @@ export type ProviderRuntimeLoadResult =
 
 export interface ReconciledBrowserPlugin {
   plugin: PiWebPluginCatalogEntry;
+  /** Active server revision used to fence paired browser publication and assets. */
+  serverRevision?: string;
+  /** Present only when the active activation accepts workspace backend requests. */
   backendRevision?: string;
 }
 
@@ -58,9 +61,13 @@ export function reconcilePiWebPluginLifecycle(
         : undefined;
 
       if (plugin?.browserModule !== undefined && shouldPublishBrowserPlugin(plugin, server)) {
+        const serverRevision = server?.activeRevision;
         browserPlugins.push({
           plugin,
-          ...(server?.activeRevision === undefined ? {} : { backendRevision: server.activeRevision }),
+          ...(serverRevision === undefined ? {} : { serverRevision }),
+          ...(serverRevision === undefined || record?.backendAvailable !== true
+            ? {}
+            : { backendRevision: serverRevision }),
         });
       }
 
