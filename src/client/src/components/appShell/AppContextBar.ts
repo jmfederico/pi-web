@@ -1,82 +1,75 @@
-import { LitElement, css, html } from "lit";
-import { customElement, property, query, state } from "lit/decorators.js";
-import type { Machine, Project, SessionInfo, Workspace } from "../../api";
+import { LitElement, css, html, type TemplateResult } from "lit";
+import { customElement, property } from "lit/decorators.js";
+import type { Project, SessionInfo, Workspace } from "../../api";
 import { shortSessionId } from "../../sessionLabels";
 import type { NavigationSection } from "../../appShell/navigationState";
 
+// Mobile-only top bar. Rather than a breadcrumb of project/workspace/session chips,
+// it shows a single button for the deepest thing currently selected (session, else
+// workspace, else project). Tapping it opens the navigation so every level — plus
+// the machine, on multi-machine gateways — stays reachable. The command palette
+// (⚡) sits on the right and is the view switcher on this layout.
+const FOLDER_ICON = html`<svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>`;
+const CHAT_ICON = html`<svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3h-6l-5 4v-4H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3Z"></path></svg>`;
+
+interface ContextButton {
+  label: string;
+  title: string;
+  ariaContext: string;
+  icon: TemplateResult;
+  section: NavigationSection;
+}
+
 @customElement("app-context-bar")
 export class AppContextBar extends LitElement {
-  @property({ attribute: false }) machines: Machine[] = [];
-  @property({ attribute: false }) machine?: Machine;
   @property({ attribute: false }) project?: Project;
   @property({ attribute: false }) workspace?: Workspace;
   @property({ attribute: false }) session?: SessionInfo;
   @property({ attribute: false }) refreshControl: unknown;
+  /** Whether the navigation view is currently open (drives the toggle + caret). */
+  @property({ attribute: false }) navigationOpen = false;
   @property({ attribute: false }) onOpenSection?: (section: NavigationSection) => void;
+  @property({ attribute: false }) onCloseNavigation?: () => void;
   @property({ attribute: false }) onShowActions?: () => void;
-  @query(".context-items") private contextItems?: HTMLElement | null;
-  @state() private canScrollLeft = false;
-  @state() private canScrollRight = false;
-  private observedContextItems: HTMLElement | undefined;
-  private contextItemsResizeObserver: ResizeObserver | undefined;
-
-  override disconnectedCallback(): void {
-    this.contextItemsResizeObserver?.disconnect();
-    this.contextItemsResizeObserver = undefined;
-    this.observedContextItems = undefined;
-    super.disconnectedCallback();
-  }
-
-  override firstUpdated(): void {
-    this.observeContextItems();
-    this.updateScrollState();
-  }
-
-  override updated(): void {
-    this.observeContextItems();
-    this.updateScrollState();
-  }
 
   override render() {
-    const showMachineContext = shouldShowMachineContext(this.machines);
-    const machineLabel = machineContextLabel(this.machine);
-    const projectLabel = projectContextLabel(this.project);
-    const workspaceLabel = workspaceContextLabel(this.workspace);
-    const sessionLabel = sessionContextLabel(this.session);
+    const context = this.currentContext();
+    const verb = this.navigationOpen ? "Close navigation." : "Open navigation.";
     return html`
-      <nav class=${this.contextBarClass()} aria-label="Current location">
-        <span class="context-bar-label">Location</span>
-        <ol class="context-items" @scroll=${this.onContextScroll}>
-          ${showMachineContext ? html`
-            <li class="context-item">
-              <button type="button" class=${this.machine === undefined ? "context-chip empty" : "context-chip"} title=${machineContextTitle(this.machine)} aria-label=${`Machine: ${machineLabel}. Open machine selection.`} @click=${() => { this.onOpenSection?.("machines"); }}>
-                <span class="context-kind">Machine</span>
-                <span class="context-value">${machineLabel}</span>
-              </button>
-            </li>
-          ` : null}
-          <li class="context-item">
-            <button type="button" class=${this.project === undefined ? "context-chip empty" : "context-chip"} title=${projectContextTitle(this.project)} aria-label=${`Project: ${projectLabel}. Open project selection.`} @click=${() => { this.onOpenSection?.("projects"); }}>
-              <span class="context-kind">Project</span>
-              <span class="context-value">${projectLabel}</span>
-            </button>
-          </li>
-          <li class="context-item">
-            <button type="button" class=${this.workspace === undefined ? "context-chip empty" : "context-chip"} title=${workspaceContextTitle(this.workspace)} aria-label=${`Workspace: ${workspaceLabel}. Open workspace selection.`} @click=${() => { this.onOpenSection?.("workspaces"); }}>
-              <span class="context-kind">Workspace</span>
-              <span class="context-value">${workspaceLabel}</span>
-            </button>
-          </li>
-          <li class="context-item">
-            <button type="button" class=${this.session === undefined ? "context-chip empty" : "context-chip"} title=${sessionContextTitle(this.session)} aria-label=${`Session: ${sessionLabel}. Open session selection.`} @click=${() => { this.onOpenSection?.("sessions"); }}>
-              <span class="context-kind">Session</span>
-              <span class="context-value">${sessionLabel}</span>
-            </button>
-          </li>
-        </ol>
+      <nav class="context-bar" aria-label="Current location">
+        <button type="button" class="context-button" title=${context.title} aria-expanded=${String(this.navigationOpen)} aria-label=${`${context.ariaContext} ${verb}`.trim()} @click=${() => { this.toggleNavigation(context.section); }}>
+          ${context.icon}
+          <span class="context-value">${context.label}</span>
+          <svg class=${`context-caret${this.navigationOpen ? " open" : ""}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 9 6 6 6-6"></path></svg>
+        </button>
         ${this.hasContextActions() ? html`<div class="context-actions">${this.renderActionsButton()}${this.refreshControl}</div>` : null}
       </nav>
     `;
+  }
+
+  // Clicking toggles the navigation view: open it (at the section you'd naturally
+  // pick next, matching defaultNavigationSection) when closed, or close it when
+  // already open — the context button is the only nav entry/exit on this layout.
+  private toggleNavigation(section: NavigationSection): void {
+    if (this.navigationOpen) this.onCloseNavigation?.();
+    else this.onOpenSection?.(section);
+  }
+
+  // The deepest selected level drives the label/icon and the section to open.
+  private currentContext(): ContextButton {
+    const section: NavigationSection = this.project === undefined ? "projects" : this.workspace === undefined ? "workspaces" : "sessions";
+    if (this.session !== undefined) {
+      const label = sessionContextLabel(this.session);
+      return { label, title: this.session.path, ariaContext: `Session: ${label}.`, icon: CHAT_ICON, section };
+    }
+    if (this.workspace !== undefined) {
+      const label = workspaceButtonLabel(this.workspace);
+      return { label, title: `${label} — ${this.workspace.path}`, ariaContext: `Workspace: ${label}.`, icon: FOLDER_ICON, section };
+    }
+    if (this.project !== undefined) {
+      return { label: this.project.name, title: `${this.project.name} — ${this.project.path}`, ariaContext: `Project: ${this.project.name}.`, icon: FOLDER_ICON, section };
+    }
+    return { label: "Select a project", title: "No project selected", ariaContext: "", icon: FOLDER_ICON, section };
   }
 
   private renderActionsButton() {
@@ -90,113 +83,37 @@ export class AppContextBar extends LitElement {
     `;
   }
 
-  private contextBarClass(): string {
-    const classes = ["context-bar"];
-    if (this.hasContextActions()) classes.push("has-context-actions");
-    if (this.refreshControl !== undefined && this.onShowActions !== undefined) classes.push("has-context-actions-double");
-    if (this.canScrollLeft) classes.push("can-scroll-left");
-    if (this.canScrollRight) classes.push("can-scroll-right");
-    return classes.join(" ");
-  }
-
   private hasContextActions(): boolean {
     return this.refreshControl !== undefined || this.onShowActions !== undefined;
   }
 
-  private observeContextItems(): void {
-    const contextItems = this.contextItemsElement();
-    if (this.observedContextItems === contextItems) return;
-    this.contextItemsResizeObserver?.disconnect();
-    this.observedContextItems = contextItems;
-    this.contextItemsResizeObserver = undefined;
-    if (contextItems === undefined || typeof ResizeObserver === "undefined") return;
-    this.contextItemsResizeObserver = new ResizeObserver(() => {
-      this.updateScrollState();
-    });
-    this.contextItemsResizeObserver.observe(contextItems);
-  }
-
-  private updateScrollState(): void {
-    const contextItems = this.contextItemsElement();
-    const maxScrollLeft = contextItems === undefined ? 0 : Math.max(0, contextItems.scrollWidth - contextItems.clientWidth);
-    const canScrollLeft = contextItems !== undefined && contextItems.scrollLeft > 1;
-    const canScrollRight = contextItems !== undefined && maxScrollLeft - contextItems.scrollLeft > 1;
-    if (this.canScrollLeft !== canScrollLeft) this.canScrollLeft = canScrollLeft;
-    if (this.canScrollRight !== canScrollRight) this.canScrollRight = canScrollRight;
-  }
-
-  private contextItemsElement(): HTMLElement | undefined {
-    const contextItems = this.contextItems;
-    return contextItems instanceof HTMLElement ? contextItems : undefined;
-  }
-
-  private readonly onContextScroll = () => {
-    this.updateScrollState();
-  };
-
   static override styles = css`
-    /* Keep the refresh menu in this shadow tree above the following mobile tab strip. */
+    /* Keep any menu opened from the actions button above the content below. */
     :host { position: relative; z-index: 20; flex: 0 0 auto; min-width: 0; }
-    .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: flex; align-items: center; gap: 0; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
-    .context-bar::before, .context-bar::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
-    .context-bar::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
-    .context-bar::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
-    .context-bar.can-scroll-left::before, .context-bar.can-scroll-right::after { opacity: 1; }
-    .context-bar-label { display: none; }
-    .context-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 5px; margin: 0; padding: 0 8px; list-style: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: thin; }
-    .context-bar.has-context-actions .context-items { padding-right: 58px; scroll-padding-inline: 8px 58px; }
-    .context-bar.has-context-actions-double .context-items { padding-right: 102px; scroll-padding-inline: 8px 102px; }
-    .context-item { flex: 0 0 auto; min-width: 0; display: flex; }
-    .context-actions { position: absolute; top: 6px; right: 0; bottom: 6px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--pi-bg); pointer-events: none; }
-    .context-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -24px; z-index: 0; width: 24px; background: linear-gradient(90deg, transparent, var(--pi-bg)); pointer-events: none; }
-    app-refresh-control, .context-action-button { position: relative; z-index: 1; pointer-events: auto; }
-    .context-action-button { box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 0; line-height: 1; }
+    .context-bar { display: flex; align-items: center; gap: 8px; min-height: 52px; min-width: 0; padding: 4px 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+    .context-button { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 8px; border: none; border-radius: 8px; background: transparent; color: var(--pi-text); padding: 8px; font: inherit; text-align: left; cursor: pointer; }
+    .context-button:hover { background: var(--pi-surface-hover); }
+    .context-button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
+    .context-icon { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: var(--pi-muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    .context-value { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+    .context-caret { flex: 0 0 auto; width: 14px; height: 14px; fill: none; stroke: var(--pi-dim); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; transition: transform .15s ease; }
+    .context-caret.open { transform: rotate(180deg); }
+    @media (prefers-reduced-motion: reduce) { .context-caret { transition: none; } }
+    .context-actions { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 6px; }
+    .context-action-button { box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 0; line-height: 1; cursor: pointer; }
     .context-action-button:hover, .context-action-button:focus-visible { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
     .context-action-icon { width: 18px; height: 18px; fill: currentColor; pointer-events: none; }
-    .context-chip { flex: 0 0 auto; min-width: 0; display: inline-flex; align-items: baseline; gap: 5px; border: 1px solid var(--pi-border-muted); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 4px 8px; font: inherit; text-align: left; }
-    .context-chip:hover { background: var(--pi-surface-hover); }
-    .context-chip:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
-    .context-chip.empty { border-style: dashed; color: var(--pi-muted); }
-    .context-kind { display: none; }
-    .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
-    button { cursor: pointer; }
   `;
 }
 
-export function shouldShowMachineContext(machines: readonly Machine[]): boolean {
-  return machines.length > 1;
+function workspaceButtonLabel(workspace: Workspace): string {
+  return `${workspace.label}${workspace.isMain ? " · main" : ""}`;
 }
 
-function machineContextLabel(machine: Machine | undefined): string {
-  return machine === undefined ? "No machine" : `${machine.name}${machine.kind === "remote" ? " · remote" : ""}`;
-}
-
-function machineContextTitle(machine: Machine | undefined): string {
-  return machine === undefined ? "No machine selected" : machine.baseUrl ?? machine.name;
-}
-
-function projectContextLabel(project: Project | undefined): string {
-  return project?.name ?? "No project";
-}
-
-function projectContextTitle(project: Project | undefined): string {
-  return project === undefined ? "No project selected" : `${project.name} — ${project.path}`;
-}
-
-function workspaceContextLabel(workspace: Workspace | undefined): string {
-  return workspace === undefined ? "No workspace" : `${workspace.label}${workspace.isMain ? " · main" : ""} · ${workspace.path}`;
-}
-
-function workspaceContextTitle(workspace: Workspace | undefined): string {
-  return workspace === undefined ? "No workspace selected" : `${workspace.label}${workspace.isMain ? " · main" : ""} — ${workspace.path}`;
-}
-
-function sessionContextLabel(session: SessionInfo | undefined): string {
-  const name = session?.name?.trim();
-  const firstMessage = session?.firstMessage.trim();
-  return name !== undefined && name !== "" ? name : firstMessage !== undefined && firstMessage !== "" ? firstMessage : session === undefined ? "No session" : shortSessionId(session.id);
-}
-
-function sessionContextTitle(session: SessionInfo | undefined): string {
-  return session === undefined ? "No session selected" : session.path;
+function sessionContextLabel(session: SessionInfo): string {
+  const name = session.name?.trim();
+  if (name !== undefined && name !== "") return name;
+  const firstMessage = session.firstMessage.trim();
+  if (firstMessage !== "") return firstMessage;
+  return shortSessionId(session.id);
 }

@@ -1,12 +1,6 @@
-import { html, svg, type TemplateResult } from "lit";
+import { svg, type TemplateResult } from "lit";
 
 export type AppTabBuiltinIcon = "navigation" | "chat" | "files" | "terminal";
-export type AppTabIcon = AppTabBuiltinIcon | TemplateResult;
-
-export function renderAppTabIcon(icon: AppTabIcon): TemplateResult {
-  if (typeof icon !== "string") return html`<span class="tab-custom-icon" aria-hidden="true">${icon}</span>`;
-  return renderBuiltinTabIcon(icon);
-}
 
 export function renderBuiltinTabIcon(icon: AppTabBuiltinIcon): TemplateResult {
   switch (icon) {

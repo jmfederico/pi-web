@@ -11,6 +11,8 @@ export class ActionPalette extends LitElement {
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) onRun?: (action: AppAction) => void;
   @property({ attribute: false }) onCancel?: () => void;
+  /** When set, actions in this group are floated to the top of the list (stable). */
+  @property({ attribute: false }) leadingGroup?: string;
   @state() private queryText = "";
   @state() private selectedIndex = 0;
 
@@ -68,7 +70,7 @@ export class ActionPalette extends LitElement {
   }
 
   private filteredActions(): AppAction[] {
-    return filterActionPaletteActions(this.actions, this.queryText);
+    return orderActionPaletteActions(filterActionPaletteActions(this.actions, this.queryText), this.leadingGroup);
   }
 
   // Escape and backdrop presses are owned by the modal surface (routed to
@@ -127,4 +129,17 @@ export function filterActionPaletteActions(actions: readonly AppAction[], queryT
       const haystack = [action.title, action.description ?? "", action.disabledReason ?? "", action.group ?? "", action.shortcut ?? ""].join(" ").toLowerCase();
       return haystack.includes(query);
     });
+}
+
+// Float actions in `leadingGroup` to the top, preserving relative order within each
+// partition. Used to lead the mobile palette with the "Navigation" (Go to …) group,
+// where the palette is the view switcher.
+export function orderActionPaletteActions(actions: readonly AppAction[], leadingGroup?: string): AppAction[] {
+  if (leadingGroup === undefined || leadingGroup === "") return [...actions];
+  const leading: AppAction[] = [];
+  const rest: AppAction[] = [];
+  for (const action of actions) {
+    (action.group === leadingGroup ? leading : rest).push(action);
+  }
+  return [...leading, ...rest];
 }
