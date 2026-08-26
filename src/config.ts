@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
-import type { PiWebConfigValues, PiWebDeprecatedAgentInput } from "./shared/apiTypes.js";
+import type { PiWebBreadcrumbMode, PiWebConfigValues, PiWebDeprecatedAgentInput } from "./shared/apiTypes.js";
 import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
 
 export type PiWebConfig = PiWebConfigValues;
@@ -211,6 +211,8 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["port"];
   delete existing["allowedHosts"];
   delete existing["shortcuts"];
+  delete existing["breadcrumbMode"];
+  delete existing["pinnedWorkspaceTools"];
   delete existing["plugins"];
   delete existing["pathAccess"];
   delete existing["uploads"];
@@ -240,6 +242,8 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.port !== undefined ? { port: config.port } : {}),
     ...(config.allowedHosts !== undefined ? { allowedHosts: config.allowedHosts } : {}),
     ...(config.shortcuts !== undefined ? { shortcuts: config.shortcuts } : {}),
+    ...(config.breadcrumbMode !== undefined ? { breadcrumbMode: config.breadcrumbMode } : {}),
+    ...(config.pinnedWorkspaceTools !== undefined ? { pinnedWorkspaceTools: config.pinnedWorkspaceTools } : {}),
     ...(config.plugins !== undefined ? { plugins: config.plugins } : {}),
     ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
@@ -258,6 +262,8 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["port"] !== undefined ? { port: parsePort(value["port"], "port", path) } : {}),
     ...(value["allowedHosts"] !== undefined ? { allowedHosts: parseAllowedHosts(value["allowedHosts"], path) } : {}),
     ...(value["shortcuts"] !== undefined ? { shortcuts: parseShortcuts(value["shortcuts"], path) } : {}),
+    ...(value["breadcrumbMode"] !== undefined ? { breadcrumbMode: parseBreadcrumbMode(value["breadcrumbMode"], path) } : {}),
+    ...(value["pinnedWorkspaceTools"] !== undefined ? { pinnedWorkspaceTools: parsePinnedWorkspaceTools(value["pinnedWorkspaceTools"], path) } : {}),
     ...(value["plugins"] !== undefined ? { plugins: parsePlugins(value["plugins"], path) } : {}),
     ...(value["pathAccess"] !== undefined ? { pathAccess: parsePathAccessConfig(value["pathAccess"], path) } : {}),
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
@@ -526,6 +532,25 @@ function hasControlCharacter(value: string): boolean {
 function isAbsoluteLike(value: string): boolean {
   const withForwardSlashes = value.replace(/\\/g, "/");
   return isAbsolute(value) || withForwardSlashes.startsWith("/") || /^[A-Za-z]:\//.test(withForwardSlashes);
+}
+
+const workspaceToolIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
+
+function parseBreadcrumbMode(value: unknown, path: string): PiWebBreadcrumbMode {
+  if (value === "expanded" || value === "compact") return value;
+  throw new Error(`PI WEB config breadcrumbMode must be "expanded" or "compact": ${path}`);
+}
+
+function parsePinnedWorkspaceTools(value: unknown, path: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`PI WEB config pinnedWorkspaceTools must be an array of "plugin:tool" ids: ${path}`);
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || !workspaceToolIdPattern.test(entry)) {
+      throw new Error(`PI WEB config pinnedWorkspaceTools must be an array of "plugin:tool" ids: ${path}`);
+    }
+    if (!ids.includes(entry)) ids.push(entry);
+  }
+  return ids;
 }
 
 function parseShortcuts(value: unknown, path: string): Record<string, string | null> {

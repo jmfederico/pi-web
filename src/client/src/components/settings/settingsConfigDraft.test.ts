@@ -37,6 +37,8 @@ describe("settings config drafts", () => {
       allowedHostsText: "ignored.local",
     }, {
       shortcuts: { "core:view.chat": "mod+1" },
+      breadcrumbMode: "compact",
+      pinnedWorkspaceTools: ["core:workspace.files"],
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },
@@ -49,6 +51,8 @@ describe("settings config drafts", () => {
       port: 9000,
       allowedHosts: true,
       shortcuts: { "core:view.chat": "mod+1" },
+      breadcrumbMode: "compact",
+      pinnedWorkspaceTools: ["core:workspace.files"],
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },

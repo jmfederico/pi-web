@@ -62,6 +62,8 @@ export function machineAccessConfigPatchFromDraft(draft: MachineAccessConfigDraf
 function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebConfigValues {
   return {
     ...(baseConfig.shortcuts === undefined ? {} : { shortcuts: baseConfig.shortcuts }),
+    ...(baseConfig.breadcrumbMode === undefined ? {} : { breadcrumbMode: baseConfig.breadcrumbMode }),
+    ...(baseConfig.pinnedWorkspaceTools === undefined ? {} : { pinnedWorkspaceTools: baseConfig.pinnedWorkspaceTools }),
     ...(baseConfig.plugins === undefined ? {} : { plugins: baseConfig.plugins }),
     ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),

@@ -64,6 +64,35 @@ describe("config routes", () => {
     expect(response.json<PiWebConfigResponse>().config).toEqual(expectedConfig);
   });
 
+  it("updates breadcrumb mode and pinned workspace tools through the service", async () => {
+    const requestedConfig: PiWebConfigValues = {
+      breadcrumbMode: "compact",
+      pinnedWorkspaceTools: ["core:workspace.files", "relays:workspace.relays"],
+    };
+
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config: requestedConfig } });
+
+    expect(response.statusCode).toBe(200);
+    expect(savedConfig).toEqual(requestedConfig);
+    expect(response.json<PiWebConfigResponse>().config).toEqual(requestedConfig);
+  });
+
+  it("rejects an invalid breadcrumb mode before writing", async () => {
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config: { breadcrumbMode: "mini" } } });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toHaveProperty("error");
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it("rejects pinned workspace tools that are not plugin:tool ids before writing", async () => {
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config: { pinnedWorkspaceTools: ["files"] } } });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toHaveProperty("error");
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid config payloads before writing", async () => {
     const response = await app.inject({
       method: "PUT",

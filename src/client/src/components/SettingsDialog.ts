@@ -5,6 +5,8 @@ import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineRuntime
 import type { SettingsSection } from "../settingsRoute";
 import "./ModalSurface";
 import "./settings/SettingsGeneralPanel";
+import "./settings/SettingsDisplayPanel";
+import type { WorkspaceToolSummary } from "./settings/SettingsDisplayPanel";
 import "./settings/SettingsSessiondPanel";
 import "./settings/SettingsPackagesPanel";
 import "./settings/SettingsPluginsPanel";
@@ -20,6 +22,7 @@ import { mergeSelectedMachineSessiondConfig } from "./settings/settingsSessiondC
 export class SettingsDialog extends LitElement {
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
+  @property({ attribute: false }) workspaceTools: WorkspaceToolSummary[] = [];
   @property({ attribute: false }) machine: Machine | undefined;
   @property({ attribute: false }) machineRuntime: MachineRuntime | undefined;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
@@ -106,6 +109,7 @@ export class SettingsDialog extends LitElement {
         <div class="settings-body">
           <nav class="settings-nav" aria-label="Settings sections">
             ${this.renderNavButton("general", "General", "Gateway + selected machine")}
+            ${this.renderNavButton("display", "Display & theme", "Gateway appearance")}
             ${this.renderNavButton("sessiond", "Session daemon", "Selected machine")}
             ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
             ${this.renderNavButton("plugins", "PI WEB plugins", "Selected machine")}
@@ -135,6 +139,20 @@ export class SettingsDialog extends LitElement {
           .onReload=${() => this.reloadSessiondState()}
           .onSave=${(config: PiWebConfigValues) => this.saveSessiondConfig(config)}
         ></settings-sessiond-panel>
+      `;
+    }
+    if (this.section === "display") {
+      return html`
+        <settings-display-panel
+          .configResponse=${this.configResponse}
+          .tools=${this.workspaceTools}
+          .loading=${this.loading}
+          .saving=${this.saving}
+          .error=${this.error}
+          .savedMessage=${this.savedMessage}
+          .onReload=${() => this.loadConfig()}
+          .onSave=${(config: PiWebConfigValues) => this.saveConfig(config)}
+        ></settings-display-panel>
       `;
     }
     if (this.section === "shortcuts") {
@@ -622,6 +640,7 @@ function errorMessage(error: unknown): string {
 
 export type SettingsPanelTag =
   | "settings-general-panel"
+  | "settings-display-panel"
   | "settings-sessiond-panel"
   | "settings-packages-panel"
   | "settings-plugins-panel"
@@ -637,6 +656,8 @@ export type SettingsPanelTag =
  */
 export function activeSettingsPanelTag(section: SettingsSection): SettingsPanelTag {
   switch (section) {
+    case "display":
+      return "settings-display-panel";
     case "sessiond":
       return "settings-sessiond-panel";
     case "packages":

@@ -29,6 +29,8 @@ import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import type { PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
+import type { BreadcrumbMode } from "./appShell/AppContextBar";
+import type { WorkspaceToolSummary } from "./settings/SettingsDisplayPanel";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
@@ -68,6 +70,8 @@ import "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
 import "./appShell/AppContextBar";
+import "./appShell/AppMobileToolBar";
+import "./appShell/AppToolsSheet";
 import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
 import "./appShell/AppPanelEdgeControl";
 import "./appShell/AppRefreshControl";
@@ -230,6 +234,12 @@ export class PiWebApp extends LitElement {
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(undefined);
+  // Which workspace tools are pinned to the mobile tool bar, from the gateway
+  // config: undefined = every tool (the default), a list = exactly those, and an
+  // empty list = none (the bar collapses into the context bar's menu button).
+  @state() private pinnedToolIds: QualifiedContributionId[] | undefined = undefined;
+  @state() private breadcrumbMode: BreadcrumbMode = "expanded";
+  @state() private toolsSheetOpen = false;
   private sessionWarningVisibility = initialSessionWarningVisibilityState();
   private readonly onPopState = () => void this.withChatScrollTransition(async () => {
     this.restoreSettingsRoute();
@@ -463,6 +473,8 @@ export class PiWebApp extends LitElement {
 
   private applyClientConfig(config: PiWebConfigValues): void {
     this.shortcutConfig = config.shortcuts ?? {};
+    this.breadcrumbMode = config.breadcrumbMode ?? "expanded";
+    this.pinnedToolIds = toQualifiedContributionIds(config.pinnedWorkspaceTools);
     this.workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(config);
   }
 
@@ -797,6 +809,33 @@ export class PiWebApp extends LitElement {
     this.refreshSelectedWorkspaceTool(tool);
   }
 
+  private openWorkspaceToolFromSheet(tool: QualifiedContributionId): void {
+    this.toolsSheetOpen = false;
+    this.openWorkspaceTool(tool);
+  }
+
+  // Pin or unpin a tool and persist it to the gateway config. When the result
+  // covers every registered tool it is stored as "all" (an absent key) so tools
+  // added later stay pinned; otherwise the explicit list (possibly empty) wins.
+  private async togglePinnedTool(tool: QualifiedContributionId): Promise<void> {
+    const allIds = this.plugins.getWorkspacePanels().map((panel) => panel.id);
+    const effective = this.pinnedToolIds ?? allIds;
+    const next = effective.includes(tool) ? effective.filter((id) => id !== tool) : [...effective, tool];
+    const pinned = coversAll(next, allIds) ? undefined : next;
+    const previous = this.pinnedToolIds;
+    this.pinnedToolIds = pinned;
+    try {
+      const current = await configApi.config();
+      const config: PiWebConfigValues = { ...current.config };
+      if (pinned === undefined) delete config.pinnedWorkspaceTools;
+      else config.pinnedWorkspaceTools = [...pinned];
+      this.applyClientConfig((await configApi.saveConfig(config)).effectiveConfig);
+    } catch (error) {
+      this.pinnedToolIds = previous;
+      this.setState({ error: `Failed to save pinned tools: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+
   private openTerminal(options?: { terminalId?: string | undefined }): void {
     if (options?.terminalId !== undefined) this.selectTerminal(options.terminalId, { replace: true });
     this.openWorkspaceTool("core:workspace.terminal");
@@ -1033,9 +1072,7 @@ export class PiWebApp extends LitElement {
     else if (tool !== "core:workspace.terminal") void this.invalidateWorkspacePanels(tool);
   }
 
-  private renderWorkspacePanel() {
-    const workspace = this.state.selectedWorkspace;
-    const panelContext = workspace === undefined ? undefined : this.createWorkspacePanelContext(workspace);
+  private renderWorkspacePanel(workspace: Workspace | undefined, panelContext: WorkspacePanelContext | undefined, panels: QualifiedWorkspacePanelContribution[]) {
     const emptyState = workspace === undefined ? this.workspacePanelEmptyState() : undefined;
     return html`
       <workspace-panel
@@ -1044,7 +1081,7 @@ export class PiWebApp extends LitElement {
         .panelContext=${panelContext}
         .emptyState=${emptyState}
         .tool=${this.state.workspaceTool}
-        .panels=${this.visibleWorkspacePanels()}
+        .panels=${panels}
         .onSelectTool=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }}
       ></workspace-panel>
     `;
@@ -1366,8 +1403,34 @@ export class PiWebApp extends LitElement {
   private visibleWorkspacePanels(): QualifiedWorkspacePanelContribution[] {
     const workspace = this.state.selectedWorkspace;
     if (workspace === undefined) return [];
-    const context = this.createWorkspacePanelContext(workspace);
+    return this.visibleWorkspacePanelsFor(this.createWorkspacePanelContext(workspace));
+  }
+
+  private visibleWorkspacePanelsFor(context: WorkspacePanelContext | undefined): QualifiedWorkspacePanelContribution[] {
+    if (context === undefined) return [];
     return this.plugins.getWorkspacePanels().filter((panel) => panel.visible?.(context) ?? true);
+  }
+
+  // The pinned tools available in this workspace. When nothing is pinned in the
+  // config (undefined), every available tool is pinned — the backwards-compatible
+  // default. Otherwise pins are shown in the user's order, skipping tools that
+  // aren't currently available (wrong machine/workspace) rather than dead buttons.
+  private pinnedWorkspacePanelsFrom(panels: QualifiedWorkspacePanelContribution[]): QualifiedWorkspacePanelContribution[] {
+    const pins = this.pinnedToolIds;
+    if (pins === undefined) return panels;
+    const byId = new Map(panels.map((panel) => [panel.id, panel] as const));
+    return pins
+      .map((id) => byId.get(id))
+      .filter((panel): panel is QualifiedWorkspacePanelContribution => panel !== undefined);
+  }
+
+  // Every registered workspace tool, for the Display settings pin list.
+  private workspaceToolCatalog(): WorkspaceToolSummary[] {
+    return this.plugins.getWorkspacePanels().map((panel) => ({
+      id: panel.id,
+      title: panel.title,
+      ...(panel.icon === undefined ? {} : { icon: panel.icon }),
+    }));
   }
 
   private workspacePanelEmptyState(): WorkspacePanelEmptyState {
@@ -2087,18 +2150,23 @@ export class PiWebApp extends LitElement {
     `;
   }
 
-  private renderContextBar() {
+  private renderContextBar(showTabsMenuButton: boolean) {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
       <app-context-bar
+        .machines=${this.state.machines}
+        .machine=${this.state.selectedMachine}
         .project=${this.state.selectedProject}
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
         .refreshControl=${this.appShell.shouldShowAppRefreshInContextBar() ? this.renderAppRefresh() : undefined}
         .navigationOpen=${this.state.mainView === "navigation"}
+        .showTabsMenuButton=${showTabsMenuButton}
+        .breadcrumbMode=${this.breadcrumbMode}
         .onOpenSection=${(section: NavigationSection) => { this.openNavigationSection(section); }}
         .onCloseNavigation=${() => { this.closeNavigation(); }}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
+        .onOpenTabsMenu=${() => { this.toolsSheetOpen = true; }}
       ></app-context-bar>
     `;
   }
@@ -2109,12 +2177,29 @@ export class PiWebApp extends LitElement {
 
   override render() {
     const state = this.state;
+    const isMobile = this.appShell.isMobileNavigationLayout;
+    const workspace = state.selectedWorkspace;
+    const panelContext = workspace === undefined ? undefined : this.createWorkspacePanelContext(workspace);
+    const workspacePanels = this.visibleWorkspacePanelsFor(panelContext);
+    const pinnedPanels = this.pinnedWorkspacePanelsFrom(workspacePanels);
+    const resolvedPinnedIds = this.pinnedToolIds ?? workspacePanels.map((panel) => panel.id);
+    const currentTool = mainViewTool(state.mainView);
+    const showTabsMenuButton = isMobile && workspacePanels.length > 0 && pinnedPanels.length === 0;
     return html`
       <div class=${this.panelCollapse.shellClass(state.mainView)} style=${this.panelResize.shellStyle({ navigation: this.resizablePanelConstraints("navigation"), workspace: this.resizablePanelConstraints("workspace") })}>
         <aside id="navigation-panel">${this.appShell.isMobileNavigationLayout ? null : this.renderNavigationPanel()}</aside>
         ${this.renderNavigationPanelEdgeControl()}
         <main class=${mainViewClass(state.mainView)}>
-          ${this.renderContextBar()}
+          ${this.renderContextBar(showTabsMenuButton)}
+          ${isMobile && pinnedPanels.length > 0 ? html`
+            <app-mobile-tool-bar
+              .panels=${pinnedPanels}
+              .panelContext=${panelContext}
+              .selected=${currentTool}
+              .onSelect=${(tool: QualifiedContributionId) => { this.openWorkspaceTool(tool); }}
+              .onOpenMenu=${() => { this.toolsSheetOpen = true; }}
+            ></app-mobile-tool-bar>
+          ` : null}
           ${errorBanner(state.error, () => { this.setState({ error: "" }); })}
           ${deprecatedAgentInputsBanner(deprecatedAgentInputsWarnings(state.machines, state.machineRuntimes))}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
@@ -2128,15 +2213,16 @@ export class PiWebApp extends LitElement {
           ` : html`<div class="empty">${this.sessionEmptyMessage()}</div>`}
         </main>
         ${this.renderWorkspacePanelEdgeControl()}
-        ${this.renderWorkspacePanel()}
+        ${this.renderWorkspacePanel(workspace, panelContext, workspacePanels)}
         ${state.authDialog !== undefined ? html`<auth-dialog .state=${state.authDialog} .onChooseMethod=${(authType: "oauth" | "api_key") => { void this.auth.chooseLoginMethod(authType); }} .onSelectProvider=${(providerId: string, authType: "oauth" | "api_key") => { void this.auth.selectLoginProvider(providerId, authType); }} .onLogoutProvider=${(providerId: string) => { void this.auth.logoutProvider(providerId); }} .onOAuthInput=${(value: string) => { this.auth.updateOAuthInput(value); }} .onOAuthRespond=${(value?: string) => { void this.auth.respondOAuth(value); }} .onOAuthCancel=${() => { void this.auth.cancelOAuth(); }} .onCancel=${() => { this.auth.closeDialog(); }}></auth-dialog>` : null}
         ${state.actionPaletteOpen ? html`<action-palette .actions=${this.getActions()} .leadingGroup=${this.appShell.isMobileNavigationLayout ? "Navigation" : undefined} .onRun=${(action: AppAction) => { this.setState({ actionPaletteOpen: false }); this.runAction(action); }} .onCancel=${() => { this.setState({ actionPaletteOpen: false }); }}></action-palette>` : null}
+        ${this.toolsSheetOpen ? html`<app-tools-sheet .panels=${workspacePanels} .pinnedIds=${resolvedPinnedIds} .panelContext=${panelContext} .selected=${currentTool} .onSelect=${(tool: QualifiedContributionId) => { this.openWorkspaceToolFromSheet(tool); }} .onTogglePin=${(tool: QualifiedContributionId) => { void this.togglePinnedTool(tool); }} .onClose=${() => { this.toolsSheetOpen = false; }}></app-tools-sheet>` : null}
         ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .workspaceTools=${this.workspaceToolCatalog()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }
@@ -2153,6 +2239,27 @@ function createPluginRegistry(): PluginRegistry {
 
 function coreWorkspacePluginBinding(): WorkspacePluginBinding {
   return { registrationPluginId: "core", sourcePluginId: "core" };
+}
+
+// The workspace tool the main view is currently showing, or undefined for the
+// chat and navigation views — drives which tool reads as selected on the bar.
+function mainViewTool(mainView: AppState["mainView"]): QualifiedContributionId | undefined {
+  return mainView === "chat" || mainView === "navigation" ? undefined : mainView;
+}
+
+// Whether `ids` covers every id in `all` (order-independent), used to store an
+// "all tools pinned" selection as an absent config key rather than a full list.
+function coversAll(ids: readonly string[], all: readonly string[]): boolean {
+  const set = new Set(ids);
+  return set.size === all.length && all.every((id) => set.has(id));
+}
+
+const qualifiedContributionIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
+
+// Narrow the config's plain string ids to QualifiedContributionId (already
+// validated server- and parser-side; this keeps the type honest without a cast).
+function toQualifiedContributionIds(ids: readonly string[] | undefined): QualifiedContributionId[] | undefined {
+  return ids?.filter((id): id is QualifiedContributionId => qualifiedContributionIdPattern.test(id));
 }
 
 function pluginMachineFromState(state: Pick<AppState, "selectedMachine">): PluginMachine {

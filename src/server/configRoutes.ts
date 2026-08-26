@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { loadPiWebConfig, parseAgentConfig, parseUploadsConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
-import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
+import type { PiWebBreadcrumbMode, PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
 
 export interface PiWebConfigService {
@@ -126,6 +126,8 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   const port = value["port"];
   const allowedHosts = value["allowedHosts"];
   const shortcuts = value["shortcuts"];
+  const breadcrumbMode = value["breadcrumbMode"];
+  const pinnedWorkspaceTools = value["pinnedWorkspaceTools"];
   const plugins = value["plugins"];
   const pathAccess = value["pathAccess"];
   const uploads = value["uploads"];
@@ -144,6 +146,8 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   }
   if (allowedHosts !== undefined) config.allowedHosts = parseAllowedHostsRequest(allowedHosts);
   if (shortcuts !== undefined) config.shortcuts = parseShortcutsRequest(shortcuts);
+  if (breadcrumbMode !== undefined) config.breadcrumbMode = parseBreadcrumbModeRequest(breadcrumbMode);
+  if (pinnedWorkspaceTools !== undefined) config.pinnedWorkspaceTools = parsePinnedWorkspaceToolsRequest(pinnedWorkspaceTools);
   if (plugins !== undefined) config.plugins = parsePluginsRequest(plugins);
   if (pathAccess !== undefined) config.pathAccess = parsePathAccessRequest(pathAccess);
   if (uploads !== undefined) config.uploads = parseUploadsConfig(uploads, "request");
@@ -189,6 +193,25 @@ function parseAllowedHostsRequest(value: unknown): string[] | true {
     throw new Error("PI WEB config allowedHosts must be true or an array of strings");
   }
   return value;
+}
+
+const workspaceToolIdRequestPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
+
+function parseBreadcrumbModeRequest(value: unknown): PiWebBreadcrumbMode {
+  if (value === "expanded" || value === "compact") return value;
+  throw new Error('PI WEB config breadcrumbMode must be "expanded" or "compact"');
+}
+
+function parsePinnedWorkspaceToolsRequest(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error('PI WEB config pinnedWorkspaceTools must be an array of "plugin:tool" ids');
+  const ids: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string" || !workspaceToolIdRequestPattern.test(entry)) {
+      throw new Error('PI WEB config pinnedWorkspaceTools must be an array of "plugin:tool" ids');
+    }
+    if (!ids.includes(entry)) ids.push(entry);
+  }
+  return ids;
 }
 
 function parseShortcutsRequest(value: unknown): Record<string, string | null> {

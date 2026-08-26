@@ -46,6 +46,7 @@ Process restarts depend on the key:
 - `serverPlugins.safeStart`: persistent offline recovery state applied before server-plugin discovery/import on the next sessiond start; use the `pi-web plugins safe-start ...` CLI rather than hand-editing it.
 - Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with `serverModule`, manually restart `pi-web-sessiond.service`, then reload the browser. If a global Pi extension adds or removes a model provider, or changes a provider's connection settings, the same manual sessiond restart is required; `/reload` cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See [Pi extension provider baseline](#pi-extension-provider-baseline).
 - `shortcuts`: saved settings apply in the browser after config refresh/save.
+- `breadcrumbMode`, `pinnedWorkspaceTools`: saved settings apply in the browser after config refresh/save.
 
 ## Global config example
 
@@ -72,7 +73,9 @@ Process restarts depend on the key:
   "shortcuts": {
     "core:view.chat": "mod+1",
     "core:session.stop": null
-  }
+  },
+  "breadcrumbMode": "expanded",
+  "pinnedWorkspaceTools": ["core:workspace.files", "core:workspace.terminal"]
 }
 ```
 
@@ -162,6 +165,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | PI WEB plugin desired enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global + sessiond startup snapshot for server entries | Not core local config; plugins may read their own project files | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
 | Server-plugin safe start | `serverPlugins.safeStart` | — | Global/offline recovery | Not supported locally; manage with `pi-web plugins safe-start ...` | Applied before discovery/import on next sessiond start |
 | Keyboard shortcuts | `shortcuts.<actionId>` | — | Global | Not supported locally | Applies after settings save/config refresh |
+| Context-bar breadcrumb style | `breadcrumbMode` | — | Global | Not supported locally | Applies after settings save/config refresh |
+| Pinned workspace tools | `pinnedWorkspaceTools` | — | Global | Not supported locally | Applies after settings save/config refresh |
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
 | **Runtime-only environment variables** |  |  |  |  |  |
 | Global config file path | — | `PI_WEB_CONFIG` (`XDG_CONFIG_HOME` affects the default path) | Process/env | Selects the global config file; not a project config | Restart services/processes after changing env |
@@ -430,6 +435,20 @@ Shortcut values are keyed by action id. Values are shortcut strings such as `mod
 ```
 
 Prefer Settings → Keyboard for editing shortcuts interactively.
+
+### Display config
+
+Gateway-wide appearance preferences, edited under Settings → Display & theme.
+
+- `breadcrumbMode`: `"expanded"` (default) shows the full machine › project › workspace › session path in the mobile context bar; `"compact"` shows only the deepest level. Absent means `"expanded"`.
+- `pinnedWorkspaceTools`: the `"plugin:tool"` ids kept on the mobile tool bar (and pinned in the tools menu). **Absent means every tool is pinned** — the backwards-compatible default; an empty array pins none, collapsing the bar into the tools menu button next to Actions.
+
+```json
+{
+  "breadcrumbMode": "compact",
+  "pinnedWorkspaceTools": ["core:workspace.files", "core:workspace.terminal"]
+}
+```
 
 ## Prompt completions
 

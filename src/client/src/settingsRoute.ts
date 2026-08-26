@@ -1,4 +1,4 @@
-export type SettingsSection = "general" | "sessiond" | "packages" | "plugins" | "shortcuts";
+export type SettingsSection = "general" | "display" | "sessiond" | "packages" | "plugins" | "shortcuts";
 
 export function readSettingsSection(): SettingsSection | undefined {
   return parseSettingsSection(new URLSearchParams(window.location.search).get("settings"));

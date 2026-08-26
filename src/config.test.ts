@@ -38,6 +38,32 @@ describe("PI WEB config persistence", () => {
     expect(loadPiWebConfig(testOptions())).toEqual(saved);
   });
 
+  it("round-trips the breadcrumb mode and pinned workspace tools", () => {
+    const requestedConfig = {
+      breadcrumbMode: "compact" as const,
+      pinnedWorkspaceTools: ["core:workspace.files", "core:workspace.files", "relays:workspace.relays"],
+    };
+    const normalizedConfig = {
+      breadcrumbMode: "compact" as const,
+      pinnedWorkspaceTools: ["core:workspace.files", "relays:workspace.relays"],
+    };
+
+    const saved = savePiWebConfig(requestedConfig, testOptions());
+
+    expect(saved.config).toEqual(normalizedConfig);
+    expect(loadPiWebConfig(testOptions()).config).toEqual(normalizedConfig);
+  });
+
+  it("rejects an invalid breadcrumb mode", async () => {
+    await writeFile(configPath, `${JSON.stringify({ breadcrumbMode: "mini" }, null, 2)}\n`, "utf8");
+    expect(() => loadPiWebConfig(testOptions())).toThrow('PI WEB config breadcrumbMode must be "expanded" or "compact"');
+  });
+
+  it("rejects pinned workspace tools that are not plugin:tool ids", async () => {
+    await writeFile(configPath, `${JSON.stringify({ pinnedWorkspaceTools: ["files"] }, null, 2)}\n`, "utf8");
+    expect(() => loadPiWebConfig(testOptions())).toThrow('PI WEB config pinnedWorkspaceTools must be an array of "plugin:tool" ids');
+  });
+
   it("preserves unrelated config keys while replacing managed keys", async () => {
     await writeFile(configPath, `${JSON.stringify({ host: "old", port: 8504, allowedHosts: true, plugins: { info: { enabled: false } }, pathAccess: { allowedPaths: ["/old"] }, uploads: { defaultFolder: "old" }, serverPlugins: { safeStart: "none" }, future: { enabled: true } }, null, 2)}\n`, "utf8");
 

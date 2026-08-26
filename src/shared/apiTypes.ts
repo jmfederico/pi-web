@@ -120,6 +120,8 @@ export interface MachineRuntime {
 }
 
 export type PiWebShortcutConfig = Record<string, string | null>;
+/** How the mobile context bar renders location: the full path, or just the deepest crumb. */
+export type PiWebBreadcrumbMode = "expanded" | "compact";
 export type PiWebPluginSettings = Record<string, unknown>;
 export type PiWebPluginConfigMap = Record<string, PiWebPluginConfig>;
 
@@ -165,6 +167,14 @@ export interface PiWebConfigValues {
   port?: number;
   allowedHosts?: string[] | true;
   shortcuts?: PiWebShortcutConfig;
+  /** Context-bar breadcrumb style. Absent means the default, "expanded". */
+  breadcrumbMode?: PiWebBreadcrumbMode;
+  /**
+   * Workspace tool ids ("plugin:tool") kept on the tool bar / pinned in the tools
+   * menu. Absent means every tool is pinned (the backwards-compatible default);
+   * an empty array means none are pinned (the bar collapses to the menu button).
+   */
+  pinnedWorkspaceTools?: string[];
   plugins?: PiWebPluginConfigMap;
   /** External filesystem roots PI WEB may expose outside a workspace. */
   pathAccess?: PiWebPathAccessConfig;
