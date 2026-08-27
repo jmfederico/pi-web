@@ -370,7 +370,9 @@ export const chatStyles = css`
     .notification-header { gap: 4px; padding-inline: 8px; }
     .notification-list { padding-inline: 8px; }
   }
-  .chat { --pi-chat-sticky-top: -26px; height: 100%; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 64px; box-sizing: border-box; }
+  .chat { --pi-chat-sticky-top: -26px; height: 100%; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 16px; box-sizing: border-box; }
+  /* Only reserve room for the absolutely positioned activity dock while it is rendered. */
+  .chat-wrap:has(.activity-dock) .chat { padding-bottom: 64px; }
   .scroll-marker { display: block; height: 0; overflow: hidden; pointer-events: none; }
   .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-bg-overlay); color: var(--pi-muted); padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px var(--pi-shadow); backdrop-filter: blur(6px); }
   .activity-dock.active { border-color: var(--pi-success-border); color: var(--pi-success); background: var(--pi-success-bg-overlay); }
