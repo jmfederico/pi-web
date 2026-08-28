@@ -10,14 +10,17 @@ manager you used does not lock you in.
 
 A machine that has both runtimes now prefers Bun when it can start PI WEB on it. Set
 `PI_WEB_RUNTIME=node` on the services to keep them on Node.js, or `PI_WEB_RUNTIME=bun` to require
-Bun instead of falling back. A Bun build without the native terminal API still runs PI WEB, with
-terminals served by `node-pty`. `pi-web doctor` and `pi-web version` report the runtime each process
+Bun instead of falling back. A Bun build without the native terminal API is never started by the
+launchers: `auto` selects Node.js instead, and `PI_WEB_RUNTIME=bun` says so and stops. `pi-web doctor` and `pi-web version` report the runtime each process
 actually selected and the terminal backend that implies, and the session daemon no longer warns
 about a missing `node-pty` installation when nothing on that process needs it.
 
-Fixes a regression where the globally installed session daemon and web server crashed on startup
-with `require is not defined` in a `type: module` package; `node-pty` is now loaded through a
-CommonJS require built from the entry file.
+Fixes a regression where terminals in the globally installed session daemon and web server were
+dead on Node.js: `node-pty` was loaded with a bare `require("node-pty")` inside an ES module, where
+`require` is undefined, and the resulting `ReferenceError` was swallowed at construction so every
+`POST /terminals` failed with "node-pty module is not available". `node-pty` is now loaded through a
+CommonJS require built from the entry file — the same loader `pi-web doctor` uses, so the two can no
+longer disagree.
 
 Upgrading from the previous release: services installed by name (`pi-web install` writes them that
 way) follow the upgraded package automatically. Units written by an older release that exec an

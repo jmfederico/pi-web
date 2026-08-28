@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parsePiWebComponentStatus, parsePiWebInstallationInfo, parsePiWebRuntimeResponse, parsePiWebVersionResponse } from "./piWebStatusParsing";
+import { parsePiWebComponentStatus, parsePiWebInstallationInfo, parsePiWebRuntimeResponse, parsePiWebVersionResponse, parseSessiondRuntimeComponent } from "./piWebStatusParsing";
 
 describe("PI WEB status parsing", () => {
+  // The daemon's own report is the only source for the sessiond runtime, so a payload describing
+  // another component must be rejected instead of filling that slot.
+  it("accepts a session daemon runtime report only when it names the session daemon", () => {
+    const report = { component: "sessiond", label: "Session daemon", available: true, capabilities: [], runtime: "bun" };
+
+    expect(parseSessiondRuntimeComponent(report)?.runtime).toBe("bun");
+    expect(parseSessiondRuntimeComponent({ ...report, component: "web" })).toBeUndefined();
+    expect(parseSessiondRuntimeComponent({ ...report, component: undefined })).toBeUndefined();
+    expect(parseSessiondRuntimeComponent(undefined)).toBeUndefined();
+  });
+
   it("drops every advertised capability string while the registry is empty", () => {
     expect(parsePiWebRuntimeResponse({
       packageName: "@jmfederico/pi-web",

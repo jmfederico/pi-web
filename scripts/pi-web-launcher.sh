@@ -12,6 +12,12 @@ set -euo pipefail
 TARGET="__TARGET__"
 MIN_NODE_VERSION="__MIN_NODE_VERSION__"
 
+# Fixed discovery locations (SPEC D2 step 3), injected at build time so this file stays the only
+# copy of the resolution logic: production builds get the real install locations, tests get
+# fixture-relative ones. "$HOME" is expanded at start, never at build.
+BUN_CANDIDATES=(__BUN_CANDIDATES__)
+NODE_CANDIDATES=(__NODE_CANDIDATES__)
+
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
   DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
@@ -23,6 +29,15 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 ENTRY="$SCRIPT_DIR/$TARGET"
+
+# --print-launcher is the installation-identity probe the native-service preflight
+# runs before it will exec this file: it answers which package owns the launcher,
+# needs no runtime, and validates nothing else, so it must stay ahead of every
+# other check.
+if [ "${1-}" = "--print-launcher" ]; then
+  printf '%s\n' "$SCRIPT_DIR"
+  exit 0
+fi
 
 # Only the three documented values; an empty value means "not set" = auto.
 case "${PI_WEB_RUNTIME-}" in
@@ -79,11 +94,11 @@ path_node() {
 }
 
 candidate_bun() {
-  first_usable_bun "$HOME/.bun/bin/bun" /usr/local/bin/bun /opt/homebrew/bin/bun /usr/bin/bun
+  first_usable_bun "${BUN_CANDIDATES[@]}"
 }
 
 candidate_node() {
-  first_usable_node /usr/bin/node /usr/local/bin/node /opt/homebrew/bin/node
+  first_usable_node "${NODE_CANDIDATES[@]}"
 }
 
 no_runtime_error() {
@@ -147,24 +162,24 @@ status=0
 resolved="$(resolve_runtime)" || status=$?
 
 # --print-runtime is the probe the native-service prerequisite runs: it must
-# exit 0 only for a runtime that passed the capability/floor gate, never reach
-# the JavaScript entrypoint, and report the same status the real command would
-# (127 when nothing is usable) so the probe and the service agree.
+# exit 0 only for a launch that would actually succeed — same capability/floor
+# gate AND the same entrypoint check as the real command — so a service and its
+# preflight verdict can never disagree.
 if [ "$status" -ne 0 ]; then
   exit "$status"
-fi
-
-if [ "${1-}" = "--print-runtime" ]; then
-  printf '%s\n' "${resolved%% *}"
-  exit 0
 fi
 
 RUNTIME_KIND="${resolved%% *}"
 RUNTIME_EXECUTABLE="${resolved#* }"
 
-if [ ! -f "$ENTRY" ]; then
-  printf 'pi-web: %s entrypoint is missing: %s\n' "$RUNTIME_KIND" "$ENTRY" >&2
+if [ ! -f "$ENTRY" ] || [ ! -r "$ENTRY" ]; then
+  printf 'pi-web: %s entrypoint is missing or unreadable: %s\n' "$RUNTIME_KIND" "$ENTRY" >&2
   exit 127
+fi
+
+if [ "${1-}" = "--print-runtime" ]; then
+  printf '%s\n' "$RUNTIME_KIND"
+  exit 0
 fi
 
 exec "$RUNTIME_EXECUTABLE" "$ENTRY" "$@"

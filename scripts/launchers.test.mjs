@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,16 +9,7 @@ import { buildLaunchers, launcherTargets, minimumSupportedNodeVersion } from "./
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MIN_NODE_VERSION = "22.19.0";
 
-/**
- * The launcher's fixed candidate paths (SPEC D2 step 3). Everything except `$HOME/.bun/bin/bun`
- * is host state a test cannot neutralise, so cases that depend on a runtime being *absent* are
- * skipped with a reason when the host actually has one installed there.
- */
-const HOST_BUN_CANDIDATES = ["/usr/local/bin/bun", "/opt/homebrew/bin/bun", "/usr/bin/bun"].filter((path) => existsSync(path));
-const HOST_NODE_CANDIDATES = ["/usr/bin/node", "/usr/local/bin/node", "/opt/homebrew/bin/node"].filter((path) => existsSync(path));
 const posixIt = it.skipIf(process.platform === "win32");
-const noHostBunIt = posixIt.skipIf(HOST_BUN_CANDIDATES.length > 0);
-const noHostRuntimeIt = posixIt.skipIf(HOST_BUN_CANDIDATES.length > 0 || HOST_NODE_CANDIDATES.length > 0);
 
 /**
  * Launcher contract (SPEC D1/D2, ACCEPTANCE A2).
@@ -27,6 +17,10 @@ const noHostRuntimeIt = posixIt.skipIf(HOST_BUN_CANDIDATES.length > 0 || HOST_NO
  * Every case runs against an **installed-shaped** tree (`bin/<name>` symlinks + generated
  * `bin/<name>.sh` + `dist/cli.js` + `dist/server/*.js`), never the repository layout: the repo has
  * no `../cli.js` next to a launcher, so spawning there would exercise something users never get.
+ *
+ * The generated launchers get their SPEC D2 candidate lists from the fixture too. Without that,
+ * whether "no runtime is discoverable" passes would depend on what the test host happens to have
+ * installed at `/usr/bin/node`, which silently turned contractual cases into skips.
  *
  * Stub runtimes are POSIX shell on purpose — a stub that needed the host's node would silently
  * stop testing the "node is absent" cases. `HOME` points into the fixture because the candidate
@@ -101,7 +95,7 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     });
   });
 
-  noHostBunIt("falls back to node when no capable bun exists anywhere", async () => {
+  posixIt("falls back to node when no capable bun exists anywhere", async () => {
     const install = await createInstall({ node: "ok", onPath: ["node"] });
 
     expect(await runLauncher(install, "pi-web-sessiond", [])).toMatchObject({
@@ -111,18 +105,20 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
   });
 
   posixIt("finds bun through the fixed candidate paths under a manager-like PATH", async () => {
-    // The service-manager environment (F6): neither runtime is on PATH and the host's HOME is
-    // replaced by the fixture, so only the deterministic candidate locations can resolve one.
-    const install = await createInstall({ bun: "capable", atCandidate: "bun", onPath: [] });
+    // The service-manager environment (F6): neither runtime is on PATH, and the candidate list is
+    // the fixture's own, so no host installation can decide this case.
+    const install = await createInstall({ bun: "capable", atCandidate: "fixed", onPath: [] });
 
-    expect(await runLauncher(install, "pi-web", [])).toMatchObject({
+    const launched = await runLauncher(install, "pi-web", []);
+    expect(launched.stderr).toBe("");
+    expect(launched).toMatchObject({
       code: 0,
       stdout: expect.stringContaining("ran:bun:"),
     });
     expect(await runLauncher(install, "pi-web-sessiond", ["--print-runtime"])).toMatchObject({ code: 0, stdout: "bun\n" });
   });
 
-  noHostRuntimeIt("exits 127 with a message naming PI_WEB_RUNTIME when nothing is discoverable", async () => {
+  posixIt("exits 127 with a message naming PI_WEB_RUNTIME when nothing is discoverable", async () => {
     const install = await createInstall({ onPath: [] });
 
     const result = await runLauncher(install, "pi-web", []);
@@ -158,7 +154,7 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     expect(result.stdout).toBe("");
   });
 
-  noHostBunIt("fails clearly when PI_WEB_RUNTIME=bun is forced but bun is missing", async () => {
+  posixIt("fails clearly when PI_WEB_RUNTIME=bun is forced but bun is missing", async () => {
     const install = await createInstall({ node: "ok", onPath: ["node"] });
 
     const result = await runLauncher(install, "pi-web", [], { PI_WEB_RUNTIME: "bun" });
@@ -175,7 +171,7 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     expect(result.stderr).toContain(`node >= ${MIN_NODE_VERSION}`);
   });
 
-  noHostBunIt("gates bun on the Bun.Terminal capability, not on bun existing", async () => {
+  posixIt("gates bun on the Bun.Terminal capability, not on bun existing", async () => {
     const install = await createInstall({ bun: "incapable", node: "ok", onPath: ["bun", "node"] });
 
     // auto falls through to node; a forced bun reports the capability gap instead of exec'ing it.
@@ -204,6 +200,56 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     const unresolvable = await runLauncher(await createInstall({ onPath: [] }), "pi-web", ["--print-runtime"]);
     expect(unresolvable.code).toBe(127);
     expect(unresolvable.stdout).toBe("");
+  });
+
+  posixIt("reports the same failure for --print-runtime when the package entrypoint is gone", async () => {
+    // Preflight runs --print-runtime; the service runs the real command. A partial install must
+    // fail both the same way, or install says "ready" about a unit that cannot start.
+    const install = await createInstall({ bun: "capable", onPath: ["bun"] });
+    await rm(install.entry("server/sessiond.js"));
+
+    const real = await runLauncher(install, "pi-web-sessiond", []);
+    const probe = await runLauncher(install, "pi-web-sessiond", ["--print-runtime"]);
+
+    expect(real.code).toBe(127);
+    expect(probe.code, probe.stderr).toBe(127);
+    expect(probe.stdout).toBe("");
+    expect(probe.stderr).toContain("entrypoint is missing or unreadable");
+    expect(real.stderr).toEqual(probe.stderr);
+  });
+
+  posixIt("does not abort when HOME is unset", async () => {
+    // The $HOME candidate is expanded under `set -u`; an unset HOME must skip that candidate, not
+    // kill the script with an unbound-variable error before any runtime is tried.
+    const install = await createInstall({ bun: "capable", onPath: ["bun"] });
+
+    expect(await runLauncher(install, "pi-web", [], { HOME: undefined })).toMatchObject({
+      code: 0,
+      stdout: expect.stringContaining("ran:bun:"),
+    });
+
+    const empty = await createInstall({ onPath: [] });
+    const result = await runLauncher(empty, "pi-web", [], { HOME: undefined });
+    expect(result.code).toBe(127);
+    expect(result.stderr).not.toContain("unbound variable");
+    expect(result.stderr).toContain("PI_WEB_RUNTIME");
+  });
+
+  posixIt("reports the launcher directory it resolved, before choosing any runtime", async () => {
+    // The native-service preflight uses this to prove the command it is about to exec belongs to
+    // this installation: a byte-identical launcher from a second install resolves to its own
+    // directory. It must work with no usable runtime and no runtime-variable validation, because
+    // the identity check runs first.
+    const install = await createInstall({ bun: "capable", onPath: ["bun"] });
+
+    expect(await runLauncher(install, "pi-web-sessiond", ["--print-launcher"], { PI_WEB_RUNTIME: "nonsense" })).toMatchObject({
+      code: 0,
+      stdout: `${install.launcherDir}${String.fromCharCode(10)}`,
+      stderr: "",
+    });
+
+    const noRuntime = await runLauncher(await createInstall({ onPath: [] }), "pi-web", ["--print-launcher"]);
+    expect(noRuntime).toMatchObject({ code: 0, stdout: expect.stringContaining("/dist/bin") });
   });
 
   posixIt("passes user arguments through to the entrypoint untouched", async () => {
@@ -251,11 +297,13 @@ async function createInstall(options) {
   const globalBin = join(root, "prefix", "bin");
   const pathDir = join(root, "sandbox", "path");
   const home = join(root, "sandbox", "home");
+  const candidateDir = join(root, "sandbox", "candidates");
   await Promise.all([
     mkdir(launcherDir, { recursive: true }),
     mkdir(join(packageDir, "dist", "server"), { recursive: true }),
     mkdir(globalBin, { recursive: true }),
     mkdir(pathDir, { recursive: true }),
+    mkdir(candidateDir, { recursive: true }),
     mkdir(home, { recursive: true }),
   ]);
 
@@ -265,15 +313,25 @@ async function createInstall(options) {
     writeFile(join(packageDir, "dist", "server", "sessiond.js"), "sessiond entrypoint stub\n", "utf8"),
   ]);
 
+  // `atCandidate` places a stub in a candidate directory instead of on PATH, which is how the
+  // manager-PATH cases are exercised without touching the host's /usr/local/bin.
+  const bunDirectory = options.atCandidate === "bun" ? join(home, ".bun", "bin") : options.atCandidate === "fixed" ? join(candidateDir, "bun") : pathDir;
+  const nodeDirectory = options.atCandidate === "node" ? join(candidateDir, "node") : pathDir;
   if (options.bun !== undefined) {
-    const bun = options.atCandidate === "bun" ? join(home, ".bun", "bin", "bun") : join(pathDir, "bun");
-    await writeExecutable(bun, shellRuntimeStub("bun", options.bun));
+    await writeExecutable(join(bunDirectory, "bun"), shellRuntimeStub("bun", options.bun));
   }
   if (options.node !== undefined) {
-    await writeExecutable(join(pathDir, "node"), shellRuntimeStub("node", options.node));
+    await writeExecutable(join(nodeDirectory, "node"), shellRuntimeStub("node", options.node));
   }
 
-  await buildLaunchers({ outDir: launcherDir, minimumNodeVersion: MIN_NODE_VERSION });
+  await buildLaunchers({
+    outDir: launcherDir,
+    minimumNodeVersion: MIN_NODE_VERSION,
+    candidates: {
+      bun: ['"${HOME:-/nonexistent}/.bun/bin/bun"', join(candidateDir, "bun", "bun")],
+      node: [join(candidateDir, "node", "node")],
+    },
+  });
   for (const name of Object.keys(launcherTargets)) {
     await symlink(join(launcherDir, `${name}.sh`), join(globalBin, name));
   }
@@ -283,6 +341,8 @@ async function createInstall(options) {
     globalBin,
     home,
     pathDir,
+    launcherDir,
+    candidateDir,
     /** Absolute path of a dist entrypoint as the package ships it. */
     entry: (relativePath) => join(packageDir, "dist", ...String(relativePath).split("/")),
     /** How the launcher names that entrypoint: `$SCRIPT_DIR/<target>`, un-normalised. */
@@ -292,7 +352,11 @@ async function createInstall(options) {
 }
 
 function launcherEnv(install, extra = {}) {
-  return { PATH: `/usr/bin:/bin:${install.pathDir}`, HOME: install.home, ...extra };
+  // The sandbox PATH comes first so a stub always wins over anything the host has; /usr/bin:/bin
+  // stays behind it for the shell utilities the launcher itself needs. `HOME: undefined` deletes
+  // the key (an unset HOME), which is a case of its own.
+  const environment = { PATH: `${install.pathDir}:/usr/bin:/bin`, HOME: install.home, ...extra };
+  return Object.fromEntries(Object.entries(environment).filter(([, value]) => value !== undefined));
 }
 
 function runLauncher(install, name, args, extra = {}) {

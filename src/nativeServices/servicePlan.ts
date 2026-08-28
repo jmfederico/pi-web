@@ -85,6 +85,13 @@ export type NativeServicePrerequisite =
        */
       kind: "runtime";
       command: string;
+      /**
+       * When set, the command must be proven to be this installation's launcher — byte-identical
+       * to `identicalTo` and reporting that directory as its own — before it is executed with
+       * `--print-runtime`. Production uses it for the named strategy, whose command is resolved
+       * through the service PATH.
+       */
+      identicalTo?: string;
       description: string;
     }
   | {
@@ -228,11 +235,18 @@ export type NativeServicePlanValidation =
   | { ok: true }
   | { ok: false; failures: readonly NativeServicePlanValidationFailure[] };
 
+/** The launcher a command prerequisite must be proven to be, when it carries an identity guard. */
+export function nativeServicePrerequisiteIdentity(prerequisite: NativeServicePrerequisite): string | undefined {
+  return prerequisite.kind === "command-available" || prerequisite.kind === "runtime"
+    ? prerequisite.identicalTo
+    : undefined;
+}
+
 export function nativeServicePrerequisiteNeedsPathAdvice(prerequisite: NativeServicePrerequisite): boolean {
-  if (prerequisite.kind === "node-version" || prerequisite.kind === "runtime") return true;
-  // A command that must be byte-identical to our launcher is not a PATH problem: it resolves, it
-  // just belongs to another installation.
-  return prerequisite.kind === "command-available" && prerequisite.identicalTo === undefined;
+  // A command that has to be this installation's launcher is not a PATH problem: it resolves, it
+  // just belongs to another copy of PI WEB.
+  if (nativeServicePrerequisiteIdentity(prerequisite) !== undefined) return false;
+  return prerequisite.kind === "node-version" || prerequisite.kind === "runtime" || prerequisite.kind === "command-available";
 }
 
 export const nativeServiceManagerRefs: Readonly<Record<NativeServiceId, NativeServiceManagerRef>> = {
@@ -516,10 +530,11 @@ function strategyPrerequisites(
     case "configured-override":
       return [];
     case "named-command":
-      // Identity is re-proved here because the runtime requirement below executes this command.
+      // Both checks carry the identity requirement: the second one executes the command, so it has
+      // to prove for itself that the name still resolves to this installation's launcher.
       return [
         commandRequirement(serviceId, strategy.command, bundledLauncherPath),
-        runtimeRequirement(serviceId, strategy.command),
+        runtimeRequirement(serviceId, strategy.command, bundledLauncherPath),
       ];
     case "bundled-entrypoint":
       return [
@@ -618,12 +633,15 @@ function nodeRequirement(serviceId: NativeServiceId): NativeServicePrerequisite 
   };
 }
 
-function runtimeRequirement(serviceId: NativeServiceId, command: string): NativeServicePrerequisite {
+function runtimeRequirement(serviceId: NativeServiceId, command: string, identicalTo?: string): NativeServicePrerequisite {
   return {
     id: `${serviceId}.runtime`,
     kind: "runtime",
     command,
-    description: `${command} selects a usable PI WEB runtime (bun with Bun.Terminal, or node >= ${minimumSupportedNodeVersion})`,
+    ...(identicalTo === undefined ? {} : { identicalTo }),
+    description: identicalTo === undefined
+      ? `${command} selects a usable PI WEB runtime (bun with Bun.Terminal, or node >= ${minimumSupportedNodeVersion})`
+      : `${command} selects a usable PI WEB runtime, and is the launcher shipped by this installation (${identicalTo})`,
   };
 }
 

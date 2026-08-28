@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LaunchdNativeServiceProbe,
   SpawnProbeCommandRunner,
+  nativeServicePrerequisiteFailureDetail,
   SystemdNativeServiceProbe,
   launchdProbePlist,
   nativeServicePrerequisiteShellCheck,
@@ -511,6 +512,72 @@ describe("probe service definitions", () => {
     });
     expect(named).toContain("command -v 'pi-web-server'");
     expect(named).toContain("--print-runtime");
+  });
+
+  // A PATH-resolved name can belong to a *different* PI WEB installation that ships a
+  // byte-identical launcher; running it would boot that installation's code. After the bytes
+  // match, the launcher itself is asked which package owns it, and the answer must be the
+  // directory the running package shipped.
+  it("proves the verified launcher belongs to this installation, not a byte-identical copy", () => {
+    const named = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.command.pi-web-sessiond",
+      kind: "command-available",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named command is the bundled launcher",
+    });
+    expect(named).toContain('--print-launcher');
+    expect(named).toContain("cd -P \"$(dirname --");
+    // Bytes first: --print-launcher is only ever executed by a file already proven to be the
+    // shipped launcher.
+    expect(named.indexOf("cmp -s")).toBeLessThan(named.indexOf("--print-launcher"));
+
+    const runtime = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named launcher selects a usable runtime",
+    });
+    expect(runtime).toContain("cmp -s");
+    expect(runtime).toContain("--print-launcher");
+    expect(runtime.indexOf("--print-launcher")).toBeLessThan(runtime.indexOf("--print-runtime"));
+
+    const fish = nativeServicePrerequisiteShellCheck("fish", {
+      id: "web.runtime",
+      kind: "runtime",
+      command: "pi-web-server",
+      identicalTo: "/package/dist/bin/pi-web-server.sh",
+      description: "named launcher selects a usable runtime",
+    });
+    expect(fish).toContain("--print-launcher");
+    expect(fish).toContain("--print-runtime");
+
+    const unguarded = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/elsewhere/launcher.sh",
+      description: "launcher selects a usable runtime",
+    });
+    expect(unguarded).not.toContain("--print-launcher");
+    expect(unguarded).toContain("--print-runtime");
+  });
+
+  it("names the launcher as the problem when an identity-guarded runtime check fails", () => {
+    expect(nativeServicePrerequisiteFailureDetail({
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named launcher selects a usable runtime",
+    })).toContain("is no longer the PI WEB launcher /package/dist/bin/pi-web-sessiond.sh");
+
+    expect(nativeServicePrerequisiteFailureDetail({
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "bundled launcher selects a usable runtime",
+    })).toContain("--print-runtime did not resolve a usable runtime");
   });
 
   it("requires bundled launchers to be readable regular files", () => {

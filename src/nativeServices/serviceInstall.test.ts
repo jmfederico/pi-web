@@ -3,6 +3,7 @@ import {
   installNativeServiceCandidate,
   nativeServiceInstallFailureNeedsPathAdvice,
 } from "./serviceInstall.js";
+import { nativeServicePrerequisiteIdentity } from "./servicePlan.js";
 import type {
   NativeServiceAuthoritativeProbe,
   NativeServicePlan,
@@ -117,12 +118,16 @@ describe("native service install orchestration", () => {
   it("does not make durable changes when exact plan requirements are unsatisfied", async () => {
     const writeInitialConfig = vi.fn<() => Promise<void>>(() => Promise.resolve());
     const replaceServices = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    // The named launcher is rejected at selection, so the plan falls back to the bundled launchers
+    // and their unsatisfied runtime check is reported as the plain "no usable runtime" case.
     const probe: NativeServiceAuthoritativeProbe = {
       run: (request: NativeServiceProbeRequest) => Promise.resolve({
         kind: "completed",
         outcomes: request.prerequisites.map((prerequisite) => ({
           prerequisiteId: prerequisite.id,
-          status: request.purpose === "plan-validation" ? "unsatisfied" : "satisfied",
+          status: prerequisite.kind === "command-available" || request.purpose === "plan-validation"
+            ? "unsatisfied"
+            : "satisfied",
           detail: "not visible in the service manager environment",
         })),
       }),
@@ -130,7 +135,7 @@ describe("native service install orchestration", () => {
 
     const result = await installNativeServiceCandidate(
       { mode: "production", input: productionInput },
-      { probe, fileExists: () => false, writeInitialConfig, replaceServices },
+      { probe, fileExists: () => true, writeInitialConfig, replaceServices },
     );
 
     expect(result).toMatchObject({ ok: false, failure: { kind: "plan-validation" } });
@@ -138,6 +143,36 @@ describe("native service install orchestration", () => {
     expect(result.failure.failures).not.toHaveLength(0);
     expect(result.failure.failures.every((failure) => failure.kind === "prerequisite-unsatisfied")).toBe(true);
     expect(nativeServiceInstallFailureNeedsPathAdvice(result.failure)).toBe(true);
+    expect(writeInitialConfig).not.toHaveBeenCalled();
+    expect(replaceServices).not.toHaveBeenCalled();
+  });
+
+  // A named launcher that failed its identity guard is not a PATH problem: the name resolves, it
+  // just belongs to another PI WEB installation. Telling the user to export PATH would misdirect.
+  it("does not give PATH advice when a named launcher only failed its identity guard", async () => {
+    const writeInitialConfig = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    const replaceServices = vi.fn<() => Promise<void>>(() => Promise.resolve());
+    // Selection succeeds on the name (it resolves), then the launcher-identity guard fails both
+    // prerequisites that carry it, so no failure here is a missing-command problem.
+    const probe: NativeServiceAuthoritativeProbe = {
+      run: (request: NativeServiceProbeRequest) => Promise.resolve({
+        kind: "completed",
+        outcomes: request.prerequisites.map((prerequisite) => ({
+          prerequisiteId: prerequisite.id,
+          status: request.purpose === "plan-validation" && nativeServicePrerequisiteIdentity(prerequisite) !== undefined ? "unsatisfied" : "satisfied",
+          detail: "did not resolve to the bundled launcher",
+        })),
+      }),
+    };
+
+    const result = await installNativeServiceCandidate(
+      { mode: "production", input: productionInput },
+      { probe, fileExists: () => true, writeInitialConfig, replaceServices },
+    );
+
+    if (result.ok || result.failure.kind !== "plan-validation") throw new Error("Expected validation failure");
+    expect(result.failure.failures.every((failure) => failure.kind === "prerequisite-unsatisfied")).toBe(true);
+    expect(nativeServiceInstallFailureNeedsPathAdvice(result.failure)).toBe(false);
     expect(writeInitialConfig).not.toHaveBeenCalled();
     expect(replaceServices).not.toHaveBeenCalled();
   });

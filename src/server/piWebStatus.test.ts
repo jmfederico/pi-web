@@ -68,6 +68,23 @@ describe("PI WEB status", () => {
     expect(runtime.components.sessiond.runtime).toBe("bun");
   });
 
+  // The daemon answers for itself, so the report has to name itself: a payload that claims to be
+  // the web component must never fill the sessiond slot with a runtime this process never saw.
+  it("rejects a session daemon runtime report that describes another component", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), component: "web", runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.sessiond.available).toBe(false);
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
+    expect(runtime.components.sessiond.available).toBe(false);
+    expect(runtime.components.sessiond).not.toHaveProperty("runtime");
+    expect(status.components.web.runtime).toBe("node");
+  });
+
   it("omits the session daemon runtime when the daemon does not report one", async () => {
     const status = await getPiWebVersionStatus(daemonWithRuntime(runningSessiondRuntime()));
 

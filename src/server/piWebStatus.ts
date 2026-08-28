@@ -10,7 +10,7 @@ import type { ActiveAgentProfileDescriptor, PiWebCapability, PiWebComponentStatu
 import { effectivePiWebCapabilities, WEB_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { piWebDockerCommand } from "../docker/piWebDockerCommandPlan.js";
 import { piWebRuntimeKind } from "../shared/piWebRuntime.js";
-import { parsePiWebRuntimeComponent } from "../shared/piWebStatusParsing.js";
+import { parseSessiondRuntimeComponent } from "../shared/piWebStatusParsing.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { isHostAbsoluteAgentDir, loadPiWebConfig, PI_CODING_AGENT_DIR_ENV, type LoadedPiWebConfig } from "../config.js";
 import { createPiWebReleaseLookupCache, type PiWebReleaseLookup } from "./piWebReleaseLookupCache.js";
@@ -351,7 +351,7 @@ async function getSessiondRuntimeComponent(daemon: PiWebStatusDaemon): Promise<P
       return unavailableSessiondRuntime(`runtime check returned HTTP ${String(upstream.statusCode)}`);
     }
     const parsed: unknown = upstream.body === "" ? undefined : JSON.parse(upstream.body);
-    const runtime = parsePiWebRuntimeComponent(parsed);
+    const runtime = parseSessiondRuntimeComponent(parsed);
     if (runtime !== undefined) return runtime;
     return unavailableSessiondRuntime("runtime response did not include valid runtime information");
   } catch (error) {
@@ -366,7 +366,7 @@ async function getSessiondComponentStatus(daemon: PiWebStatusDaemon, options: Pi
       return unavailableSessiond(`runtime check returned HTTP ${String(upstream.statusCode)}`);
     }
     const parsed: unknown = upstream.body === "" ? undefined : JSON.parse(upstream.body);
-    const runtime = parsePiWebRuntimeComponent(parsed);
+    const runtime = parseSessiondRuntimeComponent(parsed);
     if (runtime?.available !== true) return unavailableSessiond(runtime?.error ?? "runtime response did not include valid runtime information");
     const status = await getPiWebComponentStatus("sessiond", options);
     const runtimeVersion = runtime.runtimeVersion ?? status.runtimeVersion;

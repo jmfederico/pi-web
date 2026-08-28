@@ -38,7 +38,13 @@ Consequence: the feature's stated goal — *pi-web fully working after `bun add 
 
 ### D1 (chosen): POSIX bash launchers replace the bin targets
 
-`package.json` `bin` entries point to generated `dist/bin/<name>.sh` launchers (`pi-web.sh` → `../cli.js`, `pi-web-server.sh` → `../server/index.js`, `pi-web-sessiond.sh` → `../server/sessiond.js`). Each launcher resolves its own real path through symlinks (portable bash loop, no `readlink -f` dependency), picks a runtime (D2), and `exec`s the real entry file with it. `exec` = process replacement, zero overhead, single process. Launchers also implement `--print-runtime` (D3): resolve + verify a runtime and print `bun` or `node` to stdout, exit 0 only if usable; never reaches JS.
+`package.json` `bin` entries point to generated `dist/bin/<name>.sh` launchers (`pi-web.sh` → `../cli.js`, `pi-web-server.sh` → `../server/index.js`, `pi-web-sessiond.sh` → `../server/sessiond.js`). Each launcher resolves its own real path through symlinks (portable bash loop, no `readlink -f` dependency), picks a runtime (D2), and `exec`s the real entry file with it. `exec` = process replacement, zero overhead, single process. Launchers implement two preflight flags (D3) and nothing else that bypasses `exec`:
+`--print-launcher` prints the directory of the launcher itself — which installation owns this file —
+without starting a runtime or validating anything, so it is safe for a probe that has not yet decided
+the file is trustworthy; `--print-runtime` resolves and verifies a runtime and prints `bun` or `node`,
+exiting 0 only if the same command would really start. Both flags short-circuit before `exec` and
+never reach application JS. The entrypoint existence check runs **before** `--print-runtime` succeeds:
+a launcher whose code is missing must not certify a runtime for a launch that would then fail.
 
 Rationale for `auto` = **prefer bun**: there is no reliable way to detect the installer (npm vs bun), and the user goal requires bun-installed packages to run on bun. Preferring bun is also strictly more robust for terminals (zero native deps via `BunPTYBackend`). Machines with only Node are unaffected (no bun found). Machines with both flip to Bun — intentional, documented behavior change with an escape hatch; called out in the changeset and doctor output.
 
@@ -64,7 +70,12 @@ Rejected alternatives (r2 elimination): resolve everything at install time and b
 
 ### D3 (chosen, r2): single `runtime` prerequisite, verified through the launcher
 
-Both `named-command` **and** `bundled-entrypoint` production strategies (F4 — the SPEC r1 fixed only the latter; on desktop Linux the manager PATH contains the global bin dir, so the probe selects `named-command` first) get one prerequisite kind `runtime`, whose shell check executes the resolved launcher with `--print-runtime` (`<named-command-abs-path> --print-runtime`, or the bundled launcher path). The launcher is the single source of truth for selection policy and floors (22.19.0 / `Bun.Terminal`); `node-version` checks retire for these strategies (`serviceProbe.nodeVersionCheckScript` logic moves into the launcher). `configured-override` keeps empty prerequisites (user's explicit command, their responsibility; doctor prints it as-is). Probes stay honest because they execute the exact binary the unit will run.
+Both `named-command` **and** `bundled-entrypoint` production strategies (F4 — the SPEC r1 fixed only the latter; on desktop Linux the manager PATH contains the global bin dir, so the probe selects `named-command` first) get one prerequisite kind `runtime`, whose shell check executes the resolved launcher with `--print-runtime` (`<named-command-abs-path> --print-runtime`, or the bundled launcher path). The launcher is the single source of truth for selection policy and floors (22.19.0 / `Bun.Terminal`); `node-version` checks retire for these strategies (`serviceProbe.nodeVersionCheckScript` logic moves into the launcher). `configured-override` keeps empty prerequisites (user's explicit command, their responsibility; doctor prints it as-is). Probes stay honest because they execute the exact binary the unit will run — and for a name resolved
+through the service `PATH`, "exact" is proved inside the same authoritative check: `cmp -s` against the
+launcher this package ships (before any execution), then `<cmd> --print-launcher` to confirm the bytes
+come from *this* installation rather than a second copy that ships an identical launcher (r2.4). Both
+the selection probe and the executing `runtime` prerequisite carry that guard, because a check that
+runs later could otherwise exec a file the earlier check never vetted.
 
 ### D4 (chosen, r2): one node-pty loader, shared by backend and doctor
 
@@ -114,6 +125,9 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 
 ### P2 — Runtime launchers + `PI_WEB_RUNTIME` (D1 + D2)
 - [x] Launcher template in `scripts/`; build emits 3 launchers into `dist/bin/` (chmod +x); wire into existing build script and `prepack` flow. Repoint `package.json` `bin`; blank-line cleanup.
+- [x] Fixed candidate paths are injected by `build-launchers.mjs` (arrays in the template) rather than
+  written into the template by hand, so the launcher under test and the launcher we ship cannot drift
+  and no test has to know where this machine keeps its runtimes.
 - [x] Controller-level tests spawn launchers from an **installed-shaped tmpdir tree** (bin/, dist/cli.js stub, dist/server/*.js stubs, stub bun/node executables on a controlled PATH — the repo layout has no `../cli.js` TARGET, so repo-root spawning tests the wrong thing): bun-preferred, node fallback, forced `PI_WEB_RUNTIME`, invalid value → 2, missing-runtime 127 message naming `PI_WEB_RUNTIME`, candidate-path resolution with minimal PATH (manager-like), capability gate (stub bun without `Bun.Terminal` → falls to node / clear error), `--print-runtime` output and exit codes, symlink-chain resolution, exec-bit preservation through the real tarball.
 - [x] Layout assertion in `src/buildContents.test.ts`: `npm pack --dry-run` lists the three `dist/bin/*.sh` bins.
 - [x] Gate: full terminals suite + typecheck + lint + `npm run knip`.
@@ -197,6 +211,7 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 ## 8. Revision history
 
 - **r2.3 (2026-08-28, P5 addendum).** §7.3 records the executed manual matrix. Collecting it corrected one documentation claim: candidate-path discovery covers Bun as well (`~/.bun/bin/bun` first, then the system locations), tried before Node.js, so `auto` selects Bun even when the service environment has no `PATH` entry for it (`7f5f325`).
+- **r2.4 (2026-08-28, post-review).** A5 identity guard extended to prove installation *ownership* (`--print-launcher`) on both the selection probe and the executing runtime prerequisite; launcher gained `--print-launcher`, moved the entrypoint check ahead of `--print-runtime`, stopped expanding `$HOME` bare, and takes its fixed candidate list from the build instead of the template. §7.4 records the review findings, the fixes, and their receipts. No behavior claim in §1–§6 changed.
 - **r2.2 (2026-08-28, P4 addendum).** §7.2 records the install-surface evidence. Two corrections to the plan text: this repo has **no `docs/architecture.md`**, so the runtime documentation lives in `docs/config.md`/`config.html` (`config#runtime`) and `docs/install.html` (`install#bun-install`) instead of the target the P4 checkbox named; and the P4 smoke work found the npm smoke itself was not hermetic (inherited `npm_config_prefix` aimed the inner global install at the real version-manager prefix), which is now fixed and is a precondition for trusting A4.
 - **r2.1 (2026-08-28, implementation addendum).** §7.1 records the P3 evidence, including the stale-named-command hazard found while executing the A5 matrix and the `identicalTo` guard added for it (§6, ACCEPTANCE A5). No decision changed: D3 still verifies through the launcher, now only after proving the named command *is* that launcher.
 - **r2 (2026-08-27) — post-review corrections.** B1: A1 acceptance redesigned (the doctor ✓ criterion never tested the F1 fix — doctor's loader predates the branch); P1 test replaced with the transpile+spawn ESM design; D4 shared loader added. B2: D3 added — `runtime` prerequisite for both production strategies (r1 fixed only `bundled-entrypoint`; named-command carries `nodeRequirement` at `servicePlan.ts:492-493` and is selected first on desktop-PATH machines). B3: F6 + D2 added — probe runs as a manager unit, so PATH-only launcher discovery was unsound; deterministic discovery + `--print-runtime` adopted after eliminating bake-at-install and environment-import alternatives. Line refs corrected (313/350→350 region/492-495/43); F1 marked Node-only; `available()`-based wording replaced with observable behavior; "E2E under bun verified in this repo" claim removed (no browser E2E suite exists); §4.6 reasoning fixed (bun trust policy, not optionality); migration section added; dev-mode-under-bun scoped in non-goals. Retracted during review: the `case $SOURCE` quoting concern (case words are not word-split/globbed — safe).
@@ -204,3 +219,19 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 
 ## 9. Open questions
 - None blocking. (Bun min-version resolved by capability check; changeset severity **minor** — flag during review if patch preferred. The brew-node ARM macOS preflight question is an observation task inside P3, not a decision.)
+
+## 7.4 Post-review hardening (r2.4, Linux/x64, bun 1.4.1, node v24.19.0)
+
+An adversarial review of `d7e377b` returned BLOCK on eight findings. Each was checked against the code
+before acting; all eight reproduced. Changes, and what now proves them:
+
+| Finding | Verified symptom | Fix | Receipt |
+|---|---|---|---|
+| A5 identity was installable, not ownership-proof | `cmp -s` passes for a byte-identical launcher from a second install; `ENTRY` resolves relative to the *executed* file, so the probe prints `bun` and the unit boots the other release | `<cmd> --print-launcher` must report the shipped launcher's directory; guard added to the executing `runtime` prerequisite as well, which also closes the re-resolution hole where the `runtime` check used to `command -v` the name again with no identity gate | `serviceProbe.test.ts` ordering assertions (`cmp -s` before `--print-launcher` before `--print-runtime`); manual two-installation fixture: self → `bun`, shadowed by an identical copy → exit 1 with nothing executed |
+| `--print-runtime` could certify a runtime for a launcher whose code was missing | launcher printed `bun` and exited 0 before the `ENTRY` check | entry check moved ahead of the flag; parity with the real command | `launchers.test.mjs` "reports the same verdict as the real command" (missing entry → probe exits 127, real command prints no marker) |
+| `$HOME` unquoted under `set -u` printed `HOME: unbound variable` | status was still 127, message was noise | candidates bake `${HOME:-/nonexistent}/.bun/bin/bun`, launcher never expands `$HOME` bare | `launchers.test.mjs` "reports a missing runtime without a shell error when HOME is unset" |
+| Tests skipped silently on hosts without system node/bun | `node:fs` existence skips meant the matrix could run zero cases | candidate lists come from fixtures; `/usr/bin` and `/bin` stay on the PATH as the bash fallback; host inspection removed from the test file | 21/21 cases now run unconditionally (previously some skipped) |
+| Sessiond could adopt a runtime report about the wrong component | `parsePiWebRuntimeComponent` never checked `component`, so a payload labelled `web` filled the sessiond slot | `parseSessiondRuntimeComponent` requires `component: "sessiond"`; used by both the status reader and the daemon client | `piWebStatusParsing.test.ts`, `piWebStatus.test.ts` ("rejects a session daemon runtime report that describes another component") |
+| A3 proved bytes travelled, not that a PTY was attached; shutdown proved only the direct child | `printf` works through a pipe; `stopService` polled `exitCode` of the leader, so an orphaned `Bun.spawn` shell or a `sleep` grandchild passed | shell reports its own descriptors (`t\"\"tyyes` so the echoed command cannot fake it); `stopService` snapshots descendants before `SIGTERM` and fails on survivors; `DELETE /terminals/:id` must empty the daemon's tree | `npm run smoke:bun-install` exit 0 with the new assertions |
+| Docs claimed an incapable Bun still runs PI WEB; changeset claimed a startup crash | the launcher never selects a Bun without `Bun.Terminal`; F1 swallowed `ReferenceError` at construction, so terminals were dead but the process ran | wording corrected in `config.md`/`config.html`/`install.html` and the changeset; the impossible `PI_WEB_RUNTIME=node` on a Bun-only host example replaced | text review + `grep` for the retired claims |
+| `install.sh` exit 2 asserted only through the error message | a `cd` failure could produce a non-zero, message-matching exit | fixture stubs write their exit status; behaviour tests assert `2` (unknown installer) and `0` (happy paths) | `installScript.test.ts` |

@@ -27,6 +27,16 @@ export function parsePiWebRuntimeResponse(value: unknown): PiWebRuntimeResponse 
   return { packageName, generatedAt, components: { web, sessiond }, capabilities };
 }
 
+/**
+ * Parses the session daemon's own `/runtime` report. The component field has to say `sessiond`:
+ * this is the only runtime value the web process may show for the daemon, and accepting a payload
+ * that describes something else would let the daemon slot carry a runtime nobody measured.
+ */
+export function parseSessiondRuntimeComponent(value: unknown): PiWebRuntimeComponent | undefined {
+  const component = parsePiWebRuntimeComponent(value);
+  return component?.component === "sessiond" ? component : undefined;
+}
+
 export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponent | undefined {
   if (!isRecord(value)) return undefined;
   const component = value["component"];

@@ -215,7 +215,7 @@ PI WEB runs on Node.js or Bun. Every PI WEB command (`pi-web`, `pi-web-server`, 
 
 | Value | Behavior |
 | --- | --- |
-| unset or `auto` | Use Bun when it is on `PATH` and can boot PI WEB; otherwise use the first usable Node.js. Capability wins over availability: a Bun without the native terminal API still boots PI WEB, so terminals fall back to `node-pty` on it. |
+| unset or `auto` | Use Bun when it is on `PATH` and can boot PI WEB; otherwise use the first usable Node.js. Capability wins over availability: a Bun without the native terminal API is never booted by the launcher, so `auto` falls through to Node.js instead of starting on an incapable Bun. |
 | `bun` | Hard requirement. Fails loudly when Bun is missing or cannot boot PI WEB, instead of silently running on Node.js. |
 | `node` | Never select Bun, even when it is installed. |
 | anything else | The command exits with an error naming the variable and the accepted values. |
