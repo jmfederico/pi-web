@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodePTYBackend } from "./backend.js";
-import type { TerminalBackend, NodePtyModule } from "./backend.js";
+import type { TerminalBackend } from "./backend.js";
+import type { NodePtyModule } from "./nodePtyModule.js";
 import { createMockBackend } from "./backend-mock.js";
 
 /* ------------------------------------------------------------------ */
@@ -390,6 +391,19 @@ describe("BunPTYBackend", () => {
 
   it("available() returns false when Bun is missing", async () => {
     delete (globalThis as Record<string, unknown>)["Bun"];
+
+    const mod = await reimport();
+    const freshBackend = new mod.BunPTYBackend();
+
+    expect(freshBackend.available()).toBe(false);
+
+    freshBackend.dispose();
+  });
+
+  // The launcher's capability gate and the factory fallback both key off Bun.Terminal, so a Bun
+  // that only exposes Bun.spawn must not look like a usable PTY backend.
+  it("available() returns false when Bun has no Bun.Terminal", async () => {
+    (globalThis as Record<string, unknown>)["Bun"] = { spawn: vi.fn() };
 
     const mod = await reimport();
     const freshBackend = new mod.BunPTYBackend();
@@ -1168,6 +1182,19 @@ describe("createDefaultBackend", () => {
 
   it("when isBunRuntime is false, returns NodePTYBackend instance", async () => {
     delete (globalThis as Record<string, unknown>)["Bun"];
+
+    const mod = await reimport();
+    const backend = mod.createDefaultBackend();
+
+    expect(backend).toBeInstanceOf(mod.NodePTYBackend);
+
+    backend.dispose();
+  });
+
+  // SPEC §4.4: picking the Bun backend on a Bun without Bun.Terminal produced a backend whose
+  // create() threw, i.e. a silently dead terminal. The factory must fall back instead.
+  it("falls back to NodePTYBackend when Bun has no Bun.Terminal", async () => {
+    (globalThis as Record<string, unknown>)["Bun"] = { spawn: vi.fn() };
 
     const mod = await reimport();
     const backend = mod.createDefaultBackend();

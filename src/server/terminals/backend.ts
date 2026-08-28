@@ -1,4 +1,5 @@
 import type { TerminalInfo } from "../../shared/apiTypes.js";
+import { loadNodePtyModule, type NodePtyModule, type NodePtyProcess } from "./nodePtyModule.js";
 
 /* ------------------------------------------------------------------ */
 /*  Interface                                                          */
@@ -49,9 +50,10 @@ export function isBunRuntime(): boolean {
 /* ------------------------------------------------------------------ */
 
 export function createDefaultBackend(): TerminalBackend {
-  if (isBunRuntime()) {
-    return new BunPTYBackend();
-  }
+  const bunBackend = new BunPTYBackend();
+  if (isBunRuntime() && bunBackend.available()) return bunBackend;
+  // A Bun without Bun.Terminal still gets the node backend: node-pty may be absent there, but
+  // that surfaces as an explicit unavailable error instead of a silently dead terminal.
   return new NodePTYBackend();
 }
 
@@ -107,7 +109,10 @@ export class BunPTYBackend implements TerminalBackend {
   available(): boolean {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions, @typescript-eslint/dot-notation, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const bun = (globalThis as any)["Bun"];
-    return typeof bun === "object" && bun !== null && "Terminal" in bun && "spawn" in bun;
+    if (typeof bun !== "object" || bun === null) return false;
+    // Capability, not version: Bun.spawn alone cannot drive a PTY.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    return typeof (bun as Record<string, unknown>)["Terminal"] === "function";
   }
 
   create(options: {
@@ -243,27 +248,6 @@ export class BunPTYBackend implements TerminalBackend {
 /*  NodePTYBackend                                                     */
 /* ------------------------------------------------------------------ */
 
-interface NodePtyProcess {
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(signal?: string | number): void;
-  on(event: "data" | "exit", cb: (data: string | number | null) => void): void;
-}
-
-export interface NodePtyModule {
-  spawn(
-    shell: string,
-    args: string[],
-    options?: {
-      name?: string;
-      cwd?: string;
-      cols?: number;
-      rows?: number;
-      env?: Record<string, string>;
-    }
-  ): NodePtyProcess;
-}
-
 interface NodeTerminalEntry {
   proc: NodePtyProcess;
   info: TerminalInfo & { cols: number; rows: number };
@@ -276,16 +260,14 @@ export class NodePTYBackend implements TerminalBackend {
   private pty: NodePtyModule | null;
 
   constructor(ptyModule?: NodePtyModule) {
-    if (ptyModule) {
+    if (ptyModule !== undefined) {
       this.pty = ptyModule;
-    } else {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/consistent-type-assertions
-        const pty = require("node-pty") as unknown as NodePtyModule;
-        this.pty = pty;
-      } catch {
-        this.pty = null;
-      }
+      return;
+    }
+    try {
+      this.pty = loadNodePtyModule();
+    } catch {
+      this.pty = null;
     }
   }
 
