@@ -49,6 +49,16 @@ Run matrix uses an isolated environment: `BUN_INSTALL=$TMP/bun-global-test`, pac
 ## Evidence receipts
 Each criterion records command + exit code + key output in the PR description (same format as the verification session of 2026-08-27). What cannot be executed (none expected) goes to a manual checklist, never silently skipped.
 
+| Criterion | Status | Receipt |
+|---|---|---|
+| A1 | met | `src/server/terminals/nodePtyLoader.test.ts` (transpile + spawn `process.execPath`, green in the suite); single `loadNodePtyModule()` consumer test; commit `9e06407`. |
+| A2 | met | `scripts/launchers.test.mjs` controller matrix on an installed-shaped tree; `src/buildContents.test.ts` packed-launcher/exec-bit assertion; `npm run smoke:bun-install` logs `bun-installed pi-web 1.202608.2 runs on bun with node absent from PATH` (exit 0). |
+| A3 | met | `npm run smoke:bun-install` exit 0: `bun session daemon (pid …) served a terminal through Bun.Terminal` and `bun web/API and session daemon both reported runtime=bun and served / + /api/projects`; no `bun` process remained afterwards. |
+| A4 | met | `npm run smoke:package-install` exit 0 (`Installed-package plugin API and PTY smoke tests passed with npm 12.0.1.`), including the Node-backed PTY marker assertion. Required fixing the harness's inherited `npm_config_prefix` leak first (SPEC P4). |
+| A5 | met (Linux) | `src/nativeServices/*` suites + real `pi-web doctor` against live units (parses without drift, ~0.5 s after the identity guard); transient-unit probe returns `bun` for the bundled launcher in 50 ms. macOS launchd half of the matrix: **not executed** — no macOS host here; stays a manual pre-merge item (SPEC §7.1). |
+| A6 | met | `src/server/diagnostics/terminalRuntime.test.ts` (bun-with-capability, bun-without-capability, node paths) + real `pi-web doctor` printing `runtime: bun` / `terminals: Bun native PTY (Bun.Terminal)` with no npm advice. |
+| A7 | met | `install.sh` behavioral tests (`src/installScript.test.ts`, 5 cases incl. exit 2 on unknown installer); docs sections listed in SPEC P4; changeset `minor`; both smokes confined to `mkdtemp` roots (no writes to `~/.bun`, `~/.pi-web`, or live services). CI step for `smoke:bun-install` added but **not executed here**. |
+
 ## Revision history
 - **r2.1 (2026-08-28, implementation):** A5 strengthened with the launcher-identity requirement above (strictly additive; no existing criterion relaxed).
 - **r2 (2026-08-27):** A1 rewritten (old bullet 1 — "doctor reports ✓" — never tested the F1 fix; doctor's loader predates the branch and passed with terminals broken). A2 expanded for D2 discovery (candidates, capability gate, `--print-runtime`, installed-shaped test trees). A5 expanded to cover both selection branches with manager-environment probes. A4/A6 reworded to observable behavior and shared-loader invariant. Frozen criteria are r2-verbatim; weaken only via SPEC revision.

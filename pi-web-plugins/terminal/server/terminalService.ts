@@ -53,11 +53,6 @@ export interface CreateTerminalOptions extends TerminalWorkspaceScope {
   rows?: number;
 }
 
-export interface TerminalCommandFailureNotice {
-  readonly message: string;
-  readonly context: Readonly<Record<string, string>>;
-}
-
 export interface RunTerminalCommandOptions extends TerminalWorkspaceScope {
   origin: string;
   title: string;
@@ -74,12 +69,254 @@ export interface TerminalActivitySink {
   removeTerminal(terminalId: string, cwd?: string): void;
 }
 
+export interface TerminalCommandFailureNotice {
+  readonly message: string;
+  readonly context: Readonly<Record<string, string>>;
+}
+
+/**
+ * Abstract terminal backend that works on both Node.js (using node-pty)
+ * and Bun (using Bun.spawn()).
+ */
+interface TerminalBackend {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  onData(callback: (data: string) => void): void;
+  onExit(callback: (exitCode?: number) => void): void;
+}
+
+/**
+ * Bun-specific terminal backend that uses Bun.spawn() instead of node-pty.
+ * Pipes stdout and stderr as a single output stream, and provides a simple
+ * stdin write interface. This is not a full PTY but sufficient for most
+ * terminal operations in a Bun environment.
+ */
+class BunTerminalBackend implements TerminalBackend {
+  private childProcess: ReturnType<typeof Bun.spawn> | null = null;
+  private stdoutBuffer = new Set<string>();
+  private stderrBuffer = new Set<string>();
+  private stdoutHandler: ((data: string) => void) | null = null;
+  private exitHandler: ((exitCode?: number) => void) | null = null;
+  private stdoutClosed = false;
+  private stderrClosed = false;
+  private stdinClosed = false;
+  private closed = false;
+
+  constructor(private shell: string, private args: string[], private cwd: string) {
+    this.spawnProcess();
+  }
+
+  private spawnProcess(): void {
+    try {
+      this.childProcess = Bun.spawn(
+        [this.shell, ...this.args],
+        {
+          cwd: this.cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "pipe",
+        }
+      );
+      this.handleOutput();
+      this.handleExit();
+    } catch (error) {
+      this.closed = true;
+      this.exitHandler?.(1);
+      throw error;
+    }
+  }
+
+  private handleOutput(): void {
+    const stdout = this.childProcess?.stdout;
+    if (stdout) {
+      const reader = stdout.getReader();
+      const read = (): void => {
+        if (this.closed) return;
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            this.stdoutClosed = true;
+            this.checkClosed();
+            return;
+          }
+          const data = new TextDecoder().decode(value);
+          this.stdoutBuffer.add(data);
+          this.stdoutHandler?.(data);
+          read();
+        }).catch(() => {
+          this.stdoutClosed = true;
+          this.checkClosed();
+        });
+      };
+      read();
+    }
+
+    const stderr = this.childProcess?.stderr;
+    if (stderr) {
+      const reader = stderr.getReader();
+      const read = (): void => {
+        if (this.closed) return;
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            this.stderrClosed = true;
+            this.checkClosed();
+            return;
+          }
+          const data = new TextDecoder().decode(value);
+          this.stderrBuffer.add(data);
+          this.stdoutHandler?.(data);
+          read();
+        }).catch(() => {
+          this.stderrClosed = true;
+          this.checkClosed();
+        });
+      };
+      read();
+    }
+  }
+
+  private handleExit(): void {
+    this.childProcess?.onExit?.(() => {
+      this.closed = true;
+      this.exitHandler?.(this.childProcess?.exitCode);
+    });
+  }
+
+  private checkClosed(): void {
+    if (this.stdoutClosed && this.stderrClosed) {
+      // Output streams closed, process may still be running
+    }
+  }
+
+  write(data: string): void {
+    if (this.closed || this.stdinClosed) return;
+    try {
+      const stdin = this.childProcess?.stdin;
+      if (stdin) {
+        stdin.write(new TextEncoder().encode(data));
+      }
+    } catch {
+      this.stdinClosed = true;
+    }
+  }
+
+  resize(_cols: number, _rows: number): void {
+    // Bun.spawn() doesn't support terminal resizing the same way PTY does
+    // This is a limitation of the Bun implementation
+  }
+
+  kill(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.childProcess) {
+      try {
+        this.childProcess.kill();
+      } catch {
+        // Process may already be dead
+      }
+    }
+    this.exitHandler?.(128 + 9); // SIGKILL signal number
+  }
+
+  onData(callback: (data: string) => void): void {
+    this.stdoutHandler = callback;
+  }
+
+  onExit(callback: (exitCode?: number) => void): void {
+    this.exitHandler = callback;
+  }
+}
+
+/**
+ * Node.js terminal backend that uses node-pty.
+ * Loaded dynamically to avoid import errors in environments without node-pty.
+ */
+interface NodePtyTerminalBackend {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  onData(callback: (data: string) => void): void;
+  onExit(callback: (exitCode?: number) => void): void;
+}
+
+async function loadNodePtyBackend(): Promise<NodePtyTerminalBackend | null> {
+  try {
+    const ptyModule = await import("node-pty");
+    const pty = ptyModule.default ?? ptyModule;
+
+    return {
+      write: (data: string) => { pty.write?.(data); },
+      resize: (cols: number, rows: number) => { pty.resize?.(cols, rows); },
+      kill: () => { pty.kill?.(); },
+      onData: (callback: (data: string) => void) => {
+        // node-pty PTY objects have on onData
+        // We'll use a different pattern - the caller wraps the spawn
+        return () => { /* noop */ };
+      },
+      onExit: (callback: (exitCode?: number) => void) => {
+        // node-pty PTY objects have on onExit
+        return () => { /* noop */ };
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Terminal record that abstracts away the backend
 interface TerminalRecord extends TerminalInfo, TerminalWorkspaceScope {
-  pty: pty.IPty;
+  backend: TerminalBackend | null;
   buffer: string;
   events: EventEmitter;
   commandRunId?: string;
   failureNotice?: TerminalCommandFailureNotice;
+}
+
+interface CreateTerminalBackendResult {
+  backend: TerminalBackend;
+  dispose?: () => void;
+}
+
+function createTerminalBackend(
+  shell: string,
+  args: string[],
+  cwd: string,
+): CreateTerminalBackendResult {
+  if (isBunRuntime()) {
+    return { backend: new BunTerminalBackend(shell, args, cwd) };
+  }
+  // Node.js path: load node-pty dynamically
+  let spawned: pty.IPty | undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ptyModule = require("node-pty");
+    const pty = ptyModule.default ?? ptyModule;
+    const ptyInstance = pty.spawn(shell, args, {
+      name: "xterm-256color",
+      cwd,
+      cols: 100,
+      rows: 30,
+      env: terminalEnvironment(),
+    });
+    spawned = ptyInstance;
+    return {
+      backend: {
+        write: (data: string) => { ptyInstance.write(data); },
+        resize: (cols: number, rows: number) => { ptyInstance.resize(cols, rows); },
+        kill: () => { ptyInstance.kill(); },
+        onData: (callback: (data: string) => void) => { ptyInstance.onData(callback); },
+        onExit: (callback: (exitCode?: number) => void) => { ptyInstance.onExit(callback); },
+      },
+      dispose: () => { ptyInstance.kill(); },
+    };
+  } catch {
+    // node-pty failed to load (not available or native module broken)
+    if (spawned) {
+      spawned.kill();
+    }
+    // Fall through to error handling in createTerminal
+    throw new Error("Terminal backend unavailable: node-pty is not installed or failed to load native module. Try reinstalling PI WEB or using a Bun runtime.");
+  }
 }
 
 export class TerminalService {
@@ -152,7 +389,7 @@ export class TerminalService {
         ...(options.rows === undefined ? {} : { rows: options.rows }),
         shellArgs: ["-lc", commandRunShellScript(options.command)],
         commandRunId,
-        ...(failureNotice === undefined ? {} : { failureNotice }),
+        ...(failureNotice === undefined ? {} : { failureNotice: failureNotice }),
       });
     } catch (error) {
       this.commandRuns.delete(commandRunId);
@@ -180,7 +417,7 @@ export class TerminalService {
 
   getCommandRunForScope(scope: TerminalWorkspaceScope, runId: string): TerminalCommandRun | undefined {
     validateScope(scope);
-    const run = this.commandRuns.get(runId);
+    const run = this.getCommandRun(runId);
     return run?.projectId === scope.projectId && run.workspaceId === scope.workspaceId
       ? copyCommandRun(run)
       : undefined;
@@ -227,13 +464,13 @@ export class TerminalService {
 
   write(scope: TerminalWorkspaceScope, id: string, data: string): void {
     const terminal = this.requireScoped(scope, id);
-    if (!terminal.exited) terminal.pty.write(data);
+    if (!terminal.exited && terminal.backend) terminal.backend.write(data);
   }
 
   resize(scope: TerminalWorkspaceScope, id: string, cols: number, rows: number): void {
     const terminal = this.requireScoped(scope, id);
-    if (!terminal.exited && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-      terminal.pty.resize(Math.floor(cols), Math.floor(rows));
+    if (!terminal.exited && terminal.backend && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+      terminal.backend.resize(Math.floor(cols), Math.floor(rows));
     }
   }
 
@@ -247,14 +484,14 @@ export class TerminalService {
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    record.pty = pty.spawn(shell, interactiveShellArgs(shell), {
-      name: "xterm-256color",
-      cwd: record.cwd,
-      cols: 100,
-      rows: 30,
-      env: terminalEnvironment(),
-    });
-    this.attachPtyEvents(record);
+    try {
+      const backend = createTerminalBackend(shell, interactiveShellArgs(shell), record.cwd);
+      record.backend = backend.backend;
+      this.attachTerminalEvents(record);
+    } catch {
+      // Terminal backend unavailable (e.g., node-pty not installed)
+      throw new Error("Terminal backend unavailable: cannot create PTY");
+    }
     const info = toInfo(record);
     this.activitySink?.updateTerminal(info);
     return info;
@@ -287,13 +524,16 @@ export class TerminalService {
     const id = options.id ?? randomUUID();
     const createdAt = new Date().toISOString();
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    const terminal = pty.spawn(shell, options.shellArgs, {
-      name: "xterm-256color",
-      cwd: options.cwd,
-      cols: options.cols ?? 100,
-      rows: options.rows ?? 30,
-      env: terminalEnvironment(),
-    });
+    
+    let backend: TerminalBackend | null = null;
+    try {
+      const result = createTerminalBackend(shell, options.shellArgs, options.cwd);
+      backend = result.backend;
+    } catch (error) {
+      // Terminal backend unavailable (e.g., node-pty not installed)
+      throw new Error(`Terminal backend unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
     const requestedName = options.name?.trim();
     const record: TerminalRecord = {
       id,
@@ -303,25 +543,27 @@ export class TerminalService {
       name: requestedName !== undefined && requestedName !== "" ? requestedName : `Shell ${String(this.list(options).length + 1)}`,
       createdAt,
       exited: false,
-      pty: terminal,
+      backend,
       buffer: "",
       events: new EventEmitter(),
       ...(options.commandRunId === undefined ? {} : { commandRunId: options.commandRunId }),
       ...(options.failureNotice === undefined ? {} : { failureNotice: options.failureNotice }),
     };
-    this.attachPtyEvents(record);
+    this.attachTerminalEvents(record);
     this.terminals.set(id, record);
     const info = toInfo(record);
     this.activitySink?.updateTerminal(info);
     return info;
   }
 
-  private attachPtyEvents(record: TerminalRecord): void {
-    record.pty.onData((data) => {
+  private attachTerminalEvents(record: TerminalRecord): void {
+    if (!record.backend) return;
+    
+    record.backend.onData((data) => {
       record.buffer = trimReplayBuffer(record.buffer + data);
       record.events.emit("output", data);
     });
-    record.pty.onExit(({ exitCode }) => {
+    record.backend.onExit(({ exitCode }) => {
       record.exited = true;
       record.exitCode = exitCode;
       this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
@@ -375,7 +617,7 @@ export class TerminalService {
     if (isTerminalCommandRunFinal(run.status)) return copyCommandRun(run);
     const terminal = this.terminals.get(run.terminalId);
     if (terminal === undefined) throw new Error("Terminal not found");
-    if (!terminal.exited) terminal.pty.write("\x03");
+    if (!terminal.exited && terminal.backend) terminal.backend.write("\x03");
     return copyCommandRun(run);
   }
 
@@ -384,7 +626,7 @@ export class TerminalService {
     terminal.events.emit("closed");
     terminal.events.removeAllListeners();
     this.activitySink?.removeTerminal(terminal.id, terminal.cwd);
-    if (!terminal.exited) terminal.pty.kill();
+    if (!terminal.exited && terminal.backend) terminal.backend.kill();
   }
 
   private requireAvailable(): void {

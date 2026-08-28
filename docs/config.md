@@ -194,6 +194,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
 | **Runtime-only environment variables** |  |  |  |  |  |
 | Global config file path | — | `PI_WEB_CONFIG` (`XDG_CONFIG_HOME` affects the default path) | Process/env | Selects the global config file; not a project config | Restart services/processes after changing env |
+| JavaScript runtime | — | `PI_WEB_RUNTIME` | Process/env, inherited by PI WEB commands and services | Not supported locally | Restart the services or processes whose runtime should change |
 | Managed data directory | — | `PI_WEB_DATA_DIR` | Process/env | Not supported locally | Restart web/API and session daemon |
 | Session daemon socket | — | `PI_WEB_SESSIOND_SOCKET` | Web/API + session daemon env | Not supported locally | Restart daemon and web/API; both must match |
 | Session daemon TCP port | — | `PI_WEB_SESSIOND_PORT` | Session daemon env | Not supported locally | Restart session daemon; set `PI_WEB_SESSIOND_URL` for web/API too |
@@ -207,6 +208,21 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Offline mode | — | `PI_WEB_OFFLINE`, `PI_OFFLINE` | Web/API + session daemon env | Not supported locally | Restart session daemon and web/API after env changes; also disables the [background model catalog refresh](#background-model-catalog-refresh) |
 
 ## Key details
+
+### JavaScript runtime
+
+PI WEB runs on Node.js or Bun. Every PI WEB command (`pi-web`, `pi-web-server`, `pi-web-sessiond`) starts through a launcher that chooses the interpreter when the command runs, so `PI_WEB_RUNTIME` is read from the environment of the process being started — there is no config key and nothing to rebuild.
+
+| Value | Behavior |
+| --- | --- |
+| unset or `auto` | Use Bun when it is on `PATH` and can boot PI WEB; otherwise use the first usable Node.js. Capability wins over availability: a Bun without the native terminal API still boots PI WEB, so terminals fall back to `node-pty` on it. |
+| `bun` | Hard requirement. Fails loudly when Bun is missing or cannot boot PI WEB, instead of silently running on Node.js. |
+| `node` | Never select Bun, even when it is installed. |
+| anything else | The command exits with an error naming the variable and the accepted values. |
+
+When Node.js is not on the service `PATH` — common for Homebrew or self-managed installs, where user services start with a minimal system `PATH` — the launcher also looks for Node.js at its usual install locations after `PATH`. That lookup never applies to Bun, so installing Bun where a service can find it is what makes `auto` pick Bun.
+
+Auto-detection needs no configuration, so this variable is only for pinning a runtime. Set it wherever the process gets its environment: export it before starting PI WEB manually, or add an `Environment=` drop-in (`systemctl --user edit --full pi-web pi-web-sessiond`) or a `Environment=`/`EnvironmentFile=` key in the launchd plist for user services, then restart. `pi-web doctor` and `pi-web version` report the runtime each process actually selected, and `pi-web doctor` says which terminal backend that implies.
 
 ### Managed data directory
 
