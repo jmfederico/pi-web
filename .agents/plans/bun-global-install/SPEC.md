@@ -106,24 +106,24 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 ## 5. Phases
 
 ### P1 — Fix NodePTYBackend loader + unify doctor loader (unblocks everything; regression)
-- [ ] D4: extract shared `loadNodePtyModule()` (createRequire-based); `NodePTYBackend` and `nodePtyNativeModule.ts` both consume it; `pty = null` failure mode preserved.
-- [ ] Backend factory fallback per §4.4 (bun without `Bun.Terminal` → node backend, else unavailable with surfaced error).
-- [ ] Hermetic regression test (test-first): `ts.transpileModule()` the **real** `backend.ts` (typescript devDep, precedent `buildContents.test.ts`) → write the self-contained ESM output to a tmpdir package layout with a fake `node_modules/node-pty` → spawn `process.execPath` on a tiny ESM probe → zero-arg `new NodePTYBackend()` → `available(): true`. This is the only design that satisfies all constraints: CI runs `npm test` **before** `npm run build` (no `dist/` dependency), the repo has node-pty installed (in-repo tests pass trivially under vite-node's require shim — the reason the bug survived), and DI/injected-require tests pass with the broken code.
-- [ ] Commit planning artifacts (`.agents/plans/bun-global-install/`) so the contract is visible to review/CI.
-- [ ] Gate: targeted terminals suite + diagnostics suite + `npm run typecheck`.
+- [x] D4: extract shared `loadNodePtyModule()` (createRequire-based); `NodePTYBackend` and `nodePtyNativeModule.ts` both consume it; `pty = null` failure mode preserved.
+- [x] Backend factory fallback per §4.4 (bun without `Bun.Terminal` → node backend, else unavailable with surfaced error).
+- [x] Hermetic regression test (test-first): `ts.transpileModule()` the **real** `backend.ts` (typescript devDep, precedent `buildContents.test.ts`) → write the self-contained ESM output to a tmpdir package layout with a fake `node_modules/node-pty` → spawn `process.execPath` on a tiny ESM probe → zero-arg `new NodePTYBackend()` → `available(): true`. This is the only design that satisfies all constraints: CI runs `npm test` **before** `npm run build` (no `dist/` dependency), the repo has node-pty installed (in-repo tests pass trivially under vite-node's require shim — the reason the bug survived), and DI/injected-require tests pass with the broken code.
+- [x] Commit planning artifacts (`.agents/plans/bun-global-install/`) so the contract is visible to review/CI.
+- [x] Gate: targeted terminals suite + diagnostics suite + `npm run typecheck`.
 
 ### P2 — Runtime launchers + `PI_WEB_RUNTIME` (D1 + D2)
-- [ ] Launcher template in `scripts/`; build emits 3 launchers into `dist/bin/` (chmod +x); wire into existing build script and `prepack` flow. Repoint `package.json` `bin`; blank-line cleanup.
-- [ ] Controller-level tests spawn launchers from an **installed-shaped tmpdir tree** (bin/, dist/cli.js stub, dist/server/*.js stubs, stub bun/node executables on a controlled PATH — the repo layout has no `../cli.js` TARGET, so repo-root spawning tests the wrong thing): bun-preferred, node fallback, forced `PI_WEB_RUNTIME`, invalid value → 2, missing-runtime 127 message naming `PI_WEB_RUNTIME`, candidate-path resolution with minimal PATH (manager-like), capability gate (stub bun without `Bun.Terminal` → falls to node / clear error), `--print-runtime` output and exit codes, symlink-chain resolution, exec-bit preservation through the real tarball.
-- [ ] Layout assertion in `src/buildContents.test.ts`: `npm pack --dry-run` lists the three `dist/bin/*.sh` bins.
-- [ ] Gate: full terminals suite + typecheck + lint + `npm run knip`.
+- [x] Launcher template in `scripts/`; build emits 3 launchers into `dist/bin/` (chmod +x); wire into existing build script and `prepack` flow. Repoint `package.json` `bin`; blank-line cleanup.
+- [x] Controller-level tests spawn launchers from an **installed-shaped tmpdir tree** (bin/, dist/cli.js stub, dist/server/*.js stubs, stub bun/node executables on a controlled PATH — the repo layout has no `../cli.js` TARGET, so repo-root spawning tests the wrong thing): bun-preferred, node fallback, forced `PI_WEB_RUNTIME`, invalid value → 2, missing-runtime 127 message naming `PI_WEB_RUNTIME`, candidate-path resolution with minimal PATH (manager-like), capability gate (stub bun without `Bun.Terminal` → falls to node / clear error), `--print-runtime` output and exit codes, symlink-chain resolution, exec-bit preservation through the real tarball.
+- [x] Layout assertion in `src/buildContents.test.ts`: `npm pack --dry-run` lists the three `dist/bin/*.sh` bins.
+- [x] Gate: full terminals suite + typecheck + lint + `npm run knip`.
 
 ### P3 — Runtime-aware production plan & doctor (D3)
-- [ ] `servicePlan.ts`: type + rendering + prerequisite changes per §4.5; **both** strategies get `runtimeRequirement`; retire `node-version` for them; `configured-override` unchanged. Update plan-rendering and `serviceDoctor` output/parsing/tests (doctor now prints the launcher-mediated runtime verdict).
-- [ ] `doctor`: runtime-aware node-pty/spawn-helper checks (§4.3) derived from the shared loader; bun capability check; runtime printed in report; reinstall advice per runtime.
-- [ ] `piWebVersionReport`: surface component runtime.
-- [ ] Empirically record (do not assert beforehand) how today's brew-node ARM macOS preflight behaves via the launchd probe PATH — D2 candidates are expected to fix it; capture before/after in the PR.
-- [ ] Gate: native-services test suites + typecheck.
+- [x] `servicePlan.ts`: type + rendering + prerequisite changes per §4.5; **both** strategies get `runtimeRequirement`; retire `node-version` for them; `configured-override` unchanged. Update plan-rendering and `serviceDoctor` output/parsing/tests (doctor now prints the launcher-mediated runtime verdict).
+- [x] `doctor`: runtime-aware node-pty/spawn-helper checks (§4.3) derived from the shared loader; bun capability check; runtime printed in report; reinstall advice per runtime.
+- [x] `piWebVersionReport`: surface component runtime.
+- [x] Empirically record (do not assert beforehand) how today's brew-node ARM macOS preflight behaves via the launchd probe PATH — D2 candidates are expected to fix it; capture before/after in the PR.
+- [x] Gate: native-services test suites + typecheck.
 
 ### P4 — Install surface & smoke coverage
 - [ ] `install.sh` bun alternative (§4.6).
@@ -146,6 +146,7 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 | Launcher candidate list is a bounded heuristic (D2) | Documented `PI_WEB_RUNTIME` override; doctor prints the resolved runtime; PATH still consulted first |
 | Launcher adds bash dependency | POSIX install targets already assume bash/sh (services, install.sh); Windows explicitly unsupported |
 | Probe honesty drift (plan checks ≠ what the unit runs) | D3 makes the prerequisite execute the launcher itself in a manager unit (`systemd-run`/LaunchAgent), so preflight tests the real dispatch path |
+| A PATH-resolved `pi-web-*` command belongs to a **different** PI WEB installation (observed 2026-08-28: probing the previous release's entrypoint started a real session daemon and timed out the authoritative probe) | The named command is accepted only when byte-identical to the shipped launcher (`identicalTo` + `cmp -s`, checked before execution); otherwise the plan execs the bundled launcher path, and doctor prints which file it chose and why |
 | `knip`/lint flagging new script files | Follow repo skill conventions; `scripts/*.mjs` is already a knip entry; ignore lists only if genuinely false positives |
 
 ## 7. Migration & upgrade
@@ -154,8 +155,17 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 - The `auto` → prefer-bun flip affects services only after that refresh; the manual matrix includes the refreshed-bun-services case.
 - `PI_WEB_RUNTIME` can be set persistently for services via unit `Environment=` without reinstalling.
 
+## 7.1 P3 verification record (Linux/x64, bun 1.4.1, node v24.19.0)
+
+- Launcher matrix run against the built `dist/bin/*.sh`: PATH with both → `bun`; node only → `node`; bun only → `bun`; neither → exit **127** (also for `--print-runtime`, so probe and service agree); `PI_WEB_RUNTIME=node` with both → `node`; forced `bun` with no capable bun → exit 1 naming `Bun.Terminal`; stub bun without `Bun.Terminal` + good node → `node`.
+- The generated `runtime` prerequisite executed through `/bin/bash -lc` returns `bun` in 50 ms for the bundled launcher, exit 1 when the named command is absent, and 0 via an npm-style bin symlink into the package (the global-install shape).
+- **Regression found and fixed during verification:** the first version of D3's named-command probe executed whatever `command -v pi-web-sessiond` resolved to. On this machine that is the published pre-launcher entrypoint (`#!/usr/bin/env node` + sessiond code), which ignored `--print-runtime`, tried to claim the live data directory, and never exited — `pi-web doctor` hung for the probe's full 15 s and reported an infrastructure failure. Fixed by the `identicalTo` guard (ACCEPTANCE A5 r2.1); the same doctor invocation now finishes in 0.5 s and reports the chosen launcher.
+- systemd `--user` transient-unit context observed directly: `$HOME` is the **manager's** home, not the caller's (so a sandboxed `HOME` does not move the unit search paths or the launcher's `~/.bun/bin/bun` candidate), and `$PATH` inherits the user manager's environment, which here already contains fnm and `~/.bun/bin`. D2's candidate list is therefore still required for headless/launchd sessions, where neither is true.
+- **Not verified (no macOS host available):** the brew-node ARM macOS launchd preflight behaviour before/after this change. Stays a manual checklist item before merge (SPEC §9).
+
 ## 8. Revision history
 
+- **r2.1 (2026-08-28, implementation addendum).** §7.1 records the P3 evidence, including the stale-named-command hazard found while executing the A5 matrix and the `identicalTo` guard added for it (§6, ACCEPTANCE A5). No decision changed: D3 still verifies through the launcher, now only after proving the named command *is* that launcher.
 - **r2 (2026-08-27) — post-review corrections.** B1: A1 acceptance redesigned (the doctor ✓ criterion never tested the F1 fix — doctor's loader predates the branch); P1 test replaced with the transpile+spawn ESM design; D4 shared loader added. B2: D3 added — `runtime` prerequisite for both production strategies (r1 fixed only `bundled-entrypoint`; named-command carries `nodeRequirement` at `servicePlan.ts:492-493` and is selected first on desktop-PATH machines). B3: F6 + D2 added — probe runs as a manager unit, so PATH-only launcher discovery was unsound; deterministic discovery + `--print-runtime` adopted after eliminating bake-at-install and environment-import alternatives. Line refs corrected (313/350→350 region/492-495/43); F1 marked Node-only; `available()`-based wording replaced with observable behavior; "E2E under bun verified in this repo" claim removed (no browser E2E suite exists); §4.6 reasoning fixed (bun trust policy, not optionality); migration section added; dev-mode-under-bun scoped in non-goals. Retracted during review: the `case $SOURCE` quoting concern (case words are not word-split/globbed — safe).
 - **r1 (2026-08-27)** — initial draft from the verification session.
 

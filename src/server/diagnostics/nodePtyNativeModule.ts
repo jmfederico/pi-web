@@ -1,10 +1,8 @@
-import { loadNodePtyModule } from "../terminals/nodePtyModule.js";
+import { loadNodePtyModule, type LoadNodePty } from "../terminals/nodePtyModule.js";
 
 export const NODE_PTY_GLOBAL_REINSTALL_COMMAND = "npm install -g @jmfederico/pi-web --allow-scripts=node-pty";
 
 const doctorLabel = "node-pty native module loadable";
-
-type LoadNodePty = () => unknown;
 
 export interface NodePtyNativeModuleCheckOptions {
   load?: LoadNodePty;

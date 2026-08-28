@@ -433,9 +433,11 @@ function prerequisiteProbeCommand(
 export function nativeServicePrerequisiteShellCheck(shell: NativeServiceShellName, prerequisite: NativeServicePrerequisite): string {
   switch (prerequisite.kind) {
     case "command-available":
-      return externalExecutableShellCheck(shell, prerequisite.command);
+      return externalExecutableShellCheck(shell, prerequisite.command, [], prerequisite.identicalTo);
     case "node-version":
       return externalExecutableShellCheck(shell, "node", ["-e", nodeVersionCheckScript(prerequisite.minimumVersion)]);
+    case "runtime":
+      return externalExecutableShellCheck(shell, prerequisite.command, ["--print-runtime"]);
     case "readable-file": {
       const path = shellQuote(shell, prerequisite.path);
       return `test -f ${path} && test -r ${path}`;
@@ -456,15 +458,21 @@ function externalExecutableShellCheck(
   shell: NativeServiceShellName,
   command: string,
   arguments_: readonly string[] = [],
+  identicalTo?: string,
 ): string {
   const quotedCommand = shellQuote(shell, command);
   const quotedArguments = arguments_.map((argument) => shellQuote(shell, argument)).join(" ");
+  // Identity is checked before any invocation: the point is to never execute a file that is not
+  // the launcher the plan is about to run.
+  const identity = identicalTo === undefined ? "" : shellQuote(shell, identicalTo);
   if (shell === "fish") {
+    const comparison = identity === "" ? "" : `; and cmp -s $pi_web_probe_executable[1] ${identity}`;
     const invocation = quotedArguments === "" ? "" : `; and $pi_web_probe_executable[1] ${quotedArguments}`;
-    return `set -l pi_web_probe_executable (command -v ${quotedCommand}); and test (count $pi_web_probe_executable) -eq 1; and string match -q '*/*' -- $pi_web_probe_executable[1]; and test -f $pi_web_probe_executable[1]; and test -x $pi_web_probe_executable[1]${invocation}`;
+    return `set -l pi_web_probe_executable (command -v ${quotedCommand}); and test (count $pi_web_probe_executable) -eq 1; and string match -q '*/*' -- $pi_web_probe_executable[1]; and test -f $pi_web_probe_executable[1]; and test -x $pi_web_probe_executable[1]${comparison}${invocation}`;
   }
+  const comparison = identity === "" ? "" : ` && cmp -s "$pi_web_probe_executable" ${identity}`;
   const invocation = quotedArguments === "" ? "" : ` && "$pi_web_probe_executable" ${quotedArguments}`;
-  return `pi_web_probe_executable=$(command -v ${quotedCommand}) && case "$pi_web_probe_executable" in */*) test -f "$pi_web_probe_executable" && test -x "$pi_web_probe_executable"${invocation};; *) false;; esac`;
+  return `pi_web_probe_executable=$(command -v ${quotedCommand}) && case "$pi_web_probe_executable" in */*) test -f "$pi_web_probe_executable" && test -x "$pi_web_probe_executable"${comparison}${invocation};; *) false;; esac`;
 }
 
 function markerCommand(
@@ -519,9 +527,13 @@ function parseProbeOutput(
 function unsatisfiedDetail(prerequisite: NativeServicePrerequisite): string {
   switch (prerequisite.kind) {
     case "command-available":
-      return `${prerequisite.command} did not resolve to an external executable in the native service environment.`;
+      return prerequisite.identicalTo === undefined
+        ? `${prerequisite.command} did not resolve to an external executable in the native service environment.`
+        : `${prerequisite.command} did not resolve to the PI WEB launcher ${prerequisite.identicalTo} in the native service environment. Another PI WEB installation may come first in the service PATH; re-run \`pi-web install\` after removing it.`;
     case "node-version":
       return `node >= ${prerequisite.minimumVersion} was not available in the native service environment.`;
+    case "runtime":
+      return `${prerequisite.command} --print-runtime did not resolve a usable runtime (bun with Bun.Terminal, or node) in the native service environment.`;
     case "readable-file":
       return `${prerequisite.path} was not a readable regular file in the native service environment.`;
     case "package-scripts":

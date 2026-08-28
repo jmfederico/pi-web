@@ -11,6 +11,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 const terminalsSourceDir = join(repoRoot, "src", "server", "terminals");
 const backendSourcePath = join(terminalsSourceDir, "backend.ts");
 const loaderSourcePath = join(terminalsSourceDir, "nodePtyModule.ts");
+const runtimeSourcePath = join(repoRoot, "src", "shared", "piWebRuntime.ts");
 const sharedLoaderRelativePath = "src/server/terminals/nodePtyModule.ts";
 
 /**
@@ -30,10 +31,16 @@ describe("NodePTYBackend under real Node ESM", () => {
   it("loads the fake node-pty through the shared loader with zero constructor arguments", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-node-pty-esm-"));
     try {
-      const serverDir = join(root, "package", "server");
-      await mkdir(serverDir, { recursive: true });
+      // package/server/terminals mirrors the real dist/ depth so backend.js keeps the exact
+      // relative specifiers it ships with.
+      const serverDir = join(root, "package", "server", "terminals");
+      await Promise.all([
+        mkdir(serverDir, { recursive: true }),
+        mkdir(join(root, "package", "shared"), { recursive: true }),
+      ]);
       await writeFakeNodePty(join(root, "node_modules", "node-pty"));
       await writeFile(join(root, "package", "package.json"), '{ "type": "module" }\n', "utf8");
+      await writeFile(join(root, "package", "shared", "piWebRuntime.js"), transpileToEsm(runtimeSourcePath), "utf8");
       await writeFile(join(serverDir, "nodePtyModule.js"), transpileToEsm(loaderSourcePath), "utf8");
 
       const backendEsm = transpileToEsm(backendSourcePath);
@@ -101,7 +108,7 @@ function transpileToEsm(path: string): string {
  */
 function assertBackendDependsOnlyOnTheSharedLoader(backendEsm: string): void {
   const specifiers = [...backendEsm.matchAll(/\bfrom\s+["']([^"']+)["']/gu)].map((match) => match[1] ?? "");
-  expect(specifiers).toEqual(["./nodePtyModule.js"]);
+  expect(specifiers).toEqual(["./nodePtyModule.js", "../../shared/piWebRuntime.js"]);
 }
 
 function esmProbe(): string {

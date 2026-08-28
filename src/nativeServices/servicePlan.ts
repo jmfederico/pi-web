@@ -40,8 +40,8 @@ export type NativeServiceCommandStrategy =
     }
   | {
       kind: "bundled-entrypoint";
-      command: "node";
-      entrypointPath: string;
+      /** Absolute path of the bundled runtime launcher the unit execs (SPEC D1). */
+      command: string;
       namedCommand: string;
       namedCommandFailure: string | null;
     }
@@ -60,6 +60,13 @@ export type NativeServicePrerequisite =
       id: string;
       kind: "command-available";
       command: string;
+      /**
+       * When set, the resolved executable must be byte-identical to this file. Production uses it
+       * to prove a named `pi-web-*` command is the launcher shipped by the running package: an
+       * older release's bin entry is the JavaScript entrypoint, which ignores `--print-runtime`
+       * and starts a daemon — a probe must never have that side effect.
+       */
+      identicalTo?: string;
       description: string;
     }
   | {
@@ -67,6 +74,17 @@ export type NativeServicePrerequisite =
       kind: "node-version";
       command: "node";
       minimumVersion: string;
+      description: string;
+    }
+  | {
+      id: string;
+      /**
+       * Asks a PI WEB launcher which runtime it would start with (`--print-runtime`). The
+       * launcher owns the selection policy and the version/capability floors, so the plan never
+       * repeats them (SPEC D3).
+       */
+      kind: "runtime";
+      command: string;
       description: string;
     }
   | {
@@ -144,7 +162,8 @@ export interface NativeServiceAuthoritativeProbe {
 export interface ProductionNativeServiceExecutableInput {
   configuredCommand: string | undefined;
   namedCommand: string;
-  bundledEntrypointPath: string;
+  /** Bundled runtime launcher for this service, used when the named command is unavailable. */
+  bundledLauncherPath: string;
 }
 
 export interface ProductionNativeServicePlanInput {
@@ -176,9 +195,9 @@ export type NativeServicePlanFailure =
       message: string;
     }
   | {
-      kind: "entrypoint-inspection-failure";
+      kind: "launcher-inspection-failure";
       serviceId: ProductionNativeServiceId;
-      entrypointPath: string;
+      launcherPath: string;
       message: string;
     }
   | {
@@ -186,7 +205,7 @@ export type NativeServicePlanFailure =
       serviceId: ProductionNativeServiceId;
       namedCommand: string;
       namedCommandFailure: string | null;
-      bundledEntrypointPath: string;
+      bundledLauncherPath: string;
     };
 
 export type NativeServicePlanResolution =
@@ -210,7 +229,10 @@ export type NativeServicePlanValidation =
   | { ok: false; failures: readonly NativeServicePlanValidationFailure[] };
 
 export function nativeServicePrerequisiteNeedsPathAdvice(prerequisite: NativeServicePrerequisite): boolean {
-  return prerequisite.kind === "command-available" || prerequisite.kind === "node-version";
+  if (prerequisite.kind === "node-version" || prerequisite.kind === "runtime") return true;
+  // A command that must be byte-identical to our launcher is not a PATH problem: it resolves, it
+  // just belongs to another installation.
+  return prerequisite.kind === "command-available" && prerequisite.identicalTo === undefined;
 }
 
 export const nativeServiceManagerRefs: Readonly<Record<NativeServiceId, NativeServiceManagerRef>> = {
@@ -256,7 +278,7 @@ export async function resolveProductionNativeServicePlan(
     }
 
     serviceIdsToProbe.push(serviceId);
-    selectionRequirements.push(commandRequirement(serviceId, executable.namedCommand));
+    selectionRequirements.push(commandRequirement(serviceId, executable.namedCommand, executable.bundledLauncherPath));
   }
 
   let outcomes = new Map<string, NativeServicePrerequisiteOutcome>();
@@ -294,24 +316,23 @@ export async function resolveProductionNativeServicePlan(
       continue;
     }
 
-    let entrypointExists: boolean;
+    let launcherExists: boolean;
     try {
-      entrypointExists = dependencies.fileExists(executable.bundledEntrypointPath);
+      launcherExists = dependencies.fileExists(executable.bundledLauncherPath);
     } catch (error: unknown) {
       failures.push({
-        kind: "entrypoint-inspection-failure",
+        kind: "launcher-inspection-failure",
         serviceId,
-        entrypointPath: executable.bundledEntrypointPath,
+        launcherPath: executable.bundledLauncherPath,
         message: errorMessage(error),
       });
       continue;
     }
 
-    if (entrypointExists) {
+    if (launcherExists) {
       strategies.set(serviceId, {
         kind: "bundled-entrypoint",
-        command: "node",
-        entrypointPath: executable.bundledEntrypointPath,
+        command: executable.bundledLauncherPath,
         namedCommand: executable.namedCommand,
         namedCommandFailure: outcome?.detail ?? null,
       });
@@ -323,7 +344,7 @@ export async function resolveProductionNativeServicePlan(
       serviceId,
       namedCommand: executable.namedCommand,
       namedCommandFailure: outcome?.detail ?? null,
-      bundledEntrypointPath: executable.bundledEntrypointPath,
+      bundledLauncherPath: executable.bundledLauncherPath,
     });
   }
 
@@ -467,7 +488,7 @@ function productionService(
     workingDirectory: null,
     after: isWeb ? ["sessiond"] : [],
     wants: isWeb ? ["sessiond"] : [],
-    prerequisites: strategyPrerequisites(serviceId, strategy),
+    prerequisites: strategyPrerequisites(serviceId, strategy, input.executables[serviceId].bundledLauncherPath),
   };
 }
 
@@ -477,7 +498,8 @@ function strategyCommand(shell: NativeServiceShell, strategy: NativeServiceComma
     case "named-command":
       return strategy.command;
     case "bundled-entrypoint":
-      return `${strategy.command} ${shellSingleQuote(shell.name, strategy.entrypointPath)}`;
+      // An absolute path: quote it the way the service shell needs, unlike a bare command name.
+      return shellSingleQuote(shell.name, strategy.command);
     case "development-npm-script":
       return `npm run ${strategy.script}`;
     case "development-npm-script-group":
@@ -485,14 +507,25 @@ function strategyCommand(shell: NativeServiceShell, strategy: NativeServiceComma
   }
 }
 
-function strategyPrerequisites(serviceId: ProductionNativeServiceId, strategy: NativeServiceCommandStrategy): readonly NativeServicePrerequisite[] {
+function strategyPrerequisites(
+  serviceId: ProductionNativeServiceId,
+  strategy: NativeServiceCommandStrategy,
+  bundledLauncherPath: string,
+): readonly NativeServicePrerequisite[] {
   switch (strategy.kind) {
     case "configured-override":
       return [];
     case "named-command":
-      return [commandRequirement(serviceId, strategy.command), nodeRequirement(serviceId)];
+      // Identity is re-proved here because the runtime requirement below executes this command.
+      return [
+        commandRequirement(serviceId, strategy.command, bundledLauncherPath),
+        runtimeRequirement(serviceId, strategy.command),
+      ];
     case "bundled-entrypoint":
-      return [nodeRequirement(serviceId), readableFileRequirement(serviceId, strategy.entrypointPath)];
+      return [
+        runtimeRequirement(serviceId, strategy.command),
+        readableFileRequirement(serviceId, strategy.command),
+      ];
     case "development-npm-script":
     case "development-npm-script-group":
       throw new Error(`Unexpected ${strategy.kind} strategy in a production plan`);
@@ -559,12 +592,19 @@ function commandRequirementId(serviceId: NativeServiceId, command: string): stri
   return `${serviceId}.command.${command}`;
 }
 
-function commandRequirement(serviceId: NativeServiceId, command: string): NativeServicePrerequisite {
+function commandRequirement(
+  serviceId: NativeServiceId,
+  command: string,
+  identicalTo?: string,
+): NativeServicePrerequisite {
   return {
     id: commandRequirementId(serviceId, command),
     kind: "command-available",
     command,
-    description: `${command} resolves to an external executable for the service shell`,
+    ...(identicalTo === undefined ? {} : { identicalTo }),
+    description: identicalTo === undefined
+      ? `${command} resolves to an external executable for the service shell`
+      : `${command} resolves to the PI WEB launcher ${identicalTo}`,
   };
 }
 
@@ -578,12 +618,21 @@ function nodeRequirement(serviceId: NativeServiceId): NativeServicePrerequisite 
   };
 }
 
+function runtimeRequirement(serviceId: NativeServiceId, command: string): NativeServicePrerequisite {
+  return {
+    id: `${serviceId}.runtime`,
+    kind: "runtime",
+    command,
+    description: `${command} selects a usable PI WEB runtime (bun with Bun.Terminal, or node >= ${minimumSupportedNodeVersion})`,
+  };
+}
+
 function readableFileRequirement(serviceId: NativeServiceId, path: string): NativeServicePrerequisite {
   return {
     id: `${serviceId}.entrypoint`,
     kind: "readable-file",
     path,
-    description: `bundled entrypoint is a readable regular file: ${path}`,
+    description: `bundled launcher is a readable regular file: ${path}`,
   };
 }
 

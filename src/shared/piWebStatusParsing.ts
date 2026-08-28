@@ -33,6 +33,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
   const piVersion = value["piVersion"];
+  const runtime = value["runtime"];
   const available = value["available"];
   const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
   const activeAgentProfileValue = value["activeAgentProfile"];
@@ -47,6 +48,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
+    ...(runtime === "bun" || runtime === "node" ? { runtime } : {}),
     available,
     capabilities,
     ...(activeAgentProfile === undefined ? {} : { activeAgentProfile }),
@@ -85,6 +87,7 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
   const runtimeVersion = value["runtimeVersion"];
   const installedVersion = value["installedVersion"];
   const piVersion = value["piVersion"];
+  const runtime = value["runtime"];
   const stale = value["stale"];
   const available = value["available"];
   const error = value["error"];
@@ -97,6 +100,9 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
     ...(typeof installedVersion === "string" ? { installedVersion } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
+    // An unknown value is dropped rather than guessed: reporting a runtime the component never
+    // stated is worse than saying nothing.
+    ...(runtime === "bun" || runtime === "node" ? { runtime } : {}),
     stale,
     available,
     ...(installation === undefined ? {} : { installation }),

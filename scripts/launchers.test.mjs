@@ -195,12 +195,14 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
       stderr: "",
     });
 
+    // A bun without Bun.Terminal and no node leaves nothing usable: the probe reports the same
+    // 127 the real command would, so the service and the probe cannot disagree (SPEC §8).
     const incapableProbe = await runLauncher(await createInstall({ bun: "incapable", onPath: ["bun"] }), "pi-web", ["--print-runtime"]);
-    expect(incapableProbe.code).not.toBe(0);
+    expect(incapableProbe.code).toBe(127);
     expect(incapableProbe.stdout).toBe("");
 
     const unresolvable = await runLauncher(await createInstall({ onPath: [] }), "pi-web", ["--print-runtime"]);
-    expect(unresolvable.code).not.toBe(0);
+    expect(unresolvable.code).toBe(127);
     expect(unresolvable.stdout).toBe("");
   });
 

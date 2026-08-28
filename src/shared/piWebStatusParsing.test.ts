@@ -172,6 +172,39 @@ describe("PI WEB status parsing", () => {
     expect(runtime?.components.sessiond.piVersion).toBe("0.83.0");
   });
 
+  // The runtime field is optional and value-checked: an unknown string must not turn into a
+  // fabricated runtime, and a peer that predates it must still parse.
+  it("carries reported runtimes through component and runtime parsing", () => {
+    expect(parsePiWebComponentStatus({
+      component: "web",
+      label: "Web/UI",
+      stale: false,
+      available: true,
+      runtime: "bun",
+    })).toMatchObject({ runtime: "bun" });
+
+    expect(parsePiWebComponentStatus({
+      component: "web",
+      label: "Web/UI",
+      stale: false,
+      available: true,
+      runtime: "deno",
+    })).not.toHaveProperty("runtime");
+
+    const runtime = parsePiWebRuntimeResponse({
+      packageName: "@jmfederico/pi-web",
+      generatedAt: "now",
+      components: {
+        web: { component: "web", label: "Web/UI", available: true, capabilities: [], runtime: "node" },
+        sessiond: { component: "sessiond", label: "Session daemon", available: true, capabilities: [] },
+      },
+      capabilities: [],
+    });
+
+    expect(runtime?.components.web.runtime).toBe("node");
+    expect(runtime?.components.sessiond).not.toHaveProperty("runtime");
+  });
+
   it("parses Docker installation metadata", () => {
     expect(parsePiWebInstallationInfo({ kind: "docker", path: "/srv/pi-web-docker", dockerMode: "runtime" })).toEqual({
       kind: "docker",

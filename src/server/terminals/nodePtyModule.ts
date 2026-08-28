@@ -33,6 +33,12 @@ export interface NodePtyModule {
 }
 
 /**
+ * Signature of the loader seam used by diagnostics: the check only cares whether loading throws,
+ * so it does not need the module's shape. Production passes {@link loadNodePtyModule}.
+ */
+export type LoadNodePty = () => unknown;
+
+/**
  * Loads the optional node-pty native binding, throwing when it is missing or unusable —
  * bun runs a dependency's install script only under its trust policy, so an installed package
  * may legitimately ship without a built binary.

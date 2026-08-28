@@ -1,4 +1,4 @@
-# ACCEPTANCE (frozen, r2) — pi-web over Bun, global install parity
+# ACCEPTANCE (frozen, r2.1) — pi-web over Bun, global install parity
 
 Frozen at SPEC review time (r2, 2026-08-27). Criteria are verbatim and **r2-revised**: every criterion is observable (no `available()`-style internals), reachable with the SPEC's r2 designs (D2 launcher discovery, D3 launcher-mediated runtime prerequisite, D4 shared loader), and testable under CI ordering (`npm test` runs before `npm run build` — no test may depend on `dist/`). Weaken only via SPEC revision, never during execution.
 
@@ -31,6 +31,7 @@ Run matrix uses an isolated environment: `BUN_INSTALL=$TMP/bun-global-test`, pac
 - `pi-web install` preflight accepts a machine with **only bun** in **both** selection branches: (a) manager PATH contains the global bin dir → `named-command` selected, `runtime` prerequisite satisfied via `--print-runtime` (no `node-version` failure); (b) manager PATH lacks it → `bundled-entrypoint` selected with the launcher path. Both branches exercised with a transient-unit probe (`systemd-run` / launchd LaunchAgent environment), stub runtimes at candidate paths proving D2 discovery under a manager-like PATH.
 - Rendered unit `ExecStart` invokes the launcher (absolute path), `serviceDoctor` parses it without drift errors, and the runtime is decided at start (verified by flipping `PI_WEB_RUNTIME` via unit `Environment=` without reinstalling).
 - On a node-only machine the rendered plan behaves exactly as today (node selected; floor 22.19.0 enforced inside the launcher).
+- **r2.1:** A named `pi-web-*` command is only selected when it is byte-identical to the launcher shipped by the running package (`cmp -s` in the same authoritative check, before any execution). Observed while verifying this criterion: the pre-launcher release's bin entry is the JavaScript entrypoint, so probing it with `--print-runtime` started a real session daemon and the probe died on its 15 s timeout. Selecting such a command also silently re-freezes the runtime at install time, defeating D1. The bundled-launcher fallback stays available, so no configuration loses a working service path.
 
 ## A6 — Honest diagnostics (P3, D4, G4)
 - `doctor` under **bun** (no node-pty in install): exit 0 for the terminal-runtime section; reports bun runtime and `Bun.Terminal` capability; no npm-reinstall advice.
@@ -49,4 +50,5 @@ Run matrix uses an isolated environment: `BUN_INSTALL=$TMP/bun-global-test`, pac
 Each criterion records command + exit code + key output in the PR description (same format as the verification session of 2026-08-27). What cannot be executed (none expected) goes to a manual checklist, never silently skipped.
 
 ## Revision history
+- **r2.1 (2026-08-28, implementation):** A5 strengthened with the launcher-identity requirement above (strictly additive; no existing criterion relaxed).
 - **r2 (2026-08-27):** A1 rewritten (old bullet 1 — "doctor reports ✓" — never tested the F1 fix; doctor's loader predates the branch and passed with terminals broken). A2 expanded for D2 discovery (candidates, capability gate, `--print-runtime`, installed-shaped test trees). A5 expanded to cover both selection branches with manager-environment probes. A4/A6 reworded to observable behavior and shared-loader invariant. Frozen criteria are r2-verbatim; weaken only via SPEC revision.

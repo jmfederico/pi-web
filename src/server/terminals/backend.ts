@@ -1,5 +1,6 @@
 import type { TerminalInfo } from "../../shared/apiTypes.js";
 import { loadNodePtyModule, type NodePtyModule, type NodePtyProcess } from "./nodePtyModule.js";
+import { bunTerminalCapability, piWebRuntimeKind } from "../../shared/piWebRuntime.js";
 
 /* ------------------------------------------------------------------ */
 /*  Interface                                                          */
@@ -37,12 +38,9 @@ export interface TerminalBackend {
 /*  Auto-detection                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Check if the current runtime is Bun */
+/** Check if the current runtime is Bun — see `shared/piWebRuntime.ts`, the single detector. */
 export function isBunRuntime(): boolean {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions, @typescript-eslint/dot-notation, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-  const bun = (globalThis as any)["Bun"];
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof bun === "object" && bun !== null && "spawn" in bun && typeof (bun as Record<string, unknown>)["spawn"] === "function";
+  return piWebRuntimeKind() === "bun";
 }
 
 /* ------------------------------------------------------------------ */
@@ -107,12 +105,8 @@ export class BunPTYBackend implements TerminalBackend {
   private terminals = new Map<string, BunTerminalEntry>();
 
   available(): boolean {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions, @typescript-eslint/dot-notation, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
-    const bun = (globalThis as any)["Bun"];
-    if (typeof bun !== "object" || bun === null) return false;
     // Capability, not version: Bun.spawn alone cannot drive a PTY.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    return typeof (bun as Record<string, unknown>)["Terminal"] === "function";
+    return isBunRuntime() && bunTerminalCapability();
   }
 
   create(options: {

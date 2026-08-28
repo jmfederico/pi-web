@@ -23,12 +23,12 @@ const productionInput: ProductionNativeServicePlanInput = {
     sessiond: {
       configuredCommand: undefined,
       namedCommand: "pi-web-sessiond",
-      bundledEntrypointPath: "/package/sessiond.js",
+      bundledLauncherPath: "/package/dist/bin/pi-web-sessiond.sh",
     },
     web: {
       configuredCommand: undefined,
       namedCommand: "pi-web-server",
-      bundledEntrypointPath: "/package/server.js",
+      bundledLauncherPath: "/package/dist/bin/pi-web-server.sh",
     },
   },
 };

@@ -51,6 +51,30 @@ describe("PI WEB status", () => {
     expect(status).not.toHaveProperty("release");
   });
 
+  // ACCEPTANCE A6: the version report says which runtime each component process runs on, so a
+  // bun-vs-node problem is diagnosable without guessing. A daemon that predates the field stays
+  // silent rather than inheriting the web process's answer, which would be a lie.
+  it("reports the runtime of each component process", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.web.runtime).toBe("node");
+    expect(status.components.sessiond.runtime).toBe("bun");
+    expect(runtime.components.web.runtime).toBe("node");
+    expect(runtime.components.sessiond.runtime).toBe("bun");
+  });
+
+  it("omits the session daemon runtime when the daemon does not report one", async () => {
+    const status = await getPiWebVersionStatus(daemonWithRuntime(runningSessiondRuntime()));
+
+    expect(status.components.web.runtime).toBe("node");
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
+  });
+
   it("reports the loaded Pi version for each component, preferring the daemon report", async () => {
     const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), piVersion: "0.83.0" });
 

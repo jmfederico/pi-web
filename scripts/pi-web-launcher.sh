@@ -146,12 +146,12 @@ resolve_runtime() {
 status=0
 resolved="$(resolve_runtime)" || status=$?
 
+# --print-runtime is the probe the native-service prerequisite runs: it must
+# exit 0 only for a runtime that passed the capability/floor gate, never reach
+# the JavaScript entrypoint, and report the same status the real command would
+# (127 when nothing is usable) so the probe and the service agree.
 if [ "$status" -ne 0 ]; then
-  # --print-runtime is the probe the native-service prerequisite runs: it must
-  # exit 0 only for a runtime that passed the capability/floor gate, and never
-  # reach the JavaScript entrypoint.
-  [ "${1-}" = "--print-runtime" ] || exit "$status"
-  exit 1
+  exit "$status"
 fi
 
 if [ "${1-}" = "--print-runtime" ]; then
