@@ -220,7 +220,7 @@ PI WEB runs on Node.js or Bun. Every PI WEB command (`pi-web`, `pi-web-server`, 
 | `node` | Never select Bun, even when it is installed. |
 | anything else | The command exits with an error naming the variable and the accepted values. |
 
-When Node.js is not on the service `PATH` — common for Homebrew or self-managed installs, where user services start with a minimal system `PATH` — the launcher also looks for Node.js at its usual install locations after `PATH`. That lookup never applies to Bun, so installing Bun where a service can find it is what makes `auto` pick Bun.
+When a runtime is not on the service `PATH` — user services start with the service manager's environment, not your interactive shell — the launcher also looks in the usual install locations, in this order after `PATH`: Bun at `~/.bun/bin/bun`, `/usr/local/bin/bun`, `/opt/homebrew/bin/bun`, `/usr/bin/bun`, and Node.js at `/usr/bin/node`, `/usr/local/bin/node`, `/opt/homebrew/bin/node`. Version-manager directories (nvm, fnm, asdf, mise) are deliberately not among those locations, so a runtime that only exists inside a version manager has to reach the service through its `PATH`; otherwise `auto` resolves to whichever of the two is found, Bun first.
 
 Auto-detection needs no configuration, so this variable is only for pinning a runtime. Set it wherever the process gets its environment: export it before starting PI WEB manually, or add an `Environment=` drop-in (`systemctl --user edit --full pi-web pi-web-sessiond`) or a `Environment=`/`EnvironmentFile=` key in the launchd plist for user services, then restart. `pi-web doctor` and `pi-web version` report the runtime each process actually selected, and `pi-web doctor` says which terminal backend that implies.
 
