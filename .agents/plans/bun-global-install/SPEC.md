@@ -135,10 +135,13 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 - [x] Gate: `npm run verify` + both smokes green locally (§7.2).
 
 ### P5 — Hardening & PR
-- [ ] `npm run verify` (typecheck, lint, knip, full tests).
-- [ ] Changeset promoted to minor with behavior-change + upgrade notes (§4.8).
-- [ ] Manual matrix recorded in PR description: npm/node, bun-only, bun+node (auto → bun), `PI_WEB_RUNTIME=node` on bun+node, forced `bun` on old bun (capability error), systemd unit + `--print-runtime` probe on desktop-PATH and manager-PATH variants.
-- [ ] Open PR (same flow as the current feature branch).
+- [x] `npm run verify` green at `7f5f325`: typecheck, lint, knip clean; 346 files / 3463 tests passed, 9 skipped. `npm run build` and `npm run pack:dry` green (packed tree lists the three `dist/bin/*.sh`).
+- [x] Changeset promoted to minor with behavior-change + upgrade notes (§4.8) — shipped in P4 (`bfae5d7`).
+- [x] Manual matrix executed and recorded in the PR description (§7.3): npm/node, bun-only, bun+node auto → bun, `PI_WEB_RUNTIME=node`, forced `bun` on an incapable bun, no-runtime 127, manager-unit probe, live doctor/version.
+- [x] Docs corrected against the implementation while collecting receipts (§7.3, §8 r2.3): the candidate-path lookup applies to **both** runtimes, Bun first (`~/.bun/bin/bun` included), which is what makes `auto` pick Bun on a minimal service PATH.
+- [ ] macOS launchd + brew-node preflight: **not executed** (no host). Manual checklist item for the reviewer.
+- [ ] New CI step `smoke:bun-install`: **not executed here**; this PR's CI run is its first execution.
+- [x] PR opened from `feature/native-bun-pty` with the matrix and receipts.
 
 ## 6. Risks & mitigations
 
@@ -175,8 +178,25 @@ Node and Bun both resolve module imports relative to the file's real path, so de
 - `npm run verify`: typecheck, lint, knip clean; 346 files / 3463 tests passed, 9 skipped.
 - **Still not verified:** macOS launchd + brew-node preflight (no macOS host, §7.1) and the new CI step (no Actions execution here).
 
+## 7.3 P5 manual matrix (Linux/x64, bun 1.4.1, node v24.19.0, npm 12.0.1, built `dist/bin/*.sh`)
+
+| Cell | Command | Observed |
+|---|---|---|
+| npm/node install path | `npm run smoke:package-install` | exit 0 — plugin-API baseline match, consumer type-checks, Node-backed PTY served the marker through the installed package |
+| bun-only machine, node absent from PATH | `npm run smoke:bun-install` | exit 0 — installed `pi-web --version`, session daemon terminal over `Bun.Terminal`, web/API + daemon `runtime=bun`, both stopped on SIGTERM, no process left |
+| bun+node, `auto` | `dist/bin/pi-web-sessiond.sh --print-runtime` | `bun` |
+| pin node on a bun machine | `PI_WEB_RUNTIME=node dist/bin/pi-web-server.sh --print-runtime` | `node` |
+| require bun | `PI_WEB_RUNTIME=bun dist/bin/pi-web.sh --print-runtime` | `bun` |
+| invalid value | `PI_WEB_RUNTIME=deno dist/bin/pi-web.sh --print-runtime` | exit 2 — `pi-web: PI_WEB_RUNTIME=deno is not valid. Use auto, bun or node.` |
+| nothing discoverable | `env -i PATH=/usr/bin:/bin HOME=/nonexistent … --print-runtime` | exit 127 with the actionable message naming `PI_WEB_RUNTIME` |
+| forced bun, incapable bun, no node | stub bun that fails the `Bun.Terminal` probe | exit 1 — `PI_WEB_RUNTIME=bun requires bun with Bun.Terminal, but none was found in PATH or the usual install locations.` |
+| auto, incapable bun, no node | same stub | exit 127 (incapable bun never selected) |
+| manager-context probe | `systemd-run --user --pipe --wait` on the bundled launcher | `bun`, finished success in 69 ms |
+| doctor on the running checkout under bun | `dist/bin/pi-web.sh doctor` | `pi-web CLI runtime: bun`, `runtime: bun`, `✓ terminals: Bun native PTY (Bun.Terminal)`, no npm advice; named-command identity guard printed the bundled-launcher fallback note for the older published global command |
+
 ## 8. Revision history
 
+- **r2.3 (2026-08-28, P5 addendum).** §7.3 records the executed manual matrix. Collecting it corrected one documentation claim: candidate-path discovery covers Bun as well (`~/.bun/bin/bun` first, then the system locations), tried before Node.js, so `auto` selects Bun even when the service environment has no `PATH` entry for it (`7f5f325`).
 - **r2.2 (2026-08-28, P4 addendum).** §7.2 records the install-surface evidence. Two corrections to the plan text: this repo has **no `docs/architecture.md`**, so the runtime documentation lives in `docs/config.md`/`config.html` (`config#runtime`) and `docs/install.html` (`install#bun-install`) instead of the target the P4 checkbox named; and the P4 smoke work found the npm smoke itself was not hermetic (inherited `npm_config_prefix` aimed the inner global install at the real version-manager prefix), which is now fixed and is a precondition for trusting A4.
 - **r2.1 (2026-08-28, implementation addendum).** §7.1 records the P3 evidence, including the stale-named-command hazard found while executing the A5 matrix and the `identicalTo` guard added for it (§6, ACCEPTANCE A5). No decision changed: D3 still verifies through the launcher, now only after proving the named command *is* that launcher.
 - **r2 (2026-08-27) — post-review corrections.** B1: A1 acceptance redesigned (the doctor ✓ criterion never tested the F1 fix — doctor's loader predates the branch); P1 test replaced with the transpile+spawn ESM design; D4 shared loader added. B2: D3 added — `runtime` prerequisite for both production strategies (r1 fixed only `bundled-entrypoint`; named-command carries `nodeRequirement` at `servicePlan.ts:492-493` and is selected first on desktop-PATH machines). B3: F6 + D2 added — probe runs as a manager unit, so PATH-only launcher discovery was unsound; deterministic discovery + `--print-runtime` adopted after eliminating bake-at-install and environment-import alternatives. Line refs corrected (313/350→350 region/492-495/43); F1 marked Node-only; `available()`-based wording replaced with observable behavior; "E2E under bun verified in this repo" claim removed (no browser E2E suite exists); §4.6 reasoning fixed (bun trust policy, not optionality); migration section added; dev-mode-under-bun scoped in non-goals. Retracted during review: the `case $SOURCE` quoting concern (case words are not word-split/globbed — safe).
