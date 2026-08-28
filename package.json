@@ -25,9 +25,9 @@
     }
   },
   "bin": {
-    "pi-web": "dist/cli.js",
-    "pi-web-server": "dist/server/index.js",
-    "pi-web-sessiond": "dist/server/sessiond.js"
+    "pi-web": "dist/bin/pi-web.sh",
+    "pi-web-server": "dist/bin/pi-web-server.sh",
+    "pi-web-sessiond": "dist/bin/pi-web-sessiond.sh"
   },
   "files": [
     "dist",
@@ -53,7 +53,8 @@
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
     "dev:plugins": "node scripts/build-plugins.mjs --watch",
-    "build": "npm run clean && tsc -p tsconfig.build.json && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build": "npm run clean && npm run build:launchers && tsc -p tsconfig.build.json && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build:launchers": "node scripts/build-launchers.mjs",
     "build:plugin-api": "tsc -p tsconfig.plugin-api.json",
     "build:plugins": "tsc -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
     "capture:screenshots": "node scripts/capture-screenshots.mjs",
@@ -108,7 +109,6 @@
   "optionalDependencies": {
     "node-pty": "^1.1.0"
   },
-
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
     "@earendil-works/pi-agent-core": "^1.0.0",
