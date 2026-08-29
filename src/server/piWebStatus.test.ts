@@ -88,6 +88,28 @@ describe("PI WEB status", () => {
     }
   });
 
+  it("keeps a local checkout local when a configured Pi package is vendored inside it", async () => {
+    disableDockerRuntimeEnv();
+    const agentDir = await tempHome();
+    try {
+      await installConfiguredPiWebPackage(agentDir, join(process.cwd(), "dist", "pi-packages", "relays"));
+      const daemon = daemonWithRuntime({
+        component: "sessiond",
+        label: "Session daemon",
+        runtimeVersion: "1.202605.7",
+        available: true,
+        capabilities: [],
+      });
+
+      const status = await getPiWebVersionStatus(daemon, { activeAgentProfile: activeProfile(agentDir) });
+
+      expect(status.components.web.installation?.kind).not.toBe("pi-package");
+      expect(status.components.sessiond.installation?.kind).not.toBe("pi-package");
+    } finally {
+      await rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not fall back to the web process environment when no active profile is available", async () => {
     disableDockerRuntimeEnv();
     const agentDir = await tempHome();
@@ -516,8 +538,8 @@ async function installSystemdServiceFiles(home: string, names: string[]): Promis
   await Promise.all(names.map((name) => writeFile(join(dir, name), "")));
 }
 
-async function installConfiguredPiWebPackage(agentDir: string): Promise<void> {
-  await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [process.cwd()] }, null, 2)}\n`, "utf8");
+async function installConfiguredPiWebPackage(agentDir: string, packagePath: string = process.cwd()): Promise<void> {
+  await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ packages: [packagePath] }, null, 2)}\n`, "utf8");
 }
 
 async function installExecutable(dir: string, name: string): Promise<void> {

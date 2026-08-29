@@ -13,12 +13,12 @@ Relay works because it does not try to recreate human management structures. The
 
 ## The hard constraint that shapes everything
 
-`spawn_session` is fire-and-forget. When you spawn the next leg, **you do not see its output and you cannot correct it.** The only thing that travels down the chain is what you wrote to disk. A human may be watching in the UI, but they intervene by reading your documents, not by relaying messages between sessions.
+`spawn_session` is fire-and-forget. When you spawn the next leg, **you do not see its output and you cannot correct it.** The only thing that travels down the chain is what you wrote to disk. A human may be watching, but they intervene through the Relay's durable state and intervention signal, not by relaying messages between sessions.
 
 Two consequences follow, and they govern the whole method:
 
-- **Make your work durable before you hand off.** Update the status, append the log, save/commit the artifacts (commit if the relay says to), and only then spawn the next leg. Anything not on disk is lost.
-- **Hand off exactly once, at the end.** Do not spawn early, do not spawn several runners "to parallelize," and never spawn while you still have work in flight. One leg, one handoff.
+- **Make your work durable before you hand off.** Update the status, append the log, and preserve artifacts in the way the charter defines before spawning the next leg. Anything not on disk is lost.
+- **If you hand off, do it exactly once, at the end.** Do not spawn early, do not spawn several runners "to parallelize," and never spawn while you still have work in flight. One leg, at most one handoff.
 
 ## The relay packet
 
@@ -34,7 +34,7 @@ Every relay has these three core files.
 - **Goal / finish line.** A concrete, achievable end state with enough stable boundaries to decide whether it has been reached. The charter must state the finish line. It may define supporting requirements by reference only when it explicitly designates the referenced artifact as part of the stable agreement; neither `status.md` nor `log.md` may be the sole source of what “done” means. Without a finish line the relay runs forever — this is non-negotiable.
 - **Sizing.** How much is *one leg*? This is project- and plan-specific; the charter defines it (a task, a slice, a time/scope budget — whatever fits). The skill does not decide this for you.
 - **Task selection policy.** How a runner chooses the next task when `status.md` does not name one explicitly.
-- **Handover.** How a runner hands off: what the spawn prompt should say and what the next runner must read. A normal handoff starts with a natural header containing the relay name and next leg number, then points at `charter.md` and `status.md`, not the full log.
+- **Handover.** How a runner hands off: what the spawn prompt should say and what the next runner must read. A normal handoff starts with a natural header containing the relay name and next leg identifier, then points at `charter.md` and `status.md`, not the full log.
 - **Intervention signal.** When and how a runner must stop and get the human, and how that is made visible. The charter defines relay-specific triggers and signaling. A runner who would need to change the agreed finish line without explicit human direction must always stop and raise that signal.
 - **Reading discipline.** The files a runner should read to orient, and any files that should not be read defensively.
 
@@ -48,12 +48,14 @@ It should answer:
 
 - **Current position.** Where the relay is now.
 - **Current or next task.** The next leg if known; otherwise enough information to apply the charter's task selection policy.
-- **Leg tracking.** The last completed leg and the next leg to run. Keep this explicit so runners do not have to infer whether “current leg” means the leg just finished or the leg being handed off, and so the handoff prompt can name the next leg accurately.
+- **Leg tracking.** The last completed leg and the next leg to run. Keep this explicit so runners do not have to infer whether “current leg” means the leg just finished or the leg being handed off, and so the handoff prompt can identify the next leg accurately.
 - **Relevant context.** Only the files, sections, commands, artifacts, or specific log entries needed for the next leg.
-- **Progress documentation.** Where this runner must write progress: update `status.md`, append `log.md`, update artifacts, commit, etc.
+- **Progress documentation.** Where and how this runner must make progress durable: update `status.md`, append `log.md`, update artifacts, or follow another workflow named by the charter.
 - **Blockers / intervention state.** Current risks, open decisions, or active reasons to stop.
 
-Think of `status.md` as the thing passed from runner to runner. If it grows into a history dump, compress it back into current state plus pointers. If finish-line-defining content has crept into status without a stable home, restore it to the charter or a charter-designated artifact before compressing it away. If an older relay lacks leg tracking, repair it when you update status; prefer the leg number from the prompt or status, and do not read `log.md` end-to-end just to count prior legs.
+Leg identifiers distinguish handoffs; they do not predict a fixed route or total number of legs.
+
+Think of `status.md` as the thing passed from runner to runner. If it grows into a history dump, compress it back into current state plus pointers. If finish-line-defining content has crept into status without a stable home, restore it to the charter or a charter-designated artifact before compressing it away. If an older relay lacks leg tracking, repair it when you update status; prefer the leg identifier from the prompt or status, and do not read `log.md` end-to-end just to reconstruct prior identifiers.
 
 **Log** (`log.md`) — append-only history. Each leg appends a concise entry recording what it did, decisions made and why, durable artifacts changed, status updates made, and blockers. The log preserves auditability, including agreed changes to the charter, but it is **not** orientation memory and does not replace the charter as the current agreement.
 
@@ -77,19 +79,19 @@ If `status.md` is insufficient, fix the baton rather than compensating by readin
 
 This is the loop you run when you are dispatched into a relay.
 
-1. **Orient from the packet.** Read `charter.md` and `status.md`. Confirm from the charter the relay identity/root, finish line, sizing, task-selection policy, handoff protocol, intervention signal, and reading discipline. Confirm from status the current position, last completed leg, next leg to run, current/next task, and blockers. If you are not sure you are in a relay, the dispatch prompt or the packet itself is your clue — and reading this skill means you are.
+1. **Orient from the packet.** Read `charter.md` and `status.md`. Confirm from the charter the relay identity/root, finish line, sizing, task-selection policy, handoff protocol, intervention signal, and reading discipline. Confirm from status the current position, last completed leg, next leg to run, current/next task, and blockers. If you are not sure whether a Relay is active, the dispatch prompt or packet must establish it; loading this skill alone does not.
 2. **Choose the leg.** Prefer the explicit current/next task in `status.md`, provided it serves the charter's finish line and fits its sizing. If none is named, apply the charter's task selection policy. If that still requires context, inspect only the referenced plan/backlog/artifact sections. Do not adopt a task merely because status is newer. If the next task is still ambiguous, falls outside the charter's bounds, or would require moving the finish line, stop and involve the human.
 3. **Re-anchor to the charter.** Does the chosen leg still serve the finish line, and does reality still permit it? Adapting how to get there is your job. If reality indicates that what “done” means should change, stop and raise the intervention signal rather than quietly redefining it.
 4. **Run one leg.** Do exactly one well-sized slice, per the charter's sizing. Resist doing "just a bit more" — extra scope bloats context and breaks the containment that makes Relay work.
 5. **Document progress.** Make all work durable. Update `status.md` with the new current state, last completed leg, next leg to run (if any), next task or task-selection pointer, relevant context for the next runner, and blockers. Append a concise `log.md` entry with what you did, why, decisions made, artifacts changed, and whether you are handing off or stopping.
 6. **Decide: hand off, or stop.**
-   - **Hand off** if there is a clear next leg and you are on track. Use `spawn_session` once, with a prompt whose first line is a natural task header containing the relay name and next leg number (for example, `Relay "<name>" leg <N> begins now.`), followed by the Relay method and pointers to `charter.md` and `status.md` (so this skill loads and they can orient cheaply). Then you are done. Handoff is deliberately fire-and-forget: `spawn_session` starts an independent session you will not see and cannot steer — do not reach for a tracked subsession to keep an eye on it. Letting go is the point. The next runner is trusted to run their own leg, and the relay packet is the only thread between you; if you feel the need to watch downstream work, that usually means the leg wasn't sized or handed off cleanly, or an intervention signal should have fired.
+   - **Hand off** if there is a clear next leg and you are on track. Use `spawn_session` once, with a prompt whose first line is a natural task header containing the relay name and next leg identifier (for example, `Relay "<name>" leg <identifier> begins now.`), followed by the Relay method and pointers to `charter.md` and `status.md` (so this skill loads and they can orient cheaply). Then you are done. Handoff is deliberately fire-and-forget: `spawn_session` starts an independent session you will not see and cannot steer — do not reach for a tracked subsession to keep an eye on it. Letting go is the point. The next runner is trusted to run their own leg, and the relay packet is the only thread between you; if you feel the need to watch downstream work, that usually means the leg wasn't sized or handed off cleanly, or an intervention signal should have fired.
    - **Stop — do not spawn —** if the goal is reached, or you are blocked, or the charter's intervention signal fires. Update `status.md`, append a clear note in `log.md`, and raise the intervention signal so the watching human sees exactly what happened and what they need to decide. A stalled relay that stopped cleanly with a clear blocker is a success; a relay that spawned a confused next runner is a failure.
 
-A good handoff prompt is short and explicit. The example below uses the default packet root; substitute the root recorded in the charter when it differs. Put the relay identity and leg number at the very beginning so the hosting UI can derive useful distinguishing context without any naming instruction:
+A good handoff prompt is short and explicit. The example below uses the default packet root; substitute the root recorded in the charter when it differs. Put the relay identity and leg identifier at the very beginning so the handoff is immediately distinguishable:
 
 ```text
-Relay "<name>" leg <N> begins now.
+Relay "<name>" leg <identifier> begins now.
 
 You are the next runner in this Relay method chain.
 
@@ -104,11 +106,11 @@ Run one leg according to the charter. Before handing off, update status.md, appe
 
 ## Planning a relay
 
-When the user asks to set up a relay, your job is to produce the relay packet: `charter.md`, `status.md`, and `log.md`. The charter must have the required slots filled: relay identity, goal, sizing, task selection policy, handover, intervention signal, and reading discipline. Before dispatch, preserve the agreed finish line and the stable boundaries needed to judge it in the charter or in supporting material the charter explicitly designates. Do not make the initial status or planning conversation the only place those requirements exist. The initial status must give the first runner a compact baton: current position, leg tracking (usually last completed leg 0 and next leg to run 1 for a new relay), first task or task selection pointer, relevant context, documentation expectations, and known blockers. The log may start empty or with a short seed entry explaining that the relay was created.
+When the user asks to set up a relay, your job is to produce the relay packet: `charter.md`, `status.md`, and `log.md`. The charter must have the required slots filled: relay identity, goal, sizing, task selection policy, handover, intervention signal, and reading discipline. Before dispatch, preserve the agreed finish line and the stable boundaries needed to judge it in the charter or in supporting material the charter explicitly designates. Do not make the initial status or planning conversation the only place those requirements exist. The initial status must give the first runner a compact baton: current position, leg tracking (for a numeric scheme, usually last completed leg 0 and next leg to run 1 for a new relay), first task or task selection pointer, relevant context, documentation expectations, and known blockers. The log may start empty or with a short seed entry explaining that the relay was created.
 
 Unless the user or dispatching instructions provide these choices or a rule for deriving them, draw them out from the user rather than inventing them: ask what the finish line is, how much should be one leg, how runners pick tasks, how runners hand off, what they should read, and when they must stop and get the human. Sizing, task selection, and the intervention signal especially are not for the generic method to decide — propose options if it helps, but do not quietly settle them yourself.
 
-Do **not** impose what a "good" plan, leg size, or cadence looks like — those are deeply project-, plan-, and human-specific, and getting them wrong by being prescriptive is worse than leaving them to the user. Your value in planning is making sure the relay is *runnable*: the finish line exists, sizing is stated, task selection is stated, handover is stated, reading discipline is stated, and the intervention signal is stated. Once the packet is agreed, you can dispatch the first leg with `spawn_session`.
+Do **not** invent what a "good" plan, leg size, or cadence looks like when no policy is supplied — those choices are deeply project-, plan-, and human-specific. Explicit user, project, or dispatch instructions may provide defaults; follow them rather than replacing them with the skill's preferences. Your value in planning is making sure the relay is *runnable*: the finish line exists, sizing is stated, task selection is stated, handover is stated, reading discipline is stated, and the intervention signal is stated. Once the packet is agreed, you can dispatch the first leg with `spawn_session`.
 
 ## Smells to watch for
 
@@ -117,5 +119,5 @@ Do **not** impose what a "good" plan, leg size, or cadence looks like — those 
 - **Charter churn** → stable policy changes every leg. The design isn't settled; involve the human.
 - **Status bloat** → `status.md` turns into a history dump. Compress it to current state plus targeted pointers.
 - **Defensive reading** → reading the full log/backlog/artifact tree to feel safe. Use the packet and targeted lookups; stop if the baton is not enough.
-- **Eager spawning** → spawning early, spawning several runners, or spawning before work is durable. One leg, one handoff, at the end.
+- **Eager spawning** → spawning early, spawning several runners, or spawning before work is durable. One leg, at most one handoff, at the end.
 - **Silent stall** → getting stuck and stopping with no note, or spawning anyway. Always update status, log the blocker, and surface it.

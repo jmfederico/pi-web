@@ -149,6 +149,28 @@ export function liveScopedModelIds(enabledIds: readonly string[] | null, availab
   return hasEnabledAvailableModel && !allAvailableModelsEnabled ? enabledIds : null;
 }
 
+/**
+ * Resolve the canonical enabled ids into the SDK's live cycling scope. A null
+ * result means every currently available model is pickable, so the SDK's
+ * empty scoped-model array is intentional rather than an empty selection.
+ */
+export function scopedModelsFromEnabledIds<TModel extends { provider: string; id: string }>(
+  available: readonly TModel[],
+  enabledIds: readonly string[] | null,
+  existingScopedModels: readonly { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel }[] = [],
+): { model: TModel; thinkingLevel?: ThinkingLevel }[] {
+  const scopeIds = liveScopedModelIds(enabledIds, available.map(modelScopeId));
+  if (scopeIds === null) return [];
+  const modelsById = new Map(available.map((model) => [modelScopeId(model), model]));
+  const thinkingLevelsById = new Map(existingScopedModels.map((scoped) => [modelScopeId(scoped.model), scoped.thinkingLevel]));
+  return scopeIds.flatMap((id) => {
+    const model = modelsById.get(id);
+    if (model === undefined) return [];
+    const thinkingLevel = thinkingLevelsById.get(id);
+    return thinkingLevel === undefined ? [{ model }] : [{ model, thinkingLevel }];
+  });
+}
+
 export interface EnabledModelCatalogEntry<TModel> {
   model: TModel;
   enabled: boolean;

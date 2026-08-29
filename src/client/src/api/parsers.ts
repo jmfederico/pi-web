@@ -751,7 +751,7 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
 }
 
 type RealtimeStreamEvent =
-  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
+  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" | "models.changed" }>
   | TerminalUiEvent
   | MachineStatusUiEvent;
 
@@ -766,6 +766,8 @@ export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
       return parseSessionNameEvent(record);
     case "session.created":
       return { type: "session.created", session: parseSessionInfo(record["session"]) };
+    case "models.changed":
+      return { type: "models.changed", revision: requireNonNegativeSafeInteger(record, "revision") };
     case "terminal.created":
       return { type: "terminal.created", terminal: parseTerminalInfo(record["terminal"]) };
     case "terminal.exited":
@@ -1169,6 +1171,7 @@ function parseSessionModelCatalogEntry(value: unknown): SessionModelCatalogEntry
     ...optionalField("contextWindow", optionalNumber(record, "contextWindow")),
     ...optionalField("reasoning", record["reasoning"]),
     enabled: requireBoolean(record, "enabled"),
+    ...optionalField("editable", optionalBoolean(record, "editable")),
     ...optionalField("catalogIndex", record["catalogIndex"] === undefined ? undefined : requireNonNegativeSafeInteger(record, "catalogIndex")),
   };
 }

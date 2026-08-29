@@ -1,5 +1,37 @@
 # @jmfederico/pi-web
 
+## 1.202608.2
+
+### Upgrade warnings
+
+- **Breaking project-trust default — existing projects may need to be trusted again:** PI WEB now always enforces Pi's project-trust model and removes the `respectProjectTrust` opt-in environment variable and config key. After upgrading, a workspace without a saved trust decision becomes untrusted, so its project-local `.pi/` resources do not load until you trust the workspace from the workspace menu or while adding the project, or set `defaultProjectTrust` to `always`.
+- **Restart the session daemon after upgrading** on every machine so the project-trust enforcement, enabled-model synchronization, Pi version reporting, and Relay package auto-installation take effect.
+
+### Patch Changes
+
+- 62f704a: Add a search box to the provider selection list in the authentication dialog, so long subscription/credential provider lists can be narrowed by name or id. The search also applies to the stored-credential removal step.
+- 2d60542: Make `pi-web doctor` exit nonzero when an installed Web/UI or session daemon component is unavailable or stale (restart needed), instead of only reporting it in the version section. Machines with no PI WEB services installed keep the previous informational behavior.
+- 0b6497b: Trim surrounding whitespace from the path when adding a project, so the stored project matches the path the trust preview showed and no whitespace-padded folder is created.
+- e31d283: Fix the Add Project dialog showing "Loading folders…" forever without folder suggestions once a path was typed.
+- 70cb7ee: Fix pending file/image attachments in the chat composer leaking into other sessions when switching sessions, or vanishing while a new session was still being provisioned.
+- 7344b31: Fix the prompt editor caret height before any text is entered, and keep the caret and selection highlight colors readable in every theme.
+- 321de5d: Honor pi's global and project `enabledModels` settings in session model selection and cycling.
+- 3369cc9: **Breaking change — existing projects may need to be trusted again.** PI WEB now always honors Pi's project-trust model and removes the `respectProjectTrust` opt-in environment variable and config key. After upgrading, an existing workspace without a saved trust decision becomes untrusted by default, so its project-local `.pi/` resources — settings, extensions, skills, prompts, themes, `SYSTEM.md`, and `APPEND_SYSTEM.md` — do not load until you trust the workspace or set `defaultProjectTrust` to `always`.
+
+  At session start, project-local `.pi/` resources load only when the workspace is trusted. Trust is resolved the way `pi` resolves it with no browser prompt: a saved decision in the agent directory's `trust.json` wins, a user/global extension may decide through the `project_trust` event (and request that the choice be remembered), and otherwise `defaultProjectTrust` applies. With `ask` or no decision, a workspace is untrusted, matching headless `pi`.
+
+  You can trust a workspace from the new workspace-menu toggle or when adding a project; both link to the project-trust documentation. The trust routes are federated, so the toggle reads and stores the decision on the machine where the workspace runs.
+
+- 6db7a72: Report the Pi coding agent version in use: the Info panel and its diagnostics action now show the Pi version loaded by each PI WEB component (flagging when the session daemon runs a different one), the status/version API exposes it per component, and the `pi-web` CLI version report prints it.
+- 5ceeeac: Keep the session bulk-selection toolbar visible while scrolling and use consistent scroll-edge shadows as project, workspace, and session rows pass beneath fixed navigation controls.
+- 679a956: Add an Enabled / All models toggle to the session model picker. All-models mode lists the machine's full model catalog — enabled models first — with a per-model checkbox that adds or removes the model from Pi's enabled-models list (the same setting the Pi TUI edits), and search keeps filtering in both modes. Picking a model keeps its current behavior.
+- e71cc3c: Improve the model picker's All models view with stable natural row positions and an atomic Select all / Deselect all action. Membership edits now preserve the user's scroll position instead of moving the edited model, and rows change availability without switching models or closing the dialog.
+- db0202c: Make the shipped Relay prompts preserve a minimal agreed scope, apply a proportionate quality bar that favors observable and recoverable failure over speculative edge-case automation, plan adaptive context-contained legs instead of a fixed session sequence, carry review dispositions across reviewers, permit explicitly bounded transitional checkpoints, discover each repository's delivery workflow, keep whole-work review report-only, and track structured handoff identifiers durably.
+- 1e52e0b: Recognize Relay handoff session names whose leg identifiers contain letters or dashes.
+- fb0b28e: Ship Relay as the standalone `@jmfederico/pi-relay` Pi package, sourced from `pi-packages/relays/` and included at `dist/pi-packages/relays/`. Installing the package provides `/relay`, `/relay-worktree`, the `relay` skill, and the Relays PI WEB browser panel/action; Pi package removal removes those package contributions, while `plugins.relays.enabled` only shows or hides the browser panel/action. At session-daemon startup, PI WEB auto-installs Relay for the active agent profile unless that profile previously removed it from **Settings → Pi packages**, and **Available packages** offers one-click reinstall. The shipped path also supports explicit `pi install <path>` outside PI WEB; publishing `@jmfederico/pi-relay` to npm remains deferred.
+- b4f68fb: Fix `pi-web restart` on macOS reporting success while LaunchAgents could disappear: the CLI now waits for each `launchctl bootout` to finish unloading before re-bootstrapping the service instead of racing launchd's asynchronous teardown, and the install path settles the same way. `pi-web start` and `pi-web restart` now also verify on macOS and Linux that each service is actually running and responsive (web/API endpoint, session daemon health), exiting nonzero and naming the unready service instead of succeeding silently. These readiness checks and `pi-web doctor` automatically use the custom config path persisted by `pi-web install --config` unless the command is invoked with a nonempty `PI_WEB_CONFIG` override, and fail safely when the service manager has a conflicting loaded definition; malformed systemd environment entries are rejected without stalling lifecycle commands.
+- 5d40701: Synchronize global enabled-model selections across active sessions without requiring sessions to be reopened, while keeping workspace `.pi/settings.json` overrides isolated and read-only in the picker.
+
 ## 1.202608.1
 
 ### Upgrade warnings

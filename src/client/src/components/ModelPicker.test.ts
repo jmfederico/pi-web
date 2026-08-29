@@ -71,6 +71,26 @@ describe("model-picker All models mode", () => {
     expect(membershipButton(currentRow).disabled).toBe(true);
   });
 
+  it("makes membership controls read-only for a workspace settings override", async () => {
+    const picker = await mountPicker({
+      selectedValue: "openai/gpt-5",
+      catalog: defaultCatalog().map((row) => ({ ...row, editable: false })),
+      onToggleEnabled: vi.fn(),
+      onSetScope: vi.fn(),
+    });
+    scopeToggle(picker, "All models").click();
+    await settleRenderedDialog(picker);
+
+    expect(toggleAllButton(picker).disabled).toBe(true);
+    const notice = requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-notice"), "project override notice");
+    expect(notice.textContent).toContain("Project override");
+    expect(notice.textContent).toContain(".pi/settings.json");
+    expect(notice.textContent).toContain("Model availability selection is disabled");
+    expect(requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-status"), "model scope status").textContent).toBe("Workspace settings control model availability");
+    expect(catalogRows(picker).every((row) => rowCheckbox(row).disabled && membershipButton(row).disabled)).toBe(true);
+    expect(scopeToggle(picker, "Enabled").disabled).toBe(false);
+  });
+
   it("uses one atomic action to narrow the scope and blocks overlapping edits while pending", async () => {
     let resolveScope: (() => void) | undefined;
     const onSetScope = vi.fn(() => new Promise<void>((resolve) => { resolveScope = resolve; }));

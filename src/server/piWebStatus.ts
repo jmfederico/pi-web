@@ -294,7 +294,11 @@ async function detectPiPackageInstallation(realRoot: string, displayPath: string
       const installedPath = configuredPackage.installedPath ?? packageManager.getInstalledPath(configuredPackage.source, configuredPackage.scope);
       if (installedPath === undefined) continue;
       const realInstalledPath = await realPathOrSelf(installedPath);
-      if (isSameOrWithin(realInstalledPath, realRoot) || isSameOrWithin(realRoot, realInstalledPath)) {
+      // PI WEB is a Pi package only when its own root is the installed package or
+      // sits inside it. The reverse never holds: a package vendored *inside* the
+      // checkout (PI WEB ships one at dist/pi-packages/relays) is a payload PI WEB
+      // carries, not the installation PI WEB was delivered by.
+      if (isSameOrWithin(realInstalledPath, realRoot)) {
         return { kind: "pi-package", path: displayPath, source: configuredPackage.source, scope: configuredPackage.scope };
       }
     }

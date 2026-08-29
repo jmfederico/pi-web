@@ -10,6 +10,42 @@ afterEach(() => {
 });
 
 describe("PiWebApp workspace topology refresh wiring", () => {
+  it("refreshes a visible idle selected transcript", async () => {
+    const app = createApp();
+    selectSessionForPolling(app);
+    vi.stubGlobal("document", { visibilityState: "visible" });
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (!hasSelectedSessionRefresh(sessions)) throw new Error("PiWebApp SessionController was unavailable");
+    const refresh = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
+    const tick: unknown = Reflect.get(app, "refreshSelectedTranscript");
+    if (typeof tick !== "function") throw new Error("Selected transcript refresh was unavailable");
+
+    await tick.call(app);
+
+    expect(refresh).toHaveBeenCalledOnce();
+    // The timer-driven poll is a best-effort background refresh: failures must
+    // not churn the global error state.
+    expect(refresh).toHaveBeenCalledWith("session-1", { silent: true });
+  });
+
+  it.each([
+    ["hidden document", { visibilityState: "hidden", isStreaming: false }],
+    ["active session", { visibilityState: "visible", isStreaming: true }],
+  ])("does not poll a %s", async (_label: string, options: { visibilityState: string; isStreaming: boolean }) => {
+    const app = createApp();
+    selectSessionForPolling(app, options.isStreaming);
+    vi.stubGlobal("document", { visibilityState: options.visibilityState });
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (!hasSelectedSessionRefresh(sessions)) throw new Error("PiWebApp SessionController was unavailable");
+    const refresh = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
+    const tick: unknown = Reflect.get(app, "refreshSelectedTranscript");
+    if (typeof tick !== "function") throw new Error("Selected transcript refresh was unavailable");
+
+    await tick.call(app);
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
   it("re-lists the selected project's workspaces on the browser-resume refresh", async () => {
     const app = createApp();
     stubBackgroundRefreshes(app);
@@ -53,6 +89,16 @@ function createApp(): PiWebApp {
   };
   vi.stubGlobal("window", { location: { search: "" }, localStorage: storage });
   return new PiWebApp();
+}
+
+function selectSessionForPolling(app: PiWebApp, isStreaming = false): void {
+  const state: unknown = Reflect.get(app, "state");
+  if (typeof state !== "object" || state === null) throw new Error("PiWebApp state was unavailable");
+  Reflect.set(app, "state", {
+    ...state,
+    selectedSession: { id: "session-1", cwd: "/workspace", archived: false },
+    status: { isStreaming, isCompacting: false, isBashRunning: false, pendingMessageCount: 0 },
+  });
 }
 
 /**
@@ -111,4 +157,8 @@ async function refreshAppData(app: PiWebApp): Promise<void> {
 
 function isRefreshCallback(value: unknown): value is RefreshCallback {
   return typeof value === "function";
+}
+
+function hasSelectedSessionRefresh(value: unknown): value is { refreshSelectedSession(): Promise<void> } {
+  return typeof value === "object" && value !== null && "refreshSelectedSession" in value && typeof value.refreshSelectedSession === "function";
 }

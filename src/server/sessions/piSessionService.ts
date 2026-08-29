@@ -88,7 +88,7 @@ import {
 } from "./sessionNotificationStore.js";
 import { plainTextTheme } from "./plainTextTheme.js";
 import { SessionUnreadStore, type SessionUnreadMutation } from "./sessionUnreadStore.js";
-import { applyEnabledModelToggle, catalogWithEnabledFirst, liveScopedModelIds, modelScopeId, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions, type EnabledModelCatalogEntry } from "./sessionModelScope.js";
+import { applyEnabledModelToggle, catalogWithEnabledFirst, modelScopeId, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions, scopedModelsFromEnabledIds, type EnabledModelCatalogEntry } from "./sessionModelScope.js";
 
 /**
  * Minimal structured-logging seam, shaped like Fastify's logger so sessiond can
@@ -117,6 +117,15 @@ const STARTUP_PHASE_EXTENSIONS = "Loading session extensions";
 const STARTUP_CONCURRENT_CATALOG_REFRESH = "provider model lists are refreshing";
 const MAX_UNREAD_PUBLICATION_RETRY_MS = 30_000;
 const MAX_PENDING_UNREAD_MUTATIONS = SESSION_UNREAD_LIMIT + 1;
+/**
+ * Upper bound on how often one idle runtime re-resolves its transcript file.
+ * A runtime created in memory and never persisted has no session file, so
+ * every poll would otherwise rescan the session directory; throttling keeps
+ * steady-state polling of such a session O(1). The window can only delay
+ * noticing a file the runtime did not write itself: once the runtime
+ * persists, `getSessionFile()` answers and this throttle is bypassed.
+ */
+const IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS = 30_000;
 
 function noop(): void {
   // Intentionally empty default unsubscribe callback.
@@ -333,6 +342,28 @@ interface BulkDeletePlanItem {
 
 type AgentModel = NonNullable<SpawnSessionInvocation["model"]>;
 
+type ModelScopeSource = "global" | "workspace";
+
+interface ModelScopeContext {
+  key: string;
+  source: ModelScopeSource;
+  /** Global scope controls are writable through the PI WEB picker. */
+  editable: boolean;
+}
+
+interface ModelScopeSnapshot {
+  /** Effective provider/model ids; null means every catalog model is enabled. */
+  enabledIds: readonly string[] | null;
+  /** Monotonic revision for this global or workspace scope. */
+  revision: number;
+}
+
+interface SessionModelScopeCache {
+  scopeKey: string;
+  revision: number;
+  catalogKey: string;
+}
+
 export interface PiSessionManager {
   getCwd(): string;
   getSessionId(): string;
@@ -360,6 +391,13 @@ export interface PiSessionManagerGateway {
    * told explicitly.
    */
   invalidateSessionFile(sessionFile: string): void;
+  /**
+   * Read the active transcript branch without creating a runtime or writing the file.
+   * Resolves `undefined` when the transcript file is absent (never persisted or
+   * externally removed): there is no disk snapshot, and the runtime branch
+   * stays authoritative.
+   */
+  readBranch?(path: string): Promise<unknown[] | undefined>;
   create(cwd: string, options?: { parentSession?: string }): PiSessionManager;
   /**
    * Cross-project listing of Pi's session stores (the default store plus any
@@ -391,13 +429,15 @@ export interface PiAgentSession {
    * suppression flags consumed here (e.g. `anthropicExtraUsage`) and pi's
    * `enabledModels` model-scope setting. The warnings gate the Anthropic
    * subscription-auth billing warning the same way the TUI does; the enabled
-   * models let the model picker read and edit pi's model scope (shared with
-   * the pi TUI) the way `showModelsSelector` does.
+   * models let the model picker read the effective scope and edit the global
+   * scope (shared with the pi TUI) the way `showModelsSelector` does. A
+   * workspace override is exposed separately and remains read-only.
    */
   settingsManager: {
     getWarnings(): { anthropicExtraUsage?: boolean };
     setWarnings(warnings: { anthropicExtraUsage?: boolean }): void;
     getEnabledModels(): string[] | undefined;
+    getProjectSettings?(): object;
     setEnabledModels(patterns: string[] | undefined): void;
   };
   sessionManager: PiSessionManager;
@@ -1090,6 +1130,14 @@ export class PiSessionService implements SessionRouteService {
   private readonly sessionEntryMutationCounts = new WeakMap<PiAgentSession, number>();
   /** Settings-wide queue preventing enabled-model read/modify/write races across sessions. */
   private modelScopeMutationQueue: Promise<void> = Promise.resolve();
+  /** Global and workspace-owned enabled-model states; live session scopes project one entry lazily. */
+  private readonly modelScopeStates = new Map<string, ModelScopeSnapshot>();
+  /** Coalesces initialization reads independently for the global and each workspace scope. */
+  private readonly modelScopeInitializations = new Map<string, Promise<ModelScopeSnapshot>>();
+  /** Monotonic revision published for global scope changes and consumed by clients. */
+  private modelScopeRevision = 0;
+  /** Last scope/catalog revision projected into each runtime, synchronized lazily on use. */
+  private readonly modelScopeCache = new WeakMap<PiAgentSession, SessionModelScopeCache>();
   /** Runtime/session-identity reservations for operations that must not overlap tree navigation. */
   private readonly treeExclusiveRuntimeOperationCounts = new WeakMap<PiSessionRuntime, number>();
   private readonly treeExclusiveSessionOperationCounts = new Map<string, number>();
@@ -1124,6 +1172,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly now: () => Date;
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
+  /** Last idle-poll transcript file resolution per runtime, throttled; entries die with their runtime. */
+  private readonly idleSessionFileResolutions = new WeakMap<PiAgentSession, { at: number; path: string | undefined }>();
   private readonly unreadStore: SessionUnreadStore;
   private readonly pendingAskStore: PendingAskStore;
   private readonly pendingExtensionDialogStore: PendingExtensionDialogStore;
@@ -1494,29 +1544,91 @@ export class PiSessionService implements SessionRouteService {
   }
 
   /**
-   * The models a session may pick from: its scoped set when model-scoped,
-   * otherwise the runtime's available snapshot. Refreshes the runtime catalog
-   * first so callers see newly configured providers and models. The refresh
-   * stays local (`allowNetwork: false`); network refreshes belong to the
-   * bounded background catalog refresher, not this request path.
+   * Resolve the settings domain for a session. Pi's settings manager deep-merges
+   * objects, but an `enabledModels` array in `.pi/settings.json` replaces the
+   * global array, so that workspace gets its own effective scope and is not
+   * affected by global picker edits.
+   */
+  private modelScopeContext(session: PiAgentSession): ModelScopeContext {
+    const projectSettings = session.settingsManager.getProjectSettings?.() ?? {};
+    if (!Object.hasOwn(projectSettings, "enabledModels")) {
+      return { key: "global", source: "global", editable: true };
+    }
+    const workspace = canonicalizeStoredCwd(session.sessionManager.getCwd());
+    return { key: `workspace:${workspace}`, source: "workspace", editable: false };
+  }
+
+  /**
+   * Read the effective scope for one settings domain. Global sessions share one
+   * snapshot; project-overridden sessions share a snapshot keyed by workspace.
+   * Neither path enumerates or mutates other active sessions.
+   */
+  private async modelScopeSnapshot(session: PiAgentSession, context = this.modelScopeContext(session)): Promise<ModelScopeSnapshot> {
+    const existing = this.modelScopeStates.get(context.key);
+    if (existing !== undefined) return existing;
+    const pending = this.modelScopeInitializations.get(context.key);
+    if (pending !== undefined) return pending;
+    const initialization = (async () => {
+      const enabledIds = await resolveEnabledModelIds(sessionScopeSource(session));
+      const snapshot: ModelScopeSnapshot = {
+        enabledIds: enabledIds === null ? null : [...enabledIds],
+        revision: 0,
+      };
+      this.modelScopeStates.set(context.key, snapshot);
+      return snapshot;
+    })();
+    this.modelScopeInitializations.set(context.key, initialization);
+    try {
+      return await initialization;
+    } finally {
+      if (this.modelScopeInitializations.get(context.key) === initialization) this.modelScopeInitializations.delete(context.key);
+    }
+  }
+
+  /**
+   * Project one settings-domain scope into one SDK session only when that
+   * session is used. `PiAgentSession` needs an in-memory array for cycling, but
+   * that array is a cache; the keyed snapshot above is the source of truth.
+   */
+  private async synchronizeSessionModelScope(session: PiAgentSession, available: readonly AgentModel[]): Promise<void> {
+    const context = this.modelScopeContext(session);
+    const snapshot = await this.modelScopeSnapshot(session, context);
+    const catalogKey = available.map(modelScopeId).join("\0");
+    const cached = this.modelScopeCache.get(session);
+    if (cached?.scopeKey === context.key && cached.revision === snapshot.revision && cached.catalogKey === catalogKey) return;
+    session.setScopedModels(scopedModelsFromEnabledIds(available, snapshot.enabledIds, session.scopedModels));
+    this.modelScopeCache.set(session, { scopeKey: context.key, revision: snapshot.revision, catalogKey });
+  }
+
+  /**
+   * The models a session may pick from: its synchronized scoped set when
+   * model-scoped, otherwise the runtime's available snapshot. Refreshes the
+   * shared runtime catalog first so callers see newly configured providers and
+   * models. The refresh stays local (`allowNetwork: false`); network refreshes
+   * belong to the bounded background catalog refresher, not this request path.
    */
   private async sessionModelCandidates(session: PiAgentSession): Promise<readonly AgentModel[]> {
     await session.modelRuntime.refresh({ allowNetwork: false });
+    const available = session.modelRuntime.getAvailableSnapshot();
+    await this.synchronizeSessionModelScope(session, available);
     return session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
-      : session.modelRuntime.getAvailableSnapshot();
+      : available;
   }
 
   /**
    * The session machine's full available catalog with per-model enabled state,
    * ordered enabled-first for scope semantics while retaining each model's
-   * natural catalog index for stable picker placement. Reads the snapshot after
-   * every refresh so the rows and enabled-id resolution describe the same catalog.
+   * natural catalog index for stable picker placement. The enabled state comes
+   * from the keyed scope snapshot rather than a session-local SettingsManager.
    */
   private async enabledModelCatalog(session: PiAgentSession): Promise<EnabledModelCatalogEntry<AgentModel>[]> {
     await session.modelRuntime.refresh({ allowNetwork: false });
-    const enabledIds = await resolveEnabledModelIds(sessionScopeSource(session));
-    return catalogWithEnabledFirst(session.modelRuntime.getAvailableSnapshot(), enabledIds);
+    const available = session.modelRuntime.getAvailableSnapshot();
+    await this.synchronizeSessionModelScope(session, available);
+    const context = this.modelScopeContext(session);
+    const enabledIds = (await this.modelScopeSnapshot(session, context)).enabledIds;
+    return catalogWithEnabledFirst(available, enabledIds);
   }
 
   private runModelScopeMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -1525,25 +1637,29 @@ export class PiSessionService implements SessionRouteService {
     return queued;
   }
 
-  /** Persist one complete enabled-model selection and apply its live cycling scope. */
+  /** Persist one global enabled-model selection and publish its new revision. */
   private applyEnabledModelScope(
     session: PiAgentSession,
     available: readonly AgentModel[],
     enabledIds: readonly string[] | null,
   ): void {
     const availableIds = available.map(modelScopeId);
-    const scopeIds = liveScopedModelIds(enabledIds, availableIds);
-    const modelsById = new Map(available.map((model) => [modelScopeId(model), model]));
-    // enabledIds can carry stale configured patterns. Exact lookup drops those
-    // from the live scope while persistence keeps them for per-row edits.
-    const scoped = scopeIds === null
-      ? []
-      : scopeIds.flatMap((id) => {
-        const model = modelsById.get(id);
-        return model === undefined ? [] : [{ model }];
-      });
-    session.settingsManager.setEnabledModels(persistedEnabledModelPatterns(enabledIds, availableIds));
-    session.setScopedModels(scoped);
+    const persisted = persistedEnabledModelPatterns(enabledIds, availableIds);
+    const nextState: ModelScopeSnapshot = {
+      // Pi normalizes a scope covering the complete current catalog to an
+      // omitted setting, which is the global canonical all-enabled state.
+      enabledIds: persisted === undefined ? null : enabledIds === null ? [] : [...enabledIds],
+      revision: ++this.modelScopeRevision,
+    };
+    session.settingsManager.setEnabledModels(persisted);
+    this.modelScopeStates.set("global", nextState);
+    session.setScopedModels(scopedModelsFromEnabledIds(available, nextState.enabledIds, session.scopedModels));
+    this.modelScopeCache.set(session, {
+      scopeKey: "global",
+      revision: nextState.revision,
+      catalogKey: available.map(modelScopeId).join("\0"),
+    });
+    this.events.publishGlobal({ type: "models.changed", revision: nextState.revision });
   }
 
   /**
@@ -2137,11 +2253,14 @@ export class PiSessionService implements SessionRouteService {
 
   async messages(ref: PiSessionRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage> {
     const session = await this.getOrOpen(ref);
-    return pageMessagesAtSafeBoundary(historyMessages(session), page);
+    return pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
   }
 
   async status(ref: PiSessionRef): Promise<ClientSessionStatus> {
-    return this.statusFromSession(await this.sessionForStatusOrDialogClose(ref));
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    if (this.hasActiveWork(session)) return this.statusFromSession(session);
+    const branch = await this.readableSessionBranch(ref, session);
+    return this.statusFromSession(session, transcriptMessageCount(branch));
   }
 
   /**
@@ -2172,25 +2291,24 @@ export class PiSessionService implements SessionRouteService {
 
   async modelCatalog(ref: PiSessionRef): Promise<ClientSessionModelCatalogEntry[]> {
     const session = await this.getOrOpen(ref);
-    return (await this.enabledModelCatalog(session)).map(catalogEntryToClientModel);
+    const scope = this.modelScopeContext(session);
+    return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry, scope.editable));
   }
 
   /**
-   * Add/remove one model to/from pi's `enabledModels` scope, the way pi's own
-   * models selector does: the checkbox edit applies to the effective enabled
-   * ids (live scope, else configured patterns, else all), persists through the
-   * session's `SettingsManager` with pi's "everything enabled" → `undefined`
-   * normalization, and updates the live session's cycling scope so the change
-   * takes effect without a session restart. Scope is selection UX only — never
-   * an authorization boundary. Returns the updated full catalog.
+   * Add/remove one model to/from the global pi `enabledModels` scope. A
+   * workspace `.pi/settings.json` override remains authoritative for that
+   * workspace and is intentionally read-only in this picker.
    */
   async setModelEnabled(ref: PiSessionRef, provider: string, modelId: string, enabled: boolean): Promise<ClientSessionModelCatalogEntry[]> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
+      const scope = this.modelScopeContext(session);
+      if (scope.source !== "global") throw new Error("Model availability is controlled by this workspace's .pi/settings.json");
       this.assertTreeNavigationInactive(session, "change enabled models");
       await session.modelRuntime.refresh({ allowNetwork: false });
-      const currentIds = await resolveEnabledModelIds(sessionScopeSource(session));
+      const currentIds = (await this.modelScopeSnapshot(session, scope)).enabledIds;
       const available = session.modelRuntime.getAvailableSnapshot();
       const availableIds = available.map(modelScopeId);
       const targetId = `${provider}/${modelId}`;
@@ -2201,19 +2319,19 @@ export class PiSessionService implements SessionRouteService {
       const nextIds = applyEnabledModelToggle(currentIds, availableIds, targetId, enabled);
       this.assertTreeNavigationInactive(session, "change enabled models");
       if (nextIds !== currentIds) this.applyEnabledModelScope(session, available, nextIds);
-      // Respond from a fresh post-edit read (settings + live scope) so the
-      // response is exactly what GET models/catalog returns after the edit,
-      // including pi's normalizations (re-enabling everything collapses the
-      // scope, and an emptied list reads back as "all enabled").
-      return (await this.enabledModelCatalog(session)).map(catalogEntryToClientModel);
+      // Respond from a fresh post-edit read so the response is exactly what
+      // GET models/catalog returns after the edit, including pi's normalizations.
+      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
     });
   }
 
-  /** Atomically expose every model or narrow the enabled scope to the current model. */
+  /** Atomically expose every model or narrow the global enabled scope to the current model. */
   async setModelScope(ref: PiSessionRef, mode: SessionModelScopeMode): Promise<ClientSessionModelCatalogEntry[]> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     return this.runModelScopeMutation(async () => {
+      const scope = this.modelScopeContext(session);
+      if (scope.source !== "global") throw new Error("Model availability is controlled by this workspace's .pi/settings.json");
       this.assertTreeNavigationInactive(session, "change enabled models");
       await session.modelRuntime.refresh({ allowNetwork: false });
       const available = session.modelRuntime.getAvailableSnapshot();
@@ -2228,7 +2346,7 @@ export class PiSessionService implements SessionRouteService {
       }
       this.assertTreeNavigationInactive(session, "change enabled models");
       this.applyEnabledModelScope(session, available, nextIds);
-      return (await this.enabledModelCatalog(session)).map(catalogEntryToClientModel);
+      return (await this.enabledModelCatalog(session)).map((entry) => catalogEntryToClientModel(entry));
     });
   }
 
@@ -2250,7 +2368,11 @@ export class PiSessionService implements SessionRouteService {
   async cycleModel(ref: PiSessionRef, direction: "forward" | "backward"): Promise<ClientSessionStatus> {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
-    const result = await this.runSessionEntryMutation(session, "change models", () => session.cycleModel(direction));
+    const result = await this.runModelScopeMutation(async () => {
+      await session.modelRuntime.refresh({ allowNetwork: false });
+      await this.synchronizeSessionModelScope(session, session.modelRuntime.getAvailableSnapshot());
+      return this.runSessionEntryMutation(session, "change models", () => session.cycleModel(direction));
+    });
     if (result === undefined) throw new Error(session.scopedModels.length > 0 ? "Only one model in scope" : "Only one model available");
     this.publishActivity(session, `model: ${result.model.id}`, "idle", result.model.provider);
     this.publishStatus(session);
@@ -3066,6 +3188,46 @@ export class PiSessionService implements SessionRouteService {
 
   private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
     return (await this.getActive(ref)).runtime.session;
+  }
+
+  /**
+   * An idle runtime is only Pi Web's cached control view. Another Pi process may
+   * keep appending to the same JSONL file, so transcript reads must open a fresh
+   * read-only snapshot rather than serving that cached branch forever. Active
+   * runtimes remain authoritative and are never replaced, reloaded, or aborted.
+   */
+  private async readableSessionBranch(ref: PiSessionRef, session: PiAgentSession): Promise<unknown[]> {
+    if (this.hasActiveWork(session) || this.sessionManager.readBranch === undefined) return session.sessionManager.getBranch();
+    const sessionFile = session.sessionFile ?? session.sessionManager.getSessionFile();
+    const resolvedPath = sessionFile === undefined ? await this.idleSessionFilePath(ref, session) : undefined;
+    if (this.hasActiveWork(session)) return session.sessionManager.getBranch();
+    const path = sessionFile ?? resolvedPath;
+    if (path === undefined) return session.sessionManager.getBranch();
+    const snapshot = await this.sessionManager.readBranch(path);
+    // No snapshot exists when the transcript file is absent (a session known
+    // by path but never persisted, or externally removed): the runtime branch
+    // is the only readable branch then.
+    if (snapshot === undefined) return session.sessionManager.getBranch();
+    // Reading also yields. A prompt that started meanwhile must still win over
+    // the completed disk snapshot and its potentially older event watermark.
+    return this.hasActiveWork(session) ? session.sessionManager.getBranch() : snapshot;
+  }
+
+  /**
+   * Resolve the transcript file for an idle runtime that does not know one,
+   * at most once per {@link IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS}. The
+   * negative result (no file yet) is the hot case: a never-persisted session
+   * is polled every few seconds, and re-scanning its directory each tick is
+   * pure waste. `getActive` never uses this path, so prompt routing always
+   * sees a fresh resolution.
+   */
+  private async idleSessionFilePath(ref: PiSessionRef, session: PiAgentSession): Promise<string | undefined> {
+    const cached = this.idleSessionFileResolutions.get(session);
+    const at = this.now().getTime();
+    if (cached !== undefined && at - cached.at < IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS) return cached.path;
+    const match = await this.sessionManager.resolveSessionFile(ref.cwd, ref.id);
+    this.idleSessionFileResolutions.set(session, { at, path: match?.path });
+    return match?.path;
   }
 
   private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
@@ -3940,7 +4102,7 @@ export class PiSessionService implements SessionRouteService {
     this.events.publishGlobal({ type: "activity.update", activity });
   }
 
-  private statusFromSession(session: PiAgentSession): ClientSessionStatus {
+  private statusFromSession(session: PiAgentSession, messageCount = session.messages.length): ClientSessionStatus {
     const stats = session.getSessionStats();
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
@@ -3957,7 +4119,7 @@ export class PiSessionService implements SessionRouteService {
       isBashRunning: session.isBashRunning,
       pendingMessageCount: this.pendingMessageCount(session),
       queuedMessages: queuedMessagesFromSession(session, this.compactionQueuedMessages(session.sessionId)),
-      messageCount: session.messages.length,
+      messageCount,
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
@@ -4058,13 +4220,14 @@ function sessionScopeSource(session: PiAgentSession): { settingsManager: PiAgent
   return { settingsManager: session.settingsManager, modelRuntime: session.modelRuntime, scopedModels: session.scopedModels };
 }
 
-function catalogEntryToClientModel(entry: EnabledModelCatalogEntry<AgentModel>): ClientSessionModelCatalogEntry {
+function catalogEntryToClientModel(entry: EnabledModelCatalogEntry<AgentModel>, editable = true): ClientSessionModelCatalogEntry {
   return {
     ...modelToClientModel(entry.model),
     provider: entry.model.provider,
     id: entry.model.id,
     enabled: entry.enabled,
     catalogIndex: entry.catalogIndex,
+    ...(editable ? {} : { editable: false }),
   };
 }
 
@@ -4471,11 +4634,15 @@ function annotateAssistantThinkingLevel(message: unknown, thinkingLevel: string 
 }
 
 function historyMessages(session: PiAgentSession): unknown[] {
+  return historyMessagesFromEntries(session.sessionManager.getBranch());
+}
+
+function historyMessagesFromEntries(entries: readonly unknown[]): unknown[] {
   const messages: unknown[] = [];
   // Pi records the initial level at session creation and every later change, so
   // walking the branch yields the level in effect for each assistant message.
   let thinkingLevel: string | undefined;
-  for (const entry of session.sessionManager.getBranch()) {
+  for (const entry of entries) {
     if (!isRecord(entry)) continue;
     if (entry["type"] === "message") messages.push(annotateAssistantThinkingLevel(entry["message"], thinkingLevel));
     else if (entry["type"] === "thinking_level_change") {
@@ -4487,6 +4654,14 @@ function historyMessages(session: PiAgentSession): unknown[] {
     else if (entry["type"] === "branch_summary") messages.push({ role: "system", source: "branch_summary", content: `Branch summary:\n\n${stringValue(entry["summary"])}` });
   }
   return messages;
+}
+
+function transcriptMessageCount(entries: readonly unknown[]): number {
+  let count = 0;
+  for (const entry of entries) {
+    if (isRecord(entry) && entry["type"] === "message") count += 1;
+  }
+  return count;
 }
 
 /** custom entry type used to persist parent -> child subsession links outside LLM context. */

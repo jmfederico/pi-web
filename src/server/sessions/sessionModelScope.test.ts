@@ -6,7 +6,7 @@ import { ModelRuntime, ProjectTrustStore, SessionManager, SettingsManager } from
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, sessionGateway } from "./piSessionService.testSupport.js";
-import { applyEnabledModelToggle, catalogWithEnabledFirst, liveScopedModelIds, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions } from "./sessionModelScope.js";
+import { applyEnabledModelToggle, catalogWithEnabledFirst, liveScopedModelIds, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions, scopedModelsFromEnabledIds } from "./sessionModelScope.js";
 
 const PROVIDER = "anthropic";
 const FIRST_MODEL = "claude-opus-4-6";
@@ -284,6 +284,22 @@ describe("liveScopedModelIds", () => {
 
   it("scopes the session to a partial enabled list", () => {
     expect(liveScopedModelIds(["anthropic/b"], available)).toEqual(["anthropic/b"]);
+  });
+});
+
+describe("scopedModelsFromEnabledIds", () => {
+  const available = [
+    { provider: "anthropic", id: "a" },
+    { provider: "anthropic", id: "b" },
+  ];
+
+  it("resolves a partial scope while dropping stale ids", () => {
+    expect(scopedModelsFromEnabledIds(available, ["anthropic/b", "anthropic/gone"]).map(({ model }) => `${model.provider}/${model.id}`)).toEqual(["anthropic/b"]);
+  });
+
+  it("returns an empty SDK scope when every model is enabled", () => {
+    expect(scopedModelsFromEnabledIds(available, null)).toEqual([]);
+    expect(scopedModelsFromEnabledIds(available, ["anthropic/a", "anthropic/b"])).toEqual([]);
   });
 });
 

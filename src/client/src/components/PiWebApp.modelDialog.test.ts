@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionInfo, SessionModel, SessionStatus } from "../api";
+import type { SessionInfo, SessionModel, SessionModelCatalogEntry, SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { SessionController } from "../controllers/sessionController";
 import { PiWebApp } from "./PiWebApp";
@@ -45,6 +45,92 @@ describe("PiWebApp model dialog", () => {
       { value: "anthropic/claude-sonnet-4-5", label: "claude-sonnet-4-5", description: "anthropic" },
     ]);
     expect(dialog?.catalog).toEqual(catalog);
+  });
+
+  it("refreshes an open dialog after a global model-scope change", async () => {
+    const app = new PiWebApp();
+    const selectedSession = session("session-1");
+    setAppState(app, {
+      selectedSession,
+      sessions: [selectedSession],
+      status: sessionStatus(selectedSession.id, { provider: "openai", id: "gpt-5" }),
+      modelDialog: {
+        instanceId: 1,
+        origin: modelDialogOrigin,
+        title: "Select Model",
+        selectedValue: "openai/gpt-5",
+        options: [{ value: "openai/gpt-5", label: "gpt-5 ✓ current", description: "openai" }],
+        catalog: [{ provider: "openai", id: "gpt-5", enabled: true }],
+      },
+    });
+    const listModels = vi.spyOn(SessionController.prototype, "listModels")
+      .mockResolvedValue([{ provider: "openai", id: "gpt-5" }, { provider: "openai", id: "gpt-4o" }]);
+    const listModelCatalog = vi.spyOn(SessionController.prototype, "listModelCatalog")
+      .mockResolvedValue([
+        { provider: "openai", id: "gpt-5", enabled: true },
+        { provider: "openai", id: "gpt-4o", enabled: true },
+      ]);
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (typeof sessions !== "object" || sessions === null) throw new Error("PiWebApp session controller was unavailable");
+    const applyGlobalEvent: unknown = Reflect.get(sessions, "applyGlobalEvent");
+    if (typeof applyGlobalEvent !== "function") throw new Error("SessionController global event handler was unavailable");
+
+    Reflect.apply(applyGlobalEvent, sessions, [{ type: "models.changed", revision: 2 }]);
+    await vi.waitFor(() => { expect(appModelDialog(app)?.options).toHaveLength(2); });
+
+    expect(listModels).toHaveBeenCalledOnce();
+    expect(listModelCatalog).toHaveBeenCalledOnce();
+    expect(appModelDialog(app)?.options).toEqual([
+      { value: "openai/gpt-5", label: "gpt-5 ✓ current", description: "openai" },
+      { value: "openai/gpt-4o", label: "gpt-4o", description: "openai" },
+    ]);
+    expect(appModelDialog(app)?.catalog).toEqual([
+      { provider: "openai", id: "gpt-5", enabled: true },
+      { provider: "openai", id: "gpt-4o", enabled: true },
+    ]);
+  });
+
+  it("retries dialog loading when a global scope change arrives while it is opening", async () => {
+    const app = new PiWebApp();
+    const selectedSession = session("session-1");
+    setAppState(app, {
+      selectedSession,
+      sessions: [selectedSession],
+      status: sessionStatus(selectedSession.id, { provider: "openai", id: "gpt-5" }),
+    });
+    let resolveInitialModels: ((models: SessionModel[]) => void) | undefined;
+    let resolveInitialCatalog: ((catalog: SessionModelCatalogEntry[]) => void) | undefined;
+    const listModels = vi.spyOn(SessionController.prototype, "listModels").mockImplementation(() => {
+      if (listModels.mock.calls.length > 1) return Promise.resolve([{ provider: "openai", id: "gpt-5" }, { provider: "openai", id: "gpt-4o" }]);
+      return new Promise((resolve) => { resolveInitialModels = resolve; });
+    });
+    const listModelCatalog = vi.spyOn(SessionController.prototype, "listModelCatalog").mockImplementation(() => {
+      if (listModelCatalog.mock.calls.length > 1) {
+        return Promise.resolve([
+          { provider: "openai", id: "gpt-5", enabled: true },
+          { provider: "openai", id: "gpt-4o", enabled: true },
+        ]);
+      }
+      return new Promise((resolve) => { resolveInitialCatalog = resolve; });
+    });
+
+    const pending = callAppMethod(app, "openModelDialog");
+    await vi.waitFor(() => { expect(listModels).toHaveBeenCalledOnce(); });
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (typeof sessions !== "object" || sessions === null) throw new Error("PiWebApp session controller was unavailable");
+    const applyGlobalEvent: unknown = Reflect.get(sessions, "applyGlobalEvent");
+    if (typeof applyGlobalEvent !== "function") throw new Error("SessionController global event handler was unavailable");
+    Reflect.apply(applyGlobalEvent, sessions, [{ type: "models.changed", revision: 2 }]);
+    resolveInitialModels?.([{ provider: "openai", id: "gpt-5" }]);
+    resolveInitialCatalog?.([{ provider: "openai", id: "gpt-5", enabled: true }]);
+    await pending;
+
+    expect(listModels).toHaveBeenCalledTimes(2);
+    expect(listModelCatalog).toHaveBeenCalledTimes(2);
+    expect(appModelDialog(app)?.options).toEqual([
+      { value: "openai/gpt-5", label: "gpt-5 ✓ current", description: "openai" },
+      { value: "openai/gpt-4o", label: "gpt-4o", description: "openai" },
+    ]);
   });
 
   it("discards catalog results when selection changes while the dialog is opening", async () => {

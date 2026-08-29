@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeChatHistory, type RawMessagePage } from "./chatHistoryCache";
+import { isHistoryTailSlice, mergeChatHistory, type RawMessagePage } from "./chatHistoryCache";
 
 function page(start: number, total: number, messages: unknown[]): RawMessagePage {
   return { start, total, messages };
@@ -49,5 +49,44 @@ describe("mergeChatHistory", () => {
     const incoming = page(0, 2, ["fresh-a", "fresh-b"]);
 
     expect(mergeChatHistory(page(0, 2, ["stale-a", "stale-b", "stale-c"]), incoming)).toEqual(incoming);
+  });
+});
+
+describe("isHistoryTailSlice", () => {
+  it("holds when the page is exactly the held history", () => {
+    expect(isHistoryTailSlice(page(0, 2, ["a", "b"]), page(0, 2, ["a", "b"]))).toBe(true);
+  });
+
+  it("holds when the page is the tail of a history extended backwards", () => {
+    expect(isHistoryTailSlice(page(0, 5, ["a", "b", "c", "d", "e"]), page(2, 5, ["c", "d", "e"]))).toBe(true);
+  });
+
+  it("holds for an empty history and an empty page", () => {
+    expect(isHistoryTailSlice(page(0, 0, []), page(0, 0, []))).toBe(true);
+  });
+
+  it("does not hold without held history", () => {
+    expect(isHistoryTailSlice(undefined, page(0, 0, []))).toBe(false);
+  });
+
+  it("does not hold when the transcript grew, even where the pages overlap", () => {
+    expect(isHistoryTailSlice(page(0, 2, ["a", "b"]), page(0, 3, ["a", "b", "c"]))).toBe(false);
+  });
+
+  it("does not hold when the total shrank", () => {
+    expect(isHistoryTailSlice(page(0, 3, ["a", "b", "c"]), page(1, 2, ["b", "c"]))).toBe(false);
+  });
+
+  it("does not hold when tail content differs", () => {
+    expect(isHistoryTailSlice(page(0, 2, ["a", "b"]), page(0, 2, ["a", "edited"]))).toBe(false);
+  });
+
+  it("does not hold when the page reaches before the held history", () => {
+    expect(isHistoryTailSlice(page(2, 5, ["c", "d", "e"]), page(0, 5, ["a", "b"]))).toBe(false);
+  });
+
+  it("does not hold for a page that is not a valid raw message page", () => {
+    const normalizedLine = { role: "assistant", parts: [{ type: "text", text: "display line" }] };
+    expect(isHistoryTailSlice(page(0, 1, ["a"]), page(0, 1, [normalizedLine]))).toBe(false);
   });
 });
