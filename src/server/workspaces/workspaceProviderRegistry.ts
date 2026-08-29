@@ -50,7 +50,7 @@ export interface WorkspaceProviderRegistryLogger {
 export type WorkspacePathInspector = (path: string) => boolean | Promise<boolean>;
 
 export interface WorkspaceProviderRegistryOptions {
-  /** Active contributions from one immutable server-plugin runtime snapshot. */
+  /** Initially eligible provider contributions. Update explicitly after late readiness changes. */
   contributions: readonly ServerPluginProviderContribution[];
   logger: WorkspaceProviderRegistryLogger;
   providerTimeoutMs?: number;
@@ -178,18 +178,28 @@ export function eligibleWorkspaceProviderContributions(
  * list never falls through to a lower-priority provider.
  */
 export class WorkspaceProviderRegistry {
-  private readonly contributions: readonly ServerPluginProviderContribution[];
   private readonly providerTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private readonly pathInspector: WorkspacePathInspector;
   private readonly pendingResolutions = new Map<string, Promise<WorkspaceProviderAuthorityResolution>>();
+  private activeContributions: readonly ServerPluginProviderContribution[];
+  private eligibilityRevision = 0;
 
   constructor(private readonly options: WorkspaceProviderRegistryOptions) {
-    this.contributions = Object.freeze([...options.contributions]
-      .sort((left, right) => left.pluginId.localeCompare(right.pluginId)));
+    this.activeContributions = sortedContributions(options.contributions);
     this.providerTimeoutMs = positiveInteger(options.providerTimeoutMs, DEFAULT_PROVIDER_TIMEOUT_MS, "providerTimeoutMs");
     this.requestTimeoutMs = positiveInteger(options.requestTimeoutMs, PLUGIN_BACKEND_DISPATCH_TIMEOUT_MS, "requestTimeoutMs");
     this.pathInspector = options.pathInspector ?? pathIsDirectory;
+  }
+
+  /** Replace provider eligibility and invalidate every shared in-flight resolution. */
+  updateContributions(contributions: readonly ServerPluginProviderContribution[]): boolean {
+    const next = sortedContributions(contributions);
+    if (sameContributions(this.activeContributions, next)) return false;
+    this.activeContributions = next;
+    this.eligibilityRevision += 1;
+    this.pendingResolutions.clear();
+    return true;
   }
 
   /** Workspace-lister adapter used by spawned-session target validation. */
@@ -204,12 +214,18 @@ export class WorkspaceProviderRegistry {
    * callers observe completion so ownership and topology are never cached.
    */
   async resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution> {
-    const input = snapshotProject(project);
-    const key = workspaceResolutionKey(input);
+    return await this.resolveCurrent(snapshotProject(project));
+  }
+
+  private async resolveCurrent(input: ProjectInput): Promise<WorkspaceProviderAuthorityResolution> {
+    const revision = this.eligibilityRevision;
+    const contributions = this.activeContributions;
+    const key = `${String(revision)}:${workspaceResolutionKey(input)}`;
     const existing = this.pendingResolutions.get(key);
     if (existing !== undefined) return existing;
 
-    const pending = this.resolveSnapshot(input);
+    const pending = this.resolveSnapshot(input, contributions).then(async (resolution) =>
+      revision === this.eligibilityRevision ? resolution : await this.resolveCurrent(input));
     this.pendingResolutions.set(key, pending);
     try {
       return await pending;
@@ -218,11 +234,14 @@ export class WorkspaceProviderRegistry {
     }
   }
 
-  private async resolveSnapshot(input: ProjectInput): Promise<WorkspaceProviderAuthorityResolution> {
+  private async resolveSnapshot(
+    input: ProjectInput,
+    contributions: readonly ServerPluginProviderContribution[],
+  ): Promise<WorkspaceProviderAuthorityResolution> {
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
 
     for (const tier of ["primary", "fallback"] as const) {
-      const selection = await this.selectInTier(input, tier, diagnostics);
+      const selection = await this.selectInTier(input, tier, diagnostics, contributions);
       if (selection.kind === "none") continue;
       if (selection.kind === "conflict") {
         const message = `Workspace provider conflict in ${tier} tier: ${selection.pluginIds.join(", ")}`;
@@ -275,10 +294,12 @@ export class WorkspaceProviderRegistry {
   ): Promise<WorkspaceProviderRemovalTarget> {
     const input = snapshotProject(project);
     if (workspaceId === "") throw providerRemovalError("workspace-not-found", 404, "Workspace not found");
+    const revision = this.eligibilityRevision;
+    const contributions = this.activeContributions;
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
 
     for (const tier of ["primary", "fallback"] as const) {
-      const selection = await this.selectInTier(input, tier, diagnostics, signal);
+      const selection = await this.selectInTier(input, tier, diagnostics, contributions, signal);
       if (selection.kind === "none") continue;
       if (selection.kind === "conflict") {
         throw providerRemovalError(
@@ -329,12 +350,14 @@ export class WorkspaceProviderRegistry {
         );
       }
 
+      this.requireRemovalEligibility(revision, contribution.pluginId);
       const workspaces = Object.freeze(validated.map(({ workspace }) => workspace));
       return Object.freeze({
         ownerPluginId: contribution.pluginId,
         target: current.workspace,
         workspaces,
         prepare: async () => {
+          this.requireRemovalEligibility(revision, contribution.pluginId);
           let value: unknown;
           try {
             value = await runBoundedProviderOperation(
@@ -360,6 +383,7 @@ export class WorkspaceProviderRegistry {
               error,
             );
           }
+          this.requireRemovalEligibility(revision, contribution.pluginId);
           return parseWorkspaceRemovePlan(value, contribution.pluginId);
         },
       });
@@ -377,6 +401,8 @@ export class WorkspaceProviderRegistry {
   }
 
   private async dispatchRequest(request: WorkspaceProviderRequest, dispatchSignal: AbortSignal): Promise<JsonValue> {
+    const revision = this.eligibilityRevision;
+    const contributions = this.activeContributions;
     const pluginId = request.pluginId;
     if (!isPiWebPluginId(pluginId)) {
       throw providerRequestError("inactive-plugin", 409, `Server plugin is not active: ${pluginId}`);
@@ -384,7 +410,7 @@ export class WorkspaceProviderRegistry {
 
     const operation = parseRequestOperation(request.operation);
     const moduleRevision = parseRequestRevision(request.moduleRevision, operation);
-    const activeContribution = this.contributions.find((contribution) => contribution.pluginId === pluginId);
+    const activeContribution = contributions.find((contribution) => contribution.pluginId === pluginId);
     if (activeContribution === undefined) {
       throw providerRequestError("inactive-plugin", 409, `Server plugin ${pluginId} is not active for workspace backend operation ${operation}`);
     }
@@ -409,7 +435,7 @@ export class WorkspaceProviderRegistry {
     const project = snapshotProject(request.project);
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
     for (const tier of ["primary", "fallback"] as const) {
-      const selection = await this.selectInTier(project, tier, diagnostics, dispatchSignal);
+      const selection = await this.selectInTier(project, tier, diagnostics, contributions, dispatchSignal);
       if (selection.kind === "none") continue;
       if (selection.kind === "conflict") {
         throw providerRequestError(
@@ -444,6 +470,7 @@ export class WorkspaceProviderRegistry {
         );
       }
 
+      this.requireRequestEligibility(revision, pluginId, operation);
       let result: unknown;
       try {
         result = await runBoundedProviderOperation(
@@ -471,6 +498,7 @@ export class WorkspaceProviderRegistry {
         );
       }
 
+      this.requireRequestEligibility(revision, pluginId, operation);
       try {
         return cloneBoundedPluginBackendJson(
           result,
@@ -494,6 +522,24 @@ export class WorkspaceProviderRegistry {
       "owner-mismatch",
       409,
       `Server plugin ${pluginId} does not own project ${project.id}`,
+    );
+  }
+
+  private requireRequestEligibility(revision: number, pluginId: string, operation: string): void {
+    if (revision === this.eligibilityRevision) return;
+    throw providerRequestError(
+      "inactive-plugin",
+      409,
+      `Server plugin ${pluginId} eligibility changed during operation ${operation}; retry against current workspace authority`,
+    );
+  }
+
+  private requireRemovalEligibility(revision: number, pluginId: string): void {
+    if (revision === this.eligibilityRevision) return;
+    throw providerRemovalError(
+      "owner-unavailable",
+      409,
+      `Workspace provider ${pluginId} eligibility changed during removal resolution; retry against current workspace authority`,
     );
   }
 
@@ -530,9 +576,10 @@ export class WorkspaceProviderRegistry {
     project: ProjectInput,
     tier: ProviderTier,
     diagnostics: WorkspaceProviderDiagnostic[],
+    contributions: readonly ServerPluginProviderContribution[],
     dispatchSignal?: AbortSignal,
   ): Promise<TierSelection> {
-    const candidates = this.contributions.filter(({ provider }) => (provider.fallback === true) === (tier === "fallback"));
+    const candidates = contributions.filter(({ provider }) => (provider.fallback === true) === (tier === "fallback"));
     const claimants: ServerPluginProviderContribution[] = [];
 
     for (const contribution of candidates) {
@@ -954,6 +1001,19 @@ function positiveInteger(value: number | undefined, fallback: number, key: strin
   const resolved = value ?? fallback;
   if (!Number.isInteger(resolved) || resolved <= 0) throw new Error(`${key} must be a positive integer`);
   return resolved;
+}
+
+function sortedContributions(
+  contributions: readonly ServerPluginProviderContribution[],
+): readonly ServerPluginProviderContribution[] {
+  return Object.freeze([...contributions].sort((left, right) => left.pluginId.localeCompare(right.pluginId)));
+}
+
+function sameContributions(
+  left: readonly ServerPluginProviderContribution[],
+  right: readonly ServerPluginProviderContribution[],
+): boolean {
+  return left.length === right.length && left.every((contribution, index) => contribution === right[index]);
 }
 
 function errorMessage(error: unknown): string {

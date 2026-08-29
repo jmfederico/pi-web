@@ -68,7 +68,7 @@
     "smoke:package-install": "node scripts/smoke-package-install.mjs",
     "prepublishOnly": "npm run verify",
     "publish:npm": "npm publish --access public",
-    "prepare": "node scripts/install-git-hooks.mjs",
+    "prepare": "npm run build:plugin-api && node scripts/install-git-hooks.mjs",
     "changeset": "changeset",
     "release:version": "changeset version",
     "changelog:status": "changeset status"

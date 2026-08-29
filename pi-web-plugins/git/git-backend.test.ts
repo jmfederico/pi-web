@@ -24,6 +24,7 @@ const backendContext: ServerPluginActivationContext = {
   apiVersion: 1,
   pluginId: "git",
   packageRoot: "pi-web-plugins/git",
+  stateDirectory: ".pi-web-plugin-state/git",
   logger: {
     debug() { /* no-op */ },
     info() { /* no-op */ },

@@ -50,7 +50,7 @@ interface CachedBrowserArtifact {
   browserRootPath: string;
   browserRootDirectoryPath: string;
   packageRoot: string;
-  backendRevision?: string;
+  serverRevision?: string;
   files: ReadonlyMap<string, Buffer>;
   byteLength: number;
 }
@@ -81,8 +81,8 @@ export class PiWebPluginService {
   async manifest(): Promise<PiWebPluginManifest> {
     const lifecycle = await this.lifecycle();
     const plugins: PiWebPluginManifestEntry[] = [];
-    for (const { plugin, backendRevision } of lifecycle.browserPlugins) {
-      const artifact = await this.captureBrowserArtifact(plugin, backendRevision);
+    for (const { plugin, serverRevision, backendRevision } of lifecycle.browserPlugins) {
+      const artifact = await this.captureBrowserArtifact(plugin, serverRevision);
       if (artifact === undefined) continue;
       plugins.push({
         id: plugin.id,
@@ -118,7 +118,7 @@ export class PiWebPluginService {
       const lifecycle = await this.lifecycle();
       const browserPlugin = lifecycle.browserPlugins.find(({ plugin }) => plugin.id === pluginId);
       if (browserPlugin === undefined) return undefined;
-      return await this.captureBrowserArtifact(browserPlugin.plugin, browserPlugin.backendRevision);
+      return await this.captureBrowserArtifact(browserPlugin.plugin, browserPlugin.serverRevision);
     } catch (error) {
       const localPlugin = await this.catalog.browserPlugin(pluginId);
       if (localPlugin?.serverModule !== undefined) throw error;
@@ -128,7 +128,7 @@ export class PiWebPluginService {
 
   private async captureBrowserArtifact(
     plugin: PiWebPluginPackageEntry,
-    backendRevision?: string,
+    serverRevision?: string,
   ): Promise<CachedBrowserArtifact | undefined> {
     const module = plugin.browserModule;
     if (module === undefined) return undefined;
@@ -142,7 +142,7 @@ export class PiWebPluginService {
         && cached.browserRootPath === browserRoot.path
         && cached.browserRootDirectoryPath === browserRoot.directoryPath
         && cached.packageRoot === plugin.packageRoot
-        && cached.backendRevision === backendRevision;
+        && cached.serverRevision === serverRevision;
       if (matches) {
         this.touchBrowserArtifact(cached);
         return cached;
@@ -158,7 +158,7 @@ export class PiWebPluginService {
       browserRootPath: browserRoot.path,
       browserRootDirectoryPath: browserRoot.directoryPath,
       packageRoot: plugin.packageRoot,
-      ...(backendRevision === undefined ? {} : { backendRevision }),
+      ...(serverRevision === undefined ? {} : { serverRevision }),
       files: packageArtifact.files,
       byteLength: packageArtifact.byteLength,
     };
@@ -167,13 +167,13 @@ export class PiWebPluginService {
   }
 
   private async cachedArtifactIsActive(artifact: CachedBrowserArtifact): Promise<boolean> {
-    if (artifact.backendRevision === undefined) return true;
+    if (artifact.serverRevision === undefined) return true;
     const runtime = await this.loadRuntime();
     if (runtime.status !== "available") return false;
     const record = runtime.snapshot.records.find(({ pluginId }) => pluginId === artifact.pluginId);
     const health = runtime.snapshot.health.find(({ pluginId }) => pluginId === artifact.pluginId);
     return record?.state === "active"
-      && record.moduleRevision === artifact.backendRevision
+      && record.moduleRevision === artifact.serverRevision
       && record.browserRevision === artifact.revision
       && health?.health.status !== "unhealthy";
   }

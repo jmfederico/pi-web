@@ -187,6 +187,7 @@ describe("server plugin runtime", () => {
       logger: testLogger(),
       lifecycleTimeoutMs: 50,
     });
+    while (observedSignals.length === 0) await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(50);
     const runtime = await creating;
 

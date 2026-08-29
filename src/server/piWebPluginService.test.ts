@@ -235,6 +235,56 @@ describe("PiWebPluginService", () => {
     await expect(service.readAsset("dual", "browser.js")).resolves.toBeDefined();
   });
 
+  it("pairs lifecycle-only and provider-only browser modules without advertising backend requests", async () => {
+    const ids = ["lifecycle-only", "provider-only", "provider-request"];
+    await Promise.all(ids.map(async (id) => {
+      await writePlugin(join(tempDir, "plugins", id), {
+        packageJson: { piWeb: { plugins: [{ id, browserRoot: ".", module: "browser.js", serverModule: "server.js" }] } },
+        files: { "browser.js": "export default {};", "server.js": "export default {};" },
+      });
+    }));
+    const catalog = new PiWebPluginCatalog({
+      roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }],
+      packageProvider: false,
+    });
+    const desired = await catalog.snapshot();
+    const activeRecords = desired.plugins.map((plugin) => ({
+      pluginId: plugin.id,
+      source: plugin.source,
+      scope: plugin.scope,
+      moduleRevision: plugin.serverModule?.revision ?? "missing",
+      ...(plugin.browserModule === undefined ? {} : { browserRevision: plugin.browserModule.revision }),
+      settingsRevision: plugin.settingsRevision,
+      machineSpecific: plugin.machineSpecific,
+      ...(plugin.id === "provider-request" ? { backendAvailable: true as const } : {}),
+      state: "active" as const,
+      name: plugin.id,
+    }));
+    let runtime = createWorkspaceProviderRuntimeSnapshot(
+      activeRecords,
+      ids.map((pluginId) => ({ pluginId, health: { status: "healthy" as const } })),
+    );
+    const service = new PiWebPluginService({
+      catalog,
+      runtimeProvider: { providerRuntime: () => Promise.resolve(runtime) },
+    });
+
+    const manifest = await service.manifest();
+
+    expect(manifest.plugins.map(({ id, backendRevision }) => ({ id, backendRevision }))).toEqual([
+      { id: "lifecycle-only", backendRevision: undefined },
+      { id: "provider-only", backendRevision: undefined },
+      { id: "provider-request", backendRevision: activeRecords[2]?.moduleRevision },
+    ]);
+    expect(await service.readAsset("lifecycle-only", "browser.js")).toBeDefined();
+
+    runtime = createWorkspaceProviderRuntimeSnapshot(
+      activeRecords.map((record) => record.pluginId === "lifecycle-only" ? { ...record, state: "failed" as const } : record),
+      ids.map((pluginId) => ({ pluginId, health: { status: "healthy" as const } })),
+    );
+    await expect(service.readAsset("lifecycle-only", "browser.js")).resolves.toBeUndefined();
+  });
+
   it("rejects an excluded metadata alias before an equal-revision server entry change can be paired", async () => {
     const pluginId = "excluded-metadata-pairing";
     const pluginDir = join(tempDir, "plugins", pluginId);
@@ -710,6 +760,7 @@ function activeRuntimeProvider(catalog: PiWebPluginCatalog): WorkspaceProviderRu
       ...(plugin.browserModule === undefined ? {} : { browserRevision: plugin.browserModule.revision }),
       settingsRevision: plugin.settingsRevision,
       machineSpecific: plugin.machineSpecific,
+      ...(plugin.enabled ? { backendAvailable: true as const } : {}),
       state: plugin.enabled ? "active" as const : "disabled" as const,
       ...(plugin.enabled ? { name: plugin.id } : { message: "disabled in PI WEB config" }),
     }]);

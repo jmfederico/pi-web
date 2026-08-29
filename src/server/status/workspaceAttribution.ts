@@ -68,6 +68,7 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
   private readonly topologyTtlMs: number;
   private readonly now: () => number;
   private cache: TopologyCacheEntry | undefined;
+  private generation = 0;
 
   constructor(private readonly dependencies: WorkspaceAttributionDependencies) {
     this.topologyTtlMs = dependencies.topologyTtlMs ?? DEFAULT_WORKSPACE_TOPOLOGY_TTL_MS;
@@ -89,13 +90,17 @@ export class CachedWorkspaceAttribution implements WorkspaceAttribution {
   }
 
   invalidate(): void {
+    this.generation += 1;
     this.cache = undefined;
   }
 
   private topology(): Promise<readonly AttributedWorkspacePath[]> {
     const cached = this.cache;
     if (cached !== undefined && this.now() - cached.loadedAt < this.topologyTtlMs) return cached.workspaces;
-    const entry: TopologyCacheEntry = { loadedAt: this.now(), workspaces: this.loadTopology() };
+    const generation = this.generation;
+    const workspaces = this.loadTopology().then(async (loaded) =>
+      generation === this.generation ? loaded : await this.topology());
+    const entry: TopologyCacheEntry = { loadedAt: this.now(), workspaces };
     this.cache = entry;
     return entry.workspaces;
   }

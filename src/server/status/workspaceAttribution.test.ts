@@ -98,6 +98,26 @@ describe("CachedWorkspaceAttribution", () => {
     expect(deps.workspaces.list).toHaveBeenCalledTimes(2);
   });
 
+  it("does not publish an in-flight topology after invalidation", async () => {
+    const deps = dependencies({ "project-1": ["/srv/dev/project-1"] });
+    let resolveFirst: ((workspaces: WorkspaceListing[]) => void) | undefined;
+    deps.workspaces.list
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce(workspacesFor(project("project-1"), ["/srv/dev/project-1", "/srv/dev/project-1-fresh"]));
+    const attribution = new CachedWorkspaceAttribution(deps);
+
+    const pending = attribution.attribute(["/srv/dev/project-1-fresh"]);
+    await vi.waitFor(() => { expect(deps.workspaces.list).toHaveBeenCalledOnce(); });
+    attribution.invalidate();
+    resolveFirst?.(workspacesFor(project("project-1"), ["/srv/dev/project-1"]));
+
+    await expect(pending).resolves.toEqual(new Map([[
+      "/srv/dev/project-1-fresh",
+      { projectId: "project-1", workspaceId: "project-1-workspace-1" },
+    ]]));
+    expect(deps.workspaces.list).toHaveBeenCalledTimes(2);
+  });
+
   it("picks up a workspace created outside this process once the cache window expires", async () => {
     const paths: Record<string, string[]> = { "project-1": ["/srv/dev/project-1"] };
     let clock = 1_000;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { mkdir, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import Fastify from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { WorkspaceActivityService } from "./activity/workspaceActivityService.js";
@@ -30,7 +30,7 @@ import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
+import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, piWebDataDir, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
 import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { DefaultPiPackageProvider, PiWebPluginCatalog } from "./piWebPluginCatalog.js";
@@ -43,7 +43,7 @@ import { claimSessiondStateOwnership } from "./sessiond/sessiondStateOwnership.j
 import { dockerEnvironmentPromptSections } from "./sessions/dockerEnvironmentFacts.js";
 import { PI_WEB_SESSION_ENV, sessionEnvironmentPromptSections } from "./sessions/sessionEnvironmentFacts.js";
 import { createServerPluginExecFile } from "./plugins/serverPluginExec.js";
-import { createServerPluginRuntime } from "./plugins/serverPluginRuntime.js";
+import { createServerPluginRuntime, type ServerPluginProviderContribution } from "./plugins/serverPluginRuntime.js";
 import { runSessionDaemonShutdown } from "./sessiond/sessionDaemonShutdown.js";
 import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencies.js";
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
@@ -51,6 +51,8 @@ import { registerPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
 import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js";
+import { PluginWorkspaceBackendRegistry } from "./workspaces/pluginWorkspaceBackendRegistry.js";
+import { PluginBackgroundSessionRegistry } from "./plugins/pluginBackgroundSessionService.js";
 
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
 const serverPluginRecovery = loadServerPluginRecoveryConfig({ env: daemonEnvironment });
@@ -178,6 +180,7 @@ async function createSessionDaemonRuntime() {
     ...(serverPluginRecovery.safeStart === undefined ? {} : { safeStart: serverPluginRecovery.safeStart }),
     logger: app.log,
     execFile: createServerPluginExecFile({ env: daemonEnvironment }),
+    pluginStateRoot: join(piWebDataDir(daemonEnvironment), "plugin-state"),
   });
   try {
     const eventHub = new SessionEventHub();
@@ -211,16 +214,15 @@ async function createSessionDaemonRuntime() {
     auth.subscribe(() => { catalogRefresher.requestRefresh(); });
     const projects = new ProjectService(new ProjectStore(projectStorePath(daemonEnvironment)));
     const providerHealth = await serverPlugins.inspectHealth();
+    const eligibleProviderContributions = eligibleWorkspaceProviderContributions(
+      serverPlugins.providerContributions(),
+      providerHealth,
+    );
+    const initiallyEligibleProviderIds = new Set(eligibleProviderContributions.map(({ pluginId }) => pluginId));
     const workspaceProviders = new WorkspaceProviderRegistry({
-      contributions: eligibleWorkspaceProviderContributions(serverPlugins.providerContributions(), providerHealth),
+      contributions: eligibleProviderContributions,
       logger: app.log,
     });
-    const workspaceProviderRuntime = createWorkspaceProviderRuntimeSnapshot(
-      serverPlugins.healthRecords(),
-      providerHealth,
-      serverPlugins.safeStartLevel(),
-      serverPlugins.catalogDiagnostics(),
-    );
     const statusAttribution = new CachedWorkspaceAttribution({
       projects,
       workspaces: workspaceProviders,
@@ -279,6 +281,42 @@ async function createSessionDaemonRuntime() {
       }),
     }));
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    const backgroundSessions = new PluginBackgroundSessionRegistry(projects, workspaceProviders, sessions);
+    const updateWorkspaceProviderAuthority = (contributions: readonly ServerPluginProviderContribution[]): void => {
+      if (!workspaceProviders.updateContributions(contributions)) return;
+      // A ready failure can remove a provider while status attribution or another
+      // authority resolution is in flight. Drop the cached topology and publish
+      // only a resolution revalidated against the new eligible contribution set.
+      statusAttribution.invalidate();
+      machineStatus.notifyChanged();
+    };
+    await serverPlugins.ready(
+      (pluginId) => Object.freeze({ backgroundSessions: backgroundSessions.forPlugin(pluginId) }),
+      async (pluginId) => {
+        try {
+          await backgroundSessions.quiescePlugin(pluginId);
+        } finally {
+          updateWorkspaceProviderAuthority(serverPlugins.providerContributions()
+            .filter((contribution) => initiallyEligibleProviderIds.has(contribution.pluginId)));
+        }
+      },
+    );
+    const finalPluginHealth = await serverPlugins.inspectHealth();
+    updateWorkspaceProviderAuthority(eligibleWorkspaceProviderContributions(
+      serverPlugins.providerContributions(),
+      finalPluginHealth,
+    ));
+    const pluginBackends = new PluginWorkspaceBackendRegistry({
+      contributions: serverPlugins.workspaceBackendContributions(),
+      authority: workspaceProviders,
+      providers: workspaceProviders,
+    });
+    const workspaceProviderRuntime = createWorkspaceProviderRuntimeSnapshot(
+      serverPlugins.healthRecords(),
+      finalPluginHealth,
+      serverPlugins.safeStartLevel(),
+      serverPlugins.catalogDiagnostics(),
+    );
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals);
     const runtimeComponent = Object.freeze({
@@ -298,6 +336,7 @@ async function createSessionDaemonRuntime() {
         dependencies: {
           quiesceServer: () => { serverQuiescing = true; },
           serverPlugins,
+          backgroundSessions,
           terminals,
           catalogRefresher,
           auth,
@@ -312,7 +351,7 @@ async function createSessionDaemonRuntime() {
       // next start discards it.
       await stateOwnership.release();
     };
-    return { eventHub, machineStatus, statusAttribution, auth, sessions, terminals, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals, shutdown };
+    return { eventHub, machineStatus, statusAttribution, auth, sessions, terminals, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals, shutdown };
   } catch (error) {
     try {
       await serverPlugins.stop();
@@ -323,7 +362,7 @@ async function createSessionDaemonRuntime() {
   }
 }
 
-function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, terminals, runtimeComponent, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
+function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, terminals, runtimeComponent, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
   registerMachineStatusRoutes(app, machineStatus);
   registerAuthRoutes(app, auth);
   registerSessionRoutes(app, sessions, eventHub);
@@ -335,7 +374,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   });
   registerPluginBackendRoutes(app, {
     projects,
-    backends: workspaceProviders,
+    backends: pluginBackends,
     onWorkspacesMutated: () => { statusAttribution.invalidate(); },
   });
   registerWorkspaceRemovalRoutes(app, {

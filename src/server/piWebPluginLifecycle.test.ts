@@ -22,7 +22,7 @@ describe("PI WEB plugin desired/active lifecycle reconciliation", () => {
       entry("missing", { browser: "browser-1", server: "server-1" }),
     ]);
     const records = [
-      record("active-dual", "active"),
+      record("active-dual", "active", { backendAvailable: true }),
       record("became-browser-only", "active"),
       record("desired-off-active", "active"),
       record("stale-server", "active", { moduleRevision: "server-1", browserRevision: "browser-2" }),
@@ -68,6 +68,30 @@ describe("PI WEB plugin desired/active lifecycle reconciliation", () => {
     expect(plugin(reconciled, "missing").server).toMatchObject({ state: "missing", restartRequired: true });
     expect(plugin(reconciled, "active-only")).toMatchObject({ discovered: false, enabled: false, server: { state: "active", restartRequired: true } });
     expect(reconciled.response.serverRuntime).toMatchObject({ status: "available", restartRequired: true });
+  });
+
+  it("publishes lifecycle-only and provider-only browser pairs without exposing a backend", () => {
+    const ids = ["lifecycle-only", "provider-only", "provider-request", "auxiliary-backend"];
+    const desired = snapshot(ids.map((id) => entry(id, { browser: "browser-1", server: "server-1" })));
+    const runtime = createWorkspaceProviderRuntimeSnapshot(
+      ids.map((id) => record(id, "active", id === "provider-request" || id === "auxiliary-backend"
+        ? { backendAvailable: true }
+        : {})),
+      ids.map((pluginId) => ({ pluginId, health: { status: "healthy" } })),
+    );
+
+    const reconciled = reconcilePiWebPluginLifecycle(desired, { status: "available", snapshot: runtime }, moduleUrl);
+
+    expect(reconciled.browserPlugins.map(({ plugin, serverRevision, backendRevision }) => ({
+      pluginId: plugin.id,
+      serverRevision,
+      backendRevision,
+    }))).toEqual([
+      { pluginId: "auxiliary-backend", serverRevision: "server-1", backendRevision: "server-1" },
+      { pluginId: "lifecycle-only", serverRevision: "server-1", backendRevision: undefined },
+      { pluginId: "provider-only", serverRevision: "server-1", backendRevision: undefined },
+      { pluginId: "provider-request", serverRevision: "server-1", backendRevision: "server-1" },
+    ]);
   });
 
   it.each(["bundled-only", "none"] as const)("surfaces %s safe mode, disabled state, conflicts, and secret-free recovery commands", (safeStart) => {

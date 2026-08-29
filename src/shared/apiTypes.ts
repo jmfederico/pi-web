@@ -208,7 +208,7 @@ export type PiWebPluginScope = "bundled" | "local" | "user" | "project";
 export const PI_WEB_PLUGIN_LIFECYCLE_VERSION = 1;
 
 export type PiWebPluginServerState = "active" | "failed" | "incompatible" | "disabled" | "missing" | "unknown";
-export type PiWebPluginLifecyclePhase = "import" | "activate" | "validate" | "start" | "health" | "stop";
+export type PiWebPluginLifecyclePhase = "import" | "activate" | "validate" | "storage" | "start" | "ready" | "health" | "quiesce" | "stop";
 export type PiWebPluginHealthStatus = "healthy" | "degraded" | "unhealthy";
 export type PiWebPluginRuntimeStatus = "available" | "unavailable" | "incompatible";
 export type PiWebPluginSafeStart = "bundled-only" | "none";

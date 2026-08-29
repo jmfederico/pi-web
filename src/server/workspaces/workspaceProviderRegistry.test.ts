@@ -129,6 +129,41 @@ describe("WorkspaceProviderRegistry", () => {
     expect(list).toHaveBeenCalledTimes(3);
   });
 
+  it("updates provider contributions explicitly after late readiness changes", async () => {
+    const owner = contribution("late-owner", provider({
+      probe: () => Promise.resolve("claim"),
+      list: () => Promise.resolve([workspace("root", hostPath("/repo"), true)]),
+    }));
+    const registry = registryFor([owner]);
+
+    await expect(registry.resolve(project)).resolves.toMatchObject({ status: "provider", ownerPluginId: "late-owner" });
+
+    registry.updateContributions([]);
+    await expect(registry.resolve(project)).resolves.toMatchObject({ status: "folder" });
+  });
+
+  it("revalidates a shared delayed resolution when ready failure removes its provider", async () => {
+    const delayedList = deferred<ProviderWorkspace[]>();
+    const list = vi.fn(() => delayedList.promise);
+    const owner = contribution("failed-ready-owner", provider({
+      probe: () => Promise.resolve("claim"),
+      list,
+    }));
+    const registry = registryFor([owner]);
+
+    const pending = registry.resolve(project);
+    const shared = registry.resolve({ ...project });
+    await vi.waitFor(() => { expect(list).toHaveBeenCalledOnce(); });
+
+    registry.updateContributions([]);
+    delayedList.resolve([workspace("root", hostPath("/repo"), true)]);
+
+    const [resolved, sharedResolved] = await Promise.all([pending, shared]);
+    expect(resolved).toBe(sharedResolved);
+    expect(resolved).toMatchObject({ status: "folder", projectId: project.id });
+    expect(resolved).not.toHaveProperty("ownerPluginId");
+  });
+
   it("keeps removal resolution fresh and outside ordinary resolution coalescing", async () => {
     const blockedList = deferred<ProviderWorkspace[]>();
     const topology = [

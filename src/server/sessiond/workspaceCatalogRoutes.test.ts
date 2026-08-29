@@ -131,7 +131,7 @@ describe("session daemon workspace catalog routes", () => {
 
   it("exposes the immutable startup runtime and health snapshot", async () => {
     const snapshot = createWorkspaceProviderRuntimeSnapshot(
-      [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", settingsRevision: "sha256:settings", machineSpecific: true, state: "active", name: "Git" }],
+      [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", settingsRevision: "sha256:settings", machineSpecific: true, backendAvailable: true, state: "active", name: "Git" }],
       [{ pluginId: "git", health: { status: "healthy" } }],
       "bundled-only",
       [{ code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: git", pluginId: "git" }],
@@ -148,7 +148,7 @@ describe("session daemon workspace catalog routes", () => {
     expect(response.json()).toEqual({
       protocolVersion: 1,
       safeStart: "bundled-only",
-      records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", settingsRevision: "sha256:settings", machineSpecific: true, state: "active", name: "Git" }],
+      records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", settingsRevision: "sha256:settings", machineSpecific: true, backendAvailable: true, state: "active", name: "Git" }],
       health: [{ pluginId: "git", health: { status: "healthy" } }],
       diagnostics: [{ code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: git", pluginId: "git" }],
     });
