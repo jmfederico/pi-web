@@ -15,5 +15,8 @@ dist/
 # Local runtime attachment uploads (created by the chat composer "save to folder" mode).
 .pi-web/
 
+# Planning artifacts (SPEC/ACCEPTANCE/TASKS) are local working contracts, not PR content.
+.agents/plans/
+
 # Dev docs site staging output (scripts/build-docs-dev.mjs).
 /docs/.deploy/
