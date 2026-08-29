@@ -4,6 +4,7 @@ import type {
   JsonObject,
   PiWebServerPlugin,
   ProjectInput,
+  ProviderBinaryRequestContext,
   ProviderRemoveContext,
   ProviderRequestContext,
   ProviderWorkspace,
@@ -67,6 +68,10 @@ describe("public server plugin API", () => {
         observedSignals.push(context.signal);
         return Promise.resolve({ operation: context.operation, input: context.input });
       },
+      requestBinary(context) {
+        observedSignals.push(context.signal);
+        return Promise.resolve({ operation: context.operation, received: context.body.byteLength });
+      },
       prepareRemove(context) {
         observedSignals.push(context.signal);
         return Promise.resolve({ title: "Remove secondary", command: "provider workspace remove secondary" });
@@ -104,7 +109,7 @@ describe("public server plugin API", () => {
 
     await exerciseActivation(activation, project, signal);
 
-    expect(observedSignals).toHaveLength(7);
+    expect(observedSignals).toHaveLength(8);
     expect(observedSignals.every((observed) => observed === signal)).toBe(true);
   });
 
@@ -113,15 +118,16 @@ describe("public server plugin API", () => {
       "apiVersion" | "pluginId" | "packageRoot" | "logger" | "settings" | "execFile" | "signal"
     >();
     expectTypeOf<keyof WorkspaceProvider>().toEqualTypeOf<
-      "fallback" | "probe" | "list" | "request" | "prepareRemove"
+      "fallback" | "probe" | "list" | "request" | "requestBinary" | "prepareRemove"
     >();
     expectTypeOf<keyof ServerPluginExecFileRequest>().toEqualTypeOf<
-      "file" | "args" | "cwd" | "env" | "unsetEnv" | "timeoutMs" | "signal"
+      "file" | "args" | "cwd" | "env" | "unsetEnv" | "stdin" | "timeoutMs" | "signal"
     >();
     expectTypeOf<ReadonlyKeys<ServerPluginActivationContext>>().toEqualTypeOf<keyof ServerPluginActivationContext>();
     expectTypeOf<ReadonlyKeys<ServerPluginLogger>>().toEqualTypeOf<keyof ServerPluginLogger>();
     expectTypeOf<ReadonlyKeys<ProjectInput>>().toEqualTypeOf<keyof ProjectInput>();
     expectTypeOf<ReadonlyKeys<ProviderRequestContext>>().toEqualTypeOf<keyof ProviderRequestContext>();
+    expectTypeOf<ReadonlyKeys<ProviderBinaryRequestContext>>().toEqualTypeOf<keyof ProviderBinaryRequestContext>();
     expectTypeOf<ReadonlyKeys<ProviderRemoveContext>>().toEqualTypeOf<keyof ProviderRemoveContext>();
     expectTypeOf<ReadonlyKeys<ProviderRequestContext["workspace"]>>().toEqualTypeOf<keyof ProviderWorkspace>();
     expectTypeOf<ReadonlyKeys<WorkspaceRemovalPresentation>>().toEqualTypeOf<keyof WorkspaceRemovalPresentation>();
@@ -147,6 +153,8 @@ async function exerciseActivation(activation: ServerPluginActivation, input: Pro
   if (workspace === undefined) throw new Error("Expected fixture workspace");
   const request: ProviderRequestContext = { project: input, workspace, operation: "status", input: { paths: [] }, signal };
   await provider.request?.(request);
+  const binaryRequest: ProviderBinaryRequestContext = { project: input, workspace, operation: "secrets.store", body: new Uint8Array([1, 2, 3]), signal };
+  await provider.requestBinary?.(binaryRequest);
   await provider.prepareRemove?.({ project: input, workspace, signal });
   await activation.health?.(signal);
   await activation.stop?.(signal);

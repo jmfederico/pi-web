@@ -116,11 +116,12 @@
                 <li><strong>Workspace labels</strong> in the workspace list, header, and status bar.</li>
                 <li><strong>Browser-public assets</strong> served only from an explicit <code>browserRoot</code>.</li>
                 <li><strong>Browser helpers</strong> for files, terminals, prompts, rendering, and paired backends.</li>
-                <li><strong>One workspace provider</strong> from an optional sessiond server entry.</li>
+                <li><strong>One workspace provider</strong> with optional JSON or raw-binary backend operations and removal planning.</li>
               </ul>
               <p>
                 The server API is deliberately narrow: lifecycle callbacks, scoped logging/settings, bounded argv
-                execution, one workspace provider, JSON backend requests, and removal planning. Plugins receive no raw
+                execution with optional bounded stdin, one workspace provider, JSON or raw-binary backend requests, and
+                removal planning. Plugins receive no raw
                 Fastify access, arbitrary routes, concrete services, generic event bus, Pi model-provider registration,
                 or general server hooks.
               </p>
@@ -355,10 +356,22 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 is aborted when it times out or settles; it is not a plugin-lifetime shutdown signal. Release resources
                 in explicit <code>stop()</code>. Server code is never hot-reloaded.
               </p>
+              <h3 id="command-stdin-and-sensitive-payloads">Command stdin and sensitive payloads</h3>
+              <p>
+                The activation context's host-bounded <code>execFile()</code> helper accepts optional
+                <code>stdin: string | Uint8Array</code>. It invokes the command directly without a shell, UTF-8 encodes
+                strings, and passes binary arrays byte for byte. Pass the current provider callback's signal to the
+                command; an activation signal is scoped only to activation and must not be retained.
+              </p>
+              <ul>
+                <li>Empty input behaves like absent stdin. The default host cap is 1 MiB, and over-cap errors report byte counts without payload content.</li>
+                <li>The host never logs the payload or includes it in errors, and zeroes its retained copy whenever the command invocation settles, including a synchronous spawn/setup failure. The plugin remains responsible for its own copy.</li>
+                <li>A command that exits before reading stdin keeps its own exit status as the result. Never return sensitive stdout or stderr through a provider response.</li>
+              </ul>
               <p>
                 A provider returns stable workspace keys, accessible absolute directories, labels, exactly one main
-                workspace, optional private JSON data, browser-visible <code>publicMetadata</code>, and optional
-                request/removal capabilities. Public metadata is visible to all browser code and API consumers, so it
+                workspace, optional private JSON data, browser-visible <code>publicMetadata</code>, and optional JSON,
+                raw-binary, or removal callbacks. Public metadata is visible to all browser code and API consumers, so it
                 must never contain secrets. <code>capabilities.remove</code> is true only for a workspace that advertises
                 removal and whose owner implements it.
               </p>
@@ -368,13 +381,42 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 working directory. Providers must use and shell-quote the supplied absolute workspace path, keep the
                 operation in the foreground, and treat shell exit 0 as successful completion.
               </p>
+              <h3 id="raw-binary-backend-request-bodies">JSON and raw-binary backend requests</h3>
               <p>
                 Panels and labels receive optional <code>context.backend</code> only when their browser entry has a
-                paired active server backend. PI WEB binds <code>backend.request(operation, input)</code> to the original
-                plugin id, active backend revision, selected machine, project, and workspace, and carries it through
-                federation. Plugins should never construct PI WEB backend or machine API URLs. Panels can implement
-                <code>onInvalidate</code> and actions can call <code>refreshWorkspacePanels()</code>; route aliases and
-                shortcut aliases exist only for browser-v1 migrations.
+                paired active server backend. <code>backend.request(operation, input)</code> reaches the provider's
+                optional <code>request()</code> callback with bounded JSON. For an opaque byte payload, call
+                <code>backend.requestBinary(operation, body)</code> with a <code>Uint8Array</code>; the provider opts in
+                by implementing <code>requestBinary()</code>. Results from both callbacks remain bounded JSON.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Raw binary backend handoff</strong>
+                  <button class="copy-button" data-copy="#plugin-binary-backend">Copy</button>
+                </div>
+                <pre id="plugin-binary-backend"><code>// Browser entry
+const body = new TextEncoder().encode(form.value.secret);
+await context.backend.requestBinary("secrets.store", body);
+
+// Server provider; execFile is captured from the activation context.
+async requestBinary({ operation, body, signal }) {
+  if (operation !== "secrets.store") throw new Error("Unsupported operation");
+  await execFile({ file: "receiver", args: ["store"], stdin: body, signal });
+  return { stored: true };
+}</code></pre>
+              </div>
+              <ul>
+                <li>The binary body is limited to 1 MiB at the browser, web proxy, session daemon, and provider dispatch layers. Limit errors contain byte counts only.</li>
+                <li>PI WEB holds it in request-scoped memory, never logs or persists it, and never includes it in errors. Do not echo it through the JSON result; the plugin remains responsible for its own copies.</li>
+                <li>Ownership is resolved again before dispatch. Plugin identity, active backend revision, deadlines, and federation rules match the JSON path; unsupported older machines fail explicitly.</li>
+                <li><code>workspace.provider.capabilities.request</code> reports whether the JSON <code>request()</code> callback exists. Raw-binary support is a private opt-in contract between the paired browser and server entries.</li>
+              </ul>
+              <p>
+                PI WEB binds both helpers to the original plugin id, active backend revision, selected machine, project,
+                and workspace, and carries them through federation. Plugins should never construct PI WEB backend or
+                machine API URLs. Panels can implement <code>onInvalidate</code> and actions can call
+                <code>refreshWorkspacePanels()</code>; route aliases and shortcut aliases exist only for browser-v1
+                migrations.
               </p>
               <div class="callout">
                 PI WEB ships only bundled Git as a production provider. Third parties own replacement integrations such
@@ -566,12 +608,13 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               <p>
                 With <a href="machines">machine federation</a>, the gateway loads compatible browser entries from the
                 selected remote machine while server entries stay in that target's sessiond. Actions, panels, labels,
-                file/terminal helpers, and <code>context.backend.request()</code> all follow the selected machine.
+                file/terminal helpers, <code>context.backend.request()</code>, and
+                <code>context.backend.requestBinary()</code> all follow the selected machine.
                 Activation <code>pluginId</code> and workspace-provider ownership keep the stable source id;
                 <code>runtimePluginId</code> may be machine-scoped so qualified contributions remain host-unique.
               </p>
               <ul>
-                <li>Paired backend requests carry the source plugin id and active target revision through the gateway.</li>
+                <li>Paired JSON and raw-binary backend requests carry the source plugin id and active target revision through the gateway.</li>
                 <li>Server-backed browser code is served only for an exact active package/source/scope/settings/revision pairing.</li>
                 <li><code>machineSpecific</code> decides whether a browser-only gateway copy is portable; dual entries are always machine-specific.</li>
                 <li>Remote theme contributions remain ignored because themes are app-wide.</li>

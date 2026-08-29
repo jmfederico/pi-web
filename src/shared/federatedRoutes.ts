@@ -1,4 +1,7 @@
 import {
+  PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES,
+  PLUGIN_BACKEND_BINARY_REVISION_HEADER,
+  PLUGIN_BACKEND_BINARY_ROUTE_SUFFIX,
   PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
@@ -29,6 +32,8 @@ export interface FederatedHttpRouteSpec {
   responseBodyLimit?: number;
   /** Propagate an inbound disconnect through the remote request. */
   propagateCancellation?: boolean;
+  /** Listed inbound request headers forwarded across the gateway alongside the body. */
+  forwardHeaders?: readonly string[];
 }
 
 export const FEDERATED_HTTP_ROUTES = [
@@ -51,6 +56,14 @@ export const FEDERATED_HTTP_ROUTES = [
     timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
     bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
     responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+  },
+  {
+    method: "POST",
+    path: `/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation/${PLUGIN_BACKEND_BINARY_ROUTE_SUFFIX}`,
+    timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+    bodyLimit: PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES,
+    responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
+    forwardHeaders: [PLUGIN_BACKEND_BINARY_REVISION_HEADER],
   },
   {
     method: "DELETE",

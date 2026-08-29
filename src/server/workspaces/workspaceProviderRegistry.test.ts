@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, ProviderRemoveContext, ProviderRequestContext, ProviderWorkspace, WorkspaceProvider } from "../../server-plugin-api.js";
+import type { JsonValue, ProviderBinaryRequestContext, ProviderRemoveContext, ProviderRequestContext, ProviderWorkspace, WorkspaceProvider } from "../../server-plugin-api.js";
+import { PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES } from "../../shared/pluginBackendProtocol.js";
 import type { Project } from "../types.js";
 import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
 import { ProjectScopedSpawnTargetResolver } from "../sessions/spawnTargetResolver.js";
@@ -582,6 +583,95 @@ describe("WorkspaceProviderRegistry", () => {
         statusCode: 502,
         message: "Server plugin board operation cards.summary failed: board database unavailable",
       });
+  });
+
+  it("dispatches an opt-in binary operation with byte identity and a frozen context", async () => {
+    let observedContext: ProviderBinaryRequestContext | undefined;
+    const requestBinary = vi.fn((context: ProviderBinaryRequestContext) => {
+      observedContext = context;
+      return Promise.resolve({ received: context.body.byteLength });
+    });
+    const request = vi.fn(() => Promise.resolve(null));
+    const registry = registryFor([contribution("board", provider({
+      probe: () => Promise.resolve("claim"),
+      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true, { data: { cursor: "private-7" } })]),
+      request,
+      requestBinary,
+    }))]);
+    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
+    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
+    const payload = new Uint8Array([0x00, 0xff, 0x73, 0x65, 0x63]);
+
+    await expect(registry.requestBinary({
+      pluginId: "board",
+      moduleRevision: "1",
+      project,
+      workspaceId,
+      operation: "secrets.store",
+      body: payload,
+    })).resolves.toEqual({ received: 5 });
+
+    expect(request).not.toHaveBeenCalled();
+    expect(requestBinary).toHaveBeenCalledOnce();
+    expect(Array.from(observedContext?.body ?? [])).toEqual([0x00, 0xff, 0x73, 0x65, 0x63]);
+    expect(observedContext).toMatchObject({
+      project: { id: project.id, path: project.path },
+      workspace: { key: "main", data: { cursor: "private-7" } },
+      operation: "secrets.store",
+    });
+    expect(Object.isFrozen(observedContext)).toBe(true);
+    expect(observedContext?.signal.aborted).toBe(true);
+  });
+
+  it("enforces the binary byte bound and provider opt-in before owner resolution", async () => {
+    const listSpy = vi.fn(() => Promise.resolve([workspace("main", hostPath("/repo"), true)]));
+    const registry = registryFor([contribution("board", provider({
+      probe: () => Promise.resolve("claim"),
+      list: listSpy,
+      request: () => Promise.resolve(null),
+    }))]);
+    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
+    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
+
+    await expect(registry.requestBinary({
+      pluginId: "board",
+      moduleRevision: "1",
+      project,
+      workspaceId,
+      operation: "secrets.store",
+      body: new Uint8Array(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES + 1),
+    })).rejects.toMatchObject({
+      code: "invalid-input",
+      statusCode: 400,
+      message: `Server plugin board operation secrets.store binary input exceeds the ${String(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES)} byte limit`,
+    });
+    await expect(registry.requestBinary({
+      pluginId: "board",
+      moduleRevision: "1",
+      project,
+      workspaceId,
+      operation: "secrets.store",
+      body: new Uint8Array([0x01]),
+    })).rejects.toMatchObject({ code: "operation-unavailable", statusCode: 501 });
+  });
+
+  it("applies the shared ownership and revision rules to binary dispatch", async () => {
+    const requestBinary = vi.fn(() => Promise.resolve({ ok: true }));
+    const registry = registryFor([contribution("board", provider({
+      probe: () => Promise.resolve("claim"),
+      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
+      requestBinary,
+    }))]);
+    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
+    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
+
+    await expect(registry.requestBinary({ pluginId: "missing", moduleRevision: "1", project, workspaceId, operation: "secrets.store", body: new Uint8Array() }))
+      .rejects.toMatchObject({ code: "inactive-plugin", statusCode: 409 });
+    await expect(registry.requestBinary({ pluginId: "board", moduleRevision: "old", project, workspaceId, operation: "secrets.store", body: new Uint8Array() }))
+      .rejects.toMatchObject({ code: "stale-plugin-revision", statusCode: 409 });
+    await expect(registry.requestBinary({ pluginId: "board", moduleRevision: "1", project, workspaceId: "stale", operation: "secrets.store", body: new Uint8Array() }))
+      .rejects.toMatchObject({ code: "workspace-not-found", statusCode: 404 });
+    expect(requestBinary).not.toHaveBeenCalled();
   });
 
   it("applies one end-to-end deadline across owner workspace validation", async () => {

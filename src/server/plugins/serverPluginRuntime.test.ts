@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PiWebServerPlugin, ServerPluginActivation, ServerPluginActivationContext, WorkspaceProvider } from "../../server-plugin-api.js";
+import type {
+  PiWebServerPlugin,
+  ProviderBinaryRequestContext,
+  ServerPluginActivation,
+  ServerPluginActivationContext,
+  WorkspaceProvider,
+} from "../../server-plugin-api.js";
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
 import type { PiWebPluginCatalogEntry, PiWebPluginCatalogSnapshot } from "../piWebPluginCatalog.js";
+import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
 import {
   createServerPluginRuntime,
   type ServerPluginModuleImporter,
@@ -316,6 +323,83 @@ describe("server plugin runtime", () => {
       ["later", "active", undefined],
       ["mutable", "active", undefined],
       ["throwing-accessor", "failed", "stop getter exploded"],
+    ]);
+  });
+
+  it("preserves requestBinary through activation snapshots and registry dispatch", async () => {
+    const requestBinary = vi.fn((context: ProviderBinaryRequestContext) => Promise.resolve({
+      operation: context.operation,
+      bytes: [...context.body],
+    }));
+    const authoredProvider: WorkspaceProvider = {
+      probe: () => Promise.resolve("claim"),
+      list: () => Promise.resolve([{
+        key: "main",
+        path: process.cwd(),
+        label: "Main",
+        isMain: true,
+      }]),
+      requestBinary,
+    };
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("binary-provider")])) },
+      importer: () => Promise.resolve(pluginModule("Binary provider", { workspaceProvider: authoredProvider })),
+      logger: testLogger(),
+    });
+
+    // Mutating the authored object after activation must not alter the published snapshot.
+    delete authoredProvider.requestBinary;
+    const contributions = runtime.providerContributions();
+    expect(contributions[0]?.provider).toHaveProperty("requestBinary", expect.any(Function));
+    expect(Object.isFrozen(contributions[0]?.provider)).toBe(true);
+
+    const registry = new WorkspaceProviderRegistry({
+      contributions,
+      logger: testLogger(),
+      pathInspector: () => true,
+    });
+    const project = {
+      id: "project-1",
+      name: "Project",
+      path: process.cwd(),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
+    if (workspaceId === undefined) throw new Error("Expected provider workspace");
+    const body = new Uint8Array([0, 7, 255]);
+
+    await expect(registry.requestBinary({
+      pluginId: "binary-provider",
+      moduleRevision: "1",
+      project,
+      workspaceId,
+      operation: "secrets.store",
+      body,
+    })).resolves.toEqual({ operation: "secrets.store", bytes: [0, 7, 255] });
+    expect(requestBinary).toHaveBeenCalledOnce();
+    expect(requestBinary.mock.calls[0]?.[0]).toMatchObject({ operation: "secrets.store", body });
+    expect(requestBinary.mock.contexts[0]).toBe(authoredProvider);
+
+    await runtime.stop();
+  });
+
+  it("rejects a non-function requestBinary callback before publication", async () => {
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("invalid-binary")])) },
+      importer: () => Promise.resolve(pluginModule("Invalid binary provider", {
+        workspaceProvider: { ...testProvider(), requestBinary: "not-a-function" },
+      })),
+      logger: testLogger(),
+    });
+
+    expect(runtime.providerContributions()).toEqual([]);
+    expect(runtime.healthRecords()).toEqual([
+      expect.objectContaining({
+        pluginId: "invalid-binary",
+        state: "incompatible",
+        phase: "validate",
+        message: "Server plugin workspaceProvider is invalid",
+      }),
     ]);
   });
 

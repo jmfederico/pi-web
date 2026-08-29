@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it, vi, type MockedFunction } from "vitest";
 import { RemoteMachineRequestError, type MachineClient } from "./machines/machineClient.js";
 import { PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "../shared/federatedRoutes.js";
-import { PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../shared/pluginBackendProtocol.js";
+import { PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES, PLUGIN_BACKEND_BINARY_REVISION_HEADER, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../shared/pluginBackendProtocol.js";
 import { MAX_INLINE_PREVIEW_BYTES } from "../shared/workspaceFiles.js";
 import { appTestContext, fakeRemoteClient, registerAppTestHooks } from "./app.testSupport.js";
 import { workspaceFilePreviewErrorResponsePolicy, workspaceFilePreviewResponsePolicy } from "./workspaces/filePreviewResponsePolicy.js";
@@ -151,6 +151,54 @@ describe("buildApp remote machine proxy routes", () => {
       payload,
       { timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS },
     );
+  });
+
+  it("forwards raw binary provider backend bodies with the revision header and bounded deadline", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((_method, _path, _body, options) => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ stored: true, revision: options?.headers?.[PLUGIN_BACKEND_BINARY_REVISION_HEADER] })]),
+    }));
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: `/api/machines/${remote.id}/plugin-backends/board-tools/projects/p1/workspaces/w1/secrets.store/binary`,
+      headers: { "content-type": "application/octet-stream", [PLUGIN_BACKEND_BINARY_REVISION_HEADER]: "server-r1" },
+      payload: Buffer.from([0x73, 0x65, 0x63]),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ stored: true, revision: "server-r1" });
+    expect(request).toHaveBeenCalledWith(
+      "POST",
+      "/api/plugin-backends/board-tools/projects/p1/workspaces/w1/secrets.store/binary",
+      Buffer.from([0x73, 0x65, 0x63]),
+      {
+        timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
+        contentType: "application/octet-stream",
+        headers: { [PLUGIN_BACKEND_BINARY_REVISION_HEADER]: "server-r1" },
+      },
+    );
+  });
+
+  it("stops oversized federated binary plugin backend bodies at the gateway", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>();
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: `/api/machines/${remote.id}/plugin-backends/board-tools/projects/p1/workspaces/w1/secrets.store/binary`,
+      headers: { "content-type": "application/octet-stream", [PLUGIN_BACKEND_BINARY_REVISION_HEADER]: "server-r1" },
+      payload: Buffer.alloc(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES + 1, 0x78),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("maps an old remote provider-backend route to an explicit lifecycle compatibility error", async () => {

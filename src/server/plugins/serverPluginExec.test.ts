@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createServerPluginExecFile } from "./serverPluginExec.js";
 
 describe("server plugin execFile helper", () => {
@@ -50,6 +50,132 @@ describe("server plugin execFile helper", () => {
     });
 
     expect(result.stdout).toBe("base:$BASE_VALUE literal:undefined");
+  });
+
+  it("pipes a string payload to the command's standard input without a shell", async () => {
+    const execFile = createServerPluginExecFile();
+
+    const result = await execFile({
+      file: process.execPath,
+      args: ["-e", "let data='';process.stdin.setEncoding('utf8');process.stdin.on('data',(chunk)=>{data+=chunk});process.stdin.on('end',()=>process.stdout.write(data.toUpperCase()))"],
+      stdin: "secret-payload",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("SECRET-PAYLOAD");
+  });
+
+  it("pipes binary Uint8Array payloads byte for byte", async () => {
+    const execFile = createServerPluginExecFile();
+    const payload = new Uint8Array([0, 1, 2, 250, 251, 252, 10, 13, 255]);
+    const expectedPayload = [...payload];
+    const expectedHex = Buffer.from(payload).toString("hex");
+
+    const result = await execFile({
+      file: process.execPath,
+      args: ["-e", "const chunks=[];process.stdin.on('data',(chunk)=>chunks.push(chunk));process.stdin.on('end',()=>process.stdout.write(Buffer.concat(chunks).toString('hex')))"],
+      stdin: payload,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe(expectedHex);
+    expect([...payload]).toEqual(expectedPayload);
+  });
+
+  it("treats an empty stdin payload like an absent one", async () => {
+    const execFile = createServerPluginExecFile();
+
+    const result = await execFile({
+      file: process.execPath,
+      args: ["-e", "let bytes=0;process.stdin.on('data',(chunk)=>{bytes+=chunk.length});process.stdin.on('end',()=>process.stdout.write(String(bytes)))"],
+      stdin: "",
+      signal: new AbortController().signal,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("0");
+  });
+
+  it("resolves commands that exit without reading their stdin", async () => {
+    const execFile = createServerPluginExecFile();
+
+    const result = await execFile({
+      file: process.execPath,
+      args: ["-e", "process.stdin.destroy();process.exit(3)"],
+      stdin: "x".repeat(128 * 1024),
+      signal: new AbortController().signal,
+    });
+
+    expect(result.exitCode).toBe(3);
+  });
+
+  it("zeroes its retained stdin copy when spawn throws synchronously", async () => {
+    const secret = "sync-spawn-secret";
+    const payload = new TextEncoder().encode(secret);
+    const expectedPayload = [...payload];
+    const fill = vi.spyOn(Buffer.prototype, "fill");
+    try {
+      const execFile = createServerPluginExecFile();
+      const error: unknown = await execFile({
+        file: "invalid\0file",
+        stdin: payload,
+        signal: new AbortController().signal,
+      }).then(
+        () => { throw new Error("Expected spawn to fail"); },
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof Error ? error.message : String(error)).not.toContain(secret);
+      const fillInstances: unknown[] = fill.mock.instances;
+      const retainedPayloads = fillInstances.filter((instance): instance is Buffer => (
+        Buffer.isBuffer(instance) && instance.byteLength === payload.byteLength
+      ));
+      expect(retainedPayloads).toHaveLength(1);
+      const retainedPayload = retainedPayloads[0];
+      if (retainedPayload === undefined) throw new Error("Expected the retained stdin Buffer to be wiped");
+      expect([...retainedPayload]).toEqual(new Array<number>(payload.byteLength).fill(0));
+      expect([...payload]).toEqual(expectedPayload);
+    } finally {
+      fill.mockRestore();
+    }
+  });
+
+  it("rejects stdin payloads above the configured byte cap before spawning", async () => {
+    const execFile = createServerPluginExecFile({ maxStdinBytes: 8 });
+
+    await expect(execFile({
+      file: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      stdin: "123456789",
+      signal: new AbortController().signal,
+    })).rejects.toThrow("8 bytes");
+  });
+
+  it("measures string payloads in UTF-8 bytes against the default 1 MiB cap", async () => {
+    const execFile = createServerPluginExecFile();
+
+    await expect(execFile({
+      file: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      // Each character encodes to two UTF-8 bytes: 1 MiB + 2 bytes total.
+      stdin: "é".repeat(512 * 1024 + 1),
+      signal: new AbortController().signal,
+    })).rejects.toThrow("1048576 bytes");
+  });
+
+  it("rejects non-string non-binary stdin payloads before spawning", async () => {
+    const execFile = createServerPluginExecFile();
+
+    await expect(execFile({
+      file: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      // @ts-expect-error Exercise the runtime boundary used by plain JavaScript plugins.
+      stdin: 42,
+      signal: new AbortController().signal,
+    })).rejects.toThrow("stdin must be a string or Uint8Array");
   });
 
   it("rejects malformed environment keys before spawning", async () => {

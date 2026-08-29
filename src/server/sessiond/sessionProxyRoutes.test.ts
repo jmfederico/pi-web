@@ -179,6 +179,10 @@ class FakeSessionDaemon {
     return Promise.resolve(queuedResponse ?? { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: true }) });
   }
 
+  requestRaw(): Promise<FakeSessionDaemonResponse> {
+    return Promise.reject(new Error("Raw daemon requests not configured for test"));
+  }
+
   connectWebSocket(path: string): WebSocket {
     this.websocketPaths.push(path);
     return new WebSocket(`${webSocketServerUrl(this.upstream)}${path}`);

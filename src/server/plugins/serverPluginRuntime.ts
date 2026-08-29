@@ -4,6 +4,7 @@ import type {
   JsonValue,
   PiWebServerPlugin,
   ProjectInput,
+  ProviderBinaryRequestContext,
   ProviderRemoveContext,
   ProviderRequestContext,
   ServerPluginActivation,
@@ -435,18 +436,21 @@ function snapshotWorkspaceProvider(value: unknown): WorkspaceProvider {
     probe: value["probe"],
     list: value["list"],
     request: value["request"],
+    requestBinary: value["requestBinary"],
     prepareRemove: value["prepareRemove"],
-  };
+  } satisfies Record<keyof WorkspaceProvider, unknown>;
   if (!isWorkspaceProvider(candidate)) throw new IncompatibleServerPluginError("Server plugin workspaceProvider is invalid");
   const probe = candidate.probe.bind(value);
   const list = candidate.list.bind(value);
   const request = candidate.request?.bind(value);
+  const requestBinary = candidate.requestBinary?.bind(value);
   const prepareRemove = candidate.prepareRemove?.bind(value);
   return Object.freeze({
     ...(candidate.fallback === undefined ? {} : { fallback: candidate.fallback }),
     probe: (project: ProjectInput, signal: AbortSignal) => probe(project, signal),
     list: (project: ProjectInput, signal: AbortSignal) => list(project, signal),
     ...(request === undefined ? {} : { request: (context: ProviderRequestContext) => request(context) }),
+    ...(requestBinary === undefined ? {} : { requestBinary: (context: ProviderBinaryRequestContext) => requestBinary(context) }),
     ...(prepareRemove === undefined ? {} : { prepareRemove: (context: ProviderRemoveContext) => prepareRemove(context) }),
   });
 }
@@ -457,11 +461,13 @@ function isWorkspaceProvider(value: unknown): value is WorkspaceProvider {
   const probe = value["probe"];
   const list = value["list"];
   const request = value["request"];
+  const requestBinary = value["requestBinary"];
   const prepareRemove = value["prepareRemove"];
   return (fallback === undefined || typeof fallback === "boolean")
     && typeof probe === "function"
     && typeof list === "function"
     && (request === undefined || typeof request === "function")
+    && (requestBinary === undefined || typeof requestBinary === "function")
     && (prepareRemove === undefined || typeof prepareRemove === "function");
 }
 

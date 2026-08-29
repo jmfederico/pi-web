@@ -3,6 +3,9 @@ import { isPiWebPluginId } from "../../../shared/pluginIds";
 import {
   cloneBoundedPluginBackendJson,
   parseBoundedPluginBackendJson,
+  PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES,
+  PLUGIN_BACKEND_BINARY_REVISION_HEADER,
+  PLUGIN_BACKEND_BINARY_ROUTE_SUFFIX,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
@@ -44,6 +47,23 @@ export function pluginBackendRequestUrl(
   return context === undefined ? resolveAppUrl(path) : resolveAppUrl(path, context);
 }
 
+/** Application-relative path of the raw binary body variant of one operation. */
+export function pluginBackendBinaryRequestPath(
+  target: Pick<PluginBackendRequestTarget, "pluginId" | "machineId" | "projectId" | "workspaceId">,
+  operation: string,
+): string {
+  return `${pluginBackendRequestPath(target, operation)}/${PLUGIN_BACKEND_BINARY_ROUTE_SUFFIX}`;
+}
+
+export function pluginBackendBinaryRequestUrl(
+  target: Pick<PluginBackendRequestTarget, "pluginId" | "machineId" | "projectId" | "workspaceId">,
+  operation: string,
+  context?: AppUrlContext,
+): string {
+  const path = pluginBackendBinaryRequestPath(target, operation);
+  return context === undefined ? resolveAppUrl(path) : resolveAppUrl(path, context);
+}
+
 export async function requestPluginBackend(
   target: PluginBackendRequestTarget,
   operation: string,
@@ -56,13 +76,49 @@ export async function requestPluginBackend(
     throw new Error(`Plugin backend request exceeds the ${String(PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES)} byte wire limit`);
   }
 
+  return await postPluginBackend(pluginBackendRequestUrl(target, operation), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+}
+
+/**
+ * Raw binary request variant: the body crosses every hop as opaque bounded
+ * bytes, with the revision in a header. It is held in memory only and never
+ * logged; the response stays bounded JSON.
+ */
+export async function requestPluginBackendBinary(
+  target: PluginBackendRequestTarget,
+  operation: string,
+  body: Uint8Array,
+): Promise<JsonValue> {
+  const revision = requirePluginBackendRevision(target.backendRevision);
+  if (body.byteLength > PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES) {
+    throw new Error(`Plugin backend binary request exceeds the ${String(PLUGIN_BACKEND_BINARY_BODY_MAX_BYTES)} byte wire limit`);
+  }
+
+  return await postPluginBackend(pluginBackendBinaryRequestUrl(target, operation), {
+    method: "POST",
+    headers: {
+      "content-type": "application/octet-stream",
+      [PLUGIN_BACKEND_BINARY_REVISION_HEADER]: revision,
+    },
+    body: copyToArrayBuffer(body),
+  });
+}
+
+/** Fresh ArrayBuffer copy: fetch BodyInit typing excludes view-backed buffers. */
+function copyToArrayBuffer(view: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(view.byteLength);
+  new Uint8Array(buffer).set(view);
+  return buffer;
+}
+
+async function postPluginBackend(url: string, init: RequestInit): Promise<JsonValue> {
   let response: Response;
   try {
-    response = await fetch(pluginBackendRequestUrl(target, operation), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-    });
+    response = await fetch(url, init);
   } catch (error) {
     throw new Error(`Plugin backend request unavailable: ${errorMessage(error)}`, { cause: error });
   }

@@ -41,7 +41,7 @@ export function registerMachineProxyRoutes(app: FastifyInstance, machines = new 
             request.method,
             request.url,
             request.body,
-            request.headers["content-type"],
+            request.headers,
             reply,
             cancellation?.signal,
           );
@@ -66,7 +66,7 @@ async function proxyHttpRequest(
   method: string,
   requestUrl: string,
   body: unknown,
-  contentType: string | string[] | undefined,
+  requestHeaders: Record<string, string | string[] | undefined>,
   reply: FastifyReply,
   signal?: AbortSignal,
 ): Promise<FastifyReply> {
@@ -94,7 +94,7 @@ async function proxyHttpRequest(
     const responseBodyLimit = preview === undefined ? spec.responseBodyLimit : preview.responseBodyLimit;
 
     const startedAt = Date.now();
-    const requestOptions = proxyRequestOptions(spec, body, contentType, signal);
+    const requestOptions = proxyRequestOptions(spec, body, requestHeaders, signal);
     const upstream = requestOptions === undefined
       ? await client.request(method, remotePath, body)
       : await client.request(method, remotePath, body, requestOptions);
@@ -217,19 +217,35 @@ function remoteFilePreviewRequest(spec: FederatedHttpRouteSpec, remotePath: stri
 }
 
 function proxyRequestOptions(
-  spec: Pick<FederatedHttpRouteSpec, "timeoutMs" | "propagateCancellation">,
+  spec: Pick<FederatedHttpRouteSpec, "timeoutMs" | "propagateCancellation" | "forwardHeaders">,
   body: unknown,
-  contentType: string | string[] | undefined,
+  requestHeaders: Record<string, string | string[] | undefined>,
   signal?: AbortSignal,
 ): MachineRequestOptions | undefined {
   const options: MachineRequestOptions = {};
   if (spec.timeoutMs !== undefined) options.timeoutMs = spec.timeoutMs;
   if (spec.propagateCancellation === true && signal !== undefined) options.signal = signal;
   if (isRawProxyBody(body)) {
-    const value = firstHeaderValue(contentType);
+    const value = firstHeaderValue(requestHeaders["content-type"]);
     if (value !== undefined && value !== "") options.contentType = value;
   }
+  const forwarded = forwardedHeaderValues(spec.forwardHeaders, requestHeaders);
+  if (forwarded !== undefined) options.headers = forwarded;
   return Object.keys(options).length === 0 ? undefined : options;
+}
+
+/** Collect the spec-listed inbound headers that are present and non-empty. */
+function forwardedHeaderValues(
+  names: readonly string[] | undefined,
+  requestHeaders: Record<string, string | string[] | undefined>,
+): Record<string, string> | undefined {
+  if (names === undefined) return undefined;
+  const headers: Record<string, string> = {};
+  for (const name of names) {
+    const value = firstHeaderValue(requestHeaders[name]);
+    if (value !== undefined && value !== "") headers[name] = value;
+  }
+  return Object.keys(headers).length === 0 ? undefined : headers;
 }
 
 function isUnknownRemotePluginBackendRoute(

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../api";
-import { createPluginWorkspaceBackend, type PluginBackendRequester } from "./workspaceBackend";
+import {
+  createPluginWorkspaceBackend,
+  type PluginBackendBinaryRequester,
+  type PluginBackendRequester,
+} from "./workspaceBackend";
 
 const workspace: Workspace = {
   id: "workspace one",
@@ -33,6 +37,28 @@ describe("plugin workspace backend", () => {
       projectId: "project one",
       workspaceId: "workspace one",
     }, "status", null);
+  });
+
+  it("binds the binary request variant to the same workspace target", async () => {
+    const request = vi.fn<PluginBackendRequester>(() => Promise.resolve(null));
+    const requestBinary = vi.fn<PluginBackendBinaryRequester>(() => Promise.resolve({ stored: true }));
+    const backend = createPluginWorkspaceBackend({
+      registrationPluginId: "machine.remote.changes.owner",
+      sourcePluginId: "changes.owner",
+      backendRevision: "remote-r2",
+    }, workspace, "remote one", request, requestBinary);
+    if (backend === undefined) throw new Error("Expected a paired workspace backend");
+
+    const payload = new Uint8Array([0x73, 0x65, 0x63]);
+    await expect(backend.requestBinary("secrets.store", payload)).resolves.toEqual({ stored: true });
+    expect(requestBinary).toHaveBeenCalledWith({
+      pluginId: "changes.owner",
+      backendRevision: "remote-r2",
+      machineId: "remote one",
+      projectId: "project one",
+      workspaceId: "workspace one",
+    }, "secrets.store", payload);
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("omits the optional backend when the browser module has no paired server revision", () => {
