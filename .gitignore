@@ -20,3 +20,9 @@ dist/
 
 # Dev docs site staging output (scripts/build-docs-dev.mjs).
 /docs/.deploy/
+
+# Dependency installs use npm (package-lock.json is the committed lockfile).
+# A Bun lockfile here means someone ran `bun install`, which rewrites
+# package.json without updating package-lock.json.
+bun.lock
+bun.lockb
