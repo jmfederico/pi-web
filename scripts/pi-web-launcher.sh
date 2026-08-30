@@ -65,6 +65,9 @@ usable_bun() {
   _bun_candidate="$1"
   [ -x "$_bun_candidate" ] || return 1
   # Capability, not version: Bun.Terminal is what drives a PTY without node-pty.
+  # node-pty is not a spare engine for an older Bun: it cannot serve terminals under Bun at all
+  # (https://github.com/oven-sh/bun/issues/25822), so a Bun without this API has to boot on Node.js.
+  # Tracking note and what to relax when Bun ships the fix: src/shared/piWebRuntime.ts.
   "$_bun_candidate" -e 'process.exit(typeof Bun.Terminal === "function" ? 0 : 1)' >/dev/null 2>&1
 }
 
@@ -174,6 +177,10 @@ bun_install_no_runtime_error() {
 # A bun installation whose only bun lacks Bun.Terminal can still boot PI WEB on Node.js, but the
 # node-pty binding that path needs was never built (bun runs dependency install scripts only for
 # trusted packages). Warn before starting so the missing terminals are diagnosable.
+# The warning points at the build, not at `bun pm trust node-pty` being enough on its own: that
+# binding serves PI WEB only while PI WEB runs on Node.js. Under Bun itself node-pty is still broken
+# by oven-sh/bun#25822, which is what forces the Bun.Terminal capability gate above rather than a
+# plain "any bun will do".
 bun_install_node_fallback_warning() {
   printf 'pi-web: bun at %s has no Bun.Terminal, so PI WEB is starting on Node.js.\n' "$1" >&2
   printf '  Terminals need the node-pty native build: run `bun pm trust node-pty` (reinstall if the binding is still missing), or `bun upgrade` and start again to use Bun PTY.\n' >&2

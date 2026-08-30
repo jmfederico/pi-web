@@ -51,7 +51,8 @@ export function createDefaultBackend(): TerminalBackend {
   const bunBackend = new BunPTYBackend();
   if (isBunRuntime() && bunBackend.available()) return bunBackend;
   // A Bun without Bun.Terminal still gets the node backend: node-pty may be absent there, but
-  // that surfaces as an explicit unavailable error instead of a silently dead terminal.
+  // that surfaces as an explicit unavailable error instead of a silently dead terminal. It is never
+  // the Bun PTY engine — see `bunTerminalCapability()` for why (oven-sh/bun#25822).
   return new NodePTYBackend();
 }
 
@@ -195,6 +196,11 @@ export class BunPTYBackend implements TerminalBackend {
     }
     // The subprocess exit handler also deletes the entry; deleting here covers
     // the closed-without-exit path and the idempotent re-delete is harmless.
+    // Upstream: oven-sh/bun#40289 (and the drain-order variant #35851) report the PTY exit callback
+    // not firing spontaneously after a voluntary child exit on Linux. Probed on bun 1.4.1 Linux/x64
+    // with `sh -c 'exit 3'`, both with and without awaiting `proc.exited`: `onExit` fired (~3ms).
+    // Re-run that probe when either issue closes; until then keep this delete as the guaranteed
+    // release path rather than trusting the callback alone.
     this.terminals.delete(id);
   }
 
