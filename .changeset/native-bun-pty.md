@@ -5,7 +5,9 @@
 PI WEB now runs natively on Bun. Install the package with `bun add -g @jmfederico/pi-web` and the
 installed commands start on Bun: terminal sessions use Bun's own PTY API, so no `node-pty` native
 binary has to be built or approved. Node.js stays fully supported, and installing with npm keeps
-working exactly as before — `PI_WEB_RUNTIME` pins either runtime wherever you want it.
+working exactly as before — `PI_WEB_RUNTIME` pins either runtime wherever you want it. Running PI WEB
+on Bun is maintained on a best-effort basis by the community: issues that only reproduce when running
+on Bun are fixed as community effort allows.
 
 The runtime a PI WEB command starts on follows the package manager that installed it: a `bun add -g` installation runs
 on Bun whenever that Bun can boot PI WEB, and npm installations keep running on Node.js. `PI_WEB_RUNTIME=bun` requires
