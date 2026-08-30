@@ -75,8 +75,25 @@ describe.skipIf(process.platform === "win32")("launcher build", () => {
 });
 
 describe.skipIf(process.platform === "win32")("launcher runtime resolution", () => {
-  posixIt("prefers bun when both runtimes are discoverable", async () => {
+  posixIt("prefers node when both runtimes are discoverable (npm install)", async () => {
+    // The default fixture tree is npm-shaped (`prefix/lib/node_modules`), so the runtime the
+    // installing package manager chose is Node.js and `auto` starts there even when a capable bun
+    // is also discoverable — npm-installed machines must not silently move to Bun.
     const install = await createInstall({ bun: "capable", node: "ok", onPath: ["bun", "node"] });
+
+    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toEqual({ code: 0, stdout: "node\n", stderr: "" });
+    expect(await runLauncher(install, "pi-web", [])).toEqual({
+      code: 0,
+      stdout: `ran:node:${install.entryRef("../cli.js")}\nargv:\n`,
+      stderr: "",
+    });
+  });
+
+  posixIt("runs on bun when the package was installed with bun, even with node present", async () => {
+    // The bun-shaped fixture installs under `<root>/store/install/global/node_modules` with HOME
+    // pointed elsewhere, so detection is proven to come from the tree layout, not from $HOME. The
+    // package manager the user installed with wins over whatever else is on PATH.
+    const install = await createInstall({ shape: "bun", bun: "capable", node: "ok", onPath: ["bun", "node"] });
 
     expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toEqual({ code: 0, stdout: "bun\n", stderr: "" });
     expect(await runLauncher(install, "pi-web", [])).toEqual({
@@ -86,7 +103,46 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     });
   });
 
-  posixIt("runs on bun with node completely absent", async () => {
+  posixIt("falls back to node with a warning when the bun installation's bun lacks Bun.Terminal", async () => {
+    const install = await createInstall({ shape: "bun", bun: "incapable", node: "ok", onPath: ["bun", "node"] });
+
+    const launched = await runLauncher(install, "pi-web", []);
+    expect(launched.code).toBe(0);
+    expect(launched.stdout).toContain(`ran:node:${install.entryRef("../cli.js")}`);
+    expect(launched.stderr).toContain("Bun.Terminal");
+    expect(launched.stderr).toContain("bun upgrade");
+    expect(launched.stderr).toContain("bun pm trust node-pty");
+  });
+
+  posixIt("fails with actionable advice when a bun installation has no usable runtime at all", async () => {
+    // A bun without Bun.Terminal cannot host terminals, and a bun install that never trusted
+    // node-pty has no usable binding either, so there is nothing to fall back to: name the bun,
+    // name the fix, and stop before a partial start.
+    const install = await createInstall({ shape: "bun", bun: "incapable", onPath: ["bun"] });
+
+    const result = await runLauncher(install, "pi-web", []);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Bun.Terminal");
+    expect(result.stderr).toContain("bun upgrade");
+    expect(result.stderr).toContain("install PI WEB with npm");
+
+    const probe = await runLauncher(install, "pi-web", ["--print-runtime"]);
+    expect(probe.code).toBe(1);
+    expect(probe.stdout).toBe("");
+    expect(probe.stderr).toEqual(result.stderr);
+  });
+
+  posixIt("keeps PI_WEB_RUNTIME=node above the installer preference on a bun installation", async () => {
+    const install = await createInstall({ shape: "bun", bun: "capable", node: "ok", onPath: ["bun", "node"] });
+
+    const forced = await runLauncher(install, "pi-web", [], { PI_WEB_RUNTIME: "node" });
+    expect(forced.code).toBe(0);
+    expect(forced.stdout).toContain("ran:node:");
+    expect(forced.stderr).toBe("");
+  });
+
+  posixIt("runs on bun when the npm-installed package has no node anywhere", async () => {
     const install = await createInstall({ bun: "capable", onPath: ["bun"] });
 
     expect(await runLauncher(install, "pi-web-server", [])).toMatchObject({
@@ -106,7 +162,8 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
 
   posixIt("finds bun through the fixed candidate paths under a manager-like PATH", async () => {
     // The service-manager environment (F6): neither runtime is on PATH, and the candidate list is
-    // the fixture's own, so no host installation can decide this case.
+    // the fixture's own, so no host installation can decide this case. An npm install falls back
+    // to a capable bun when Node.js is not usable at all.
     const install = await createInstall({ bun: "capable", atCandidate: "fixed", onPath: [] });
 
     const launched = await runLauncher(install, "pi-web", []);
@@ -182,9 +239,10 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
   });
 
   posixIt("prints exactly one runtime name for --print-runtime and never reaches the entrypoint", async () => {
+    // npm-shaped install with both runtimes: the probe answers "node", the installer's choice.
     const install = await createInstall({ bun: "capable", node: "ok", onPath: ["bun", "node"] });
 
-    expect(await runLauncher(install, "pi-web-server", ["--print-runtime"])).toEqual({ code: 0, stdout: "bun\n", stderr: "" });
+    expect(await runLauncher(install, "pi-web-server", ["--print-runtime"])).toEqual({ code: 0, stdout: "node\n", stderr: "" });
     expect(await runLauncher(install, "pi-web", ["--print-runtime"], { PI_WEB_RUNTIME: "node" })).toEqual({
       code: 0,
       stdout: "node\n",
@@ -285,16 +343,20 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
 });
 
 /**
- * An installed-shaped package. `bun`/`node` name the stub to create: `capable`/`incapable` drives
- * the Bun.Terminal gate, `ok`/`too-old` drives the node floor.
+ * An installed-shaped package. `shape` picks the global tree layout the launcher sees — `npm`
+ * (`prefix/lib/node_modules`) or `bun` (`store/install/global/node_modules`) — and with it the
+ * package manager whose runtime preference wins. `bun`/`node` name the stub to create:
+ * `capable`/`incapable` drives the Bun.Terminal gate, `ok`/`too-old` drives the node floor.
  */
 async function createInstall(options) {
   const root = await freshDir("pi-web-install-");
   // Shaped like `npm install -g` / `bun add -g`: a package tree whose bins live in dist/bin,
   // reached through symlinks from the global bin directory.
-  const packageDir = join(root, "prefix", "lib", "node_modules", "@jmfederico", "pi-web");
+  const bunShaped = options.shape === "bun";
+  const globalRoot = bunShaped ? join(root, "store", "install", "global") : join(root, "prefix", "lib");
+  const packageDir = join(globalRoot, "node_modules", "@jmfederico", "pi-web");
   const launcherDir = join(packageDir, "dist", "bin");
-  const globalBin = join(root, "prefix", "bin");
+  const globalBin = bunShaped ? join(root, "store", "bin") : join(root, "prefix", "bin");
   const pathDir = join(root, "sandbox", "path");
   const home = join(root, "sandbox", "home");
   const candidateDir = join(root, "sandbox", "candidates");

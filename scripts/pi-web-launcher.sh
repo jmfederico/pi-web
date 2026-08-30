@@ -3,10 +3,12 @@
 #
 # PI WEB runtime launcher (SPEC D1/D2). npm and bun both install package `bin`
 # entries as symlinks to this file, so the interpreter cannot be chosen by a
-# shebang: it is chosen here, at start, from PI_WEB_RUNTIME and deterministic
-# paths. Service managers give their children the *manager* PATH (launchd:
-# /usr/bin:/bin:/usr/sbin:/sbin), never the interactive one, which is why
-# discovery also tries fixed candidate locations instead of trusting PATH.
+# shebang: it is chosen here, at start, from PI_WEB_RUNTIME, the package manager
+# that owns this installation (read from the tree layout — the closest thing to
+# a shebang npm and bun can share), and deterministic paths. Service managers
+# give their children the *manager* PATH (launchd: /usr/bin:/bin:/usr/sbin:/sbin),
+# never the interactive one, which is why discovery also tries fixed candidate
+# locations instead of trusting PATH.
 set -euo pipefail
 
 TARGET="__TARGET__"
@@ -38,6 +40,17 @@ if [ "${1-}" = "--print-launcher" ]; then
   printf '%s\n' "$SCRIPT_DIR"
   exit 0
 fi
+
+# The package manager that installed this tree decides which runtime `auto` prefers —
+# the user's package-manager choice is the shebang this file cannot carry. Bun's global
+# root is `<root>/install/global/node_modules`; every other layout (npm, pnpm, yarn,
+# `bun add -g --linker npm`, dev checkouts) is npm-shaped and prefers Node.js. A missing
+# tree degrades to the npm default instead of aborting before the entrypoint error.
+PACKAGE_ROOT="$(cd -P "$SCRIPT_DIR/../.." 2>/dev/null && pwd)" || PACKAGE_ROOT=""
+case "$PACKAGE_ROOT" in
+  */install/global/node_modules|*/install/global/node_modules/*) INSTALLER="bun" ;;
+  *) INSTALLER="npm" ;;
+esac
 
 # Only the three documented values; an empty value means "not set" = auto.
 case "${PI_WEB_RUNTIME-}" in
@@ -101,11 +114,69 @@ candidate_node() {
   first_usable_node "${NODE_CANDIDATES[@]}"
 }
 
+# Prints the path of a bun that can boot PI WEB (Bun.Terminal), PATH first, then the fixed
+# candidates. Any-bun, capable or not, is separate: a bun that exists but lacks the capability
+# is a diagnosable state, not a missing one.
+capable_bun() {
+  _found="$(path_bun 2>/dev/null || true)"
+  if [ -n "$_found" ] && usable_bun "$_found"; then
+    printf '%s\n' "$_found"
+    return 0
+  fi
+  first_usable_bun "${BUN_CANDIDATES[@]}"
+}
+
+any_bun() {
+  _found="$(path_bun 2>/dev/null || true)"
+  if [ -n "$_found" ]; then
+    printf '%s\n' "$_found"
+    return 0
+  fi
+  for _try in "${BUN_CANDIDATES[@]}"; do
+    if [ -x "$_try" ]; then
+      printf '%s\n' "$_try"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Prints the path of a node that meets the engine floor, PATH first, then the fixed candidates.
+capable_node() {
+  _found="$(path_node 2>/dev/null || true)"
+  if [ -n "$_found" ] && usable_node "$_found"; then
+    printf '%s\n' "$_found"
+    return 0
+  fi
+  first_usable_node "${NODE_CANDIDATES[@]}"
+}
+
 no_runtime_error() {
   printf 'pi-web: no usable JavaScript runtime found.\n' >&2
   printf '  Looked for bun (with Bun.Terminal) and node >= %s in PATH and the usual install locations.\n' "$MIN_NODE_VERSION" >&2
   printf '  Install one of them, or point PI_WEB_RUNTIME at a runtime: PI_WEB_RUNTIME=bun|node|auto.\n' >&2
   printf '  PI_WEB_RUNTIME is currently %s.\n' "${PI_WEB_RUNTIME:-auto}" >&2
+}
+
+# This tree was installed with bun but nothing on the machine can serve it: bun lacks the
+# native terminal API and no node meets the floor. Say which bun and how to fix it.
+bun_install_no_runtime_error() {
+  printf 'pi-web: no usable JavaScript runtime for this bun installation.\n' >&2
+  if [ -n "${1-}" ]; then
+    printf '  bun was found at %s but it has no Bun.Terminal, and no node >= %s was found in PATH or the usual install locations.\n' "$1" "$MIN_NODE_VERSION" >&2
+  else
+    printf '  No bun with Bun.Terminal and no node >= %s was found in PATH or the usual install locations.\n' "$MIN_NODE_VERSION" >&2
+  fi
+  printf '  Fix: run `bun upgrade` (Bun.Terminal needs a current Bun), or install PI WEB with npm to run it on Node.js.\n' >&2
+  printf '  PI_WEB_RUNTIME is currently %s.\n' "${PI_WEB_RUNTIME:-auto}" >&2
+}
+
+# A bun installation whose only bun lacks Bun.Terminal can still boot PI WEB on Node.js, but the
+# node-pty binding that path needs was never built (bun runs dependency install scripts only for
+# trusted packages). Warn before starting so the missing terminals are diagnosable.
+bun_install_node_fallback_warning() {
+  printf 'pi-web: bun at %s has no Bun.Terminal, so PI WEB is starting on Node.js.\n' "$1" >&2
+  printf '  Terminals need the node-pty native build: run `bun pm trust node-pty` (reinstall if the binding is still missing), or `bun upgrade` and start again to use Bun PTY.\n' >&2
 }
 
 # Echoes "<runtime-kind> <executable>" for the runtime this launch should use.
@@ -136,20 +207,31 @@ resolve_runtime() {
       return 1
       ;;
     *)
-      if _exec="$(path_bun)" && usable_bun "$_exec"; then
-        printf 'bun %s\n' "$_exec"
-        return 0
+      _capable_bun=""
+      _any_bun=""
+      if _exec="$(capable_bun)"; then _capable_bun="$_exec"; fi
+      if _exec="$(any_bun)"; then _any_bun="$_exec"; fi
+      if [ "$INSTALLER" = "bun" ]; then
+        if [ -n "$_capable_bun" ]; then
+          printf 'bun %s\n' "$_capable_bun"
+          return 0
+        fi
+        if _exec="$(capable_node)"; then
+          if [ -n "$_any_bun" ]; then
+            bun_install_node_fallback_warning "$_any_bun"
+          fi
+          printf 'node %s\n' "$_exec"
+          return 0
+        fi
+        bun_install_no_runtime_error "$_any_bun"
+        return 1
       fi
-      if _exec="$(candidate_bun)"; then
-        printf 'bun %s\n' "$_exec"
-        return 0
-      fi
-      if _exec="$(path_node)" && usable_node "$_exec"; then
+      if _exec="$(capable_node)"; then
         printf 'node %s\n' "$_exec"
         return 0
       fi
-      if _exec="$(candidate_node)"; then
-        printf 'node %s\n' "$_exec"
+      if [ -n "$_capable_bun" ]; then
+        printf 'bun %s\n' "$_capable_bun"
         return 0
       fi
       no_runtime_error

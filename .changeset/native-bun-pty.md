@@ -5,15 +5,15 @@
 PI WEB now runs natively on Bun. Install the package with `bun add -g @jmfederico/pi-web` and the
 installed commands start on Bun: terminal sessions use Bun's own PTY API, so no `node-pty` native
 binary has to be built or approved. Node.js stays fully supported, and installing with npm keeps
-working exactly as before — each PI WEB command chooses its runtime when it starts, so the package
-manager you used does not lock you in.
+working exactly as before — `PI_WEB_RUNTIME` pins either runtime wherever you want it.
 
-A machine that has both runtimes now prefers Bun when it can start PI WEB on it. Set
-`PI_WEB_RUNTIME=node` on the services to keep them on Node.js, or `PI_WEB_RUNTIME=bun` to require
-Bun instead of falling back. A Bun build without the native terminal API is never started by the
-launchers: `auto` selects Node.js instead, and `PI_WEB_RUNTIME=bun` says so and stops. `pi-web doctor` and `pi-web version` report the runtime each process
-actually selected and the terminal backend that implies, and the session daemon no longer warns
-about a missing `node-pty` installation when nothing on that process needs it.
+The runtime a PI WEB command starts on follows the package manager that installed it: a `bun add -g` installation runs
+on Bun whenever that Bun can boot PI WEB, and npm installations keep running on Node.js. `PI_WEB_RUNTIME=bun` requires
+Bun instead of falling back, `PI_WEB_RUNTIME=node` never selects Bun, and `pi-web doctor` and `pi-web version` report the
+runtime each process actually selected. A Bun build without the native terminal API is never started: with no usable
+Node.js the command stops and names the fix (`bun upgrade`, or reinstalling with npm), and with a usable Node.js it
+starts there with a warning that terminals need the trusted `node-pty` build. The session daemon no longer warns about
+a missing `node-pty` installation when nothing on that process needs it.
 
 Fixes a regression where terminals in the globally installed session daemon and web server were
 dead on Node.js: `node-pty` was loaded with a bare `require("node-pty")` inside an ES module, where
