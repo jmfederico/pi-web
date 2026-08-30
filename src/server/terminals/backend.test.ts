@@ -460,6 +460,29 @@ describe("BunPTYBackend", () => {
     );
   });
 
+  // Bun.spawn({ terminal }) on a pre-created Bun.Terminal only wires stdio: the shell keeps the
+  // daemon's session and has no controlling terminal, so bash logs "cannot set terminal process
+  // group … no job control" and ^C/SIGHUP never reach it (oven-sh/bun#33240). `detached: true`
+  // is what makes the child setsid() into its own session and own the PTY.
+  it("create spawns the shell detached so it sessions into the PTY (job control)", () => {
+    (globalThis as Record<string, unknown>)["Bun"] = {
+      ...((globalThis as Record<string, unknown>)["Bun"] as object),
+      spawn: mockSpawn,
+    };
+
+    backend.create({
+      cwd: "/tmp",
+      shell: "/bin/bash",
+      shellArgs: ["-l"],
+      env: {},
+    });
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.arrayContaining(["/bin/bash", "-l"]),
+      expect.objectContaining({ detached: true })
+    );
+  });
+
     it("create passes PI_WEB_TERMINAL=1 env var", () => {
     // Use the spawn mock set on globalThis in this test
     const globalBun = (globalThis as Record<string, unknown>)["Bun"] as { spawn: ReturnType<typeof vi.fn> };
@@ -486,6 +509,34 @@ describe("BunPTYBackend", () => {
     const lastCallArgs = globalBun.spawn.mock.calls[0] as [string[], { env: Record<string, string> }];
     const spawnOpts = lastCallArgs[1];
     expect(spawnOpts.env["TERM"]).toBe("xterm-256color");
+  });
+
+  // Bun.spawn owns the child but not the already-constructed Bun.Terminal: when the spawn itself
+  // fails (missing shell, bad cwd) nobody would close the terminal and its master fd would leak
+  // for the daemon's lifetime. The node-pty backend has no such window — its spawn allocates the
+  // pty internally and cleans up on failure.
+  it("create closes the terminal when Bun.spawn throws", async () => {
+    (globalThis as Record<string, unknown>)["Bun"] = {
+      ...((globalThis as Record<string, unknown>)["Bun"] as object),
+      spawn: vi.fn(() => {
+        throw new Error("spawn ENOENT");
+      }),
+    };
+
+    const mod = await reimport();
+    const freshBackend = new mod.BunPTYBackend();
+
+    expect(() =>
+      freshBackend.create({
+        cwd: "/tmp",
+        shell: "/nonexistent-shell",
+        shellArgs: [],
+        env: {},
+      })
+    ).toThrow("spawn ENOENT");
+
+    expect(mockTerminalClose).toHaveBeenCalled();
+    freshBackend.dispose();
   });
 
   it("write delegates to terminal.write()", async () => {

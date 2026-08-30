@@ -82,6 +82,8 @@ interface BunTerminalOptions {
 
 interface BunSpawnOptions {
   terminal?: BunTerminalHandle;
+  /** See the `detached: true` call site — it is what gives the shell the PTY session. */
+  detached?: boolean;
   cwd?: string;
   env?: Record<string, string>;
   onExit?: (subprocess: BunSubprocessHandle, exitCode: number | null, signal: string | null) => void;
@@ -136,24 +138,42 @@ export class BunPTYBackend implements TerminalBackend {
       },
     });
 
-    const subprocess = Bun.spawn([options.shell, ...options.shellArgs], {
-      terminal,
-      cwd: options.cwd,
-      env: {
-        ...options.env,
-        PI_WEB_TERMINAL: "1",
-        TERM: "xterm-256color",
-      },
-      onExit: (_sub, exitCode) => {
-        const entry = this.terminals.get(id);
-        if (entry?.exitCb) {
-          entry.exitCb(exitCode ?? undefined);
-        }
-        // Release the entry once the spawned process is gone so exited
-        // terminals do not accumulate for the lifetime of the service.
-        this.terminals.delete(id);
-      },
-    });
+    // The terminal is ours, not the spawn's: if the child never starts (missing shell, bad cwd),
+    // close it here or its master fd leaks for the daemon's lifetime.
+    let subprocess: BunSubprocessHandle;
+    try {
+      subprocess = Bun.spawn([options.shell, ...options.shellArgs], {
+        terminal,
+        // `detached` (setsid) is what gives the shell a controlling terminal on the PTY, not just
+        // stdio wires: without it the shell keeps the daemon's session (`TTY ?`), bash logs
+        // "cannot set terminal process group … no job control", and ^C never reaches the foreground
+        // process group. Upstream gap for pre-created terminals: oven-sh/bun#33240 (open) — the
+        // inline `terminal: { … }` spawn form already sessions correctly, only the existing-
+        // `Bun.Terminal` form skips `setsid()` + `TIOCSCTTY`. Probed on bun 1.4.0 Linux/x64 with
+        // `detached: true`: bash reports PID == PGID == SID on a pts/N, `stty size` tracks resize,
+        // and SIGKILLing the daemon delivers SIGHUP through the closed master. Re-run that probe
+        // when #33240 closes; the flag stays harmless either way.
+        detached: true,
+        cwd: options.cwd,
+        env: {
+          ...options.env,
+          PI_WEB_TERMINAL: "1",
+          TERM: "xterm-256color",
+        },
+        onExit: (_sub, exitCode) => {
+          const entry = this.terminals.get(id);
+          if (entry?.exitCb) {
+            entry.exitCb(exitCode ?? undefined);
+          }
+          // Release the entry once the spawned process is gone so exited
+          // terminals do not accumulate for the lifetime of the service.
+          this.terminals.delete(id);
+        },
+      });
+    } catch (error) {
+      terminal.close();
+      throw error;
+    }
 
     const info: TerminalInfo & { cols: number; rows: number } = {
       id,
