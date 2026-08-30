@@ -207,31 +207,28 @@ resolve_runtime() {
       return 1
       ;;
     *)
-      _capable_bun=""
-      _any_bun=""
-      if _exec="$(capable_bun)"; then _capable_bun="$_exec"; fi
-      if _exec="$(any_bun)"; then _any_bun="$_exec"; fi
       if [ "$INSTALLER" = "bun" ]; then
-        if [ -n "$_capable_bun" ]; then
-          printf 'bun %s\n' "$_capable_bun"
+        if _exec="$(capable_bun)"; then
+          printf 'bun %s\n' "$_exec"
           return 0
         fi
         if _exec="$(capable_node)"; then
-          if [ -n "$_any_bun" ]; then
-            bun_install_node_fallback_warning "$_any_bun"
+          if _any="$(any_bun)"; then
+            bun_install_node_fallback_warning "$_any"
           fi
           printf 'node %s\n' "$_exec"
           return 0
         fi
-        bun_install_no_runtime_error "$_any_bun"
+        _any="$(any_bun)" || _any=""
+        bun_install_no_runtime_error "$_any"
         return 1
       fi
       if _exec="$(capable_node)"; then
         printf 'node %s\n' "$_exec"
         return 0
       fi
-      if [ -n "$_capable_bun" ]; then
-        printf 'bun %s\n' "$_capable_bun"
+      if _exec="$(capable_bun)"; then
+        printf 'bun %s\n' "$_exec"
         return 0
       fi
       no_runtime_error

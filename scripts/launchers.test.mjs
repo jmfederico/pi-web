@@ -114,6 +114,25 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     expect(launched.stderr).toContain("bun pm trust node-pty");
   });
 
+  posixIt("does not execute bun when an npm install already has a usable node", async () => {
+    // Performance contract: discovery must not pay a runtime startup for a runtime it will not
+    // use. An npm-shaped tree with a usable Node resolves without ever executing bun.
+    const install = await createInstall({ bun: "capable", node: "ok", onPath: ["bun", "node"] });
+
+    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toMatchObject({ code: 0, stdout: "node\n" });
+    await expect(readFile(`${install.stub("bun")}.ran`, "utf8")).rejects.toThrow();
+    await readFile(`${install.stub("node")}.ran`, "utf8");
+  });
+
+  posixIt("does not execute node when the bun installation already has a capable bun", async () => {
+    // The mirror case: a bun-shaped tree resolves on its first probe and leaves node untouched.
+    const install = await createInstall({ shape: "bun", bun: "capable", node: "ok", onPath: ["bun", "node"] });
+
+    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toMatchObject({ code: 0, stdout: "bun\n" });
+    await readFile(`${install.stub("bun")}.ran`, "utf8");
+    await expect(readFile(`${install.stub("node")}.ran`, "utf8")).rejects.toThrow();
+  });
+
   posixIt("fails with actionable advice when a bun installation has no usable runtime at all", async () => {
     // A bun without Bun.Terminal cannot host terminals, and a bun install that never trusted
     // node-pty has no usable binding either, so there is nothing to fall back to: name the bun,
@@ -405,6 +424,8 @@ async function createInstall(options) {
     pathDir,
     launcherDir,
     candidateDir,
+    /** Absolute path of a stub runtime. `${stub(kind)}.ran` exists once that runtime was executed. */
+    stub: (kind) => join(kind === "bun" ? bunDirectory : nodeDirectory, kind),
     /** Absolute path of a dist entrypoint as the package ships it. */
     entry: (relativePath) => join(packageDir, "dist", ...String(relativePath).split("/")),
     /** How the launcher names that entrypoint: `$SCRIPT_DIR/<target>`, un-normalised. */
@@ -437,6 +458,8 @@ function shellRuntimeStub(kind, behaviour) {
   return [
     "#!/bin/sh",
     `# Stub ${kind} runtime (behaviour: ${behaviour}).`,
+    // Records every execution next to itself, so a test can prove a runtime was never started.
+    "printf 'x' >> \"$0.ran\" 2>/dev/null || true",
     'if [ "$1" = "-e" ]; then',
     '  case "$2" in',
     `    *Bun.Terminal*) exit ${capabilityExit} ;;`,
