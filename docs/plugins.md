@@ -740,6 +740,7 @@ interface PluginRuntimeContext {
   configureAuth: () => void | Promise<void>;
   logoutAuth: () => void | Promise<void>;
   openThemePicker: () => void;
+  selectProject: (projectId: string, options?: { workspaceId?: string }) => Promise<boolean>;
   selectMainView: (view: string) => void;
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string }) => void;
@@ -761,6 +762,7 @@ Notes:
 - Other `state` fields may exist at runtime, but they are private PI WEB internals that may graduate into stable helpers, change shape, or disappear.
 - `enabled` is evaluated when the action palette asks for actions.
 - `shortcutAliases` is for migration only: list former fully qualified action ids whose saved shortcut preference should still apply to this action.
+- `selectProject()` selects one of the selected machine's projects the same way the sidebar does, so focus, chat scroll transition, and the URL stay consistent. Pass `{ workspaceId }` to target a workspace inside it; without it the host applies its usual preferred-workspace choice. It resolves `false` when no project on the selected machine has that id, so a plugin can fall back instead of assuming the selection happened.
 - `selectWorkspaceTool()` expects a qualified panel id such as `my-plugin:workspace.info`.
 - `openTerminal()` switches to the built-in terminal panel. Pass `{ terminalId }` to deep-link to a specific terminal.
 - `refreshWorkspacePanels()` invokes `onInvalidate` for the selected workspace, either for every plugin panel or for one qualified `panelId`. The callback owns its refresh and should request a render when its visible state changes.
