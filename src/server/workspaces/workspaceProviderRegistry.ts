@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { workspaceIdFor } from "./workspaceIdentity.js";
 import type {
   ProjectInput,
   ProviderClaim,
@@ -667,7 +668,7 @@ async function validateProviderWorkspaces(
       ...(metadata === undefined ? {} : { metadata }),
     });
     const workspace: WorkspaceListing = {
-      id: workspaceId(project.id, candidate.key),
+      id: workspaceIdFor(project.id, candidate.key),
       projectId: project.id,
       path,
       label: candidate.label,
@@ -773,16 +774,12 @@ function degradedResolution(
 
 function folderWorkspace(project: ProjectInput): WorkspaceListing {
   return Object.freeze({
-    id: workspaceId(project.id, project.path),
+    id: workspaceIdFor(project.id, project.path),
     projectId: project.id,
     path: project.path,
     label: project.name,
     isMain: true,
   });
-}
-
-function workspaceId(projectId: string, providerKey: string): string {
-  return createHash("sha1").update(`${projectId}:${providerKey}`).digest("hex").slice(0, 12);
 }
 
 function normalizeAbsolutePath(path: string, label: string): string {

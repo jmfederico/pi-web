@@ -1,4 +1,4 @@
-import { api as defaultApi, type Project, type Workspace } from "../api";
+import { api as defaultApi, type Project, type SessionInfo, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
@@ -10,13 +10,13 @@ import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type Worksp
 const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
 
 export interface WorkspaceControllerDependencies {
-  api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  api?: Pick<typeof defaultApi, "sessions" | "workspaces" | "messages">;
   onBackgroundError?: (message: string, error: unknown) => void;
   topologyRefreshDebounceMs?: number;
 }
 
 export class WorkspaceController {
-  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces" | "messages">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
   private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
 
@@ -73,10 +73,35 @@ export class WorkspaceController {
       if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedWorkspace?.id !== workspace.id || this.getState().selectedProject?.id !== workspace.projectId) return;
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
-      if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
-      else if (target?.updateUrl !== false) this.updateUrl();
+      if (session) {
+        await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
+        return;
+      }
+      const provisional = await this.probeSessionOutsideList(target?.sessionId, workspace, machineId);
+      if (provisional !== undefined && selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id && this.getState().selectedProject?.id === workspace.projectId) {
+        await this.sessions.selectSession(provisional, { updateUrl: target?.updateUrl });
+        return;
+      }
+      if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
       if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
+    }
+  }
+
+  /**
+   * Deep-link fallback for sessions absent from the fetched list (e.g. older than the server-side
+   * list cap, which push deep links from long-lived workspaces routinely hit): probe the transcript
+   * endpoint with the known {id, cwd}; when the daemon serves content, select a provisional
+   * SessionInfo so the chat opens instead of dead-ending on an empty session pane.
+   */
+  private async probeSessionOutsideList(sessionId: string | undefined, workspace: Workspace, machineId: string): Promise<SessionInfo | undefined> {
+    if (sessionId === undefined || sessionId === "") return undefined;
+    try {
+      const page = await this.api.messages({ id: sessionId, cwd: workspace.path }, { limit: 1 }, machineId);
+      if (page.total < 1) return undefined;
+      return { id: sessionId, cwd: workspace.path, path: "", created: "", modified: "", messageCount: page.total, firstMessage: "", persisted: true };
+    } catch {
+      return undefined;
     }
   }
 

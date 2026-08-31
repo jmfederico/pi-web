@@ -22,6 +22,8 @@ import {
   parseMachinesResponse,
   parseMessagePage,
   parseModelSelectionResponse,
+  parsePushVapidPublicKey,
+  parseRemoved,
   parseSessionModelCatalogResponse,
   parseMoveWorkspaceFileResponse,
   parseOAuthFlowState,
@@ -96,6 +98,13 @@ export const piWebApi = {
   piWebStatus: (machineId = "local") => request(piWebStatusPath(machineId), parsePiWebStatusResponse),
   checkForUpdates: (machineId = "local") => request(`${piWebStatusPath(machineId)}?refresh=1`, parsePiWebStatusResponse, { cache: "no-store" }),
   piWebRuntime: () => request("api/pi-web/runtime", parsePiWebRuntimeResponse),
+};
+
+/** Web Push subscription management on the local machine's daemon. */
+export const pushApi = {
+  vapidPublicKey: () => request("api/push/vapid-public-key", parsePushVapidPublicKey),
+  subscribe: (subscription: PushSubscriptionJSON) => request("api/push/subscribe", parseAccepted, { method: "POST", body: JSON.stringify(subscription) }),
+  unsubscribe: (subscription: PushSubscriptionJSON) => request("api/push/unsubscribe", parseRemoved, { method: "DELETE", body: JSON.stringify(subscription) }),
 };
 
 export const machinesApi = {
@@ -396,6 +405,7 @@ export const api = {
   ...sessionsApi,
   ...terminalsApi,
   ...filesApi,
+  ...pushApi,
   ...trustApi,
 
 };

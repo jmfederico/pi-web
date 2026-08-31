@@ -33,13 +33,13 @@ defaults → global config file → environment overrides
 
 Supported project-local settings are then applied for that project's workspaces. For upload and prompt-attachment defaults, `<project>/.pi-web/config.json` overrides the global value.
 
-Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
+Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_PUSH_VAPID_PUBLIC_KEY`, `PI_WEB_PUSH_VAPID_PRIVATE_KEY`, `PI_WEB_PUSH_VAPID_SUBJECT_EMAIL`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
 
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts` / `push`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `attachments.defaultFolder`: applies to new prompt-attachment saves after config/workspace refresh.
@@ -167,6 +167,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | — | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session environment facts | `environmentFacts` | `PI_WEB_ENVIRONMENT_FACTS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
+| Web push VAPID credentials | `push.vapidPublicKey`, `push.vapidPrivateKey`, `push.subjectEmail` | `PI_WEB_PUSH_VAPID_PUBLIC_KEY`, `PI_WEB_PUSH_VAPID_PRIVATE_KEY`, `PI_WEB_PUSH_VAPID_SUBJECT_EMAIL` | Global/session daemon | Not supported locally | Restart session daemon on that machine; see [Web push notifications](#web-push-notifications) |
 | PI WEB plugin desired enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global + sessiond startup snapshot for server entries | Not core local config; plugins may read their own project files | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
 | Server-plugin safe start | `serverPlugins.safeStart` | — | Global/offline recovery | Not supported locally; manage with `pi-web plugins safe-start ...` | Applied before discovery/import on next sessiond start |
 | Keyboard shortcuts | `shortcuts.<actionId>` | — | Global | Not supported locally | Applies after settings save/config refresh |
@@ -283,6 +284,27 @@ The directory must use the data layout supported by the bundled Pi SDK; PI WEB d
 The session daemon resolves the directory once at startup and exports the resolved values to everything it starts, so sessions, terminals, the bash tool, and subsessions all observe the same `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`. That resolved active directory stays fixed for the daemon lifetime: changing the environment takes effect on the next session-daemon restart on that machine, and until then sessions, Pi package operations, Pi-package-backed PI WEB plugin discovery, status/install detection, and update planning continue to use the daemon-owned active directory; a web/API restart recovers that same active directory instead of applying the new value.
 
 If the session daemon cannot report a valid active directory, profile-dependent Pi package and PI WEB plugin operations report unavailable instead of falling back to independently resolved values. A package-managed update command is shown only when the daemon reports a valid active directory and the `pi` command is on `PATH`, and the command pins that directory for the update. Restart the session daemon on the selected machine to establish the next active directory.
+
+### Web push notifications
+
+PI WEB can notify your device through the browser's Web Push API when an assistant message with visible text completes or a session errors, even while the app is closed or backgrounded. Push is off by default; enabling it needs VAPID credentials on the server and the browser's notification permission (Settings → General → Push notifications).
+
+```jsonc
+// Global config (~/.config/pi-web/config.json)
+{
+  "push": {
+    "vapidPublicKey": "…base64url key…",
+    "vapidPrivateKey": "…base64url key…",
+    "subjectEmail": "mailto:you@example.com"
+  }
+}
+```
+
+The environment variables `PI_WEB_PUSH_VAPID_PUBLIC_KEY`, `PI_WEB_PUSH_VAPID_PRIVATE_KEY`, and `PI_WEB_PUSH_VAPID_SUBJECT_EMAIL` override the config-file values. Generate a key pair with `npx web-push generate-vapid-keys`. All three fields must be present and non-empty, and the subject must be an `https` URL or `mailto:` address; otherwise the session daemon logs why push stays disabled and the browser push endpoints answer 503.
+
+Notifications are sent from the session daemon on assistant message completions with visible text and on session errors, with a short per-session cooldown so a burst of activity produces one notification. Each new notification replaces the previous one from the same session, so a talkative agent leaves only its latest notification. While a PI WEB window is visible on the device, pushes are not shown at all (the app itself already reports what happened), and notifications that were already shown are closed when a window comes back to the foreground. Each browser stores one subscription per endpoint in `push-subscriptions.json` under the data directory; endpoints the push service reports as expired are removed automatically. Tapping a notification focuses or opens PI WEB and routes into the session that produced it; an already-open window switches to that session without reloading.
+
+Web Push additionally requires the deployment to be served over HTTPS; deployments without HTTPS (or with push unconfigured) keep the in-app experience only.
 
 ### Pi extension provider baseline
 

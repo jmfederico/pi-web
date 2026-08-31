@@ -234,6 +234,28 @@ export const workspacePanelStyles = css`
   p { margin: 10px; }
 `;
 
+/**
+ * Shared design language for settings cards. Settings panels and the deployment-local cards they
+ * embed (e.g. the web push toggle) each render in their own shadow root, so the card language is
+ * imported from here instead of being re-declared per component.
+ */
+export const settingsCardStyles = css`
+  :host { display: block; }
+  .card-heading { display: grid; gap: 6px; min-width: 0; }
+  h3, p { margin: 0; }
+  h3 { font-size: 13px; line-height: 1.3; }
+  p { color: var(--pi-muted); line-height: 1.45; }
+  button, input, select, textarea { font: inherit; }
+  button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .settings-card { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; display: grid; gap: 14px; }
+  .field-heading { color: var(--pi-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+  .config-form { display: grid; gap: 14px; }
+  .field { display: grid; gap: 7px; }
+  .field small { color: var(--pi-muted); }
+  .form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+`;
+
 export const listStyles = css`
   :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; color: var(--pi-text); font: 14px system-ui, sans-serif; }
   :host([collapsed]) { flex: 0 0 auto; min-height: auto; overflow: hidden; }

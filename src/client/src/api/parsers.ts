@@ -2096,3 +2096,15 @@ function numberOrNull(record: Record<string, unknown>, key: string): number | nu
 function optionalField(key: string, value: unknown): object {
   return value === undefined ? {} : { [key]: value };
 }
+
+export function parsePushVapidPublicKey(value: unknown): { publicKey: string } {
+  const record = requireRecord(value);
+  if (typeof record["publicKey"] !== "string" || record["publicKey"] === "") throw new Error("Expected a VAPID public key");
+  return { publicKey: record["publicKey"] };
+}
+
+export function parseRemoved(value: unknown): { removed: boolean } {
+  const record = requireRecord(value);
+  if (record["removed"] !== true && record["removed"] !== false) throw new Error("Expected a push unsubscribe result");
+  return { removed: record["removed"] };
+}

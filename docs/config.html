@@ -101,6 +101,7 @@
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#prompt-attachments">Prompt attachments</a>
             <a href="#agent-runtime">Agent state directory</a>
+            <a href="#web-push-notifications">Web push notifications</a>
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#catalog-refresh">Model catalog refresh</a>
             <a href="#session-tools">Session tools</a>
@@ -177,14 +178,16 @@
               </p>
               <p>
                 Environment overrides include <code>PI_WEB_HOST</code>, <code>PI_WEB_PORT</code> / <code>PORT</code>,
-                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_CODING_AGENT_DIR</code>,
+                <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>,
+                <code>PI_WEB_PUSH_VAPID_PUBLIC_KEY</code>, <code>PI_WEB_PUSH_VAPID_PRIVATE_KEY</code>,
+                <code>PI_WEB_PUSH_VAPID_SUBJECT_EMAIL</code>, <code>PI_CODING_AGENT_DIR</code>,
                 <code>PI_CODING_AGENT_SESSION_DIR</code>, <code>PI_WEB_SPAWN_SESSIONS</code>,
                 <code>PI_WEB_SUBSESSIONS</code>, <code>PI_WEB_ASK_USER</code>, and <code>PI_WEB_ENVIRONMENT_FACTS</code>.
               </p>
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
-                <li><code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code> / <code>environmentFacts</code>: restart the session daemon on that machine.</li>
+                <li><code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code> / <code>environmentFacts</code> / <code>push</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>attachments.defaultFolder</code>: applies to new prompt-attachment saves after config/workspace refresh.</li>
@@ -464,6 +467,14 @@ worktree_path="$1"
                       <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
+                      <td>Web push VAPID credentials</td>
+                      <td><code>push.vapidPublicKey</code>, <code>push.vapidPrivateKey</code>, <code>push.subjectEmail</code></td>
+                      <td><code>PI_WEB_PUSH_VAPID_PUBLIC_KEY</code>, <code>PI_WEB_PUSH_VAPID_PRIVATE_KEY</code>, <code>PI_WEB_PUSH_VAPID_SUBJECT_EMAIL</code></td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
+                      <td>Restart session daemon on that machine; see <a href="#web-push-notifications">Web push notifications</a></td>
+                    </tr>
+                    <tr>
                       <td>PI WEB plugin desired enablement/settings</td>
                       <td><code>plugins.&lt;id&gt;.enabled</code>, <code>plugins.&lt;id&gt;.settings</code></td>
                       <td>—</td>
@@ -734,6 +745,48 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 package-managed update command is shown only when the daemon reports a valid active directory and the
                 <code>pi</code> command is on <code>PATH</code>, and the command pins that directory for the update.
                 Restart the session daemon on the selected machine to establish the next active directory.
+              </div>
+            </section>
+
+            <section id="web-push-notifications">
+              <h2>Web push notifications</h2>
+              <p>
+                PI WEB can notify your device through the browser's Web Push API when an assistant message with visible
+                text completes or a session errors, even while the app is closed or backgrounded. Push is off by default;
+                enabling it needs VAPID credentials on the server and the browser's notification permission
+                (Settings → General → Push notifications).
+              </p>
+              <div class="code-card">
+                <pre><code>// Global config (~/.config/pi-web/config.json)
+{
+  "push": {
+    "vapidPublicKey": "…base64url key…",
+    "vapidPrivateKey": "…base64url key…",
+    "subjectEmail": "mailto:you@example.com"
+  }
+}</code></pre>
+              </div>
+              <p>
+                The environment variables <code>PI_WEB_PUSH_VAPID_PUBLIC_KEY</code>, <code>PI_WEB_PUSH_VAPID_PRIVATE_KEY</code>,
+                and <code>PI_WEB_PUSH_VAPID_SUBJECT_EMAIL</code> override the config-file values. Generate a key pair with
+                <code>npx web-push generate-vapid-keys</code>. All three fields must be present and non-empty, and the
+                subject must be an <code>https</code> URL or <code>mailto:</code> address; otherwise the session daemon logs
+                why push stays disabled and the browser push endpoints answer 503.
+              </p>
+              <p>
+                Notifications are sent from the session daemon on assistant message completions with visible text and on
+                session errors, with a short per-session cooldown so a burst of activity produces one notification. Each
+                new notification replaces the previous one from the same session, so a talkative agent leaves only its
+                latest notification. While a PI WEB window is visible on the device, pushes are not shown at all (the
+                app itself already reports what happened), and notifications that were already shown are closed when a
+                window comes back to the foreground. Each browser stores one subscription per endpoint in <code>push-subscriptions.json</code>
+                under the data directory; endpoints the push service reports as expired are removed automatically. Tapping a
+                notification focuses or opens PI WEB and routes into the session that produced it; an already-open
+                window switches to that session without reloading.
+              </p>
+              <div class="callout warning">
+                Web Push additionally requires the deployment to be served over HTTPS; deployments without HTTPS (or with
+                push unconfigured) keep the in-app experience only.
               </div>
             </section>
 

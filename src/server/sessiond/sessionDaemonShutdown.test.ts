@@ -19,11 +19,12 @@ describe("session daemon shutdown", () => {
         auth: { dispose: () => { events.push("auth"); } },
         sessions: { dispose: () => { events.push("sessions"); } },
         unreadStore: { flush: () => { events.push("unread"); } },
+        pushSubscriptions: { flush: () => { events.push("pushSubscriptions"); } },
         closeServer: () => { events.push("server"); },
       },
     });
 
-    expect(events).toEqual(["quiesce", "terminals", "catalog", "sessions", "server", "plugins", "auth", "unread"]);
+    expect(events).toEqual(["quiesce", "terminals", "catalog", "sessions", "server", "plugins", "auth", "unread", "pushSubscriptions"]);
     expect(onFailure).toHaveBeenCalledOnce();
     expect(logger.error).toHaveBeenCalledWith(
       { err: failure, operation: "stop server plugins" },

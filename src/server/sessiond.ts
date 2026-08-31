@@ -8,6 +8,9 @@ import { MachineStatusService } from "./status/machineStatusService.js";
 import { registerMachineStatusRoutes } from "./status/machineStatusRoutes.js";
 import { CachedWorkspaceAttribution } from "./status/workspaceAttribution.js";
 import { SessionEventHub } from "./realtime/sessionEventHub.js";
+import { PushSubscriptionStore, defaultPushSubscriptionFilePath } from "./push/pushSubscriptionStore.js";
+import { createWebPushRuntime } from "./push/webPushRuntime.js";
+import { registerPushRoutes } from "./push/pushRoutes.js";
 import { AuthService } from "./sessions/authService.js";
 import { bootstrapAndFreezeGlobalExtensionProviders } from "./sessions/globalProviderPolicy.js";
 import { registerAuthRoutes } from "./sessions/authRoutes.js";
@@ -51,6 +54,7 @@ import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoute
 import { registerPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
+import { workspaceIdFor } from "./workspaces/workspaceIdentity.js";
 import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js";
 
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
@@ -186,6 +190,19 @@ async function createSessionDaemonRuntime() {
   });
   try {
     const eventHub = new SessionEventHub();
+    // Web Push: the subscription store always loads (subscriptions must survive restarts), while
+    // delivery arms only when a complete VAPID credential set is present via file or env config.
+    // A corrupted store file resets to empty: subscriptions are re-creatable client state, never user content.
+    const pushStore = new PushSubscriptionStore(defaultPushSubscriptionFilePath(daemonEnvironment), {
+      onPersistenceError(operation, error) {
+        app.log.error({ err: error, operation }, "push subscription persistence failed");
+      },
+    });
+    try {
+      await pushStore.load();
+    } catch (error) {
+      app.log.warn({ err: error }, "push subscription store unreadable; continuing without stored subscriptions");
+    }
     const notificationStore = new SessionNotificationStore();
     const unreadStore = new SessionUnreadStore({
       persistence: new FileSessionUnreadPersistence(defaultSessionUnreadFilePath(daemonEnvironment)),
@@ -284,6 +301,23 @@ async function createSessionDaemonRuntime() {
         env: daemonEnvironment,
       }),
     }));
+    // Created after the session service so notification payloads can resolve a session's cwd into
+    // a deep-link route; the resolver stays lazy (per-event), the creation order only names it.
+    const push = createWebPushRuntime({
+      config,
+      store: pushStore,
+      eventHub,
+      logger: app.log,
+      resolveSessionCwd: (sessionId) => sessions.sessionCwd(sessionId),
+      // Canonical deep-link route ids: the session cwd equals the project path for main workspaces,
+      // whose workspace id is the shared workspaceIdentity formula over (projectId, path). Worktrees
+      // are not covered here and keep the client-side cwd join as their fallback.
+      resolveDeepLink: async (cwd) => {
+        const project = (await projects.list()).find((candidate) => candidate.path === cwd);
+        if (project === undefined) return undefined;
+        return { projectId: project.id, workspaceId: workspaceIdFor(project.id, cwd) };
+      },
+    });
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals);
@@ -309,6 +343,7 @@ async function createSessionDaemonRuntime() {
           auth,
           sessions,
           unreadStore,
+          pushSubscriptions: pushStore,
           closeServer: () => app.close(),
         },
         onFailure: () => { process.exitCode = 1; },
@@ -318,7 +353,7 @@ async function createSessionDaemonRuntime() {
       // next start discards it.
       await stateOwnership.release();
     };
-    return { eventHub, machineStatus, statusAttribution, auth, sessions, terminals, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals, shutdown };
+    return { eventHub, push, machineStatus, statusAttribution, auth, sessions, terminals, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals, shutdown };
   } catch (error) {
     try {
       await serverPlugins.stop();
@@ -329,10 +364,11 @@ async function createSessionDaemonRuntime() {
   }
 }
 
-function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, terminals, runtimeComponent, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
+function registerSessionDaemonRoutes({ eventHub, push, machineStatus, statusAttribution, auth, sessions, terminals, runtimeComponent, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
   registerMachineStatusRoutes(app, machineStatus);
   registerAuthRoutes(app, auth);
   registerSessionRoutes(app, sessions, eventHub);
+  registerPushRoutes(app, push);
   registerTerminalRoutes(app, terminals);
   registerWorkspaceCatalogRoutes(app, {
     projects,

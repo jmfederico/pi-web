@@ -10,6 +10,7 @@ export interface SessionDaemonShutdownDependencies {
   auth: { dispose(): void | Promise<void> };
   sessions: { dispose(): void | Promise<void> };
   unreadStore: { flush(): void | Promise<void> };
+  pushSubscriptions: { flush(): void | Promise<void> };
   closeServer(): void | Promise<void>;
 }
 
@@ -31,6 +32,9 @@ export async function runSessionDaemonShutdown(options: SessionDaemonShutdownOpt
     ["stop server plugins", () => dependencies.serverPlugins.stop()],
     ["dispose auth", () => dependencies.auth.dispose()],
     ["flush session unread state", () => dependencies.unreadStore.flush()],
+    // Both persistence stores flush last (after the server is closed): in-flight work can still write to them,
+    // and a graceful stop must not drop state accepted moments before shutdown.
+    ["flush push subscriptions", () => dependencies.pushSubscriptions.flush()],
   ];
 
   for (const [operation, run] of operations) {

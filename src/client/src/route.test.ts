@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readRoute, resolveAppRoute, writeRoute, type AppRoute } from "./route";
+import { readRoute, resolveAppRoute, resolveNotificationRoute, writeRoute, findNotifiedWorkspace, type AppRoute, type ParsedAppRoute } from "./route";
 
 const originalWindow = globalThis.window;
 
@@ -103,5 +103,75 @@ describe("route helpers", () => {
 
     expect(pushed).toEqual([]);
     expect(replaced).toEqual([]);
+  });
+
+  it("writes the notification cwd parameter alongside the session", () => {
+    const { pushed } = installWindow("http://localhost/app");
+
+    writeRoute({ machineId: undefined, projectId: undefined, workspaceId: undefined, sessionId: "s1", cwd: "/repo/app", tool: undefined, view: undefined });
+
+    expect(pushed).toEqual(["http://localhost/app?session=s1&cwd=%2Frepo%2Fapp"]);
+  });
+
+  it("clears a stale cwd parameter when the new route has none", () => {
+    const { pushed } = installWindow("http://localhost/app?session=s1&cwd=%2Frepo");
+
+    writeRoute({ machineId: undefined, projectId: "p1", workspaceId: undefined, sessionId: "s2", tool: undefined, view: undefined });
+
+    expect(pushed[0]?.includes("cwd")).toBe(false);
+    expect(pushed[0]).toContain("session=s2");
+  });
+
+  it("reads the cwd parameter", () => {
+    installWindow("http://localhost/app?session=s1&cwd=%2Frepo%2Fapp");
+
+    expect(readRoute()).toMatchObject({ sessionId: "s1", cwd: "/repo/app" });
+  });
+});
+
+describe("findNotifiedWorkspace", () => {
+  it("matches the workspace whose path equals the notified session cwd", () => {
+    const workspaces = [{ id: "w1", path: "/other" }, { id: "w2", path: "/repo/app" }];
+    expect(findNotifiedWorkspace(workspaces, "/repo/app")).toBe("w2");
+  });
+
+  it("returns undefined when no workspace path matches", () => {
+    expect(findNotifiedWorkspace([{ id: "w1", path: "/other" }], "/repo/app")).toBeUndefined();
+  });
+});
+
+describe("resolveNotificationRoute", () => {
+  const sessionRoute: ParsedAppRoute = {
+    machineId: undefined,
+    projectId: undefined,
+    workspaceId: undefined,
+    sessionId: "target-session",
+    tool: undefined,
+    view: undefined,
+  };
+
+  it("resolves a session-only link from workspace session lists", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue([{ id: "w1", path: "/repo" }]);
+    const loadSessions = vi.fn().mockResolvedValue([{ id: "target-session" }]);
+
+    const route = await resolveNotificationRoute(sessionRoute, [{ id: "p1" }], {}, loadWorkspaces, loadSessions);
+
+    expect(route).toEqual({ ...sessionRoute, projectId: "p1", workspaceId: "w1" });
+    expect(loadSessions).toHaveBeenCalledWith("/repo");
+  });
+
+  it("keeps cwd matching as the direct path without loading sessions", async () => {
+    const loadSessions = vi.fn();
+
+    const route = await resolveNotificationRoute(
+      { ...sessionRoute, cwd: "/repo" },
+      [{ id: "p1" }],
+      { p1: [{ id: "w1", path: "/repo" }] },
+      vi.fn(),
+      loadSessions,
+    );
+
+    expect(route).toEqual({ ...sessionRoute, cwd: "/repo", projectId: "p1", workspaceId: "w1" });
+    expect(loadSessions).not.toHaveBeenCalled();
   });
 });

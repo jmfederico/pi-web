@@ -1376,6 +1376,11 @@ export class PiSessionService implements SessionRouteService {
     });
   }
 
+  /** Best-effort cwd of a live session; Web Push deep links use it to address the session route (undefined when the session is not active). */
+  sessionCwd(sessionId: string): string | undefined {
+    return this.active.get(sessionId)?.runtime.cwd;
+  }
+
   async dispose(): Promise<void> {
     this.unreadPublicationStopped = true;
     this.clearUnreadPublicationRetry();

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
-import type { PiWebConfigValues, PiWebDeprecatedAgentInput } from "./shared/apiTypes.js";
+import type { PiWebConfigValues, PiWebDeprecatedAgentInput, PiWebPushConfig } from "./shared/apiTypes.js";
 import { isPiWebPluginId, piWebPluginIdPattern } from "./shared/pluginIds.js";
 
 export type PiWebConfig = PiWebConfigValues;
@@ -183,6 +183,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
   const port = env["PI_WEB_PORT"] ?? env["PORT"];
   const allowedHosts = env["PI_WEB_ALLOWED_HOSTS"];
   const maxUpload = env["PI_WEB_MAX_UPLOAD_BYTES"];
+  const push = effectivePushConfig(env, loaded.config);
   const agent = effectiveAgentConfig(env, loaded.config);
   return {
     ...loaded,
@@ -207,6 +208,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       environmentFacts: environmentFactsEnabled(env, loaded.config),
       // Always resolved; the unattended-dialog safety valve, not a gate.
       extensionDialogsTimeoutMs: loaded.config.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS,
+      ...(push === undefined ? {} : { push }),
       agent,
     },
   };
@@ -281,9 +283,43 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
     ...(value["environmentFacts"] !== undefined ? { environmentFacts: parseBooleanKey(value["environmentFacts"], "environmentFacts", path) } : {}),
+    ...(value["push"] !== undefined ? { push: parsePushConfig(value["push"], path) } : {}),
     ...(value["extensionDialogsTimeoutMs"] !== undefined ? { extensionDialogsTimeoutMs: parseExtensionDialogsTimeoutMs(value["extensionDialogsTimeoutMs"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
   };
+}
+
+function parsePushConfig(value: unknown, path: string): PiWebPushConfig {
+  if (!isRecord(value) || Array.isArray(value)) throw new Error(`PI WEB config push must be an object: ${path}`);
+  const record = value;
+  return {
+    ...(record["vapidPublicKey"] !== undefined ? { vapidPublicKey: parsePushString(record["vapidPublicKey"], "push.vapidPublicKey", path) } : {}),
+    ...(record["vapidPrivateKey"] !== undefined ? { vapidPrivateKey: parsePushString(record["vapidPrivateKey"], "push.vapidPrivateKey", path) } : {}),
+    ...(record["subjectEmail"] !== undefined ? { subjectEmail: parsePushString(record["subjectEmail"], "push.subjectEmail", path) } : {}),
+  };
+}
+
+function parsePushString(value: unknown, key: string, path: string): string {
+  if (typeof value !== "string" || value === "") throw new Error(`PI WEB config ${key} must be a non-empty string: ${path}`);
+  return value;
+}
+
+/** VAPID credential fields with environment overrides taking precedence over the config file, like the other sensitive deployment settings. */
+function effectivePushConfig(env: NodeJS.ProcessEnv, config: PiWebConfig): PiWebPushConfig | undefined {
+  const publicKey = nonEmptyStringEnv(env["PI_WEB_PUSH_VAPID_PUBLIC_KEY"]);
+  const privateKey = nonEmptyStringEnv(env["PI_WEB_PUSH_VAPID_PRIVATE_KEY"]);
+  const subjectEmail = nonEmptyStringEnv(env["PI_WEB_PUSH_VAPID_SUBJECT_EMAIL"]);
+  if (publicKey === undefined && privateKey === undefined && subjectEmail === undefined) return config.push;
+  return {
+    ...config.push,
+    ...(publicKey === undefined ? {} : { vapidPublicKey: publicKey }),
+    ...(privateKey === undefined ? {} : { vapidPrivateKey: privateKey }),
+    ...(subjectEmail === undefined ? {} : { subjectEmail }),
+  };
+}
+
+function nonEmptyStringEnv(value: string | undefined): string | undefined {
+  return value !== undefined && value !== "" ? value : undefined;
 }
 
 function parseMaxUploadBytes(value: unknown, key: string, path = "environment"): number {

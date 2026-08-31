@@ -164,6 +164,20 @@ export interface PiWebDeprecatedAgentInput {
   readonly replacement?: string;
 }
 
+/**
+ * Web Push (VAPID) credentials for server-side push delivery. All three fields must be
+ * present and non-empty for push to be enabled; without them the endpoints report that
+ * push is not configured instead of failing per request.
+ */
+export interface PiWebPushConfig {
+  /** Base64url VAPID public key handed to clients for `pushManager.subscribe`. */
+  vapidPublicKey?: string;
+  /** Base64url VAPID private key used by the server when sending notifications. Never sent to browsers. */
+  vapidPrivateKey?: string;
+  /** Contact (email or URL) embedded in every VAPID authorization header, e.g. "mailto:admin@example.com". */
+  subjectEmail?: string;
+}
+
 export interface PiWebConfigValues {
   host?: string;
   port?: number;
@@ -207,6 +221,8 @@ export interface PiWebConfigValues {
   extensionDialogsTimeoutMs?: number;
   /** Deprecated agent-configuration keys, still honored as aliases during the deprecation window and detected for the deprecation warning (see PiWebAgentConfig). */
   agent?: PiWebAgentConfig;
+  /** Web Push delivery credentials; push stays disabled until all three fields are set. */
+  push?: PiWebPushConfig;
 }
 
 export type PiWebPluginScope = "bundled" | "local" | "user" | "project";
