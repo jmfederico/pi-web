@@ -82,6 +82,7 @@ export interface WorkspaceProvider {
     list(project: ProjectInput, signal: AbortSignal): Promise<ProviderWorkspace[]>;
     request?(context: ProviderRequestContext): Promise<ProviderResponse>;
     prepareRemove?(context: ProviderRemoveContext): Promise<WorkspaceRemovePlan>;
+    prepareCreate?(context: ProviderCreateContext): Promise<WorkspaceCreatePlan>;
 }
 export type ProviderClaim = "claim" | "pass";
 export interface ProjectInput {
@@ -120,6 +121,29 @@ export interface ProviderRemoveContext {
     /** Host-validated, frozen projection of one listed provider workspace. */
     readonly workspace: Readonly<ProviderWorkspace>;
     readonly signal: AbortSignal;
+}
+export interface ProviderCreateContext {
+    readonly project: ProjectInput;
+    /** Host-validated absolute directory the new workspace is created inside. */
+    readonly parentPath: string;
+    /** Human-entered workspace name; the provider derives its own safe identifiers from it. */
+    readonly name: string;
+    readonly signal: AbortSignal;
+}
+/**
+ * Plugin-authored plan for a visible host terminal run. Returning this plan
+ * approves the operation; it does not mean the workspace exists yet.
+ */
+export interface WorkspaceCreatePlan {
+    /** Human-readable title for the host-owned terminal run. */
+    title: string;
+    /**
+     * Shell source interpreted by the host's login shell, run from the project's
+     * main workspace. Any path used here must be shell-quoted by the provider.
+     * Keep the creation in the foreground: the host records completion when the
+     * shell exits, with exit 0 meaning the workspace was created.
+     */
+    command: string;
 }
 /**
  * Plugin-authored plan for a visible host terminal run. Returning this plan

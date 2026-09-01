@@ -363,13 +363,13 @@ export class WorkspaceFilesPanel extends LitElement {
       .toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
       .toolbar .toolbar-actions button { margin-left: 0; }
       .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-      .drop-overlay { position: absolute; inset: 52px 10px 10px; z-index: 15; display: grid; place-items: center; border: 2px dashed var(--pi-accent); border-radius: 12px; background: color-mix(in srgb, var(--pi-bg-overlay) 90%, var(--pi-accent) 10%); color: var(--pi-text); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+      .drop-overlay { position: absolute; inset: 52px 10px 10px; z-index: 15; display: grid; place-items: center; border: 2px dashed var(--pi-accent); border-radius: 14px; background: color-mix(in srgb, var(--pi-bg-overlay) 90%, var(--pi-accent) 10%); color: var(--pi-text); opacity: 0; pointer-events: none; transition: opacity .12s ease; }
       .files-panel.dragging .drop-overlay { opacity: 1; }
-      .drop-overlay div { display: grid; gap: 4px; justify-items: center; padding: 18px; border-radius: 10px; background: var(--pi-bg-overlay); box-shadow: 0 8px 24px var(--pi-shadow); }
+      .drop-overlay div { display: grid; gap: 4px; justify-items: center; padding: 18px; border-radius: 12px; background: var(--pi-bg-overlay); box-shadow: 0 8px 24px var(--pi-shadow); }
       .drop-overlay span { color: var(--pi-muted); }
       .upload-progress { flex: 0 0 auto; display: grid; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: color-mix(in srgb, var(--pi-surface) 55%, transparent); }
       .upload-progress-header, .upload-batch-heading, .upload-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-      .upload-batch { display: grid; gap: 6px; border: 1px solid var(--pi-border-muted); border-radius: 8px; background: var(--pi-bg); padding: 8px; }
+      .upload-batch { display: grid; gap: 6px; border: 1px solid var(--pi-border-muted); border-radius: 10px; background: var(--pi-bg); padding: 8px; }
       .upload-batch.error { border-color: var(--pi-danger); }
       .upload-batch.cancelled { border-color: var(--pi-warning-border); }
       .upload-batch.completed { border-color: var(--pi-success-border); }
@@ -386,7 +386,7 @@ export class WorkspaceFilesPanel extends LitElement {
       .upload-file-status { font-size: 12px; white-space: nowrap; }
       .upload-actions { justify-content: end; }
       .dialog-backdrop { position: fixed; inset: 0; z-index: 100; box-sizing: border-box; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: var(--pi-overlay); }
-      .upload-dialog { box-sizing: border-box; width: min(560px, 100%); max-height: min(720px, 100%); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--pi-border); border-radius: 14px; background: var(--pi-bg); box-shadow: 0 18px 70px var(--pi-shadow-strong); }
+      .upload-dialog { box-sizing: border-box; width: min(560px, 100%); max-height: min(720px, 100%); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--pi-border); border-radius: 16px; background: var(--pi-bg); box-shadow: 0 18px 70px var(--pi-shadow-strong); }
       .upload-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--pi-border-muted); }
       .upload-dialog h2 { margin: 2px 0 0; font-size: 18px; line-height: 1.2; }
       .eyebrow { color: var(--pi-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
@@ -394,14 +394,14 @@ export class WorkspaceFilesPanel extends LitElement {
       form { min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: auto; padding: 16px; }
       form > label { display: grid; gap: 6px; }
       form > label > span, .review-files > strong { font-weight: 600; }
-      input[type="text"], form > label > input:not([type]) { box-sizing: border-box; width: 100%; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 8px 9px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
+      input[type="text"], form > label > input:not([type]) { box-sizing: border-box; width: 100%; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); color: var(--pi-text); padding: 8px 9px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
       input:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
       .dialog-options { display: grid; gap: 8px; }
       .dialog-options label { display: flex; align-items: center; gap: 8px; color: var(--pi-text); }
-      .review-files { display: grid; gap: 6px; min-height: 0; max-height: 180px; overflow: auto; border: 1px solid var(--pi-border-muted); border-radius: 8px; padding: 8px; }
+      .review-files { display: grid; gap: 6px; min-height: 0; max-height: 180px; overflow: auto; border: 1px solid var(--pi-border-muted); border-radius: 10px; padding: 8px; }
       .review-file { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
       .review-file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .dialog-error { border: 1px solid var(--pi-danger); border-radius: 8px; background: color-mix(in srgb, var(--pi-danger) 10%, transparent); color: var(--pi-danger); padding: 9px; line-height: 1.35; overflow-wrap: anywhere; }
+      .dialog-error { border: 1px solid var(--pi-danger); border-radius: 10px; background: color-mix(in srgb, var(--pi-danger) 10%, transparent); color: var(--pi-danger); padding: 9px; line-height: 1.35; overflow-wrap: anywhere; }
       footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
     `,
   ];

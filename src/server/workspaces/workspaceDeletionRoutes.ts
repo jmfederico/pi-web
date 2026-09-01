@@ -44,7 +44,8 @@ export function registerWorkspaceDeletionRoutes(
   );
 }
 
-function proxyJsonResponse(
+/** Shared by the sibling workspace mutation proxies. */
+export function proxyJsonResponse(
   reply: FastifyReply,
   upstream: { statusCode: number; headers: Record<string, string>; body: string },
 ): unknown {
@@ -57,7 +58,7 @@ function proxyJsonResponse(
     return value;
   } catch (error) {
     return reply.code(502).send({
-      error: `Invalid session daemon workspace removal response: ${errorMessage(error)}`,
+      error: `Invalid session daemon workspace response: ${errorMessage(error)}`,
     });
   }
 }

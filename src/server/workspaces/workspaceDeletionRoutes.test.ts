@@ -89,7 +89,7 @@ describe("workspace deletion routes", () => {
     const unavailable = await app.inject({ method: "DELETE", url: "/api/projects/p1/workspaces/w1", payload });
 
     expect(malformed.statusCode).toBe(502);
-    expect(malformed.json<{ error: string }>().error).toContain("Invalid session daemon workspace removal response");
+    expect(malformed.json<{ error: string }>().error).toContain("Invalid session daemon workspace response");
     expect(unavailable.statusCode).toBe(502);
     expect(unavailable.json()).toEqual({ error: "Session daemon unavailable: socket unavailable" });
   });

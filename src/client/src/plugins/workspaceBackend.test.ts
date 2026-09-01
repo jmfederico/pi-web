@@ -11,7 +11,7 @@ const workspace: Workspace = {
   effectiveConfig: {},
   provider: {
     pluginId: "changes.owner",
-    capabilities: { request: true, remove: false },
+    capabilities: { request: true, remove: false, create: false },
   },
 };
 

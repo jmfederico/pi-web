@@ -43,6 +43,45 @@ export function groupChatMessages(messages: ChatLine[], indexOffset = 0): ChatGr
   return groups;
 }
 
+export type ChatEventStatus = "none" | "pending" | "running" | "success" | "error";
+
+export interface ChatEventDescriptor {
+  label: string;
+  detail: string;
+  status: ChatEventStatus;
+}
+
+/** Whether a timeline entry has content beyond what its one-line summary already shows. */
+export function chatEventHasBody(message: ChatLine): boolean {
+  return message.parts.some((part) => {
+    if (part.type === "toolCall" || part.type === "empty") return false;
+    if (part.type === "thinking" || part.type === "text") return part.text.trim() !== "";
+    if (part.type === "toolResult") return part.text.trim() !== "";
+    return true;
+  });
+}
+
+/** The one-line timeline entry for a single technical event message. */
+export function describeChatEvent(message: ChatLine): ChatEventDescriptor {
+  if (message.source === "compaction") return { label: "compaction", detail: "history compaction summary", status: "none" };
+  if (message.source === "branch_summary") return { label: "branch", detail: "branch summary", status: "none" };
+  for (const part of message.parts) {
+    if (part.type === "toolExecution") return { label: part.toolName, detail: part.summary, status: part.status };
+    if (part.type === "toolCall") return { label: part.toolName, detail: part.summary, status: "pending" };
+    if (part.type === "toolResult") return { label: part.toolName, detail: firstLine(part.text), status: part.isError ? "error" : "success" };
+    if (part.type === "thinking") return { label: "thinking", detail: firstLine(part.text), status: "none" };
+    if (part.type === "skillInvocation") return { label: part.name, detail: part.location, status: "none" };
+    if (part.type === "skillRead") return { label: part.name, detail: part.path, status: "none" };
+    if (part.type === "text") return { label: message.role, detail: firstLine(part.text), status: "none" };
+  }
+  return { label: message.role, detail: "", status: "none" };
+}
+
+function firstLine(text: string): string {
+  const line = text.split("\n").find((candidate) => candidate.trim() !== "");
+  return line === undefined ? "" : line.trim();
+}
+
 export function summarizeChatGroup(messages: ChatLine[]): string {
   if (messages.every((message) => message.source === "compaction")) return `${String(messages.length)} history compaction ${messages.length === 1 ? "summary" : "summaries"}`;
   if (messages.every((message) => message.source === "branch_summary")) return `${String(messages.length)} branch ${messages.length === 1 ? "summary" : "summaries"}`;

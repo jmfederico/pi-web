@@ -61,7 +61,7 @@ describe("WorkspaceProviderRegistry", () => {
         isMain: true,
         provider: {
           pluginId: "primary",
-          capabilities: { request: true, remove: false },
+          capabilities: { request: true, remove: false, create: false },
           metadata: { changeId: "abc", nested: [1, true, null] },
         },
       }),
@@ -70,7 +70,7 @@ describe("WorkspaceProviderRegistry", () => {
         path: hostPath("/linked"),
         provider: {
           pluginId: "primary",
-          capabilities: { request: true, remove: true },
+          capabilities: { request: true, remove: true, create: false },
         },
       }),
     ]);

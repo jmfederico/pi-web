@@ -182,7 +182,7 @@ function workspaceFixture(patch: Partial<Workspace> = {}): Workspace {
     isMain: true,
     provider: {
       pluginId: "git",
-      capabilities: { request: true, remove: true },
+      capabilities: { request: true, remove: true, create: false },
       metadata: { branch: "main" },
     },
     ...patch,

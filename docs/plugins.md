@@ -653,6 +653,7 @@ interface WorkspaceProvider {
   list(project: ProjectInput, signal: AbortSignal): Promise<ProviderWorkspace[]>;
   request?(context: ProviderRequestContext): Promise<JsonValue>;
   prepareRemove?(context: ProviderRemoveContext): Promise<WorkspaceRemovePlan>;
+  prepareCreate?(context: ProviderCreateContext): Promise<WorkspaceCreatePlan>;
 }
 
 interface ProviderWorkspace {
@@ -671,6 +672,7 @@ interface ProviderWorkspace {
 - `data` is round-tripped privately to that provider during the current resolution. `publicMetadata` appears under `workspace.provider.metadata` and is visible to **all browser code and API consumers**. Never put secrets in `publicMetadata` or removal wording.
 - `request()` is optional and receives a host-validated frozen current owner/workspace projection plus a bounded operation id, JSON input, and operation-scoped abort signal. It must return JSON.
 - `removal` is display text only and requires `prepareRemove()`. It advertises removal for that specific workspace; browser `workspace.provider.capabilities.remove` is true only when that workspace advertises it and the owning provider implements removal.
+- `prepareCreate()` is optional and receives the project, the host-validated absolute `parentPath` the browser picked, and the human-entered `name`. The host rejects an empty, oversized, relative (`.`/`..`), or separator-bearing name before the provider sees it; everything else about the name is the provider's to interpret (bundled Git slugifies it into a branch name). Return a plan for a visible host-owned terminal run from the project's main workspace; returning the plan approves the operation but does **not** mean the workspace exists yet. Shell-quote every path and keep the creation in the foreground. `capabilities.create` on the project's main workspace is true only when the owning provider implements `prepareCreate()`, and PI WEB hides its "Add workspace" project action otherwise.
 - `prepareRemove()` returns a plan for a visible host-owned terminal run; returning the plan approves the operation but does **not** mean removal has completed. `command` is shell source interpreted by the host's login shell. The host chooses a safe current working directory outside the target, so the provider must use the supplied absolute `workspace.path`, shell-quote it, and keep removal in the foreground. The host records completion when the shell exits, with exit status 0 meaning success.
 - Provider failures and conflicts are diagnostics. A claimant that fails `list()` does not permit fallback takeover for the same resolution.
 
@@ -898,14 +900,14 @@ interface Workspace {
   readonly isMain: boolean;
   readonly provider?: {
     readonly pluginId: string;
-    readonly capabilities: { readonly request: boolean; readonly remove: boolean };
+    readonly capabilities: { readonly request: boolean; readonly remove: boolean; readonly create: boolean };
     readonly metadata?: JsonObject;
   };
   readonly removal?: { readonly actionLabel: string; readonly confirmation: string };
 }
 ```
 
-`machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
+`machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general, while `capabilities.create` describes the owning provider rather than the workspace, so read it from the project's main workspace. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
 
 Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel content when possible. Do not assume a panel owns the whole page; keep layout contained.
 
@@ -1280,7 +1282,7 @@ If you are an AI agent building or editing a PI WEB plugin, follow this checklis
 7. Return arrays synchronously from workspace label `items()`; return an empty array to render nothing.
 8. Use documented browser helpers first: `files`, `terminal`, `backend`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Never construct PI WEB backend, federation, or absolute asset URLs.
 9. In a server entry, return only the demonstrated lifecycle callbacks and at most one `workspaceProvider`; treat every supplied `AbortSignal` as operation-scoped and forward it to bounded work.
-10. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON data/metadata, and optional request/removal capabilities.
+10. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON data/metadata, and optional request/removal/creation capabilities.
 11. Keep backend operations JSON-only, bounded, and provider-owned. Put no secrets in `publicMetadata`, browser responses, removal wording, or diagnostics.
 12. Keep the installed package at or below 4,096 entries and 16 MiB, and keep every browser-public file inside a narrow `browserRoot`.
 13. Treat both entries as trusted code. A server module shares sessiond's process and user permissions.

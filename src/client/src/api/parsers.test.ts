@@ -690,7 +690,7 @@ describe("API parsers", () => {
       isMain: false,
       provider: {
         pluginId: "workspace-provider",
-        capabilities: { request: true, remove: true },
+        capabilities: { request: true, remove: true, create: false },
         metadata: { changeId: "abc", nested: [1, true, null] },
       },
       removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?", precondition: "v1.confirmed" },

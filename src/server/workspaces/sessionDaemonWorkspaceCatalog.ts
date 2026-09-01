@@ -209,6 +209,8 @@ function parseProvider(value: unknown, workspaceLabel: string): NonNullable<Work
     capabilities: Object.freeze({
       request: requireBoolean(capabilities, "request", `${label} capabilities`),
       remove: requireBoolean(capabilities, "remove", `${label} capabilities`),
+      // Optional on the wire: a session daemon from an older release omits it.
+      create: capabilities["create"] === true,
     }),
     ...(metadata === undefined ? {} : { metadata }),
   });

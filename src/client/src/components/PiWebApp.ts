@@ -61,6 +61,7 @@ import "./CommandPicker";
 import "./ModelPicker";
 import "./ActionPalette";
 import "./AuthDialog";
+import "./AddWorkspaceDialog";
 import "./ProjectDialog";
 import "./MachineDialog";
 import type { MachineDialogSubmit } from "./MachineDialog";
@@ -239,6 +240,7 @@ export class PiWebApp extends LitElement {
   @state() private activeThemeId: QualifiedContributionId = CLASSIC_THEME_ID;
   @state() private isRefreshingApp = false;
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
+  @state() private addWorkspaceDialog: { project: Project; busy: boolean; error: string } | undefined;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private workspaceUploadDefaultFolder = effectiveWorkspaceUploadFolder(undefined);
@@ -1265,6 +1267,9 @@ export class PiWebApp extends LitElement {
         .onToggleSessions=${() => { this.navigationSections.toggle("sessions"); }}
         .onSelectProject=${(project: Project) => this.selectNavigationItem("projects", "workspaces", () => this.workspaces.selectProject(project))}
         .onCloseProject=${(project: Project) => this.projects.closeProject(project.id)}
+        .onAddWorkspace=${(project: Project) => { this.addWorkspaceDialog = { project, busy: false, error: "" }; }}
+        .canAddWorkspace=${(project: Project) => this.canAddWorkspace(project)}
+        .onProjectMenuOpen=${(project: Project) => { this.loadProjectWorkspacesForMenu(project); }}
         .onSelectWorkspace=${(workspace: Workspace) => this.selectNavigationItem("workspaces", "sessions", () => this.workspaces.selectWorkspace(workspace))}
         .onDeleteWorkspace=${(workspace: Workspace) => { void this.deleteWorkspace(workspace); }}
         .onArchivedCollapsed=${() => { this.sessions.clearSelectionAfterArchivedCollapse(); }}
@@ -1753,6 +1758,50 @@ export class PiWebApp extends LitElement {
       stopActiveWork: () => this.sessions.stopActiveWork(),
     }, createContext);
     return createContext("core");
+  }
+
+  /** The menu's creation gate reads this project's workspaces, which are loaded only for the selected project. */
+  private loadProjectWorkspacesForMenu(project: Project): void {
+    if (this.state.workspacesByProjectId[project.id] !== undefined) return;
+    void this.workspaces.refreshProjectWorkspaces(project.id).catch(() => undefined);
+  }
+
+  /** Creation is provider-gated: only the owner that advertises it can add workspaces. */
+  private canAddWorkspace(project: Project): boolean {
+    const workspaces = this.state.workspacesByProjectId[project.id] ?? [];
+    return workspaces.find((workspace) => workspace.isMain)?.provider?.capabilities.create === true;
+  }
+
+  private async createWorkspace(parentPath: string, name: string): Promise<void> {
+    const dialog = this.addWorkspaceDialog;
+    if (dialog === undefined || dialog.busy) return;
+    const machineId = selectedMachineId(this.state);
+    this.addWorkspaceDialog = { ...dialog, busy: true, error: "" };
+    try {
+      const run = await workspacesApi.createWorkspace(dialog.project.id, parentPath, name, machineId);
+      if (selectedMachineId(this.state) !== machineId) return;
+      this.addWorkspaceDialog = undefined;
+      const commandWorkspace = await this.workspaceForCommandRun(run);
+      if (selectedMachineId(this.state) !== machineId) return;
+      if (commandWorkspace !== undefined) void this.openRuntimeTerminal(machineId, commandWorkspace, { terminalId: run.terminalId });
+      await this.refreshWorkspacesAfterRun(run, machineId);
+    } catch (error) {
+      if (selectedMachineId(this.state) !== machineId || this.addWorkspaceDialog === undefined) return;
+      this.addWorkspaceDialog = { ...this.addWorkspaceDialog, busy: false, error: errorMessage(error) };
+    }
+  }
+
+  /** The new workspace only exists once the visible command run exits. */
+  private async refreshWorkspacesAfterRun(run: TerminalCommandRun, machineId: string): Promise<void> {
+    const runs = this.terminalCommandRunsForOrigin("core", machineId);
+    // ponytail: bounded poll, matches the workspace deletion poll cadence.
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const current = await runs.getCommandRun(run.id);
+      if (current === undefined || current.status === "succeeded" || current.status === "failed") break;
+      await new Promise<void>((resolvePoll) => { window.setTimeout(resolvePoll, 1000); });
+    }
+    if (selectedMachineId(this.state) !== machineId) return;
+    await this.workspaces.refreshSelectedProjectTopology();
   }
 
   private async deleteWorkspace(workspace = this.state.selectedWorkspace): Promise<void> {
@@ -2274,6 +2323,7 @@ export class PiWebApp extends LitElement {
         ${this.renderSessionTreeNavigator(state)}
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
+        ${this.addWorkspaceDialog === undefined ? null : html`<add-workspace-dialog .machineId=${selectedMachineId(state)} .projectPath=${this.addWorkspaceDialog.project.path} .busy=${this.addWorkspaceDialog.busy} .error=${this.addWorkspaceDialog.error} .onSubmit=${(parentPath: string, name: string) => { void this.createWorkspace(parentPath, name); }} .onCancel=${() => { this.addWorkspaceDialog = undefined; }}></add-workspace-dialog>`}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
         ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}

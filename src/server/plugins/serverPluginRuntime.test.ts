@@ -319,6 +319,34 @@ describe("server plugin runtime", () => {
     ]);
   });
 
+  // Regression: the snapshot copies provider methods by name, so an optional
+  // method missing from that list is silently dropped and its capability never
+  // reaches the browser.
+  it("carries every optional provider method through the published snapshot", async () => {
+    const provider: WorkspaceProvider = {
+      ...testProvider(),
+      request: () => Promise.resolve("requested"),
+      prepareRemove: () => Promise.resolve({ title: "Remove", command: "true" }),
+      prepareCreate: () => Promise.resolve({ title: "Create", command: "true" }),
+    };
+    const importer: ServerPluginModuleImporter = () => Promise.resolve(pluginModule("Complete", { workspaceProvider: provider }));
+
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("complete")])) },
+      importer,
+      logger: testLogger(),
+    });
+
+    const published = runtime.providerContributions()[0]?.provider;
+    expect(Object.keys(published ?? {}).sort()).toEqual(["list", "prepareCreate", "prepareRemove", "probe", "request"]);
+    await expect(published?.prepareCreate?.({
+      project: { id: "p", name: "P", path: "/p" },
+      parentPath: "/p",
+      name: "spike",
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ title: "Create", command: "true" });
+  });
+
   it("rejects plural provider contributions and non-JSON settings before publication", async () => {
     const pluralActivation = { workspaceProviders: [testProvider()] };
     const circular: Record<string, unknown> = {};

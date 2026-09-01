@@ -2,7 +2,7 @@ import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { ChatDisclosureController } from "../chatDisclosure";
-import { groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
+import { chatEventHasBody, describeChatEvent, groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
 import { writeClipboardText } from "../clipboard";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
@@ -831,8 +831,8 @@ export class ChatView extends LitElement {
     return html`
       ${this.renderScrollMarker(this.messageScrollMarkerId(index))}
       <article class=${toolOnly || askUserRecordOnly ? shellClass : `msg ${message.role}`} data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
-        ${toolOnly || askUserRecordOnly ? null : this.renderMessageHeader(message, String(index))}
         ${message.parts.map((part) => this.renderPart(part, message))}
+        ${toolOnly || askUserRecordOnly ? null : this.renderMessageFooter(message, String(index))}
       </article>
     `;
   }
@@ -866,29 +866,58 @@ export class ChatView extends LitElement {
           <b class="label">${chatMessageGroupLabel(defaultOpen)}</b>
           <span>${summarizeChatGroup(messages)}</span>
         </summary>
-        ${open ? this.renderMessageGroupBody(messages, startIndex) : null}
+        ${open ? this.renderMessageGroupBody(messages, startIndex, defaultOpen) : null}
       </details>
     `;
   }
 
-  private renderMessageGroupBody(messages: ChatLine[], startIndex: number) {
+  private renderMessageGroupBody(messages: ChatLine[], startIndex: number, defaultOpen: boolean) {
     return html`
-      <div class="group-body">
+      <ol class="group-body event-timeline">
         ${messages.map((message, offset) => {
-          const toolOnly = this.isToolExecutionOnlyMessage(message);
+          const index = startIndex + offset;
+          const descriptor = describeChatEvent(message);
+          const disclosureKey = this.eventDisclosureKey(index);
+          const open = this.disclosures.isOpen(disclosureKey, defaultOpen);
+          const expandable = chatEventHasBody(message);
+          const row = html`
+            <span class=${`event-dot status-${descriptor.status}`}></span>
+            <b class="event-label">${descriptor.label}</b>
+            <span class="event-detail">${descriptor.detail}</span>
+          `;
           return html`
-            <section class=${toolOnly ? "group-msg tool-execution-shell" : `group-msg ${message.role}`} data-index=${startIndex + offset} data-scroll-anchor-id=${this.eventAnchorKey(startIndex + offset)}>
-              ${toolOnly ? null : this.renderMessageHeader(message, `${String(startIndex)}:${String(offset)}`)}
-              ${message.parts.map((part) => this.renderPart(part, message))}
-            </section>
+            <li class=${open && expandable ? "event-entry open" : "event-entry"} data-index=${index} data-scroll-anchor-id=${this.eventAnchorKey(index)}>
+              ${expandable
+                ? html`<button class="event-summary" type="button" aria-expanded=${open ? "true" : "false"} @click=${() => { this.onEventToggle(disclosureKey, !open, defaultOpen); }}>${row}</button>`
+                : html`<div class="event-summary static">${row}</div>`}
+              ${open && expandable
+                ? html`
+                    <section class=${`group-msg ${message.role}`}>
+                      ${message.parts.map((part) => this.renderPart(part, message, true))}
+                    </section>
+                  `
+                : null}
+            </li>
           `;
         })}
-      </div>
+      </ol>
     `;
   }
 
   private renderScrollMarker(markerId: string) {
     return html`<span class="scroll-marker" data-marker-id=${markerId} aria-hidden="true"></span>`;
+  }
+
+  /** Trailing meta row, replacing the role header now that colour carries the role. */
+  private renderMessageFooter(message: ChatLine, key: string) {
+    const meta = this.messageMetaLabel(message);
+    const expanded = this.expandedMetaKey === key;
+    return html`
+      <div class="msg-footer">
+        ${this.renderMessageActions(message, key)}
+        <span class=${expanded ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${meta} aria-label=${meta} aria-expanded=${String(expanded)} @click=${() => { this.expandedMetaKey = expanded ? undefined : key; }} @keydown=${(event: KeyboardEvent) => { this.onMetaKeydown(event, key, expanded); }}>${meta}</span>
+      </div>
+    `;
   }
 
   private renderMessageHeader(message: ChatLine, key: string, label: string = message.role) {
@@ -958,17 +987,28 @@ export class ChatView extends LitElement {
     return label;
   }
 
-  private renderPart(part: ChatPart, message?: ChatLine) {
+  private renderPart(part: ChatPart, message?: ChatLine, bare = false) {
     if (part.type === "text" && message?.role === "bash") return html`<pre class="part shell-output">${part.text}</pre>`;
     if (part.type === "text") return html`<formatted-text class="part" .text=${part.text}></formatted-text>`;
-    if (part.type === "thinking") return html`<details class="part"><summary>thinking</summary><formatted-text .text=${part.text}></formatted-text></details>`;
-    if (part.type === "skillInvocation") return html`
-      <details class="part skill-invocation">
-        <summary><b>[skill]</b> ${part.name}</summary>
-        <small>${part.location}</small>
-        <formatted-text .text=${part.content}></formatted-text>
-      </details>
-    `;
+    if (part.type === "thinking") {
+      if (bare) return html`<formatted-text class="part thinking" .text=${part.text}></formatted-text>`;
+      return html`<details class="part"><summary>thinking</summary><formatted-text class="thinking" .text=${part.text}></formatted-text></details>`;
+    }
+    if (part.type === "skillInvocation") {
+      if (bare) return html`
+        <div class="part skill-invocation">
+          <small>${part.location}</small>
+          <formatted-text .text=${part.content}></formatted-text>
+        </div>
+      `;
+      return html`
+        <details class="part skill-invocation">
+          <summary><b>[skill]</b> ${part.name}</summary>
+          <small>${part.location}</small>
+          <formatted-text .text=${part.content}></formatted-text>
+        </details>
+      `;
+    }
     if (part.type === "skillRead") return html`
       <div class="part skill-read">
         <strong>Loaded ${part.name}</strong>
@@ -986,14 +1026,20 @@ export class ChatView extends LitElement {
       const { src, alt } = chatImagePartSource(part);
       return html`<img class="part chat-image" src=${src} alt=${alt} loading="lazy" role="button" tabindex="0" title="Click to enlarge" @load=${this.onImageLoad} @click=${() => { this.openImageZoom(src, alt); }} @keydown=${(event: KeyboardEvent) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.openImageZoom(src, alt); } }} />`;
     }
-    if (part.type === "toolCall") return html`<div class="part tool-line">▶ ${part.toolName}<span class="summary">${part.summary}</span></div>`;
-    if (part.type === "toolExecution") return html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
-    if (part.type === "toolResult") return html`
+    if (part.type === "toolCall") {
+      if (bare) return null;
+      return html`<div class="part tool-line">▶ ${part.toolName}<span class="summary">${part.summary}</span></div>`;
+    }
+    if (part.type === "toolExecution") return html`<tool-execution-view class="part" ?bare=${bare} .execution=${part}></tool-execution-view>`;
+    if (part.type === "toolResult") {
+      if (bare) return html`<formatted-text class="part" .text=${part.text}></formatted-text>`;
+      return html`
       <details class="part" ?open=${part.isError}>
         <summary>${part.isError ? "✖" : "✓"} ${part.toolName} result</summary>
         <formatted-text .text=${part.text}></formatted-text>
       </details>
     `;
+    }
     return null;
   }
 
@@ -1001,6 +1047,10 @@ export class ChatView extends LitElement {
     const details = event.currentTarget;
     if (!(details instanceof HTMLDetailsElement)) return;
     if (this.disclosures.applyToggle(key, details.open, defaultOpen)) this.requestUpdate();
+  }
+
+  private onEventToggle(key: string, open: boolean, defaultOpen: boolean) {
+    if (this.disclosures.applyToggle(key, open, defaultOpen)) this.requestUpdate();
   }
 
   private onScroll() {
@@ -1342,6 +1392,10 @@ export class ChatView extends LitElement {
 
   private groupDisclosureKey(startIndex: number, endIndex: number, defaultOpen: boolean): string {
     return defaultOpen ? `${this.sessionId}:live:${String(startIndex)}` : `${this.sessionId}:${String(endIndex)}`;
+  }
+
+  private eventDisclosureKey(index: number): string {
+    return `${this.sessionId}:e:${String(index)}`;
   }
 
   private messageAnchorKey(index: number): string {

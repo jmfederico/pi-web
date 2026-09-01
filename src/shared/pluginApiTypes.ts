@@ -12,6 +12,8 @@ export interface WorkspaceProviderCapabilities {
   readonly request: boolean;
   /** True only when this specific workspace advertises removal. */
   readonly remove: boolean;
+  /** True when the owning provider can create new workspaces for the project. */
+  readonly create: boolean;
 }
 
 /** Public identity and browser-visible data for the plugin that owns a workspace. */

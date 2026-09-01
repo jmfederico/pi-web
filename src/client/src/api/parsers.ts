@@ -217,6 +217,8 @@ function optionalWorkspaceProviderMetadata(value: unknown): Workspace["provider"
     capabilities: Object.freeze({
       request: requireBoolean(capabilities, "request"),
       remove: requireBoolean(capabilities, "remove"),
+      // Optional on the wire: a machine running an older PI WEB omits it.
+      create: capabilities["create"] === true,
     }),
     ...optionalField("metadata", metadata === undefined ? undefined : parseJsonObject(metadata, "workspace provider metadata")),
   });

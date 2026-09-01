@@ -15,7 +15,7 @@ const gitWorkspace: Workspace = {
   path: "/repo",
   label: "main",
   isMain: true,
-  provider: { pluginId: "git", capabilities: { request: true, remove: false } },
+  provider: { pluginId: "git", capabilities: { request: true, remove: false, create: false } },
 };
 
 afterEach(() => {
@@ -40,7 +40,7 @@ describe("bundled Git browser plugin", () => {
     expect(panel.visible?.(panelContext(backend.request, {
       ...gitWorkspace,
       // Legacy Git-shaped data must not override a declared replacement owner.
-      provider: { pluginId: "jj", capabilities: { request: true, remove: false } },
+      provider: { pluginId: "jj", capabilities: { request: true, remove: false, create: false } },
     }))).toBe(false);
 
     const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
@@ -76,7 +76,7 @@ describe("bundled Git browser plugin", () => {
     expect(panel.visible?.(panelContext(backend.request))).toBe(true);
     expect(panel.visible?.(panelContext(backend.request, {
       ...gitWorkspace,
-      provider: { pluginId: runtimePluginId, capabilities: { request: true, remove: false } },
+      provider: { pluginId: runtimePluginId, capabilities: { request: true, remove: false, create: false } },
     }))).toBe(false);
 
     const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();

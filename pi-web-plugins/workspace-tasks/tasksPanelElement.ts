@@ -289,19 +289,19 @@ function taskStyles(): string {
       .tasks { display: grid; gap: 14px; }
       .task-group { display: grid; gap: 10px; }
       .task-group h3 { margin: 4px 0 0; color: var(--pi-text-secondary); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
-      .task-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
+      .task-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-surface); padding: 12px; }
       .task-copy { display: grid; min-width: 0; gap: 5px; }
       .task-copy span, .muted { color: var(--pi-muted); }
-      code, pre { border: 1px solid var(--pi-border-muted); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      code, pre { border: 1px solid var(--pi-border-muted); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       code { overflow: auto; padding: 5px 7px; white-space: nowrap; }
       pre { margin: 8px 0 0; overflow: auto; padding: 8px; white-space: pre-wrap; }
-      button { border: 1px solid var(--pi-accent-border); border-radius: 7px; background: var(--pi-accent); color: var(--pi-bg); cursor: pointer; padding: 6px 10px; font: inherit; }
+      button { border: 1px solid var(--pi-accent-border); border-radius: 9px; background: var(--pi-accent); color: var(--pi-bg); cursor: pointer; padding: 6px 10px; font: inherit; }
       button.secondary { border-color: var(--pi-border); background: var(--pi-surface); color: var(--pi-text); }
       button:disabled { cursor: wait; opacity: 0.65; }
-      .empty-state { border: 1px dashed var(--pi-border-muted); border-radius: 8px; color: var(--pi-muted); padding: 12px; }
+      .empty-state { border: 1px dashed var(--pi-border-muted); border-radius: 10px; color: var(--pi-muted); padding: 12px; }
       .empty-state p { margin: 6px 0 0; }
       .panel-status { margin: 12px 12px 0; }
-      .status { border: 1px solid var(--pi-border); border-radius: 8px; padding: 10px; }
+      .status { border: 1px solid var(--pi-border); border-radius: 10px; padding: 10px; }
       .status.info { border-color: var(--pi-accent-border); background: var(--pi-bg-overlay-soft); }
       .status.success { border-color: var(--pi-success-border); background: var(--pi-success-surface); color: var(--pi-success); }
       .status.error { border-color: var(--pi-danger); color: var(--pi-danger); }

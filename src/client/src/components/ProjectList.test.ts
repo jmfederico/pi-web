@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Project } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../machineStatus.testSupport";
@@ -73,6 +73,31 @@ describe("project status indicator", () => {
   });
 });
 
+describe("project actions menu", () => {
+  it("asks for the project's gating data when the menu opens, then shows the creation action", async () => {
+    const list = await mountProjectList([project("project-a")], undefined);
+    const allowed = new Set<string>();
+    list.canAddWorkspace = ({ id }) => allowed.has(id);
+    const onMenuOpen = vi.fn<(opened: Project) => void>(({ id }) => { allowed.add(id); });
+    list.onMenuOpen = onMenuOpen;
+
+    menuToggle(rowFor(list, "project-a")).click();
+    await list.updateComplete;
+
+    expect(onMenuOpen).toHaveBeenCalledWith(expect.objectContaining({ id: "project-a" }));
+    expect(menuLabels(list)).toEqual(["Add workspace", "Close"]);
+  });
+
+  it("offers only Close when the owner cannot create workspaces", async () => {
+    const list = await mountProjectList([project("project-a")], undefined);
+
+    menuToggle(rowFor(list, "project-a")).click();
+    await list.updateComplete;
+
+    expect(menuLabels(list)).toEqual(["Close"]);
+  });
+});
+
 async function mountProjectList(projects: Project[], statusSnapshot: MachineStatusSnapshot | undefined): Promise<ProjectList> {
   const list = new ProjectList();
   list.projects = projects;
@@ -95,4 +120,14 @@ function unreadDot(row: Element): Element | null {
 
 function project(id: string): Project {
   return { id, name: id, path: `/repo/${id}`, createdAt: "2026-06-04T00:00:00.000Z" };
+}
+
+function menuToggle(row: Element): HTMLButtonElement {
+  const toggle = row.querySelector<HTMLButtonElement>(".action-menu-toggle");
+  if (toggle === null) throw new Error("Expected a project actions toggle");
+  return toggle;
+}
+
+function menuLabels(list: ProjectList): string[] {
+  return [...(list.shadowRoot?.querySelectorAll(".action-menu-panel button") ?? [])].map((button) => button.textContent.trim());
 }

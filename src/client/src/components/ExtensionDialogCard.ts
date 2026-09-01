@@ -281,7 +281,7 @@ export class ExtensionDialogCard extends LitElement {
     }
     .card {
       border: 1px solid var(--pi-border);
-      border-radius: 10px;
+      border-radius: 12px;
       background: var(--pi-surface);
     }
     .card-header {
@@ -295,7 +295,7 @@ export class ExtensionDialogCard extends LitElement {
       min-height: 22px;
       padding: 8px 16px 7px;
       border-bottom: 1px solid var(--pi-border-muted);
-      border-radius: 9px 9px 0 0;
+      border-radius: 11px 11px 0 0;
       background: var(--pi-surface);
       box-shadow: 0 8px 18px var(--pi-shadow-soft);
     }
@@ -332,7 +332,7 @@ export class ExtensionDialogCard extends LitElement {
       width: calc(100% - 32px);
       margin: 12px 16px 0;
       border: 1px solid var(--pi-border);
-      border-radius: 8px;
+      border-radius: 10px;
       background: var(--pi-bg);
       color: var(--pi-text);
       padding: 8px;
@@ -350,7 +350,7 @@ export class ExtensionDialogCard extends LitElement {
     .dialog-message + .dialog-footer, .dialog-options + .dialog-footer { border-top: 0; }
     button {
       border: 1px solid var(--pi-border);
-      border-radius: 8px;
+      border-radius: 10px;
       background: var(--pi-surface);
       color: var(--pi-text);
       padding: 7px 12px;

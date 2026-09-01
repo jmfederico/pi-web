@@ -17,7 +17,7 @@ import {
   GIT_DIFF_OPERATION,
   GIT_STATUS_OPERATION,
 } from "./git-backend.js";
-import plugin, { parseGitWorktreeList } from "./server-plugin.js";
+import plugin, { gitBranchSlug, parseGitWorktreeList } from "./server-plugin.js";
 
 const tempRoots: string[] = [];
 const gitLocalEnvironmentKeys = [
@@ -239,6 +239,47 @@ describe("bundled Git workspace provider", () => {
       title: "Delete workspace: feature/remove",
       command: `git worktree remove '${linked.replaceAll("'", "'\\''")}'`,
     });
+  });
+
+  it("plans a new branch worktree under the chosen parent directory", async () => {
+    const repository = await createRepository("creation repo");
+    const parent = join(repository.parent, "worktrees");
+    await mkdir(parent, { recursive: true });
+    const workspaceProvider = await providerFor(createServerPluginExecFile({ env: cleanGitEnvironment() }));
+    if (workspaceProvider.prepareCreate === undefined) throw new Error("Expected Git creation support");
+
+    await expect(workspaceProvider.prepareCreate({
+      project: project(repository.path),
+      parentPath: parent,
+      name: "My Feature",
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      title: "Create workspace: my-feature",
+      command: `git worktree add '${join(parent, "my-feature")}' -b 'my-feature'`,
+    });
+  });
+
+  it("checks out an existing branch instead of recreating it", async () => {
+    const repository = await createRepository("existing branch repo");
+    runGit(repository.path, ["branch", "spare"]);
+    const workspaceProvider = await providerFor(createServerPluginExecFile({ env: cleanGitEnvironment() }));
+    if (workspaceProvider.prepareCreate === undefined) throw new Error("Expected Git creation support");
+
+    await expect(workspaceProvider.prepareCreate({
+      project: project(repository.path),
+      parentPath: repository.parent,
+      name: "spare",
+      signal: new AbortController().signal,
+    })).resolves.toEqual({
+      title: "Create workspace: spare",
+      command: `git worktree add '${join(repository.parent, "spare")}' 'spare'`,
+    });
+  });
+
+  it("rejects workspace names that cannot become Git branches", () => {
+    expect(gitBranchSlug("Feature/One")).toBe("feature-one");
+    expect(() => gitBranchSlug("...")).toThrow(/must contain letters or numbers/u);
+    expect(() => gitBranchSlug("a..b")).toThrow(/not a valid Git branch/u);
   });
 
   it("keeps current raw worktree paths for a registered subdirectory", async () => {

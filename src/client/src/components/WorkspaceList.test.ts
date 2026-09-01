@@ -123,7 +123,7 @@ describe("workspace detail copy buttons", () => {
       label: "review app",
       provider: {
         pluginId: "workspace-provider",
-        capabilities: { request: true, remove: false },
+        capabilities: { request: true, remove: false, create: false },
         metadata: { branch: "feature-x" },
       },
     });

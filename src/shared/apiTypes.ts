@@ -392,6 +392,13 @@ export interface WorkspaceRemovalRequest {
   precondition: string;
 }
 
+export interface WorkspaceCreationRequest {
+  /** Absolute directory the new workspace is created inside. */
+  parentPath: string;
+  /** Human-entered workspace name; the owning provider derives paths and branches from it. */
+  name: string;
+}
+
 export type WorkspaceProviderResolutionStatus = "provider" | "folder" | "degraded";
 export type WorkspaceProviderTier = "primary" | "fallback";
 export type WorkspaceProviderDiagnosticCode = "probe-failed" | "claim-conflict" | "list-failed";

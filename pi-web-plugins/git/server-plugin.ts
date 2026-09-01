@@ -4,10 +4,12 @@ import type {
   ProjectInput,
   ProviderClaim,
   ProviderRemoveContext,
+  ProviderCreateContext,
   ProviderRequestContext,
   ProviderWorkspace,
   ServerPluginActivationContext,
   ServerPluginExecFileResult,
+  WorkspaceCreatePlan,
   WorkspaceProvider,
   WorkspaceRemovePlan,
 } from "@jmfederico/pi-web/server-plugin-api";
@@ -110,6 +112,21 @@ export function createGitWorkspaceProvider(context: ServerPluginActivationContex
       });
     },
     request: (request: ProviderRequestContext) => requestGitBackend(context, request),
+    async prepareCreate({ project, parentPath, name, signal }: ProviderCreateContext): Promise<WorkspaceCreatePlan> {
+      const branch = gitBranchSlug(name);
+      const worktreePath = `${parentPath.replace(/\/+$/u, "")}/${branch}`;
+      const existing = await runGit(context, project.path, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], signal);
+      if (existing.signal !== null) throw new Error(`git branch lookup ended from signal ${existing.signal}`);
+      // An existing branch has no worktree yet (a checked-out branch is already a
+      // workspace), so check it out here instead of failing on `-b`.
+      const branchArgs = existing.exitCode === 0
+        ? [shellQuote(branch)]
+        : ["-b", shellQuote(branch)];
+      return {
+        title: `Create workspace: ${branch}`,
+        command: `git worktree add ${shellQuote(worktreePath)} ${branchArgs.join(" ")}`,
+      };
+    },
     async prepareRemove({ project, workspace, signal }: ProviderRemoveContext): Promise<WorkspaceRemovePlan> {
       const privatePath = gitPrivateWorktreePath(workspace);
       if (resolve(privatePath) !== workspace.path) {
@@ -178,6 +195,14 @@ function gitPrivateWorktreePath(workspace: ProviderWorkspace): string {
   const path: unknown = Reflect.get(data, "worktreePath");
   if (typeof path !== "string" || path === "") throw new Error("Git worktree path is unavailable for removal");
   return path;
+}
+
+/** Git branch name derived from a human workspace name; also the worktree directory name. */
+export function gitBranchSlug(name: string): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^[-.]+|[-.]+$/gu, "");
+  if (slug === "") throw new Error("Workspace name must contain letters or numbers");
+  if (slug.includes("..") || slug.endsWith(".lock")) throw new Error(`Workspace name is not a valid Git branch: ${name}`);
+  return slug;
 }
 
 function shellQuote(value: string): string {

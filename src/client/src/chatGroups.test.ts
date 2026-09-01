@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupChatMessages, summarizeChatGroup } from "./chatGroups";
+import { chatEventHasBody, describeChatEvent, groupChatMessages, summarizeChatGroup } from "./chatGroups";
 import type { ChatLine } from "./components/shared";
 
 const text = (role: ChatLine["role"], value: string): ChatLine => ({ role, parts: [{ type: "text", text: value }] });
@@ -119,5 +119,45 @@ describe("summarizeChatGroup", () => {
 
   it("summarizes mixed groups by role counts", () => {
     expect(summarizeChatGroup([text("tool", "a"), text("system", "b"), text("tool", "c")])).toBe("3 events · 2 tool · 1 system");
+  });
+});
+
+describe("describeChatEvent", () => {
+  it("describes tool events with their execution status", () => {
+    expect(describeChatEvent({ role: "assistant", parts: [{ type: "toolExecution", toolName: "read", summary: "src/app.ts", status: "running" }] }))
+      .toEqual({ label: "read", detail: "src/app.ts", status: "running" });
+    expect(describeChatEvent({ role: "assistant", parts: [{ type: "toolCall", toolName: "write", summary: "notes.md" }] }))
+      .toEqual({ label: "write", detail: "notes.md", status: "pending" });
+    expect(describeChatEvent({ role: "tool", parts: [{ type: "toolResult", toolName: "read", text: "boom", isError: true }] }))
+      .toEqual({ label: "read", detail: "boom", status: "error" });
+  });
+
+  it("uses the first non-blank line as the detail", () => {
+    expect(describeChatEvent({ role: "assistant", parts: [{ type: "thinking", text: "\n\n  weighing options  \nmore" }] }))
+      .toEqual({ label: "thinking", detail: "weighing options", status: "none" });
+  });
+
+  it("labels summary sources ahead of their parts", () => {
+    expect(describeChatEvent({ role: "assistant", source: "compaction", parts: [{ type: "text", text: "recap" }] }))
+      .toEqual({ label: "compaction", detail: "history compaction summary", status: "none" });
+  });
+
+  it("falls back to the role when no part is descriptive", () => {
+    expect(describeChatEvent({ role: "system", parts: [{ type: "empty" }] }))
+      .toEqual({ label: "system", detail: "", status: "none" });
+  });
+});
+
+describe("chatEventHasBody", () => {
+  it("treats announcement-only events as having nothing left to expand", () => {
+    expect(chatEventHasBody({ role: "assistant", parts: [{ type: "toolCall", toolName: "read", summary: "app.ts" }] })).toBe(false);
+    expect(chatEventHasBody({ role: "assistant", parts: [{ type: "empty" }] })).toBe(false);
+    expect(chatEventHasBody({ role: "assistant", parts: [{ type: "thinking", text: "   " }] })).toBe(false);
+  });
+
+  it("reports a body when any part carries content", () => {
+    expect(chatEventHasBody({ role: "assistant", parts: [{ type: "toolCall", toolName: "read", summary: "app.ts" }, { type: "thinking", text: "why" }] })).toBe(true);
+    expect(chatEventHasBody({ role: "tool", parts: [{ type: "toolResult", toolName: "read", text: "ok", isError: false }] })).toBe(true);
+    expect(chatEventHasBody({ role: "assistant", parts: [{ type: "toolExecution", toolName: "read", summary: "app.ts", status: "success" }] })).toBe(true);
   });
 });

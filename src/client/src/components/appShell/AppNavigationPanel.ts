@@ -66,6 +66,9 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onReloadSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onCleanupSessions?: () => void | Promise<void>;
   @property({ attribute: false }) onArchivedCollapsed?: () => void | Promise<void>;
+  @property({ attribute: false }) onAddWorkspace?: (project: Project) => void | Promise<void>;
+  @property({ attribute: false }) onProjectMenuOpen?: (project: Project) => void;
+  @property({ attribute: false }) canAddWorkspace: (project: Project) => boolean = () => false;
   @property({ attribute: false }) onSelectMachine?: (machine: Machine) => void | Promise<void>;
   @property({ attribute: false }) onRemoveMachine?: (machine: Machine) => void | Promise<void>;
   @property({ attribute: false }) onFocusNavigationTarget?: (target: NavigationFocusTarget) => void | Promise<void>;
@@ -132,6 +135,9 @@ export class AppNavigationPanel extends LitElement {
         .onToggleCollapsed=${() => { this.onToggleProjects?.(); }}
         .onSelect=${(project: Project) => this.onSelectProject?.(project)}
         .onClose=${(project: Project) => this.onCloseProject?.(project)}
+        .onAddWorkspace=${(project: Project) => this.onAddWorkspace?.(project)}
+        .onMenuOpen=${(project: Project) => { this.onProjectMenuOpen?.(project); }}
+        .canAddWorkspace=${(project: Project) => this.canAddWorkspace(project)}
         .onFocusPreviousSection=${() => { this.focusPreviousFrom("projects"); }}
         .onFocusNextSection=${() => { this.focusNextFrom("projects"); }}
         .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
@@ -231,7 +237,7 @@ export class AppNavigationPanel extends LitElement {
     project-list[collapsed],
     workspace-list[collapsed],
     session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
-    button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
+    button { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
   `;
 }
 

@@ -18,6 +18,11 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (project: Project) => void;
   @property({ attribute: false }) onClose?: (project: Project) => void;
+  @property({ attribute: false }) onAddWorkspace?: (project: Project) => void;
+  /** Fires when a project's action menu opens, so gating data can be loaded on demand. */
+  @property({ attribute: false }) onMenuOpen?: (project: Project) => void;
+  /** Provider-gated: only projects whose workspace owner can create workspaces show the action. */
+  @property({ attribute: false }) canAddWorkspace: (project: Project) => boolean = () => false;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
   @property({ attribute: false }) onFocusPreviousSection?: () => void | Promise<void>;
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
@@ -68,9 +73,10 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   ${this.renderActivity(project)}
                 </div>
                 <div class="action-menu">
-                  <button class="action-menu-toggle" title="Project actions" aria-label=${`Actions for ${project.name}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id, event.currentTarget); }}>⋯</button>
+                  <button class="action-menu-toggle" title="Project actions" aria-label=${`Actions for ${project.name}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project, event.currentTarget); }}>⋯</button>
                   ${this.openMenuProjectId === project.id ? html`
                     <div class="action-menu-panel" style=${this.menuStyle}>
+                      ${this.canAddWorkspace(project) ? html`<button title="Add workspace" @click=${() => { this.addWorkspace(project); }}>Add workspace</button>` : null}
                       <button title="Close project" @click=${() => { this.close(project); }}>Close</button>
                     </div>
                   ` : null}
@@ -106,13 +112,19 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active", unreadLabel);
   }
 
-  private toggleMenu(projectId: string, target: EventTarget | null) {
-    if (this.openMenuProjectId === projectId) {
+  private toggleMenu(project: Project, target: EventTarget | null) {
+    if (this.openMenuProjectId === project.id) {
       this.openMenuProjectId = undefined;
       return;
     }
     this.menuStyle = actionMenuPanelStyle(target, { constrainTo: "viewport" });
-    this.openMenuProjectId = projectId;
+    this.openMenuProjectId = project.id;
+    this.onMenuOpen?.(project);
+  }
+
+  private addWorkspace(project: Project) {
+    this.openMenuProjectId = undefined;
+    this.onAddWorkspace?.(project);
   }
 
   private close(project: Project) {
