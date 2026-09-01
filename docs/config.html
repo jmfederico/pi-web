@@ -137,9 +137,11 @@
                 <code>pi-web restart</code>, and <code>pi-web doctor</code> automatically use the
                 <code>PI_WEB_CONFIG</code> saved in those service definitions for their readiness checks. A nonempty
                 <code>PI_WEB_CONFIG</code> supplied when invoking one of those commands overrides the installed path for
-                that command. On systemd, these commands fail rather than guess if active drop-ins,
+                that command. On systemd, these commands fail rather than guess if
                 <code>EnvironmentFile=</code> inputs, stale manager state, a different loaded fragment, or an effective
-                environment mismatch make the loaded definition untrustworthy. On launchd, <code>start</code> and
+                environment mismatch make the loaded definition untrustworthy. Drop-ins that do not alter the inspected
+                environment (such as distribution-provided global hardening drop-ins) are tolerated. On launchd,
+                <code>start</code> and
                 <code>doctor</code> likewise fail if an already-loaded label came from another plist or retains a
                 different config path; <code>restart</code> reloads the installed plists and can repair that stale state.
                 Rerun <code>pi-web install --config /path/to/config.json</code> after changing the managed path or after
