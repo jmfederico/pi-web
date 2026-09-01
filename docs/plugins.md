@@ -669,6 +669,16 @@ interface ProviderWorkspace {
 - `probe()` must return only `"claim"` or `"pass"`. Leave `fallback` unset/false for a replacement that should run before bundled Git.
 - `list()` runs only for the selected owner. Return stable provider-local keys, accessible absolute directory paths, unique paths/keys, non-empty labels, and exactly one main workspace.
 - `data` is round-tripped privately to that provider during the current resolution. `publicMetadata` appears under `workspace.provider.metadata` and is visible to **all browser code and API consumers**. Never put secrets in `publicMetadata` or removal wording.
+- The host reads two reserved keys from `publicMetadata.navigation` and ignores values of the wrong shape. Everything else in provider metadata stays free-form and is read only by plugins.
+
+```ts
+interface WorkspaceProviderNavigationMetadata {
+  hideProjects?: boolean;     // the provider's project is an implied single context
+  workspacesTitle?: string;   // section name, e.g. "Cases" instead of "Workspaces"
+}
+```
+
+  `hideProjects` removes the project section — and the project crumb in the mobile context bar — while one of that provider's workspaces is selected, and takes it out of the keyboard section walk. Use it when the project is not a choice: a provider whose projects are one implied context per project. The workspace section stays, so there is always a way back out through it and through the machine switcher.
 - `request()` is optional and receives a host-validated frozen current owner/workspace projection plus a bounded operation id, JSON input, and operation-scoped abort signal. It must return JSON.
 - `removal` is display text only and requires `prepareRemove()`. It advertises removal for that specific workspace; browser `workspace.provider.capabilities.remove` is true only when that workspace advertises it and the owning provider implements removal.
 - `prepareRemove()` returns a plan for a visible host-owned terminal run; returning the plan approves the operation but does **not** mean removal has completed. `command` is shell source interpreted by the host's login shell. The host chooses a safe current working directory outside the target, so the provider must use the supplied absolute `workspace.path`, shell-quote it, and keep removal in the foreground. The host records completion when the shell exits, with exit status 0 meaning success.

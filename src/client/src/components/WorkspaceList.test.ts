@@ -209,6 +209,21 @@ function restoreStubbedProperty(target: object, key: string, descriptor: Propert
   Object.defineProperty(target, key, descriptor);
 }
 
+describe("section name", () => {
+  it("keeps its own name by default and takes the one a provider supplies", async () => {
+    const plain = await mountWorkspaceList([workspace("ws-1")]);
+    plain.collapsible = true;
+    await plain.updateComplete;
+    expect(plain.shadowRoot?.querySelector(".section-name")?.textContent).toContain("Workspaces");
+
+    plain.sectionTitle = "Cases";
+    await plain.updateComplete;
+    const named = plain.shadowRoot?.querySelector(".section-name")?.textContent;
+    expect(named).toContain("Cases");
+    expect(named).not.toContain("Workspaces");
+  });
+});
+
 async function mountWorkspaceList(workspaces: Workspace[], statusSnapshot?: MachineStatusSnapshot): Promise<WorkspaceList> {
   const list = new WorkspaceList();
   list.workspaces = workspaces;
