@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildTerminalPackage } from "../../scripts/build-plugins.mjs";
@@ -72,7 +72,7 @@ describe("bundled Terminal package", () => {
 
     const files = (await readdir(packageRoot, { recursive: true, withFileTypes: true }))
       .filter((entry) => entry.isFile())
-      .map((entry) => join(entry.parentPath, entry.name).slice(packageRoot.length + 1))
+      .map((entry) => relative(packageRoot, join(entry.parentPath, entry.name)).split(sep).join("/"))
       .sort();
     expect(files).toEqual([
       "browser/pi-web-plugin.js",

@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JsonValue,
@@ -19,7 +20,7 @@ import {
 const project: Project = {
   id: "project-1",
   name: "Project",
-  path: "/repo",
+  path: resolve("/repo"),
   createdAt: "2026-08-01T00:00:00.000Z",
 };
 
@@ -35,7 +36,7 @@ describe("PluginBackendRegistry", () => {
       probe: () => Promise.resolve("claim"),
       list: () => Promise.resolve([{
         key: "worktree",
-        path: "/repo/worktree",
+        path: join(project.path, "worktree"),
         label: "feature/paired",
         isMain: true,
         data: { privateHead: "secret" },
@@ -74,7 +75,7 @@ describe("PluginBackendRegistry", () => {
     expect(observed.workspace).toMatchObject({
       id: workspaceId,
       projectId: project.id,
-      path: "/repo/worktree",
+      path: join(project.path, "worktree"),
       label: "feature/paired",
       provider: {
         pluginId: "git",
@@ -111,7 +112,7 @@ describe("PluginBackendRegistry", () => {
       workspaceId,
       operation: "notes.summary",
       input: null,
-    })).resolves.toEqual({ path: "/repo", provider: null });
+    })).resolves.toEqual({ path: project.path, provider: null });
   });
 
   it("preserves the legacy owner-only provider request fallback", async () => {
@@ -123,7 +124,7 @@ describe("PluginBackendRegistry", () => {
       probe: () => Promise.resolve("claim"),
       list: () => Promise.resolve([{
         key: "main",
-        path: "/repo",
+        path: project.path,
         label: "main",
         isMain: true,
         data: { head: "abc123" },
@@ -181,7 +182,7 @@ describe("PluginBackendRegistry", () => {
           workspaces: [{
             id: workspaceId,
             projectId: "another-project",
-            path: "/repo",
+            path: project.path,
             label: "Project",
             isMain: true,
           }],
@@ -333,7 +334,7 @@ describe("PluginBackendRegistry", () => {
     }, transport.value);
 
     if (openContext === undefined) throw new Error("Expected channel context");
-    expect(openContext.workspace).toMatchObject({ id: workspaceId, projectId: project.id, path: "/repo" });
+    expect(openContext.workspace).toMatchObject({ id: workspaceId, projectId: project.id, path: project.path });
     expect(Object.isFrozen(openContext)).toBe(true);
     expect(Object.isFrozen(openContext.input)).toBe(true);
     expect(openContext.signal.aborted).toBe(false);
