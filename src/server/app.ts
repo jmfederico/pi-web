@@ -10,7 +10,7 @@ import { ProjectService } from "./projects/projectService.js";
 import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
 import { SessionDaemonWorkspaceCatalog } from "./workspaces/sessionDaemonWorkspaceCatalog.js";
 import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
-import { loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
+import { loadEffectiveProjectAttachmentsConfig, loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
 import { listDirectorySuggestions } from "./projects/directorySuggestions.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
@@ -113,7 +113,10 @@ async function resolveWorkspacesWithEffectiveConfig(
 
 async function workspaceEffectiveConfig(projectPath: string, config?: Pick<PiWebConfigService, "read">): Promise<WorkspaceEffectiveConfig> {
   const globalConfig = config === undefined ? {} : (await config.read()).effectiveConfig;
-  return { uploads: await loadEffectiveProjectUploadsConfig(projectPath, globalConfig) };
+  return {
+    uploads: await loadEffectiveProjectUploadsConfig(projectPath, globalConfig),
+    attachments: await loadEffectiveProjectAttachmentsConfig(projectPath, globalConfig),
+  };
 }
 
 async function readEffectiveConfig(config: Pick<PiWebConfigService, "read">) {

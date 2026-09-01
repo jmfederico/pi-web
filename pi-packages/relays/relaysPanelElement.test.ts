@@ -131,6 +131,7 @@ describe("document tabs", () => {
       relayDocument("relay", "log.md"),
       relayDocument("relay", "data.json"),
       relayDocument("relay", "charter.md"),
+      relayDocument("relay", "operations.md"),
       relayDocument("relay", "status.md"),
     ]);
     fake.addDocument(`${RELAYS_ROOT}/relay/status.md`, "status body");
@@ -138,7 +139,7 @@ describe("document tabs", () => {
 
     const panel = await mountPanel(panelContext(fake));
 
-    expect(tabNames(panel)).toEqual(["status.md", "charter.md", "log.md", "data.json", "notes.md"]);
+    expect(tabNames(panel)).toEqual(["status.md", "charter.md", "operations.md", "log.md", "data.json", "notes.md"]);
     expect(activeTab(panel)?.textContent).toBe("status.md");
 
     tabNamed(panel, "log.md").click();

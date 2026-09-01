@@ -250,8 +250,10 @@ function parseJsonValue(value: unknown, field: string): JsonValue {
 function requireWorkspaceEffectiveConfig(value: unknown): WorkspaceEffectiveConfig {
   if (!isRecord(value) || Array.isArray(value)) throw new Error("Expected workspace effectiveConfig field");
   const uploads = optionalUploads(value["uploads"]);
+  const attachments = optionalAttachments(value["attachments"]);
   return Object.freeze({
     ...optionalField("uploads", uploads === undefined ? undefined : Object.freeze({ ...uploads })),
+    ...optionalField("attachments", attachments === undefined ? undefined : Object.freeze({ ...attachments })),
   });
 }
 
@@ -1460,6 +1462,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("plugins", optionalPlugins(record["plugins"])),
     ...optionalField("pathAccess", optionalPathAccess(record["pathAccess"])),
     ...optionalField("uploads", optionalUploads(record["uploads"])),
+    ...optionalField("attachments", optionalAttachments(record["attachments"])),
     ...optionalField("maxUploadBytes", optionalNumber(record, "maxUploadBytes")),
     ...optionalField("agent", optionalAgent(record["agent"])),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
@@ -1502,6 +1505,14 @@ function optionalStringArray(value: unknown, field: string): string[] | undefine
 function optionalUploads(value: unknown): PiWebConfigValues["uploads"] | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB uploads field");
+  return {
+    ...optionalField("defaultFolder", optionalString(value, "defaultFolder")),
+  };
+}
+
+function optionalAttachments(value: unknown): PiWebConfigValues["attachments"] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB attachments field");
   return {
     ...optionalField("defaultFolder", optionalString(value, "defaultFolder")),
   };

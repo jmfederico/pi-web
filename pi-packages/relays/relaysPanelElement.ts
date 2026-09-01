@@ -398,7 +398,7 @@ class PiWebRelaysPanel extends HTMLElement {
       return `${partialNotice}
         <div class="empty-state">
           <strong>This relay has no documents yet.</strong>
-          <p>Relay packets usually contain <code>status.md</code>, <code>charter.md</code>, and <code>log.md</code>.</p>
+          <p>Relay Runner packets usually contain <code>status.md</code>, <code>charter.md</code>, <code>operations.md</code>, and <code>log.md</code>.</p>
         </div>
       `;
     }

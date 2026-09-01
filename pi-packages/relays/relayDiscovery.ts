@@ -3,7 +3,7 @@ import type { FileContentResponse, FileTreeEntry, FileTreeResponse } from "@jmfe
 export const RELAYS_ROOT = ".pi-web/relays";
 
 /** Documents that anchor a relay packet, in display order. Any other files follow alphabetically. */
-export const RELAY_ANCHOR_DOCUMENTS: readonly string[] = ["status.md", "charter.md", "log.md"];
+export const RELAY_ANCHOR_DOCUMENTS: readonly string[] = ["status.md", "charter.md", "operations.md", "log.md"];
 
 /**
  * Deepest node depth listed below the relay root; direct children of the relay
@@ -105,7 +105,7 @@ export async function listWorkspaceRelays(files: RelayDiscoveryFiles): Promise<R
 
 /**
  * List one relay's document tree. At the relay root the anchor documents come
- * first (status.md, charter.md, log.md); at every level files sort
+ * first (status.md, charter.md, operations.md, log.md); at every level files sort
  * alphabetically before directories. Symlinks are never followed. Never
  * rejects.
  */

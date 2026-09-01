@@ -28,7 +28,7 @@ export const KNOWN_AUTO_INSTALLABLE_PI_PACKAGES: readonly KnownAutoInstallablePi
   {
     id: "@jmfederico/pi-relay",
     label: "Relays",
-    description: "Generic Relay method: /relay and /relay-worktree prompts and a relay skill for chaining independent pi sessions.",
+    description: "Tool-agnostic Relay method, opinionated runner profile, and human-gated preparation prompts for independent Pi session chains.",
     shippedPathSegments: ["dist", "pi-packages", "relays"],
   },
 ];

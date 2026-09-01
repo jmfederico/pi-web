@@ -14,6 +14,7 @@ describe("settings config drafts", () => {
       allowedHosts: ["example.local", "192.168.1.20"],
       pathAccess: { allowedPaths: ["/tmp", "~/SDKs"] },
       uploads: { defaultFolder: "manual/uploads" },
+      attachments: { defaultFolder: "saved/attachments" },
     };
 
     expect(gatewayServerDraftFromConfig(config)).toEqual({
@@ -25,6 +26,7 @@ describe("settings config drafts", () => {
     expect(machineAccessDraftFromConfig(config)).toEqual({
       allowedPathsText: "/tmp\n~/SDKs",
       uploadDefaultFolder: "manual/uploads",
+      attachmentDefaultFolder: "saved/attachments",
     });
     expect(gatewayServerDraftFromConfig({ allowedHosts: true }).allowedHostsMode).toBe("all");
   });
@@ -40,6 +42,7 @@ describe("settings config drafts", () => {
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },
+      attachments: { defaultFolder: "old/attachments" },
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
@@ -52,6 +55,7 @@ describe("settings config drafts", () => {
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },
+      attachments: { defaultFolder: "old/attachments" },
       maxUploadBytes: 1234,
       spawnSessions: true,
       subsessions: false,
@@ -70,31 +74,40 @@ describe("settings config drafts", () => {
     const patch = machineAccessConfigPatchFromDraft({
       allowedPathsText: "/tmp\n~/SDKs\n",
       uploadDefaultFolder: " manual\\uploads/. ",
+      attachmentDefaultFolder: " saved\\attachments/. ",
     });
 
-    expect(Object.keys(patch)).toEqual(["pathAccess", "uploads"]);
+    expect(Object.keys(patch)).toEqual(["pathAccess", "uploads", "attachments"]);
     expect(patch).toEqual({
       pathAccess: { allowedPaths: ["/tmp", "~/SDKs"] },
       uploads: { defaultFolder: "manual/uploads" },
+      attachments: { defaultFolder: "saved/attachments" },
     });
   });
 
   it("clears selected-machine access/upload settings with safe default patches", () => {
-    expect(machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "" })).toEqual({
+    expect(machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "" })).toEqual({
       pathAccess: { allowedPaths: [] },
       uploads: {},
+      attachments: {},
     });
   });
 
   it("rejects invalid selected-machine upload default folders before saving", () => {
-    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "/tmp/uploads" })).toThrow("Upload default folder must be workspace-relative.");
-    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "../secret" })).toThrow("Upload default folder must not contain path traversal.");
+    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "/tmp/uploads", attachmentDefaultFolder: "" })).toThrow("Upload default folder must be workspace-relative.");
+    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "../secret", attachmentDefaultFolder: "" })).toThrow("Upload default folder must not contain path traversal.");
+  });
+
+  it("rejects invalid selected-machine attachment default folders before saving", () => {
+    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "/tmp/attachments" })).toThrow("Attachment default folder must be workspace-relative.");
+    expect(() => machineAccessConfigPatchFromDraft({ allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "../secret" })).toThrow("Attachment default folder must not contain path traversal.");
   });
 
   it("rejects relative external paths before saving selected-machine access", () => {
     expect(() => machineAccessConfigPatchFromDraft({
       allowedPathsText: "relative/path",
       uploadDefaultFolder: "",
+      attachmentDefaultFolder: "",
     })).toThrow("Allowed external paths must be absolute paths or start with ~");
   });
 });

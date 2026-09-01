@@ -137,6 +137,10 @@ export interface PiWebUploadsConfig {
   defaultFolder?: string;
 }
 
+export interface PiWebAttachmentsConfig {
+  defaultFolder?: string;
+}
+
 export interface PiWebAgentConfig {
   /** Deprecated and ignored: the multi-implementation CLI abstraction was removed; sessions always run on the bundled pi SDK. Detected for the deprecation warning. */
   command?: string;
@@ -170,6 +174,8 @@ export interface PiWebConfigValues {
   pathAccess?: PiWebPathAccessConfig;
   /** Workspace-relative defaults for manual file uploads. */
   uploads?: PiWebUploadsConfig;
+  /** Workspace-relative defaults for prompt attachments saved into the workspace. */
+  attachments?: PiWebAttachmentsConfig;
   /** Maximum accepted HTTP request body size in bytes (uploads/attachments). */
   maxUploadBytes?: number;
   /** When true, LLMs can start new sessions via the spawn_session tool. */
@@ -360,6 +366,7 @@ export interface Project {
 
 export interface WorkspaceEffectiveConfig {
   readonly uploads?: Readonly<PiWebUploadsConfig>;
+  readonly attachments?: Readonly<PiWebAttachmentsConfig>;
 }
 
 /** Host-only removal state carried by PI WEB's browser/sessiond protocol. */

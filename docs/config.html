@@ -99,6 +99,7 @@
             <a href="#keys">Config matrix</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
+            <a href="#prompt-attachments">Prompt attachments</a>
             <a href="#agent-runtime">Agent state directory</a>
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#catalog-refresh">Model catalog refresh</a>
@@ -170,7 +171,8 @@
                 <pre><code>defaults → global config file → environment overrides</code></pre>
               </div>
               <p>
-                Supported project-local settings are then applied for that project's workspaces. For upload defaults,
+                Supported project-local settings are then applied for that project's workspaces. For upload and
+                prompt-attachment defaults,
                 <code>&lt;project&gt;/.pi-web/config.json</code> overrides the global value.
               </p>
               <p>
@@ -185,6 +187,7 @@
                 <li><code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code> / <code>extensionDialogsTimeoutMs</code> / <code>environmentFacts</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
+                <li><code>attachments.defaultFolder</code>: applies to new prompt-attachment saves after config/workspace refresh.</li>
                 <li><code>plugins</code>: browser-only changes apply after a tab reload. Any enablement, settings, source, or package-revision change affecting a <code>serverModule</code> requires a manual sessiond restart, then a tab reload for its paired UI.</li>
                 <li><code>serverPlugins.safeStart</code>: offline recovery state applied before server-plugin discovery/import on the next sessiond start; manage it with <code>pi-web plugins safe-start ...</code>.</li>
                 <li>Pi package install/remove/update: not a PI WEB config key; after a mutation, type <code>/reload</code> in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with <code>serverModule</code>, manually restart <code>pi-web-sessiond.service</code>, then reload the browser. If a global Pi extension changes model-provider registration/settings, the same manual restart is required; <code>/reload</code> cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See <a href="#pi-extension-provider-baseline">Pi extension provider baseline</a>.</li>
@@ -214,6 +217,9 @@
   },
   "uploads": {
     "defaultFolder": ".pi-web/uploads"
+  },
+  "attachments": {
+    "defaultFolder": ".pi-web/attachments"
   },
   "maxUploadBytes": 67108864,
   "spawnSessions": true,
@@ -251,6 +257,9 @@
   },
   "uploads": {
     "defaultFolder": "manual/uploads"
+  },
+  "attachments": {
+    "defaultFolder": "prompt-attachments"
   }
 }</code></pre>
               </div>
@@ -260,8 +269,9 @@
               </p>
               <p>
                 Project-local <code>uploads.defaultFolder</code> overrides the global upload destination for workspaces in
-                that project. PI WEB servers always include this workspace-effective value on local and federated
-                workspace responses.
+                that project, and project-local <code>attachments.defaultFolder</code> overrides the global prompt-attachment
+                destination the same way. PI WEB servers always include these workspace-effective values on local and
+                federated workspace responses.
               </p>
               <p>
                 Plugins may own separate project files, such as <code>.pi-web/tasks.json</code> for the built-in Workspace
@@ -339,7 +349,7 @@ worktree_path="$1"
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
-                <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
+                <code>attachments</code>, <code>maxUploadBytes</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
                 are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
                 registry/tokens stay local.
               </p>
@@ -396,6 +406,14 @@ worktree_path="$1"
                       <td>Global + project</td>
                       <td><strong>Overrides:</strong> project value wins for workspaces in that project; otherwise global/default applies</td>
                       <td>New Upload dialogs and direct drag/drop batches after config/workspace refresh</td>
+                    </tr>
+                    <tr>
+                      <td>Prompt attachment default folder</td>
+                      <td><code>attachments.defaultFolder</code></td>
+                      <td>—</td>
+                      <td>Global + project</td>
+                      <td><strong>Overrides:</strong> project value wins for workspaces in that project; otherwise global/default applies</td>
+                      <td>New prompt-attachment saves after config/workspace refresh</td>
                     </tr>
                     <tr>
                       <td>Upload/body limit</td>
@@ -654,6 +672,28 @@ worktree_path="$1"
                 For machine federation, Settings saves the global upload default on the selected machine. Remote
                 PI WEB servers always return workspace-effective upload defaults on workspace responses, and the Files
                 panel uses them as the default upload destination.
+              </p>
+            </section>
+
+            <section id="prompt-attachments">
+              <h2>Prompt attachment defaults</h2>
+              <p>
+                When the chat composer has pending attachments, its delivery selector offers <strong>Save to …</strong>:
+                the attachments are written into a workspace folder and the prompt references the saved paths, instead of
+                attaching the content inline. <code>attachments.defaultFolder</code> sets the workspace-effective save
+                destination shown in that selector. The built-in default is <code>.pi-web/attachments</code>; a
+                project-local value overrides the global value for workspaces in that project.
+              </p>
+              <p>
+                The value must be a non-empty workspace-relative folder. PI WEB normalizes repeated separators and
+                backslashes to <code>/</code>, and rejects absolute paths or <code>..</code> traversal. Saved attachments
+                always stay inside the workspace root, and an explicit per-request folder on the attachments API overrides
+                the configured default.
+              </p>
+              <p>
+                For machine federation, Settings saves the global attachments default on the selected machine. Remote
+                PI WEB servers always return <code>workspace.effectiveConfig.attachments.defaultFolder</code> on workspace
+                responses, and the composer uses it as the default save destination.
               </p>
             </section>
 

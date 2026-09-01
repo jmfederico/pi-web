@@ -161,6 +161,10 @@ describe("production build contents", () => {
         .sort();
       expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
       expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
       expect(builtPackageFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
       expect(packagedFiles.filter((path) => path.startsWith("dist/pi-packages/")).sort()).toEqual(builtPackageFiles);
 

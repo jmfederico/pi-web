@@ -2,7 +2,7 @@
   "name": "@jmfederico/pi-relay",
   "version": "0.1.0",
   "private": true,
-  "description": "Generic Relay method: /relay and /relay-worktree prompts and a relay skill for chaining independent pi sessions.",
+  "description": "Tool-agnostic Relay method, opinionated Relay Runner profile, and human-gated preparation prompts for independent Pi session chains.",
   "piWeb": {
     "plugins": [
       { "id": "relays", "browserRoot": ".", "module": "pi-web-plugin.js" }

@@ -31,6 +31,7 @@ import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
+import { createFilePiWebConfigService } from "./configRoutes.js";
 import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { DefaultPiPackageProvider, PiWebPluginCatalog } from "./piWebPluginCatalog.js";
@@ -55,6 +56,10 @@ import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
 const serverPluginRecovery = loadServerPluginRecoveryConfig({ env: daemonEnvironment });
 const { config, deprecatedAgentInputs } = effectivePiWebConfig({ env: daemonEnvironment });
+// The session service re-reads the config file at request time (e.g. for the
+// attachments default folder), so Settings edits apply without a daemon
+// restart; the daemon's own startup toggles keep using the snapshot above.
+const configService = createFilePiWebConfigService({ env: daemonEnvironment });
 const activeAgentProfile = createActiveAgentProfileDescriptor(config.agent);
 // Normalize the resolved agent state locations into the canonical pi SDK env
 // vars before anything agent-visible can spawn: the embedded SDK's own
@@ -252,6 +257,7 @@ async function createSessionDaemonRuntime() {
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       subsessionsEnabled: config.subsessions,
       askUserEnabled: config.askUser,
+      config: configService,
       appendSystemPromptSections: [
         // Sessions always run nested in this daemon, so they always get the
         // session environment facts; Docker deployments add their container

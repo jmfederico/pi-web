@@ -52,16 +52,29 @@ describe("API parsers", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
     })).toEqual({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
     });
+  });
+
+  it("rejects malformed PI WEB attachments config fields", () => {
+    const response = {
+      path: "/tmp/config.json",
+      exists: true,
+      config: {},
+      effectiveConfig: {},
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    };
+
+    expect(() => parsePiWebConfigResponse({ ...response, config: { attachments: "saved/attachments" } })).toThrow("Invalid PI WEB attachments field");
+    expect(() => parsePiWebConfigResponse({ ...response, effectiveConfig: { attachments: [] } })).toThrow("Invalid PI WEB attachments field");
   });
 
   it("parses PI WEB runtime responses and ignores the daemon-reported active agent profile", () => {
@@ -633,7 +646,7 @@ describe("API parsers", () => {
     })).toThrow("Invalid session warning severity");
   });
 
-  it("parses workspace effective upload config without retaining the removed top-level branch alias", () => {
+  it("parses workspace effective upload and attachments config without retaining the removed top-level branch alias", () => {
     const workspace = parseWorkspace({
       id: "w1",
       projectId: "p1",
@@ -641,7 +654,7 @@ describe("API parsers", () => {
       label: "main",
       branch: "legacy-wire-alias",
       isMain: true,
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
 
     expect(workspace).toEqual({
@@ -650,7 +663,7 @@ describe("API parsers", () => {
       path: "/repo",
       label: "main",
       isMain: true,
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
     expect(workspace).not.toHaveProperty("branch");
   });
@@ -698,7 +711,7 @@ describe("API parsers", () => {
         metadata: { nested: [{ ready: true }] },
       },
       removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?", precondition: "v1.confirmed" },
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
     const nested = workspace.provider?.metadata?.["nested"];
     if (!Array.isArray(nested)) throw new Error("Expected nested workspace metadata fixture");
@@ -712,6 +725,7 @@ describe("API parsers", () => {
     expect(Object.isFrozen(workspace.removal)).toBe(true);
     expect(Object.isFrozen(workspace.effectiveConfig)).toBe(true);
     expect(Object.isFrozen(workspace.effectiveConfig.uploads)).toBe(true);
+    expect(Object.isFrozen(workspace.effectiveConfig.attachments)).toBe(true);
   });
 
   it("parses provider-neutral workspace resolution ownership and diagnostics", () => {

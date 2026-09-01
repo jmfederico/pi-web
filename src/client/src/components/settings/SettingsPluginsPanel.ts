@@ -152,7 +152,7 @@ export class SettingsPluginsPanel extends LitElement {
         </div>
         <label class="toggle">
           <input type="checkbox" .checked=${plugin.enabled} ?disabled=${this.saving || this.configResponse === undefined || !plugin.editable} @change=${(event: Event) => { void this.togglePlugin(plugin, event); }}>
-          <span>${plugin.enabled ? "Desired enabled" : "Desired disabled"}</span>
+          <span>Enabled</span>
         </label>
       </article>
     `;

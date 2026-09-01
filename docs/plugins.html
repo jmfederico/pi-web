@@ -158,8 +158,19 @@
               </p>
               <p>
                 Relay follows this split: installing or removing <code>@jmfederico/pi-relay</code> controls the
-                <code>/relay</code> and <code>/relay-worktree</code> prompt templates and the <code>relay</code> skill,
-                while <code>plugins.relays.enabled</code> controls only the read-only Relays browser panel and its
+                human-gated <code>/relay</code> preparation prompt, its <code>/relay-worktree</code> compatibility alias,
+                the tool-agnostic <code>relay</code> skill, and the opinionated <code>relay-runner</code> profile.
+                Preparation builds a reviewable draft packet while establishing a shared understanding and only the
+                first leg, then requires explicit approval before <code>spawn_session</code>; it does not pre-plan the
+                chain. Fresh-worktree preparation moves the drafts into the target before dispatch. The runner keeps <code>charter.md</code> focused on the goal and scope edges, with execution mechanics in
+                <code>operations.md</code> and project guidance as the quality authority. Relay completion requires
+                both the chartered outcome and the review, approval, and delivery gates recorded in
+                <code>operations.md</code>. The profile treats review as evidence gathering rather than a finding quota;
+                re-review carries earlier decisions forward instead of restarting defect hunting. The normal path is an
+                initial whole-work review plus one re-review when needed. A third attempt is an exceptional, justified
+                contingency, after which a still-blocked Relay stops for human intervention.
+                <code>plugins.relays.enabled</code> controls only the
+                read-only Relays browser panel and its
                 workspace action. Disabling the browser plugin leaves the Pi resources available. At session-daemon
                 startup, PI WEB installs the package automatically for the active agent profile by default; removing it in
                 <strong>Settings → Pi packages</strong> is remembered for that profile, and

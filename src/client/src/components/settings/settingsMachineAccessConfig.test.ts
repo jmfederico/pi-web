@@ -13,11 +13,13 @@ describe("selected-machine access config helpers", () => {
       spawnSessions: false,
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },
+      attachments: { defaultFolder: "old/attachments" },
       maxUploadBytes: 1234,
     });
     const selectedMachine = configResponse({
       pathAccess: { allowedPaths: ["~/SDKs"] },
       uploads: { defaultFolder: "manual/uploads" },
+      attachments: { defaultFolder: "manual/attachments" },
       maxUploadBytes: 5678,
     });
 
@@ -32,6 +34,7 @@ describe("selected-machine access config helpers", () => {
         spawnSessions: false,
         pathAccess: { allowedPaths: ["~/SDKs"] },
         uploads: { defaultFolder: "manual/uploads" },
+        attachments: { defaultFolder: "manual/attachments" },
         maxUploadBytes: 5678,
       },
       effectiveConfig: {
@@ -43,6 +46,7 @@ describe("selected-machine access config helpers", () => {
         spawnSessions: false,
         pathAccess: { allowedPaths: ["~/SDKs"] },
         uploads: { defaultFolder: "manual/uploads" },
+        attachments: { defaultFolder: "manual/attachments" },
         maxUploadBytes: 5678,
       },
     });
@@ -54,8 +58,9 @@ describe("selected-machine access config helpers", () => {
       shortcuts: { "core:view.chat": "mod+1" },
       pathAccess: { allowedPaths: ["/old"] },
       uploads: { defaultFolder: "old/uploads" },
+      attachments: { defaultFolder: "old/attachments" },
     });
-    const selectedMachine = configResponse({ pathAccess: { allowedPaths: [] }, uploads: {} });
+    const selectedMachine = configResponse({ pathAccess: { allowedPaths: [] }, uploads: {}, attachments: {} });
 
     expect(mergeSelectedMachineAccessConfig(gateway, selectedMachine)).toEqual({
       ...gateway,
@@ -64,12 +69,14 @@ describe("selected-machine access config helpers", () => {
         shortcuts: { "core:view.chat": "mod+1" },
         pathAccess: { allowedPaths: [] },
         uploads: {},
+        attachments: {},
       },
       effectiveConfig: {
         host: "127.0.0.1",
         shortcuts: { "core:view.chat": "mod+1" },
         pathAccess: { allowedPaths: [] },
         uploads: {},
+        attachments: {},
       },
     });
   });

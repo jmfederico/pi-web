@@ -40,6 +40,8 @@ import type { ActiveSession } from "./sessionRuntimeStore.js";
 import { deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
+import { loadEffectiveProjectAttachmentsConfig } from "../workspaces/projectPiWebConfig.js";
+import type { PiWebConfigService } from "../configRoutes.js";
 import { parsePromptAttachments } from "../../shared/promptAttachments.js";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_LIMIT } from "../../shared/apiTypes.js";
 import type {
@@ -50,6 +52,7 @@ import type {
   ExtensionDialogCloseResponse,
   ExtensionDialogKind,
   ExtensionDialogOutcome,
+  PiWebAttachmentsConfig,
   SavedPromptAttachment,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
@@ -117,6 +120,15 @@ const STARTUP_PHASE_EXTENSIONS = "Loading session extensions";
 const STARTUP_CONCURRENT_CATALOG_REFRESH = "provider model lists are refreshing";
 const MAX_UNREAD_PUBLICATION_RETRY_MS = 30_000;
 const MAX_PENDING_UNREAD_MUTATIONS = SESSION_UNREAD_LIMIT + 1;
+/**
+ * Upper bound on how often one idle runtime re-resolves its transcript file.
+ * A runtime created in memory and never persisted has no session file, so
+ * every poll would otherwise rescan the session directory; throttling keeps
+ * steady-state polling of such a session O(1). The window can only delay
+ * noticing a file the runtime did not write itself: once the runtime
+ * persists, `getSessionFile()` answers and this throttle is bypassed.
+ */
+const IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS = 30_000;
 
 function noop(): void {
   // Intentionally empty default unsubscribe callback.
@@ -382,6 +394,13 @@ export interface PiSessionManagerGateway {
    * told explicitly.
    */
   invalidateSessionFile(sessionFile: string): void;
+  /**
+   * Read the active transcript branch without creating a runtime or writing the file.
+   * Resolves `undefined` when the transcript file is absent (never persisted or
+   * externally removed): there is no disk snapshot, and the runtime branch
+   * stays authoritative.
+   */
+  readBranch?(path: string): Promise<unknown[] | undefined>;
   create(cwd: string, options?: { parentSession?: string }): PiSessionManager;
   /**
    * Cross-project listing of Pi's session stores (the default store plus any
@@ -1092,6 +1111,13 @@ export interface PiSessionServiceDependencies {
    * a session is being constructed. Omit to report the startup phase alone.
    */
   catalogRefreshStatus?: CatalogRefreshStatus;
+  /**
+   * Live global config reader used to resolve workspace-effective request
+   * defaults, currently the attachments save folder. Read at request time so
+   * Settings edits apply without a daemon restart. When omitted, only the
+   * project-local layer applies on top of the built-in defaults.
+   */
+  config?: Pick<PiWebConfigService, "read">;
 }
 
 export class PiSessionService implements SessionRouteService {
@@ -1156,6 +1182,8 @@ export class PiSessionService implements SessionRouteService {
   private readonly now: () => Date;
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
+  /** Last idle-poll transcript file resolution per runtime, throttled; entries die with their runtime. */
+  private readonly idleSessionFileResolutions = new WeakMap<PiAgentSession, { at: number; path: string | undefined }>();
   private readonly unreadStore: SessionUnreadStore;
   private readonly pendingAskStore: PendingAskStore;
   private readonly pendingExtensionDialogStore: PendingExtensionDialogStore;
@@ -1163,6 +1191,7 @@ export class PiSessionService implements SessionRouteService {
   /** The parked extension Promise resolvers behind the store's open dialogs. */
   private readonly dialogWaiters = new ExtensionDialogWaiters();
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
+  private readonly config: Pick<PiWebConfigService, "read"> | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly onUnreadChanged: (() => void) | undefined;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -1188,6 +1217,7 @@ export class PiSessionService implements SessionRouteService {
     this.pendingExtensionDialogStore = deps.pendingExtensionDialogStore ?? new PendingExtensionDialogStore();
     this.extensionDialogsTimeoutMs = deps.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS;
     this.catalogRefreshStatus = deps.catalogRefreshStatus;
+    this.config = deps.config;
     this.unreadPublicationRetryInitialMs = Math.max(
       0,
       deps.unreadPublicationRetryDelayMs ?? DEFAULT_UNREAD_PUBLICATION_RETRY_MS,
@@ -2235,11 +2265,14 @@ export class PiSessionService implements SessionRouteService {
 
   async messages(ref: PiSessionRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage> {
     const session = await this.getOrOpen(ref);
-    return pageMessagesAtSafeBoundary(historyMessages(session), page);
+    return pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
   }
 
   async status(ref: PiSessionRef): Promise<ClientSessionStatus> {
-    return this.statusFromSession(await this.sessionForStatusOrDialogClose(ref));
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    if (this.hasActiveWork(session)) return this.statusFromSession(session);
+    const branch = await this.readableSessionBranch(ref, session);
+    return this.statusFromSession(session, transcriptMessageCount(branch));
   }
 
   /**
@@ -2463,7 +2496,26 @@ export class PiSessionService implements SessionRouteService {
     if (parsed.length === 0) return [];
     await this.assertWritable(ref);
     const active = await this.getActive(ref);
-    return saveAttachmentsToWorkspace(active.runtime.cwd, parsed, folder === undefined ? {} : { folder });
+    const cwd = active.runtime.cwd;
+    // An explicit request folder wins; the config lookup below is only the
+    // fallback for folder-less calls (see workspaceAttachmentsConfig).
+    const effectiveFolder = folder ?? (await this.workspaceAttachmentsConfig(cwd)).defaultFolder;
+    return saveAttachmentsToWorkspace(cwd, parsed, effectiveFolder === undefined ? {} : { folder: effectiveFolder });
+  }
+
+  /**
+   * Fallback attachments config for save requests that omit an explicit
+   * folder: the live global config merged with the session cwd's own
+   * project-local override. Unlike `workspaceEffectiveConfig` in app.ts (which
+   * resolves from the owning project's path), this lookup keys off the cwd
+   * itself, so for secondary (worktree) workspaces it cannot see the owning
+   * project's override. The composer therefore always sends the
+   * workspace-effective folder it displayed explicitly; this cwd-based
+   * resolution only governs folder-less API calls.
+   */
+  private async workspaceAttachmentsConfig(cwd: string): Promise<PiWebAttachmentsConfig> {
+    const globalConfig = this.config === undefined ? {} : (await this.config.read()).effectiveConfig;
+    return loadEffectiveProjectAttachmentsConfig(cwd, globalConfig);
   }
 
   async shell(ref: PiSessionRef, text: string): Promise<void> {
@@ -3167,6 +3219,46 @@ export class PiSessionService implements SessionRouteService {
 
   private async getOrOpen(ref: PiSessionRef): Promise<PiAgentSession> {
     return (await this.getActive(ref)).runtime.session;
+  }
+
+  /**
+   * An idle runtime is only Pi Web's cached control view. Another Pi process may
+   * keep appending to the same JSONL file, so transcript reads must open a fresh
+   * read-only snapshot rather than serving that cached branch forever. Active
+   * runtimes remain authoritative and are never replaced, reloaded, or aborted.
+   */
+  private async readableSessionBranch(ref: PiSessionRef, session: PiAgentSession): Promise<unknown[]> {
+    if (this.hasActiveWork(session) || this.sessionManager.readBranch === undefined) return session.sessionManager.getBranch();
+    const sessionFile = session.sessionFile ?? session.sessionManager.getSessionFile();
+    const resolvedPath = sessionFile === undefined ? await this.idleSessionFilePath(ref, session) : undefined;
+    if (this.hasActiveWork(session)) return session.sessionManager.getBranch();
+    const path = sessionFile ?? resolvedPath;
+    if (path === undefined) return session.sessionManager.getBranch();
+    const snapshot = await this.sessionManager.readBranch(path);
+    // No snapshot exists when the transcript file is absent (a session known
+    // by path but never persisted, or externally removed): the runtime branch
+    // is the only readable branch then.
+    if (snapshot === undefined) return session.sessionManager.getBranch();
+    // Reading also yields. A prompt that started meanwhile must still win over
+    // the completed disk snapshot and its potentially older event watermark.
+    return this.hasActiveWork(session) ? session.sessionManager.getBranch() : snapshot;
+  }
+
+  /**
+   * Resolve the transcript file for an idle runtime that does not know one,
+   * at most once per {@link IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS}. The
+   * negative result (no file yet) is the hot case: a never-persisted session
+   * is polled every few seconds, and re-scanning its directory each tick is
+   * pure waste. `getActive` never uses this path, so prompt routing always
+   * sees a fresh resolution.
+   */
+  private async idleSessionFilePath(ref: PiSessionRef, session: PiAgentSession): Promise<string | undefined> {
+    const cached = this.idleSessionFileResolutions.get(session);
+    const at = this.now().getTime();
+    if (cached !== undefined && at - cached.at < IDLE_SESSION_FILE_RESOLUTION_THROTTLE_MS) return cached.path;
+    const match = await this.sessionManager.resolveSessionFile(ref.cwd, ref.id);
+    this.idleSessionFileResolutions.set(session, { at, path: match?.path });
+    return match?.path;
   }
 
   private async getActive(ref: PiSessionRef, options: Pick<CreateSessionRuntimeOptions, "notificationGeneration"> = {}): Promise<ActiveSession<PiSessionRuntime>> {
@@ -4041,7 +4133,7 @@ export class PiSessionService implements SessionRouteService {
     this.events.publishGlobal({ type: "activity.update", activity });
   }
 
-  private statusFromSession(session: PiAgentSession): ClientSessionStatus {
+  private statusFromSession(session: PiAgentSession, messageCount = session.messages.length): ClientSessionStatus {
     const stats = session.getSessionStats();
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
@@ -4058,7 +4150,7 @@ export class PiSessionService implements SessionRouteService {
       isBashRunning: session.isBashRunning,
       pendingMessageCount: this.pendingMessageCount(session),
       queuedMessages: queuedMessagesFromSession(session, this.compactionQueuedMessages(session.sessionId)),
-      messageCount: session.messages.length,
+      messageCount,
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
@@ -4573,11 +4665,15 @@ function annotateAssistantThinkingLevel(message: unknown, thinkingLevel: string 
 }
 
 function historyMessages(session: PiAgentSession): unknown[] {
+  return historyMessagesFromEntries(session.sessionManager.getBranch());
+}
+
+function historyMessagesFromEntries(entries: readonly unknown[]): unknown[] {
   const messages: unknown[] = [];
   // Pi records the initial level at session creation and every later change, so
   // walking the branch yields the level in effect for each assistant message.
   let thinkingLevel: string | undefined;
-  for (const entry of session.sessionManager.getBranch()) {
+  for (const entry of entries) {
     if (!isRecord(entry)) continue;
     if (entry["type"] === "message") messages.push(annotateAssistantThinkingLevel(entry["message"], thinkingLevel));
     else if (entry["type"] === "thinking_level_change") {
@@ -4589,6 +4685,14 @@ function historyMessages(session: PiAgentSession): unknown[] {
     else if (entry["type"] === "branch_summary") messages.push({ role: "system", source: "branch_summary", content: `Branch summary:\n\n${stringValue(entry["summary"])}` });
   }
   return messages;
+}
+
+function transcriptMessageCount(entries: readonly unknown[]): number {
+  let count = 0;
+  for (const entry of entries) {
+    if (isRecord(entry) && entry["type"] === "message") count += 1;
+  }
+  return count;
 }
 
 /** custom entry type used to persist parent -> child subsession links outside LLM context. */

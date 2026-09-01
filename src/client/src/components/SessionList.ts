@@ -157,8 +157,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       return html`
         <h2>
           <span class="plain-heading">Sessions</span>
-          ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderUnreadCount(unreadCount)}
+          ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderCleanupButton()}
           ${this.renderStartButton()}
         </h2>
@@ -169,8 +169,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`
       <h2>
         <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
-        ${this.renderCurrentSelectionButton(currentSessions)}
         ${this.renderUnreadCount(unreadCount)}
+        ${this.renderCurrentSelectionButton(currentSessions)}
         <small class="section-count">${sessionCount}</small>
         ${this.renderCleanupButton()}
         ${this.renderStartButton()}
