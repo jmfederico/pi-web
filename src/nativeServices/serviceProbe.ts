@@ -433,9 +433,11 @@ function prerequisiteProbeCommand(
 export function nativeServicePrerequisiteShellCheck(shell: NativeServiceShellName, prerequisite: NativeServicePrerequisite): string {
   switch (prerequisite.kind) {
     case "command-available":
-      return externalExecutableShellCheck(shell, prerequisite.command);
+      return externalExecutableShellCheck(shell, prerequisite.command, [], prerequisite.identicalTo);
     case "node-version":
       return externalExecutableShellCheck(shell, "node", ["-e", nodeVersionCheckScript(prerequisite.minimumVersion)]);
+    case "runtime":
+      return externalExecutableShellCheck(shell, prerequisite.command, ["--print-runtime"], prerequisite.identicalTo);
     case "readable-file": {
       const path = shellQuote(shell, prerequisite.path);
       return `test -f ${path} && test -r ${path}`;
@@ -456,15 +458,26 @@ function externalExecutableShellCheck(
   shell: NativeServiceShellName,
   command: string,
   arguments_: readonly string[] = [],
+  identicalTo?: string,
 ): string {
   const quotedCommand = shellQuote(shell, command);
   const quotedArguments = arguments_.map((argument) => shellQuote(shell, argument)).join(" ");
+  // Identity is checked before any invocation: the point is to never execute a file that is not
+  // the launcher the plan is about to run. Bytes alone are not enough, because a second PI WEB
+  // installation ships a launcher with the same content — so once the bytes match (and the file is
+  // therefore provably our own script) it is asked which package it lives in, which also bounds
+  // the window where the name could be re-pointed elsewhere before the service starts.
+  const identity = identicalTo === undefined ? "" : shellQuote(shell, identicalTo);
   if (shell === "fish") {
+    const comparison = identity === "" ? "" : `; and cmp -s $pi_web_probe_executable[1] ${identity}; and test ($pi_web_probe_executable[1] --print-launcher) = (cd -- (dirname -- ${identity}) && pwd)`;
     const invocation = quotedArguments === "" ? "" : `; and $pi_web_probe_executable[1] ${quotedArguments}`;
-    return `set -l pi_web_probe_executable (command -v ${quotedCommand}); and test (count $pi_web_probe_executable) -eq 1; and string match -q '*/*' -- $pi_web_probe_executable[1]; and test -f $pi_web_probe_executable[1]; and test -x $pi_web_probe_executable[1]${invocation}`;
+    return `set -l pi_web_probe_executable (command -v ${quotedCommand}); and test (count $pi_web_probe_executable) -eq 1; and string match -q '*/*' -- $pi_web_probe_executable[1]; and test -f $pi_web_probe_executable[1]; and test -x $pi_web_probe_executable[1]${comparison}${invocation}`;
   }
+  const comparison = identity === ""
+    ? ""
+    : ` && cmp -s "$pi_web_probe_executable" ${identity} && test "$("$pi_web_probe_executable" --print-launcher)" = "$(cd -P "$(dirname -- ${identity})" && pwd)"`;
   const invocation = quotedArguments === "" ? "" : ` && "$pi_web_probe_executable" ${quotedArguments}`;
-  return `pi_web_probe_executable=$(command -v ${quotedCommand}) && case "$pi_web_probe_executable" in */*) test -f "$pi_web_probe_executable" && test -x "$pi_web_probe_executable"${invocation};; *) false;; esac`;
+  return `pi_web_probe_executable=$(command -v ${quotedCommand}) && case "$pi_web_probe_executable" in */*) test -f "$pi_web_probe_executable" && test -x "$pi_web_probe_executable"${comparison}${invocation};; *) false;; esac`;
 }
 
 function markerCommand(
@@ -506,7 +519,7 @@ function parseProbeOutput(
     outcomes.set(prerequisite.id, {
       prerequisiteId: prerequisite.id,
       status,
-      detail: status === "satisfied" ? null : unsatisfiedDetail(prerequisite),
+      detail: status === "satisfied" ? null : nativeServicePrerequisiteFailureDetail(prerequisite),
     });
   }
   const missing = prerequisites.find((prerequisite) => !outcomes.has(prerequisite.id));
@@ -516,12 +529,20 @@ function parseProbeOutput(
   return { kind: "completed", outcomes: [...outcomes.values()] };
 }
 
-function unsatisfiedDetail(prerequisite: NativeServicePrerequisite): string {
+/** Human-readable reason for a failed prerequisite, shared by install output and doctor. */
+export function nativeServicePrerequisiteFailureDetail(prerequisite: NativeServicePrerequisite): string {
   switch (prerequisite.kind) {
     case "command-available":
-      return `${prerequisite.command} did not resolve to an external executable in the native service environment.`;
+      return prerequisite.identicalTo === undefined
+        ? `${prerequisite.command} did not resolve to an external executable in the native service environment.`
+        : `${prerequisite.command} did not resolve to the PI WEB launcher ${prerequisite.identicalTo} in the native service environment. Another PI WEB installation may come first in the service PATH; re-run \`pi-web install\` after removing it.`;
     case "node-version":
       return `node >= ${prerequisite.minimumVersion} was not available in the native service environment.`;
+    case "runtime":
+      if (prerequisite.identicalTo !== undefined) {
+        return `${prerequisite.command} is no longer the PI WEB launcher ${prerequisite.identicalTo} in the native service environment, so its runtime was not queried. Another PI WEB installation may come first in the service PATH; re-run \`pi-web install\`.`;
+      }
+      return `${prerequisite.command} --print-runtime did not resolve a usable runtime (bun with Bun.Terminal, or node) in the native service environment.`;
     case "readable-file":
       return `${prerequisite.path} was not a readable regular file in the native service environment.`;
     case "package-scripts":

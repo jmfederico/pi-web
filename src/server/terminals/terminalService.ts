@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import * as pty from "node-pty";
 import type { TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunStatus, TerminalUiEvent } from "../../shared/apiTypes.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
+import { createDefaultBackend, type TerminalBackend } from "./backend.js";
 
 const MAX_REPLAY_BUFFER = 200_000;
 
@@ -30,7 +30,7 @@ export interface RunTerminalCommandOptions {
 }
 
 interface TerminalRecord extends TerminalInfo {
-  pty: pty.IPty;
+  backendId: string;
   buffer: string;
   events: EventEmitter;
   commandRunId?: string;
@@ -39,8 +39,20 @@ interface TerminalRecord extends TerminalInfo {
 export class TerminalService {
   private readonly terminals = new Map<string, TerminalRecord>();
   private readonly commandRuns = new Map<string, TerminalCommandRun>();
+  private readonly backend: TerminalBackend;
 
-  constructor(private readonly events?: SessionEventHub, private readonly workspaceActivity?: Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal">) {}
+  constructor(
+    events?: SessionEventHub,
+    workspaceActivity?: Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal">,
+    backendOverride?: TerminalBackend,
+  ) {
+    this.backend = backendOverride ?? createDefaultBackend();
+    this.events = events;
+    this.workspaceActivity = workspaceActivity;
+  }
+
+  private events: SessionEventHub | undefined;
+  private workspaceActivity: Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal"> | undefined;
 
   list(cwd: string): TerminalInfo[] {
     return [...this.terminals.values()]
@@ -114,7 +126,7 @@ export class TerminalService {
     if (isTerminalCommandRunFinal(run.status)) return copyCommandRun(run);
     const terminal = this.terminals.get(run.terminalId);
     if (terminal === undefined) throw new Error("Terminal not found");
-    if (!terminal.exited) terminal.pty.write("\x03");
+    if (!terminal.exited) this.backend.write(terminal.backendId, "\x03");
     return copyCommandRun(run);
   }
 
@@ -139,13 +151,13 @@ export class TerminalService {
 
   write(id: string, data: string): void {
     const terminal = this.require(id);
-    if (!terminal.exited) terminal.pty.write(data);
+    if (!terminal.exited) this.backend.write(terminal.backendId, data);
   }
 
   resize(id: string, cols: number, rows: number): void {
     const terminal = this.require(id);
     if (!terminal.exited && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-      terminal.pty.resize(Math.floor(cols), Math.floor(rows));
+      this.backend.resize(terminal.backendId, Math.floor(cols), Math.floor(rows));
     }
   }
 
@@ -159,13 +171,15 @@ export class TerminalService {
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    record.pty = pty.spawn(shell, interactiveShellArgs(shell), {
-      name: "xterm-256color",
+    const { id: backendId } = this.backend.create({
       cwd: record.cwd,
+      shell,
+      shellArgs: interactiveShellArgs(shell),
       cols: 100,
       rows: 30,
       env: { ...process.env, TERM: "xterm-256color", PI_WEB_TERMINAL: "1" },
     });
+    record.backendId = backendId;
     this.attachPtyEvents(record);
     const info = toInfo(record);
     this.workspaceActivity?.updateTerminal(info);
@@ -179,12 +193,13 @@ export class TerminalService {
     this.terminals.delete(id);
     terminal.events.removeAllListeners();
     this.workspaceActivity?.removeTerminal(id, terminal.cwd);
-    if (!terminal.exited) terminal.pty.kill();
+    if (!terminal.exited) this.backend.kill(terminal.backendId);
     this.publish({ type: "terminal.closed", terminalId: id, cwd: terminal.cwd });
   }
 
   dispose(): void {
     for (const id of [...this.terminals.keys()]) this.close(id);
+    this.backend.dispose();
   }
 
   private createTerminal(options: { id?: string; cwd: string; name?: string; cols?: number; rows?: number; shellArgs: string[]; commandRunId?: string }): TerminalInfo {
@@ -192,11 +207,12 @@ export class TerminalService {
     const id = options.id ?? randomUUID();
     const createdAt = new Date().toISOString();
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    const terminal = pty.spawn(shell, options.shellArgs, {
-      name: "xterm-256color",
+    const { id: backendId } = this.backend.create({
       cwd: options.cwd,
-      cols: options.cols ?? 100,
-      rows: options.rows ?? 30,
+      shell,
+      shellArgs: options.shellArgs,
+      ...(options.cols !== undefined && options.cols > 0 ? { cols: options.cols } : {}),
+      ...(options.rows !== undefined && options.rows > 0 ? { rows: options.rows } : {}),
       env: { ...process.env, TERM: "xterm-256color", PI_WEB_TERMINAL: "1" },
     });
     const requestedName = options.name?.trim();
@@ -206,7 +222,7 @@ export class TerminalService {
       name: requestedName !== undefined && requestedName !== "" ? requestedName : `Shell ${String(this.list(options.cwd).length + 1)}`,
       createdAt,
       exited: false,
-      pty: terminal,
+      backendId,
       buffer: "",
       events: new EventEmitter(),
       ...(options.commandRunId === undefined ? {} : { commandRunId: options.commandRunId }),
@@ -220,18 +236,20 @@ export class TerminalService {
   }
 
   private attachPtyEvents(record: TerminalRecord): void {
-    record.pty.onData((data) => {
-      record.buffer = trimReplayBuffer(record.buffer + data);
-      record.events.emit("output", data);
-    });
-    record.pty.onExit(({ exitCode }) => {
-      record.exited = true;
-      record.exitCode = exitCode;
-      this.completeCommandRun(record.commandRunId, exitCode);
-      record.events.emit("exit", exitCode);
-      const info = toInfo(record);
-      this.workspaceActivity?.updateTerminal(info);
-      this.publish({ type: "terminal.exited", terminal: info });
+    this.backend.attach(record.backendId, {
+      output: (data) => {
+        record.buffer = trimReplayBuffer(record.buffer + data);
+        record.events.emit("output", data);
+      },
+      exit: (exitCode) => {
+        record.exited = true;
+        if (exitCode !== undefined) record.exitCode = exitCode;
+        this.completeCommandRun(record.commandRunId, exitCode);
+        record.events.emit("exit", exitCode);
+        const info = toInfo(record);
+        this.workspaceActivity?.updateTerminal(info);
+        this.publish({ type: "terminal.exited", terminal: info });
+      },
     });
   }
 

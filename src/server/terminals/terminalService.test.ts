@@ -25,9 +25,22 @@ describe("interactive shell arguments", () => {
 // TerminalService spawns a POSIX shell (/bin/bash with -lc and commands like
 // printf/true/exit). The terminal feature is not supported on native Windows,
 // so these tests are skipped there rather than asserting Unix shell behavior.
-describe.skipIf(process.platform === "win32")("TerminalService command runs", () => {
+import { createDefaultBackend } from "./backend.js";
+import { createMockBackend } from "./backend-mock.js";
+
+// Check if a real backend (Bun or node-pty) is available for runCommand tests
+const hasRealBackend = (() => {
+  try {
+    const b = createDefaultBackend();
+    return b.available();
+  } catch {
+    return false;
+  }
+})();
+
+describe("TerminalService basic operations", () => {
   it("closes all terminal records for a cwd", () => {
-    const service = new TerminalService();
+    const service = new TerminalService(undefined, undefined, createMockBackend());
     try {
       const terminal = service.create({ cwd: process.cwd() });
 
@@ -39,7 +52,9 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
       service.dispose();
     }
   });
+});
 
+describe.skipIf(process.platform === "win32" || !hasRealBackend)("TerminalService command runs", () => {
   it("loads login-profile PATH entries in new interactive terminals", async () => {
     await withBashLoginProfile(async () => {
       const service = new TerminalService();

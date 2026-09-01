@@ -173,6 +173,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
 | **Runtime-only environment variables** |  |  |  |  |  |
 | Global config file path | — | `PI_WEB_CONFIG` (`XDG_CONFIG_HOME` affects the default path) | Process/env | Selects the global config file; not a project config | Restart services/processes after changing env |
+| JavaScript runtime | — | `PI_WEB_RUNTIME` | Process/env, inherited by PI WEB commands and services | Not supported locally | Restart the services or processes whose runtime should change |
 | Managed data directory | — | `PI_WEB_DATA_DIR` | Process/env | Not supported locally | Restart web/API and session daemon |
 | Session daemon socket | — | `PI_WEB_SESSIOND_SOCKET` | Web/API + session daemon env | Not supported locally | Restart daemon and web/API; both must match |
 | Session daemon TCP port | — | `PI_WEB_SESSIOND_PORT` | Session daemon env | Not supported locally | Restart session daemon; set `PI_WEB_SESSIOND_URL` for web/API too |
@@ -186,6 +187,21 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Offline mode | — | `PI_WEB_OFFLINE`, `PI_OFFLINE` | Web/API + session daemon env | Not supported locally | Restart session daemon and web/API after env changes; also disables the [background model catalog refresh](#background-model-catalog-refresh) |
 
 ## Key details
+
+### JavaScript runtime
+
+PI WEB runs on Node.js or Bun. Every PI WEB command (`pi-web`, `pi-web-server`, `pi-web-sessiond`) starts through a launcher that chooses the interpreter when the command runs, so `PI_WEB_RUNTIME` is read from the environment of the process being started — there is no config key and nothing to rebuild.
+
+| Value | Behavior |
+| --- | --- |
+| unset or `auto` | The package manager that installed PI WEB decides: a `bun add -g` tree starts on Bun, and npm (or any other) installs start on Node.js. The other runtime is used only when the preferred one is not usable. Capability wins over availability: the launcher never starts PI WEB on a Bun without the native terminal API — with no usable Node.js the command fails with instructions (`bun upgrade`, or reinstall with npm), and with a usable Node.js it starts there and warns that terminals need the trusted `node-pty` build. |
+| `bun` | Hard requirement. Fails loudly when Bun is missing or cannot boot PI WEB, instead of silently running on Node.js. |
+| `node` | Never select Bun, even when it is installed. |
+| anything else | The command exits with an error naming the variable and the accepted values. |
+
+When a runtime is not on the service `PATH` — user services start with the service manager's environment, not your interactive shell — the launcher also looks in the usual install locations, in this order after `PATH`: Bun at `~/.bun/bin/bun`, `/usr/local/bin/bun`, `/opt/homebrew/bin/bun`, `/usr/bin/bun`, and Node.js at `/usr/bin/node`, `/usr/local/bin/node`, `/opt/homebrew/bin/node`. Version-manager directories (nvm, fnm, asdf, mise) are deliberately not among those locations, so a runtime that only exists inside a version manager has to reach the service through its `PATH`. The launcher reads the installing package manager from the tree layout: bun's global root is `install/global/node_modules`, and every other layout — npm, pnpm, `bun add -g --linker npm`, a dev checkout — is npm-shaped and prefers Node.js. `PI_WEB_RUNTIME` always overrides this preference.
+
+Auto-detection needs no configuration, so this variable is only for pinning a runtime. Set it wherever the process gets its environment: export it before starting PI WEB manually, or add an `Environment=` drop-in (`systemctl --user edit --full pi-web pi-web-sessiond`) or a `Environment=`/`EnvironmentFile=` key in the launchd plist for user services, then restart. `pi-web doctor` and `pi-web version` report the runtime each process actually selected, and `pi-web doctor` says which terminal backend that implies.
 
 ### Managed data directory
 

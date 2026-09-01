@@ -1,0 +1,429 @@
+import type { TerminalInfo } from "../../shared/apiTypes.js";
+import { loadNodePtyModule, type NodePtyModule, type NodePtyProcess } from "./nodePtyModule.js";
+import { bunTerminalCapability, piWebRuntimeKind } from "../../shared/piWebRuntime.js";
+
+/* ------------------------------------------------------------------ */
+/*  Interface                                                          */
+/* ------------------------------------------------------------------ */
+
+export interface TerminalBackend {
+  available(): boolean;
+
+  create(options: {
+    cwd: string;
+    shell: string;
+    shellArgs: string[];
+    cols?: number;
+    rows?: number;
+    env: Record<string, string>;
+  }): { id: string; info: TerminalInfo; cols: number; rows: number };
+
+  write(id: string, data: string): void;
+  resize(id: string, cols: number, rows: number): void;
+  kill(id: string): void;
+
+  attach(
+    id: string,
+    handlers: {
+      output: (data: string, replay: boolean) => void;
+      exit: (code: number | undefined) => void;
+    }
+  ): () => void;
+
+  get(id: string): TerminalInfo | undefined;
+  dispose(): void;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Auto-detection                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Check if the current runtime is Bun — see `shared/piWebRuntime.ts`, the single detector. */
+export function isBunRuntime(): boolean {
+  return piWebRuntimeKind() === "bun";
+}
+
+/* ------------------------------------------------------------------ */
+/*  Factory                                                            */
+/* ------------------------------------------------------------------ */
+
+export function createDefaultBackend(): TerminalBackend {
+  const bunBackend = new BunPTYBackend();
+  if (isBunRuntime() && bunBackend.available()) return bunBackend;
+  // A Bun without Bun.Terminal still gets the node backend: node-pty may be absent there, but
+  // that surfaces as an explicit unavailable error instead of a silently dead terminal. It is never
+  // the Bun PTY engine — see `bunTerminalCapability()` for why (oven-sh/bun#25822).
+  return new NodePTYBackend();
+}
+
+/* ------------------------------------------------------------------ */
+/*  BunPTYBackend                                                      */
+/* ------------------------------------------------------------------ */
+
+interface BunTerminalHandle {
+  write(data: string): number;
+  resize(cols: number, rows: number): void;
+  close(): void;
+}
+
+interface BunSubprocessHandle {
+  kill(signal?: string | number): void;
+  onExit(cb: (code: number | null) => void): void;
+}
+
+interface BunTerminalOptions {
+  cols?: number;
+  rows?: number;
+  name?: string;
+  data?: (terminal: BunTerminalHandle, data: Uint8Array) => void;
+  exit?: (terminal: BunTerminalHandle, exitCode: number, signal: string | null) => void;
+  drain?: (terminal: BunTerminalHandle) => void;
+}
+
+interface BunSpawnOptions {
+  terminal?: BunTerminalHandle;
+  /** See the `detached: true` call site — it is what gives the shell the PTY session. */
+  detached?: boolean;
+  cwd?: string;
+  env?: Record<string, string>;
+  onExit?: (subprocess: BunSubprocessHandle, exitCode: number | null, signal: string | null) => void;
+}
+
+interface BunGlobal {
+  Terminal: new (options: BunTerminalOptions) => BunTerminalHandle;
+  spawn: (cmd: string[], opts: BunSpawnOptions) => BunSubprocessHandle;
+}
+
+interface BunTerminalEntry {
+  terminal: BunTerminalHandle;
+  subprocess: BunSubprocessHandle;
+  info: TerminalInfo & { cols: number; rows: number };
+  outputCb: ((data: string, replay: boolean) => void) | null;
+  exitCb: ((code: number | undefined) => void) | null;
+  /** Streaming decoder so multi-byte UTF-8 sequences split across data chunks are not corrupted. */
+  decoder: TextDecoder;
+}
+
+export class BunPTYBackend implements TerminalBackend {
+  private terminals = new Map<string, BunTerminalEntry>();
+
+  available(): boolean {
+    // Capability, not version: Bun.spawn alone cannot drive a PTY.
+    return isBunRuntime() && bunTerminalCapability();
+  }
+
+  create(options: {
+    cwd: string;
+    shell: string;
+    shellArgs: string[];
+    cols?: number;
+    rows?: number;
+    env: Record<string, string>;
+  }): { id: string; info: TerminalInfo; cols: number; rows: number } {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const Bun = (globalThis as Record<string, unknown>)["Bun"] as BunGlobal;
+    const id = crypto.randomUUID();
+    const cols = options.cols ?? 100;
+    const rows = options.rows ?? 30;
+
+    const terminal = new Bun.Terminal({
+      cols,
+      rows,
+      name: "xterm-256color",
+      data: (_term, data: Uint8Array) => {
+        const entry = this.terminals.get(id);
+        if (entry?.outputCb) {
+          entry.outputCb(entry.decoder.decode(data, { stream: true }), false);
+        }
+      },
+    });
+
+    // The terminal is ours, not the spawn's: if the child never starts (missing shell, bad cwd),
+    // close it here or its master fd leaks for the daemon's lifetime.
+    let subprocess: BunSubprocessHandle;
+    try {
+      subprocess = Bun.spawn([options.shell, ...options.shellArgs], {
+        terminal,
+        // `detached` (setsid) is what gives the shell a controlling terminal on the PTY, not just
+        // stdio wires: without it the shell keeps the daemon's session (`TTY ?`), bash logs
+        // "cannot set terminal process group … no job control", and ^C never reaches the foreground
+        // process group. Upstream gap for pre-created terminals: oven-sh/bun#33240 (open) — the
+        // inline `terminal: { … }` spawn form already sessions correctly, only the existing-
+        // `Bun.Terminal` form skips `setsid()` + `TIOCSCTTY`. Probed on bun 1.4.0 Linux/x64 with
+        // `detached: true`: bash reports PID == PGID == SID on a pts/N, `stty size` tracks resize,
+        // and SIGKILLing the daemon delivers SIGHUP through the closed master. Re-run that probe
+        // when #33240 closes; the flag stays harmless either way.
+        detached: true,
+        cwd: options.cwd,
+        env: {
+          ...options.env,
+          PI_WEB_TERMINAL: "1",
+          TERM: "xterm-256color",
+        },
+        onExit: (_sub, exitCode) => {
+          const entry = this.terminals.get(id);
+          if (entry?.exitCb) {
+            entry.exitCb(exitCode ?? undefined);
+          }
+          // Release the entry once the spawned process is gone so exited
+          // terminals do not accumulate for the lifetime of the service.
+          this.terminals.delete(id);
+        },
+      });
+    } catch (error) {
+      terminal.close();
+      throw error;
+    }
+
+    const info: TerminalInfo & { cols: number; rows: number } = {
+      id,
+      cwd: options.cwd,
+      name: "Terminal",
+      createdAt: new Date().toISOString(),
+      exited: false,
+      cols,
+      rows,
+    };
+
+    this.terminals.set(id, {
+      terminal,
+      subprocess,
+      info,
+      outputCb: null,
+      exitCb: null,
+      decoder: new TextDecoder(),
+    });
+
+    return { id, info, cols, rows };
+  }
+
+  write(id: string, data: string): void {
+    const entry = this.terminals.get(id);
+    entry?.terminal.write(data);
+  }
+
+  resize(id: string, cols: number, rows: number): void {
+    const entry = this.terminals.get(id);
+    entry?.terminal.resize(cols, rows);
+  }
+
+  kill(id: string): void {
+    const entry = this.terminals.get(id);
+    if (entry) {
+      entry.subprocess.kill("SIGKILL");
+      entry.terminal.close();
+      entry.info.exited = true;
+    }
+    // The subprocess exit handler also deletes the entry; deleting here covers
+    // the closed-without-exit path and the idempotent re-delete is harmless.
+    // Upstream: oven-sh/bun#40289 (and the drain-order variant #35851) report the PTY exit callback
+    // not firing spontaneously after a voluntary child exit on Linux. Probed on bun 1.4.1 Linux/x64
+    // with `sh -c 'exit 3'`, both with and without awaiting `proc.exited`: `onExit` fired (~3ms).
+    // Re-run that probe when either issue closes; until then keep this delete as the guaranteed
+    // release path rather than trusting the callback alone.
+    this.terminals.delete(id);
+  }
+
+  attach(
+    id: string,
+    handlers: {
+      output: (data: string, replay: boolean) => void;
+      exit: (code: number | undefined) => void;
+    }
+  ): () => void {
+    const entry = this.terminals.get(id);
+    if (!entry) {
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      return () => {};
+    }
+
+    entry.outputCb = handlers.output;
+    entry.exitCb = handlers.exit;
+
+    return () => {
+      if (entry.outputCb === handlers.output) entry.outputCb = null;
+      if (entry.exitCb === handlers.exit) entry.exitCb = null;
+    };
+  }
+
+  get(id: string): TerminalInfo | undefined {
+    const entry = this.terminals.get(id);
+    return entry?.info;
+  }
+
+  dispose(): void {
+    for (const entry of this.terminals.values()) {
+      try {
+        entry.subprocess.kill("SIGKILL");
+        entry.terminal.close();
+      } catch {
+        // ignore dispose errors
+      }
+    }
+    this.terminals.clear();
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  NodePTYBackend                                                     */
+/* ------------------------------------------------------------------ */
+
+interface NodeTerminalEntry {
+  proc: NodePtyProcess;
+  info: TerminalInfo & { cols: number; rows: number };
+  outputCb: ((data: string, replay: boolean) => void) | null;
+  exitCb: ((code: number | undefined) => void) | null;
+}
+
+export class NodePTYBackend implements TerminalBackend {
+  private terminals = new Map<string, NodeTerminalEntry>();
+  private pty: NodePtyModule | null;
+
+  constructor(ptyModule?: NodePtyModule) {
+    if (ptyModule !== undefined) {
+      this.pty = ptyModule;
+      return;
+    }
+    try {
+      this.pty = loadNodePtyModule();
+    } catch {
+      this.pty = null;
+    }
+  }
+
+  /** Override the pty module — useful for testing with mocks. Pass null to disable. */
+  setPty(ptyModule: NodePtyModule | null): void {
+    this.pty = ptyModule;
+  }
+
+  available(): boolean {
+    return this.pty !== null;
+  }
+
+  create(options: {
+    cwd: string;
+    shell: string;
+    shellArgs: string[];
+    cols?: number;
+    rows?: number;
+    env: Record<string, string>;
+  }): { id: string; info: TerminalInfo; cols: number; rows: number } {
+    if (!this.pty) {
+      throw new Error("node-pty module is not available");
+    }
+
+    const id = crypto.randomUUID();
+    const cols = options.cols ?? 100;
+    const rows = options.rows ?? 30;
+
+    const proc = this.pty.spawn(options.shell, options.shellArgs, {
+      name: "xterm-256color",
+      cwd: options.cwd,
+      cols,
+      rows,
+      env: {
+        ...options.env,
+        PI_WEB_TERMINAL: "1",
+        TERM: "xterm-256color",
+      },
+    });
+
+    proc.on("data", (data: string | number | null) => {
+      if (typeof data === "string") {
+        const entry = this.terminals.get(id);
+        if (entry?.outputCb) {
+          entry.outputCb(data, false);
+        }
+      }
+    });
+
+    proc.on("exit", (exitCode: string | number | null) => {
+      const code = typeof exitCode === "number" ? exitCode : undefined;
+      const entry = this.terminals.get(id);
+      if (entry?.exitCb) {
+        entry.exitCb(code);
+      }
+      // Release the entry once the process is gone so exited terminals do not
+      // accumulate for the lifetime of the service.
+      this.terminals.delete(id);
+    });
+
+    const info: TerminalInfo & { cols: number; rows: number } = {
+      id,
+      cwd: options.cwd,
+      name: "Terminal",
+      createdAt: new Date().toISOString(),
+      exited: false,
+      cols,
+      rows,
+    };
+
+    this.terminals.set(id, {
+      proc,
+      info,
+      outputCb: null,
+      exitCb: null,
+    });
+
+    return { id, info, cols, rows };
+  }
+
+  write(id: string, data: string): void {
+    const entry = this.terminals.get(id);
+    entry?.proc.write(data);
+  }
+
+  resize(id: string, cols: number, rows: number): void {
+    const entry = this.terminals.get(id);
+    entry?.proc.resize(cols, rows);
+  }
+
+  kill(id: string): void {
+    const entry = this.terminals.get(id);
+    if (entry) {
+      entry.proc.kill("SIGKILL");
+      entry.info.exited = true;
+    }
+    // The proc exit event also deletes the entry; deleting here covers the
+    // closed-without-exit path and the idempotent re-delete is harmless.
+    this.terminals.delete(id);
+  }
+
+  attach(
+    id: string,
+    handlers: {
+      output: (data: string, replay: boolean) => void;
+      exit: (code: number | undefined) => void;
+    }
+  ): () => void {
+    const entry = this.terminals.get(id);
+    if (!entry) {
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      return () => {};
+    }
+
+    entry.outputCb = handlers.output;
+    entry.exitCb = handlers.exit;
+
+    return () => {
+      if (entry.outputCb === handlers.output) entry.outputCb = null;
+      if (entry.exitCb === handlers.exit) entry.exitCb = null;
+    };
+  }
+
+  get(id: string): TerminalInfo | undefined {
+    const entry = this.terminals.get(id);
+    return entry?.info;
+  }
+
+  dispose(): void {
+    for (const entry of this.terminals.values()) {
+      try {
+        entry.proc.kill("SIGKILL");
+      } catch {
+        // ignore dispose errors
+      }
+    }
+    this.terminals.clear();
+  }
+}

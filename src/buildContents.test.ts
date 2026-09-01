@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -91,6 +91,49 @@ describe("production build contents", () => {
         "server-plugin-api": ["dist/server-plugin-api.d.ts"],
       },
     });
+  });
+
+  // ACCEPTANCE A2: the published bins are the generated runtime launchers, and they reach the
+  // user still executable. Both halves matter: a launcher that loses its mode in the tarball is
+  // an unusable bin, and a tarball that omits dist/bin/ breaks `pi-web --help` at best.
+  it("ships the runtime launchers as executable package bins", async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-launcher-package-"));
+    try {
+      await createLauncherFixture(fixtureRoot);
+      await execUtf8(process.execPath, [join(fixtureRoot, "scripts", "build-launchers.mjs")], fixtureRoot, 30_000);
+
+      const stdout = await runNpm(["pack", "--dry-run", "--json", "--ignore-scripts"], fixtureRoot);
+      const [entry] = packageEntries(stdout);
+      if (entry === undefined) throw new Error("npm pack reported no package");
+      const launcherPaths = [
+        "dist/bin/pi-web-server.sh",
+        "dist/bin/pi-web-sessiond.sh",
+        "dist/bin/pi-web.sh",
+      ];
+      expect(entry.paths.filter((path) => path.startsWith("dist/bin/"))).toEqual(launcherPaths);
+      const manifest: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+      if (!isRecord(manifest) || !isRecord(manifest["bin"])) throw new Error("package.json bin map is missing");
+      expect(Object.values(manifest["bin"]).sort()).toEqual(launcherPaths);
+
+      if (process.platform !== "win32") {
+        // Modes come from the packing host's filesystem, so the exec-bit promise is only
+        // checkable where those bits exist; the listing/bin checks above run everywhere.
+        for (const path of launcherPaths) {
+          const mode = entry.modes.get(path) ?? 0;
+          expect(mode & 0o111, `${path} is packed without an exec bit`).not.toBe(0);
+        }
+        const tarballName = await packTarball(fixtureRoot);
+        const extracted = join(fixtureRoot, "extracted");
+        await mkdir(extracted, { recursive: true });
+        await execUtf8("tar", ["-xzf", join(fixtureRoot, tarballName), "-C", extracted], fixtureRoot, 30_000);
+        for (const path of launcherPaths) {
+          const stats = await lstat(join(extracted, "package", path));
+          expect(stats.mode & 0o111, `${path} lost its exec bit in the tarball`).not.toBe(0);
+        }
+      }
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
   });
 
   it("matches the committed browser and server plugin API declaration baseline", async () => {
@@ -204,6 +247,36 @@ async function createCleanPluginBuildFixture(fixtureRoot: string): Promise<void>
       process.platform === "win32" ? "junction" : "dir",
     ),
   ]);
+}
+
+/**
+ * A package tree that can generate its own launchers and be packed: the manifest (without
+ * lifecycle hooks), the launcher builder plus its template, and the entrypoints the launchers
+ * reference. `files` ships `dist/`, so whatever the builder writes must reach the tarball.
+ */
+async function createLauncherFixture(fixtureRoot: string): Promise<void> {
+  await Promise.all([
+    writeFixtureManifest(fixtureRoot),
+    mkdir(join(fixtureRoot, "scripts"), { recursive: true }),
+  ]);
+  await Promise.all([
+    copyFile(join(repoRoot, "scripts", "build-launchers.mjs"), join(fixtureRoot, "scripts", "build-launchers.mjs")),
+    copyFile(join(repoRoot, "scripts", "pi-web-launcher.sh"), join(fixtureRoot, "scripts", "pi-web-launcher.sh")),
+    mkdir(join(fixtureRoot, "dist", "server"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(fixtureRoot, "dist", "cli.js"), "export {};\n", "utf8"),
+    writeFile(join(fixtureRoot, "dist", "server", "index.js"), "export {};\n", "utf8"),
+    writeFile(join(fixtureRoot, "dist", "server", "sessiond.js"), "export {};\n", "utf8"),
+  ]);
+}
+
+/** Runs a real `npm pack` and returns the tarball filename it wrote into `cwd`. */
+async function packTarball(cwd: string): Promise<string> {
+  const stdout = await runNpm(["pack", "--ignore-scripts", "--pack-destination", "."], cwd);
+  const line = stdout.trim().split("\n").at(-1)?.trim() ?? "";
+  if (!line.endsWith(".tgz")) throw new Error(`npm pack did not report a tarball name (got ${JSON.stringify(stdout)})`);
+  return line;
 }
 
 async function bundledServerPlugins(pluginsRoot: string): Promise<BundledServerPlugin[]> {
@@ -326,21 +399,35 @@ function execUtf8(file: string, args: string[], cwd: string, timeoutMs: number):
 }
 
 function packageFilePaths(output: string): string[] {
-  const parsed: unknown = JSON.parse(output);
-  if (!Array.isArray(parsed) || parsed.length !== 1) throw new Error("npm pack returned an unexpected result");
+  return packageEntries(output).flatMap((entry) => entry.paths);
+}
 
-  const packResult: unknown = parsed[0];
+/**
+ * npm 11 answers `pack --json` with an array; npm 12 keys the same payload by package name.
+ * Both shapes describe one package here, and the assertions below must not depend on which
+ * npm the runner happens to ship.
+ */
+function packageEntries(output: string): { filename: string; paths: string[]; modes: Map<string, number> }[] {
+  const parsed: unknown = JSON.parse(output);
+  const results = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+  if (results.length !== 1) throw new Error("npm pack returned an unexpected result");
+
+  const packResult: unknown = results[0];
   if (!isRecord(packResult)) throw new Error("npm pack result was not an object");
   const filesValue = packResult["files"];
   if (!Array.isArray(filesValue)) throw new Error("npm pack result did not include files");
   const files: unknown[] = filesValue;
 
-  return files.map((file) => {
+  const modes = new Map<string, number>();
+  const paths = files.map((file) => {
     if (!isRecord(file) || typeof file["path"] !== "string") {
       throw new Error("npm pack returned an invalid file entry");
     }
+    if (typeof file["mode"] === "number") modes.set(file["path"], file["mode"]);
     return file["path"];
   });
+  const filename = typeof packResult["filename"] === "string" ? packResult["filename"] : "";
+  return [{ filename, paths, modes }];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -16,6 +16,7 @@ import type {
   PiWebInstallationInfo,
   PiWebInstallationKind,
   PiWebReleaseStatus,
+  PiWebRuntime,
   PiWebServiceComponent,
   PiWebStatusMessage,
   PiWebStatusResponse,
@@ -1162,6 +1163,8 @@ export interface PiWebRuntimeComponent {
   component: PiWebServiceComponent;
   label: string;
   runtimeVersion?: string;
+  /** Runtime this process is on; see PiWebComponentStatus.runtime. */
+  runtime?: PiWebRuntime;
   /** Version of the Pi coding agent library loaded by this component's process; omitted when the component does not report it. */
   piVersion?: string;
   available: boolean;

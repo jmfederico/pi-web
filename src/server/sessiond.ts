@@ -359,6 +359,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
       label: runtimeComponent.label,
       ...(runtimeComponent.runtimeVersion === undefined ? {} : { runtimeVersion: runtimeComponent.runtimeVersion }),
       ...(runtimeComponent.piVersion === undefined ? {} : { piVersion: runtimeComponent.piVersion }),
+      ...(runtimeComponent.runtime === undefined ? {} : { runtime: runtimeComponent.runtime }),
       stale: false,
       available: runtimeComponent.available,
     },

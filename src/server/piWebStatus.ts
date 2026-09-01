@@ -9,7 +9,8 @@ import { DefaultPackageManager, SettingsManager, VERSION as PI_CODING_AGENT_VERS
 import type { ActiveAgentProfileDescriptor, PiWebCapability, PiWebComponentStatus, PiWebDeprecatedAgentInput, PiWebInstallationInfo, PiWebReleaseStatus, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebVersionResponse } from "../shared/apiTypes.js";
 import { effectivePiWebCapabilities, WEB_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { piWebDockerCommand } from "../docker/piWebDockerCommandPlan.js";
-import { parsePiWebRuntimeComponent } from "../shared/piWebStatusParsing.js";
+import { piWebRuntimeKind } from "../shared/piWebRuntime.js";
+import { parseSessiondRuntimeComponent } from "../shared/piWebStatusParsing.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { isHostAbsoluteAgentDir, loadPiWebConfig, PI_CODING_AGENT_DIR_ENV, type LoadedPiWebConfig } from "../config.js";
 import { createPiWebReleaseLookupCache, type PiWebReleaseLookup } from "./piWebReleaseLookupCache.js";
@@ -89,6 +90,7 @@ export function getPiWebRuntimeComponent(component: PiWebServiceComponent, capab
     component,
     label: component === "web" ? "Web/UI" : "Session daemon",
     runtimeVersion: runtimePackageInfo?.version ?? DEFAULT_VERSION,
+    runtime: piWebRuntimeKind(),
     piVersion: PI_CODING_AGENT_VERSION,
     available: true,
     capabilities: [...capabilities],
@@ -147,6 +149,10 @@ export async function getPiWebComponentStatus(component: PiWebServiceComponent, 
     component,
     label: component === "web" ? "Web/UI" : "Session daemon",
     runtimeVersion,
+    // Only the web/UI status is computed inside the process it describes. The session daemon's
+    // runtime comes from the daemon's own report, and is omitted rather than inferred when the
+    // daemon predates runtime reporting.
+    ...(component === "web" ? { runtime: piWebRuntimeKind() } : {}),
     ...(installedVersion === undefined ? {} : { installedVersion }),
     piVersion: PI_CODING_AGENT_VERSION,
     stale: isInstalledVersionNewer(installedVersion, runtimeVersion),
@@ -346,7 +352,7 @@ async function getSessiondRuntimeComponent(daemon: PiWebStatusDaemon): Promise<P
       return unavailableSessiondRuntime(`runtime check returned HTTP ${String(upstream.statusCode)}`);
     }
     const parsed: unknown = upstream.body === "" ? undefined : JSON.parse(upstream.body);
-    const runtime = parsePiWebRuntimeComponent(parsed);
+    const runtime = parseSessiondRuntimeComponent(parsed);
     if (runtime !== undefined) return runtime;
     return unavailableSessiondRuntime("runtime response did not include valid runtime information");
   } catch (error) {
@@ -361,12 +367,13 @@ async function getSessiondComponentStatus(daemon: PiWebStatusDaemon, options: Pi
       return unavailableSessiond(`runtime check returned HTTP ${String(upstream.statusCode)}`);
     }
     const parsed: unknown = upstream.body === "" ? undefined : JSON.parse(upstream.body);
-    const runtime = parsePiWebRuntimeComponent(parsed);
+    const runtime = parseSessiondRuntimeComponent(parsed);
     if (runtime?.available !== true) return unavailableSessiond(runtime?.error ?? "runtime response did not include valid runtime information");
     const status = await getPiWebComponentStatus("sessiond", options);
     const runtimeVersion = runtime.runtimeVersion ?? status.runtimeVersion;
     return {
       ...status,
+      ...(runtime.runtime === undefined ? {} : { runtime: runtime.runtime }),
       ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
       // The daemon reports the Pi version it has loaded in its own process;
       // the spread of `status` already carries this process's Pi version as

@@ -1,11 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadNodePtyModule } from "../terminals/nodePtyModule.js";
 import {
   checkNodePtyNativeModule,
   formatNodePtyNativeModuleCheck,
   NODE_PTY_GLOBAL_REINSTALL_COMMAND,
 } from "./nodePtyNativeModule.js";
 
+// SPEC D4: doctor and NodePTYBackend must resolve node-pty through one loader, so the r1
+// contradiction ("doctor ✓ while terminals ✗") cannot come back. Runtime proof that the default
+// path really is the shared loader — a regex over the source would pass with a second copy.
+vi.mock("../terminals/nodePtyModule.js", () => ({
+  loadNodePtyModule: vi.fn(() => {
+    throw new Error("shared-loader-was-used");
+  }),
+}));
+
 describe("node-pty native module diagnostics", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses the shared terminal loader when no loader is injected", () => {
+    expect(checkNodePtyNativeModule()).toEqual({
+      status: "load-failed",
+      message: "shared-loader-was-used",
+    });
+    expect(vi.mocked(loadNodePtyModule)).toHaveBeenCalledTimes(1);
+  });
+
   it("passes when node-pty loads", () => {
     const check = checkNodePtyNativeModule({ load: () => ({ spawn: () => undefined }) });
 

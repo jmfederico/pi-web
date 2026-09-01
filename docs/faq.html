@@ -170,8 +170,9 @@
               <p>
                 Missing plan requirements fail doctor and include login-file guidance. Manager, timeout, malformed-output,
                 and cleanup failures are reported as probe infrastructure problems rather than being mislabeled as PATH
-                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also checks
-                that the <code>node-pty</code> native module can load, prints installed and running PI WEB versions, and reports
+                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also reports which
+                JavaScript runtime each PI WEB process runs on and the terminal backend it implies — Bun's native PTY, or
+                <code>node-pty</code> when the process needs it — prints installed and running PI WEB versions, and reports
                 systemd lingering when relevant.
               </p>
             </article>
@@ -197,6 +198,12 @@
                 npm 12 blocks dependency installation scripts unless they are explicitly approved. If PI WEB was installed
                 without approving <code>node-pty</code>, its required native module can be missing even though npm reported a
                 successful installation.
+              </p>
+              <p>
+                This only concerns processes running on Node.js. A session daemon on Bun serves terminals from Bun's native
+                PTY and never loads <code>node-pty</code>; <code>pi-web doctor</code> names the runtime it is judging, so it
+                does not ask you to approve a native module the running process does not use. See
+                <a href="install#bun-install">Install with Bun</a>.
               </p>
               <p>Reinstall PI WEB with approval limited to <code>node-pty</code>:</p>
               <div class="code-card">

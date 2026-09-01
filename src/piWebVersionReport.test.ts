@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { probeRunningComponentReady, runningComponentsReady, type RunningVersionInfo } from "./piWebVersionReport.js";
+import { describe, expect, it, vi } from "vitest";
+import { printPiWebVersionReport, probeRunningComponentReady, runningComponentsReady, type RunningVersionInfo } from "./piWebVersionReport.js";
 import type { PiWebComponentStatus } from "./shared/apiTypes.js";
 
 function componentStatus(overrides: Partial<PiWebComponentStatus> = {}): PiWebComponentStatus {
@@ -67,6 +67,38 @@ describe("probeRunningComponentReady", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+});
+
+// ACCEPTANCE A6: `pi-web version` shows the runtime each running component reported, per
+// component — the CLI's own runtime is not evidence for a long-lived daemon.
+describe("printPiWebVersionReport", () => {
+  it("prints the runtime of every reported component", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pi-web-version-report-"));
+    const configPath = join(directory, "managed.json");
+    writeFileSync(configPath, `${JSON.stringify({ host: "127.0.0.1", port: 9124 })}\n`);
+    const fetchImplementation: typeof globalThis.fetch = () => Promise.resolve(new Response(JSON.stringify({
+      packageName: "@jmfederico/pi-web",
+      generatedAt: "2026-08-01T00:00:00.000Z",
+      components: {
+        web: componentStatus({ runtimeVersion: "1.202608.1", runtime: "bun" }),
+        sessiond: sessiondStatus({ runtimeVersion: "1.202608.1", runtime: "node" }),
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(" "));
+    });
+
+    try {
+      await printPiWebVersionReport({ configEnv: { PI_WEB_CONFIG: configPath }, fetch: fetchImplementation });
+    } finally {
+      log.mockRestore();
+      rmSync(directory, { recursive: true, force: true });
+    }
+
+    expect(lines.filter((line) => line === "  runtime: bun")).toHaveLength(1);
+    expect(lines.filter((line) => line === "  runtime: node")).toHaveLength(1);
   });
 });
 

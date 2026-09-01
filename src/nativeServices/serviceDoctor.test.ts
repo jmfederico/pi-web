@@ -35,12 +35,12 @@ function productionInput(configured = false): ProductionNativeServicePlanInput {
       sessiond: {
         configuredCommand: configured ? "custom sessiond --flag" : undefined,
         namedCommand: "pi-web-sessiond",
-        bundledEntrypointPath: "/package/sessiond.js",
+        bundledLauncherPath: "/package/dist/bin/pi-web-sessiond.sh",
       },
       web: {
         configuredCommand: configured ? "custom web --flag" : undefined,
         namedCommand: "pi-web-server",
-        bundledEntrypointPath: "/package/server.js",
+        bundledLauncherPath: "/package/dist/bin/pi-web-server.sh",
       },
     },
   };
@@ -439,6 +439,9 @@ describe("installed native-service mode and definition inspection", () => {
       value: {
         shell: separatorShell,
         environment: { PI_WEB_CONFIG: "/home/user/config.json" },
+        // Line controls must survive the round trip in the parsed start commands too — doctor
+        // compares those against the plan it would write.
+        commands: plan.services.map((service) => ({ id: service.id, shellCommand: service.shellCommand })),
       },
     });
   });
@@ -826,6 +829,7 @@ describe("installed native-service mode and definition inspection", () => {
       value: {
         shell,
         environment: { PI_WEB_CONFIG: "/home/user/config & dev.json" },
+        commands: [{ id: "sessiond", shellCommand: productionService.shellCommand }],
       },
     });
   });
@@ -875,6 +879,80 @@ describe("native-service doctor planning and reporting", () => {
     expect(report).toMatchObject({ ok: false, failureKind: "requirements", pathAdviceRecommended: false });
   });
 
+  // SPEC §7: upgrading does not rewrite an existing unit, and an old one execs an interpreter
+  // chosen at install time. Doctor must say so, as an advisory that does not fail an otherwise
+  // healthy plan.
+  it("advises a refresh for installed units that predate the runtime launcher", async () => {
+    const target: NativeServiceDoctorTarget = {
+      kind: "prospective-production",
+      input: productionInput(),
+      reason: "installed executable strategy is not recorded",
+      installedCommands: [
+        { id: "sessiond", shellCommand: "exec node '/package/dist/server/sessiond.js'" },
+        { id: "web", shellCommand: "exec pi-web-server" },
+      ],
+    };
+    const result = await runNativeServiceDoctor(target, {
+      probe: probeWithStatus("satisfied"),
+      fileExists: () => true,
+    });
+    const report = formatNativeServiceDoctorResult(result);
+    const lines = report.lines.join("\n");
+
+    expect(report.ok).toBe(true);
+    expect(lines.match(/predates the runtime launcher/gu)).toHaveLength(1);
+    expect(lines).toContain("PI WEB session daemon");
+    expect(lines).toContain("re-run `pi-web install`");
+    expect(lines).not.toContain("PI WEB server predates");
+  });
+
+  it("says nothing about launchers when installed units already use one", async () => {
+    const target: NativeServiceDoctorTarget = {
+      kind: "prospective-production",
+      input: productionInput(),
+      reason: "installed executable strategy is not recorded",
+      installedCommands: [
+        { id: "sessiond", shellCommand: "exec '/package/dist/bin/pi-web-sessiond.sh'" },
+        { id: "web", shellCommand: "exec pi-web-server" },
+      ],
+    };
+    const result = await runNativeServiceDoctor(target, {
+      probe: probeWithStatus("satisfied"),
+      fileExists: () => true,
+    });
+
+    expect(formatNativeServiceDoctorResult(result).lines.join("\n")).not.toContain("runtime launcher");
+  });
+
+  // When the PATH command belongs to another install, PI WEB runs its own launcher instead. The
+  // user has to be able to see which file the unit will exec and why (SPEC §6 F3).
+  it("says which bundled launcher a service runs when the named command was rejected", async () => {
+    const target: NativeServiceDoctorTarget = {
+      kind: "prospective-production",
+      input: productionInput(),
+      reason: "installed executable strategy is not recorded",
+    };
+    const result = await runNativeServiceDoctor(target, {
+      probe: {
+        run: (request) => Promise.resolve({
+          kind: "completed",
+          outcomes: request.prerequisites.map((prerequisite) => ({
+            prerequisiteId: prerequisite.id,
+            status: prerequisite.kind === "command-available" ? "unsatisfied" as const : "satisfied" as const,
+            detail: prerequisite.kind === "command-available" ? "it resolved to another installation" : null,
+          })),
+        }),
+      },
+      fileExists: () => true,
+    });
+    const report = formatNativeServiceDoctorResult(result);
+    const lines = report.lines.join("\n");
+
+    expect(report.ok).toBe(true);
+    expect(lines).toContain("runs the bundled launcher /package/dist/bin/pi-web-sessiond.sh");
+    expect(lines).toContain("it resolved to another installation");
+  });
+
   it("labels a production check as prospective and reports manager-context requirements", async () => {
     const target: NativeServiceDoctorTarget = {
       kind: "prospective-production",
@@ -892,7 +970,7 @@ describe("native-service doctor planning and reporting", () => {
     expect(report.lines[0]).toContain("Prospective production native-service plan");
     expect(report.lines.join("\n")).toContain("Native service requirement failed");
     expect(report.failedPrerequisites).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "node-version" }),
+      expect.objectContaining({ kind: "runtime" }),
       expect.objectContaining({ kind: "readable-file" }),
     ]));
   });

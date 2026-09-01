@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   commandWithVersionCheck,
+  nativeServiceDoctorTarget,
   doctorExitCode,
   expectedRunningComponents,
   generalDoctorChecks,
@@ -85,11 +86,46 @@ describe("generalDoctorChecks", () => {
   });
 });
 
+function systemdUnit(description: string, execCommand: string): string {
+  return [
+    "[Unit]",
+    `Description=${description}`,
+    "[Service]",
+    "Type=simple",
+    `ExecStart=/usr/bin/env "/bin/bash" -lc "${execCommand}"`,
+    "Restart=on-failure",
+    "",
+  ].join("\n");
+}
+
 describe("native-service doctor CLI contracts", () => {
   it("uses native services only on supported platforms", () => {
     expect(serviceBackendForPlatform("linux")).toEqual({ kind: "systemd", label: "systemd user services" });
     expect(serviceBackendForPlatform("darwin")).toEqual({ kind: "launchd", label: "LaunchAgents" });
     expect(serviceBackendForPlatform("win32")).toBeUndefined();
+  });
+
+  // The pre-launcher advisory depends on the installed start commands reaching the doctor target;
+  // this proves the CLI wires them and keeps the interpreter override out of the comparison, so
+  // doctor never suggests `pi-web install` for a command the user chose deliberately.
+  it("carries installed start commands into the prospective production plan and honours interpreter overrides", () => {
+    expect(nativeServiceDoctorTarget(
+      { kind: "systemd", label: "systemd user services" },
+      new Set(["sessiond", "web"]),
+      { PI_WEB_SESSIOND_EXEC: "node /opt/run-sessiond" },
+      [
+        { id: "sessiond", contents: systemdUnit("PI WEB session daemon", "exec node '/package/dist/server/sessiond.js'") },
+        { id: "web", contents: systemdUnit("PI WEB server", "exec pi-web-server") },
+      ],
+    )).toMatchObject({
+      kind: "prospective-production",
+      input: { executables: { sessiond: { configuredCommand: "node /opt/run-sessiond" } } },
+      reason: "installed executable strategy is not recorded",
+      installedCommands: [
+        { id: "sessiond", shellCommand: "exec node '/package/dist/server/sessiond.js'" },
+        { id: "web", shellCommand: "exec pi-web-server" },
+      ],
+    });
   });
 
   it("fails doctor for general, native-plan, node-pty, or running-component failures", () => {

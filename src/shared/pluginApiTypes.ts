@@ -114,6 +114,12 @@ export type PiWebStatusSeverity = "info" | "warning" | "error";
 export type PiWebInstallationKind = "pi-package" | "npm-global" | "local" | "docker" | "unknown";
 export type PiWebDockerMode = "runtime" | "dev";
 
+/**
+ * JavaScript runtime a PI WEB process runs on. Bun is selected only when it can drive terminals
+ * natively, so this reports the runtime PI WEB chose, not merely what happened to be installed.
+ */
+export type PiWebRuntime = "bun" | "node";
+
 export interface PiWebInstallationInfo {
   kind: PiWebInstallationKind;
   path?: string;
@@ -127,6 +133,11 @@ export interface PiWebComponentStatus {
   component: PiWebServiceComponent;
   label: string;
   runtimeVersion?: string;
+  /**
+   * JavaScript runtime this component's process reported running on. Omitted when the component
+   * predates runtime reporting and never filled in from another component's answer.
+   */
+  runtime?: PiWebRuntime;
   installedVersion?: string;
   /** Version of the Pi coding agent library loaded by this component's process; omitted when the component does not report it. */
   piVersion?: string;

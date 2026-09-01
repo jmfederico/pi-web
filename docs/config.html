@@ -97,6 +97,7 @@
             <a href="#project-config">Project config</a>
             <a href="#worktree-pre-remove-hook">Pre-remove hook</a>
             <a href="#keys">Config matrix</a>
+            <a href="#runtime">JavaScript runtime</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#prompt-attachments">Prompt attachments</a>
@@ -507,6 +508,14 @@ worktree_path="$1"
                       <td>Restart services/processes after changing env</td>
                     </tr>
                     <tr>
+                      <td>JavaScript runtime</td>
+                      <td>—</td>
+                      <td><code>PI_WEB_RUNTIME</code></td>
+                      <td>Process/env</td>
+                      <td>Not supported locally</td>
+                      <td>Restart the services or processes whose runtime should change</td>
+                    </tr>
+                    <tr>
                       <td>Managed data directory</td>
                       <td>—</td>
                       <td><code>PI_WEB_DATA_DIR</code></td>
@@ -621,6 +630,52 @@ worktree_path="$1"
                 <code>environmentFacts</code> config key to <code>false</code>, or
                 <code>PI_WEB_ENVIRONMENT_FACTS=false</code> in the session daemon's environment, to leave environment
                 facts out of session system prompts; they default to on.
+              </p>
+            </section>
+
+            <section id="runtime">
+              <h2>JavaScript runtime</h2>
+              <p>
+                PI WEB runs on Node.js or Bun. Each PI WEB command starts through a launcher that chooses the interpreter
+                when the command runs, so <code>PI_WEB_RUNTIME</code> is read from the environment of the process being
+                started: there is no config key and nothing to rebuild.
+              </p>
+              <ul>
+                <li>
+                  Unset or <code>auto</code> follows the package manager that installed PI WEB: a <code>bun add -g</code> tree
+                  starts on Bun, and npm (or any other) installs start on Node.js. The other runtime is used only when the
+                  preferred one is not usable. Capability wins over availability: the launcher never starts PI WEB on a Bun
+                  that lacks <code>Bun.Terminal</code> — with no usable Node.js the command fails and names the fix
+                  (<code>bun upgrade</code>, or reinstall with npm), and with a usable Node.js it starts there and warns that
+                  terminals need the trusted <code>node-pty</code> build. <code>PI_WEB_RUNTIME=bun</code> and
+                  <code>PI_WEB_RUNTIME=node</code> stay hard requirements.
+                </li>
+                <li>
+                  <code>bun</code> is a hard requirement — it fails loudly when Bun is missing or cannot boot PI WEB
+                  instead of silently running on Node.js.
+                </li>
+                <li><code>node</code> never selects Bun, even when Bun is installed.</li>
+                <li>Any other value makes the command exit with an error naming the variable and the accepted values.</li>
+              </ul>
+              <p>
+                When a runtime is not on the service <code>PATH</code> — user services start with the service manager's
+                environment, not your interactive shell — the launcher also looks in the usual install locations, after
+                <code>PATH</code>: Bun at <code>~/.bun/bin/bun</code>, <code>/usr/local/bin/bun</code>,
+                <code>/opt/homebrew/bin/bun</code>, <code>/usr/bin/bun</code>, and Node.js at <code>/usr/bin/node</code>,
+                <code>/usr/local/bin/node</code>, <code>/opt/homebrew/bin/node</code>. Version-manager directories (nvm, fnm,
+                asdf, mise) are deliberately not among those locations, so a runtime that only exists inside a version manager
+                has to reach the service through its <code>PATH</code>. The launcher reads the installing package manager from
+                the tree layout: bun's global root is <code>install/global/node_modules</code>, and every other layout — npm,
+                pnpm, <code>bun add -g --linker npm</code>, a dev checkout — is npm-shaped and prefers Node.js.
+                <code>PI_WEB_RUNTIME</code> always overrides this preference.
+              </p>
+              <p>
+                Auto-detection needs no configuration, so this variable is only for pinning a runtime. Set it wherever the
+                process gets its environment: export it before starting PI WEB manually, or add an <code>Environment=</code>
+                drop-in (<code>systemctl --user edit --full pi-web pi-web-sessiond</code>) or an <code>Environment=</code> key
+                in the launchd plist for user services, then restart. <code>pi-web doctor</code> and
+                <code>pi-web version</code> report the runtime each process actually selected, and <code>pi-web doctor</code>
+                says which terminal backend that implies.
               </p>
             </section>
 

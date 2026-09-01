@@ -91,6 +91,7 @@
             <strong>On this page</strong>
             <a href="#requirements">Requirements</a>
             <a href="#user-services">User service install</a>
+            <a href="#bun-install">Install with Bun</a>
             <a href="#one-line">One-line install</a>
             <a href="#pi-package">Install through Pi</a>
             <a href="#manual-run">WSL / manual run</a>
@@ -106,7 +107,7 @@
             <section id="requirements">
               <h2>Requirements</h2>
               <ul>
-                <li><strong>Node.js 22.19.0 or newer</strong> and npm.</li>
+                <li><strong>Node.js 22.19.0 or newer</strong> and npm (fully supported), or <strong>Bun</strong> (best-effort, community-supported) — see <a href="#bun-install">Install with Bun</a>.</li>
                 <li><strong>Pi Coding Agent <code>&gt;=0.83.0</code></strong> installed/configured so the <code>pi</code> command works for your user.</li>
                 <li>A shell login environment that exposes Node, npm, Pi, git, and any tools your agents need.</li>
                 <li>For the automatic installer: a supported per-user service manager.</li>
@@ -119,6 +120,10 @@
                 config or replacing services. Arbitrary configured command overrides are preserved but not executed by
                 preflight; run <code>pi-web doctor</code> later to repeat plan-specific diagnostics.
               </div>
+              <p>
+                On Bun, the same rule applies to <code>bun</code> itself: a user service can only start on a runtime its
+                manager environment can find. See <a href="#bun-install">Install with Bun</a>.
+              </p>
             </section>
 
             <section id="user-services">
@@ -146,15 +151,66 @@
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
             </section>
 
+            <section id="bun-install">
+              <h2>Install with Bun</h2>
+              <p>
+                PI WEB runs natively on Bun. Install the same package with Bun's global add and let PI WEB's launchers find
+                Bun at run time:
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Bun global install</strong>
+                  <button class="copy-button" data-copy="#bun-install-command">Copy</button>
+                </div>
+                <pre id="bun-install-command"><code><span class="prompt">$</span> bun add -g @jmfederico/pi-web
+<span class="prompt">$</span> pi-web install
+<span class="prompt">$</span> pi-web doctor</code></pre>
+              </div>
+              <p>
+                Terminals are backed by Bun's native PTY, so this path needs no <code>node-pty</code> binary. And
+                <code>bun add -g --bun</code> is not part of the setup: that flag changes which interpreter launches a
+                package's executables, while PI WEB's own launcher is what chooses a runtime.
+              </p>
+              <p>
+                Bun runs a dependency's install script only for packages you trust, so if PI WEB ever starts on Node.js on
+                this machine — an older Bun without <code>Bun.Terminal</code>, for example — terminals need the
+                <code>node-pty</code> binding: trust it and reinstall: <code>bun pm trust node-pty</code>.
+              </p>
+              <p>
+                Because you installed with Bun, PI WEB starts on Bun whenever that Bun provides its native terminal API, even
+                when Node.js is also installed — the package manager you installed with decides. A Bun without
+                <code>Bun.Terminal</code> is never started: with a usable Node.js the command starts there and warns that
+                terminals need the trusted <code>node-pty</code> build, and with no usable Node.js it stops and tells you to
+                run <code>bun upgrade</code> or reinstall with npm. Node.js stays fully supported. See
+                <a href="config#runtime">JavaScript runtime</a> for the installer-based preference, the
+                <code>PI_WEB_RUNTIME</code> override, and how to pin a runtime for the services.
+              </p>
+              <div class="callout warning">
+                <strong>Best-effort support:</strong>
+                Node.js is the fully supported runtime. Running PI WEB on Bun is maintained on a best-effort basis by the
+                community: bugs or problems that only reproduce when running on Bun are fixed as community effort allows.
+              </div>
+              <div class="callout">
+                <strong>After a package upgrade:</strong>
+                services installed by name (<code>ExecStart=pi-web-sessiond</code>) pick up the new version automatically,
+                because the launcher inside the package decides which runtime runs it. Units written by an older PI WEB that
+                exec an interpreter directly keep running that way — <code>pi-web doctor</code> reports them and
+                <code>pi-web install</code> rewrites them.
+              </div>
+            </section>
+
             <section id="one-line">
               <h2>One-line install</h2>
-              <p>If you prefer a curl pipe for the native user-service install, use the repository installer. This path still requires Node.js, npm, and Pi Coding Agent on the host.</p>
+              <p>If you prefer a curl pipe for the native user-service install, use the repository installer. This path still requires a JavaScript runtime, its package manager, and Pi Coding Agent on the host.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>One-liner</strong>
                   <button class="copy-button" data-copy="#one-line-install">Copy</button>
                 </div>
-                <pre id="one-line-install"><code><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh</code></pre>
+                <pre id="one-line-install"><code><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | sh
+
+<span class="comment"># Same installer, global package installed with Bun instead of npm:</span>
+<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/install.sh | PI_WEB_INSTALLER=bun sh</code></pre>
               </div>
             </section>
 
