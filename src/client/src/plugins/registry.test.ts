@@ -5,7 +5,7 @@ import { initialAppState, type AppState } from "../appState";
 import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
-import { PluginRegistry, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
+import { PluginRegistry, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
 import { themePackPlugin } from "./themes";
 import type { PiWebPlugin, PluginRuntimeContext, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "./types";
 import { createPluginWorkspaceBackend } from "./workspaceBackend";
@@ -553,6 +553,67 @@ describe("PluginRegistry", () => {
     expect(registry.getThemePairs().map((pair) => ({ id: pair.id, pluginId: pair.pluginId, localId: pair.localId, light: pair.light, dark: pair.dark }))).toEqual([
       { id: "example:pair", pluginId: "example", localId: "pair", light: "example:first", dark: "example:last" },
     ]);
+  });
+
+  it("collects header items in contribution order and drops hidden ones", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 2,
+        name: "Example",
+        activate: ({ html }) => ({
+          contributions: {
+            headerItems: [
+              { id: "last", title: "Last", order: 20, render: () => html`<span>last</span>` },
+              { id: "hidden", title: "Hidden", order: 5, visible: () => false, render: () => html`<span>hidden</span>` },
+              { id: "first", title: "First", order: 10, render: () => html`<span>first</span>` },
+            ],
+          },
+        }),
+      },
+    });
+
+    expect(registry.getHeaderItems(createContext().context).map((item) => ({ id: item.id, title: item.title }))).toEqual([
+      { id: "example:first", title: "First" },
+      { id: "example:last", title: "Last" },
+    ]);
+  });
+
+  it("renders a header item with the contributing plugin's own runtime context", () => {
+    const registry = new PluginRegistry();
+    const seen: string[] = [];
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 2,
+        name: "Example",
+        activate: ({ html }) => ({
+          contributions: {
+            headerItems: [{
+              id: "probe",
+              title: "Probe",
+              render: (context) => {
+                context.openTerminal({ terminalId: "from-header" });
+                seen.push(context.prompt.getText());
+                return html`<span>probe</span>`;
+              },
+            }],
+          },
+        }),
+      },
+    });
+
+    // Скоуп ставится так же, как его ставит приложение: контекст плагина отличается от
+    // общего, и рендер обязан получить свой. Без этого правка «не скоупить» была бы
+    // незаметной.
+    const { context, calls } = createContext();
+    const scoped = installPluginRuntimeScope(context, (pluginId) => ({ ...context, prompt: { ...context.prompt, getText: () => `scoped:${pluginId}` } }));
+    const [item] = registry.getHeaderItems(scoped);
+    item?.render();
+
+    expect(seen).toEqual(["scoped:example"]);
+    expect(calls).toEqual(["openTerminal:from-header"]);
   });
 
   it("collects workspace label items in contribution order", () => {

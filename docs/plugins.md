@@ -683,6 +683,7 @@ The workspace-related contribution arrays returned by `activate()` are:
 ```ts
 interface PluginContributions {
   actions?: PluginAction[];
+  headerItems?: HeaderItemContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
 }
@@ -908,6 +909,47 @@ interface Workspace {
 `machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
 
 Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel content when possible. Do not assume a panel owns the whole page; keep layout contained.
+
+### Header items
+
+Header items are small always-visible controls in the navigation panel header, on their own row under the app name and machine switcher. In the mobile layout, where that header is hidden, the same items appear in the context bar.
+
+Use them for plugin-owned state that is not scoped to one workspace and therefore has nowhere else to live: a context switch, a global indicator. Anything workspace-scoped belongs in a workspace panel or label instead.
+
+Keep the rendered control inline and compact. The panel can be as narrow as ~210px, and on mobile the items share a scrolling row with the context chips.
+
+```js
+headerItems: [
+  {
+    id: "mode",
+    title: "Working mode",
+    order: 10,
+    visible: ({ state }) => state.selectedMachine?.kind === "local",
+    render: ({ state, selectProject }) => html`
+      <my-mode-switcher .state=${state} .selectProject=${selectProject}></my-mode-switcher>
+    `,
+  },
+]
+```
+
+Header item contribution type:
+
+```ts
+interface HeaderItemContribution {
+  id: string;
+  title: string;
+  order?: number;
+  visible?: (context: PluginRuntimeContext) => boolean;
+  render: (context: PluginRuntimeContext) => TemplateResult;
+}
+```
+
+Notes:
+
+- `title` is the accessible name of the region the item renders into; it is not displayed as text.
+- `render` receives the same runtime context actions get, scoped to the contributing plugin, and runs on every app render, so keep it cheap and free of side effects.
+- Items are ordered by `order` (default 1000), then by qualified id.
+- Rendering a custom element keeps plugin styles inside its own shadow root instead of inheriting the header's.
 
 ### Workspace labels
 
