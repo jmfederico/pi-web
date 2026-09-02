@@ -166,6 +166,7 @@ function languageForPath(path: string): { language?: string } {
     css: "css",
     htm: "html",
     html: "html",
+    nix: "nix",
     py: "python",
     rs: "rust",
     go: "go",

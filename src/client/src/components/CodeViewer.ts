@@ -12,6 +12,7 @@ import { rust } from "@codemirror/lang-rust";
 import { go } from "@codemirror/lang-go";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { LitElement, css, html } from "lit";
+import { nix } from "@replit/codemirror-lang-nix";
 import { customElement, property, query } from "lit/decorators.js";
 
 @customElement("code-viewer")
@@ -124,6 +125,7 @@ function languageExtensions(language: string | undefined): Extension[] {
     case "rust": return [rust()];
     case "go": return [go()];
     case "diff": return [StreamLanguage.define(diff)];
+    case "nix": return [nix()];
     default: return [];
   }
 }
