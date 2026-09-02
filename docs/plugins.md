@@ -871,6 +871,7 @@ interface WorkspacePanelContext {
       open?: boolean;
     }): Promise<TerminalCommandRunHandle>;
   };
+  review: WorkspaceReview;
   host: {
     requestRender(): void;
   };
@@ -879,7 +880,7 @@ interface WorkspacePanelContext {
 
 `icon` is optional and is used in the compact mobile tab bar. Prefer an SVG rendered with the `svg` helper from `PluginActivationContext`; use `currentColor` so PI WEB themes can style it. If `icon` is omitted, mobile tabs fall back to initials from the panel title, or to the full title when initials collide.
 
-`machine`, `workspace`, `files`, optional `backend`, `prompt`, `terminal`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files). A browser entry with a paired active provider uses `backend.request()` instead of constructing API routes — see [Calling paired workspace backends](#calling-paired-workspace-backends). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. `routeAliases` is only for migrating former URL tool/view values. Implement `onInvalidate()` to refresh plugin-owned panel data when an action or host refresh calls `refreshWorkspacePanels()`; call `host.requestRender()` when async state changes should make PI WEB re-evaluate `badge`, `visible`, or `render`.
+`machine`, `workspace`, `files`, optional `backend`, `prompt`, `terminal`, `review`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files). A browser entry with a paired active provider uses `backend.request()` instead of constructing API routes — see [Calling paired workspace backends](#calling-paired-workspace-backends). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. The `review` helper hosts line-range review comments for this panel's files — see [Review comments API](#review-comments-api). `routeAliases` is only for migrating former URL tool/view values. Implement `onInvalidate()` to refresh plugin-owned panel data when an action or host refresh calls `refreshWorkspacePanels()`; call `host.requestRender()` when async state changes should make PI WEB re-evaluate `badge`, `visible`, or `render`.
 
 Useful workspace and machine shapes:
 
@@ -908,6 +909,86 @@ interface Workspace {
 `machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
 
 Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel content when possible. Do not assume a panel owns the whole page; keep layout contained.
+
+### Review comments API
+
+The `review` helper on `WorkspacePanelContext` is a shared, gesture-agnostic service for line-range review comments. It is not specific to any one panel: the core Files browser and the bundled Git panel both drive the same `review` instance for the currently selected session, so a comment made from one surface is visible (subject to anchor matching) from the other. A workspace-panel plugin can use it identically to host its own line-anchored review comments over any per-file, per-line content it renders.
+
+Every line reference passed to `review` methods is a `WorkspaceReviewLineRef`:
+
+```ts
+interface WorkspaceReviewLineRef {
+  side: "new" | "old";
+  line: number;
+}
+```
+
+`side` distinguishes which column of a diff a line belongs to: `"new"` is context/added lines (and always the only side for plain file content, which has no diff), `"old"` is removed lines. A single comment anchors to one side only; selections cannot span both.
+
+A draft in progress is a `WorkspaceReviewDraft`:
+
+```ts
+interface WorkspaceReviewDraft {
+  anchor: { filePath: string; range: { side: "new" | "old"; start: number; end: number } };
+  body: string;
+}
+```
+
+Queries and badges:
+
+| Method | Description |
+| --- | --- |
+| `total()` | Total comment count for the current session, for a tab-level badge. |
+| `countForFile(filePath)` | Comment count for one file, for a per-file badge. |
+| `commentsForLine(filePath, ref)` | Existing comments anchored at this file/line/side. |
+| `draftForLine(filePath, ref)` | The in-progress draft anchored at this file/line/side, or `null`. |
+| `lineState(filePath, ref)` | `{ selected, commented }` — whether this line is inside the active selection, and/or inside the range of a saved comment or an open (not yet submitted) draft, for row/gutter styling. |
+| `canAuthor()` | Whether authoring is currently allowed (false with no selected session, or while a send is in flight). |
+
+Selection and draft lifecycle (gesture-agnostic: a surface maps its own pointer/keyboard gestures to these calls):
+
+| Method | Description |
+| --- | --- |
+| `beginSelection(filePath, ref)` | Starts a new line selection anchored at `ref`, cancelling any previous selection. |
+| `extendSelection(ref)` | Extends the active selection towards `ref`. Refs on the opposite side from the anchor are ignored — a selection is always single-side. |
+| `commitSelection(sourceHash)` | Ends the selection and opens a draft at the committed range. `sourceHash` fingerprints the underlying content, used later to detect and drop stale comments. |
+| `cancelSelection()` | Discards the active selection without opening a draft. |
+| `setDraftBody(body)` | Updates the open draft's text. |
+| `submitDraft()` | Saves the open draft as a comment. |
+| `cancelDraft()` | Discards the open draft. |
+
+Mutating existing comments:
+
+| Method | Description |
+| --- | --- |
+| `updateComment(id, body)` | Replaces a saved comment's body. |
+| `removeComment(id)` | Deletes a saved comment. |
+
+Usage — wiring pointer handlers on a line-number cell (the pattern used by the bundled Git panel):
+
+```js
+function reviewCellHandlers(context, state, path, ref, sourceHash) {
+  return {
+    mousedown(event) {
+      if (ref === undefined || event.button !== 0) return;
+      state.reviewDragActive = true;
+      context.review.beginSelection(path, ref);
+    },
+    mousemove(event) {
+      if (ref === undefined || !state.reviewDragActive || event.buttons !== 1) return;
+      context.review.extendSelection(ref);
+    },
+    mouseup() {
+      if (ref === undefined || !state.reviewDragActive) return;
+      state.reviewDragActive = false;
+      context.review.extendSelection(ref);
+      context.review.commitSelection(sourceHash);
+    },
+  };
+}
+```
+
+The host renders all comment/draft UI; a panel only needs to mount the shared card element bound to `commentsForLine(...)` / `draftForLine(...)` for a line and wire its callbacks to `updateComment` / `removeComment` / `setDraftBody` / `submitDraft` / `cancelDraft`, then call `host.requestRender()` after each mutation so badges and inline state stay in sync.
 
 ### Workspace labels
 

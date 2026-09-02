@@ -188,6 +188,22 @@ describe("workspace-files-panel file tree boundary", () => {
     expect(onSelectFile).toHaveBeenCalledWith("README.md");
   });
 
+  it("shows a review count badge on a file row with comments, and none without", async () => {
+    const panel = new WorkspaceFilesPanel();
+    panel.context = workspacePanelContext({
+      fileTree: [fileEntry("README.md", 4096), fileEntry("empty.md", 1)],
+      review: { ...stubReview(), countForFile: (path) => (path === "README.md" ? 2 : 0) },
+    });
+    document.body.append(panel);
+    await panel.updateComplete;
+
+    const rows = Array.from(panel.shadowRoot?.querySelectorAll<HTMLElement>("button.row") ?? []);
+    const readmeRow = rows.find((row) => row.textContent.includes("README.md"));
+    const emptyRow = rows.find((row) => row.textContent.includes("empty.md"));
+    expect(requiredElement(requiredElement(readmeRow, "README.md row").querySelector(".badge"), "README.md badge").textContent).toBe("2");
+    expect(requiredElement(emptyRow, "empty.md row").querySelector(".badge")).toBeNull();
+  });
+
   it("passes the selected workspace file scope into the contained viewer", async () => {
     const file = textFileContent("README.md");
     const panel = new WorkspaceFilesPanel();
@@ -406,6 +422,7 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
     prompt: patch.prompt ?? { insertText: vi.fn<WorkspacePanelContext["prompt"]["insertText"]>(), getText: vi.fn<WorkspacePanelContext["prompt"]["getText"]>(() => ""), getSelection: vi.fn<WorkspacePanelContext["prompt"]["getSelection"]>(() => null) },
     terminal: patch.terminal ?? { open: vi.fn<WorkspacePanelContext["terminal"]["open"]>(), runCommand: vi.fn<WorkspacePanelContext["terminal"]["runCommand"]>(() => Promise.reject(new Error("not implemented"))) },
     host: patch.host ?? { requestRender: vi.fn<WorkspacePanelContext["host"]["requestRender"]>() },
+    review: patch.review ?? stubReview(),
     fileTree: patch.fileTree ?? [],
     expandedDirs: patch.expandedDirs ?? {},
     selectedFilePath: patch.selectedFilePath,
@@ -423,6 +440,26 @@ function workspacePanelContext(patch: Partial<WorkspacePanelContext> = {}): Work
     onCancelWorkspaceUpload: patch.onCancelWorkspaceUpload ?? vi.fn<WorkspacePanelContext["onCancelWorkspaceUpload"]>(),
     onClearWorkspaceUpload: patch.onClearWorkspaceUpload ?? vi.fn<WorkspacePanelContext["onClearWorkspaceUpload"]>(),
     onSelectTerminal: patch.onSelectTerminal ?? vi.fn<WorkspacePanelContext["onSelectTerminal"]>(),
+  };
+}
+
+function stubReview(): WorkspacePanelContext["review"] {
+  return {
+    total: () => 0,
+    countForFile: () => 0,
+    commentsForLine: () => [],
+    draftForLine: () => null,
+    lineState: () => ({ selected: false, commented: false }),
+    canAuthor: () => false,
+    beginSelection: () => undefined,
+    extendSelection: () => undefined,
+    commitSelection: () => undefined,
+    cancelSelection: () => undefined,
+    setDraftBody: () => undefined,
+    submitDraft: () => undefined,
+    cancelDraft: () => undefined,
+    updateComment: () => undefined,
+    removeComment: () => undefined,
   };
 }
 

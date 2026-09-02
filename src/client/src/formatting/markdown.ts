@@ -1,7 +1,7 @@
 import { marked } from "marked";
 
 const renderer = new marked.Renderer();
-renderer.html = ({ text }) => escapeHtml(text);
+renderer.html = ({ text }) => sanitizeHtml(text);
 
 const MAX_MARKDOWN_CACHE_ENTRIES = 300;
 const markdownHtmlCache = new Map<string, string>();
@@ -17,13 +17,6 @@ export function toSafeMarkdownHtml(text: string): string {
     if (oldest !== undefined) markdownHtmlCache.delete(oldest);
   }
   return safeHtml;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
 }
 
 const TABLE_SCROLL_CLASS = "table-scroll";

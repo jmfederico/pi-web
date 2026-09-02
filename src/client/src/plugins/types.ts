@@ -3,6 +3,7 @@ import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
+import type { ReviewAnchor, ReviewComment, ReviewLineRef } from "../review/reviewTypes";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 
 export type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
@@ -172,6 +173,7 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   piWebUnstable?: Pick<PiWebUnstableRuntimeContext, "terminalCommandRuns">;
   fileTree: FileTreeEntry[];
   expandedDirs: Record<string, FileTreeEntry[]>;
+  review: WorkspaceReview;
   selectedFilePath: string | undefined;
   selectedFileContent: FileContentResponse | undefined;
   selectedFileLoadError: string | undefined;
@@ -187,6 +189,46 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   onCancelWorkspaceUpload: (batchId: string) => void;
   onClearWorkspaceUpload: (batchId: string) => void;
   onSelectTerminal: (terminalId: string | undefined, options?: { replace?: boolean | undefined }) => void;
+}
+
+/** A line reference on a diff/file surface, used by the review selection and query APIs. */
+export type WorkspaceReviewLineRef = ReviewLineRef;
+
+/** An in-progress, not-yet-saved review comment. */
+export interface WorkspaceReviewDraft {
+  anchor: ReviewAnchor;
+  body: string;
+}
+
+/**
+ * Gesture-agnostic review service: data/badges, a selection/draft state
+ * machine driven by line refs (not DOM handlers), and existing-comment
+ * mutation. The SAME service instance is used by the core Files (CodeMirror)
+ * surface and by plugins; only the gesture-to-ref mapping and where
+ * `<pi-web-review-thread>` mounts differ per surface.
+ */
+export interface WorkspaceReview {
+  // --- data / badges ---
+  total(): number;
+  countForFile(filePath: string): number;
+  commentsForLine(filePath: string, ref: WorkspaceReviewLineRef): readonly ReviewComment[];
+  draftForLine(filePath: string, ref: WorkspaceReviewLineRef): WorkspaceReviewDraft | null;
+  /** For styling: is this line inside the active selection / does it have comments. */
+  lineState(filePath: string, ref: WorkspaceReviewLineRef): { selected: boolean; commented: boolean };
+
+  // --- selection + draft state machine (gesture-agnostic) ---
+  canAuthor(): boolean;
+  beginSelection(filePath: string, ref: WorkspaceReviewLineRef): void;
+  extendSelection(ref: WorkspaceReviewLineRef): void; // clamped to the anchor's side
+  commitSelection(sourceHash: string): void; // opens the draft at the current selection
+  cancelSelection(): void;
+  setDraftBody(body: string): void;
+  submitDraft(anchor?: ReviewAnchor): void;
+  cancelDraft(): void;
+
+  // --- existing comments ---
+  updateComment(id: string, body: string, anchor: ReviewAnchor): void;
+  removeComment(id: string): void;
 }
 
 export type WorkspacePanelIcon = TemplateResult;

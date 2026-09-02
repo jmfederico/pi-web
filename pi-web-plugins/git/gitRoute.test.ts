@@ -48,5 +48,22 @@ function panelContext(machineId: string, projectId: string, workspaceId: string)
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },
+    review: {
+      total: () => 0,
+      countForFile: () => 0,
+      commentsForLine: () => [],
+      draftForLine: () => null,
+      lineState: () => ({ selected: false, commented: false }),
+      canAuthor: () => false,
+      beginSelection: noop,
+      extendSelection: noop,
+      commitSelection: noop,
+      cancelSelection: noop,
+      setDraftBody: noop,
+      submitDraft: noop,
+      cancelDraft: noop,
+      updateComment: noop,
+      removeComment: noop,
+    },
   };
 }

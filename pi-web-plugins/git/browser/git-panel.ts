@@ -4,10 +4,12 @@ import type {
   PluginAction,
   PluginContributions,
   PluginRuntimeContext,
+  ReviewAnchor,
   SvgTemplateTag,
   Workspace,
   WorkspacePanelContext,
   WorkspacePanelContribution,
+  WorkspaceReviewLineRef,
 } from "@jmfederico/pi-web/plugin-api";
 import {
   GIT_DIFF_OPERATION,
@@ -22,6 +24,7 @@ import { buildGitFileList, type GitFileListModel, type GitFileListSubmoduleFile,
 import { buildGitFileTree, collectGitFileTreeDirectoryPaths, type GitFileTreeNode } from "./gitFileTree.js";
 import { readGitFileView, writeGitFileView, type GitFileView } from "./gitFileViewPreference.js";
 import { createGitDiffRoute, type GitDiffRoute } from "./gitRoute.js";
+import { hashDiffSource, reviewRefForDiffLine } from "./reviewDiffRef.js";
 import { parseUnifiedDiff, type UnifiedDiffLine, type UnifiedDiffTextSpan } from "./unifiedDiff.js";
 
 const GIT_PANEL_LOCAL_ID = "workspace.git";
@@ -43,6 +46,8 @@ interface GitWorkspaceUiState {
   selectedStagedDiff: GitDiffView | undefined;
   diffLoading: boolean;
   error: string | undefined;
+  /** Whether a line-number-cell drag gesture (mousedown..mouseup) is active. */
+  reviewDragActive: boolean;
   expandedDirectories: Set<string>;
   statusRequest: Promise<void> | undefined;
   diffRequestSequence: number;
@@ -245,6 +250,7 @@ class GitUiController {
       selectedStagedDiff: undefined,
       diffLoading: false,
       error: undefined,
+      reviewDragActive: false,
       expandedDirectories: new Set(),
       statusRequest: undefined,
       diffRequestSequence: 0,
@@ -380,6 +386,7 @@ function createGitPanel(
     order: 20,
     routeAliases: ["git", "core:workspace.git"],
     visible: (context) => controller.isOwnedWorkspace(context.workspace),
+    badge: (context) => context.review.total() || undefined,
     onInvalidate: (context) => controller.invalidate(context),
     render: (context) => renderGitPanel(html, controller, context),
   };
@@ -411,7 +418,7 @@ function renderGitPanel(html: HtmlTemplateTag, controller: GitUiController, cont
       ${state.error === undefined ? null : html`<div class="git-error" role="alert">${state.error}</div>`}
       <section class="git-split">
         <div class="git-file-list">${renderFileList(html, controller, context, state, viewState)}</div>
-        <div class="git-viewer">${renderDiffViewer(html, state)}</div>
+        <div class="git-viewer">${renderDiffViewer(html, context, state)}</div>
       </section>
     </section>
   `;
@@ -545,34 +552,37 @@ function renderSelectableRow(
   depth: number,
 ) {
   const selected = state.selectedDiffPath === path;
+  const reviewCount = context.review.countForFile(path);
   return html`
     <button type="button" class=${selected ? "git-row is-selected" : "git-row"} style=${`--depth:${String(depth)}`} @click=${() => { controller.selectDiff(context, path); }}>
       <span>${stateLabel(file.index, file.workingTree)}</span>
-      <span>${label}</span>
+      <span>${label}${reviewCount > 0 ? html`<span class="review-badge" title=${`${String(reviewCount)} review ${reviewCount === 1 ? "comment" : "comments"}`}>${reviewCount}</span>` : null}</span>
     </button>
   `;
 }
 
-function renderDiffViewer(html: HtmlTemplateTag, state: GitWorkspaceUiState) {
-  if (state.selectedDiffPath === undefined) return html`<p class="git-muted">Select a changed file.</p>`;
+function renderDiffViewer(html: HtmlTemplateTag, context: WorkspacePanelContext, state: GitWorkspaceUiState) {
+  const path = state.selectedDiffPath;
+  if (path === undefined) return html`<p class="git-muted">Select a changed file.</p>`;
   const unstaged = state.selectedDiff;
   const staged = state.selectedStagedDiff;
   if (unstaged === undefined || staged === undefined) return html`<p class="git-muted">Loading diff…</p>`;
   const diffs = [staged, unstaged].filter((diff) => diff.response.diff !== "");
   if (diffs.length === 0) return html`<p class="git-muted">No staged or unstaged diff.</p>`;
-  return html`<div class=${diffs.length === 1 ? "git-diffs is-single" : "git-diffs"}>${diffs.map((diff) => renderDiffSection(html, diff))}</div>`;
+  return html`<div class=${diffs.length === 1 ? "git-diffs is-single" : "git-diffs"}>${diffs.map((diff) => renderDiffSection(html, context, state, path, diff))}</div>`;
 }
 
-function renderDiffSection(html: HtmlTemplateTag, view: GitDiffView) {
+function renderDiffSection(html: HtmlTemplateTag, context: WorkspacePanelContext, state: GitWorkspaceUiState, path: string, view: GitDiffView) {
   const diff = view.response;
   const lines = view.lines ??= parseUnifiedDiff(diff.diff);
+  const sourceHash = hashDiffSource(diff.diff);
   return html`
     <section class="git-diff-section">
       <div class="git-viewer-header"><strong>${diff.path ?? "diff"}</strong><small>${diff.staged ? "staged" : "unstaged"}${diff.truncated ? " · truncated" : ""}</small></div>
       ${lines.length === 0 ? html`<p class="git-muted">No diff.</p>` : html`
         <div class="git-diff-scroller">
           <div class="git-diff-grid" role="table" aria-label="Unified diff">
-            ${lines.map((line) => renderDiffLine(html, line))}
+            ${lines.map((line) => renderDiffLine(html, context, state, path, sourceHash, line))}
           </div>
         </div>
       `}
@@ -580,14 +590,98 @@ function renderDiffSection(html: HtmlTemplateTag, view: GitDiffView) {
   `;
 }
 
-function renderDiffLine(html: HtmlTemplateTag, line: UnifiedDiffLine) {
+function renderDiffLine(
+  html: HtmlTemplateTag,
+  context: WorkspacePanelContext,
+  state: GitWorkspaceUiState,
+  path: string,
+  sourceHash: string,
+  line: UnifiedDiffLine,
+) {
+  const ref = reviewRefForDiffLine(line);
+  const review = ref === undefined ? undefined : context.review.lineState(path, ref);
+  const handlers = reviewCellHandlers(context, state, path, ref, sourceHash);
+  const rowClasses = ["git-diff-line", review?.selected === true ? "is-review-selected" : "", review?.commented === true ? "has-review" : ""].filter((entry) => entry !== "").join(" ");
+  // Both number cells of a row share the same handlers, bound to the row's
+  // single `ref` (a context line's ref is always its `new`-side line, even
+  // though its old-number cell also shows a number) -- so "reviewable" is a
+  // per-ROW concept, applied identically to both number cells.
+  const numberCellClass = `git-diff-cell git-line-number ${line.kind}${ref === undefined ? "" : " is-reviewable"}`;
   return html`
-    <div class="git-diff-line" role="row">
-      <span class=${`git-diff-cell git-line-number ${line.kind}`} role="cell">${formatLineNumber(line.oldLineNumber)}</span>
-      <span class=${`git-diff-cell git-line-number ${line.kind}`} role="cell">${formatLineNumber(line.newLineNumber)}</span>
+    <div class=${rowClasses} role="row">
+      <span class=${numberCellClass} role="cell" @mousedown=${handlers.mousedown} @mousemove=${handlers.mousemove} @mouseup=${handlers.mouseup}>${formatLineNumber(line.oldLineNumber)}</span>
+      <span class=${numberCellClass} role="cell" @mousedown=${handlers.mousedown} @mousemove=${handlers.mousemove} @mouseup=${handlers.mouseup}>${formatLineNumber(line.newLineNumber)}</span>
       <span class=${`git-diff-cell git-prefix ${line.kind}`} role="cell">${line.prefix}</span>
       <span class=${`git-diff-cell git-content ${line.kind}`} role="cell">${renderDiffSpans(html, line.spans)}</span>
     </div>
+    ${ref === undefined ? null : renderReviewThreadRow(html, context, path, ref)}
+  `;
+}
+
+/**
+ * Pointer handlers for a diff row's line-number cells, driving the shared
+ * review selection state machine. Attached to the line-number cells
+ * specifically, not the whole row, so native text selection over the diff
+ * content itself keeps working. A plain click (mousedown -> mouseup, no
+ * intervening mousemove) still selects one line because mouseup always
+ * re-extends to its own ref before committing. Rows with no `ref`
+ * (meta/hunk/marker) get inert no-op handlers.
+ */
+function reviewCellHandlers(
+  context: WorkspacePanelContext,
+  state: GitWorkspaceUiState,
+  path: string,
+  ref: WorkspaceReviewLineRef | undefined,
+  sourceHash: string,
+): { mousedown: (event: MouseEvent) => void; mousemove: (event: MouseEvent) => void; mouseup: (event: MouseEvent) => void } {
+  return {
+    mousedown(event) {
+      if (ref === undefined || event.button !== 0) return;
+      state.reviewDragActive = true;
+      context.review.beginSelection(path, ref);
+    },
+    mousemove(event) {
+      if (ref === undefined || !state.reviewDragActive || event.buttons !== 1) return;
+      context.review.extendSelection(ref);
+    },
+    mouseup() {
+      if (ref === undefined || !state.reviewDragActive) return;
+      state.reviewDragActive = false;
+      // Cover the plain-click case and a pointer jump straight to the final
+      // line without an intervening mousemove: extend once more to the
+      // mouseup ref before committing, so the committed range always
+      // reflects where the gesture actually ended.
+      context.review.extendSelection(ref);
+      context.review.commitSelection(sourceHash);
+    },
+  };
+}
+
+/**
+ * Mounts `<pi-web-review-thread>` for a diff row's ref, only at the row where
+ * a comment's/draft's range actually ENDS. `commentsForLine`/`draftForLine`
+ * match ANY line within a multi-line range (correct for badges/highlighting),
+ * but rendering the thread at every matching row would mount one duplicate
+ * box per line of a multi-line comment; anchoring it to the range's last line
+ * -- mirroring `codeViewerReview.ts`'s `buildCommentDecorations` on the Files
+ * side -- keeps exactly one box per comment/draft, regardless of range length.
+ */
+function renderReviewThreadRow(html: HtmlTemplateTag, context: WorkspacePanelContext, path: string, ref: WorkspaceReviewLineRef) {
+  const endsHere = (range: { side: "new" | "old"; end: number }): boolean => range.side === ref.side && range.end === ref.line;
+  const comments = context.review.commentsForLine(path, ref).filter((comment) => endsHere(comment.anchor.range));
+  const draftAtRef = context.review.draftForLine(path, ref) ?? undefined;
+  const draft = draftAtRef !== undefined && endsHere(draftAtRef.anchor.range) ? draftAtRef : undefined;
+  if (comments.length === 0 && draft === undefined) return null;
+  return html`
+    <pi-web-review-thread
+      class="git-review-thread"
+      .comments=${comments}
+      .draft=${draft}
+      .onSubmitDraft=${(body: string, anchor: ReviewAnchor) => { context.review.setDraftBody(body); context.review.submitDraft(anchor); context.host.requestRender(); }}
+      .onCancelDraft=${() => { context.review.cancelDraft(); context.host.requestRender(); }}
+      .onUpdate=${(id: string, body: string, anchor: ReviewAnchor) => { context.review.updateComment(id, body, anchor); context.host.requestRender(); }}
+      .onRemove=${(id: string) => { context.review.removeComment(id); context.host.requestRender(); }}
+    ></pi-web-review-thread>
   `;
 }
 
@@ -715,6 +809,7 @@ const gitPanelStyles = `
   .git-panel .git-twisty { color: var(--pi-dim, var(--pi-muted)); }
   .git-panel .git-summary { margin: 4px 6px 8px; color: var(--pi-muted); }
   .git-panel .submodule-badge { display: inline-block; margin-left: 6px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; vertical-align: baseline; }
+  .git-panel .review-badge { display: inline-block; margin-left: 6px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; vertical-align: baseline; }
   .git-panel .git-viewer { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .git-panel .git-diffs { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; grid-template-rows: minmax(120px, 1fr) minmax(120px, 1fr); }
   .git-panel .git-diffs.is-single { grid-template-rows: minmax(0, 1fr); }
@@ -722,11 +817,14 @@ const gitPanelStyles = `
   .git-panel .git-diff-section:last-child { border-bottom: 0; }
   .git-panel .git-viewer-header { position: sticky; top: 0; display: flex; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
   .git-panel .git-viewer-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .git-panel .git-diff-scroller { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--pi-bg); }
+  .git-panel .git-diff-scroller { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--pi-bg); container-type: inline-size; }
   .git-panel .git-diff-grid { display: grid; grid-template-columns: max-content max-content 2ch max-content; width: max-content; min-width: 100%; padding: 6px 0; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
   .git-panel .git-diff-line { display: contents; }
   .git-panel .git-diff-cell { min-height: 1.45em; white-space: pre; }
   .git-panel .git-line-number { min-width: 4ch; padding: 0 8px; border-right: 1px solid var(--pi-border-muted); color: var(--pi-dim); text-align: right; user-select: none; }
+  .git-panel .git-line-number.is-reviewable { position: relative; cursor: pointer; }
+  .git-panel .git-line-number.is-reviewable:hover { color: var(--pi-accent); }
+  .git-panel .git-line-number.is-reviewable:hover::before { content: "+"; position: absolute; left: 1px; color: var(--pi-accent); }
   .git-panel .git-prefix { padding: 0 4px; color: var(--pi-dim); text-align: center; user-select: none; }
   .git-panel .git-content { padding: 0 12px 0 4px; }
   .git-panel .git-diff-cell.meta, .git-panel .git-diff-cell.marker { color: var(--pi-dim); }
@@ -735,4 +833,7 @@ const gitPanelStyles = `
   .git-panel .git-diff-cell.remove { background: color-mix(in srgb, var(--pi-danger) 12%, transparent); }
   .git-panel .git-content.add .inline-change { border-radius: 2px; background: color-mix(in srgb, var(--pi-success) 36%, transparent); color: var(--pi-text); }
   .git-panel .git-content.remove .inline-change { border-radius: 2px; background: color-mix(in srgb, var(--pi-danger) 36%, transparent); color: var(--pi-text); }
+  .git-panel .git-diff-line.is-review-selected .git-diff-cell { background: var(--pi-selection-bg); }
+  .git-panel .git-diff-line.has-review .git-line-number { box-shadow: inset 2px 0 0 var(--pi-accent); }
+  .git-panel .git-review-thread { grid-column: 1 / -1; width: 100cqw; box-sizing: border-box; position: sticky; left: 0; padding: 0.2em 0.4em 0.2em calc(4ch + 8px * 2 + 2px); }
 `;

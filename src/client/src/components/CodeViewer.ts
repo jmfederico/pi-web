@@ -13,11 +13,17 @@ import { go } from "@codemirror/lang-go";
 import { diff } from "@codemirror/legacy-modes/mode/diff";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
+import { buildReviewExtensions, reviewGutterDomEventHandlers, reviewRefreshEffect, type CodeViewerReview } from "./codeViewerReview";
+import { hashSource } from "../review/reviewHash";
 
 @customElement("code-viewer")
 export class CodeViewer extends LitElement {
   @property() content = "";
   @property() language: string | undefined;
+  /** Gesture-agnostic review service. `undefined` disables all review behavior (gutter authoring, highlight, inline threads). */
+  @property({ attribute: false }) review: CodeViewerReview | undefined;
+  /** Workspace-relative path of the shown file. Required alongside `review` to enable review behavior. */
+  @property({ attribute: false }) reviewFilePath: string | undefined;
   @query(".host") private editorHost?: HTMLDivElement;
 
   private view: EditorView | undefined;
@@ -27,7 +33,15 @@ export class CodeViewer extends LitElement {
   }
 
   override updated(changed: Map<string, unknown>): void {
-    if (changed.has("content") || changed.has("language")) this.recreateEditor();
+    // Only content/language/reviewFilePath changes rebuild the editor (a
+    // `review`-only change would blow away scroll position/selection); a
+    // `review` change instead dispatches a refresh effect so externally
+    // mutated comments/drafts (e.g. removed via a prompt chip) still show up.
+    if (changed.has("content") || changed.has("language") || changed.has("reviewFilePath")) {
+      this.recreateEditor();
+    } else if (changed.has("review") && this.view !== undefined) {
+      this.view.dispatch({ effects: reviewRefreshEffect.of(undefined) });
+    }
   }
 
   override disconnectedCallback(): void {
@@ -42,13 +56,20 @@ export class CodeViewer extends LitElement {
 
   private recreateEditor(): void {
     if (!this.editorHost) return;
+    const review = this.review;
+    const reviewFilePath = this.reviewFilePath;
+    const reviewOptions = review !== undefined && reviewFilePath !== undefined ? { filePath: reviewFilePath, review } : undefined;
+    // Staleness invalidation: drop this file's pending comments whose
+    // sourceHash no longer matches before the new content is shown, so
+    // stale anchors never render against the wrong lines.
+    if (reviewOptions !== undefined) reviewOptions.review.invalidateFile?.(reviewOptions.filePath, hashSource(this.content));
     this.view?.destroy();
     this.view = new EditorView({
       parent: this.editorHost,
       state: EditorState.create({
         doc: this.content,
         extensions: [
-          lineNumbers(),
+          lineNumbers(reviewOptions === undefined ? undefined : { domEventHandlers: reviewGutterDomEventHandlers(reviewOptions) }),
           keymap.of(defaultKeymap),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           EditorState.readOnly.of(true),
@@ -57,6 +78,7 @@ export class CodeViewer extends LitElement {
           viewerTheme,
           ...bidiTextExtensions(this.language),
           ...languageExtensions(this.language),
+          ...(reviewOptions === undefined ? [] : buildReviewExtensions(reviewOptions)),
         ],
       }),
     });
@@ -109,6 +131,12 @@ const bidiTextTheme = EditorView.theme({
 
 function bidiTextExtensions(language: string | undefined): Extension[] {
   return language === "markdown" ? [EditorView.contentAttributes.of({ dir: "auto" }), bidiTextTheme] : [];
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "code-viewer": CodeViewer;
+  }
 }
 
 function languageExtensions(language: string | undefined): Extension[] {

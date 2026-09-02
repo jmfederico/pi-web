@@ -18,6 +18,10 @@ import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendProm
 import { promptEditorStyles, type CompletionItem } from "./shared";
 import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
+import { formatAnchorLabel } from "../review/reviewCoordinates";
+import { sortComments } from "../review/reviewMarkdown";
+import type { ReviewComment } from "../review/reviewTypes";
+import type { ReviewSendSnapshot } from "../controllers/reviewController";
 import "./AutocompleteMenu";
 
 @customElement("prompt-editor")
@@ -39,11 +43,17 @@ export class PromptEditor extends LitElement {
   @property({ type: Boolean }) canStop = false;
   @property({ attribute: false }) status?: SessionStatus;
   @property({ type: Boolean }) sending = false;
-  @property({ attribute: false }) onSend?: (text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string) => void | Promise<void>;
+  @property({ attribute: false }) onSend?: (text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string, hasReviewContent?: boolean) => unknown;
   @property({ attribute: false }) onStop?: () => void;
   @property({ attribute: false }) onSelectModel?: () => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
   @property({ attribute: false }) availableThinkingLevels: readonly string[] = [];
+  @property({ attribute: false }) reviewComments: readonly ReviewComment[] = [];
+  @property({ attribute: false }) reviewSendLocked = false;
+  @property({ attribute: false }) onReviewRemove?: (id: string) => void;
+  @property({ attribute: false }) onReviewBeginSend?: () => ReviewSendSnapshot;
+  @property({ attribute: false }) onReviewCompleteSend?: (ids: string[]) => void;
+  @property({ attribute: false }) onReviewAbortSend?: () => void;
   @query(".markdown-editor") private editorHost?: HTMLDivElement;
   @query(".attachment-input") private attachmentInput?: HTMLInputElement;
   // `draft` is the live document text but is intentionally NOT reactive: it
@@ -125,12 +135,13 @@ export class PromptEditor extends LitElement {
           ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
           ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
           ${this.renderAttachments()}
+          ${this.renderReviewChips()}
           <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
         </div>
         <div class="actions">
           ${this.renderCompactStatus()}
-          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
-          ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
+          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { void this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
+          ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { void this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
           <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
         </div>
       </footer>
@@ -202,6 +213,21 @@ export class PromptEditor extends LitElement {
           </label>
         ` : null}
         ${this.attachmentError !== undefined ? html`<div class="attachment-error">${this.attachmentError}</div>` : null}
+      </div>
+    `;
+  }
+
+  private renderReviewChips() {
+    if (this.reviewComments.length === 0) return null;
+    return html`
+      <div class="review-chips" aria-label="Pending review comments">
+        ${sortComments(this.reviewComments).map((comment) => html`
+          <div class="review-chip" title=${comment.body}>
+            <span class="review-chip-label">${formatAnchorLabel(comment.anchor)}</span>
+            <span class="review-chip-snippet">${reviewChipSnippet(comment.body)}</span>
+            <button type="button" class="review-chip-remove" ?disabled=${this.reviewSendLocked} title="Remove review comment" aria-label="Remove review comment" @click=${() => { this.onReviewRemove?.(comment.id); }}>×</button>
+          </div>
+        `)}
       </div>
     `;
   }
@@ -445,7 +471,7 @@ export class PromptEditor extends LitElement {
     if (!shouldSendPromptOnEnterShortcut(shiftKey, this.mobilePromptEnterMedia, readPromptEnterPreference())) {
       return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
     }
-    this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
+    void this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
     return true;
   }
 
@@ -477,23 +503,32 @@ export class PromptEditor extends LitElement {
     this.completions = [];
   }
 
-  private send(streamingBehavior?: "steer" | "followUp") {
+  private async send(streamingBehavior?: "steer" | "followUp") {
     if (this.disabled || this.sending) return;
     const text = this.draft.trim();
     const pending = this.attachments;
-    if (text === "" && pending.length === 0) return;
+    const reviewComments = this.reviewComments;
+    if (text === "" && pending.length === 0 && reviewComments.length === 0) return;
     const behavior = this.canSteer || this.isCompacting ? streamingBehavior : undefined;
     const attachments = pending.length > 0 ? this.currentAttachments() : undefined;
     const delivery = this.effectiveAttachmentDelivery();
-    // Folder delivery sends the displayed workspace-effective folder explicitly
-    // (the uploads pattern): the save lands exactly where the label pointed,
-    // independent of how the session cwd would resolve its own project config.
     const folder = attachments !== undefined && delivery === "folder" ? this.attachmentsFolder : undefined;
+    if (reviewComments.length === 0) {
+      this.resetComposer();
+      void this.onSend?.(text, behavior, attachments, attachments === undefined ? undefined : delivery, folder);
+      return;
+    }
+
+    const snapshot = this.onReviewBeginSend?.() ?? { ids: [], markdown: "" };
+    const body = [text, snapshot.markdown].filter((part) => part !== "").join("\n\n");
     this.resetComposer();
-    // Sending is owned by the controller (it drives the chat activity dock and,
-    // for folder mode, orchestrates the upload + reference rewrite), so this is
-    // fire-and-forget here.
-    void this.onSend?.(text, behavior, attachments, attachments === undefined ? undefined : delivery, folder);
+    try {
+      const result = await this.onSend?.(body, behavior, attachments, attachments === undefined ? undefined : delivery, folder, true);
+      if (result === false) this.onReviewAbortSend?.();
+      else this.onReviewCompleteSend?.(snapshot.ids);
+    } catch {
+      this.onReviewAbortSend?.();
+    }
   }
 
   private resetComposer() {
@@ -562,6 +597,13 @@ function pendingToPromptAttachment(attachment: PendingAttachment): PromptAttachm
     return { kind: "image", mimeType: attachment.mimeType, data: attachment.data, name: attachment.name };
   }
   return { kind: "file", mimeType: attachment.mimeType, data: attachment.data, name: attachment.name };
+}
+
+const REVIEW_CHIP_SNIPPET_LENGTH = 40;
+
+function reviewChipSnippet(body: string): string {
+  const trimmed = body.trim();
+  return trimmed.length > REVIEW_CHIP_SNIPPET_LENGTH ? `${trimmed.slice(0, REVIEW_CHIP_SNIPPET_LENGTH)}\u2026` : trimmed;
 }
 
 export function attachmentFolderDeliveryLabel(folder: string): string {

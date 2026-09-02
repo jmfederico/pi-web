@@ -197,9 +197,94 @@ export interface WorkspacePanelTerminal {
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
 }
 
+/**
+ * Side a review anchor/line ref refers to. The Files raw view is always
+ * "new" (current file lines). Git context/added lines are "new"; git
+ * deleted lines are "old". A single comment is single-side.
+ *
+ * Mirrored by hand from `src/client/src/review/reviewTypes.ts` rather than
+ * sourced from `src/shared/pluginApiTypes.ts`. That shared file is reserved
+ * for DTOs that already cross the server/client boundary (re-exported
+ * through `src/shared/apiTypes.ts`); the review types are browser-only
+ * local state. Hand duplication here follows the same pattern already used
+ * for `WorkspacePanelContext` itself (which also can't be a raw shared
+ * import, since the internal version depends on `AppState`).
+ */
+export type ReviewSide = "new" | "old";
+
+export interface ReviewLineRange {
+  side: ReviewSide;
+  /** 1-based inclusive line number on the given side. */
+  start: number;
+  end: number;
+}
+
+export interface ReviewAnchor {
+  /** Workspace-relative path. */
+  filePath: string;
+  /** Single side, contiguous range. */
+  range: ReviewLineRange;
+}
+
+export interface ReviewComment {
+  /** Stable local id, e.g. "review-<seq>". */
+  id: string;
+  anchor: ReviewAnchor;
+  /** User text (markdown allowed). */
+  body: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Fingerprint of the underlying content at creation, for staleness invalidation. */
+  sourceHash: string;
+}
+
+/** A line reference on a diff/file surface, used by the review selection and query APIs. */
+export interface WorkspaceReviewLineRef {
+  side: ReviewSide;
+  line: number;
+}
+
+/** An in-progress, not-yet-saved review comment. */
+export interface WorkspaceReviewDraft {
+  anchor: ReviewAnchor;
+  body: string;
+}
+
+/**
+ * Gesture-agnostic review service: data/badges, a selection/draft state
+ * machine driven by line refs (not DOM handlers), and existing-comment
+ * mutation. The SAME service instance is used by the core Files (CodeMirror)
+ * surface and by plugins; only the gesture-to-ref mapping and where
+ * `<pi-web-review-thread>` mounts differ per surface.
+ */
+export interface WorkspaceReview {
+  // --- data / badges ---
+  total(): number;
+  countForFile(filePath: string): number;
+  commentsForLine(filePath: string, ref: WorkspaceReviewLineRef): readonly ReviewComment[];
+  draftForLine(filePath: string, ref: WorkspaceReviewLineRef): WorkspaceReviewDraft | null;
+  /** For styling: is this line inside the active selection / does it have comments. */
+  lineState(filePath: string, ref: WorkspaceReviewLineRef): { selected: boolean; commented: boolean };
+
+  // --- selection + draft state machine (gesture-agnostic) ---
+  canAuthor(): boolean;
+  beginSelection(filePath: string, ref: WorkspaceReviewLineRef): void;
+  extendSelection(ref: WorkspaceReviewLineRef): void; // clamped to the anchor's side
+  commitSelection(sourceHash: string): void; // opens the draft at the current selection
+  cancelSelection(): void;
+  setDraftBody(body: string): void;
+  submitDraft(anchor?: ReviewAnchor): void;
+  cancelDraft(): void;
+
+  // --- existing comments ---
+  updateComment(id: string, body: string, anchor: ReviewAnchor): void;
+  removeComment(id: string): void;
+}
+
 export interface WorkspacePanelContext extends WorkspaceContext {
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
+  review: WorkspaceReview;
 }
 
 export type WorkspacePanelIcon = TemplateResult;

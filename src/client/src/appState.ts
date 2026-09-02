@@ -2,6 +2,7 @@ import type { AuthProviderOption, CommandOption, CommandResult, ExtensionDialogA
 import type { ChatLine } from "./components/shared";
 import type { MachineStatusSnapshot } from "../../shared/machineStatus";
 import type { QualifiedContributionId } from "./plugins/ids";
+import type { ReviewComment, ReviewDraft, ReviewSide } from "./review/reviewTypes";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
 import type { WorkspaceUploadBatchState } from "./workspaceUploadState";
 
@@ -85,6 +86,19 @@ export interface AppState {
   selectedTerminalId: string | undefined;
   piWebStatus: PiWebStatusResponse | undefined;
   error: string;
+  /** The selected session's pending code review comments (Files/Git tabs). */
+  reviewComments: readonly ReviewComment[];
+  /** The single active, not-yet-saved review comment editor (app-wide). */
+  reviewDraft: ReviewDraft | undefined;
+  /**
+   * The transient in-progress line-drag selection (before a draft is opened).
+   * `anchorLine` is where the drag started; `currentLine` follows the pointer.
+   * Both share `side` (single-side selection): `extendSelection` clamps
+   * updates to a different side.
+   */
+  reviewSelection: { filePath: string; side: ReviewSide; anchorLine: number; currentLine: number } | undefined;
+  /** True while a send is in flight; disables authoring/removal until it settles. */
+  reviewSendLocked: boolean;
 }
 
 /** A closed extension dialog paired with the record the browser rendered while it was open. */
@@ -199,5 +213,9 @@ export function initialAppState(): AppState {
     selectedTerminalId: undefined,
     piWebStatus: undefined,
     error: "",
+    reviewComments: [],
+    reviewDraft: undefined,
+    reviewSelection: undefined,
+    reviewSendLocked: false,
   };
 }

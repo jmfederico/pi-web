@@ -9,6 +9,7 @@ import { MAX_INLINE_PREVIEW_BYTES, MAX_INLINE_PREVIEW_LABEL, workspaceFileName }
 import { formatFileSize } from "../utils/format";
 import { workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "../workspaceFileViewMode";
 import { formattedTextStyles } from "./shared";
+import type { CodeViewerReview } from "./codeViewerReview";
 
 export type WorkspaceFilePreviewKind = "image" | "html" | "pdf" | "markdown" | "download" | "code";
 
@@ -30,6 +31,13 @@ export class WorkspaceFileViewer extends LitElement {
   @property({ attribute: false }) loadError: string | undefined;
   @property({ attribute: false }) previewUrlBuilder: typeof workspaceFilePreviewUrl = workspaceFilePreviewUrl;
   @property({ attribute: false }) modeStore: WorkspaceFileViewModeStore = workspaceFileViewModeStore;
+  /**
+   * Gesture-agnostic review service, threaded down to `<code-viewer>` for the
+   * Raw source view only (design: "Comments only apply to the Raw source view
+   * (not Preview / binary)"). `renderRawSource` is the sole call site that
+   * uses it below -- Preview/binary rendering paths never see it.
+   */
+  @property({ attribute: false }) review: CodeViewerReview | undefined;
 
   /** Undefined until the first render adopts the deep-linked or stored mode. */
   private mode: WorkspaceFileViewMode | undefined;
@@ -169,7 +177,7 @@ export class WorkspaceFileViewer extends LitElement {
     loadCodeViewer();
     return html`
       ${file.truncated ? html`<p class="preview-note" role="status">Raw source is truncated. Use Download for the complete file.</p>` : null}
-      <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+      <code-viewer .content=${file.content} .language=${file.language} .review=${this.review} .reviewFilePath=${file.path}></code-viewer>
     `;
   }
 

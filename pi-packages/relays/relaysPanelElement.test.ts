@@ -768,6 +768,7 @@ function panelContext(fake: WorkspaceFilesFake, workspaceId = "ws-1"): Workspace
     host: { requestRender: () => undefined },
     prompt: { insertText: () => undefined, getText: () => "", getSelection: () => null },
     terminal: { open: () => undefined, runCommand: () => Promise.reject(new Error("terminal not used")) },
+    review: stubReview(),
   };
 }
 
@@ -880,4 +881,24 @@ function directoryChip(panel: RelaysPanelTestElement, name: string): HTMLElement
 function containsActiveChip(panel: RelaysPanelTestElement): HTMLElement | null {
   const chip = shadow(panel).querySelector("button[data-directory-path].contains-active");
   return chip instanceof HTMLElement ? chip : null;
+}
+
+function stubReview(): WorkspacePanelContext["review"] {
+  return {
+    total: () => 0,
+    countForFile: () => 0,
+    commentsForLine: () => [],
+    draftForLine: () => null,
+    lineState: () => ({ selected: false, commented: false }),
+    canAuthor: () => false,
+    beginSelection: () => undefined,
+    extendSelection: () => undefined,
+    commitSelection: () => undefined,
+    cancelSelection: () => undefined,
+    setDraftBody: () => undefined,
+    submitDraft: () => undefined,
+    cancelDraft: () => undefined,
+    updateComment: () => undefined,
+    removeComment: () => undefined,
+  };
 }

@@ -1,7 +1,7 @@
 import { html, type TemplateResult } from "lit";
 import { renderBuiltinTabIcon } from "../../components/tabIcons";
 import "../../components/WorkspaceFilesPanel";
-import type { WorkspacePanelContribution, WorkspacePanelContext } from "../types";
+import type { WorkspacePanelContribution, WorkspacePanelContext, WorkspaceReview } from "../types";
 
 export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
   return [
@@ -11,6 +11,7 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
       icon: renderBuiltinTabIcon("files"),
       order: 10,
       routeAliases: ["files"],
+      badge: (context) => filesTabBadge(context.review),
       render: renderFiles,
     },
     {
@@ -22,6 +23,10 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
       render: renderTerminal,
     },
   ];
+}
+
+export function filesTabBadge(review: WorkspaceReview): number | undefined {
+  return review.total() || undefined;
 }
 
 function renderFiles(context: WorkspacePanelContext): TemplateResult {

@@ -82,6 +82,7 @@ export class WorkspaceFilesPanel extends LitElement {
               .selectedPath=${context.selectedFilePath}
               .file=${context.selectedFileContent}
               .loadError=${context.selectedFileLoadError}
+              .review=${context.review}
             ></workspace-file-viewer>
           </div>
         </section>
@@ -100,10 +101,12 @@ export class WorkspaceFilesPanel extends LitElement {
     const children = context.expandedDirs[entry.path];
     const hasChildren = children !== undefined;
     const selected = entry.type !== "directory" && context.selectedFilePath === entry.path;
+    // Review comment counts are per-file; directories never show one.
+    const reviewCount = entry.type === "directory" ? 0 : context.review.countForFile(entry.path);
     return html`
       <button class=${selected ? "row selected" : "row"} style=${`--depth:${String(depth)}`} @click=${() => { this.selectTreeEntry(context, entry); }}>
         <span>${entry.type === "directory" ? (hasChildren ? "▾" : "▸") : "·"}</span>
-        <span>${entry.name}</span>
+        <span>${entry.name}${reviewCount > 0 ? html`<span class="badge" title=${`${String(reviewCount)} review ${reviewCount === 1 ? "comment" : "comments"}`}>${reviewCount}</span>` : null}</span>
       </button>
       ${hasChildren ? children.map((child) => this.renderTreeEntry(context, child, depth + 1)) : null}
     `;
@@ -361,6 +364,7 @@ export class WorkspaceFilesPanel extends LitElement {
       workspace-file-viewer { flex: 1 1 auto; min-height: 0; }
       .files-panel { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
       .toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+      .row .badge { display: inline-block; margin-left: 5px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; }
       .toolbar .toolbar-actions button { margin-left: 0; }
       .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
       .drop-overlay { position: absolute; inset: 52px 10px 10px; z-index: 15; display: grid; place-items: center; border: 2px dashed var(--pi-accent); border-radius: 12px; background: color-mix(in srgb, var(--pi-bg-overlay) 90%, var(--pi-accent) 10%); color: var(--pi-text); opacity: 0; pointer-events: none; transition: opacity .12s ease; }

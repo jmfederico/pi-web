@@ -2,7 +2,7 @@
 
 import { html, render, svg } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PiWebComponentStatus, PiWebStatusResponse, PluginRuntimeState, TerminalCommandRun, TerminalCommandRunHandle, WorkspacePanelContext, WorkspacePanelTerminal } from "@jmfederico/pi-web/plugin-api";
+import type { PiWebComponentStatus, PiWebStatusResponse, PluginRuntimeState, TerminalCommandRun, TerminalCommandRunHandle, WorkspacePanelContext, WorkspacePanelTerminal, WorkspaceReview } from "@jmfederico/pi-web/plugin-api";
 import plugin from "./pi-web-plugin.js";
 
 function component(overrides: Partial<PiWebComponentStatus> = {}): PiWebComponentStatus {
@@ -48,6 +48,24 @@ function commandRunHandle(input: { title: string; command: string }): TerminalCo
   return { run, completed: Promise.resolve({ ...run, status: "succeeded" }) };
 }
 
+const emptyReview: WorkspaceReview = {
+  total: () => 0,
+  countForFile: () => 0,
+  commentsForLine: () => [],
+  draftForLine: () => null,
+  lineState: () => ({ selected: false, commented: false }),
+  canAuthor: () => false,
+  beginSelection: () => undefined,
+  extendSelection: () => undefined,
+  commitSelection: () => undefined,
+  cancelSelection: () => undefined,
+  setDraftBody: () => undefined,
+  submitDraft: () => undefined,
+  cancelDraft: () => undefined,
+  updateComment: () => undefined,
+  removeComment: () => undefined,
+};
+
 function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTerminal): WorkspacePanelContext {
   const noop = () => undefined;
   return {
@@ -62,6 +80,7 @@ function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTermin
       moveFile: () => Promise.reject(new Error("not implemented")),
     },
     host: { requestRender: noop },
+    review: emptyReview,
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: terminal ?? { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },
   };

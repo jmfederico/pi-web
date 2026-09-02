@@ -347,6 +347,24 @@ describe("workspace-file-viewer", () => {
   });
 });
 
+describe("workspace-file-viewer review wiring", () => {
+  it("passes review + reviewFilePath to code-viewer for the raw source view", async () => {
+    const review = fakeReviewHandle();
+    const file = textFile("main.ts", "const x = 1", { language: "typescript" });
+    const viewer = await mountViewer(file, { review });
+    const codeViewer = requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { review?: unknown; reviewFilePath?: string }>("code-viewer"), "code viewer");
+    expect(codeViewer.review).toBe(review);
+    expect(codeViewer.reviewFilePath).toBe("main.ts");
+  });
+
+  it("does not reach code-viewer's review props for a non-raw preview kind", async () => {
+    const review = fakeReviewHandle();
+    const image = binaryFile("logo.png", { mediaType: "image", mimeType: "image/png" });
+    const viewer = await mountViewer(image, { review });
+    expect(viewer.shadowRoot?.querySelector("code-viewer")).toBeNull();
+  });
+});
+
 describe("workspace file viewer seams", () => {
   it("classifies every viewer kind including Markdown", () => {
     expect(workspaceFilePreviewKind(binaryFile("logo.png", { mediaType: "image" }))).toBe("image");
@@ -390,6 +408,28 @@ interface ViewerPatch {
   loadError?: string | undefined;
   previewUrlBuilder?: WorkspaceFileViewer["previewUrlBuilder"];
   modeStore?: WorkspaceFileViewModeStore;
+  review?: WorkspaceFileViewer["review"];
+}
+
+/** Minimal fake review handle: identity is all these tests need (prop pass-through, not behavior). */
+function fakeReviewHandle(): NonNullable<WorkspaceFileViewer["review"]> {
+  return {
+    total: () => 0,
+    countForFile: () => 0,
+    commentsForLine: () => [],
+    draftForLine: () => null,
+    lineState: () => ({ selected: false, commented: false }),
+    canAuthor: () => true,
+    beginSelection: () => { /* unused in this test */ },
+    extendSelection: () => { /* unused in this test */ },
+    commitSelection: () => { /* unused in this test */ },
+    cancelSelection: () => { /* unused in this test */ },
+    setDraftBody: () => { /* unused in this test */ },
+    submitDraft: () => { /* unused in this test */ },
+    cancelDraft: () => { /* unused in this test */ },
+    updateComment: () => { /* unused in this test */ },
+    removeComment: () => { /* unused in this test */ },
+  };
 }
 
 interface FakeModeStore extends WorkspaceFileViewModeStore {

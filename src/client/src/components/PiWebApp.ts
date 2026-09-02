@@ -12,6 +12,7 @@ import { MachineController } from "../controllers/machineController";
 import { MachineStatusController } from "../controllers/machineStatusController";
 import { ProjectController, type ProjectTrustChoice } from "../controllers/projectController";
 import { PiWebStatusController } from "../controllers/piWebStatusController";
+import { ReviewController } from "../controllers/reviewController";
 import { SessionController } from "../controllers/sessionController";
 import { SessionNotificationController } from "../controllers/sessionNotificationController";
 import { WorkspaceController } from "../controllers/workspaceController";
@@ -29,7 +30,7 @@ import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { ServerNoticesController } from "../serverNotices";
 import type { ServerNotice } from "../../../shared/apiTypes";
-import type { PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "../plugins/types";
+import type { PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding, WorkspaceReviewLineRef } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
@@ -51,6 +52,11 @@ import { canDeleteWorkspace, isWorkspaceDeletionPending, isWorkspaceDeletionRunP
 import "./MachineList";
 import "./ProjectList";
 import "./WorkspaceList";
+import type { CodeViewerReview } from "./codeViewerReview";
+// Registers `<pi-web-review-thread>` unconditionally at app bootstrap: the
+// Git tab mounts it from its own bundled package (which can't import core
+// source), so it must already be defined before either tab needs it.
+import "./ReviewThread";
 import { unreadSessionCount } from "./SessionList";
 import "./SessionCleanupDialog";
 import "./SessionTreeNavigator";
@@ -195,6 +201,10 @@ export class PiWebApp extends LitElement {
     (patch) => { this.setState(patch); },
     () => { this.updateUrl(); },
   );
+  private readonly reviewController = new ReviewController(
+    () => this.state,
+    (patch) => { this.setState(patch); },
+  );
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
   private readonly serverNotices = new ServerNoticesController({
@@ -281,6 +291,7 @@ export class PiWebApp extends LitElement {
   protected override willUpdate(): void {
     this.toggleAttribute("pwa-display-mode", this.appShell.isPwaDisplayMode);
     this.syncSessionWarningVisibility();
+    this.syncReviewSession();
   }
 
   protected override updated(): void {
@@ -289,6 +300,21 @@ export class PiWebApp extends LitElement {
     // deduplicates acknowledgements for the observed completion order.
     this.committedChatIdentity = selectedChatIdentity(this.state);
     this.syncSelectedSessionReadState();
+  }
+
+  /** Tracks the last session `syncReviewSession` adopted, so review comments/drafts follow session switches instead of leaking across them. */
+  private reviewSessionKey: string | undefined;
+
+  private syncReviewSession(): void {
+    const session = this.state.selectedSession;
+    const key = session === undefined ? undefined : machineSessionKey(selectedMachineId(this.state), session.id);
+    if (key === this.reviewSessionKey) return;
+    this.reviewSessionKey = key;
+    if (session === undefined) {
+      this.reviewController.clearActiveSession();
+    } else {
+      this.reviewController.adoptSession(selectedMachineId(this.state), session.id);
+    }
   }
 
   private syncSessionWarningVisibility(): void {
@@ -1494,6 +1520,35 @@ export class PiWebApp extends LitElement {
     };
   }
 
+  /**
+   * Thin pass-through adapter over `reviewController`, shared by the core
+   * Files surface and plugins. Returns `CodeViewerReview` (a strict
+   * superset of the public `WorkspaceReview`) so `CodeViewer` can also get
+   * `invalidateFile`, a core-only operation withheld from the plugin-facing
+   * type.
+   */
+  private createReviewAdapter(): CodeViewerReview {
+    const controller = this.reviewController;
+    return {
+      invalidateFile: (path, currentHash) => { controller.invalidateFile(path, currentHash); },
+      total: () => controller.total(),
+      countForFile: (filePath) => controller.countForFile(filePath),
+      commentsForLine: (filePath, ref: WorkspaceReviewLineRef) => controller.commentsForLine(filePath, ref),
+      draftForLine: (filePath, ref: WorkspaceReviewLineRef) => controller.draftForLine(filePath, ref) ?? null,
+      lineState: (filePath, ref: WorkspaceReviewLineRef) => controller.lineState(filePath, ref),
+      canAuthor: () => controller.canAuthor(),
+      beginSelection: (filePath, ref: WorkspaceReviewLineRef) => { controller.beginSelection(filePath, ref); },
+      extendSelection: (ref: WorkspaceReviewLineRef) => { controller.extendSelection(ref); },
+      commitSelection: (sourceHash) => { controller.commitSelection(sourceHash); },
+      cancelSelection: () => { controller.cancelSelection(); },
+      setDraftBody: (body) => { controller.setDraftBody(body); },
+      submitDraft: (anchor) => { controller.submitDraft(anchor); },
+      cancelDraft: () => { controller.cancelDraft(); },
+      updateComment: (id, body, anchor) => { controller.update(id, body, anchor); },
+      removeComment: (id) => { controller.remove(id); },
+    };
+  }
+
   private createWorkspacePanelContext(workspace: Workspace): WorkspacePanelContext {
     const machine = pluginMachineFromState(this.state);
     const machineId = machine.id;
@@ -1516,6 +1571,7 @@ export class PiWebApp extends LitElement {
         piWebUnstable: { terminalCommandRuns },
         fileTree: this.state.fileTree,
         expandedDirs: this.state.expandedDirs,
+        review: this.createReviewAdapter(),
         selectedFilePath: this.state.selectedFilePath,
         selectedFileContent: this.state.selectedFileContent,
         selectedFileLoadError: this.state.selectedFileLoadError,
@@ -2085,17 +2141,34 @@ export class PiWebApp extends LitElement {
     if (value !== "") await this.sessions.setThinkingLevel(value);
   }
 
-  private sendPrompt(text: string, streamingBehavior?: "steer" | "followUp", attachments?: import("../api").PromptAttachment[], delivery?: import("../../../shared/apiTypes").PromptAttachmentDelivery, folder?: string): void {
+  // Returns whether the send genuinely went out or was queued for later delivery.
+  private async sendPrompt(text: string, streamingBehavior?: "steer" | "followUp", attachments?: import("../api").PromptAttachment[], delivery?: import("../../../shared/apiTypes").PromptAttachmentDelivery, folderOrReview?: string | boolean, hasReviewContent = false): Promise<boolean> {
+    const folder = typeof folderOrReview === "string" ? folderOrReview : undefined;
+    const hasReview = typeof folderOrReview === "boolean" ? folderOrReview : hasReviewContent;
     const hasAttachments = attachments !== undefined && attachments.length > 0;
-    if (!hasAttachments && streamingBehavior === undefined && this.auth.handleSlashCommand(text)) return;
-    void this.sessions.send(text, streamingBehavior, attachments, delivery, folder);
+    if (!hasAttachments && !hasReview && streamingBehavior === undefined && this.auth.handleSlashCommand(text)) return true;
+    return await this.sessions.send(text, streamingBehavior, attachments, delivery, folder, hasReview);
   }
 
   // Stable handler identities for child components. Inlined arrow closures
   // would be a fresh reference on every render, forcing Lit to re-commit the
   // bindings each time the app re-renders; bound class fields keep them constant.
-  private readonly handleSendPrompt = (text: string, streamingBehavior?: "steer" | "followUp", attachments?: import("../api").PromptAttachment[], delivery?: import("../../../shared/apiTypes").PromptAttachmentDelivery, folder?: string): void => {
-    this.sendPrompt(text, streamingBehavior, attachments, delivery, folder);
+  private readonly handleSendPrompt = async (text: string, streamingBehavior?: "steer" | "followUp", attachments?: import("../api").PromptAttachment[], delivery?: import("../../../shared/apiTypes").PromptAttachmentDelivery, folder?: string, hasReviewContent = false): Promise<boolean> => {
+    return await this.sendPrompt(text, streamingBehavior, attachments, delivery, folder, hasReviewContent);
+  };
+
+  private readonly handleReviewRemove = (id: string): void => {
+    this.reviewController.remove(id);
+  };
+
+  private readonly handleReviewBeginSend = () => this.reviewController.beginSend();
+
+  private readonly handleReviewCompleteSend = (ids: string[]): void => {
+    this.reviewController.completeSend(ids);
+  };
+
+  private readonly handleReviewAbortSend = (): void => {
+    this.reviewController.abortSend();
   };
 
   private readonly handleStopActiveWork = (): void => {
@@ -2286,7 +2359,7 @@ export class PiWebApp extends LitElement {
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
           ${state.selectedSession ? html`
             ${this.renderChatView(state, state.selectedSession)}
-            <prompt-editor .sessionId=${state.selectedSession.id} .cwd=${state.selectedWorkspace?.path} .machineId=${selectedMachineId(state)} .projectId=${state.selectedWorkspace?.projectId} .workspaceId=${state.selectedWorkspace?.id} .attachmentsFolder=${workspaceEffectiveAttachmentsFolder(state.selectedWorkspace?.effectiveConfig, this.workspaceAttachmentsDefaultFolder)} .disabled=${state.selectedSession.archived === true} .canSteer=${state.status?.isStreaming === true} .isCompacting=${state.status?.isCompacting === true} .canStop=${state.status?.isStreaming === true || state.status?.isBashRunning === true || state.status?.isCompacting === true || (state.status?.pendingMessageCount ?? 0) > 0} .status=${state.status} .availableThinkingLevels=${state.availableThinkingLevels} .sending=${state.sendingPrompts[state.selectedSession.id] === true} .onSend=${this.handleSendPrompt} .onStop=${this.handleStopActiveWork} .onSelectModel=${this.handleSelectModel} .onSelectThinking=${this.handleSelectThinking}></prompt-editor>
+            <prompt-editor .sessionId=${state.selectedSession.id} .cwd=${state.selectedWorkspace?.path} .machineId=${selectedMachineId(state)} .projectId=${state.selectedWorkspace?.projectId} .workspaceId=${state.selectedWorkspace?.id} .attachmentsFolder=${workspaceEffectiveAttachmentsFolder(state.selectedWorkspace?.effectiveConfig, this.workspaceAttachmentsDefaultFolder)} .disabled=${state.selectedSession.archived === true} .canSteer=${state.status?.isStreaming === true} .isCompacting=${state.status?.isCompacting === true} .canStop=${state.status?.isStreaming === true || state.status?.isBashRunning === true || state.status?.isCompacting === true || (state.status?.pendingMessageCount ?? 0) > 0} .status=${state.status} .availableThinkingLevels=${state.availableThinkingLevels} .sending=${state.sendingPrompts[state.selectedSession.id] === true} .reviewComments=${state.reviewComments} .reviewSendLocked=${state.reviewSendLocked} .onSend=${this.handleSendPrompt} .onStop=${this.handleStopActiveWork} .onSelectModel=${this.handleSelectModel} .onSelectThinking=${this.handleSelectThinking} .onReviewRemove=${this.handleReviewRemove} .onReviewBeginSend=${this.handleReviewBeginSend} .onReviewCompleteSend=${this.handleReviewCompleteSend} .onReviewAbortSend=${this.handleReviewAbortSend}></prompt-editor>
             ${this.renderStatusBar(state)}
             ${state.commandDialog !== undefined ? html`<command-picker .title=${state.commandDialog.title} .options=${state.commandDialog.options} .onPick=${(value: string) => this.sessions.respondToCommand(state.commandDialog?.requestId ?? "", value)} .onCancel=${() => { this.sessions.cancelCommand(); }}></command-picker>` : null}
             ${state.modelDialog !== undefined ? html`<model-picker title=${state.modelDialog.title} .options=${state.modelDialog.options} .catalog=${state.modelDialog.catalog} .selectedValue=${state.modelDialog.selectedValue} .onPick=${(value: string) => { void this.pickModel(value); }} .onToggleEnabled=${this.handleToggleModelEnabled} .onSetScope=${this.handleSetModelScope} .onCancel=${() => { this.setState({ modelDialog: undefined }); }}></model-picker>` : null}
