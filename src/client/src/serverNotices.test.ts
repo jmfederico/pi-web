@@ -34,10 +34,21 @@ describe("visibleServerNotices", () => {
     expect(visibleServerNotices([deletionNotice], { projectId: "project-b", workspaceId: "other-worktree" })).toEqual([]);
   });
 
+  it("does not give a similarly named plugin the core deletion source semantics", () => {
+    const pluginNotice = {
+      ...notice("plugin-deletion"),
+      source: "plugin:workspace.delete",
+      context: { projectId: "project-a", workspaceId: "target-worktree" },
+    };
+
+    expect(visibleServerNotices([pluginNotice], { projectId: "project-a", workspaceId: "runner-worktree" })).toEqual([]);
+    expect(visibleServerNotices([pluginNotice], { projectId: "project-a", workspaceId: "target-worktree" })).toEqual([pluginNotice]);
+  });
+
   it("keeps a Terminal-attributed removal failure visible across its project worktrees", () => {
     const deletionNotice = {
       ...notice("terminal-deletion"),
-      source: "terminal",
+      source: "plugin:terminal",
       context: { commandRunId: "run-1", projectId: "project-a", targetWorkspaceId: "target-worktree" },
     };
 

@@ -721,7 +721,7 @@ if (context.notices?.version === 1) {
 }
 ```
 
-PI WEB validates and clones the input, derives `source` from the activating catalog entry's plugin id, and then owns storage, realtime publication, browser scoping, and dismissal. Plugins cannot provide or override `source`, and the reporter does not expose the notice store, snapshots, routes, event publication, or dismissal. Existing server API v1 plugins may ignore the optional capability and continue to load on hosts that provide it.
+PI WEB validates and clones the input, derives the host-owned `plugin:<plugin-id>` source from the activating catalog entry, and then owns storage, realtime publication, browser scoping, and dismissal. The `plugin:` namespace keeps plugin attribution separate from core-owned notice sources. Plugins cannot provide or override `source`, and the reporter does not expose the notice store, snapshots, routes, event publication, or dismissal. Existing server API v1 plugins may ignore the optional capability and continue to load on hosts that provide it.
 
 ### Paired backend contract
 

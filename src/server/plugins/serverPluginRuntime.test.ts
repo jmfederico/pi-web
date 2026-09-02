@@ -133,48 +133,93 @@ describe("server plugin runtime", () => {
     expect(lifecycleSignals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it("provides a frozen validating notice reporter with host-derived attribution", async () => {
-    let reporter: ServerPluginNoticeReporterV1 | undefined;
+  it("provides frozen notice reporters with host-namespaced attribution", async () => {
+    const reporters = new Map<string, ServerPluginNoticeReporterV1 | undefined>();
     const records: { source: string; input: ServerPluginNoticeInput }[] = [];
     const runtime = await createServerPluginRuntime({
-      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha"), entry("ignores-notices")])) },
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("terminal"), entry("workspace.delete")])) },
       importer: (url) => {
         const pluginId = pluginIdFromUrl(url);
-        return Promise.resolve(pluginId === "alpha"
-          ? {
-              default: plugin("Alpha", (context) => {
-                reporter = context.notices;
-                return {};
-              }),
-            }
-          : pluginModule("Ignores notices", {}));
+        return Promise.resolve({
+          default: plugin(pluginId, (context) => {
+            reporters.set(pluginId, context.notices);
+            return {};
+          }),
+        });
       },
       logger: testLogger(),
       noticeSink: (source, input) => { records.push({ source, input }); },
     });
 
-    expect(runtime.healthRecords().map(({ pluginId, state }) => [pluginId, state])).toEqual([
-      ["alpha", "active"],
-      ["ignores-notices", "active"],
+    const terminalReporter = reporters.get("terminal");
+    const workspaceDeleteReporter = reporters.get("workspace.delete");
+    if (terminalReporter === undefined || workspaceDeleteReporter === undefined) {
+      throw new Error("Expected notice reporters");
+    }
+    expect(terminalReporter.version).toBe(1);
+    expect(Object.isFrozen(terminalReporter)).toBe(true);
+    terminalReporter.record({ severity: "warning", message: "Terminal warning" });
+    workspaceDeleteReporter.record({ severity: "error", message: "Plugin warning" });
+
+    expect(records).toEqual([
+      {
+        source: "plugin:terminal",
+        input: { severity: "warning", message: "Terminal warning" },
+      },
+      {
+        source: "plugin:workspace.delete",
+        input: { severity: "error", message: "Plugin warning" },
+      },
     ]);
+    expect(() => {
+      Reflect.apply(workspaceDeleteReporter.record, workspaceDeleteReporter, [{
+        severity: "error",
+        message: "Spoof",
+        source: "workspace.delete",
+      }]);
+    }).toThrow("cannot set their source");
+    expect(records).toHaveLength(2);
+
+    await runtime.stop();
+  });
+
+  it("validates and safely deep-clones notice context", async () => {
+    let reporter: ServerPluginNoticeReporterV1 | undefined;
+    const records: { source: string; input: ServerPluginNoticeInput }[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha")])) },
+      importer: () => Promise.resolve({
+        default: plugin("Alpha", (context) => {
+          reporter = context.notices;
+          return {};
+        }),
+      }),
+      logger: testLogger(),
+      noticeSink: (source, input) => { records.push({ source, input }); },
+    });
 
     const noticeReporter = reporter;
     if (noticeReporter === undefined) throw new Error("Expected notice reporter");
-    expect(noticeReporter.version).toBe(1);
-    expect(Object.isFrozen(noticeReporter)).toBe(true);
     const context = { nested: { labels: ["original"] } };
     noticeReporter.record({ severity: "warning", message: "Plugin warning", context });
     context.nested.labels[0] = "mutated";
 
-    expect(records).toEqual([{
-      source: "alpha",
-      input: {
-        severity: "warning",
-        message: "Plugin warning",
-        context: { nested: { labels: ["original"] } },
-      },
-    }]);
+    const protoContext = { label: "safe" };
+    Object.defineProperty(protoContext, "__proto__", {
+      value: { preserved: true },
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    noticeReporter.record({ severity: "info", message: "Prototype key", context: protoContext });
+
+    expect(records.map(({ source }) => source)).toEqual(["plugin:alpha", "plugin:alpha"]);
     const recorded = records[0]?.input;
+    expect(recorded).toEqual({
+      severity: "warning",
+      message: "Plugin warning",
+      context: { nested: { labels: ["original"] } },
+    });
     expect(Object.isFrozen(recorded)).toBe(true);
     expect(Object.isFrozen(recorded?.context)).toBe(true);
     const nested = requireRecord(recorded?.context?.["nested"], "Expected recorded nested notice context");
@@ -183,21 +228,28 @@ describe("server plugin runtime", () => {
     expect(Object.isFrozen(nested)).toBe(true);
     expect(Object.isFrozen(labels)).toBe(true);
 
-    expect(() => {
-      Reflect.apply(noticeReporter.record, noticeReporter, [{
-        severity: "error",
-        message: "Spoof",
-        source: "core",
-      }]);
-    }).toThrow("cannot set their source");
-    expect(() => {
+    const preservedContext = requireRecord(records[1]?.input.context, "Expected prototype-key context");
+    expect(Object.hasOwn(preservedContext, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(preservedContext)).toBe(Object.prototype);
+    expect(requireRecord(preservedContext["__proto__"], "Expected preserved __proto__ value"))
+      .toEqual({ preserved: true });
+    expect(preservedContext["label"]).toBe("safe");
+    expect(Object.isFrozen(preservedContext)).toBe(true);
+
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    const recordContext = (invalidContext: unknown): void => {
       Reflect.apply(noticeReporter.record, noticeReporter, [{
         severity: "error",
         message: "Invalid JSON",
-        context: { count: Number.NaN },
+        context: invalidContext,
       }]);
-    }).toThrow("finite JSON numbers");
-    expect(records).toHaveLength(1);
+    };
+    expect(() => { recordContext(new Date()); }).toThrow("must be a JSON object");
+    expect(() => { recordContext({ createdAt: new Date() }); }).toThrow("must contain only JSON values");
+    expect(() => { recordContext({ count: Number.NaN }); }).toThrow("finite JSON numbers");
+    expect(() => { recordContext(circular); }).toThrow("must not contain cycles");
+    expect(records).toHaveLength(2);
 
     await runtime.stop();
   });
@@ -295,13 +347,19 @@ describe("server plugin runtime", () => {
           },
         }));
       }
+      if (pluginId === "bad-health-details") {
+        return Promise.resolve(pluginModule("Bad health details", {
+          health: () => ({ status: "healthy", details: { checkedAt: new Date() } }),
+          stop: () => { stops.push("bad-health-details"); },
+        }));
+      }
       return Promise.resolve(pluginModule("Degraded", {
         health: () => ({ status: "degraded", message: "tool unavailable", details: { retry: true } }),
         stop: () => { stops.push("degraded"); },
       }));
     };
     const runtime = await createServerPluginRuntime({
-      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("bad-health"), entry("degraded")])) },
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("bad-health"), entry("bad-health-details"), entry("degraded")])) },
       importer,
       logger: testLogger(),
     });
@@ -314,6 +372,12 @@ describe("server plugin runtime", () => {
         error: "health exploded",
       },
       {
+        pluginId: "bad-health-details",
+        health: { status: "unhealthy", message: "server plugin health details must contain only JSON values" },
+        phase: "health",
+        error: "server plugin health details must contain only JSON values",
+      },
+      {
         pluginId: "degraded",
         health: { status: "degraded", message: "tool unavailable", details: { retry: true } },
       },
@@ -321,7 +385,7 @@ describe("server plugin runtime", () => {
 
     await runtime.stop();
 
-    expect(stops).toEqual(["degraded", "bad-health"]);
+    expect(stops).toEqual(["degraded", "bad-health-details", "bad-health"]);
     expect(runtime.healthRecords()).toContainEqual(expect.objectContaining({
       pluginId: "bad-health",
       state: "failed",
@@ -450,6 +514,7 @@ describe("server plugin runtime", () => {
         entry("invalid-backend"),
         entry("invalid-channel"),
         entry("invalid-settings", { settings: circular }),
+        entry("non-json-settings", { settings: { installedAt: new Date() } }),
       ])) },
       importer,
       logger: testLogger(),
@@ -461,12 +526,14 @@ describe("server plugin runtime", () => {
       ["invalid-backend", "incompatible", "validate"],
       ["invalid-channel", "incompatible", "validate"],
       ["invalid-settings", "incompatible", "validate"],
+      ["non-json-settings", "incompatible", "validate"],
       ["plural", "incompatible", "validate"],
     ]);
     expect(records[0]?.message).toContain("pairedBackend must be a version 1 request backend");
     expect(records[1]?.message).toContain("optional channel opener");
     expect(records[2]?.message).toContain("must not contain cycles");
-    expect(records[3]?.message).toBe("Server plugins may contribute only one workspaceProvider");
+    expect(records[3]?.message).toContain("must contain only JSON values");
+    expect(records[4]?.message).toBe("Server plugins may contribute only one workspaceProvider");
   });
 
   it("requires the bundled Terminal shape in normal and bundled-only startup but bypasses discovery in no-plugin recovery", async () => {

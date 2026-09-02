@@ -105,7 +105,7 @@ export interface CreateServerPluginRuntimeOptions {
   importer?: ServerPluginModuleImporter;
   execFile?: ServerPluginExecFile;
   lifecycleTimeoutMs?: number;
-  /** Core-owned sink; source is always the activating catalog entry id. */
+  /** Core-owned sink; source is host-derived as `plugin:<catalog id>`. */
   noticeSink?: (source: string, input: ServerPluginNoticeInput) => void;
   /** Isolated unit/package tests may opt out; production always enforces Terminal. */
   enforceRequiredTerminal?: boolean;
@@ -124,6 +124,8 @@ interface ActiveServerPlugin {
 }
 
 const DEFAULT_LIFECYCLE_TIMEOUT_MS = 10_000;
+/** Reserved for host-derived plugin attribution; core notice sources stay outside this namespace. */
+const SERVER_PLUGIN_NOTICE_SOURCE_PREFIX = "plugin:";
 
 /**
  * Resolves exactly one desired catalog snapshot and activates its server
@@ -690,16 +692,17 @@ function createScopedNoticeReporter(
   sink: CreateServerPluginRuntimeOptions["noticeSink"],
 ): ServerPluginNoticeReporterV1 | undefined {
   if (sink === undefined) return undefined;
+  const source = `${SERVER_PLUGIN_NOTICE_SOURCE_PREFIX}${pluginId}`;
   return Object.freeze({
     version: 1,
     record(input: ServerPluginNoticeInput): void {
-      sink(pluginId, parseServerPluginNoticeInput(input));
+      sink(source, parseServerPluginNoticeInput(input));
     },
   });
 }
 
 function parseServerPluginNoticeInput(value: unknown): ServerPluginNoticeInput {
-  if (!isRecord(value)) throw new Error("Server plugin notice input must be an object");
+  if (!isPlainRecord(value)) throw new Error("Server plugin notice input must be an object");
   if ("source" in value) throw new Error("Server plugin notices cannot set their source");
   const unsupportedKey = Object.keys(value).find((key) => key !== "severity" && key !== "message" && key !== "context");
   if (unsupportedKey !== undefined) throw new Error(`Unsupported server plugin notice field: ${unsupportedKey}`);
@@ -761,7 +764,7 @@ async function runBounded<T>(
 }
 
 function cloneJsonObject(value: unknown, label: string): JsonObject {
-  if (!isRecord(value)) throw new IncompatibleServerPluginError(`${label} must be a JSON object`);
+  if (!isPlainRecord(value)) throw new IncompatibleServerPluginError(`${label} must be a JSON object`);
   return cloneJsonRecord(value, new Set<object>(), label);
 }
 
@@ -769,7 +772,9 @@ function cloneJsonRecord(value: Record<string, unknown>, ancestors: Set<object>,
   if (ancestors.has(value)) throw new IncompatibleServerPluginError(`${label} must not contain cycles`);
   ancestors.add(value);
   const output: Record<string, JsonValue> = {};
-  for (const [key, child] of Object.entries(value)) output[key] = cloneJsonValue(child, ancestors, label);
+  for (const [key, child] of Object.entries(value)) {
+    defineJsonProperty(output, key, cloneJsonValue(child, ancestors, label));
+  }
   ancestors.delete(value);
   return Object.freeze(output);
 }
@@ -787,8 +792,12 @@ function cloneJsonValue(value: unknown, ancestors: Set<object>, label: string): 
     ancestors.delete(value);
     return Object.freeze(output);
   }
-  if (isRecord(value)) return cloneJsonRecord(value, ancestors, label);
+  if (isPlainRecord(value)) return cloneJsonRecord(value, ancestors, label);
   throw new IncompatibleServerPluginError(`${label} must contain only JSON values`);
+}
+
+function defineJsonProperty(record: Record<string, JsonValue>, key: string, value: JsonValue): void {
+  Object.defineProperty(record, key, { value, enumerable: true, configurable: true, writable: true });
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -829,4 +838,10 @@ function formatUnknown(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }

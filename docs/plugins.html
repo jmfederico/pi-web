@@ -342,10 +342,11 @@ import type { PairedPluginBackendV1, PiWebServerPlugin, WorkspaceProvider } from
               <p>
                 A server activation may feature-detect <code>context.notices?.version === 1</code> and record an
                 <code>info</code>, <code>warning</code>, or <code>error</code> notice with a non-empty message and
-                optional JSON context. PI WEB validates and clones the input, derives its source from the catalog
-                plugin id, and retains ownership of publication, browser scoping, and dismissal. The reporter cannot
-                choose a source or access notice storage, routes, events, snapshots, or dismissal. Existing server
-                API v1 entries may ignore the optional capability.
+                optional JSON context. PI WEB validates and clones the input and derives the host-owned
+                <code>plugin:&lt;plugin-id&gt;</code> source from the catalog entry, keeping plugin attribution separate
+                from core-owned notice sources. PI WEB retains ownership of publication, browser scoping, and
+                dismissal. The reporter cannot choose a source or access notice storage, routes, events, snapshots,
+                or dismissal. Existing server API v1 entries may ignore the optional capability.
               </p>
               <p>
                 Browser and server module paths must use canonical package-relative form; empty or <code>.</code>
