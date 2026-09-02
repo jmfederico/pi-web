@@ -5,7 +5,8 @@ import type {
   ProviderWorkspace,
   WorkspaceProvider,
 } from "../../server-plugin-api.js";
-import type { TerminalCommandRun, WorkspaceListing } from "../../shared/apiTypes.js";
+import type { ServerNotice, TerminalCommandRun, WorkspaceListing } from "../../shared/apiTypes.js";
+import type { ServerNoticeCreator } from "../notices/serverNoticeService.js";
 import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
 import type { Project } from "../types.js";
 import type { RunTerminalCommandOptions } from "../terminals/terminalService.js";
@@ -208,6 +209,60 @@ describe("WorkspaceRemovalService", () => {
 
     expect(terminals.closedCwds).toEqual([]);
     expect(terminals.runOptions).toEqual([]);
+  });
+
+  it("records one server notice when a removal fails before command creation", async () => {
+    const records: Parameters<ServerNoticeCreator["record"]>[0][] = [];
+    const notices: ServerNoticeCreator = {
+      record: (input) => {
+        records.push(input);
+        return { id: "notice-1", createdAt: "2026-08-01T00:00:00.000Z", ...input } satisfies ServerNotice;
+      },
+    };
+    const target = hostWorkspace("target", "/linked", false);
+    const removals = new WorkspaceRemovalService(removalProvider({
+      ownerPluginId: "neutral",
+      target,
+      workspaces: [hostWorkspace("main", "/repo", true), target],
+      prepare: () => Promise.reject(new Error("workspace has unsubmitted changes")),
+    }), terminalHost(), { notices });
+
+    await expect(removals.remove(project, target.id, removalPrecondition(target))).rejects.toThrow("workspace has unsubmitted changes");
+
+    expect(records).toEqual([{
+      severity: "error",
+      message: "Workspace removal failed: workspace has unsubmitted changes",
+      source: "workspace.delete",
+      context: { projectId: project.id, workspaceId: target.id },
+    }]);
+  });
+
+  it("does not record a notice when all removal waiters cancel", async () => {
+    const records: Parameters<ServerNoticeCreator["record"]>[0][] = [];
+    const notices: ServerNoticeCreator = {
+      record: (input) => {
+        records.push(input);
+        return { id: "notice-1", createdAt: "2026-08-01T00:00:00.000Z", ...input } satisfies ServerNotice;
+      },
+    };
+    const target = hostWorkspace("target", "/linked", false);
+    let releaseResolution: ((value: WorkspaceProviderRemovalTarget) => void) | undefined;
+    const removals = new WorkspaceRemovalService({
+      resolveRemoval: () => new Promise<WorkspaceProviderRemovalTarget>((resolvePromise) => { releaseResolution = resolvePromise; }),
+    }, terminalHost(), { notices });
+    const controller = new AbortController();
+    const pending = removals.remove(project, target.id, removalPrecondition(target), controller.signal);
+
+    controller.abort(new DOMException("Request cancelled", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(records).toEqual([]);
+    releaseResolution?.({
+      ownerPluginId: "neutral",
+      target,
+      workspaces: [hostWorkspace("main", "/repo", true), target],
+      prepare: () => Promise.resolve({ title: "Too late", command: "must not run" }),
+    });
   });
 
   it("rejects a stale host-issued confirmation before provider or terminal side effects", async () => {

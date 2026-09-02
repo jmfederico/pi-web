@@ -439,6 +439,37 @@ export interface SessionRef {
   cwd: string;
 }
 
+export type ServerNoticeSeverity = "info" | "warning" | "error";
+
+/** One independent server-created application event retained until dismissal. */
+export interface ServerNotice {
+  id: string;
+  severity: ServerNoticeSeverity;
+  message: string;
+  createdAt: string;
+  source?: string;
+  context?: JsonObject;
+}
+
+/** Current undismissed server notices for one session-daemon instance. */
+export interface ServerNoticeSnapshot {
+  daemonInstanceId: string;
+  /** Monotonic only for this daemon instance's current notice projection. */
+  revision: number;
+  notices: ServerNotice[];
+}
+
+export interface ServerNoticeDismissRequest {
+  daemonInstanceId: string;
+  noticeId: string;
+}
+
+/** Full current notice projection published on the existing global realtime socket. */
+export interface ServerNoticeEvent {
+  type: "notices.updated";
+  snapshot: ServerNoticeSnapshot;
+}
+
 export const SESSION_UNREAD_LIMIT = 1_000;
 export const SESSION_UNREAD_SESSION_ID_MAX_LENGTH = 512;
 export const SESSION_UNREAD_CWD_MAX_LENGTH = 32 * 1024;
@@ -1331,5 +1362,6 @@ export type GlobalSessionEvent =
   | SessionNotificationSummaryEvent
   | SessionUnreadEvent
   | SessionStartupProgressEvent
-  | ModelScopeChangedEvent;
+  | ModelScopeChangedEvent
+  | ServerNoticeEvent;
 export type RealtimeEvent = GlobalSessionEvent | TerminalUiEvent | MachineStatusUiEvent;

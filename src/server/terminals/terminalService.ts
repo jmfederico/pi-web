@@ -2,7 +2,9 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import * as pty from "node-pty";
 import type { TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunStatus, TerminalUiEvent } from "../../shared/apiTypes.js";
+import { targetWorkspaceIdMetadataKey, workspaceDeleteOperation, workspaceDeleteOperationMetadataKey } from "../../shared/workspaceDeletion.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
+import type { ServerNoticeCreator } from "../notices/serverNoticeService.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 
 const MAX_REPLAY_BUFFER = 200_000;
@@ -40,7 +42,11 @@ export class TerminalService {
   private readonly terminals = new Map<string, TerminalRecord>();
   private readonly commandRuns = new Map<string, TerminalCommandRun>();
 
-  constructor(private readonly events?: SessionEventHub, private readonly workspaceActivity?: Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal">) {}
+  constructor(
+    private readonly events?: SessionEventHub,
+    private readonly workspaceActivity?: Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal">,
+    private readonly notices?: ServerNoticeCreator,
+  ) {}
 
   list(cwd: string): TerminalInfo[] {
     return [...this.terminals.values()]
@@ -246,6 +252,18 @@ export class TerminalService {
       completedAt: new Date().toISOString(),
     };
     this.commandRuns.set(runId, completed);
+    if (completed.status === "failed" && isWorkspaceDeletionRun(completed)) {
+      this.notices?.record({
+        severity: "error",
+        message: "Workspace removal failed. See terminal output.",
+        source: workspaceDeleteOperation,
+        context: {
+          commandRunId: completed.id,
+          projectId: completed.projectId,
+          workspaceId: completed.metadata[targetWorkspaceIdMetadataKey] ?? completed.workspaceId,
+        },
+      });
+    }
   }
 
   private require(id: string): TerminalRecord {
@@ -323,6 +341,10 @@ function matchesCommandRunFilter(run: TerminalCommandRun, filter: TerminalComman
 
 function isTerminalCommandRunFinal(status: TerminalCommandRunStatus): boolean {
   return status === "succeeded" || status === "failed";
+}
+
+function isWorkspaceDeletionRun(run: TerminalCommandRun): boolean {
+  return run.metadata[workspaceDeleteOperationMetadataKey] === workspaceDeleteOperation;
 }
 
 function copyCommandRun(run: TerminalCommandRun): TerminalCommandRun {

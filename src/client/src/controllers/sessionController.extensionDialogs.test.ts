@@ -262,7 +262,7 @@ describe("SessionController extension dialog answers", () => {
 
     await controller.answerDialog("dialog-1", true);
 
-    expect(state.error).toBe("Error: answer failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: answer failed");
     expect(state.pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-1"]);
     expect(state.closedDialogs).toEqual([]);
   });

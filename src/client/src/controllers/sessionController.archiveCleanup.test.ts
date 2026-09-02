@@ -128,7 +128,7 @@ describe("SessionController archive and cleanup", () => {
     expect(state.sessions.find((session) => session.id === oldSession.id)).toMatchObject({ archived: true });
     expect(state.sessions.find((session) => session.id === failedSession.id)?.archived).toBeUndefined();
     expect(state.selectedSession?.id).toBe(failedSession.id);
-    expect(state.error).toBe("Archive failed for 1 session: failed-session: busy");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Archive failed for 1 session: failed-session: busy");
   });
 
   it("deletes selected archived sessions in bulk and selects the next current session", async () => {
@@ -191,7 +191,7 @@ describe("SessionController archive and cleanup", () => {
     expect(deleteCalls).toEqual([{ ids: [deletedSession.id, failedSession.id], machineId: "local" }]);
     expect(state.sessions.map((session) => session.id)).toEqual([failedSession.id]);
     expect(state.selectedSession?.id).toBe(failedSession.id);
-    expect(state.error).toBe("Delete failed for 1 session: failed-archived: busy");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Delete failed for 1 session: failed-archived: busy");
   });
 
   it("applies cleanup execution results and refreshes the current workspace sessions", async () => {

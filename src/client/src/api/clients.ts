@@ -1,4 +1,4 @@
-import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, TerminalCommandRun, TerminalCommandRunFilter, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
+import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, ServerNoticeDismissRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, TerminalCommandRun, TerminalCommandRunFilter, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
 import {
@@ -41,6 +41,7 @@ import {
   parseSessionCleanupPreviewResponse,
   parseSessionInfo,
   parseSessionNotificationInboxSnapshot,
+  parseServerNoticeSnapshot,
   parseSessionStatus,
   parseSessionUnreadCatalogSnapshot,
   parseSessionStreamSnapshot,
@@ -146,6 +147,14 @@ export const piPackagesApi = {
 
 export const machineStatusApi = {
   machineStatus: (machineId = "local") => request(`${machinePrefix(machineId)}/status`, requireMachineStatusSnapshot),
+};
+
+export const noticesApi = {
+  snapshot: (machineId = "local") => request(`${machinePrefix(machineId)}/notices`, parseServerNoticeSnapshot, { cache: "no-store" }),
+  dismiss: (machineId: string, daemonInstanceId: string, noticeId: string) => {
+    const body: ServerNoticeDismissRequest = { daemonInstanceId, noticeId };
+    return request(`${machinePrefix(machineId)}/notices/dismiss`, parseServerNoticeSnapshot, { method: "POST", body: JSON.stringify(body) });
+  },
 };
 
 export const projectsApi = {
@@ -396,6 +405,7 @@ export const trustApi = {
 export const api = {
   ...piWebApi,
   ...machinesApi,
+  ...noticesApi,
   ...configApi,
   ...pluginsApi,
   ...piPackagesApi,

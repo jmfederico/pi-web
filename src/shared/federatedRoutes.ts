@@ -119,6 +119,8 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "GET", path: "/terminal-command-runs/:runId" },
   { method: "POST", path: "/terminal-command-runs/:runId/cancel" },
   { method: "GET", path: "/status" },
+  { method: "GET", path: "/notices" },
+  { method: "POST", path: "/notices/dismiss" },
   { method: "GET", path: "/sessions" },
   { method: "POST", path: "/sessions" },
   { method: "GET", path: "/sessions/unread" },

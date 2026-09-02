@@ -71,7 +71,7 @@ describe("SessionController warning dismissal", () => {
 
     await controller.dismissWarning("anthropicExtraUsage");
 
-    expect(state.error).toBe("Error: dismiss failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: dismiss failed");
     expect(state.status).toBe(withWarning);
   });
 });

@@ -50,7 +50,7 @@ describe("SessionController model catalog", () => {
     const models = await controller.listModelCatalog();
 
     expect(models).toEqual([]);
-    expect(state.error).toBe("Error: catalog failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: catalog failed");
   });
 
   it("toggles one model's membership and returns the fresh catalog", async () => {
@@ -97,7 +97,7 @@ describe("SessionController model catalog", () => {
     const models = await controller.setModelEnabled("openai", "gpt-4o", true);
 
     expect(models).toBeUndefined();
-    expect(state.error).toBe("Error: toggle failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: toggle failed");
   });
 
   it("reports scope preset failures through the application error state", async () => {
@@ -106,7 +106,7 @@ describe("SessionController model catalog", () => {
     const controller = controllerWithApi(state, (patch) => { state = { ...state, ...patch }; }, api);
 
     await expect(controller.setModelScope("all")).resolves.toBeUndefined();
-    expect(state.error).toBe("Error: scope failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: scope failed");
   });
 
   it("lists and toggles nothing without a selected session", async () => {

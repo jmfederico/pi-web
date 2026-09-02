@@ -208,7 +208,7 @@ export class AskUserCard extends LitElement {
       <section class="record-question" aria-labelledby=${this.recordQuestionHeadingId(index)}>
         <h3 id=${this.recordQuestionHeadingId(index)}>
           <span class="question-number">${String(index + 1)}.</span>
-          ${record.question.question}
+          <span>${record.question.question}</span>
         </h3>
         ${record.question.detail === undefined ? null : html`<p class="question-detail">${record.question.detail}</p>`}
         ${answer === undefined
@@ -401,6 +401,8 @@ export class AskUserCard extends LitElement {
       container-type: inline-size;
     }
     .card {
+      --question-number-column: 25px;
+      --question-copy-gap: 5px;
       border: 1px solid var(--pi-border);
       border-radius: 10px;
       background: var(--pi-surface);
@@ -437,7 +439,7 @@ export class AskUserCard extends LitElement {
       margin: 0;
       border: 0;
       border-top: 1px solid var(--pi-border-muted);
-      padding: 16px;
+      padding: 0 16px 16px;
       background: transparent;
     }
     fieldset.question:first-child { border-top: 0; }
@@ -446,23 +448,29 @@ export class AskUserCard extends LitElement {
       box-sizing: border-box;
       width: 100%;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: var(--question-number-column) minmax(0, 1fr);
       align-items: start;
-      gap: 5px;
+      gap: var(--question-copy-gap);
       color: var(--pi-text);
       padding: 0;
       font-weight: 650;
       line-height: 1.35;
     }
-    .question-number { color: var(--pi-muted); }
+    .question-number { justify-self: end; color: var(--pi-muted); }
     fieldset.question.answered .question-number { color: var(--pi-success); }
     .question-detail {
       margin: 4px 0 10px;
       color: var(--pi-muted);
       font-size: 12px;
       line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    fieldset.question > .question-detail, .record-question > .question-detail {
+      padding-inline-start: calc(var(--question-number-column) + var(--question-copy-gap));
     }
     .options { display: grid; gap: 7px; }
+    legend + .options { margin-top: 10px; }
     .option {
       display: grid;
       grid-template-columns: auto minmax(0, 1fr);
@@ -479,7 +487,7 @@ export class AskUserCard extends LitElement {
     input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
     .option-copy { min-width: 0; display: grid; gap: 2px; }
     .option-label { line-height: 1.35; }
-    .option-detail { color: var(--pi-muted); font-size: 12px; line-height: 1.35; }
+    .option-detail { color: var(--pi-muted); font-size: 12px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
     .other-answer { display: grid; gap: 5px; color: var(--pi-muted); font-size: 12px; padding: 4px 8px 4px 32px; }
     .other-answer:only-child { padding-left: 0; padding-right: 0; }
     textarea {
@@ -532,13 +540,14 @@ export class AskUserCard extends LitElement {
     .record-questions { display: grid; }
     .record-question { min-width: 0; padding: 14px 16px; }
     .record-question + .record-question { border-top: 1px solid var(--pi-border-muted); }
-    .record-question h3 { display: flex; gap: 5px; margin-bottom: 8px; font-size: 14px; line-height: 1.35; }
+    .record-question h3 { display: grid; grid-template-columns: var(--question-number-column) minmax(0, 1fr); align-items: start; gap: var(--question-copy-gap); margin-bottom: 8px; font-size: 14px; line-height: 1.35; }
     .record-answers { display: grid; gap: 4px; margin: 0; padding-left: 22px; line-height: 1.4; }
     .other-record-text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .unanswered-record { margin: 0; color: var(--pi-muted); font-style: italic; }
     .draft-note { margin: 7px 0 0; color: var(--pi-warning); font-size: 11px; }
     @container (max-width: 580px) {
-      fieldset.question, .record-question { padding: 14px 12px; }
+      fieldset.question { padding: 0 12px 14px; }
+      .record-question { padding: 14px 12px; }
       .record-summary { padding-inline: 12px; }
       .form-footer { align-items: stretch; flex-direction: column; padding: 12px; }
       .partial-confirmation { align-items: stretch; flex-direction: column; }

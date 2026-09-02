@@ -173,7 +173,7 @@ describe("SessionController stream seed + watermark reconciliation", () => {
 
     // The failure surfaces instead of being swallowed as "no partial to seed":
     // no history is applied and no watermark is recorded.
-    expect(state.error).toContain("Not Found");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("Not Found");
     expect(state.messages).toEqual([]);
 
     // The failed join still leaves the socket live (selectSession's recovery

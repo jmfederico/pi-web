@@ -1,15 +1,22 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import { effectivePiWebConfig } from "./src/config";
+import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
+import { detectPiWebInstallation } from "./src/server/piWebStatus";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
 const docsRoot = resolve("docs");
 const docsPrefix = "/site";
+const clientPublicRoot = resolve("src/client/public");
+
+// The dev deployment gets the dev brand identity even when the UI is served
+// by the Vite dev server (production serving does the same swap in Fastify).
+const deploymentFlavor = createDeploymentFlavorResolver(() => detectPiWebInstallation());
 
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -90,8 +97,81 @@ function devDocsPlugin(): Plugin {
   };
 }
 
+async function serveDevDeploymentIdentity(request: IncomingMessage, response: ServerResponse, next: MiddlewareNext): Promise<void> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    next();
+    return;
+  }
+  const requestUrl = request.url;
+  if (requestUrl === undefined) {
+    next();
+    return;
+  }
+  const { pathname } = new URL(requestUrl, "http://localhost");
+  const isManifest = pathname === DEPLOYMENT_MANIFEST_PATH;
+  if (!isManifest && !isDeploymentIdentityAssetPath(pathname)) {
+    next();
+    return;
+  }
+  if ((await deploymentFlavor()) !== "dev") {
+    next();
+    return;
+  }
+
+  const serve = async (): Promise<{ contentType: string; body: string | undefined; filePath: string | undefined } | undefined> => {
+    if (isManifest) {
+      const manifest = await readFile(join(clientPublicRoot, DEPLOYMENT_MANIFEST_PATH.slice(1)), "utf8");
+      return { contentType: DEPLOYMENT_MANIFEST_CONTENT_TYPE, body: deploymentManifestForFlavor(manifest, "dev"), filePath: undefined };
+    }
+    const asset = deploymentIdentityAssetForPath(pathname, "dev");
+    if (asset === undefined) return undefined;
+    return { contentType: asset.contentType, body: undefined, filePath: join(clientPublicRoot, asset.fileName) };
+  };
+
+  let serving: Awaited<ReturnType<typeof serve>>;
+  try {
+    serving = await serve();
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code === "ENOENT") {
+      next();
+      return;
+    }
+    next(error);
+    return;
+  }
+  if (serving === undefined) {
+    next();
+    return;
+  }
+  response.statusCode = 200;
+  response.setHeader("Content-Type", serving.contentType);
+  response.setHeader("Cache-Control", "no-store");
+  if (serving.body !== undefined) {
+    response.end(serving.body);
+    return;
+  }
+  if (serving.filePath === undefined) {
+    next();
+    return;
+  }
+  createReadStream(serving.filePath).pipe(response);
+}
+
+function devDeploymentIdentityPlugin(): Plugin {
+  return {
+    name: "pi-web-dev-deployment-identity",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        void serveDevDeploymentIdentity(request, response, next);
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [devDocsPlugin()],
+  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin()],
   root: "src/client",
   base: "./",
   build: {

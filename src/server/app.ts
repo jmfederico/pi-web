@@ -24,7 +24,10 @@ import { PiWebPluginService } from "./piWebPluginService.js";
 import { createActiveProfilePiPackageService, type PiPackageService } from "./piPackageService.js";
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
 import { createPiWebStatusCache, type PiWebStatusCache } from "./piWebStatusCache.js";
-import { getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { detectPiWebInstallation, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { createDeploymentFlavorResolver } from "./deploymentIdentity.js";
+import { registerDeploymentIdentityAssetRoutes } from "./deploymentIdentityRoutes.js";
+import type { PiWebDeploymentFlavor } from "./deploymentIdentity.js";
 import {
   ActiveAgentProfileAccessError,
   requireActiveAgentProfile,
@@ -49,6 +52,8 @@ export interface AppDependencies {
   piWebStatusCache?: PiWebStatusCache;
   config?: PiWebConfigService;
   clientDist?: string | false;
+  /** Overrides deployment-flavor detection (dev/stable asset identity) in tests. */
+  deploymentFlavor?: () => Promise<PiWebDeploymentFlavor>;
   logger?: FastifyServerOptions["logger"];
   /** Maximum accepted HTTP request body size in bytes. */
   bodyLimit?: number;
@@ -255,6 +260,14 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));
   if (clientDist !== false && existsSync(clientDist)) {
     await app.register(fastifyStatic, { root: clientDist });
+    const deploymentFlavor = deps.deploymentFlavor ?? createDeploymentFlavorResolver(
+      async () => {
+        const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
+        return detectPiWebInstallation(activeAgentProfile.status === "available" ? activeAgentProfile.profile.dir : undefined);
+      },
+      (error) => { app.log.warn({ err: error }, "failed to detect PI WEB deployment flavor"); },
+    );
+    registerDeploymentIdentityAssetRoutes(app, { clientDist, flavor: deploymentFlavor });
     app.setNotFoundHandler((_request, reply) => reply.sendFile("index.html"));
   }
 

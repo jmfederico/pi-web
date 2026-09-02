@@ -2,8 +2,10 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RealtimeEvent, TerminalInfo } from "../../shared/apiTypes.js";
+import type { RealtimeEvent, ServerNotice, TerminalInfo } from "../../shared/apiTypes.js";
+import { workspaceDeletionMetadata } from "../../shared/workspaceDeletion.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
+import type { ServerNoticeCreator } from "../notices/serverNoticeService.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { interactiveShellArgs, TerminalService } from "./terminalService";
 
@@ -191,6 +193,39 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
       await terminalExit(service, run.terminalId);
 
       expect(service.getCommandRun(run.id)).toMatchObject({ status: "failed", exitCode: 7 });
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("records one server notice for a failed workspace deletion command", async () => {
+    const records: Parameters<ServerNoticeCreator["record"]>[0][] = [];
+    const notices: ServerNoticeCreator = {
+      record: (input) => {
+        records.push(input);
+        return { id: "notice-1", createdAt: "2026-08-01T00:00:00.000Z", ...input } satisfies ServerNotice;
+      },
+    };
+    const service = new TerminalService(undefined, undefined, notices);
+    try {
+      const run = service.runCommand({
+        origin: "core",
+        projectId: "p1",
+        workspaceId: "w1",
+        cwd: process.cwd(),
+        title: "Remove workspace",
+        command: "exit 7",
+        metadata: workspaceDeletionMetadata({ id: "w1", path: process.cwd() }),
+      });
+
+      await terminalExit(service, run.terminalId);
+
+      expect(records).toEqual([{
+        severity: "error",
+        message: "Workspace removal failed. See terminal output.",
+        source: "workspace.delete",
+        context: { commandRunId: run.id, projectId: "p1", workspaceId: "w1" },
+      }]);
     } finally {
       service.dispose();
     }

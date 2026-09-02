@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiWebConfigValues, TerminalCommandRun, Workspace } from "../../../shared/apiTypes";
-import { configApi, filesApi, machinesApi, piPackagesApi, piWebApi, pluginsApi, SessionTreeForkUnavailableError, sessionsApi, terminalsApi, workspacesApi } from "./clients";
+import { configApi, filesApi, machinesApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, SessionTreeForkUnavailableError, sessionsApi, terminalsApi, workspacesApi } from "./clients";
 
 const workspace: Workspace = {
   id: "w/1",
@@ -48,6 +48,22 @@ afterEach(() => {
 });
 
 describe("machine-scoped runtime API", () => {
+  it("reads and dismisses server notices through the selected machine route", async () => {
+    const snapshot = { daemonInstanceId: "daemon-a", revision: 1, notices: [] };
+    const fetchMock = stubSequenceFetch([jsonResponse(snapshot), jsonResponse({ ...snapshot, revision: 2 })]);
+
+    await noticesApi.snapshot("remote a");
+    await noticesApi.dismiss("remote a", "daemon-a", "notice-1");
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://pi.example.test/api/machines/remote%20a/notices",
+      "https://pi.example.test/api/machines/remote%20a/notices/dismiss",
+    ]);
+    expect(fetchCall(fetchMock, 0)[1]?.cache).toBe("no-store");
+    expect(fetchCall(fetchMock, 1)[1]?.method).toBe("POST");
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ daemonInstanceId: "daemon-a", noticeId: "notice-1" });
+  });
+
   it("reads machine PI WEB status through the gateway route", async () => {
     const fetchMock = stubJsonFetch(piWebStatusResponse());
 
