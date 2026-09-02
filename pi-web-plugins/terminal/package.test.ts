@@ -105,6 +105,7 @@ describe("bundled Terminal package", () => {
         const imported: unknown = await import(moduleUrl);
         return imported;
       },
+      noticeSink: () => undefined,
     });
     try {
       const health = await runtime.inspectHealth();

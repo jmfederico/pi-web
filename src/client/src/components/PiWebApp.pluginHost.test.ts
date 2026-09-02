@@ -9,6 +9,7 @@ import type { WorkspaceFilesCapabilityV1, WorkspacePanelContext as PublicWorkspa
 import type { Machine, Project, TerminalCommandRun, Workspace } from "../api";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { initialAppState } from "../appState";
+import { browserErrorScopeKey, workspaceBrowserErrorScope } from "../browserErrors";
 import type { MachineNavigationSnapshot } from "../controllers/machineNavigationMemory";
 import { loadExternalPlugins, type PluginManifestEntry } from "../plugins/external";
 import { PluginRegistry } from "../plugins/registry";
@@ -1084,12 +1085,14 @@ describe("PiWebApp plugin host", () => {
     await callAsyncAppMethod(app, "refreshWorkspaceDeletionRuns");
 
     expect(appState(app).workspaceDeletionRuns["target-workspace"]).toEqual(completedRun);
-    expect(appState(app).error).toContain("Retrying");
+    const errorScope = workspaceBrowserErrorScope("local", project.id, "target-workspace");
+    expect(appState(app).browserErrors[browserErrorScopeKey(errorScope)]?.message).toContain("Retrying");
     expect(refreshAfterDeleted).toHaveBeenCalledOnce();
 
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => { expect(refreshAfterDeleted).toHaveBeenCalledTimes(2); });
     await vi.waitFor(() => { expect(appState(app).workspaceDeletionRuns["target-workspace"]).toBeUndefined(); });
+    expect(appState(app).browserErrors[browserErrorScopeKey(errorScope)]).toBeUndefined();
   });
 
   it("publishes a cross-workspace command terminal atomically on the target route", async () => {

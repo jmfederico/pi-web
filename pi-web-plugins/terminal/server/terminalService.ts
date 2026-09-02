@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import * as pty from "node-pty";
+import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
 
 const MAX_REPLAY_BUFFER = 200_000;
 
@@ -52,11 +53,18 @@ export interface CreateTerminalOptions extends TerminalWorkspaceScope {
   rows?: number;
 }
 
+export interface TerminalCommandFailureNotice {
+  readonly message: string;
+  readonly context: Readonly<Record<string, string>>;
+}
+
 export interface RunTerminalCommandOptions extends TerminalWorkspaceScope {
   origin: string;
   title: string;
   command: string;
   metadata?: unknown;
+  /** Private host-composition intent; never accepted from the paired browser protocol. */
+  failureNotice?: TerminalCommandFailureNotice;
   cols?: number;
   rows?: number;
 }
@@ -71,6 +79,7 @@ interface TerminalRecord extends TerminalInfo, TerminalWorkspaceScope {
   buffer: string;
   events: EventEmitter;
   commandRunId?: string;
+  failureNotice?: TerminalCommandFailureNotice;
 }
 
 export class TerminalService {
@@ -78,6 +87,8 @@ export class TerminalService {
   private readonly commandRuns = new Map<string, TerminalCommandRun>();
   private activitySink: TerminalActivitySink | undefined;
   private disposed = false;
+
+  constructor(private readonly recordNotice?: (input: ServerPluginNoticeInput) => void) {}
 
   bindActivitySink(sink: TerminalActivitySink): void {
     if (this.activitySink !== undefined) throw new Error("Terminal activity sink is already bound");
@@ -111,6 +122,10 @@ export class TerminalService {
     const terminalId = randomUUID();
     const createdAt = new Date().toISOString();
     const metadata = parseMetadata(options.metadata);
+    const failureNotice = parseFailureNotice(options.failureNotice);
+    if (failureNotice !== undefined && this.recordNotice === undefined) {
+      throw new Error("Terminal command failure notices are unavailable");
+    }
     const queued: TerminalCommandRun = {
       id: commandRunId,
       origin: options.origin,
@@ -137,6 +152,7 @@ export class TerminalService {
         ...(options.rows === undefined ? {} : { rows: options.rows }),
         shellArgs: ["-lc", commandRunShellScript(options.command)],
         commandRunId,
+        ...(failureNotice === undefined ? {} : { failureNotice }),
       });
     } catch (error) {
       this.commandRuns.delete(commandRunId);
@@ -265,7 +281,7 @@ export class TerminalService {
     for (const terminal of [...this.terminals.values()]) this.closeRecord(terminal);
   }
 
-  private createTerminal(options: CreateTerminalOptions & { id?: string; shellArgs: string[]; commandRunId?: string }): TerminalInfo {
+  private createTerminal(options: CreateTerminalOptions & { id?: string; shellArgs: string[]; commandRunId?: string; failureNotice?: TerminalCommandFailureNotice }): TerminalInfo {
     this.requireAvailable();
     validateScope(options);
     const id = options.id ?? randomUUID();
@@ -291,6 +307,7 @@ export class TerminalService {
       buffer: "",
       events: new EventEmitter(),
       ...(options.commandRunId === undefined ? {} : { commandRunId: options.commandRunId }),
+      ...(options.failureNotice === undefined ? {} : { failureNotice: options.failureNotice }),
     };
     this.attachPtyEvents(record);
     this.terminals.set(id, record);
@@ -307,14 +324,18 @@ export class TerminalService {
     record.pty.onExit(({ exitCode }) => {
       record.exited = true;
       record.exitCode = exitCode;
-      this.completeCommandRun(record.commandRunId, exitCode);
+      this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
       record.events.emit("exit", exitCode);
       const info = toInfo(record);
       this.activitySink?.updateTerminal(info);
     });
   }
 
-  private completeCommandRun(runId: string | undefined, exitCode: number | undefined): void {
+  private completeCommandRun(
+    runId: string | undefined,
+    exitCode: number | undefined,
+    failureNotice: TerminalCommandFailureNotice | undefined,
+  ): void {
     if (runId === undefined) return;
     const run = this.commandRuns.get(runId);
     if (run === undefined || isTerminalCommandRunFinal(run.status)) return;
@@ -325,6 +346,13 @@ export class TerminalService {
       completedAt: new Date().toISOString(),
     };
     this.commandRuns.set(runId, completed);
+    if (completed.status === "failed" && failureNotice !== undefined) {
+      this.recordNotice?.({
+        severity: "error",
+        message: failureNotice.message,
+        context: { ...failureNotice.context, commandRunId: completed.id },
+      });
+    }
   }
 
   private requireScoped(scope: TerminalWorkspaceScope, id: string): TerminalRecord {
@@ -426,6 +454,17 @@ function parseMetadata(value: unknown): Record<string, string> {
     if (typeof metadataValue !== "string") throw new Error("metadata values must be strings");
     return [key, metadataValue];
   }));
+}
+
+function parseFailureNotice(value: TerminalCommandFailureNotice | undefined): TerminalCommandFailureNotice | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value.message !== "string" || value.message.trim() === "") {
+    throw new Error("failureNotice message must be a non-empty string");
+  }
+  if (!isRecord(value.context) || !Object.values(value.context).every((item) => typeof item === "string")) {
+    throw new Error("failureNotice context must contain only strings");
+  }
+  return Object.freeze({ message: value.message, context: Object.freeze({ ...value.context }) });
 }
 
 function matchesCommandRunFilter(run: TerminalCommandRun, filter: TerminalCommandRunFilter): boolean {

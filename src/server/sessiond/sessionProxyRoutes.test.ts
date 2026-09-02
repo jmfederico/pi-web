@@ -61,6 +61,21 @@ describe("machine-scoped session proxy routes", () => {
     ]);
   });
 
+  it("forwards server notice snapshots and exact dismissal bodies unchanged", async () => {
+    const snapshot = await app.inject({ method: "GET", url: "/api/machines/local/notices" });
+    const dismiss = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/notices/dismiss",
+      payload: { daemonInstanceId: "daemon-test", noticeId: "notice-1" },
+    });
+
+    expect([snapshot.statusCode, dismiss.statusCode]).toEqual([200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/notices", body: undefined },
+      { method: "POST", path: "/notices/dismiss", body: { daemonInstanceId: "daemon-test", noticeId: "notice-1" } },
+    ]);
+  });
+
   it("forwards notification snapshots and dismissal bodies unchanged", async () => {
     const catalog = await app.inject({ method: "GET", url: "/api/machines/local/sessions/notifications" });
     const inbox = await app.inject({ method: "GET", url: `/api/machines/local/sessions/session-1/notifications?cwd=${encodeURIComponent("/repo")}` });

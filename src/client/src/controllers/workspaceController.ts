@@ -1,5 +1,6 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
+import { BrowserErrorReporter, projectBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
@@ -23,6 +24,7 @@ interface WorkspaceMutationGuard {
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
+  private readonly browserErrors: BrowserErrorReporter;
   private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
 
   constructor(
@@ -35,6 +37,7 @@ export class WorkspaceController {
   ) {
     this.api = deps.api ?? defaultApi;
     this.onBackgroundError = deps.onBackgroundError ?? ((message, error) => { console.warn(message, error); });
+    this.browserErrors = new BrowserErrorReporter(getState, setState);
     this.topologyRefreshes = new TrailingRefreshCoordinator(
       deps.topologyRefreshDebounceMs ?? WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS,
     );
@@ -47,13 +50,16 @@ export class WorkspaceController {
   }
 
   forgetProject(projectId: string): void {
-    this.workspaceSelection.forgetProject(machineProjectKey(selectedMachineId(this.getState()), projectId));
+    const machineId = selectedMachineId(this.getState());
+    this.browserErrors.discard(projectBrowserErrorScope(machineId, projectId));
+    this.workspaceSelection.forgetProject(machineProjectKey(machineId, projectId));
     const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
     this.setState({ workspacesByProjectId });
   }
 
   async selectProject(project: Project, target?: RouteTarget) {
     const machineId = selectedMachineId(this.getState());
+    const errorScope = projectBrowserErrorScope(machineId, project.id);
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
@@ -64,7 +70,8 @@ export class WorkspaceController {
       if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedProject?.id === project.id) this.setState({ error: String(error), isLoadingWorkspaces: false });
+      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedProject?.id === project.id) this.setState({ isLoadingWorkspaces: false });
+      this.browserErrors.report(errorScope, String(error));
     }
   }
 
@@ -76,6 +83,7 @@ export class WorkspaceController {
   }) {
     if (!workspaceMutationIsCurrent(target)) return;
     const machineId = selectedMachineId(this.getState());
+    const errorScope = workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id);
     this.workspaceSelection.rememberWorkspace({ ...workspace, projectId: machineProjectKey(machineId, workspace.projectId) });
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
@@ -94,9 +102,7 @@ export class WorkspaceController {
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (workspaceMutationIsCurrent(target)
-        && selectedMachineId(this.getState()) === machineId
-        && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
+      this.browserErrors.report(errorScope, String(error));
     }
   }
 

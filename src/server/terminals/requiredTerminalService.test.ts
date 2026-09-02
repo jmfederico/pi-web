@@ -22,18 +22,23 @@ describe("required Terminal server composition port", () => {
     const service = snapshotRequiredTerminalService({ closeForCwd, runCommand, bindActivitySink, extra: vi.fn() });
 
     service.closeForCwd("/repo");
-    expect(service.runCommand({
+    const options = {
       projectId: "project-1",
       workspaceId: "workspace-1",
       cwd: "/repo",
       origin: "core",
       title: "Remove workspace",
       command: "true",
-    })).toEqual(run);
+      failureNotice: {
+        message: "Workspace removal failed. See terminal output.",
+        context: { projectId: "project-1", targetWorkspaceId: "workspace-2" },
+      },
+    };
+    expect(service.runCommand(options)).toEqual(run);
     service.bindActivitySink({ updateTerminal: vi.fn(), removeTerminal: vi.fn() });
 
     expect(closeForCwd).toHaveBeenCalledWith("/repo");
-    expect(runCommand).toHaveBeenCalledOnce();
+    expect(runCommand).toHaveBeenCalledWith(options);
     expect(bindActivitySink).toHaveBeenCalledOnce();
     expect(service).not.toHaveProperty("legacyRoutes");
   });

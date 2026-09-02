@@ -30,6 +30,8 @@ export interface ServerPluginActivationContext {
   readonly packageRoot: string;
   readonly logger: ServerPluginLogger;
   readonly settings: JsonObject;
+  /** Record a host-attributed application notice when this capability is available. */
+  readonly notices?: ServerPluginNoticeReporterV1;
   /**
    * Execute an argv-based command through host-owned output and time bounds.
    * The caller must forward the signal for its current bounded operation.
@@ -40,6 +42,21 @@ export interface ServerPluginActivationContext {
    * out or settles; it is not a plugin-lifetime shutdown signal.
    */
   readonly signal: AbortSignal;
+}
+
+export type ServerPluginNoticeSeverity = "info" | "warning" | "error";
+
+/** Plugin-authored notice data. The host supplies the immutable source identity. */
+export interface ServerPluginNoticeInput {
+  readonly severity: ServerPluginNoticeSeverity;
+  readonly message: string;
+  readonly context?: JsonObject;
+}
+
+/** Optional versioned capability for recording host-owned server notices. */
+export interface ServerPluginNoticeReporterV1 {
+  readonly version: 1;
+  readonly record: (input: ServerPluginNoticeInput) => void;
 }
 
 /** Host-owned logger supplied through the frozen activation context. */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
+import { browserErrorScopeKey, visibleBrowserErrors, workspaceBrowserErrorScope } from "../browserErrors";
 import { isCachedNewSessionInfo, loadCachedNewSessions } from "../cachedNewSessions";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
@@ -254,12 +255,54 @@ describe("SessionController pending starts", () => {
     expect(state.sessions.map((session) => session.id)).toEqual([temporaryId]);
     expect(state.sessions[0]?.persisted).toBe(false);
     expect(state.activity).toMatchObject({ sessionId: temporaryId, phase: "error", label: "Session creation failed" });
-    expect(state.error).toContain("backend unavailable");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("backend unavailable");
 
     await controller.deleteCachedNewSession(state.sessions[0]);
 
     expect(state.sessions).toEqual([]);
     expect(state.selectedSession).toBeUndefined();
+  });
+
+  it("retains a late pending-start failure under its originating workspace", async () => {
+    const otherWorkspace = { ...workspace, id: "workspace-2", projectId: "project-2", path: "/other-repo", label: "other-repo" };
+    const startRequest = deferred<SessionInfo>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      startSession: () => startRequest.promise,
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    const start = controller.startSession();
+    const temporaryId = state.selectedSession?.id;
+    if (temporaryId === undefined) throw new Error("Expected a temporary session id");
+
+    // Workspace navigation resets the visible session list while the create is
+    // still pending. The rejection must remain attributable to workspace-1.
+    state = { ...state, selectedWorkspace: otherWorkspace, sessions: [], selectedSession: undefined };
+    startRequest.reject(new Error("late backend failure"));
+    await start;
+
+    const originScope = workspaceBrowserErrorScope("local", workspace.projectId, workspace.id);
+    expect(state.browserErrors[browserErrorScopeKey(originScope)]?.message).toBe("Failed to start session: late backend failure");
+    expect(visibleBrowserErrors(state.browserErrors, {
+      machineId: "local",
+      projectId: otherWorkspace.projectId,
+      workspaceId: otherWorkspace.id,
+    })).toEqual([]);
+    expect(visibleBrowserErrors(state.browserErrors, {
+      machineId: "local",
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+    })).toEqual([{ scope: originScope, message: "Failed to start session: late backend failure" }]);
+    expect(state.sessions).toEqual([]);
+    expect(temporaryId).toMatch(/^pending-session-/);
   });
 
   it("stops the backend session if a discarded pending start resolves later", async () => {

@@ -1,9 +1,11 @@
-import { LitElement, html } from "lit";
+import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import { configApi, effectiveWorkspaceAttachmentsFolder, effectiveWorkspaceUploadFolder, sessionsApi, workspacesApi, workspaceEffectiveAttachmentsFolder, workspaceEffectiveUploadFolder, type AskUserSubmission, type CommandOption, type ExtensionDialogAnswer, type Machine, type MachineHealth, type PiWebConfigValues, type PiWebShortcutConfig, type Project, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupRequest, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type TerminalCommandRun, type Workspace } from "../api";
 import type { AppAction } from "../actions";
 import { initialAppState, type AppState, type ModelDialogOrigin } from "../appState";
+import { browserErrorContext, browserErrorScopeKey, BrowserErrorReporter, clearBrowserError, machineBrowserErrorScope, visibleBrowserErrors, workspaceBrowserErrorScope, type BrowserError, type BrowserErrorScope } from "../browserErrors";
 import { isSessionActive } from "../../../shared/activity";
+import { workspaceDeleteOperation } from "../../../shared/workspaceDeletion";
 import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../../shared/capabilities";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { AuthController } from "../controllers/authController";
@@ -20,11 +22,14 @@ import { SessionStorageWorkspaceSelectionMemory } from "../controllers/workspace
 import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
 import { machineSessionKey } from "../machineKeys";
+import { HttpRequestError } from "../api/http";
 import { sessionCleanupRequestKey } from "../sessionCleanupUi";
 import { selectedNotificationView } from "../sessionNotifications";
 import { SessionUnreadController } from "../sessionUnread";
 import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility, toggleSessionWarnings } from "../sessionWarningVisibility";
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
+import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
+import type { ServerNotice } from "../../../shared/apiTypes";
 import type { ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding } from "../plugins/types";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemePairForTheme, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
@@ -121,6 +126,7 @@ interface SessionCleanupDialogState {
 @customElement("pi-web-app")
 export class PiWebApp extends LitElement {
   @state() private state: AppState = initialAppState();
+  private readonly browserErrors = new BrowserErrorReporter(() => this.state, (patch) => { this.setState(patch); });
   @query("chat-view") private chatView?: ChatView;
   @query("prompt-editor") private promptEditor?: PromptEditor;
   @query("app-navigation-panel") private navigationPanel?: AppNavigationPanel;
@@ -206,6 +212,14 @@ export class PiWebApp extends LitElement {
   );
   private readonly keyboard = new KeyboardShortcutDispatcher();
   private readonly realtime = new RealtimeSocket();
+  private readonly serverNotices = new ServerNoticesController({
+    onChange: (machineId) => {
+      if (selectedMachineId(this.state) === machineId) this.requestUpdate();
+    },
+    onBackgroundError: (operation, machineId, error) => {
+      console.warn(`Failed to ${operation} server notices for ${machineId}`, error);
+    },
+  });
   private readonly machineRealtimeSockets = new Map<string, RealtimeSocket>();
   private readonly machineNavigation = new SessionStorageMachineNavigationMemory();
   private readonly appShell = new AppShellController(this);
@@ -386,6 +400,7 @@ export class PiWebApp extends LitElement {
     this.auth.dispose();
     this.sessions.dispose();
     this.notifications.dispose();
+    this.serverNotices.retainMachines(new Set<string>());
     this.realtime.close();
     this.closeMachineActivitySockets();
     if (this.piWebStatusTimer !== undefined) window.clearInterval(this.piWebStatusTimer);
@@ -713,6 +728,9 @@ export class PiWebApp extends LitElement {
     this.remoteRouteRestoreInProgress = true;
     try {
       const machineId = route.machineId ?? "local";
+      const scope = machineBrowserErrorScope(machineId);
+      const errorBeforeRetry = this.state.browserErrors[browserErrorScopeKey(scope)];
+      const hasNewMachineError = () => this.state.browserErrors[browserErrorScopeKey(scope)] !== errorBeforeRetry;
       const health = await this.machines.refreshMachineHealth(machineId);
       if (!this.pendingRemoteRouteRestoreStillCurrent(route)) return;
       if (health?.ok !== true) {
@@ -722,9 +740,13 @@ export class PiWebApp extends LitElement {
 
       await this.machines.refreshMachineRuntime(machineId);
       if (!this.pendingRemoteRouteRestoreStillCurrent(route)) return;
+      if (hasNewMachineError()) {
+        this.scheduleNextRemoteRouteRestoreAttempt(route);
+        return;
+      }
       await this.projects.loadProjects();
       if (!this.pendingRemoteRouteRestoreStillCurrent(route)) return;
-      if (this.state.error !== "") {
+      if (hasNewMachineError()) {
         this.scheduleNextRemoteRouteRestoreAttempt(route);
         return;
       }
@@ -754,11 +776,12 @@ export class PiWebApp extends LitElement {
     const machineId = route.machineId ?? "local";
     const machineName = this.state.machines.find((machine) => machine.id === machineId)?.name ?? this.state.selectedMachine?.name ?? "Remote machine";
     const health = this.state.machineStatuses[machineId];
-    const detail = health?.error ?? (this.state.error === "" ? undefined : this.state.error);
+    const existing = this.state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(machineId))]?.message;
+    const detail = health?.error ?? (existing !== undefined && !existing.startsWith(`${machineName} is unavailable`) && !existing.startsWith(`${machineName} is still unavailable`) ? existing : undefined);
     const prefix = options.exhausted === true
       ? `${machineName} is still unavailable.`
       : `${machineName} is unavailable; reconnecting…`;
-    this.setState({ error: `${prefix}${detail === undefined ? "" : ` ${detail}`}` });
+    this.browserErrors.report(machineBrowserErrorScope(machineId), `${prefix}${detail === undefined ? "" : ` ${detail}`}`);
   }
 
   private pendingRemoteRouteRestoreStillCurrent(route: ParsedAppRoute): boolean {
@@ -900,7 +923,10 @@ export class PiWebApp extends LitElement {
   }
 
   private shouldPreserveUnrestoredMachineNavigation(snapshot: MachineNavigationSnapshot): boolean {
-    return snapshot.projectId !== undefined && this.state.selectedProject?.id !== snapshot.projectId && this.state.error !== "";
+    const machineError = this.state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(selectedMachineId(this.state)))];
+    return snapshot.projectId !== undefined
+      && this.state.selectedProject?.id !== snapshot.projectId
+      && (this.state.error !== "" || machineError !== undefined);
   }
 
   private openWorkspaceTool(tool: QualifiedContributionId): void {
@@ -1059,7 +1085,10 @@ export class PiWebApp extends LitElement {
     const machineId = selectedMachineId(this.state);
     this.realtime.connect(
       (event) => { this.handleRealtimeEvent(machineId, event); },
-      () => { void this.sessionUnread.refresh(machineId); },
+      () => {
+        void this.sessionUnread.refresh(machineId);
+        void this.serverNotices.refresh(machineId);
+      },
       machineId,
     );
   }
@@ -1103,6 +1132,7 @@ export class PiWebApp extends LitElement {
 
   private handleRealtimeEvent(machineId: string, event: BrowserRealtimeEvent): void {
     if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    else if (event.type === "notices.updated") this.serverNotices.applyEvent(machineId, event);
     else if (event.type === "machine.status") this.machineStatus.apply(machineId, event.status);
     else this.sessions.applyGlobalEvent(event);
   }
@@ -1297,6 +1327,7 @@ export class PiWebApp extends LitElement {
       <app-navigation-panel
         .machines=${this.state.machines}
         .selectedMachine=${this.state.selectedMachine}
+        .locationIndicator=${this.appShell.isPwaDisplayMode}
         .machineStatuses=${this.state.machineStatuses}
         .machineStatusSnapshots=${this.state.machineStatusSnapshots}
         .machinesCollapsed=${this.navigationSections.isCollapsed("machines")}
@@ -1380,8 +1411,11 @@ export class PiWebApp extends LitElement {
   private async startSessionAndOpenChat(shouldComplete: () => boolean = () => true): Promise<void> {
     // `startSession()` remains in flight until the backend session resolves;
     // open the chat as soon as the controller has inserted the temporary row.
+    const workspace = this.state.selectedWorkspace;
+    const machineId = selectedMachineId(this.state);
     const start = this.sessions.startSession().catch((error: unknown) => {
-      if (shouldComplete()) this.setState({ error: String(error) });
+      if (workspace === undefined) return;
+      this.browserErrors.report(workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id), String(error));
     });
     if (shouldComplete()) await this.focusChatComposer();
     void start;
@@ -1396,6 +1430,8 @@ export class PiWebApp extends LitElement {
   }
 
   private async focusNavigationSection(section: NavigationSection): Promise<void> {
+    // The machines section is only focusable when a machine choice exists; the
+    // single-machine bubble is not a control.
     if (section === "machines" && !shouldShowMachinesSection(this.state.machines)) {
       await this.focusNavigationSection("projects");
       return;
@@ -2030,8 +2066,10 @@ export class PiWebApp extends LitElement {
 
   private async deleteWorkspace(workspace = this.state.selectedWorkspace): Promise<void> {
     if (workspace === undefined) return;
+    const machineId = selectedMachineId(this.state);
+    const scope = workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id);
     if (!canDeleteWorkspace(workspace)) {
-      this.setState({ error: "Workspace removal is not available" });
+      this.browserErrors.report(scope, "Workspace removal is not available");
       return;
     }
     if (isWorkspaceDeletionPending(this.state, workspace)) return;
@@ -2039,7 +2077,6 @@ export class PiWebApp extends LitElement {
     const confirmation = workspaceRemovalConfirmation(workspace);
     if (removal === undefined || confirmation === undefined || !confirm(confirmation)) return;
 
-    const machineId = selectedMachineId(this.state);
     try {
       const composition = this.requiredTerminalComposition(machineId);
       const run = composition.facade.parseCommandRun(await workspacesApi.deleteWorkspace(
@@ -2053,8 +2090,30 @@ export class PiWebApp extends LitElement {
       if (selectedMachineId(this.state) !== machineId) return;
       if (commandWorkspace !== undefined) this.workspaceTerminal("core", commandWorkspace, machineId).open({ terminalId: run.terminalId });
     } catch (error) {
-      if (selectedMachineId(this.state) === machineId) this.setState({ error: `Failed to start workspace removal: ${errorMessage(error)}` });
+      await this.reportWorkspaceRemovalFailure(workspace, machineId, scope, error);
     }
+  }
+
+  private async reportWorkspaceRemovalFailure(workspace: Workspace, machineId: string, scope: BrowserErrorScope, error: unknown): Promise<void> {
+    const message = errorMessage(error);
+    // A fetch/parser failure and the gateway's explicit daemon-unavailable
+    // response have no sessiond-owned notice to rely on, so keep browser
+    // feedback even when an older notice for this workspace is still visible.
+    if (!(error instanceof HttpRequestError) || message.startsWith("Session daemon unavailable:")) {
+      this.browserErrors.report(scope, `Failed to start workspace removal: ${message}`);
+      return;
+    }
+
+    const expectedNoticeMessage = `Workspace removal failed: ${message}`;
+    const hasNotice = () => this.serverNotices.hasNotice(machineId, (notice) => {
+      const context = notice.context ?? {};
+      return notice.source === workspaceDeleteOperation
+        && notice.message === expectedNoticeMessage
+        && context["projectId"] === workspace.projectId
+        && context["workspaceId"] === workspace.id;
+    });
+    if (!hasNotice()) await this.serverNotices.refresh(machineId);
+    if (!hasNotice()) this.browserErrors.report(scope, `Failed to start workspace removal: ${message}`);
   }
 
   private async workspaceForCommandRun(run: TerminalCommandRun, machineId: string): Promise<Workspace | undefined> {
@@ -2233,6 +2292,7 @@ export class PiWebApp extends LitElement {
     if (run.status === "succeeded") {
       const retry = this.workspaceDeletionReconcileRetries.get(runKey);
       if (retry !== undefined && retry.retryAt > Date.now()) return;
+      const errorScope = workspaceBrowserErrorScope(machineId, run.projectId, workspaceId);
       try {
         await this.workspaces.refreshAfterWorkspaceDeleted(run.projectId, workspaceId, machineId, {
           signal: controller.signal,
@@ -2245,23 +2305,20 @@ export class PiWebApp extends LitElement {
           Math.min(attempt - 1, WORKSPACE_DELETION_RECONCILE_RETRY_DELAYS_MS.length - 1)
         ] ?? 10_000;
         this.workspaceDeletionReconcileRetries.set(runKey, { attempt, retryAt: Date.now() + delay });
-        this.setState({ error: `Workspace removal succeeded, but refreshing the workspace list failed: ${errorMessage(error)}. Retrying…` });
+        this.browserErrors.report(errorScope, `Workspace removal succeeded, but refreshing the workspace list failed: ${errorMessage(error)}. Retrying…`);
         return;
       }
       if (!this.workspaceDeletionRefreshIsCurrent(machineId, projectId, generation, controller)) return;
       this.workspaceDeletionReconcileRetries.delete(runKey);
       this.handledWorkspaceDeletionRunIds.add(runKey);
-      this.setState({
-        workspaceDeletionRuns: omitWorkspaceDeletionRun(this.state.workspaceDeletionRuns, workspaceId),
-        ...(this.state.error.startsWith("Workspace removal succeeded, but refreshing the workspace list failed:") ? { error: "" } : {}),
-      });
+      this.browserErrors.discard(errorScope);
+      this.setState({ workspaceDeletionRuns: omitWorkspaceDeletionRun(this.state.workspaceDeletionRuns, workspaceId) });
       return;
     }
 
     if (run.status === "failed") {
       this.workspaceDeletionReconcileRetries.delete(runKey);
       this.handledWorkspaceDeletionRunIds.add(runKey);
-      this.setState({ error: "Workspace removal failed. See terminal output." });
     }
   }
 
@@ -2299,7 +2356,7 @@ export class PiWebApp extends LitElement {
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`Action failed: ${action.id}`, error);
-        this.setState({ error: `Action failed: ${message}` });
+        this.browserErrors.report({ kind: "global" }, `Action failed: ${message}`);
       });
   }
 
@@ -2605,6 +2662,7 @@ export class PiWebApp extends LitElement {
       <app-context-bar
         .machines=${this.state.machines}
         .machine=${this.state.selectedMachine}
+        .locationIndicator=${this.appShell.isPwaDisplayMode}
         .project=${this.state.selectedProject}
         .workspace=${this.state.selectedWorkspace}
         .session=${this.state.selectedSession}
@@ -2653,6 +2711,27 @@ export class PiWebApp extends LitElement {
     return html`<app-refresh-control .onReload=${() => { this.hardReloadApp(); }}></app-refresh-control>`;
   }
 
+  private renderServerNoticeBanners(): TemplateResult | null {
+    const machineId = selectedMachineId(this.state);
+    const projection = this.serverNotices.projection(machineId);
+    const notices = projection?.status === "fresh" ? visibleServerNotices(projection.notices, browserErrorContext(this.state)) : [];
+    if (notices.length === 0) return null;
+    return html`${notices.map((notice: ServerNotice) => errorBanner(notice.message, () => {
+      void this.serverNotices.dismiss(machineId, notice.id);
+    }, notice.severity))}`;
+  }
+
+  private renderBrowserErrorBanners(state: AppState): TemplateResult | null {
+    const errors = visibleBrowserErrors(state.browserErrors, browserErrorContext(state));
+    if (errors.length === 0) return null;
+    return html`${errors.map((error) => errorBanner(error.message, () => { this.dismissBrowserError(error); }))}`;
+  }
+
+  private dismissBrowserError(error: BrowserError): void {
+    const browserErrors = clearBrowserError(this.state.browserErrors, error.scope, error.message);
+    if (browserErrors !== this.state.browserErrors) this.setState({ browserErrors });
+  }
+
   override render() {
     const state = this.state;
     const mainView = this.effectiveMainView();
@@ -2663,7 +2742,9 @@ export class PiWebApp extends LitElement {
         <main class=${mainViewClass(mainView)}>
           ${this.renderContextBar()}
           ${this.renderMobileMainTabs()}
+          ${this.renderServerNoticeBanners()}
           ${errorBanner(this.displayedError(), () => { this.dismissDisplayedError(); })}
+          ${this.renderBrowserErrorBanners(state)}
           ${deprecatedAgentInputsBanner(deprecatedAgentInputsWarnings(state.machines, state.machineRuntimes))}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
           ${state.selectedSession ? html`

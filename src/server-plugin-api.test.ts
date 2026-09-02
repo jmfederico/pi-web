@@ -18,6 +18,8 @@ import type {
   ServerPluginExecFileRequest,
   ServerPluginExecFileResult,
   ServerPluginLogger,
+  ServerPluginNoticeInput,
+  ServerPluginNoticeReporterV1,
   WorkspaceProvider,
   WorkspaceRemovalPresentation,
   WorkspaceRemovePlan,
@@ -106,6 +108,7 @@ describe("public server plugin API", () => {
       packageRoot: "/plugins/neutral-fixture",
       settings,
       signal,
+      notices: { version: 1, record() { /* no-op */ } },
       logger: {
         debug() { /* no-op */ },
         info() { /* no-op */ },
@@ -123,8 +126,10 @@ describe("public server plugin API", () => {
 
   it("keeps host inputs readonly and concrete services out of the declaration surface", async () => {
     expectTypeOf<keyof ServerPluginActivationContext>().toEqualTypeOf<
-      "apiVersion" | "pluginId" | "packageRoot" | "logger" | "settings" | "execFile" | "signal"
+      "apiVersion" | "pluginId" | "packageRoot" | "logger" | "settings" | "notices" | "execFile" | "signal"
     >();
+    expectTypeOf<keyof ServerPluginNoticeReporterV1>().toEqualTypeOf<"version" | "record">();
+    expectTypeOf<keyof ServerPluginNoticeInput>().toEqualTypeOf<"severity" | "message" | "context">();
     expectTypeOf<keyof WorkspaceProvider>().toEqualTypeOf<
       "fallback" | "probe" | "list" | "request" | "prepareRemove"
     >();
@@ -140,6 +145,8 @@ describe("public server plugin API", () => {
     >();
     expectTypeOf<ReadonlyKeys<ServerPluginActivationContext>>().toEqualTypeOf<keyof ServerPluginActivationContext>();
     expectTypeOf<ReadonlyKeys<ServerPluginLogger>>().toEqualTypeOf<keyof ServerPluginLogger>();
+    expectTypeOf<ReadonlyKeys<ServerPluginNoticeReporterV1>>().toEqualTypeOf<keyof ServerPluginNoticeReporterV1>();
+    expectTypeOf<ReadonlyKeys<ServerPluginNoticeInput>>().toEqualTypeOf<keyof ServerPluginNoticeInput>();
     expectTypeOf<ReadonlyKeys<ProjectInput>>().toEqualTypeOf<keyof ProjectInput>();
     expectTypeOf<ReadonlyKeys<ProviderRequestContext>>().toEqualTypeOf<keyof ProviderRequestContext>();
     expectTypeOf<ReadonlyKeys<ProviderRemoveContext>>().toEqualTypeOf<keyof ProviderRemoveContext>();

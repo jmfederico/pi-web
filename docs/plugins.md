@@ -701,11 +701,27 @@ interface ServerPluginActivation {
 }
 ```
 
-A server plugin may contribute at most one `workspaceProvider` and one version-1 `pairedBackend`. Either contribution is optional and independent: a paired backend does not need to own or provide workspaces. The host-owned frozen activation context contains its `pluginId`, `packageRoot`, JSON settings snapshot, scoped logger, activation `AbortSignal`, and an argv-based `execFile()` helper. `execFile()` has host-owned timeout/output bounds; pass the current callback's signal into every command request. The API exposes no shell parser, Fastify instance, route registration, concrete service, event bus, or service locator.
+A server plugin may contribute at most one `workspaceProvider` and one version-1 `pairedBackend`. Either contribution is optional and independent: a paired backend does not need to own or provide workspaces. The host-owned frozen activation context contains its `pluginId`, `packageRoot`, JSON settings snapshot, scoped logger, activation `AbortSignal`, an optional version-1 `notices` reporter, and an argv-based `execFile()` helper. `execFile()` has host-owned timeout/output bounds; pass the current callback's signal into every command request. The API exposes no shell parser, Fastify instance, route registration, concrete service, event bus, or service locator.
 
 Every activation, lifecycle, provider, request, channel `receive`, and channel `close` signal is scoped to that one invocation. The host aborts it when the invocation times out or settles. The deliberate exception is the signal passed to `openChannel()`: it remains live for that channel's finite lifetime and is aborted on disconnect, failure, expiry, or shutdown. Do not treat any other callback signal as a plugin-lifetime shutdown notification; release plugin-global resources in the explicit `stop()` callback. Deadlines remain cooperative, so plugins must observe each supplied signal.
 
 Sessiond resolves the enabled catalog once per process start. It imports, validates, activates, and starts each server entry before publishing its contributions. A failed entry is attributed and skipped without aborting ordinary activation of other plugins; a failed `start` is rolled back with `stop` when available. Successful plugins stop in reverse activation order. Sessiond inspects each optional `health()` callback once while building the startup workspace authority; an unhealthy provider is excluded, a degraded provider remains eligible, and that inspection is not polled again during the process lifetime. Server entries are never hot-reloaded or unloaded after config/package edits.
+
+### Server notice reporter
+
+Feature-detect `context.notices?.version === 1` before reporting a notice. `record()` accepts only a severity (`info`, `warning`, or `error`), a non-empty message, and optional JSON-object context:
+
+```ts
+if (context.notices?.version === 1) {
+  context.notices.record({
+    severity: "warning",
+    message: "Background synchronization failed",
+    context: { projectId: "project-id" },
+  });
+}
+```
+
+PI WEB validates and clones the input, derives `source` from the activating catalog entry's plugin id, and then owns storage, realtime publication, browser scoping, and dismissal. Plugins cannot provide or override `source`, and the reporter does not expose the notice store, snapshots, routes, event publication, or dismissal. Existing server API v1 plugins may ignore the optional capability and continue to load on hosts that provide it.
 
 ### Paired backend contract
 
@@ -1541,7 +1557,7 @@ If you are an AI agent building or editing a PI WEB plugin, follow this checklis
 6. Add actions for command-palette operations, panels for larger workspace UI, and labels for compact inline metadata.
 7. Return arrays synchronously from workspace label `items()`; return an empty array to render nothing.
 8. Use documented browser helpers first: `files`, `terminal`, `backend`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Feature-detect versioned `files`, direct `backend`, and `navigation` helpers, and never construct PI WEB backend, file-preview, federation, or absolute plugin-asset URLs.
-9. In a server entry, return only the demonstrated lifecycle callbacks, at most one `workspaceProvider`, and at most one version-1 `pairedBackend`; treat every supplied `AbortSignal` as operation-scoped and forward it to bounded work.
+9. In a server entry, return only the demonstrated lifecycle callbacks, at most one `workspaceProvider`, and at most one version-1 `pairedBackend`; feature-detect the optional version-1 `notices` reporter, and treat every supplied `AbortSignal` as operation-scoped and forward it to bounded work.
 10. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON data/metadata, and optional request/removal capabilities.
 11. Keep backend operations JSON-only and bounded. Provider requests remain owner-scoped; direct paired requests may use any host-resolved workspace. Put no secrets in `publicMetadata`, browser responses, removal wording, or diagnostics.
 12. Keep the installed package at or below 4,096 entries and 16 MiB. Use a narrow, self-contained `browserRoot` that includes every emitted runtime dependency, style, chunk, and asset without private PI WEB imports.

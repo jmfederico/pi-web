@@ -17,6 +17,8 @@ import type {
   ServerPluginExecFileResult,
   ServerPluginHealth,
   ServerPluginLogger,
+  ServerPluginNoticeInput,
+  ServerPluginNoticeReporterV1,
   WorkspaceProvider,
 } from "../../server-plugin-api.js";
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
@@ -103,6 +105,8 @@ export interface CreateServerPluginRuntimeOptions {
   importer?: ServerPluginModuleImporter;
   execFile?: ServerPluginExecFile;
   lifecycleTimeoutMs?: number;
+  /** Core-owned sink; source is always the activating catalog entry id. */
+  noticeSink?: (source: string, input: ServerPluginNoticeInput) => void;
   /** Isolated unit/package tests may opt out; production always enforces Terminal. */
   enforceRequiredTerminal?: boolean;
 }
@@ -149,6 +153,7 @@ export class ServerPluginRuntime {
     private readonly importer: ServerPluginModuleImporter,
     private readonly execFile: ServerPluginExecFile,
     private readonly lifecycleTimeoutMs: number,
+    private readonly noticeSink: ((source: string, input: ServerPluginNoticeInput) => void) | undefined,
     private readonly enforceRequiredTerminal: boolean,
   ) {}
 
@@ -163,6 +168,7 @@ export class ServerPluginRuntime {
       options.importer ?? importServerPluginModule,
       options.execFile ?? createServerPluginExecFile(),
       positiveInteger(options.lifecycleTimeoutMs, DEFAULT_LIFECYCLE_TIMEOUT_MS, "lifecycleTimeoutMs"),
+      options.noticeSink,
       options.enforceRequiredTerminal !== false && options.safeStart !== "none",
     );
     try {
@@ -301,12 +307,14 @@ export class ServerPluginRuntime {
       plugin = loadedPlugin;
       phase = "activate";
       const scopedLogger = createScopedLogger(entry.id, this.logger);
+      const notices = createScopedNoticeReporter(entry.id, this.noticeSink);
       const activationValue = await runBounded(entry.id, phase, this.lifecycleTimeoutMs, (signal) => loadedPlugin.activate(Object.freeze({
         apiVersion: 1,
         pluginId: entry.id,
         packageRoot: entry.packageRoot,
         logger: scopedLogger,
         settings,
+        ...(notices === undefined ? {} : { notices }),
         execFile: this.execFile,
         signal,
       })));
@@ -674,6 +682,42 @@ function parseHealth(value: unknown): ServerPluginHealth {
     status,
     ...(message === undefined ? {} : { message }),
     ...(clonedDetails === undefined ? {} : { details: clonedDetails }),
+  });
+}
+
+function createScopedNoticeReporter(
+  pluginId: string,
+  sink: CreateServerPluginRuntimeOptions["noticeSink"],
+): ServerPluginNoticeReporterV1 | undefined {
+  if (sink === undefined) return undefined;
+  return Object.freeze({
+    version: 1,
+    record(input: ServerPluginNoticeInput): void {
+      sink(pluginId, parseServerPluginNoticeInput(input));
+    },
+  });
+}
+
+function parseServerPluginNoticeInput(value: unknown): ServerPluginNoticeInput {
+  if (!isRecord(value)) throw new Error("Server plugin notice input must be an object");
+  if ("source" in value) throw new Error("Server plugin notices cannot set their source");
+  const unsupportedKey = Object.keys(value).find((key) => key !== "severity" && key !== "message" && key !== "context");
+  if (unsupportedKey !== undefined) throw new Error(`Unsupported server plugin notice field: ${unsupportedKey}`);
+  const severity = value["severity"];
+  if (severity !== "info" && severity !== "warning" && severity !== "error") {
+    throw new Error("Server plugin notice severity must be info, warning, or error");
+  }
+  const message = value["message"];
+  if (typeof message !== "string" || message.trim() === "") {
+    throw new Error("Server plugin notice message must be a non-empty string");
+  }
+  const context = value["context"] === undefined
+    ? undefined
+    : cloneJsonObject(value["context"], "server plugin notice context");
+  return Object.freeze({
+    severity,
+    message,
+    ...(context === undefined ? {} : { context }),
   });
 }
 

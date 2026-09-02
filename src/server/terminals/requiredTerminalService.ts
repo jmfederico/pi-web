@@ -1,5 +1,10 @@
 import type { TerminalCommandRun } from "../../shared/apiTypes.js";
 
+export interface RequiredTerminalCommandFailureNotice {
+  readonly message: string;
+  readonly context: Readonly<Record<string, string>>;
+}
+
 export interface RunTerminalCommandOptions {
   projectId: string;
   workspaceId: string;
@@ -8,6 +13,8 @@ export interface RunTerminalCommandOptions {
   title: string;
   command: string;
   metadata?: unknown;
+  /** Private host-composition intent; never part of the browser Terminal protocol. */
+  failureNotice?: RequiredTerminalCommandFailureNotice;
   cols?: number;
   rows?: number;
 }

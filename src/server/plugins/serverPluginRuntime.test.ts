@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PiWebServerPlugin, ServerPluginActivation, ServerPluginActivationContext, WorkspaceProvider } from "../../server-plugin-api.js";
+import type { PiWebServerPlugin, ServerPluginActivation, ServerPluginActivationContext, ServerPluginNoticeInput, ServerPluginNoticeReporterV1, WorkspaceProvider } from "../../server-plugin-api.js";
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
 import type { PiWebPluginCatalogEntry, PiWebPluginCatalogSnapshot } from "../piWebPluginCatalog.js";
 import {
@@ -121,6 +121,7 @@ describe("server plugin runtime", () => {
     expect(Object.isFrozen(activationContext)).toBe(true);
     expect(Object.isFrozen(activationContext.logger)).toBe(true);
     expect(Object.isFrozen(activationContext.settings)).toBe(true);
+    expect(activationContext.notices).toBeUndefined();
     expect(lifecycleSignals).toHaveLength(2);
     expect(lifecycleSignals.every((signal) => signal.aborted)).toBe(true);
 
@@ -130,6 +131,75 @@ describe("server plugin runtime", () => {
     expect(lifecycleSignals).toHaveLength(4);
     expect(new Set(lifecycleSignals).size).toBe(4);
     expect(lifecycleSignals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("provides a frozen validating notice reporter with host-derived attribution", async () => {
+    let reporter: ServerPluginNoticeReporterV1 | undefined;
+    const records: { source: string; input: ServerPluginNoticeInput }[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha"), entry("ignores-notices")])) },
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        return Promise.resolve(pluginId === "alpha"
+          ? {
+              default: plugin("Alpha", (context) => {
+                reporter = context.notices;
+                return {};
+              }),
+            }
+          : pluginModule("Ignores notices", {}));
+      },
+      logger: testLogger(),
+      noticeSink: (source, input) => { records.push({ source, input }); },
+    });
+
+    expect(runtime.healthRecords().map(({ pluginId, state }) => [pluginId, state])).toEqual([
+      ["alpha", "active"],
+      ["ignores-notices", "active"],
+    ]);
+
+    const noticeReporter = reporter;
+    if (noticeReporter === undefined) throw new Error("Expected notice reporter");
+    expect(noticeReporter.version).toBe(1);
+    expect(Object.isFrozen(noticeReporter)).toBe(true);
+    const context = { nested: { labels: ["original"] } };
+    noticeReporter.record({ severity: "warning", message: "Plugin warning", context });
+    context.nested.labels[0] = "mutated";
+
+    expect(records).toEqual([{
+      source: "alpha",
+      input: {
+        severity: "warning",
+        message: "Plugin warning",
+        context: { nested: { labels: ["original"] } },
+      },
+    }]);
+    const recorded = records[0]?.input;
+    expect(Object.isFrozen(recorded)).toBe(true);
+    expect(Object.isFrozen(recorded?.context)).toBe(true);
+    const nested = requireRecord(recorded?.context?.["nested"], "Expected recorded nested notice context");
+    const labels = nested["labels"];
+    if (!Array.isArray(labels)) throw new Error("Expected recorded notice labels");
+    expect(Object.isFrozen(nested)).toBe(true);
+    expect(Object.isFrozen(labels)).toBe(true);
+
+    expect(() => {
+      Reflect.apply(noticeReporter.record, noticeReporter, [{
+        severity: "error",
+        message: "Spoof",
+        source: "core",
+      }]);
+    }).toThrow("cannot set their source");
+    expect(() => {
+      Reflect.apply(noticeReporter.record, noticeReporter, [{
+        severity: "error",
+        message: "Invalid JSON",
+        context: { count: Number.NaN },
+      }]);
+    }).toThrow("finite JSON numbers");
+    expect(records).toHaveLength(1);
+
+    await runtime.stop();
   });
 
   it("applies disabled and both safe-start states before importing any skipped module", async () => {
@@ -572,6 +642,15 @@ function pluginIdFromUrl(url: string): string {
   const pluginId = segments.at(-2);
   if (pluginId === undefined || pluginId === "") throw new Error(`Missing plugin id in ${url}`);
   return pluginId;
+}
+
+function requireRecord(value: unknown, message: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(message);
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function testLogger() {

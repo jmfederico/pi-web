@@ -47,7 +47,11 @@ export function activateTerminalPlugin(context: ServerPluginActivationContext): 
   if (context.pluginId !== "terminal") {
     throw new Error(`Terminal server entry must activate as plugin id terminal, received ${context.pluginId}`);
   }
-  const service = new TerminalService();
+  const notices = context.notices;
+  if (notices?.version !== 1) {
+    throw new Error("Terminal server entry requires server notice reporter version 1");
+  }
+  const service = new TerminalService((input) => { notices.record(input); });
   const requiredTerminalService: RequiredTerminalServiceContribution = Object.freeze({
     closeForCwd: (cwd: string) => { service.closeForCwd(cwd); },
     runCommand: (options: RunTerminalCommandOptions) => service.runCommand(options),

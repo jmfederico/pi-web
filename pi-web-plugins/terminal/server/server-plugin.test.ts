@@ -7,6 +7,7 @@ import type {
   PairedPluginWorkspace,
   ProjectInput,
   ServerPluginActivationContext,
+  ServerPluginNoticeInput,
 } from "@jmfederico/pi-web/server-plugin-api";
 import { activateTerminalPlugin, createTerminalBackend, terminalOutputFrames } from "./server-plugin.js";
 import { TerminalService } from "./terminalService.js";
@@ -52,6 +53,62 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
       await expect(backendRequest(backend, requestContext("terminal.get-run", { runId })))
         .resolves.toEqual(expect.objectContaining({ status: "succeeded", exitCode: 0 }));
     });
+  });
+
+  it("reports a private host-composed command failure without exposing the intent on the run", async () => {
+    const records: ServerPluginNoticeInput[] = [];
+    const activation = activateTerminalPlugin(activationContext("terminal", (input) => { records.push(input); }));
+    const run = activation.requiredTerminalService.runCommand({
+      origin: "core",
+      projectId: "project-1",
+      workspaceId: "workspace-1",
+      cwd: process.cwd(),
+      title: "Remove workspace",
+      command: "exit 9",
+      failureNotice: {
+        message: "Workspace removal failed. See terminal output.",
+        context: { projectId: "project-1", targetWorkspaceId: "target-workspace" },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(records).toEqual([{
+        severity: "error",
+        message: "Workspace removal failed. See terminal output.",
+        context: {
+          commandRunId: run.id,
+          projectId: "project-1",
+          targetWorkspaceId: "target-workspace",
+        },
+      }]);
+    });
+    expect(run).not.toHaveProperty("failureNotice");
+    await activation.stop?.(new AbortController().signal);
+  });
+
+  it("does not accept a failure-notice intent from the paired browser protocol", async () => {
+    const records: ServerPluginNoticeInput[] = [];
+    const activation = activateTerminalPlugin(activationContext("terminal", (input) => { records.push(input); }));
+    const backend = activation.pairedBackend;
+    if (backend === undefined) throw new Error("Expected Terminal paired backend");
+    const runValue = await backendRequest(backend, requestContext("terminal.run", {
+      origin: "browser",
+      title: "Fail without host intent",
+      command: "exit 8",
+      failureNotice: {
+        message: "Spoofed notice",
+        context: { projectId: "project-1" },
+      },
+    }));
+    const runId = jsonString(runValue, "id");
+
+    await vi.waitFor(async () => {
+      await expect(backendRequest(backend, requestContext("terminal.get-run", { runId })))
+        .resolves.toEqual(expect.objectContaining({ status: "failed", exitCode: 8 }));
+    });
+    expect(records).toEqual([]);
+    expect(runValue).not.toHaveProperty("failureNotice");
+    await activation.stop?.(new AbortController().signal);
   });
 
   it("attaches a bounded JSON channel for input, resize, output, and cleanup", async () => {
@@ -119,6 +176,11 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
     await activation.stop?.(new AbortController().signal);
 
     expect(() => activateTerminalPlugin(activationContext("other"))).toThrow("must activate as plugin id terminal");
+
+    const withoutNotices = { ...activationContext("terminal") };
+    Reflect.deleteProperty(withoutNotices, "notices");
+    expect(() => activateTerminalPlugin(Object.freeze(withoutNotices)))
+      .toThrow("requires server notice reporter version 1");
   });
 });
 
@@ -171,7 +233,10 @@ function workspace(id: string): PairedPluginWorkspace {
   });
 }
 
-function activationContext(pluginId: string): ServerPluginActivationContext {
+function activationContext(
+  pluginId: string,
+  recordNotice: (input: ServerPluginNoticeInput) => void = () => undefined,
+): ServerPluginActivationContext {
   return Object.freeze({
     apiVersion: 1,
     pluginId,
@@ -183,6 +248,7 @@ function activationContext(pluginId: string): ServerPluginActivationContext {
       error: () => undefined,
     }),
     settings: Object.freeze({}),
+    notices: Object.freeze({ version: 1, record: recordNotice }),
     execFile: () => Promise.reject(new Error("not used")),
     signal: new AbortController().signal,
   });

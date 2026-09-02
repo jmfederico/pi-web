@@ -3,6 +3,7 @@ import type { ChatLine } from "./components/shared";
 import type { MachineStatusSnapshot } from "../../shared/machineStatus";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
+import type { BrowserErrorMap } from "./browserErrors";
 
 export interface AppState {
   machines: Machine[];
@@ -73,6 +74,9 @@ export interface AppState {
   workspaceTool: QualifiedContributionId | undefined;
   mainView: "navigation" | "chat" | QualifiedContributionId;
   piWebStatus: PiWebStatusResponse | undefined;
+  /** Browser-local failures retained by their machine/project/workspace/session owner. */
+  browserErrors: BrowserErrorMap;
+  /** Legacy global browser error surface for unmigrated global operations. */
   error: string;
 }
 
@@ -164,6 +168,7 @@ export function initialAppState(): AppState {
     workspaceTool: undefined,
     mainView: "chat",
     piWebStatus: undefined,
+    browserErrors: {},
     error: "",
   };
 }

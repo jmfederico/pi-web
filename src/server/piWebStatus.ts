@@ -229,7 +229,7 @@ function parsePackageInfo(value: unknown, path: string): PackageInfo | undefined
   return { name, version, path };
 }
 
-async function detectPiWebInstallation(agentDir?: string): Promise<PiWebInstallationInfo> {
+export async function detectPiWebInstallation(agentDir?: string): Promise<PiWebInstallationInfo> {
   const docker = detectDockerInstallation();
   if (docker !== undefined) return docker;
   const root = packageRootPath();

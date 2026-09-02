@@ -697,6 +697,26 @@ describe("buildApp remote machine proxy routes", () => {
     expect(request).toHaveBeenCalledTimes(4);
   });
 
+  it("proxies remote server notice reads and dismissals through the allowlisted routes", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((method, path, body) => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify({ method, path, body })]),
+    }));
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const snapshot = await appTestContext.app.inject({ method: "GET", url: `/api/machines/${remote.id}/notices` });
+    const dismissBody = { daemonInstanceId: "daemon-a", noticeId: "notice-1" };
+    const dismiss = await appTestContext.app.inject({ method: "POST", url: `/api/machines/${remote.id}/notices/dismiss`, payload: dismissBody });
+
+    expect([snapshot.statusCode, dismiss.statusCode]).toEqual([200, 200]);
+    expect(request).toHaveBeenNthCalledWith(1, "GET", "/api/notices", undefined);
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/api/notices/dismiss", dismissBody);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("proxies remote session queue clearing through the allowlisted route", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

@@ -1,5 +1,6 @@
 import { api as defaultApi, type AuthProviderOption, type AuthType, type OAuthFlowState, type SessionStatus } from "../api";
 import type { AuthDialogState } from "../appState";
+import { BrowserErrorReporter, machineBrowserErrorScope } from "../browserErrors";
 import { selectedMachineId, type GetState, type SetState } from "./types";
 
 type OAuthDialogState = Extract<AuthDialogState, { step: "oauth" }>;
@@ -28,6 +29,7 @@ export class AuthController {
    * Cancellation deliberately ignores this guard and stays available.
    */
   private inFlightResponse: OAuthResponseTarget | undefined;
+  private readonly browserErrors: BrowserErrorReporter;
 
   constructor(
     private readonly getState: GetState,
@@ -37,6 +39,7 @@ export class AuthController {
   ) {
     this.api = deps.api ?? defaultApi;
     this.pollIntervalMs = deps.pollIntervalMs ?? 1000;
+    this.browserErrors = new BrowserErrorReporter(getState, setState);
   }
 
   dispose(): void {
@@ -71,7 +74,7 @@ export class AuthController {
       if (!this.isCurrentAuthOperation(operationGeneration) || this.getState().authDialog !== dialog) return;
       this.setState({ authDialog: { step: "providers", mode: "login", machineId, authType, providers } });
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration) && this.getState().authDialog === dialog) this.setState({ error: String(error) });
+      if (this.isCurrentAuthOperation(operationGeneration) && this.getState().authDialog === dialog) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
@@ -95,12 +98,12 @@ export class AuthController {
       if (providerId !== undefined && providerId !== "") {
         const provider = providers.find((candidate) => candidate.id === providerId);
         if (provider !== undefined) await this.logoutProviderOnMachine(provider.id, machineId, operationGeneration);
-        else this.setState({ error: `No stored credentials for ${providerId}` });
+        else this.browserErrors.report(machineBrowserErrorScope(machineId), `No stored credentials for ${providerId}`);
         return;
       }
       this.setState({ authDialog: { step: "logout", machineId, providers } });
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration)) this.setState({ error: String(error) });
+      if (this.isCurrentAuthOperation(operationGeneration)) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
@@ -176,7 +179,7 @@ export class AuthController {
       if (!this.isCurrentAuthOperation(operationGeneration)) return;
       const exact = providers.filter((provider) => provider.id === providerId);
       if (exact.length === 0) {
-        this.setState({ error: `Auth provider not found: ${providerId}` });
+        this.browserErrors.report(machineBrowserErrorScope(machineId), `Auth provider not found: ${providerId}`);
         return;
       }
       if (exact.length > 1) {
@@ -187,7 +190,7 @@ export class AuthController {
       if (provider === undefined) return;
       if (provider.authType === "oauth" || provider.loginFlow === "interactive") await this.startLoginFlow(provider, machineId, operationGeneration);
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration)) this.setState({ error: String(error) });
+      if (this.isCurrentAuthOperation(operationGeneration)) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
@@ -199,7 +202,7 @@ export class AuthController {
       this.closeDialog();
       void this.refreshStatus(machineId);
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration)) this.setState({ error: String(error) });
+      if (this.isCurrentAuthOperation(operationGeneration)) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
@@ -224,7 +227,7 @@ export class AuthController {
       this.updateOAuthFlow(flow, machineId);
       if (flow.status === "running") this.startPolling(flow.flowId, machineId);
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration)) this.setState({ error: String(error) });
+      if (this.isCurrentAuthOperation(operationGeneration)) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
