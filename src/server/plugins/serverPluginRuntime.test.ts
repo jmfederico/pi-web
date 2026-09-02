@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiWebServerPlugin, ServerPluginActivation, ServerPluginActivationContext, ServerPluginNoticeInput, ServerPluginNoticeReporterV1, WorkspaceProvider } from "../../server-plugin-api.js";
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
+import { ServerNoticeService } from "../notices/serverNoticeService.js";
+import { ServerNoticeStore } from "../notices/serverNoticeStore.js";
 import type { PiWebPluginCatalogEntry, PiWebPluginCatalogSnapshot } from "../piWebPluginCatalog.js";
 import {
   createServerPluginRuntime as createServerPluginRuntimeWithRequiredTerminal,
@@ -250,6 +252,126 @@ describe("server plugin runtime", () => {
     expect(() => { recordContext({ count: Number.NaN }); }).toThrow("finite JSON numbers");
     expect(() => { recordContext(circular); }).toThrow("must not contain cycles");
     expect(records).toHaveLength(2);
+
+    await runtime.stop();
+  });
+
+  it("clones dense notice arrays without invoking plugin-owned array methods", async () => {
+    let reporter: ServerPluginNoticeReporterV1 | undefined;
+    const records: { source: string; input: ServerPluginNoticeInput }[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha")])) },
+      importer: () => Promise.resolve({
+        default: plugin("Alpha", (context) => {
+          reporter = context.notices;
+          return {};
+        }),
+      }),
+      logger: testLogger(),
+      noticeSink: (source, input) => { records.push({ source, input }); },
+    });
+
+    const noticeReporter = reporter;
+    if (noticeReporter === undefined) throw new Error("Expected notice reporter");
+    const ownSourceItem = { label: "own" };
+    const subclassSourceItem = { label: "subclass" };
+    const hiddenCycle: Record<string, unknown> = {};
+    hiddenCycle["self"] = hiddenCycle;
+    const ownMap = vi.fn(() => [1n, () => undefined, hiddenCycle, ownSourceItem]);
+    const ownMapArray: unknown[] = [ownSourceItem];
+    Object.defineProperty(ownMapArray, "map", {
+      value: ownMap,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+    class PluginArray extends Array<unknown> {}
+    const inheritedMap = vi.fn(() => [subclassSourceItem]);
+    Object.defineProperty(PluginArray.prototype, "map", {
+      value: inheritedMap,
+      configurable: true,
+      writable: true,
+    });
+    const subclassedArray = new PluginArray(subclassSourceItem);
+
+    Reflect.apply(noticeReporter.record, noticeReporter, [{
+      severity: "info",
+      message: "Dense arrays",
+      context: { own: ownMapArray, inherited: subclassedArray },
+    }]);
+    ownSourceItem.label = "mutated";
+    subclassSourceItem.label = "mutated";
+
+    expect(ownMap).not.toHaveBeenCalled();
+    expect(inheritedMap).not.toHaveBeenCalled();
+    expect(records).toHaveLength(1);
+    const recordedContext = requireRecord(records[0]?.input.context, "Expected recorded array context");
+    expect(recordedContext).toEqual({
+      own: [{ label: "own" }],
+      inherited: [{ label: "subclass" }],
+    });
+    for (const key of ["own", "inherited"]) {
+      const array = recordedContext[key];
+      if (!Array.isArray(array)) throw new Error(`Expected recorded ${key} array`);
+      expect(Object.getPrototypeOf(array)).toBe(Array.prototype);
+      expect(Object.isFrozen(array)).toBe(true);
+      expect(Object.isFrozen(requireRecord(array[0], `Expected recorded ${key} item`))).toBe(true);
+    }
+
+    await runtime.stop();
+  });
+
+  it("rejects malformed or sparse notice arrays before mutating notice state", async () => {
+    let reporter: ServerPluginNoticeReporterV1 | undefined;
+    const publishGlobal = vi.fn();
+    const store = new ServerNoticeStore({ daemonInstanceId: "daemon-a", createNoticeId: () => "notice-1" });
+    const notices = new ServerNoticeService(store, { publishGlobal });
+    const noticeSink = vi.fn((source: string, input: ServerPluginNoticeInput) => {
+      notices.record({ ...input, source });
+    });
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha")])) },
+      importer: () => Promise.resolve({
+        default: plugin("Alpha", (context) => {
+          reporter = context.notices;
+          return {};
+        }),
+      }),
+      logger: testLogger(),
+      noticeSink,
+    });
+
+    const noticeReporter = reporter;
+    if (noticeReporter === undefined) throw new Error("Expected notice reporter");
+    const bigintArray: unknown[] = [1n];
+    const sanitizingMap = vi.fn(() => ["sanitized"]);
+    Object.defineProperty(bigintArray, "map", { value: sanitizingMap, configurable: true, writable: true });
+    const circularArray: unknown[] = [];
+    circularArray.push(circularArray);
+    const sparseArray: unknown[] = [];
+    sparseArray.length = 2;
+    sparseArray[1] = "present";
+    const invalidCases: { context: unknown; message: string }[] = [
+      { context: { values: bigintArray }, message: "must contain only JSON values" },
+      { context: { values: [() => undefined] }, message: "must contain only JSON values" },
+      { context: { values: circularArray }, message: "must not contain cycles" },
+      { context: { values: sparseArray }, message: "must not contain sparse arrays" },
+    ];
+
+    for (const invalid of invalidCases) {
+      expect(() => {
+        Reflect.apply(noticeReporter.record, noticeReporter, [{
+          severity: "error",
+          message: "Invalid array",
+          context: invalid.context,
+        }]);
+      }).toThrow(invalid.message);
+    }
+
+    expect(sanitizingMap).not.toHaveBeenCalled();
+    expect(noticeSink).not.toHaveBeenCalled();
+    expect(publishGlobal).not.toHaveBeenCalled();
+    expect(notices.snapshot()).toEqual({ daemonInstanceId: "daemon-a", revision: 0, notices: [] });
 
     await runtime.stop();
   });

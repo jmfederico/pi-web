@@ -785,15 +785,28 @@ function cloneJsonValue(value: unknown, ancestors: Set<object>, label: string): 
     if (!Number.isFinite(value)) throw new IncompatibleServerPluginError(`${label} must contain only finite JSON numbers`);
     return value;
   }
-  if (Array.isArray(value)) {
-    if (ancestors.has(value)) throw new IncompatibleServerPluginError(`${label} must not contain cycles`);
-    ancestors.add(value);
-    const output = value.map((child) => cloneJsonValue(child, ancestors, label));
-    ancestors.delete(value);
-    return Object.freeze(output);
-  }
+  if (Array.isArray(value)) return cloneJsonArray(value, ancestors, label);
   if (isPlainRecord(value)) return cloneJsonRecord(value, ancestors, label);
   throw new IncompatibleServerPluginError(`${label} must contain only JSON values`);
+}
+
+function cloneJsonArray(value: unknown[], ancestors: Set<object>, label: string): readonly JsonValue[] {
+  if (ancestors.has(value)) throw new IncompatibleServerPluginError(`${label} must not contain cycles`);
+  ancestors.add(value);
+  try {
+    const output: JsonValue[] = [];
+    const length = value.length;
+    // Plugin-owned arrays may override iteration helpers; inspect each dense element directly.
+    for (let index = 0; index < length; index += 1) {
+      if (!Object.hasOwn(value, index)) {
+        throw new IncompatibleServerPluginError(`${label} must not contain sparse arrays`);
+      }
+      output[index] = cloneJsonValue(value[index], ancestors, label);
+    }
+    return Object.freeze(output);
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 function defineJsonProperty(record: Record<string, JsonValue>, key: string, value: JsonValue): void {
