@@ -46,6 +46,7 @@ export interface PluginActivationResult {
 
 export interface PluginContributions {
   actions?: PluginAction[];
+  headerItems?: HeaderItemContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
@@ -241,6 +242,21 @@ export interface WorkspaceLabelRenderItem {
   render: () => TemplateResult;
 }
 
+export interface HeaderItemContribution {
+  id: LocalContributionId;
+  title: string;
+  order?: number;
+  visible?: (context: PluginRuntimeContext) => boolean;
+  render: (context: PluginRuntimeContext) => TemplateResult;
+}
+
+/** One header item resolved for rendering: the runtime context is already scoped. */
+export interface HeaderItem {
+  id: QualifiedContributionId;
+  title: string;
+  render: () => TemplateResult;
+}
+
 export interface WorkspaceLabelContribution {
   id: LocalContributionId;
   order?: number;
@@ -319,6 +335,14 @@ export interface QualifiedThemePairContribution extends Omit<ThemePairContributi
   localId: LocalContributionId;
   light: QualifiedContributionId;
   dark: QualifiedContributionId;
+}
+
+export interface QualifiedHeaderItemContribution extends HeaderItemContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
+  sourcePluginId?: string;
 }
 
 export interface QualifiedWorkspaceLabelContribution extends WorkspaceLabelContribution {
