@@ -58,6 +58,31 @@ describe("PiWebApp plugin host", () => {
     expect(invalidated).toHaveBeenCalledTimes(5);
   });
 
+  it("leaves plugin-hidden projects out of the list but never the selected one", () => {
+    const chat = { id: "p-chat", name: "chat", path: "/home/node/chat", createdAt: "2026-01-01T00:00:00.000Z" };
+    const repo = { id: "p-repo", name: "repo", path: "/repo", createdAt: "2026-01-01T00:00:00.000Z" };
+    const app = createApp();
+    setAppState(app, { ...initialAppState(), projects: [chat, repo] });
+    appPluginRegistry(app).register({
+      id: "modes",
+      plugin: {
+        apiVersion: 2,
+        name: "Modes",
+        activate: () => ({ contributions: { hiddenProjects: [{ id: "roots", projects: () => ["p-chat"] }] } }),
+      },
+    });
+
+    expect(listedProjectIds(app)).toEqual(["p-repo"]);
+    // И панель обязана получить именно этот список, а не state.projects: иначе фильтр
+    // существует, но ни на что не влияет (мутация «фильтр не применяется» это показала).
+    expect(projectIdsHandedToPanel(app)).toEqual(["p-repo"]);
+
+    // Работая внутри скрытого проекта, человек обязан видеть, где он находится.
+    setAppState(app, { ...initialAppState(), projects: [chat, repo], selectedProject: chat });
+    expect(listedProjectIds(app)).toEqual(["p-chat", "p-repo"]);
+    expect(projectIdsHandedToPanel(app)).toEqual(["p-chat", "p-repo"]);
+  });
+
   it("keeps successful registrations while making an incomplete gateway load retryable", async () => {
     const app = createApp();
     stubPluginLoadRendering(app);
@@ -146,6 +171,40 @@ function createApp(): PiWebApp {
   };
   vi.stubGlobal("window", { location: { search: "" }, localStorage: storage });
   return new PiWebApp();
+}
+
+function projectId(value: object): string {
+  const id: unknown = Reflect.get(value, "id");
+  return typeof id === "string" ? id : "";
+}
+
+/* Что панель реально получает в .projects. Узкая лазейка из testing-guide: разбираем
+   TemplateResult вместо DOM — поднимать всё приложение в happy-dom ради одного свойства
+   дороже и хрупче, чем найти переданный массив проектов среди значений шаблона. */
+function projectIdsHandedToPanel(app: PiWebApp): string[] {
+  const template: unknown = callAppMethod(app, "renderNavigationPanel");
+  if (typeof template !== "object" || template === null || !("values" in template)) throw new Error("PiWebApp navigation panel template was unavailable");
+  const values: unknown = Reflect.get(template, "values");
+  if (!Array.isArray(values)) throw new Error("PiWebApp navigation panel template had no values");
+  const looksLikeProjects = (value: unknown): value is object[] =>
+    Array.isArray(value) && value.length > 0
+    && value.every((item) => typeof item === "object" && item !== null && "path" in item && "createdAt" in item && !("projectId" in item));
+  const projects = values.find(looksLikeProjects);
+  if (projects === undefined) throw new Error("PiWebApp handed the navigation panel no project list");
+  return projects.map(projectId);
+}
+
+function listedProjectIds(app: PiWebApp): string[] {
+  const listed: unknown = callAppMethod(app, "listedProjects");
+  if (!Array.isArray(listed)) throw new Error("PiWebApp listed projects were unavailable");
+  const length: unknown = Reflect.get(listed, "length");
+  const count = typeof length === "number" ? length : 0;
+  const ids: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const project: unknown = Reflect.get(listed, String(index));
+    ids.push(typeof project === "object" && project !== null ? projectId(project) : "");
+  }
+  return ids;
 }
 
 function setAppState(app: PiWebApp, state: ReturnType<typeof initialAppState>): void {

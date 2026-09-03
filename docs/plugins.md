@@ -683,6 +683,7 @@ The workspace-related contribution arrays returned by `activate()` are:
 ```ts
 interface PluginContributions {
   actions?: PluginAction[];
+  hiddenProjects?: HiddenProjectsContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
 }
@@ -908,6 +909,28 @@ interface Workspace {
 `machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
 
 Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel content when possible. Do not assume a panel owns the whole page; keep layout contained.
+
+### Hidden projects
+
+A plugin can ask the project section to leave some projects out:
+
+```js
+hiddenProjects: [
+  { id: "roots", projects: () => ["project-id-1", "project-id-2"] },
+]
+```
+
+Use it for a provider whose projects are one implied context each and that already offers its own way in. A row in the project list is then a second door into a place the plugin navigates to itself, on a panel where space is scarce.
+
+The host cannot work this out alone: it learns a project's provider only after resolving that project's workspaces, and it does that lazily for the selected project. A plugin that navigates between such projects has usually resolved them already.
+
+Notes:
+
+- The bargain is explicit — hiding a project means the plugin takes responsibility for offering the way in.
+- The **selected** project is always listed, so what you are working in never disappears from navigation.
+- `projects()` runs on every render: return a cached list, do not fetch.
+- A `projects()` that throws is logged and skipped; other plugins' hidden lists still apply.
+- Hidden projects stay reachable by URL and by adding them again, so nothing becomes permanently unreachable.
 
 ### Workspace labels
 
