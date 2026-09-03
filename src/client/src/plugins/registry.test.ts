@@ -555,6 +555,52 @@ describe("PluginRegistry", () => {
     ]);
   });
 
+  it("collects hidden project ids from every active plugin", () => {
+    const registry = new PluginRegistry();
+    registry.register({
+      id: "modes",
+      plugin: {
+        apiVersion: 2,
+        name: "Modes",
+        activate: () => ({ contributions: { hiddenProjects: [{ id: "roots", projects: () => ["p-chat", "p-cowork", ""] }] } }),
+      },
+    });
+    registry.register({
+      id: "other",
+      plugin: {
+        apiVersion: 2,
+        name: "Other",
+        activate: () => ({ contributions: { hiddenProjects: [{ id: "roots", projects: () => ["p-other"] }] } }),
+      },
+    });
+
+    expect([...registry.getHiddenProjectIds(createContext().context)].sort()).toEqual(["p-chat", "p-cowork", "p-other"]);
+  });
+
+  it("keeps the list usable when a plugin throws instead of naming projects", () => {
+    const registry = new PluginRegistry();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    registry.register({
+      id: "broken",
+      plugin: {
+        apiVersion: 2,
+        name: "Broken",
+        activate: () => ({ contributions: { hiddenProjects: [{ id: "roots", projects: () => { throw new Error("nope"); } }] } }),
+      },
+    });
+    registry.register({
+      id: "modes",
+      plugin: {
+        apiVersion: 2,
+        name: "Modes",
+        activate: () => ({ contributions: { hiddenProjects: [{ id: "roots", projects: () => ["p-chat"] }] } }),
+      },
+    });
+
+    expect([...registry.getHiddenProjectIds(createContext().context)]).toEqual(["p-chat"]);
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
   it("collects workspace label items in contribution order", () => {
     const registry = new PluginRegistry();
     const workspace = testWorkspace();
