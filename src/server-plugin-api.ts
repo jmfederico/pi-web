@@ -1,6 +1,6 @@
-import type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
+import type { JsonObject, JsonPrimitive, JsonValue, WorkspaceProviderNavigationMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
 
-export type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation };
+export type { JsonObject, JsonPrimitive, JsonValue, WorkspaceProviderNavigationMetadata, WorkspaceRemovalPresentation };
 
 type MaybePromise<T> = T | Promise<T>;
 

@@ -3,6 +3,7 @@ import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import type { WorkspaceLabelItem } from "../../plugins/types";
+import { providerNavigation } from "../../plugins/providerNavigation";
 import { selectedMachineId } from "../../controllers/types";
 import type { NavigationSection } from "../../appShell/navigationState";
 import { NAVIGATION_SECTION_ORDER } from "../../appShell/navigationState";
@@ -124,6 +125,7 @@ export class AppNavigationPanel extends LitElement {
           .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
         ></machine-list>
       ` : null}
+      ${providerNavigation(this.selectedWorkspace).hideProjects ? null : html`
       <project-list
         .projects=${this.projects}
         .selected=${this.selectedProject}
@@ -137,7 +139,9 @@ export class AppNavigationPanel extends LitElement {
         .onFocusNextSection=${() => { this.focusNextFrom("projects"); }}
         .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
       ></project-list>
+      `}
       <workspace-list
+        .sectionTitle=${providerNavigation(this.selectedWorkspace).workspacesTitle}
         .workspaces=${this.workspaces}
         .selected=${this.selectedWorkspace}
         .machineId=${this.selectedMachine?.id ?? "local"}
@@ -204,12 +208,12 @@ export class AppNavigationPanel extends LitElement {
   }
 
   private focusPreviousFrom(section: NavigationSection): void {
-    const target = previousVisibleNavigationTarget(section, this.machines);
+    const target = previousVisibleNavigationTarget(section, this.machines, providerNavigation(this.selectedWorkspace).hideProjects);
     if (target !== undefined) void this.onFocusNavigationTarget?.(target);
   }
 
   private focusNextFrom(section: NavigationSection): void {
-    void this.onFocusNavigationTarget?.(nextVisibleNavigationTarget(section, this.machines));
+    void this.onFocusNavigationTarget?.(nextVisibleNavigationTarget(section, this.machines, providerNavigation(this.selectedWorkspace).hideProjects));
   }
 
   private cancelKeyboardNavigation(): void {
@@ -240,18 +244,22 @@ export function shouldShowMachinesSection(machines: readonly Machine[]): boolean
   return machines.length > 1;
 }
 
-function previousVisibleNavigationTarget(section: NavigationSection, machines: readonly Machine[]): NavigationSection | undefined {
-  const sections = visibleNavigationSections(machines);
+function previousVisibleNavigationTarget(section: NavigationSection, machines: readonly Machine[], hideProjects: boolean): NavigationSection | undefined {
+  const sections = visibleNavigationSections(machines, hideProjects);
   return sections[sections.indexOf(section) - 1];
 }
 
-function nextVisibleNavigationTarget(section: NavigationSection, machines: readonly Machine[]): NavigationFocusTarget {
-  const sections = visibleNavigationSections(machines);
+function nextVisibleNavigationTarget(section: NavigationSection, machines: readonly Machine[], hideProjects: boolean): NavigationFocusTarget {
+  const sections = visibleNavigationSections(machines, hideProjects);
   return sections[sections.indexOf(section) + 1] ?? "chat";
 }
 
 // Only a machine choice makes the machines section navigable: with a single
 // machine the switcher is a static bubble, and compact mode has no list.
-function visibleNavigationSections(machines: readonly Machine[]): NavigationSection[] {
-  return NAVIGATION_SECTION_ORDER.filter((section) => section !== "machines" || shouldShowMachinesSection(machines));
+function visibleNavigationSections(machines: readonly Machine[], hideProjects: boolean): NavigationSection[] {
+  return NAVIGATION_SECTION_ORDER.filter((section) => {
+    if (section === "machines") return shouldShowMachinesSection(machines);
+    if (section === "projects") return !hideProjects;
+    return true;
+  });
 }

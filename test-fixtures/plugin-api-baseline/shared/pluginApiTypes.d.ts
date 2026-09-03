@@ -15,6 +15,18 @@ export interface WorkspaceProviderMetadata {
     readonly capabilities: WorkspaceProviderCapabilities;
     readonly metadata?: JsonObject;
 }
+/**
+ * Keys the host itself reads from a provider's `publicMetadata`. Everything else in
+ * provider metadata is free-form and only plugins read it; these two change the app's own
+ * navigation, so the host validates them and ignores values of the wrong shape.
+ */
+export interface WorkspaceProviderNavigationMetadata {
+    /** The provider's project is an implied single context: hide the project section while
+     *  one of its workspaces is selected. */
+    readonly hideProjects?: boolean;
+    /** Name for the workspace section, e.g. "Cases" instead of "Workspaces". */
+    readonly workspacesTitle?: string;
+}
 /** Provider-authored removal wording exposed to browser plugins. */
 export interface WorkspaceRemovalPresentation {
     readonly actionLabel: string;

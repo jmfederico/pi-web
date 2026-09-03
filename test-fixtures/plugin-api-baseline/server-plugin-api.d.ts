@@ -1,5 +1,5 @@
-import type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
-export type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation };
+import type { JsonObject, JsonPrimitive, JsonValue, WorkspaceProviderNavigationMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
+export type { JsonObject, JsonPrimitive, JsonValue, WorkspaceProviderNavigationMetadata, WorkspaceRemovalPresentation };
 type MaybePromise<T> = T | Promise<T>;
 /** Public server entry exported by a package's `serverModule`. */
 export interface PiWebServerPlugin {
