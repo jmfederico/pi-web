@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Workspace } from "../api";
+import type { Project, Workspace } from "../api";
 import { initialAppState } from "../appState";
 import { loadExternalPlugins, type PluginManifestEntry } from "../plugins/external";
 import { PluginRegistry } from "../plugins/registry";
@@ -16,6 +16,8 @@ const workspace: Workspace = {
   isMain: true,
   effectiveConfig: {},
 };
+
+const project: Project = { id: "project-1", name: "repo", path: "/repo", createdAt: "2026-01-01T00:00:00.000Z" };
 
 beforeEach(() => {
   vi.mocked(loadExternalPlugins).mockReset();
@@ -56,6 +58,36 @@ describe("PiWebApp plugin host", () => {
     await Promise.resolve();
 
     expect(invalidated).toHaveBeenCalledTimes(5);
+  });
+
+  it("selects a plugin-named project through the sidebar navigation seam", async () => {
+    const app = createApp();
+    setAppState(app, { ...initialAppState(), projects: [project] });
+    const selectProjectOnController = vi.fn(() => Promise.resolve(undefined));
+    stubWorkspaceProjectSelection(app, selectProjectOnController);
+    const navigated: [string, string][] = [];
+    stubNavigationSeam(app, navigated);
+
+    const selected = await createPluginRuntimeContext(app).selectProject(project.id, { workspaceId: workspace.id });
+
+    expect(selected).toBe(true);
+    expect(navigated).toEqual([["projects", "workspaces"]]);
+    expect(selectProjectOnController).toHaveBeenCalledWith(project, { workspaceId: workspace.id });
+  });
+
+  it("reports an unknown project id instead of selecting anything", async () => {
+    const app = createApp();
+    setAppState(app, { ...initialAppState(), projects: [project] });
+    const selectProjectOnController = vi.fn(() => Promise.resolve(undefined));
+    stubWorkspaceProjectSelection(app, selectProjectOnController);
+    const navigated: [string, string][] = [];
+    stubNavigationSeam(app, navigated);
+
+    const selected = await createPluginRuntimeContext(app).selectProject("missing-project");
+
+    expect(selected).toBe(false);
+    expect(navigated).toEqual([]);
+    expect(selectProjectOnController).not.toHaveBeenCalled();
   });
 
   it("keeps successful registrations while making an incomplete gateway load retryable", async () => {
@@ -177,6 +209,23 @@ async function ensureGatewayPluginsLoaded(app: PiWebApp): Promise<void> {
 function isPluginRuntimeContext(value: unknown): value is PluginRuntimeContext {
   if (typeof value !== "object" || value === null) return false;
   return "refreshWorkspacePanels" in value && typeof value.refreshWorkspacePanels === "function";
+}
+
+/* The seam under test is which navigation path a plugin selection takes, so the
+   controller call and the section advance are stubbed rather than the network: a real
+   selectProject would fetch workspaces and a real navigation advance would need a DOM. */
+function stubWorkspaceProjectSelection(app: PiWebApp, selectProject: (project: Project, target?: { workspaceId?: string }) => Promise<void>): void {
+  const workspaces: unknown = Reflect.get(app, "workspaces");
+  if (typeof workspaces !== "object" || workspaces === null) throw new Error("PiWebApp workspace controller was unavailable");
+  if (!Reflect.set(workspaces, "selectProject", selectProject)) throw new Error("Could not stub workspace project selection");
+}
+
+function stubNavigationSeam(app: PiWebApp, navigated: [string, string][]): void {
+  const seam = async (section: string, nextTarget: string, action: () => Promise<void>): Promise<void> => {
+    navigated.push([section, nextTarget]);
+    await action();
+  };
+  if (!Reflect.set(app, "selectNavigationItem", seam)) throw new Error("Could not stub navigation selection");
 }
 
 function stubPluginLoadRendering(app: PiWebApp): void {

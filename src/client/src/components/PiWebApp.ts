@@ -1321,6 +1321,16 @@ export class PiWebApp extends LitElement {
     this.navigationSections.open(section, () => { this.selectMainView("navigation"); });
   }
 
+  /* Plugin-facing project selection. Routed through the same navigation seam as a
+     sidebar click so focus advance, chat scroll transition, and URL update stay
+     identical; plugins have project ids but no way to reach the project objects. */
+  private async selectProjectById(projectId: string, options?: { workspaceId?: string }): Promise<boolean> {
+    const project = this.state.projects.find((candidate) => candidate.id === projectId);
+    if (project === undefined) return false;
+    await this.selectNavigationItem("projects", "workspaces", () => this.workspaces.selectProject(project, { workspaceId: options?.workspaceId }));
+    return true;
+  }
+
   private async selectNavigationItem(section: NavigationSection, nextTarget: NavigationFocusTarget, action: () => Promise<void>): Promise<void> {
     const seq = ++this.navigationSelectionSeq;
     const isCurrentSelection = () => seq === this.navigationSelectionSeq;
@@ -1771,6 +1781,7 @@ export class PiWebApp extends LitElement {
       openThemePicker: () => { this.openThemeDialog(); },
       openModelPicker: () => this.openModelDialog(),
       openThinkingLevelPicker: () => this.openThinkingDialog(),
+      selectProject: (projectId, options) => this.selectProjectById(projectId, options),
       selectMainView: (view) => { this.selectMainView(view); },
       selectWorkspaceTool: (tool) => { this.openWorkspaceTool(tool); },
       openTerminal: (options) => { this.openTerminal(options); },
