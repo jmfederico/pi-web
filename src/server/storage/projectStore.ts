@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { randomUUID } from "node:crypto";
@@ -91,17 +91,6 @@ export class ProjectStore {
 
   private async write(data: ProjectFile): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    // The registry is the link from its durable project ids to persisted
-    // workspaces and sessions. Replacing it atomically prevents an interrupted
-    // container shutdown from leaving a truncated file that makes every project
-    // disappear on the next start.
-    const temporaryPath = `${this.filePath}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-      await rename(temporaryPath, this.filePath);
-    } catch (error) {
-      await rm(temporaryPath, { force: true }).catch(() => undefined);
-      throw error;
-    }
+    await writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   }
 }
