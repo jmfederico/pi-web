@@ -33,6 +33,7 @@ import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
 import { SessionCommandService } from "./sessionCommandService.js";
+import { ResponseTokenRateTracker } from "./responseTokenRate.js";
 import { projectSessionTree, type ProjectableSessionTreeNode } from "./sessionTreeProjection.js";
 import { SessionArchiveStore, type ArchivedSessionRecord, type ArchiveSessionInput } from "./sessionArchiveStore.js";
 import { findArchiveCandidateByIdOrPrefix, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
@@ -1132,6 +1133,7 @@ export class PiSessionService implements SessionRouteService {
    */
   private readonly startupSessions = new Map<string, PiAgentSession>();
   private readonly activities = new Map<string, { phase: "active" | "idle" | "error"; label: string; detail?: string; at: string }>();
+  private readonly responseTokenRates = new ResponseTokenRateTracker<PiAgentSession>();
   private readonly heartbeat: NodeJS.Timeout;
   private readonly commandService: SessionCommandService<PiAgentSession>;
   /** Runtime-identity gate held while Pi may await abandoned-branch summarization. */
@@ -3741,6 +3743,7 @@ export class PiSessionService implements SessionRouteService {
       this.events.publish(session.sessionId, toClientEvent(event, session.thinkingLevel));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
+      this.observeResponseTokenRate(session, event);
       if (eventType === "agent_end") this.abortRunScopedExtensionDialogs(session.sessionId);
       if (eventType === "compaction_end") this.scheduleCompactionQueueDrain(session.sessionId);
       if (eventType === "agent_start" || eventType === "agent_end") this.scheduleCompactionQueueDrain(session.sessionId);
@@ -4135,6 +4138,10 @@ export class PiSessionService implements SessionRouteService {
 
   private statusFromSession(session: PiAgentSession, messageCount = session.messages.length): ClientSessionStatus {
     const stats = session.getSessionStats();
+    // Heartbeats keep publishing idle status after the agent ends. Only sample
+    // while streaming; agent_end captures the final value and freezes it.
+    if (session.isStreaming) this.responseTokenRates.sample(session, { outputTokens: stats.tokens.output, at: this.now() });
+    const outputTokensPerSecond = this.responseTokenRates.rate(session);
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
     const warnings = this.warningsForSession(session);
@@ -4152,12 +4159,30 @@ export class PiSessionService implements SessionRouteService {
       queuedMessages: queuedMessagesFromSession(session, this.compactionQueuedMessages(session.sessionId)),
       messageCount,
       tokens: stats.tokens,
+      ...(outputTokensPerSecond === undefined ? {} : { outputTokensPerSecond }),
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingAsk === undefined ? {} : { pendingAsk }),
       ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),
     };
+  }
+
+  private observeResponseTokenRate(session: PiAgentSession, event: unknown): void {
+    const eventType = getString(event, "type");
+    if (eventType === "agent_start") {
+      this.responseTokenRates.begin(session, session.getSessionStats().tokens.output);
+      return;
+    }
+    const assistantMessageEvent = getProperty(event, "assistantMessageEvent");
+    const assistantEventType = getString(assistantMessageEvent, "type");
+    if (eventType === "message_update" && (assistantEventType === "text_delta" || assistantEventType === "thinking_delta") && !this.responseTokenRates.hasStarted(session)) {
+      // Standard generation throughput starts at the first generated token,
+      // whether it is visible text or model reasoning.
+      this.responseTokenRates.startTiming(session, this.now());
+      return;
+    }
+    if (eventType === "agent_end") this.responseTokenRates.sample(session, { outputTokens: session.getSessionStats().tokens.output, at: this.now() });
   }
 
   /**

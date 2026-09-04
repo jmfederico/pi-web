@@ -544,6 +544,13 @@ function optionalNonEmptyString(record: Record<string, unknown>, key: string): s
   return value;
 }
 
+function optionalNonNegativeNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = optionalNumber(record, key);
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value) || value < 0) throw new Error(`Expected non-negative number field: ${key}`);
+  return value;
+}
+
 export function parseSessionStatus(value: unknown): SessionStatus {
   const record = requireRecord(value);
   return {
@@ -556,6 +563,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     queuedMessages: record["queuedMessages"] === undefined ? [] : arrayOf(parseQueuedSessionMessage)(record["queuedMessages"]),
     ...optionalField("messageCount", optionalNumber(record, "messageCount")),
     tokens: parseTokens(record["tokens"]),
+    ...optionalField("outputTokensPerSecond", optionalNonNegativeNumber(record, "outputTokensPerSecond")),
     cost: requireNumber(record, "cost"),
     ...optionalModel(record["model"]),
     ...optionalContextUsage(record["contextUsage"]),
