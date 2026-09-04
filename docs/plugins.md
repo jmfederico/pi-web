@@ -218,7 +218,7 @@ When [machine federation](https://pi-web.dev/machines) is enabled, PI WEB loads 
 - `context.backend.request()` is routed through the gateway to the current workspace owner on that machine;
 - a server-backed browser module is published only when its package source, scope, settings fingerprint, browser revision, and backend revision match the active sessiond snapshot and the backend is not unhealthy;
 - if gateway and remote packages share an original id, `machineSpecific` controls whether the portable gateway copy is reused or the selected machine's own copy is required;
-- remote theme contributions are ignored for now because themes are app-wide.
+- remote theme and style contributions are ignored for now because they are app-wide.
 
 The remote manifest and backend bridge use a versioned lifecycle contract. A future/unsupported lifecycle version, a missing backend route, or a mismatched frontend/backend revision produces an explicit compatibility error; PI WEB does not silently run an unpaired server-backed UI.
 
@@ -685,6 +685,7 @@ interface PluginContributions {
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  styles?: string[];
 }
 ```
 
@@ -1021,6 +1022,40 @@ export default {
   }),
 };
 ```
+
+### Styles
+
+`styles` is an array of raw CSS strings that PI WEB applies across the whole UI. Use it to restyle the host's own components — navigation, headers, the session list, chat — without patching `attachShadow` or hand-injecting stylesheets into shadow roots.
+
+```js
+const NAV_CSS = `
+  app-navigation-panel .action-row {
+    border: none;
+    border-radius: 8px;
+  }
+  app-navigation-panel .action-row:hover {
+    background: var(--pi-surface-hover);
+  }
+`;
+
+export default {
+  apiVersion: 2,
+  name: "Flat Navigation",
+  activate: () => ({
+    contributions: {
+      styles: [NAV_CSS],
+    },
+  }),
+};
+```
+
+How it works and what to keep in mind:
+
+- PI WEB adopts your CSS into the document **and into every shadow root** it creates, so ordinary rules reach component internals that a document-level `<style>` cannot. This happens as each shadow root mounts, so there is no flash of the default styling first.
+- Selectors are evaluated inside each shadow root independently. Write selectors that target the internal tags/classes of whichever components you mean (for example `app-navigation-panel`, `chat-view`); rules that match nothing in a given root are simply inert there.
+- Those internal tag and class names are **not a stable public contract** — they can change between releases. Prefer theme tokens (`--pi-*`) for colors so your styles follow the active light/dark theme, and keep selectors as shallow as you can.
+- Styles are collected only from gateway (local) plugins, like [theme contributions](#trust-model). Remote-machine plugins cannot restyle the app-wide UI.
+- To change colors globally, a [theme](https://pi-web.dev/themes) contribution is usually the better fit; reach for `styles` when you need to change layout, spacing, or structure that tokens do not cover.
 
 ## Calling paired workspace backends
 

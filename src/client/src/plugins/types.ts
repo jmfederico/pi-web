@@ -50,6 +50,18 @@ export interface PluginContributions {
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
+  /**
+   * Raw CSS adopted into the document and every shadow root the app creates,
+   * letting a plugin restyle the host's own components. Collected only from
+   * gateway (local) plugins, like theme contributions. See {@link PluginStyleEntry}.
+   */
+  styles?: string[];
+}
+
+/** A single `styles` contribution, tagged with the plugin that supplied it. */
+export interface PluginStyleEntry {
+  pluginId: PluginId;
+  css: string;
 }
 
 export interface PluginMachine {

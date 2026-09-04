@@ -39,6 +39,7 @@ import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
 import { PluginRegistry, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope } from "../plugins/registry";
 import { createPluginWorkspaceBackend } from "../plugins/workspaceBackend";
+import { composePluginStyles, setPluginStyles } from "../plugins/pluginStyles";
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { queryNamespace, readNamespacedString, setNamespacedQueryKey } from "../namespacedQueryArgs";
 import { AppShellController } from "../appShell/appShellController";
@@ -359,6 +360,7 @@ export class PiWebApp extends LitElement {
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
     this.systemLightThemeMedia?.addEventListener("change", this.onSystemLightThemeChange);
     this.applyPreferredTheme(false);
+    this.applyPluginStyles();
     this.connectRealtime();
     this.syncSessionUnreadMachines();
     this.piWebStatusTimer = window.setInterval(() => { this.schedulePiWebStatusRefresh(); }, PI_WEB_STATUS_REFRESH_MS);
@@ -1716,6 +1718,7 @@ export class PiWebApp extends LitElement {
         }
       }
       this.applyPreferredTheme(false);
+      this.applyPluginStyles();
       this.requestUpdate();
       return complete;
     } catch (error) {
@@ -2069,6 +2072,10 @@ export class PiWebApp extends LitElement {
     this.activeThemeId = theme.id;
     applyPiWebTheme(theme);
     if (persist) writeStoredThemePreference(this.themePreference);
+  }
+
+  private applyPluginStyles(): void {
+    setPluginStyles(composePluginStyles(this.plugins.getStyles()));
   }
 
   private resolveCurrentThemePreference(themes = this.plugins.getThemes()): ThemePreferenceResolution {
