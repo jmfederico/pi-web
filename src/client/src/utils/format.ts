@@ -7,6 +7,13 @@ export function formatTokenCount(count: number): string {
   return `${String(Math.round(count / 1_000_000))}M`;
 }
 
+/** Compact output-token throughput for the status footer. */
+export function formatTokensPerSecond(tokensPerSecond: number): string {
+  if (!Number.isFinite(tokensPerSecond) || tokensPerSecond < 0) return "0 tok/s";
+  if (tokensPerSecond < 10) return `${tokensPerSecond.toFixed(1)} tok/s`;
+  return `${formatTokenCount(tokensPerSecond)} tok/s`;
+}
+
 /** Human-readable byte size shared by every workspace file surface. */
 export function formatFileSize(size: number): string {
   if (!Number.isFinite(size) || size < 0) return "0 B";

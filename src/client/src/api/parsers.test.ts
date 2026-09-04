@@ -572,6 +572,7 @@ describe("API parsers", () => {
       queuedMessages: [{ kind: "steer", text: "adjust this" }, { kind: "followUp", text: "then do that" }],
       messageCount: 7,
       tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+      outputTokensPerSecond: 12.5,
       cost: 0.12,
       model: { provider: "p", id: "m", contextWindow: 100, reasoning: { effort: "low" } },
       contextUsage: { tokens: null, contextWindow: 100, percent: 0.5 },
@@ -586,11 +587,26 @@ describe("API parsers", () => {
       queuedMessages: [{ kind: "steer", text: "adjust this" }, { kind: "followUp", text: "then do that" }],
       messageCount: 7,
       tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, total: 10 },
+      outputTokensPerSecond: 12.5,
       cost: 0.12,
       model: { provider: "p", id: "m", contextWindow: 100, reasoning: { effort: "low" } },
       contextUsage: { tokens: null, contextWindow: 100, percent: 0.5 },
       thinkingLevel: "medium",
     });
+  });
+
+  it("rejects an invalid output token rate", () => {
+    expect(() => parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: false,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      outputTokensPerSecond: -1,
+      cost: 0,
+    })).toThrow("Expected non-negative number field: outputTokensPerSecond");
   });
 
   it("parses live session warnings including optional source and path", () => {

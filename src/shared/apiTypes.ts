@@ -1132,6 +1132,8 @@ export interface SessionStatus {
   queuedMessages: QueuedSessionMessage[];
   messageCount?: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  /** Generated output-token throughput for the current or most recent agent response. */
+  outputTokensPerSecond?: number;
   cost: number;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   /**
