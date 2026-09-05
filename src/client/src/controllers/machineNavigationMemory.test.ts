@@ -68,6 +68,7 @@ describe("SessionStorageMachineNavigationMemory", () => {
         machineId: "local",
         surface: {
           selectedFilePath: "legacy.ts",
+          selectedTerminalId: "terminal-1",
           contributionQuery: {
             "core.workspace.files--file": "canonical.ts",
             "git.workspace.git--diff": ["a", "b"],
@@ -79,6 +80,7 @@ describe("SessionStorageMachineNavigationMemory", () => {
 
     expect(new SessionStorageMachineNavigationMemory(storage).latest("local")?.surface.contributionQuery).toEqual({
       "core.workspace.files--file": "canonical.ts",
+      "core.workspace.terminal--terminal": "terminal-1",
       "git.workspace.git--diff": ["a", "b"],
     });
   });
@@ -110,11 +112,11 @@ describe("machineNavigationSnapshotFromState", () => {
       selectedSession: session("session"),
       workspaceTool: "core:workspace.files",
       mainView: "core:workspace.files",
-      selectedTerminalId: "terminal-1",
     };
 
     expect(machineNavigationSnapshotFromState(state, {
       "core.workspace.files--file": "src/main.ts",
+      "core.workspace.terminal--terminal": "terminal-1",
       "git.workspace.git--diff": ["README.md", "package.json"],
     })).toEqual({
       machineId: "remote",
@@ -126,22 +128,17 @@ describe("machineNavigationSnapshotFromState", () => {
       surface: {
         contributionQuery: {
           "core.workspace.files--file": "src/main.ts",
+          "core.workspace.terminal--terminal": "terminal-1",
           "git.workspace.git--diff": ["README.md", "package.json"],
         },
-        selectedTerminalId: "terminal-1",
       },
     });
   });
 
   it("does not carry workspace surface without a selected workspace", () => {
-    const state: AppState = {
-      ...initialAppState(),
-      selectedTerminalId: "terminal-1",
-    };
+    const state: AppState = initialAppState();
 
-    expect(machineNavigationSnapshotFromState(state, { "core.workspace.files--file": "src/main.ts" }).surface).toEqual({
-      selectedTerminalId: undefined,
-    });
+    expect(machineNavigationSnapshotFromState(state, { "core.workspace.files--file": "src/main.ts" }).surface).toEqual({});
   });
 });
 

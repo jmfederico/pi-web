@@ -988,7 +988,8 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 server-only, and dual-entry plugins. It does not install packages. Plugins default to enabled;
                 <code>plugins.&lt;id&gt;.enabled: false</code> hides a browser-only entry on the next page load. For a
                 server-backed entry, desired disablement takes effect on the next sessiond start, and its paired browser
-                entry continues to follow the still-active backend until then.
+                entry continues to follow the still-active backend until then. The bundled <code>terminal</code> plugin
+                is required during normal startup; ordinary config cannot disable it, and Settings renders it non-editable.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -1056,10 +1057,12 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
 <span class="prompt">$</span> pi-web plugins safe-start clear --restart</code></pre>
               </div>
               <p>
-                <code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config.
-                Safe-start state lives at <code>serverPlugins.safeStart</code>. <code>bundled-only</code> filters external
-                server packages before discovery/import. <code>none</code> imports no server plugins and retains the
-                kernel folder workspace. <code>clear</code> restores ordinary configured discovery on the next start. An
+                <code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config,
+                but rejects required <code>terminal</code> with no-plugin safe-start recovery guidance. Safe-start state
+                lives at <code>serverPlugins.safeStart</code>. <code>bundled-only</code> filters external server packages
+                before discovery/import while still requiring bundled Terminal. <code>none</code> imports no server
+                plugins and retains the kernel folder and diagnosis/Settings surfaces without Terminal or Terminal-backed
+                commands. <code>clear</code> restores ordinary configured discovery on the next start. An
                 unsupported safe-start shape or value in otherwise valid JSON fails closed as effective <code>none</code>;
                 use <code>show</code>, then <code>set</code> or <code>clear</code>, to repair it offline.
               </p>

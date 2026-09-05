@@ -2,9 +2,10 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildTerminalPackage } from "../../../scripts/build-plugins.mjs";
 
 type FixtureChild = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -82,6 +83,11 @@ describe("sessiond persisted server plugin recovery", () => {
   // Plugin stop on SIGTERM requires POSIX signal delivery; Windows
   // force-terminates the child without running shutdown handlers.
   it.skipIf(process.platform === "win32")("stops activated plugins when SIGTERM arrives during sessiond startup", async () => {
+    // This source-level child bypasses start:sessiond's build:plugins prerequisite.
+    const terminalPackageRoot = resolve("dist/pi-web-plugins/terminal");
+    tempRoots.push(terminalPackageRoot);
+    await buildTerminalPackage(resolve("pi-web-plugins/terminal"), terminalPackageRoot);
+
     const root = await mkdtemp(join(tmpdir(), "pi-web-sessiond-plugin-startup-signal-"));
     tempRoots.push(root);
     const configPath = join(root, "config.json");

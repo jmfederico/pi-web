@@ -1,0 +1,16 @@
+{
+  "name": "@pi-web/terminal-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "terminal",
+        "browserRoot": "browser",
+        "module": "browser/pi-web-plugin.js",
+        "serverModule": "server-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

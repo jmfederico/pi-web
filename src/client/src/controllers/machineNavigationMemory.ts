@@ -5,10 +5,10 @@ import type { AppRoute } from "../route";
 import { browserSessionStorage, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
 
 const LEGACY_FILES_QUERY_PARAMETER = "core.workspace.files--file";
+const LEGACY_TERMINAL_QUERY_PARAMETER = "core.workspace.terminal--terminal";
 
 export interface WorkspaceRouteSurface {
   contributionQuery?: ContributionQueryRecord | undefined;
-  selectedTerminalId?: string | undefined;
 }
 
 export interface MachineNavigationSnapshot {
@@ -86,7 +86,6 @@ export function machineNavigationSnapshotFromState(
     view: state.mainView,
     surface: {
       ...(Object.keys(boundedQuery).length === 0 ? {} : { contributionQuery: boundedQuery }),
-      selectedTerminalId: hasWorkspace ? state.selectedTerminalId : undefined,
     },
   };
 }
@@ -134,13 +133,14 @@ function parseWorkspaceRouteSurface(value: unknown): WorkspaceRouteSurface {
   if (!isRecord(value)) return {};
   const storedContributionQuery = isRecord(value["contributionQuery"]) ? value["contributionQuery"] : {};
   const legacySelectedFilePath = optionalStringField(value, "selectedFilePath");
+  const legacySelectedTerminalId = optionalStringField(value, "selectedTerminalId");
   const contributionQuery = normalizeContributionQueryRecord({
     ...(legacySelectedFilePath === undefined ? {} : { [LEGACY_FILES_QUERY_PARAMETER]: legacySelectedFilePath }),
+    ...(legacySelectedTerminalId === undefined ? {} : { [LEGACY_TERMINAL_QUERY_PARAMETER]: legacySelectedTerminalId }),
     ...storedContributionQuery,
   });
   return {
     ...(Object.keys(contributionQuery).length === 0 ? {} : { contributionQuery }),
-    selectedTerminalId: optionalStringField(value, "selectedTerminalId"),
   };
 }
 

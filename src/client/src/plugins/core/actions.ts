@@ -102,14 +102,6 @@ export function createCoreActions(): PluginAction[] {
       run: (context) => { context.focusPrompt(); },
     },
     {
-      id: "view.terminal",
-      title: "Go to Terminal",
-      shortcut: "mod+4",
-      group: "Navigation",
-      enabled: hasWorkspace,
-      run: (context) => { context.selectMainView("core:workspace.terminal"); },
-    },
-    {
       id: "workspace.delete",
       title: "Remove Workspace",
       description: "Run the owning provider's workspace removal operation",

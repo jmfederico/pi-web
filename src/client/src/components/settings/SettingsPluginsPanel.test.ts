@@ -93,7 +93,7 @@ describe("settings-plugins-panel layout", () => {
 
   it.each([
     ["bundled-only", "Only bundled server plugins were imported."],
-    ["none", "No server plugins were imported; the kernel folder workspace remains available."],
+    ["none", "No server plugins were imported; Terminal is unavailable and the kernel folder workspace remains available for diagnosis."],
   ] as const)("renders active %s safe-start recovery", (safeStart, message) => {
     const panel = new SettingsPluginsPanel();
     const response = pluginsResponse([]);
@@ -205,6 +205,22 @@ describe("settings-plugins-panel layout", () => {
     const configuredOnly = rows.find(({ id }) => id === "configured-only");
     if (configuredOnly === undefined) throw new Error("Expected configured-only settings row");
     expect(templateValues(renderPluginTemplate(panel, configuredOnly)).filter(isBoolean)).toEqual([true, false]);
+  });
+
+  it("renders required Terminal enabled and non-editable despite ordinary disable config", () => {
+    const terminal = { ...pluginInfo("terminal", true), required: true as const };
+    const config = configResponse({ plugins: { terminal: { enabled: false } } });
+    const [row] = settingsPluginRows(pluginsResponse([terminal]), config);
+    if (row === undefined) throw new Error("Expected Terminal settings row");
+
+    expect(row).toMatchObject({ id: "terminal", enabled: true, editable: false, required: true });
+    const panel = new SettingsPluginsPanel();
+    panel.pluginsResponse = pluginsResponse([terminal]);
+    panel.configResponse = config;
+    const rendered = flattenTemplateContent(panel.render());
+    expect(rendered).toContain("Required · ordinary config cannot disable");
+    expect(rendered).not.toContain("Offline disable:");
+    expect(templateValues(renderPluginTemplate(panel, row)).filter(isBoolean)).toEqual([true, true]);
   });
 
   it("keeps loaded plugins visible but disabled when selected-machine config is unavailable", () => {
@@ -327,11 +343,12 @@ function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
 
 function pluginsResponse(plugins: PiWebPluginInfo[]): PiWebPluginsResponse {
   return {
-    lifecycleVersion: 1,
+    lifecycleVersion: 2,
     plugins,
     diagnostics: [],
     serverRuntime: {
       status: "available",
+      terminalMode: "recovery-disabled",
       restartRequired: false,
       recovery: {
         showSafeStart: "pi-web plugins safe-start show",

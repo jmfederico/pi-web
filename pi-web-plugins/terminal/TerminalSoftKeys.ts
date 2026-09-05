@@ -1,6 +1,6 @@
 import { css, html, LitElement } from "lit";
-import { customElement, property } from "lit/decorators.js";
-import { TERMINAL_SOFT_KEYS, terminalSoftKeySequence, type TerminalModesSnapshot, type TerminalSoftKeyDefinition } from "../terminalKeys";
+import { property } from "lit/decorators.js";
+import { TERMINAL_SOFT_KEYS, terminalSoftKeySequence, type TerminalModesSnapshot, type TerminalSoftKeyDefinition } from "./terminalKeys";
 
 const SOFT_KEY_TAP_MOVE_THRESHOLD_PX = 8;
 const SYNTHETIC_CLICK_SUPPRESSION_MS = 500;
@@ -9,7 +9,6 @@ export interface TerminalSoftKeyInputOptions {
   refocus: boolean;
 }
 
-@customElement("terminal-soft-keys")
 export class TerminalSoftKeys extends LitElement {
   @property({ attribute: false }) modes: TerminalModesSnapshot | undefined;
   @property({ type: Boolean }) refocusOnClick = true;

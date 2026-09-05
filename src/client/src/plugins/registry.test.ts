@@ -21,12 +21,6 @@ function createContext(statePatch: Partial<AppState> = {}) {
       getSelection: vi.fn(() => null),
     },
     piWebUnstable: {
-      terminalCommandRuns: {
-        runCommand: vi.fn(),
-        listCommandRuns: vi.fn(),
-        getCommandRun: vi.fn(),
-        open: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`terminal.open:${options?.terminalId ?? ""}`); }),
-      },
       openSettings: vi.fn(() => { calls.push("openSettings"); }),
     },
     openActionPalette: vi.fn(() => { calls.push("openActionPalette"); }),
@@ -64,9 +58,122 @@ describe("PluginRegistry", () => {
     registry.register({ id: "core", plugin: corePlugin });
 
     expect(registry.getActions(createContext().context).some((action) => action.id === "core:actions.show")).toBe(true);
-    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.terminal"]);
+    expect(registry.getWorkspacePanels()).toEqual([]);
     expect(registry.resolveWorkspacePanelRouteId("files", "local")).toBeUndefined();
     expect(registry.resolveWorkspacePanelRouteId("core:workspace.files", "local")).toBeUndefined();
+  });
+
+  it("dynamically gates every ordinary contribution surface without discarding registration", async () => {
+    let enabled = true;
+    const actionRun = vi.fn();
+    const panelRender = vi.fn(() => html`<p>Panel</p>`);
+    const panelInvalidate = vi.fn();
+    const labelItems = vi.fn(() => [{ type: "text" as const, text: "label" }]);
+    const activate = vi.fn<PiWebPlugin["activate"]>(() => ({
+      contributions: {
+        actions: [{ id: "act", title: "Act", run: actionRun }],
+        workspacePanels: [{
+          id: "workspace.panel",
+          title: "Panel",
+          routeAliases: ["legacy:workspace.panel"],
+          onInvalidate: panelInvalidate,
+          render: panelRender,
+        }],
+        workspaceLabels: [{ id: "label", items: labelItems }],
+        themes: [{ id: "light", name: "Light", colorScheme: "light", tokens: testThemeTokens() }],
+        themePairs: [{ id: "pair", name: "Pair", light: "light", dark: "light" }],
+      },
+    }));
+    const registry = new PluginRegistry({ isContributionEnabled: () => enabled });
+    registry.register({ id: "ordinary", plugin: { apiVersion: 2, name: "Ordinary", activate } });
+    const runtime = createContext({ selectedMachine: testMachine("local"), selectedWorkspace: testWorkspace() }).context;
+    const panelContext = createWorkspacePanelContext("local");
+    const labelContext = createWorkspaceLabelContext("local");
+    const staleAction = registry.getActions(runtime)[0];
+    const panel = registry.getWorkspacePanels()[0];
+
+    expect(registry.resolveWorkspacePanelRouteId("legacy:workspace.panel", "local")).toBe("ordinary:workspace.panel");
+    expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([{ type: "text", text: "label" }]);
+    expect(registry.getThemes()).toHaveLength(1);
+    expect(registry.getThemePairs()).toHaveLength(1);
+
+    enabled = false;
+    expect(registry.hasPlugin("ordinary")).toBe(true);
+    expect(registry.getActions(runtime)).toEqual([]);
+    expect(registry.resolveWorkspacePanelRouteId("legacy:workspace.panel", "local")).toBeUndefined();
+    expect(panel?.visible?.(panelContext)).toBe(false);
+    panel?.render(panelContext);
+    await registry.invalidateWorkspacePanels(panelContext);
+    await staleAction?.run();
+    expect(panelRender).not.toHaveBeenCalled();
+    expect(panelInvalidate).not.toHaveBeenCalled();
+    expect(actionRun).not.toHaveBeenCalled();
+    expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([]);
+    expect(labelItems).toHaveBeenCalledOnce();
+    expect(registry.getThemes()).toEqual([]);
+    expect(registry.getThemePairs()).toEqual([]);
+
+    enabled = true;
+    expect(registry.getActions(runtime)).toHaveLength(1);
+    expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([{ type: "text", text: "label" }]);
+    expect(registry.getThemes()).toHaveLength(1);
+    expect(activate).toHaveBeenCalledOnce();
+  });
+
+  it("gates portable machine-using contributions against the selected machine and rechecks stale callbacks", async () => {
+    const modes = new Map<string, boolean>([["local", false], ["remote-1", true]]);
+    const actionRun = vi.fn();
+    const registry = new PluginRegistry({
+      isContributionEnabled: (_pluginId, effectiveMachineId) => effectiveMachineId === undefined
+        ? true // themes are intentionally app-global
+        : modes.get(effectiveMachineId) ?? false,
+    });
+    registry.register({
+      id: "portable",
+      machineSpecific: false,
+      plugin: {
+        apiVersion: 2,
+        name: "Portable",
+        activate: () => ({
+          contributions: {
+            actions: [{ id: "act", title: "Act", run: actionRun }],
+            workspacePanels: [{
+              id: "workspace.panel",
+              title: "Panel",
+              routeAliases: ["portable-panel"],
+              render: () => html`<p>Portable</p>`,
+            }],
+            workspaceLabels: [{ id: "label", items: () => [{ type: "text", text: "portable" }] }],
+            themes: [{ id: "theme", name: "Portable", colorScheme: "light", tokens: testThemeTokens() }],
+          },
+        }),
+      },
+    });
+    const remoteRuntime = createContext({ selectedMachine: testMachine("remote-1"), selectedWorkspace: testWorkspace() }).context;
+    const localRuntime = createContext({ selectedMachine: testMachine("local"), selectedWorkspace: testWorkspace() }).context;
+    const staleRemoteAction = registry.getActions(remoteRuntime)[0];
+
+    expect(staleRemoteAction?.id).toBe("portable:act");
+    expect(registry.getActions(localRuntime)).toEqual([]);
+    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "remote-1")).toBe("portable:workspace.panel");
+    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "local")).toBeUndefined();
+    expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("remote-1"))).toEqual([{ type: "text", text: "portable" }]);
+    expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("local"))).toEqual([]);
+    expect(registry.getThemes()).toHaveLength(1);
+
+    modes.set("local", true);
+    modes.set("remote-1", false);
+    expect(registry.getActions(remoteRuntime)).toEqual([]);
+    expect(registry.getActions(localRuntime)).toHaveLength(1);
+    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "remote-1")).toBeUndefined();
+    await staleRemoteAction?.run();
+    expect(actionRun).not.toHaveBeenCalled();
+    expect(registry.getThemes()).toHaveLength(1);
+
+    modes.set("remote-1", true);
+    expect(registry.getActions(remoteRuntime)).toHaveLength(1);
+    await registry.getActions(remoteRuntime)[0]?.run();
+    expect(actionRun).toHaveBeenCalledOnce();
   });
 
   it("rejects legacy browser plugins with an attributed API-version error", () => {
@@ -422,7 +529,7 @@ describe("PluginRegistry", () => {
     expect(registry.getWorkspacePanels()).toEqual([]);
   });
 
-  it("evaluates core action enablement against runtime state", () => {
+  it("evaluates core workspace action enablement against runtime state", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
 
@@ -430,9 +537,7 @@ describe("PluginRegistry", () => {
     const active = registry.getActions(createContext({ selectedWorkspace: testWorkspace() }).context);
 
     expect(inactive.find((action) => action.id === "core:view.files")).toBeUndefined();
-    expect(inactive.find((action) => action.id === "core:view.terminal")?.enabled).toBe(false);
     expect(active.find((action) => action.id === "core:view.files")).toBeUndefined();
-    expect(active.find((action) => action.id === "core:view.terminal")?.enabled).toBe(true);
     expect(active.find((action) => action.id === "core:workspace.delete")?.enabled).toBe(false);
 
     const deletable = registry.getActions(createContext({ selectedWorkspace: testWorkspace({
@@ -603,18 +708,6 @@ describe("PluginRegistry", () => {
     expect(calls).toEqual(["reloadPage", "openSettings"]);
   });
 
-  it("exposes terminal navigation as a shortcut-backed action", () => {
-    const registry = new PluginRegistry();
-    registry.register({ id: "core", plugin: corePlugin });
-    const { context, calls } = createContext({ selectedWorkspace: testWorkspace() });
-    const action = registry.getActions(context).find((candidate) => candidate.id === "core:view.terminal");
-
-    expect(action?.shortcut).toBe("mod+4");
-    if (action !== undefined) void action.run();
-
-    expect(calls).toEqual(["selectMainView:core:workspace.terminal"]);
-  });
-
   it("keeps built-in keyboard shortcuts unique and action-backed", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
@@ -627,7 +720,6 @@ describe("PluginRegistry", () => {
       ["core:prompt.focus", "mod+g c"],
       ["core:settings.open", "mod+,"],
       ["core:view.chat", "mod+1"],
-      ["core:view.terminal", "mod+4"],
       ["core:session.start", "mod+enter"],
       ["core:session.stop", "mod+."],
     ]);
@@ -781,6 +873,8 @@ describe("PluginRegistry", () => {
       machineId: "remote-1",
       sourcePluginId: "board-tools",
       backendRevision: "server-r7",
+      backendCapabilityVersion: 1,
+      channelVersion: 1,
       plugin: {
         apiVersion: 2,
         name: "Board Tools",
@@ -832,8 +926,8 @@ describe("PluginRegistry", () => {
     expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([{ type: "text", text: "2 cards" }]);
 
     expect(observedBindings).toEqual([
-      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7" },
-      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7" },
+      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7", backendCapabilityVersion: 1, channelVersion: 1 },
+      { registrationPluginId, sourcePluginId: "board-tools", backendRevision: "server-r7", backendCapabilityVersion: 1, channelVersion: 1 },
     ]);
     expect(observedRequests).toEqual([
       {
@@ -1076,10 +1170,6 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     prompt,
     terminal: { open: vi.fn(), runCommand: vi.fn() },
     host: { requestRender: vi.fn() },
-    activeTerminalCount: 0,
-    selectedTerminalId: undefined,
-    terminalAutoStart: false,
-    onSelectTerminal: vi.fn(),
   };
 }
 

@@ -2,12 +2,8 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RealtimeEvent, ServerNotice, TerminalInfo } from "../../shared/apiTypes.js";
-import { workspaceDeletionMetadata } from "../../shared/workspaceDeletion.js";
-import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
-import type { ServerNoticeCreator } from "../notices/serverNoticeService.js";
-import { SessionEventHub } from "../realtime/sessionEventHub.js";
-import { interactiveShellArgs, TerminalService } from "./terminalService";
+import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
+import { interactiveShellArgs, TerminalService, type TerminalActivitySink, type TerminalInfo, type TerminalWorkspaceScope } from "./terminalService";
 
 describe("interactive shell arguments", () => {
   it.each([
@@ -31,12 +27,43 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
   it("closes all terminal records for a cwd", () => {
     const service = new TerminalService();
     try {
-      const terminal = service.create({ cwd: process.cwd() });
+      const terminal = service.create(scope());
+      let closed = 0;
+      service.attach(scope(), terminal.id, {
+        output: () => undefined,
+        exit: () => undefined,
+        closed: () => { closed += 1; },
+      });
 
       service.closeForCwd(process.cwd());
 
-      expect(service.get(terminal.id)).toBeUndefined();
-      expect(service.list(process.cwd())).toEqual([]);
+      expect(closed).toBe(1);
+      expect(service.get(scope(), terminal.id)).toBeUndefined();
+      expect(service.list(scope())).toEqual([]);
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("closes all terminals only in the requested workspace when cwd values match", () => {
+    const service = new TerminalService();
+    const firstScope = scope();
+    const secondScope = { ...firstScope, projectId: "p2", workspaceId: "w2" };
+    try {
+      const first = service.create(firstScope);
+      const second = service.create(secondScope);
+      let firstClosed = 0;
+      service.attach(firstScope, first.id, {
+        output: () => undefined,
+        exit: () => undefined,
+        closed: () => { firstClosed += 1; },
+      });
+
+      service.closeAll(firstScope);
+
+      expect(firstClosed).toBe(1);
+      expect(service.get(firstScope, first.id)).toBeUndefined();
+      expect(service.get(secondScope, second.id)).toMatchObject({ id: second.id, cwd: secondScope.cwd });
     } finally {
       service.dispose();
     }
@@ -46,10 +73,10 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     await withBashLoginProfile(async () => {
       const service = new TerminalService();
       try {
-        const terminal = service.create({ cwd: process.cwd() });
+        const terminal = service.create(scope());
         const exit = terminalExit(service, terminal.id);
 
-        service.write(terminal.id, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
+        service.write(scope(), terminal.id, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
 
         expect(await exit).toContain(LOGIN_PROFILE_OUTPUT);
       } finally {
@@ -72,9 +99,11 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
         });
         await terminalExit(service, run.terminalId);
 
-        service.continue(run.terminalId);
+        service.continue(scope(), run.terminalId);
+        const shellReady = firstLiveTerminalOutput(service, run.terminalId);
         const exit = terminalExit(service, run.terminalId);
-        service.write(run.terminalId, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
+        await shellReady;
+        service.write(scope(), run.terminalId, `${LOGIN_PROFILE_COMMAND}\nexit\n`);
 
         expect(await exit).toContain(LOGIN_PROFILE_OUTPUT);
       } finally {
@@ -131,15 +160,17 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
         });
         await terminalExit(service, run.terminalId);
 
-        const continued = service.continue(run.terminalId);
+        const continued = service.continue(scope(), run.terminalId);
 
         expect(continued).toMatchObject({ id: run.terminalId, exited: false });
         expect(continued.commandRunId).toBeUndefined();
-        expect(service.get(run.terminalId)?.commandRunId).toBeUndefined();
+        expect(service.get(scope(), run.terminalId)?.commandRunId).toBeUndefined();
 
         const frame = "__PI_WEB_CONTINUE_ENV_42D8B1__";
+        const shellReady = firstLiveTerminalOutput(service, run.terminalId);
         const exit = terminalExit(service, run.terminalId);
-        service.write(run.terminalId, `printf '${frame}%s${frame}\\n' "$PI_WEB_TERMINAL"\nexit\n`);
+        await shellReady;
+        service.write(scope(), run.terminalId, `printf '${frame}%s${frame}\\n' "$PI_WEB_TERMINAL"\nexit\n`);
 
         const output = await exit;
         expect(output).toContain("[continued in interactive shell]");
@@ -164,7 +195,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
       });
 
       expect(run).toMatchObject({ status: "running", origin: "core", projectId: "p1", workspaceId: "w1", metadata: { "pi.operation": "test" } });
-      expect(service.get(run.terminalId)).toMatchObject({ commandRunId: run.id });
+      expect(service.get(scope(), run.terminalId)).toMatchObject({ commandRunId: run.id });
       expect(service.listCommandRuns({ metadata: { "pi.operation": "test" } })).toHaveLength(1);
 
       const output = await terminalExit(service, run.terminalId);
@@ -198,15 +229,9 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     }
   });
 
-  it("records one server notice for a failed workspace deletion command", async () => {
-    const records: Parameters<ServerNoticeCreator["record"]>[0][] = [];
-    const notices: ServerNoticeCreator = {
-      record: (input) => {
-        records.push(input);
-        return { id: "notice-1", createdAt: "2026-08-01T00:00:00.000Z", ...input } satisfies ServerNotice;
-      },
-    };
-    const service = new TerminalService(undefined, undefined, notices);
+  it("records one host-attributed intent when a command fails", async () => {
+    const records: ServerPluginNoticeInput[] = [];
+    const service = new TerminalService((input) => { records.push(input); });
     try {
       const run = service.runCommand({
         origin: "core",
@@ -215,26 +240,60 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
         cwd: process.cwd(),
         title: "Remove workspace",
         command: "exit 7",
-        metadata: workspaceDeletionMetadata({ id: "w1", path: process.cwd() }),
+        failureNotice: {
+          message: "Workspace removal failed. See terminal output.",
+          context: { projectId: "p1", targetWorkspaceId: "target-workspace" },
+        },
       });
 
       await terminalExit(service, run.terminalId);
 
+      expect(run).not.toHaveProperty("failureNotice");
+      expect(service.getCommandRun(run.id)).not.toHaveProperty("failureNotice");
       expect(records).toEqual([{
         severity: "error",
         message: "Workspace removal failed. See terminal output.",
-        source: "workspace.delete",
-        context: { commandRunId: run.id, projectId: "p1", workspaceId: "w1" },
+        context: {
+          commandRunId: run.id,
+          projectId: "p1",
+          targetWorkspaceId: "target-workspace",
+        },
       }]);
     } finally {
       service.dispose();
     }
   });
 
-  it("publishes terminal lifecycle events and workspace activity updates", async () => {
-    const events = new RecordingEventHub();
+  it("does not record a failure intent for a successful command", async () => {
+    const records: ServerPluginNoticeInput[] = [];
+    const service = new TerminalService((input) => { records.push(input); });
+    try {
+      const run = service.runCommand({
+        origin: "core",
+        projectId: "p1",
+        workspaceId: "w1",
+        cwd: process.cwd(),
+        title: "Remove workspace",
+        command: "true",
+        failureNotice: {
+          message: "Workspace removal failed. See terminal output.",
+          context: { projectId: "p1", targetWorkspaceId: "target-workspace" },
+        },
+      });
+
+      await terminalExit(service, run.terminalId);
+
+      expect(service.getCommandRun(run.id)).toMatchObject({ status: "succeeded", exitCode: 0 });
+      expect(records).toEqual([]);
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("publishes workspace activity updates across the terminal lifecycle", async () => {
     const workspaceActivity = createWorkspaceActivityRecorder();
-    const service = new TerminalService(events, workspaceActivity);
+    const service = new TerminalService();
+    service.bindActivitySink(workspaceActivity);
     const cwd = process.cwd();
     try {
       const run = service.runCommand({
@@ -245,46 +304,27 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
         title: "Lifecycle command",
         command: "true",
       });
-      const runningTerminal = requireTerminal(service, run.terminalId);
-
+      expect(requireTerminal(service, run.terminalId).exited).toBe(false);
       expect(workspaceActivity.updated).toEqual([{ id: run.terminalId, cwd, exited: false }]);
-      expect(events.events).toEqual([{ type: "terminal.created", terminal: runningTerminal }]);
 
       await terminalExit(service, run.terminalId);
-      const exitedTerminal = requireTerminal(service, run.terminalId);
+      expect(requireTerminal(service, run.terminalId).exited).toBe(true);
 
       expect(workspaceActivity.updated).toEqual([
         { id: run.terminalId, cwd, exited: false },
         { id: run.terminalId, cwd, exited: true },
       ]);
-      expect(events.events).toEqual([
-        { type: "terminal.created", terminal: runningTerminal },
-        { type: "terminal.exited", terminal: exitedTerminal },
-      ]);
 
-      service.close(run.terminalId);
+      service.close(scope(), run.terminalId);
 
       expect(workspaceActivity.removed).toEqual([{ terminalId: run.terminalId, cwd }]);
-      expect(events.events).toEqual([
-        { type: "terminal.created", terminal: runningTerminal },
-        { type: "terminal.exited", terminal: exitedTerminal },
-        { type: "terminal.closed", terminalId: run.terminalId, cwd },
-      ]);
     } finally {
       service.dispose();
     }
   });
 });
 
-class RecordingEventHub extends SessionEventHub {
-  readonly events: RealtimeEvent[] = [];
-
-  override publishRealtime(event: RealtimeEvent): void {
-    this.events.push(event);
-  }
-}
-
-interface WorkspaceActivityRecorder extends Pick<WorkspaceActivityService, "updateTerminal" | "removeTerminal"> {
+interface WorkspaceActivityRecorder extends TerminalActivitySink {
   readonly updated: TerminalActivityUpdate[];
   readonly removed: TerminalActivityRemoval[];
 }
@@ -312,7 +352,7 @@ function createWorkspaceActivityRecorder(): WorkspaceActivityRecorder {
 }
 
 function requireTerminal(service: TerminalService, terminalId: string): TerminalInfo {
-  const terminal = service.get(terminalId);
+  const terminal = service.get(scope(), terminalId);
   if (terminal === undefined) throw new Error(`Expected terminal ${terminalId} to exist`);
   return terminal;
 }
@@ -347,11 +387,31 @@ function restoreEnv(key: "HOME" | "SHELL", value: string | undefined): void {
   else process.env[key] = value;
 }
 
+function firstLiveTerminalOutput(service: TerminalService, terminalId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let detach = (): void => undefined;
+    const finish = (callback: () => void): void => {
+      detach();
+      callback();
+    };
+    try {
+      detach = service.attach(scope(), terminalId, {
+        output: (_data, replay) => {
+          if (!replay) finish(resolve);
+        },
+        exit: () => { finish(() => { reject(new Error("Continued terminal exited before its shell became ready")); }); },
+      });
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
 function terminalExit(service: TerminalService, terminalId: string): Promise<string> {
   const output: string[] = [];
   return new Promise((resolve, reject) => {
     try {
-      service.attach(terminalId, {
+      service.attach(scope(), terminalId, {
         output: (data) => { output.push(data); },
         exit: () => { resolve(output.join("")); },
       });
@@ -359,4 +419,8 @@ function terminalExit(service: TerminalService, terminalId: string): Promise<str
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
+}
+
+function scope(cwd = process.cwd()): TerminalWorkspaceScope {
+  return { projectId: "p1", workspaceId: "w1", cwd };
 }

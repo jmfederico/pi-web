@@ -8,10 +8,11 @@ import {
   serializeBoundedPluginBackendJson,
   type PluginBackendRequestEnvelope,
 } from "../../shared/pluginBackendProtocol.js";
+import { requestCancellation } from "../requestCancellation.js";
 import type { Project } from "../types.js";
 import {
-  WorkspaceProviderRequestError,
-  type WorkspaceProviderRequest,
+  PluginBackendRequestError,
+  type PluginBackendRequest,
 } from "../workspaces/workspaceProviderRegistry.js";
 
 interface PluginBackendRouteParams {
@@ -26,7 +27,7 @@ export interface PluginBackendProjectReader {
 }
 
 export interface PluginBackendDispatcher {
-  request(request: WorkspaceProviderRequest): Promise<unknown>;
+  request(request: PluginBackendRequest, signal?: AbortSignal): Promise<unknown>;
 }
 
 export interface PluginBackendRouteDependencies {
@@ -40,7 +41,7 @@ export interface PluginBackendRouteDependencies {
   onWorkspacesMutated: () => void;
 }
 
-/** JSON-only sessiond boundary for the active owner of one current workspace. */
+/** JSON-only sessiond boundary for a revision-paired plugin and current workspace. */
 export function registerPluginBackendRoutes(
   app: FastifyInstance,
   dependencies: PluginBackendRouteDependencies,
@@ -78,6 +79,7 @@ export function registerPluginBackendRoutes(
         );
       }
 
+      const cancellation = requestCancellation(request, reply);
       try {
         const result = await dependencies.backends.request({
           pluginId,
@@ -86,7 +88,7 @@ export function registerPluginBackendRoutes(
           workspaceId,
           operation,
           input: envelope.input,
-        });
+        }, cancellation.signal);
         const serialized = serializeBoundedPluginBackendJson(
           result,
           `Server plugin ${pluginId} operation ${operation} result`,
@@ -97,6 +99,7 @@ export function registerPluginBackendRoutes(
         return await pluginBackendRequestFailed(reply, error, pluginId, operation);
       } finally {
         dependencies.onWorkspacesMutated();
+        cancellation.dispose();
       }
     },
   );
@@ -108,7 +111,7 @@ function pluginBackendRequestFailed(
   pluginId: string,
   operation: string,
 ): FastifyReply {
-  if (error instanceof WorkspaceProviderRequestError) {
+  if (error instanceof PluginBackendRequestError) {
     return attributedError(reply, error.statusCode, error.message, error.code, pluginId, operation);
   }
   return attributedError(

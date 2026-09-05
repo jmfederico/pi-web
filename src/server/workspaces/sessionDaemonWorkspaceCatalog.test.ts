@@ -73,7 +73,8 @@ describe("SessionDaemonWorkspaceCatalog", () => {
 
   it("parses the immutable provider runtime and startup-health snapshot", async () => {
     const request = vi.fn<SessionDaemonRequestClient["request"]>(() => Promise.resolve(jsonResponse({
-      protocolVersion: 1,
+      protocolVersion: 2,
+      terminalMode: "required",
       safeStart: "bundled-only",
       records: [{
         pluginId: "git",
@@ -83,6 +84,8 @@ describe("SessionDaemonWorkspaceCatalog", () => {
         browserRevision: "sha256:browser",
         settingsRevision: "sha256:settings",
         machineSpecific: true,
+        backendCapabilityVersion: 1,
+        channelVersion: 1,
         state: "active",
         name: "Git",
       }],
@@ -95,9 +98,10 @@ describe("SessionDaemonWorkspaceCatalog", () => {
 
     expect(request).toHaveBeenCalledWith("GET", "/workspace-catalog/provider-runtime");
     expect(snapshot).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
+      terminalMode: "required",
       safeStart: "bundled-only",
-      records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", browserRevision: "sha256:browser", settingsRevision: "sha256:settings", machineSpecific: true, state: "active", name: "Git" }],
+      records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", browserRevision: "sha256:browser", settingsRevision: "sha256:settings", machineSpecific: true, backendCapabilityVersion: 1, channelVersion: 1, state: "active", name: "Git" }],
       health: [{ pluginId: "git", health: { status: "degraded", message: "Git is old", details: { version: 1, nested: ["ok", { ready: true }] } } }],
       diagnostics: [{ code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: git", pluginId: "git" }],
     });

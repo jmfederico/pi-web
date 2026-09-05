@@ -2,6 +2,7 @@ import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { PiWebConfigResponse, PiWebPluginInfo, PiWebPluginsResponse } from "../../api";
 import { PI_WEB_PLUGIN_RECOVERY_COMMANDS } from "../../../../shared/pluginRecoveryCommands";
+import { REQUIRED_TERMINAL_PLUGIN_ID } from "../../../../shared/requiredTerminalPlugin";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 
@@ -66,7 +67,7 @@ export class SettingsPluginsPanel extends LitElement {
         title: "Server-plugin safe mode active",
         content: runtime.safeStart === "bundled-only"
           ? html`Only bundled server plugins were imported. Clear safe mode with <code>${runtime.recovery.clearSafeStart}</code>.`
-          : html`No server plugins were imported; the kernel folder workspace remains available. Clear safe mode with <code>${runtime.recovery.clearSafeStart}</code>.`,
+          : html`No server plugins were imported; Terminal is unavailable and the kernel folder workspace remains available for diagnosis. Clear safe mode with <code>${runtime.recovery.clearSafeStart}</code>.`,
       });
     }
     if (runtime?.desiredSafeStart !== undefined && runtime.desiredSafeStart !== (runtime.safeStart ?? "off")) {
@@ -136,23 +137,25 @@ export class SettingsPluginsPanel extends LitElement {
 
   private renderPlugin(plugin: SettingsPluginRow): TemplateResult {
     const configured = this.configResponse?.config.plugins?.[plugin.id];
-    const configuredState = !plugin.discovered && configured === undefined
-      ? "Desired package/config absent"
-      : configured?.enabled === false ? "Config disabled" : configured?.enabled === true ? "Config enabled" : "Default enabled";
+    const configuredState = plugin.required === true
+      ? "Required · ordinary config cannot disable"
+      : !plugin.discovered && configured === undefined
+        ? "Desired package/config absent"
+        : configured?.enabled === false ? "Config disabled" : configured?.enabled === true ? "Config enabled" : "Default enabled";
     return html`
       <article class=${`plugin-card${plugin.enabled ? "" : " disabled"}`}>
         <div class="plugin-main">
           <strong>${plugin.id}</strong>
-          <small>${plugin.configOnly ? "configured only · package not discovered" : `${plugin.source} · ${plugin.scope}${plugin.machineSpecific ? " · machine-specific" : ""}${plugin.discovered ? "" : " · active snapshot only"}`}</small>
+          <small>${plugin.configOnly ? "configured only · package not discovered" : `${plugin.source} · ${plugin.scope}${plugin.machineSpecific ? " · machine-specific" : ""}${plugin.required === true ? " · required" : ""}${plugin.discovered ? "" : " · active snapshot only"}`}</small>
           <small>${configuredState}</small>
           ${this.renderPluginStatuses(plugin)}
           ${plugin.server?.message === undefined ? nothing : html`<small class="diagnostic">${plugin.server.message}</small>`}
           ${plugin.server?.health?.message === undefined ? nothing : html`<small class="diagnostic">Health: ${plugin.server.health.message}</small>`}
-          ${plugin.server === undefined ? nothing : html`<small class="command">Offline disable: <code>${plugin.server.disableCommand}</code></small>`}
+          ${plugin.server === undefined || plugin.required === true ? nothing : html`<small class="command">Offline disable: <code>${plugin.server.disableCommand}</code></small>`}
         </div>
         <label class="toggle">
           <input type="checkbox" .checked=${plugin.enabled} ?disabled=${this.saving || this.configResponse === undefined || !plugin.editable} @change=${(event: Event) => { void this.togglePlugin(plugin, event); }}>
-          <span>Enabled</span>
+          <span>${plugin.required === true ? "Required" : "Enabled"}</span>
         </label>
       </article>
     `;
@@ -233,27 +236,29 @@ export function settingsPluginRows(
   const configuredPlugins = config?.config.plugins ?? {};
   const rows = (response?.plugins ?? []).map((plugin): SettingsPluginRow => {
     const configured = configuredPlugins[plugin.id];
-    const enabled = configured?.enabled ?? plugin.enabled;
+    const enabled = plugin.required === true ? true : configured?.enabled ?? plugin.enabled;
     return {
       ...plugin,
       enabled,
       configOnly: false,
-      editable: plugin.discovered || configured !== undefined,
+      editable: plugin.required !== true && (plugin.discovered || configured !== undefined),
     };
   });
   const knownIds = new Set(rows.map(({ id }) => id));
   for (const [id, configured] of Object.entries(configuredPlugins)) {
     if (knownIds.has(id)) continue;
+    const required = id === REQUIRED_TERMINAL_PLUGIN_ID;
     rows.push({
       id,
+      ...(required ? { required: true as const } : {}),
       source: "config",
       scope: "local",
       machineSpecific: false,
-      enabled: configured.enabled !== false,
+      enabled: required || configured.enabled !== false,
       discovered: false,
       conflict: false,
       configOnly: true,
-      editable: true,
+      editable: !required,
     });
   }
   return rows.sort((left, right) => left.id.localeCompare(right.id));

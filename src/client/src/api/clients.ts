@@ -1,4 +1,4 @@
-import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, RunTerminalCommandInput, ServerNoticeDismissRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, TerminalCommandRun, TerminalCommandRunFilter, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
+import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, ServerNoticeDismissRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
 import {
@@ -49,8 +49,6 @@ import {
   parseSessionTreeNavigateResult,
   parseSlashCommand,
   parseStopped,
-  parseTerminalCommandRun,
-  parseTerminalInfo,
   parseThinkingLevelsResponse,
   parseWriteWorkspaceFileResponse,
   parseWorkspaceProviderResolution,
@@ -164,7 +162,7 @@ export const projectsApi = {
   projectDirectories: (query: string, machineId = "local") => request(`${machinePrefix(machineId)}/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
 };
 
-function workspaceResolution(projectId: string, machineId = "local") {
+function workspaceResolution(projectId: string, machineId = "local", options?: { signal?: AbortSignal }) {
   return request(
     `${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces`,
     (value) => {
@@ -172,19 +170,20 @@ function workspaceResolution(projectId: string, machineId = "local") {
       if (resolution.projectId !== projectId) throw new Error("Workspace resolution did not match the requested project");
       return resolution;
     },
+    options?.signal === undefined ? undefined : { signal: options.signal },
   );
 }
 
 export const workspacesApi = {
   workspaceResolution,
-  workspaces: async (projectId: string, machineId = "local") => [
-    ...(await workspaceResolution(projectId, machineId)).workspaces,
+  workspaces: async (projectId: string, machineId = "local", options?: { signal?: AbortSignal }) => [
+    ...(await workspaceResolution(projectId, machineId, options)).workspaces,
   ],
   deleteWorkspace: (projectId: string, workspaceId: string, precondition: string, machineId = "local") => {
     const body: WorkspaceRemovalRequest = { precondition };
     return request(
       `${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}`,
-      parseTerminalCommandRun,
+      (value): unknown => value,
       { method: "DELETE", body: JSON.stringify(body) },
     );
   },
@@ -227,7 +226,11 @@ export const workspacesApi = {
 };
 
 export const sessionsApi = {
-  sessions: (cwd: string, machineId = "local") => request(`${machinePrefix(machineId)}/sessions?cwd=${encodeURIComponent(cwd)}`, arrayOf(parseSessionInfo)),
+  sessions: (cwd: string, machineId = "local", options?: { signal?: AbortSignal }) => request(
+    `${machinePrefix(machineId)}/sessions?cwd=${encodeURIComponent(cwd)}`,
+    arrayOf(parseSessionInfo),
+    options?.signal === undefined ? undefined : { signal: options.signal },
+  ),
   unreadCatalog: (machineId = "local") => request(`${machinePrefix(machineId)}/sessions/unread`, parseSessionUnreadCatalogSnapshot, { cache: "no-store" }),
   acknowledgeUnread: (session: SessionRef, catalogId: string, throughCompletionOrder: number, machineId = "local") => {
     const body: SessionUnreadAcknowledgeRequest = { cwd: session.cwd, catalogId, throughCompletionOrder };
@@ -292,18 +295,6 @@ export const sessionsApi = {
   cancelOAuthFlow: (flowId: string, machineId = "local") => request(`${machinePrefix(machineId)}/auth/oauth/${encodeURIComponent(flowId)}/cancel`, parseOAuthFlowState, { method: "POST" }),
 };
 
-export const terminalsApi = {
-  terminals: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, arrayOf(parseTerminalInfo)),
-  startTerminal: (projectId: string, workspaceId: string, options?: { name?: string; cols?: number; rows?: number }, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, parseTerminalInfo, { method: "POST", body: JSON.stringify(options ?? {}) }),
-  closeWorkspaceTerminals: (projectId: string, workspaceId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals`, parseClosed, { method: "DELETE" }),
-  closeTerminal: (projectId: string, workspaceId: string, terminalId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}`, parseClosed, { method: "DELETE" }),
-  continueTerminal: (projectId: string, workspaceId: string, terminalId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/terminals/${encodeURIComponent(terminalId)}/continue`, parseTerminalInfo, { method: "POST" }),
-  runTerminalCommand: (origin: string, input: RunTerminalCommandInput, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(input.workspace.projectId)}/workspaces/${encodeURIComponent(input.workspace.id)}/terminal-command-runs`, parseTerminalCommandRun, { method: "POST", body: JSON.stringify({ origin, title: input.title, command: input.command, metadata: input.metadata ?? {} }) }),
-  listCommandRuns: (filter?: TerminalCommandRunFilter, machineId = "local") => request(`${machinePrefix(machineId)}/terminal-command-runs${terminalCommandRunFilterQuery(filter)}`, arrayOf(parseTerminalCommandRun)),
-  getCommandRun: (runId: string, machineId = "local") => getOptionalTerminalCommandRun(runId, machineId),
-  cancelCommandRun: (runId: string, machineId = "local") => request(`${machinePrefix(machineId)}/terminal-command-runs/${encodeURIComponent(runId)}/cancel`, parseTerminalCommandRun, { method: "POST" }),
-};
-
 /**
  * Raised when an older session daemon cannot serve the specific `tree/fork`
  * route. The message is user-facing and explains how to enable the operation.
@@ -334,28 +325,6 @@ function isMissingSessionTreeForkRoute(status: number, value: unknown): boolean 
   if (value["statusCode"] !== 404 || value["error"] !== "Not Found") return false;
   const message = value["message"];
   return typeof message === "string" && /^Route POST:.*\/tree\/fork not found$/i.test(message);
-}
-
-async function getOptionalTerminalCommandRun(runId: string, machineId: string): Promise<TerminalCommandRun | undefined> {
-  const response = await fetch(resolveAppUrl(`${machinePrefix(machineId)}/terminal-command-runs/${encodeURIComponent(runId)}`));
-  if (response.status === 404) return undefined;
-  if (!response.ok) {
-    const body: unknown = await response.json().catch((): unknown => ({}));
-    throw new Error(apiErrorMessage(body) ?? response.statusText);
-  }
-  return parseTerminalCommandRun(await response.json());
-}
-
-function terminalCommandRunFilterQuery(filter: TerminalCommandRunFilter | undefined): string {
-  if (filter === undefined) return "";
-  const params = new URLSearchParams();
-  if (filter.projectId !== undefined) params.set("projectId", filter.projectId);
-  if (filter.workspaceId !== undefined) params.set("workspaceId", filter.workspaceId);
-  if (filter.terminalId !== undefined) params.set("terminalId", filter.terminalId);
-  if (filter.statuses !== undefined && filter.statuses.length > 0) params.set("statuses", filter.statuses.join(","));
-  if (filter.metadata !== undefined && Object.keys(filter.metadata).length > 0) params.set("metadata", JSON.stringify(filter.metadata));
-  const query = params.toString();
-  return query === "" ? "" : `?${query}`;
 }
 
 function apiErrorMessage(value: unknown): string | undefined {
@@ -412,7 +381,6 @@ export const api = {
   ...projectsApi,
   ...workspacesApi,
   ...sessionsApi,
-  ...terminalsApi,
   ...filesApi,
   ...trustApi,
 

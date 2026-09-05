@@ -62,6 +62,7 @@ describe("server plugin runtime child-process fixtures", () => {
         safeStart: "bundled-only",
         logger,
         lifecycleTimeoutMs: 500,
+        enforceRequiredTerminal: false,
       });
       const beforeStop = runtime.healthRecords();
       const providers = runtime.providerContributions().map((item) => item.pluginId);

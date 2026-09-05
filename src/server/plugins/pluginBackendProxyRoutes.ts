@@ -5,6 +5,7 @@ import {
   utf8ByteLength,
 } from "../../shared/pluginBackendProtocol.js";
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
+import { requestCancellation } from "../requestCancellation.js";
 
 interface PluginBackendProxyParams {
   pluginId: string;
@@ -13,7 +14,7 @@ interface PluginBackendProxyParams {
   operation: string;
 }
 
-/** Browser-facing local route; all owner resolution and execution stays in sessiond. */
+/** Browser-facing local route; workspace authority and execution stay in sessiond. */
 export function registerPluginBackendProxyRoutes(
   app: FastifyInstance,
   daemon: SessionDaemonRequestClient,
@@ -24,40 +25,45 @@ export function registerPluginBackendProxyRoutes(
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
       const path = daemonPluginBackendPath(request.params);
-      let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
+      const cancellation = requestCancellation(request, reply);
       try {
-        upstream = await daemon.request("POST", path, request.body);
-      } catch (error) {
-        return reply.code(502).send({
-          error: `Session daemon unavailable: ${errorMessage(error)}`,
-          code: "daemon-unavailable",
-          pluginId: request.params.pluginId,
-          operation: request.params.operation,
-        });
-      }
+        let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
+        try {
+          upstream = await daemon.request("POST", path, request.body, { signal: cancellation.signal });
+        } catch (error) {
+          return await reply.code(502).send({
+            error: `Session daemon unavailable: ${errorMessage(error)}`,
+            code: "daemon-unavailable",
+            pluginId: request.params.pluginId,
+            operation: request.params.operation,
+          });
+        }
 
-      if (upstream.body === "" || utf8ByteLength(upstream.body) > PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES) {
-        return daemonProtocolError(reply, request.params, "Session daemon plugin backend returned an invalid response size");
-      }
+        if (upstream.body === "" || utf8ByteLength(upstream.body) > PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES) {
+          return await daemonProtocolError(reply, request.params, "Session daemon plugin backend returned an invalid response size");
+        }
 
-      let body: unknown;
-      try {
-        body = JSON.parse(upstream.body);
-      } catch {
-        return daemonProtocolError(reply, request.params, "Session daemon plugin backend returned invalid JSON");
-      }
-      if (isUnknownPluginBackendRoute(upstream.statusCode, body)) {
-        return daemonProtocolError(
-          reply,
-          request.params,
-          "Session daemon does not support plugin backend requests; restart or upgrade the session daemon",
-        );
-      }
+        let body: unknown;
+        try {
+          body = JSON.parse(upstream.body);
+        } catch {
+          return await daemonProtocolError(reply, request.params, "Session daemon plugin backend returned invalid JSON");
+        }
+        if (isUnknownPluginBackendRoute(upstream.statusCode, body)) {
+          return await daemonProtocolError(
+            reply,
+            request.params,
+            "Session daemon does not support plugin backend requests; restart or upgrade the session daemon",
+          );
+        }
 
-      return await reply
-        .code(upstream.statusCode)
-        .type("application/json; charset=utf-8")
-        .send(upstream.body);
+        return await reply
+          .code(upstream.statusCode)
+          .type("application/json; charset=utf-8")
+          .send(upstream.body);
+      } finally {
+        cancellation.dispose();
+      }
     },
   );
 }

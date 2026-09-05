@@ -1,5 +1,6 @@
 import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, type PiWebPluginSafeStart, type PiWebPluginsResponse, type PiWebPluginScope } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
+import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../shared/requiredTerminalPlugin.js";
 import {
   PiWebPluginCatalog,
   readPiWebPluginPackageArtifact,
@@ -29,7 +30,18 @@ export {
 
 export interface PiWebPluginManifest {
   lifecycleVersion: typeof PI_WEB_PLUGIN_LIFECYCLE_VERSION;
+  terminalMode: TerminalPluginMode;
   plugins: PiWebPluginManifestEntry[];
+}
+
+export class PiWebPluginManifestRuntimeError extends Error {
+  override name = "PiWebPluginManifestRuntimeError";
+  readonly statusCode: 409 | 503;
+
+  constructor(readonly runtimeStatus: "unavailable" | "incompatible", message: string) {
+    super(message);
+    this.statusCode = runtimeStatus === "unavailable" ? 503 : 409;
+  }
 }
 
 export interface PiWebPluginManifestEntry {
@@ -37,6 +49,10 @@ export interface PiWebPluginManifestEntry {
   module: string;
   /** Active compatible server revision from sessiond's immutable startup snapshot. */
   backendRevision?: string;
+  /** Versioned direct paired-request capability exposed as `context.backend.capabilityVersion`. */
+  backendCapabilityVersion?: 1;
+  /** Versioned bounded channel capability exposed as `context.backend.channelVersion`. */
+  channelVersion?: 1;
   source: string;
   scope: PiWebPluginScope;
   machineSpecific: boolean;
@@ -80,20 +96,31 @@ export class PiWebPluginService {
 
   async manifest(): Promise<PiWebPluginManifest> {
     const lifecycle = await this.lifecycle();
+    const runtime = lifecycle.response.serverRuntime;
+    if (runtime.status !== "available") {
+      throw new PiWebPluginManifestRuntimeError(
+        runtime.status,
+        requiredRuntimeFailureMessage(runtime.status, runtime.message),
+      );
+    }
     const plugins: PiWebPluginManifestEntry[] = [];
-    for (const { plugin, backendRevision } of lifecycle.browserPlugins) {
+    for (const { plugin, backendRevision, backendCapabilityVersion, channelVersion } of lifecycle.browserPlugins) {
       const artifact = await this.captureBrowserArtifact(plugin, backendRevision);
       if (artifact === undefined) continue;
       plugins.push({
         id: plugin.id,
         module: browserModuleUrl(plugin),
         ...(backendRevision === undefined ? {} : { backendRevision }),
+        ...(backendCapabilityVersion === undefined ? {} : { backendCapabilityVersion }),
+        ...(channelVersion === undefined ? {} : { channelVersion }),
         source: plugin.source,
         scope: plugin.scope,
         machineSpecific: plugin.machineSpecific,
       });
     }
-    return { lifecycleVersion: PI_WEB_PLUGIN_LIFECYCLE_VERSION, plugins };
+    const terminalMode = lifecycle.response.serverRuntime.terminalMode;
+    if (terminalMode === "required") requireTerminalManifestEntry(plugins);
+    return { lifecycleVersion: PI_WEB_PLUGIN_LIFECYCLE_VERSION, terminalMode, plugins };
   }
 
   async plugins(): Promise<PiWebPluginsResponse> {
@@ -226,6 +253,23 @@ export class PiWebPluginService {
       };
     }
   }
+}
+
+function requiredRuntimeFailureMessage(status: "unavailable" | "incompatible", message: string | undefined): string {
+  const detail = message === undefined || message === "" ? "no runtime detail was available" : message;
+  return `Required Terminal plugin runtime is ${status}: ${detail}. Retry when the session daemon is available and compatible; only an active safe-start-none runtime may disable Terminal.`;
+}
+
+function requireTerminalManifestEntry(plugins: readonly PiWebPluginManifestEntry[]): void {
+  const terminal = plugins.find(({ id }) => id === REQUIRED_TERMINAL_PLUGIN_ID);
+  if (terminal === undefined) throw new Error("Required Terminal browser entry is unavailable; use safe start none for recovery");
+  if (terminal.scope !== "bundled" || terminal.source !== "bundled" || !terminal.machineSpecific) {
+    throw new Error("Required Terminal browser entry is not the bundled machine-specific package");
+  }
+  if (terminal.backendRevision === undefined || terminal.backendCapabilityVersion !== 1 || terminal.channelVersion !== 1) {
+    throw new Error("Required Terminal browser/server pairing is incompatible; restart or use safe start none for recovery");
+  }
+  if (plugins[0] !== terminal) throw new Error("Required Terminal browser entry must be activated before ordinary plugins");
 }
 
 function browserModuleUrl(plugin: PiWebPluginCatalogEntry): string {

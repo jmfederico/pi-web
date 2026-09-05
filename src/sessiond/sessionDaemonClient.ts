@@ -44,13 +44,13 @@ export class SessionDaemonClient {
     return getSessionDaemonActiveAgentProfile(this);
   }
 
-  connectWebSocket(path: string): WebSocket {
+  connectWebSocket(path: string, options: { maxPayload?: number } = {}): WebSocket {
     if (this.baseUrl !== undefined && this.baseUrl !== "") {
       const url = new URL(path, this.baseUrl);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-      return new WebSocket(url);
+      return new WebSocket(url, options);
     }
-    return new WebSocket(`ws+unix:${this.socketPath}:${path}`);
+    return new WebSocket(`ws+unix:${this.socketPath}:${path}`, options);
   }
 
   private async requestUrl(method: string, path: string, payload?: string, signal?: AbortSignal) {

@@ -106,9 +106,11 @@ describe("buildApp active profile composition", () => {
       const manifest = await app.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });
       expect(after.statusCode).toBe(200);
       expect(after.json<{ plugins: unknown[] }>().plugins).toEqual(expect.arrayContaining([expect.objectContaining({ id: "offline-browser", enabled: false })]));
-      const manifestBody = manifest.json<{ lifecycleVersion: number; plugins: { id: string }[] }>();
-      expect(manifestBody.lifecycleVersion).toBe(1);
-      expect(manifestBody.plugins.map(({ id }) => id)).not.toContain("offline-browser");
+      expect(manifest.statusCode).toBe(503);
+      expect(manifest.json()).toMatchObject({
+        error: "Required Terminal plugin runtime is unavailable",
+        code: "required-plugin-runtime-unavailable",
+      });
     } finally {
       await app.close();
     }

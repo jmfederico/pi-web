@@ -10,14 +10,17 @@ const bundledPluginsSourceDir = resolve("pi-web-plugins");
 const bundledPluginsOutputDir = resolve("dist/pi-web-plugins");
 const filesPluginSourceDir = resolve(bundledPluginsSourceDir, "files");
 const filesPluginOutputDir = resolve(bundledPluginsOutputDir, "files");
+const terminalPluginSourceDir = resolve(bundledPluginsSourceDir, "terminal");
+const terminalPluginOutputDir = resolve(bundledPluginsOutputDir, "terminal");
 
 // Two independent source trees ship inside the npm package: bundled PI WEB
 // plugins (discovered by directory scan, see PiWebPluginCatalog) and Pi
 // packages that ship alongside them without being discovered that way (for
 // example a Pi package that is installed rather than scanned). They retain
 // separate output roots so neither becomes a discovery root for the other.
-// Files is the one concrete exception to plain transpilation: it is replaced
-// below by a self-contained browser bundle.
+// Files and Terminal are the concrete exceptions to plain transpilation: each
+// browser entry is replaced below by a self-contained bundle. Terminal also
+// keeps a package-local transpiled server graph.
 const buildTargets = [
   { rootDir: bundledPluginsSourceDir, outDir: bundledPluginsOutputDir, label: "plugin" },
   { rootDir: resolve("pi-packages"), outDir: resolve("dist/pi-packages"), label: "package" },
@@ -37,14 +40,18 @@ async function buildAll() {
   for (const target of buildTargets) {
     await rm(target.outDir, { recursive: true, force: true });
     const excludedDirectories = target.rootDir === bundledPluginsSourceDir
-      ? new Set([await realpath(filesPluginSourceDir)])
+      ? new Set([
+          await realpath(filesPluginSourceDir),
+          await realpath(terminalPluginSourceDir),
+        ])
       : new Set();
     const result = await buildDirectory(target.rootDir, target.outDir, new Set(), excludedDirectories);
     if (target.rootDir === bundledPluginsSourceDir) {
       await buildFilesBrowserPackage(filesPluginSourceDir, filesPluginOutputDir);
+      await buildTerminalPackage(terminalPluginSourceDir, terminalPluginOutputDir);
     }
     const suffix = result.transpiled === 1 ? "file" : "files";
-    const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files browser bundle" : "";
+    const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files/Terminal browser bundles" : "";
     console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix}${bundleSuffix} into ${relative(cwd, target.outDir)}`);
   }
 }
@@ -103,6 +110,10 @@ export async function buildDirectory(sourceDir, targetDir, visited = new Set(), 
 }
 
 export function filesBrowserBuildConfig(sourceDir, targetDir) {
+  return complexBrowserBuildConfig(sourceDir, targetDir);
+}
+
+export function complexBrowserBuildConfig(sourceDir, targetDir) {
   return {
     configFile: false,
     root: sourceDir,
@@ -138,6 +149,14 @@ export async function buildFilesBrowserPackage(sourceDir, targetDir, buildBrowse
   await mkdir(targetDir, { recursive: true });
   await copyFile(resolve(sourceDir, "package.json"), resolve(targetDir, "package.json"));
   await buildBrowser(filesBrowserBuildConfig(sourceDir, targetDir));
+}
+
+export async function buildTerminalPackage(sourceDir, targetDir, buildBrowser = viteBuild) {
+  await rm(targetDir, { recursive: true, force: true });
+  await mkdir(targetDir, { recursive: true });
+  await copyFile(resolve(sourceDir, "package.json"), resolve(targetDir, "package.json"));
+  await buildDirectory(resolve(sourceDir, "server"), targetDir);
+  await buildBrowser(complexBrowserBuildConfig(sourceDir, targetDir));
 }
 
 async function buildFile(file, outputPath) {

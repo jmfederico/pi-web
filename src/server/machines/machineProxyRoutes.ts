@@ -1,7 +1,20 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { WebSocket } from "ws";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, type FederatedHttpRouteSpec } from "../../shared/federatedRoutes.js";
+import {
+  PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES,
+  PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
+} from "../../shared/pluginBackendProtocol.js";
 import { mergeSelectedMachineConfig, parsePiWebConfigResponseBody, parseSelectedMachineConfigRequest, selectedMachineConfigResponse } from "../configRoutes.js";
+import {
+  type PluginBackendChannelProxyAdmissionPool,
+  type PluginBackendChannelProxyScope,
+  pluginBackendChannelProxyAdmissionPool,
+} from "../plugins/pluginBackendChannelProxyAdmission.js";
+import {
+  coordinatePluginBackendChannelProxy,
+  PluginBackendChannelProxyConnectionError,
+} from "../plugins/pluginBackendChannelProxyCoordinator.js";
 import { requestCancellation } from "../requestCancellation.js";
 import { bridgeSockets } from "../webSocketBridge.js";
 import { applyWorkspaceFilePreviewErrorResponsePolicy, applyWorkspaceFilePreviewResponsePolicy } from "../workspaces/filePreviewResponseHeaders.js";
@@ -23,7 +36,20 @@ const SAFE_RESPONSE_HEADERS = new Set([
   "x-content-type-options",
 ]);
 
-export function registerMachineProxyRoutes(app: FastifyInstance, machines = new MachineService()): void {
+type MachineProxyService = Pick<MachineService, "remoteClient">;
+
+interface MachineProxyWebSocketParams {
+  machineId: string;
+  pluginId: string;
+  projectId: string;
+  workspaceId: string;
+}
+
+export function registerMachineProxyRoutes(
+  app: FastifyInstance,
+  machines: MachineProxyService = new MachineService(),
+  pluginChannelAdmissions: PluginBackendChannelProxyAdmissionPool = pluginBackendChannelProxyAdmissionPool(app),
+): void {
   for (const spec of REMOTE_HTTP_ROUTES) {
     app.route<{ Params: { machineId: string }; Body: unknown }>({
       method: spec.method,
@@ -53,14 +79,30 @@ export function registerMachineProxyRoutes(app: FastifyInstance, machines = new 
   }
 
   for (const path of REMOTE_WEBSOCKET_ROUTES) {
-    app.get<{ Params: { machineId: string } }>(`/api/machines/:machineId${path}`, { websocket: true }, async (socket, request) => {
-      await proxyWebSocket(machines, request.params.machineId, request.url, socket);
+    app.get<{ Params: MachineProxyWebSocketParams }>(`/api/machines/:machineId${path}`, { websocket: true }, async (socket, request) => {
+      await proxyWebSocket(
+        machines,
+        request.params.machineId,
+        request.url,
+        socket,
+        path === PLUGIN_BACKEND_CHANNEL_ROUTE_PATH
+          ? {
+              admissions: pluginChannelAdmissions,
+              scope: {
+                authorityId: request.params.machineId,
+                pluginId: request.params.pluginId,
+                projectId: request.params.projectId,
+                workspaceId: request.params.workspaceId,
+              },
+            }
+          : undefined,
+      );
     });
   }
 }
 
 async function proxyHttpRequest(
-  machines: MachineService,
+  machines: MachineProxyService,
   spec: FederatedHttpRouteSpec,
   machineId: string,
   method: string,
@@ -170,7 +212,23 @@ function isSuccessfulStatus(statusCode: number): boolean {
   return statusCode >= 200 && statusCode < 300;
 }
 
-async function proxyWebSocket(machines: MachineService, machineId: string, requestUrl: string, socket: WebSocket): Promise<void> {
+interface BoundedPluginChannelProxyContext {
+  admissions: PluginBackendChannelProxyAdmissionPool;
+  scope: PluginBackendChannelProxyScope;
+}
+
+async function proxyWebSocket(
+  machines: MachineProxyService,
+  machineId: string,
+  requestUrl: string,
+  socket: WebSocket,
+  boundedPluginChannel: BoundedPluginChannelProxyContext | undefined,
+): Promise<void> {
+  if (boundedPluginChannel !== undefined) {
+    proxyBoundedPluginChannel(machines, machineId, requestUrl, socket, boundedPluginChannel);
+    return;
+  }
+
   if (machineId === "local") {
     socket.close(1011, "Local machine route is not registered for this endpoint");
     return;
@@ -187,6 +245,47 @@ async function proxyWebSocket(machines: MachineService, machineId: string, reque
   } catch {
     socket.close(1011, "Remote machine unavailable");
   }
+}
+
+function proxyBoundedPluginChannel(
+  machines: MachineProxyService,
+  machineId: string,
+  requestUrl: string,
+  socket: WebSocket,
+  context: BoundedPluginChannelProxyContext,
+): void {
+  void coordinatePluginBackendChannelProxy({
+    downstream: socket,
+    admissions: context.admissions,
+    scope: context.scope,
+    async connectUpstream(signal) {
+      if (machineId === "local") {
+        throw new PluginBackendChannelProxyConnectionError(
+          1011,
+          "Local machine route is not registered for this endpoint",
+        );
+      }
+
+      let client: MachineClient | undefined;
+      try {
+        client = await machines.remoteClient(machineId);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw new PluginBackendChannelProxyConnectionError(1011, "Remote machine unavailable", { cause: error });
+      }
+      signal.throwIfAborted();
+      if (client === undefined) {
+        throw new PluginBackendChannelProxyConnectionError(1008, "Machine not found");
+      }
+      try {
+        return client.connectWebSocket(remoteApiPath(machineId, requestUrl), {
+          maxPayload: PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES,
+        });
+      } catch (error) {
+        throw new PluginBackendChannelProxyConnectionError(1011, "Remote machine unavailable", { cause: error });
+      }
+    },
+  });
 }
 
 function remoteApiPath(machineId: string, requestUrl: string): string {

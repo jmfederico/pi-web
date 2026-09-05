@@ -1,7 +1,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceProvider } from "../../server-plugin-api.js";
-import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
+import { PluginBackendRegistry } from "../plugins/pluginBackendRegistry.js";
+import type {
+  ServerPluginPairedBackendContribution,
+  ServerPluginProviderContribution,
+} from "../plugins/serverPluginRuntime.js";
 import type { Project } from "../types.js";
 import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
 import { registerPluginBackendRoutes } from "./pluginBackendRoutes.js";
@@ -63,6 +67,45 @@ describe("session daemon plugin backend routes", () => {
     expect(onWorkspacesMutated).toHaveBeenCalledTimes(1);
   });
 
+  it("routes a non-provider paired backend with an operation-scoped cancellation signal", async () => {
+    const workspaces = new WorkspaceProviderRegistry({
+      contributions: [],
+      logger: { warn: vi.fn() },
+      pathInspector: () => true,
+    });
+    const workspaceId = (await workspaces.resolve(project)).workspaces[0]?.id;
+    if (workspaceId === undefined) throw new Error("Expected folder workspace");
+    let observedSignal: AbortSignal | undefined;
+    const contribution: ServerPluginPairedBackendContribution = {
+      pluginId: "board",
+      pluginName: "Board",
+      packageRoot: "/plugins/board",
+      source: "test fixture",
+      scope: "local",
+      moduleRevision: "server-r1",
+      backend: {
+        version: 1,
+        request: ({ operation, input, signal }) => {
+          observedSignal = signal;
+          return { operation, input };
+        },
+      },
+    };
+    const backends = new PluginBackendRegistry({ contributions: [contribution], workspaces });
+    registerPluginBackendRoutes(app, { projects: projectReader(), backends, onWorkspacesMutated: vi.fn() });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/plugin-backends/board/projects/${encodeURIComponent(project.id)}/workspaces/${workspaceId}/cards.summary`,
+      payload: { revision: "server-r1", input: { cards: 2 } },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ operation: "cards.summary", input: { cards: 2 } });
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
   it("serializes invalid, stale, and thrown operation failures without a stack", async () => {
     const registry = registryFor({
       probe: () => Promise.resolve("claim"),
@@ -105,6 +148,25 @@ describe("session daemon plugin backend routes", () => {
     expect(missing.statusCode).toBe(404);
     expect(missing.json()).toMatchObject({ code: "project-not-found" });
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("passes an inbound cancellation signal to the dispatcher", async () => {
+    let observedSignal: AbortSignal | undefined;
+    const request = vi.fn((_backendRequest, signal?: AbortSignal) => {
+      observedSignal = signal;
+      return Promise.resolve(null);
+    });
+    registerPluginBackendRoutes(app, { projects: projectReader(), backends: { request }, onWorkspacesMutated: vi.fn() });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/plugin-backends/board/projects/project%20one/workspaces/w1/cards.summary",
+      payload: { revision: "server-r1", input: null },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(observedSignal).toBeInstanceOf(AbortSignal);
+    expect(observedSignal?.aborted).toBe(false);
   });
 });
 

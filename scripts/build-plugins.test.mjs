@@ -290,6 +290,16 @@ describe("Files browser package build", () => {
     const serviceOptions = {
       roots: [{ path: tempDir, source: "bundled", scope: "bundled" }],
       packageProvider: false,
+      runtimeProvider: {
+        providerRuntime: () => Promise.resolve({
+          protocolVersion: 2,
+          terminalMode: "recovery-disabled",
+          safeStart: "none",
+          records: [],
+          health: [],
+          diagnostics: [],
+        }),
+      },
     };
     const service = new PiWebPluginService(serviceOptions);
     const manifest = await service.manifest();
@@ -308,7 +318,7 @@ describe("Files browser package build", () => {
       ...serviceOptions,
       configProvider: () => ({ plugins: { files: { enabled: false } } }),
     });
-    await expect(disabledService.manifest()).resolves.toEqual({ lifecycleVersion: 1, plugins: [] });
+    await expect(disabledService.manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
     await expect(disabledService.plugins()).resolves.toMatchObject({
       plugins: [{ id: "files", enabled: false }],
     });

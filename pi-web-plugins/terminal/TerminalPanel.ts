@@ -1,15 +1,17 @@
-import { css, html, LitElement, type PropertyValues } from "lit";
-import { customElement, property, query, state } from "lit/decorators.js";
+import { css, html, LitElement, unsafeCSS } from "lit";
+import { property, query, state } from "lit/decorators.js";
+import { html as staticHtml, unsafeStatic } from "lit/static-html.js";
 import { styleMap, type StyleInfo } from "lit/directives/style-map.js";
 import { Terminal, type ITerminalOptions, type ITheme } from "@xterm/xterm";
 import { FitAddon, type ITerminalDimensions } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
-import { terminalSocket, terminalsApi, type TerminalCommandRun, type TerminalInfo, type Workspace } from "../api";
-import { writeClipboardText } from "../clipboard";
-import { selectFallbackTerminal, selectPreferredTerminal } from "../controllers/terminalSelection";
-import { createTerminalCopySnapshot, DEFAULT_TERMINAL_ANSI_THEME, type TerminalCopyRunStyle, type TerminalCopySnapshot } from "../terminalCopySnapshot";
-import { createTerminalSoftKeysDefaultEnvironmentMedia, hasTerminalSoftKeysPreference, initialTerminalSoftKeysEnabled, isTerminalSoftKeysDefaultEnvironment, writeTerminalSoftKeysPreference } from "../terminalSoftKeysPreference";
-import "./TerminalSoftKeys";
+import xtermStyles from "@xterm/xterm/css/xterm.css?inline";
+import type { TerminalCommandRun, WorkspaceBackendChannel, WorkspaceBackendChannelClose, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import { writeClipboardText } from "./clipboard";
+import { selectFallbackTerminal, selectPreferredTerminal } from "./terminalSelection";
+import { TerminalBackendClient, terminalChannelFailureMessage, terminalInputFrames, type TerminalClientFrame, type TerminalInfo, type TerminalServerFrame, type TerminalSize } from "./terminalProtocol";
+import { createTerminalCopySnapshot, DEFAULT_TERMINAL_ANSI_THEME, type TerminalCopyRunStyle, type TerminalCopySnapshot } from "./terminalCopySnapshot";
+import { createTerminalSoftKeysDefaultEnvironmentMedia, hasTerminalSoftKeysPreference, initialTerminalSoftKeysEnabled, isTerminalSoftKeysDefaultEnvironment, writeTerminalSoftKeysPreference } from "./terminalSoftKeysPreference";
+import type { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
 import type { TerminalSoftKeyInputOptions } from "./TerminalSoftKeys";
 
 const TERMINAL_OPTIONS_BASE: ITerminalOptions = {
@@ -21,14 +23,27 @@ const TERMINAL_OPTIONS_BASE: ITerminalOptions = {
 
 const DEFAULT_TERMINAL_SIZE: TerminalSize = { cols: 100, rows: 30 };
 const COMMAND_RUN_POLL_INTERVAL_MS = 1000;
+const CHANNEL_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
+const WORKSPACE_LOAD_RETRY_DELAYS_MS = [1_000, 2_000, 5_000] as const;
 
-@customElement("terminal-panel")
+interface ScopedPanelOperation {
+  readonly context: WorkspacePanelContext;
+  readonly runtime: TerminalBrowserRuntime;
+  readonly scope: string;
+  readonly generation: number;
+  readonly controller: AbortController;
+}
+
+interface TerminalReplayInputSuppression {
+  readonly generation: number;
+  readonly terminalId: string;
+  readonly terminal: Terminal;
+}
+
 export class TerminalPanel extends LitElement {
-  @property({ attribute: false }) workspace: Workspace | undefined;
-  @property() machineId = "local";
-  @property({ attribute: false }) selectedTerminalId: string | undefined;
-  @property({ type: Boolean }) autoStart = false;
-  @property({ attribute: false }) onSelectTerminal: (terminalId: string | undefined, options?: { replace?: boolean | undefined }) => void = () => undefined;
+  @property({ attribute: false }) context: WorkspacePanelContext | undefined;
+  @property({ attribute: false }) runtime: TerminalBrowserRuntime | undefined;
+  @property({ attribute: false }) softKeysElementName = "pi-web-terminal-soft-keys-terminal";
   @query(".terminal-host") private terminalHost?: HTMLDivElement | null;
   @query(".terminal-copy-content") private terminalCopyContent?: HTMLPreElement | null;
   @query(".terminal-copy-selector") private terminalCopySelector?: HTMLTextAreaElement | null;
@@ -37,6 +52,7 @@ export class TerminalPanel extends LitElement {
   @state() private selectedId: string | undefined;
   @state() private loading = false;
   @state() private error: string | undefined;
+  @state() private connectionError: string | undefined;
   @state() private visible = false;
   @state() private cancellingRunIds: string[] = [];
   @state() private continuingTerminalIds: string[] = [];
@@ -47,14 +63,29 @@ export class TerminalPanel extends LitElement {
 
   private terminal: Terminal | undefined;
   private fitAddon: FitAddon | undefined;
-  private socket: WebSocket | undefined;
+  private channel: WorkspaceBackendChannel | undefined;
+  private channelAbort: AbortController | undefined;
+  private channelGeneration = 0;
+  private channelReconnectAttempt = 0;
+  private channelReconnectTimer: number | undefined;
+  private loadAbort: AbortController | undefined;
+  private loadRetryTimer: number | undefined;
+  private loadRetryAttempt = 0;
+  private commandRunLoadAbort: AbortController | undefined;
+  private readonly operationAborts = new Set<AbortController>();
+  private workspaceGeneration = 0;
   private resizeObserver: ResizeObserver | undefined;
   private intersectionObserver: IntersectionObserver | undefined;
   private themeObserver: MutationObserver | undefined;
-  private suppressTerminalInput = false;
+  private replayInputSuppression: TerminalReplayInputSuppression | undefined;
+  private observedRuntime: TerminalBrowserRuntime | undefined;
   private observedWorkspaceScope: string | undefined;
-  private loadedCwd: string | undefined;
-  private autoStartConsumedCwd: string | undefined;
+  private loadedWorkspaceScope: string | undefined;
+  private consumedAutoStartRequest: string | undefined;
+  private requestedAutoStartRequest: string | undefined;
+  private routedTerminalId: string | undefined;
+  private requestedTerminalId: string | undefined;
+  private pendingTerminalNavigation: { context: WorkspacePanelContext; terminalId: string | undefined } | undefined;
   private commandRunPollTimer: number | undefined;
   private readonly softKeysDefaultEnvironmentMedia = createTerminalSoftKeysDefaultEnvironmentMedia();
   private softKeysPreferenceStored = hasTerminalSoftKeysPreference();
@@ -71,6 +102,10 @@ export class TerminalPanel extends LitElement {
   }
 
   override firstUpdated(): void {
+    if (typeof IntersectionObserver === "undefined") {
+      this.visible = true;
+      return;
+    }
     this.intersectionObserver = new IntersectionObserver((entries) => {
       this.visible = entries[0]?.isIntersecting === true;
     });
@@ -83,6 +118,10 @@ export class TerminalPanel extends LitElement {
     this.themeObserver?.disconnect();
     this.themeObserver = undefined;
     this.softKeysDefaultEnvironmentMedia?.removeEventListener("change", this.onSoftKeysDefaultEnvironmentChange);
+    this.workspaceGeneration += 1;
+    this.cancelWorkspaceRequests();
+    this.cancellingRunIds = [];
+    this.continuingTerminalIds = [];
     this.updateCommandRunPolling(false);
     this.disposeTerminalView();
     super.disconnectedCallback();
@@ -100,98 +139,220 @@ export class TerminalPanel extends LitElement {
     void this.updateComplete.then(() => { this.fitAndNotify(); });
   }
 
-  override willUpdate(changed: PropertyValues<this>): void {
-    const workspaceScope = this.workspace === undefined ? undefined : JSON.stringify([this.machineId, this.workspace.path]);
-    if (workspaceScope !== this.observedWorkspaceScope) {
+  override willUpdate(): void {
+    const context = this.context;
+    const runtime = this.runtime;
+    const workspaceScope = context === undefined || runtime === undefined ? undefined : runtime.workspaceScope(context);
+    let routedTerminalId = context === undefined || runtime === undefined ? undefined : runtime.routedTerminalId(context);
+    let requestedTerminalId = context === undefined || runtime === undefined ? undefined : runtime.selectedTerminalId(context);
+    const requestedAutoStart = context === undefined || runtime === undefined ? undefined : runtime.autoStartRequest(context);
+    const pendingTerminalNavigation = this.pendingTerminalNavigation;
+    if (context !== undefined && pendingTerminalNavigation?.context === context) {
+      routedTerminalId = pendingTerminalNavigation.terminalId;
+      requestedTerminalId = pendingTerminalNavigation.terminalId;
+    } else if (pendingTerminalNavigation !== undefined) {
+      this.pendingTerminalNavigation = undefined;
+    }
+    if (workspaceScope !== this.observedWorkspaceScope || runtime !== this.observedRuntime) {
+      this.workspaceGeneration += 1;
+      this.cancelWorkspaceRequests();
+      this.observedRuntime = runtime;
       this.observedWorkspaceScope = workspaceScope;
-      this.loadedCwd = undefined;
-      this.autoStartConsumedCwd = undefined;
+      this.loadedWorkspaceScope = undefined;
+      this.consumedAutoStartRequest = undefined;
+      this.requestedAutoStartRequest = requestedAutoStart;
+      this.routedTerminalId = routedTerminalId;
+      this.requestedTerminalId = requestedTerminalId;
+      this.pendingTerminalNavigation = undefined;
       this.terminals = [];
       this.commandRuns = [];
       this.selectedId = undefined;
       this.cancellingRunIds = [];
       this.continuingTerminalIds = [];
+      this.loading = false;
+      this.error = undefined;
+      this.connectionError = undefined;
+      this.loadRetryAttempt = 0;
       this.updateCommandRunPolling(false);
       this.disposeTerminalView();
       return;
     }
-    if (changed.has("selectedTerminalId")) {
-      const previousTerminalId = changed.get("selectedTerminalId");
-      if (previousTerminalId !== undefined && this.selectedTerminalId === undefined) {
-        this.loadedCwd = undefined;
-        this.selectTerminalIdInView(undefined);
-        return;
-      }
+    if (routedTerminalId !== this.routedTerminalId || requestedTerminalId !== this.requestedTerminalId) {
+      this.routedTerminalId = routedTerminalId;
+      this.requestedTerminalId = requestedTerminalId;
       this.applyRequestedTerminalSelection();
     }
+    if (requestedAutoStart !== this.requestedAutoStartRequest) this.requestedAutoStartRequest = requestedAutoStart;
   }
 
-  override updated(changed: PropertyValues<this>): void {
-    if (!this.visible) this.updateCommandRunPolling(false);
-    else if (this.hasPendingCommandRuns()) this.updateCommandRunPolling(true);
+  override updated(): void {
+    if (!this.visible) {
+      this.updateCommandRunPolling(false);
+      this.disposeTerminalView();
+      return;
+    }
+    if (this.hasPendingCommandRuns()) this.updateCommandRunPolling(true);
     this.loadVisibleWorkspaceTerminals();
-    if (changed.has("selectedTerminalId") && this.shouldReloadForRequestedTerminal()) void this.loadTerminals();
+    if (this.shouldReloadForRequestedTerminal()) void this.loadTerminals();
+    this.applyAutoStartRequest();
     this.ensureTerminalView();
   }
 
   private loadVisibleWorkspaceTerminals(): void {
-    const cwd = this.workspace?.path;
-    if (!this.visible || cwd === undefined || cwd === this.loadedCwd) return;
-    this.loadedCwd = cwd;
+    const scope = this.observedWorkspaceScope;
+    if (!this.visible
+      || scope === undefined
+      || scope === this.loadedWorkspaceScope
+      || this.loading
+      || this.loadRetryTimer !== undefined) return;
     void this.loadTerminals();
   }
 
   private async loadTerminals(): Promise<void> {
+    const context = this.context;
+    const runtime = this.runtime;
+    const scope = this.observedWorkspaceScope;
+    const generation = this.workspaceGeneration;
+    if (context === undefined || runtime === undefined || scope === undefined || runtime.workspaceScope(context) !== scope) return;
+    this.clearWorkspaceLoadRetryTimer();
+    this.loadAbort?.abort();
+    const controller = new AbortController();
+    this.loadAbort = controller;
     this.loading = true;
     this.error = undefined;
     try {
-      const workspace = this.workspace;
-      if (workspace === undefined) return;
-      const shouldAutoStart = this.consumeAutoStart();
+      const client = this.backendClient(context);
       const [terminals, commandRuns] = await Promise.all([
-        terminalsApi.terminals(workspace.projectId, workspace.id, this.machineId),
-        terminalsApi.listCommandRuns({ projectId: workspace.projectId, workspaceId: workspace.id }, this.machineId),
+        client.list(controller.signal),
+        client.listCommandRuns({}, controller.signal),
       ]);
+      if (!this.workspaceIsCurrent(scope, generation, runtime) || controller.signal.aborted) return;
+      this.loadedWorkspaceScope = scope;
+      this.loadRetryAttempt = 0;
       this.terminals = terminals;
       this.commandRuns = commandRuns;
+      runtime.updateTerminals(context, terminals);
       this.selectPreferredLoadedTerminal({ replaceUrl: true });
       this.updateCommandRunPolling(this.hasPendingCommandRuns(commandRuns));
+      const shouldAutoStart = this.consumeAutoStart(scope);
       if (terminals.length === 0 && shouldAutoStart) await this.startTerminal();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (!controller.signal.aborted && this.workspaceIsCurrent(scope, generation, runtime)) {
+        this.loadedWorkspaceScope = undefined;
+        this.error = errorMessage(error);
+        this.scheduleWorkspaceLoadRetry(scope, generation, runtime);
+      }
     } finally {
-      this.loading = false;
+      if (this.loadAbort === controller) this.loadAbort = undefined;
+      if (!controller.signal.aborted && this.workspaceIsCurrent(scope, generation, runtime)) this.loading = false;
     }
   }
 
   private applyRequestedTerminalSelection(): void {
-    if (this.selectedTerminalId !== undefined && !this.terminals.some((terminal) => terminal.id === this.selectedTerminalId)) return;
+    if (this.requestedTerminalId !== undefined && !this.terminals.some((terminal) => terminal.id === this.requestedTerminalId)) return;
     this.selectPreferredLoadedTerminal({ replaceUrl: true });
   }
 
-  private consumeAutoStart(): boolean {
-    const cwd = this.workspace?.path;
-    if (!this.autoStart || cwd === undefined || this.autoStartConsumedCwd === cwd) return false;
-    this.autoStartConsumedCwd = cwd;
-    return true;
+  private applyAutoStartRequest(): void {
+    const scope = this.observedWorkspaceScope;
+    if (scope === undefined || scope !== this.loadedWorkspaceScope || this.loading) return;
+    const shouldAutoStart = this.consumeAutoStart(scope);
+    if (shouldAutoStart && this.terminals.length === 0) void this.startTerminal();
+  }
+
+  private consumeAutoStart(scope: string): boolean {
+    const request = this.requestedAutoStartRequest;
+    if (request === undefined) return false;
+    const key = JSON.stringify([scope, request]);
+    const shouldAutoStart = this.consumedAutoStartRequest !== key;
+    this.consumedAutoStartRequest = key;
+    this.requestedAutoStartRequest = undefined;
+    this.context?.navigation?.set("start", undefined, { replace: true });
+    return shouldAutoStart;
   }
 
   private shouldReloadForRequestedTerminal(): boolean {
-    const cwd = this.workspace?.path;
     return this.visible
-      && cwd !== undefined
-      && cwd === this.loadedCwd
-      && this.selectedTerminalId !== undefined
+      && this.observedWorkspaceScope !== undefined
+      && this.observedWorkspaceScope === this.loadedWorkspaceScope
+      && this.requestedTerminalId !== undefined
       && !this.loading
-      && !this.terminals.some((terminal) => terminal.id === this.selectedTerminalId);
+      && this.loadRetryTimer === undefined
+      && !this.terminals.some((terminal) => terminal.id === this.requestedTerminalId);
+  }
+
+  private scheduleWorkspaceLoadRetry(scope: string, generation: number, runtime: TerminalBrowserRuntime): void {
+    if (this.loadRetryTimer !== undefined) return;
+    const delay = WORKSPACE_LOAD_RETRY_DELAYS_MS[Math.min(this.loadRetryAttempt, WORKSPACE_LOAD_RETRY_DELAYS_MS.length - 1)] ?? 5_000;
+    this.loadRetryAttempt += 1;
+    this.loadRetryTimer = window.setTimeout(() => {
+      this.loadRetryTimer = undefined;
+      if (!this.visible || !this.workspaceIsCurrent(scope, generation, runtime)) return;
+      void this.loadTerminals();
+    }, delay);
+  }
+
+  private clearWorkspaceLoadRetryTimer(): void {
+    if (this.loadRetryTimer === undefined) return;
+    window.clearTimeout(this.loadRetryTimer);
+    this.loadRetryTimer = undefined;
+  }
+
+  private cancelWorkspaceRequests(): void {
+    this.loadAbort?.abort();
+    this.loadAbort = undefined;
+    this.loading = false;
+    this.clearWorkspaceLoadRetryTimer();
+    for (const controller of this.operationAborts) controller.abort();
+    this.operationAborts.clear();
+    this.commandRunLoadAbort = undefined;
+  }
+
+  private workspaceIsCurrent(scope: string, generation: number, runtime: TerminalBrowserRuntime): boolean {
+    const context = this.context;
+    return generation === this.workspaceGeneration
+      && runtime === this.runtime
+      && context !== undefined
+      && this.observedWorkspaceScope === scope
+      && runtime.workspaceScope(context) === scope;
+  }
+
+  private beginScopedOperation(): ScopedPanelOperation | undefined {
+    const context = this.context;
+    const runtime = this.runtime;
+    const scope = this.observedWorkspaceScope;
+    const generation = this.workspaceGeneration;
+    if (context === undefined || runtime === undefined || scope === undefined || !this.workspaceIsCurrent(scope, generation, runtime)) return undefined;
+    const controller = new AbortController();
+    this.operationAborts.add(controller);
+    return { context, runtime, scope, generation, controller };
+  }
+
+  private operationIsCurrent(operation: ScopedPanelOperation): boolean {
+    return !operation.controller.signal.aborted
+      && this.workspaceIsCurrent(operation.scope, operation.generation, operation.runtime);
+  }
+
+  private finishScopedOperation(operation: ScopedPanelOperation): void {
+    this.operationAborts.delete(operation.controller);
+    if (this.commandRunLoadAbort === operation.controller) this.commandRunLoadAbort = undefined;
   }
 
   private selectPreferredLoadedTerminal(options?: { replaceUrl?: boolean | undefined }): void {
-    let terminal = selectPreferredTerminal(this.terminals, { targetTerminalId: this.selectedTerminalId });
-    if (terminal === undefined && this.selectedTerminalId !== undefined) terminal = selectFallbackTerminal(this.terminals);
-    this.selectTerminalIdInView(terminal?.id);
-    if (terminal?.id !== this.selectedTerminalId || (terminal === undefined && this.selectedTerminalId !== undefined)) {
-      this.onSelectTerminal(terminal?.id, { replace: options?.replaceUrl === true });
+    const context = this.context;
+    const runtime = this.runtime;
+    if (context === undefined || runtime === undefined) return;
+    const latestTerminalId = runtime.selection.latestTerminalId(runtime.selectionScope(context));
+    let terminal = selectPreferredTerminal(this.terminals, {
+      targetTerminalId: this.requestedTerminalId,
+      latestTerminalId,
+    });
+    if (terminal === undefined && this.requestedTerminalId !== undefined) terminal = selectFallbackTerminal(this.terminals);
+    const selectedTerminalId = terminal?.id;
+    this.selectTerminalIdInView(selectedTerminalId);
+    this.requestedTerminalId = selectedTerminalId;
+    if (selectedTerminalId !== this.routedTerminalId || selectedTerminalId !== latestTerminalId) {
+      this.publishTerminalSelection(context, runtime, selectedTerminalId, { replace: options?.replaceUrl === true });
     }
   }
 
@@ -202,38 +363,64 @@ export class TerminalPanel extends LitElement {
   }
 
   private async startTerminal(): Promise<void> {
-    if (this.workspace === undefined) return;
+    const operation = this.beginScopedOperation();
+    if (operation === undefined) return;
     this.error = undefined;
     try {
       const size = this.measureTerminalSize() ?? DEFAULT_TERMINAL_SIZE;
-      const terminal = await terminalsApi.startTerminal(this.workspace.projectId, this.workspace.id, size, this.machineId);
+      const terminal = await this.backendClient(operation.context).create(size, operation.controller.signal);
+      if (!this.operationIsCurrent(operation)) return;
       this.terminals = [...this.terminals, terminal];
+      operation.runtime.updateTerminals(operation.context, this.terminals);
       this.selectTerminal(terminal.id);
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
+    } finally {
+      this.finishScopedOperation(operation);
     }
   }
 
   private async closeTerminal(id: string, event: Event): Promise<void> {
     event.stopPropagation();
+    const operation = this.beginScopedOperation();
+    if (operation === undefined) return;
     try {
-      if (this.workspace === undefined) return;
-      await terminalsApi.closeTerminal(this.workspace.projectId, this.workspace.id, id, this.machineId);
+      await this.backendClient(operation.context).close(id, operation.controller.signal);
+      if (!this.operationIsCurrent(operation)) return;
       const next = this.terminals.filter((terminal) => terminal.id !== id);
       this.terminals = next;
-      if (this.selectedId === id || this.selectedTerminalId === id) {
+      operation.runtime.forgetTerminal(operation.context, id);
+      operation.runtime.updateTerminals(operation.context, next);
+      if (this.selectedId === id || this.requestedTerminalId === id) {
         const nextSelectedId = selectFallbackTerminal(next)?.id;
         this.selectTerminalIdInView(nextSelectedId);
-        this.onSelectTerminal(nextSelectedId, { replace: true });
+        this.publishTerminalSelection(operation.context, operation.runtime, nextSelectedId, { replace: true });
       }
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
+    } finally {
+      this.finishScopedOperation(operation);
     }
   }
 
   private selectTerminal(id: string): void {
+    const context = this.context;
+    const runtime = this.runtime;
+    if (context === undefined || runtime === undefined) return;
     if (this.selectedId !== id) this.selectTerminalIdInView(id);
-    this.onSelectTerminal(id);
+    this.publishTerminalSelection(context, runtime, id);
+  }
+
+  private publishTerminalSelection(
+    context: WorkspacePanelContext,
+    runtime: TerminalBrowserRuntime,
+    terminalId: string | undefined,
+    options?: { replace?: boolean | undefined },
+  ): void {
+    this.pendingTerminalNavigation = { context, terminalId };
+    this.routedTerminalId = terminalId;
+    this.requestedTerminalId = terminalId;
+    runtime.selectTerminal(context, terminalId, options);
   }
 
   private selectedTerminalInfo(): TerminalInfo | undefined {
@@ -247,25 +434,34 @@ export class TerminalPanel extends LitElement {
   }
 
   private async loadCommandRuns(): Promise<void> {
-    const workspace = this.workspace;
-    if (workspace === undefined) return;
+    this.commandRunLoadAbort?.abort();
+    const operation = this.beginScopedOperation();
+    if (operation === undefined) return;
+    this.commandRunLoadAbort = operation.controller;
     try {
-      const commandRuns = await terminalsApi.listCommandRuns({ projectId: workspace.projectId, workspaceId: workspace.id }, this.machineId);
+      const commandRuns = await this.backendClient(operation.context).listCommandRuns({}, operation.controller.signal);
+      if (!this.operationIsCurrent(operation)) return;
       this.commandRuns = commandRuns;
       this.cancellingRunIds = this.cancellingRunIds.filter((runId) => commandRuns.some((run) => run.id === runId && isCommandRunPending(run)));
-      this.updateCommandRunPolling(this.hasPendingCommandRuns(commandRuns));
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
+    } finally {
+      const shouldPoll = this.operationIsCurrent(operation) && this.visible && this.hasPendingCommandRuns();
+      this.finishScopedOperation(operation);
+      this.updateCommandRunPolling(shouldPoll);
     }
   }
 
   private updateCommandRunPolling(shouldPoll: boolean): void {
-    if (shouldPoll && this.commandRunPollTimer === undefined) {
-      this.commandRunPollTimer = window.setInterval(() => { void this.loadCommandRuns(); }, COMMAND_RUN_POLL_INTERVAL_MS);
+    if (shouldPoll && this.visible && this.commandRunPollTimer === undefined && this.commandRunLoadAbort === undefined) {
+      this.commandRunPollTimer = window.setTimeout(() => {
+        this.commandRunPollTimer = undefined;
+        void this.loadCommandRuns();
+      }, COMMAND_RUN_POLL_INTERVAL_MS);
       return;
     }
     if (!shouldPoll && this.commandRunPollTimer !== undefined) {
-      window.clearInterval(this.commandRunPollTimer);
+      window.clearTimeout(this.commandRunPollTimer);
       this.commandRunPollTimer = undefined;
     }
   }
@@ -276,96 +472,195 @@ export class TerminalPanel extends LitElement {
 
   private async cancelCommandRun(run: TerminalCommandRun): Promise<void> {
     if (!isCommandRunPending(run) || this.cancellingRunIds.includes(run.id)) return;
+    const operation = this.beginScopedOperation();
+    if (operation === undefined) return;
     this.error = undefined;
     this.cancellingRunIds = [...this.cancellingRunIds, run.id];
     try {
-      await terminalsApi.cancelCommandRun(run.id, this.machineId);
+      await this.backendClient(operation.context).cancelCommandRun(run.id, operation.controller.signal);
+      if (!this.operationIsCurrent(operation)) return;
       await this.loadCommandRuns();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
-      this.cancellingRunIds = this.cancellingRunIds.filter((runId) => runId !== run.id);
+      if (this.operationIsCurrent(operation)) this.cancellingRunIds = this.cancellingRunIds.filter((runId) => runId !== run.id);
+      this.finishScopedOperation(operation);
     }
   }
 
   private async continueTerminal(id: string): Promise<void> {
-    if (this.workspace === undefined || this.continuingTerminalIds.includes(id)) return;
+    if (this.continuingTerminalIds.includes(id)) return;
+    const operation = this.beginScopedOperation();
+    if (operation === undefined) return;
     this.error = undefined;
     this.continuingTerminalIds = [...this.continuingTerminalIds, id];
     try {
-      const terminal = await terminalsApi.continueTerminal(this.workspace.projectId, this.workspace.id, id, this.machineId);
+      const terminal = await this.backendClient(operation.context).continue(id, operation.controller.signal);
+      if (!this.operationIsCurrent(operation)) return;
       this.terminals = this.terminals.map((item) => item.id === id ? terminal : item);
-      if (this.socket === undefined) this.disposeTerminalView();
+      operation.runtime.updateTerminals(operation.context, this.terminals);
+      if (this.channel === undefined) this.disposeTerminalView();
       this.fitAndNotify();
       this.terminal?.focus();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
-      this.continuingTerminalIds = this.continuingTerminalIds.filter((terminalId) => terminalId !== id);
+      if (this.operationIsCurrent(operation)) this.continuingTerminalIds = this.continuingTerminalIds.filter((terminalId) => terminalId !== id);
+      this.finishScopedOperation(operation);
     }
   }
 
   private ensureTerminalView(): void {
-    const workspace = this.workspace;
+    const context = this.context;
     const terminalHost = this.terminalHostElement();
-    if (!this.visible || this.terminal !== undefined || this.selectedId === undefined || terminalHost === undefined || workspace === undefined) return;
+    if (!this.visible || this.terminal !== undefined || this.selectedId === undefined || terminalHost === undefined || context === undefined) return;
     const terminal = new Terminal(terminalOptions(this));
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(terminalHost);
     this.terminal = terminal;
     this.fitAddon = fitAddon;
-    this.resizeObserver = new ResizeObserver(() => { this.fitAndNotify(); });
-    this.resizeObserver.observe(terminalHost);
-    terminal.onData((data) => {
-      if (this.suppressTerminalInput || this.copySnapshot !== undefined) return;
-      this.sendTerminalInput(data);
-    });
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => { this.fitAndNotify(); });
+      this.resizeObserver.observe(terminalHost);
+    }
+    terminal.onData((data) => { this.handleTerminalData(terminal, data); });
     const initialSize = this.fitTerminal();
-    this.connectSocket(workspace.projectId, workspace.id, this.selectedId, terminal, initialSize);
+    this.connectChannel(context, this.selectedId, terminal, initialSize);
     requestAnimationFrame(() => { this.fitAndNotify(); });
     terminal.focus();
   }
 
-  private connectSocket(projectId: string, workspaceId: string, terminalId: string, terminal: Terminal, initialSize: TerminalSize | undefined): void {
-    const socket = terminalSocket(projectId, workspaceId, terminalId, initialSize, this.machineId);
-    socket.binaryType = "arraybuffer";
-    this.socket = socket;
-    socket.addEventListener("open", () => { this.fitAndNotify(); });
-    socket.addEventListener("message", (event) => {
-      void this.handleSocketMessage(event.data, terminalId, terminal);
-    });
-    socket.addEventListener("close", () => {
-      if (this.socket === socket) this.socket = undefined;
+  private connectChannel(
+    context: WorkspacePanelContext,
+    terminalId: string,
+    terminal: Terminal,
+    initialSize: TerminalSize | undefined,
+    resetAfterReconnect = false,
+  ): void {
+    const generation = ++this.channelGeneration;
+    this.channelAbort?.abort();
+    const controller = new AbortController();
+    this.channelAbort = controller;
+    const bufferedFrames: TerminalServerFrame[] = [];
+    let readyForFrames = !resetAfterReconnect;
+    void this.backendClient(context).attach({
+      terminalId,
+      ...(initialSize === undefined ? {} : { size: initialSize }),
+      signal: controller.signal,
+      onFrame: (frame) => {
+        if (readyForFrames) this.handleChannelFrame(generation, frame, terminalId, terminal);
+        else bufferedFrames.push(frame);
+      },
+    }).then((channel) => {
+      if (!this.channelIsCurrent(generation, terminalId, terminal) || controller.signal.aborted) {
+        channel.close("Terminal view changed");
+        return;
+      }
+      this.channel = channel;
+      if (resetAfterReconnect) {
+        this.replayInputSuppression = undefined;
+        terminal.reset();
+      }
+      readyForFrames = true;
+      for (const frame of bufferedFrames) this.handleChannelFrame(generation, frame, terminalId, terminal);
+      this.channelReconnectAttempt = 0;
+      this.connectionError = undefined;
+      this.fitAndNotify();
+      void channel.closed.then((close) => { this.handleChannelClosed(generation, terminalId, terminal, close); });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted || !this.channelIsCurrent(generation, terminalId, terminal)) return;
+      this.connectionError = `Terminal connection failed: ${errorMessage(error)}`;
+      this.scheduleChannelReconnect(terminalId, terminal);
     });
   }
 
-  private async handleSocketMessage(data: unknown, terminalId: string, terminal: Terminal): Promise<void> {
-    try {
-      const message = parseServerMessage(await socketDataToString(data));
-      if (message.type === "output") {
-        this.writeTerminalOutput(terminal, message.data, message.replay === true);
-      }
-      if (message.type === "exit") {
-        terminal.writeln(`\r\n[process exited${message.exitCode === undefined ? "" : ` with code ${String(message.exitCode)}`}]`);
-        this.terminals = this.terminals.map((item) => item.id === terminalId ? { ...item, exited: true, ...(message.exitCode === undefined ? {} : { exitCode: message.exitCode }) } : item);
-        void this.loadCommandRuns();
-      }
-      if (message.type === "error") terminal.writeln(`\r\n[terminal error: ${message.message}]`);
-    } catch (error) {
-      terminal.writeln(`\r\n[terminal error: ${error instanceof Error ? error.message : String(error)}]`);
-    }
-  }
-
-  private writeTerminalOutput(terminal: Terminal, data: string, replay: boolean): void {
-    if (!replay) {
-      terminal.write(data);
+  private handleChannelFrame(generation: number, frame: TerminalServerFrame, terminalId: string, terminal: Terminal): void {
+    if (!this.channelIsCurrent(generation, terminalId, terminal)) return;
+    if (frame.type === "output") {
+      this.writeTerminalOutput(generation, terminalId, terminal, frame);
       return;
     }
-    this.suppressTerminalInput = true;
-    terminal.write(data, () => {
-      this.suppressTerminalInput = false;
-    });
+    if (frame.type === "exit") {
+      terminal.writeln(`\r\n[process exited${frame.exitCode === undefined ? "" : ` with code ${String(frame.exitCode)}`}]`);
+      this.terminals = this.terminals.map((item) => item.id === terminalId ? { ...item, exited: true, ...(frame.exitCode === undefined ? {} : { exitCode: frame.exitCode }) } : item);
+      if (this.context !== undefined && this.runtime !== undefined) this.runtime.updateTerminals(this.context, this.terminals);
+      void this.loadCommandRuns();
+      return;
+    }
+    terminal.writeln(`\r\n[terminal error: ${frame.message}]`);
+  }
+
+  private handleChannelClosed(generation: number, terminalId: string, terminal: Terminal, close: WorkspaceBackendChannelClose): void {
+    if (!this.channelIsCurrent(generation, terminalId, terminal)) return;
+    this.channel = undefined;
+    const failure = terminalChannelFailureMessage(close);
+    if (failure === undefined) {
+      void this.refreshAfterCleanChannelClose(generation, terminalId, terminal);
+      return;
+    }
+    this.connectionError = `Terminal connection closed: ${failure}`;
+    terminal.writeln(`\r\n[terminal connection closed: ${failure}]`);
+    this.scheduleChannelReconnect(terminalId, terminal);
+  }
+
+  private async refreshAfterCleanChannelClose(generation: number, terminalId: string, terminal: Terminal): Promise<void> {
+    await this.loadTerminals();
+    if (!this.channelIsCurrent(generation, terminalId, terminal) || this.channel !== undefined) return;
+    const context = this.context;
+    const terminalInfo = this.terminals.find((candidate) => candidate.id === terminalId);
+    if (context === undefined || terminalInfo === undefined || terminalInfo.exited) return;
+    this.connectChannel(context, terminalId, terminal, this.fitTerminal(), true);
+  }
+
+  private scheduleChannelReconnect(terminalId: string, terminal: Terminal): void {
+    if (!this.visible || terminal !== this.terminal || terminalId !== this.selectedId || this.context === undefined) return;
+    if (this.channelReconnectTimer !== undefined) window.clearTimeout(this.channelReconnectTimer);
+    const delay = CHANNEL_RECONNECT_DELAYS_MS[Math.min(this.channelReconnectAttempt, CHANNEL_RECONNECT_DELAYS_MS.length - 1)] ?? 5_000;
+    this.channelReconnectAttempt += 1;
+    this.channelReconnectTimer = window.setTimeout(() => {
+      this.channelReconnectTimer = undefined;
+      const context = this.context;
+      if (context === undefined || !this.visible || terminal !== this.terminal || terminalId !== this.selectedId) return;
+      this.connectChannel(context, terminalId, terminal, this.fitTerminal(), true);
+    }, delay);
+  }
+
+  private channelIsCurrent(generation: number, terminalId: string, terminal: Terminal): boolean {
+    return generation === this.channelGeneration && terminal === this.terminal && terminalId === this.selectedId;
+  }
+
+  private handleTerminalData(terminal: Terminal, data: string): void {
+    const suppression = this.replayInputSuppression;
+    if (terminal !== this.terminal
+      || this.copySnapshot !== undefined
+      || suppression?.terminal === terminal) return;
+    this.sendTerminalInput(data);
+  }
+
+  private writeTerminalOutput(
+    generation: number,
+    terminalId: string,
+    terminal: Terminal,
+    frame: Extract<TerminalServerFrame, { type: "output" }>,
+  ): void {
+    if (!frame.replay) {
+      terminal.write(frame.data);
+      return;
+    }
+    let suppression = this.replayInputSuppression;
+    if (suppression?.generation !== generation
+      || suppression.terminalId !== terminalId
+      || suppression.terminal !== terminal) {
+      suppression = { generation, terminalId, terminal };
+      this.replayInputSuppression = suppression;
+    }
+    terminal.write(frame.data, frame.replayComplete ? () => {
+      if (this.replayInputSuppression === suppression
+        && this.channelIsCurrent(generation, terminalId, terminal)) {
+        this.replayInputSuppression = undefined;
+      }
+    } : undefined);
   }
 
   private fitAndNotify(): void {
@@ -409,7 +704,9 @@ export class TerminalPanel extends LitElement {
 
   private sendTerminalInput(data: string): void {
     const filtered = filterTerminalInput(data);
-    if (filtered !== "") this.send({ type: "input", data: filtered });
+    for (const frame of terminalInputFrames(filtered)) {
+      if (!this.send(frame)) return;
+    }
   }
 
   private sendSoftKeyInput(data: string, options: TerminalSoftKeyInputOptions): void {
@@ -425,20 +722,41 @@ export class TerminalPanel extends LitElement {
     requestAnimationFrame(() => { terminal.focus(); });
   }
 
-  private send(message: { type: "input"; data: string } | { type: "resize"; cols: number; rows: number }): void {
-    if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+  private send(message: TerminalClientFrame): boolean {
+    const channel = this.channel;
+    if (channel === undefined) return false;
+    try {
+      channel.send(message);
+      return true;
+    } catch (error) {
+      this.connectionError = `Terminal send failed: ${errorMessage(error)}`;
+      return false;
+    }
   }
 
   private disposeTerminalView(): void {
+    this.channelGeneration += 1;
+    if (this.channelReconnectTimer !== undefined) window.clearTimeout(this.channelReconnectTimer);
+    this.channelReconnectTimer = undefined;
+    this.channelReconnectAttempt = 0;
+    this.channelAbort?.abort();
+    this.channelAbort = undefined;
+    this.channel?.close("Terminal view disposed");
+    this.channel = undefined;
     this.resizeObserver?.disconnect();
     this.resizeObserver = undefined;
-    this.socket?.close();
-    this.socket = undefined;
+    this.replayInputSuppression = undefined;
     this.terminal?.dispose();
     this.terminal = undefined;
     this.fitAddon = undefined;
     this.copySnapshot = undefined;
     this.copyStatus = undefined;
+    this.connectionError = undefined;
+  }
+
+  private backendClient(context: WorkspacePanelContext): TerminalBackendClient {
+    if (context.backend === undefined) throw new Error("Required Terminal paired backend is unavailable");
+    return new TerminalBackendClient(context.backend);
   }
 
   private renderCommandRunNotice() {
@@ -642,12 +960,14 @@ export class TerminalPanel extends LitElement {
   }
 
   private renderSoftKeys() {
-    return html`
-      <terminal-soft-keys
+    const softKeysTag = unsafeStatic(this.softKeysElementName);
+    return staticHtml`
+      <${softKeysTag}
+        class="terminal-soft-keys"
         .modes=${this.terminal?.modes}
         .refocusOnClick=${!this.defaultSoftKeysEnvironment}
         .onInput=${(data: string, options: TerminalSoftKeyInputOptions) => { this.sendSoftKeyInput(data, options); }}
-      ></terminal-soft-keys>
+      ></${softKeysTag}>
     `;
   }
 
@@ -663,9 +983,10 @@ export class TerminalPanel extends LitElement {
               <small @click=${(event: Event) => { void this.closeTerminal(terminal.id, event); }}>×</small>
             </button>
           `)}
-          <button class="new" ?disabled=${this.workspace === undefined} @click=${() => { void this.startTerminal(); }}>+ Shell</button>
+          <button class="new" ?disabled=${this.context === undefined} @click=${() => { void this.startTerminal(); }}>+ Shell</button>
         </div>
         ${this.error === undefined ? null : html`<p class="error">${this.error}</p>`}
+        ${this.connectionError === undefined ? null : html`<p class="error">${this.connectionError}</p>`}
         ${this.renderCommandRunNotice()}
         ${this.renderTerminalAccessoryBar()}
         ${this.loading ? html`<p class="muted">Loading terminals…</p>` : null}
@@ -677,17 +998,17 @@ export class TerminalPanel extends LitElement {
     `;
   }
 
-  static override styles = css`
+  static override styles = [unsafeCSS(xtermStyles), css`
     :host { flex: 1 1 auto; min-height: 0; display: flex; }
     .terminal-shell { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--pi-terminal-bg); }
     .terminal-tabs { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; padding: 6px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); overflow: auto; }
     .terminal-tabs > button { box-sizing: border-box; height: 30px; line-height: 16px; }
     /* Desktop xterm already has mouse selection and hardware keys; keep touch controls to touch/narrow layouts. */
-    .copy-mode-toggle, .soft-keys-toggle, terminal-soft-keys { display: none; }
+    .copy-mode-toggle, .soft-keys-toggle, .terminal-soft-keys { display: none; }
     .copy-mode-toggle.selected { display: inline-flex; }
     @media (pointer: coarse), (max-width: 760px) {
       .copy-mode-toggle, .soft-keys-toggle { display: inline-flex; }
-      terminal-soft-keys { display: block; }
+      .terminal-soft-keys { display: block; }
     }
     button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 180px; border: 1px solid var(--pi-border); border-radius: 7px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 7px; cursor: pointer; }
     button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
@@ -741,7 +1062,7 @@ export class TerminalPanel extends LitElement {
     .error { flex: 0 0 auto; margin: 0; padding: 8px; color: var(--pi-danger); border-bottom: 1px solid var(--pi-border); background: var(--pi-surface); }
     .muted { margin: 10px; color: var(--pi-muted); }
     .xterm { height: 100%; }
-  `;
+  `];
 }
 
 function normalizedScrollOffset(sourceOffset: number, sourceRange: number, targetRange: number): number {
@@ -768,16 +1089,6 @@ function terminalCopyRunStyle(style: TerminalCopyRunStyle): StyleInfo {
   };
 }
 
-interface TerminalSize {
-  cols: number;
-  rows: number;
-}
-
-type ServerTerminalMessage =
-  | { type: "output"; data: string; replay?: boolean }
-  | { type: "exit"; exitCode?: number }
-  | { type: "error"; message: string };
-
 function isCommandRunPending(run: TerminalCommandRun): boolean {
   return run.status === "queued" || run.status === "running";
 }
@@ -787,28 +1098,11 @@ function commandRunCompletionLabel(run: TerminalCommandRun): string {
   return `Command failed${run.exitCode === undefined ? "" : ` with exit code ${String(run.exitCode)}`}`;
 }
 
-function parseServerMessage(data: string): ServerTerminalMessage {
-  const value: unknown = JSON.parse(data);
-  if (!isRecord(value)) return { type: "error", message: "Invalid terminal message" };
-  const record = value;
-  if (record["type"] === "output" && typeof record["data"] === "string") return { type: "output", data: record["data"], ...(typeof record["replay"] === "boolean" ? { replay: record["replay"] } : {}) };
-  if (record["type"] === "exit") return { type: "exit", ...(typeof record["exitCode"] === "number" ? { exitCode: record["exitCode"] } : {}) };
-  if (record["type"] === "error" && typeof record["message"] === "string") return { type: "error", message: record["message"] };
-  return { type: "error", message: "Invalid terminal message" };
-}
-
 export function filterTerminalInput(data: string): string {
   // Xterm can emit focus-in/focus-out sequences when replayed output leaves focus
   // tracking enabled. Bash/readline treats those sequences as typed text, which
   // leaves stray characters on the prompt after reconnecting to an active shell.
   return data.replaceAll("\x1b[I", "").replaceAll("\x1b[O", "");
-}
-
-async function socketDataToString(data: unknown): Promise<string> {
-  if (typeof data === "string") return data;
-  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
-  if (data instanceof Blob) return await data.text();
-  return String(data);
 }
 
 function terminalOptions(element: HTMLElement): ITerminalOptions {
@@ -839,6 +1133,6 @@ function isValidTerminalSize(cols: number, rows: number): boolean {
   return Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

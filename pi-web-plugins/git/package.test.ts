@@ -80,7 +80,7 @@ describe("bundled Git package metadata", () => {
     const { catalog, root } = await gitCatalogFixture(false);
     const importer = vi.fn(() => Promise.reject(new Error("disabled Git module was imported")));
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const runtime = await createServerPluginRuntime({ catalog, importer, logger });
+    const runtime = await createServerPluginRuntime({ catalog, importer, logger, enforceRequiredTerminal: false });
     const registry = new WorkspaceProviderRegistry({ contributions: runtime.providerContributions(), logger });
 
     const resolution = await registry.resolve({

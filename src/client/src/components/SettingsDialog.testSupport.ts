@@ -61,11 +61,12 @@ export function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
 
 export function pluginsResponse(plugins: PiWebPluginInfo[]): PiWebPluginsResponse {
   return {
-    lifecycleVersion: 1,
+    lifecycleVersion: 2,
     plugins,
     diagnostics: [],
     serverRuntime: {
       status: "available",
+      terminalMode: "recovery-disabled",
       restartRequired: false,
       recovery: {
         showSafeStart: "pi-web plugins safe-start show",

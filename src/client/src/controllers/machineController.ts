@@ -56,7 +56,6 @@ export class MachineController {
       sendingPrompts: {},
       workspacesByProjectId: {},
       workspaceDeletionRuns: {},
-      activeTerminalCount: 0,
       ...resetWorkspaceScopedState(),
     });
     if (options.updateUrl !== false) this.updateUrl();

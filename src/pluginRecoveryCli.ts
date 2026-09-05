@@ -43,9 +43,10 @@ Usage:
   pi-web plugins safe-start clear [--config <path>] [--restart]
 
 Safe-start levels:
-  bundled-only  Load bundled server plugins only.
-  none          Load no server plugins; the kernel folder workspace remains available.
+  bundled-only  Load bundled server plugins, including required Terminal, only.
+  none          Load no server plugins; Terminal is unavailable and the kernel folder workspace remains available.
 
+The required bundled Terminal plugin cannot be disabled with the disable command.
 These commands edit config offline and never contact the session daemon or import plugins.
 Changes take effect after a manual session-daemon restart unless --restart can restart it automatically.`;
 }

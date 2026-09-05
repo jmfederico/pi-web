@@ -29,8 +29,6 @@ import {
   WorkspaceProviderRegistry,
 } from "./workspaces/workspaceProviderRegistry.js";
 import { sessiondSocketPath } from "../sessiond/config.js";
-import { TerminalService } from "./terminals/terminalService.js";
-import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { agentSessionDirEnvOverride, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled, PI_CODING_AGENT_DIR_ENV, PI_CODING_AGENT_SESSION_DIR_ENV } from "../config.js";
@@ -48,9 +46,15 @@ import { dockerEnvironmentPromptSections } from "./sessions/dockerEnvironmentFac
 import { PI_WEB_SESSION_ENV, sessionEnvironmentPromptSections } from "./sessions/sessionEnvironmentFacts.js";
 import { createServerPluginExecFile } from "./plugins/serverPluginExec.js";
 import { createServerPluginRuntime } from "./plugins/serverPluginRuntime.js";
+import {
+  eligiblePluginBackendContributions,
+  PluginBackendRegistry,
+} from "./plugins/pluginBackendRegistry.js";
 import { runSessionDaemonShutdown } from "./sessiond/sessionDaemonShutdown.js";
 import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencies.js";
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
+import { registerPluginBackendChannelRoutes } from "./sessiond/pluginBackendChannelRoutes.js";
+import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
 import { registerPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
@@ -91,6 +95,7 @@ if (serverPluginRecovery.safeStartDiagnostic !== undefined) {
   );
 }
 await app.register(fastifyWebsocket);
+installPluginBackendChannelWebSocketPayloadLimit(app.websocketServer);
 let serverQuiescing = false;
 app.addHook("onRequest", (_request, reply, done) => {
   if (!serverQuiescing) {
@@ -181,15 +186,16 @@ async function createSessionDaemonRuntime() {
   }).catch((error: unknown) => {
     app.log.warn({ err: error }, "Pi package auto-install reconciliation failed unexpectedly; continuing without it");
   });
+  const eventHub = new SessionEventHub();
+  const serverNotices = new ServerNoticeService(new ServerNoticeStore(), eventHub);
   const serverPlugins = await createServerPluginRuntime({
     catalog: serverPluginCatalog,
     ...(serverPluginRecovery.safeStart === undefined ? {} : { safeStart: serverPluginRecovery.safeStart }),
     logger: app.log,
     execFile: createServerPluginExecFile({ env: daemonEnvironment }),
+    noticeSink: (source, input) => { serverNotices.record({ ...input, source }); },
   });
   try {
-    const eventHub = new SessionEventHub();
-    const serverNotices = new ServerNoticeService(new ServerNoticeStore(), eventHub);
     const notificationStore = new SessionNotificationStore();
     const unreadStore = new SessionUnreadStore({
       persistence: new FileSessionUnreadPersistence(defaultSessionUnreadFilePath(daemonEnvironment)),
@@ -222,6 +228,11 @@ async function createSessionDaemonRuntime() {
     const providerHealth = await serverPlugins.inspectHealth();
     const workspaceProviders = new WorkspaceProviderRegistry({
       contributions: eligibleWorkspaceProviderContributions(serverPlugins.providerContributions(), providerHealth),
+      logger: app.log,
+    });
+    const pluginBackends = new PluginBackendRegistry({
+      contributions: eligiblePluginBackendContributions(serverPlugins.pairedBackendContributions(), providerHealth),
+      workspaces: workspaceProviders,
       logger: app.log,
     });
     const workspaceProviderRuntime = createWorkspaceProviderRuntimeSnapshot(
@@ -289,7 +300,11 @@ async function createSessionDaemonRuntime() {
       }),
     }));
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
-    const terminals = new TerminalService(eventHub, workspaceActivity, serverNotices);
+    const terminals = serverPlugins.requiredTerminalService();
+    terminals.bindActivitySink({
+      updateTerminal: (terminal) => { workspaceActivity.updateTerminal(terminal); },
+      removeTerminal: (terminalId, cwd) => { workspaceActivity.removeTerminal(terminalId, cwd); },
+    });
     const workspaceRemovals = new WorkspaceRemovalService(workspaceProviders, terminals, { notices: serverNotices });
     const runtimeComponent = Object.freeze({
       // The deprecated-input report is fixed at startup: it was detected from
@@ -308,11 +323,11 @@ async function createSessionDaemonRuntime() {
         dependencies: {
           quiesceServer: () => { serverQuiescing = true; },
           serverPlugins,
-          terminals,
           catalogRefresher,
           auth,
           sessions,
           unreadStore,
+          pluginBackends,
           closeServer: () => app.close(),
         },
         onFailure: () => { process.exitCode = 1; },
@@ -322,7 +337,7 @@ async function createSessionDaemonRuntime() {
       // next start discards it.
       await stateOwnership.release();
     };
-    return { eventHub, machineStatus, statusAttribution, auth, sessions, terminals, serverNotices, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals, shutdown };
+    return { eventHub, machineStatus, statusAttribution, auth, sessions, serverNotices, unreadStore, activeAgentProfile, runtimeComponent, catalogRefresher, serverPlugins, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals, shutdown };
   } catch (error) {
     try {
       await serverPlugins.stop();
@@ -333,12 +348,11 @@ async function createSessionDaemonRuntime() {
   }
 }
 
-function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, terminals, serverNotices, runtimeComponent, projects, workspaceProviders, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
+function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttribution, auth, sessions, serverNotices, runtimeComponent, projects, workspaceProviders, pluginBackends, workspaceProviderRuntime, workspaceRemovals }: SessionDaemonRuntime): void {
   registerMachineStatusRoutes(app, machineStatus);
   registerServerNoticeRoutes(app, serverNotices);
   registerAuthRoutes(app, auth);
   registerSessionRoutes(app, sessions, eventHub);
-  registerTerminalRoutes(app, terminals);
   registerWorkspaceCatalogRoutes(app, {
     projects,
     workspaces: workspaceProviders,
@@ -346,9 +360,10 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   });
   registerPluginBackendRoutes(app, {
     projects,
-    backends: workspaceProviders,
+    backends: pluginBackends,
     onWorkspacesMutated: () => { statusAttribution.invalidate(); },
   });
+  registerPluginBackendChannelRoutes(app, { projects, backends: pluginBackends });
   registerWorkspaceRemovalRoutes(app, {
     projects,
     removals: workspaceRemovals,

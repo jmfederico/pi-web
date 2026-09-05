@@ -32,11 +32,12 @@ describe("local plugin backend proxy route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.json()).toEqual({ counts: { open: 2 } });
-    expect(request).toHaveBeenCalledWith(
+    expect(request.mock.calls[0]?.slice(0, 3)).toEqual([
       "POST",
       "/plugin-backends/board/projects/project%20one/workspaces/workspace%231/cards.summary",
       payload,
-    );
+    ]);
+    expect(request.mock.calls[0]?.[3]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("preserves JSON primitives and attributable upstream failures", async () => {

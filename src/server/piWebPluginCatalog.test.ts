@@ -634,6 +634,35 @@ describe("PiWebPluginCatalog", () => {
     await expect(catalog.browserPlugin("duplicate")).resolves.toBeUndefined();
   });
 
+  it("keeps the bundled Terminal package enabled and reports ignored disable config", async () => {
+    const bundledRoot = join(tempDir, "bundled");
+    await writePlugin(join(bundledRoot, "terminal"), {
+      packageJson: { piWeb: { plugins: [{ id: "terminal", browserRoot: ".", module: "browser.js", serverModule: "server.js", machineSpecific: true }] } },
+      files: {
+        "browser.js": "export default {};",
+        "server.js": "export default {};",
+      },
+    });
+    const warningSink = vi.fn();
+    const catalog = new PiWebPluginCatalog({
+      roots: [{ path: bundledRoot, source: "bundled", scope: "bundled" }],
+      packageProvider: false,
+      configProvider: () => ({ plugins: { terminal: { enabled: false } } }),
+      warningSink,
+    });
+
+    const snapshot = await catalog.snapshot();
+
+    expect(snapshot.plugins).toMatchObject([{ id: "terminal", enabled: true, source: "bundled", scope: "bundled" }]);
+    expect(snapshot.diagnostics).toHaveLength(1);
+    expect(snapshot.diagnostics[0]).toMatchObject({
+      code: "required-plugin-config",
+      pluginId: "terminal",
+    });
+    expect(snapshot.diagnostics[0]?.message).toContain("ignored");
+    expect(warningSink).toHaveBeenCalledWith(expect.stringContaining("serverPlugins.safeStart=none"));
+  });
+
   it("limits bundled-only discovery before consulting external package providers", async () => {
     const bundledRoot = join(tempDir, "bundled");
     const localRoot = join(tempDir, "local");

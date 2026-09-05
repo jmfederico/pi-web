@@ -34,6 +34,28 @@ describe("visibleServerNotices", () => {
     expect(visibleServerNotices([deletionNotice], { projectId: "project-b", workspaceId: "other-worktree" })).toEqual([]);
   });
 
+  it("does not give a similarly named plugin the core deletion source semantics", () => {
+    const pluginNotice = {
+      ...notice("plugin-deletion"),
+      source: "plugin:workspace.delete",
+      context: { projectId: "project-a", workspaceId: "target-worktree" },
+    };
+
+    expect(visibleServerNotices([pluginNotice], { projectId: "project-a", workspaceId: "runner-worktree" })).toEqual([]);
+    expect(visibleServerNotices([pluginNotice], { projectId: "project-a", workspaceId: "target-worktree" })).toEqual([pluginNotice]);
+  });
+
+  it("keeps a Terminal-attributed removal failure visible across its project worktrees", () => {
+    const deletionNotice = {
+      ...notice("terminal-deletion"),
+      source: "plugin:terminal",
+      context: { commandRunId: "run-1", projectId: "project-a", targetWorkspaceId: "target-worktree" },
+    };
+
+    expect(visibleServerNotices([deletionNotice], { projectId: "project-a", workspaceId: "runner-worktree" })).toEqual([deletionNotice]);
+    expect(visibleServerNotices([deletionNotice], { projectId: "project-b", workspaceId: "other-worktree" })).toEqual([]);
+  });
+
   it("matches ordinary workspace and session notice context to the active namespace", () => {
     const workspaceNotice = { ...notice("workspace"), context: { projectId: "project-a", workspaceId: "workspace-a" } };
     const sessionNotice = { ...notice("session"), context: { projectId: "project-a", workspaceId: "workspace-a", sessionId: "session-a" } };

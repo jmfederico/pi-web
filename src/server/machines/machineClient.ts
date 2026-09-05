@@ -23,7 +23,7 @@ export interface MachineRequestOptions {
 export interface MachineClient {
   request(method: string, path: string, body?: unknown, options?: MachineRequestOptions): Promise<MachineHttpResponse>;
   requestJson(method: string, path: string, body?: unknown, options?: MachineRequestOptions): Promise<MachineJsonResponse>;
-  connectWebSocket(path: string): WebSocket;
+  connectWebSocket(path: string, options?: { maxPayload?: number }): WebSocket;
 }
 
 export const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 30_000;
@@ -76,10 +76,10 @@ export class RemoteMachineClient implements MachineClient {
     };
   }
 
-  connectWebSocket(path: string): WebSocket {
+  connectWebSocket(path: string, options: { maxPayload?: number } = {}): WebSocket {
     const url = this.remoteUrl(path);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return new WebSocket(url, { headers: this.remoteHeaders() });
+    return new WebSocket(url, { headers: this.remoteHeaders(), ...options });
   }
 
   private async fetchResponse(method: string, path: string, body: unknown, options: MachineRequestOptions): Promise<Response> {

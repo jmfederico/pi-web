@@ -7,6 +7,7 @@ import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-codin
 import { loadPiWebConfig, piWebDataDir, type PiWebConfig } from "../config.js";
 import type { PiWebPluginScope, PiWebPluginSettings } from "../shared/apiTypes.js";
 import { isPiWebPluginId, isReservedPiWebPluginId } from "../shared/pluginIds.js";
+import { REQUIRED_TERMINAL_PLUGIN_ID } from "../shared/requiredTerminalPlugin.js";
 
 export interface ConfiguredPiPackage {
   source: string;
@@ -59,7 +60,7 @@ export interface PiWebPluginCatalogEntry extends PiWebPluginPackageEntry {
   settingsRevision: string;
 }
 
-export type PiWebPluginCatalogDiagnosticCode = "invalid-package" | "duplicate-id";
+export type PiWebPluginCatalogDiagnosticCode = "invalid-package" | "duplicate-id" | "required-plugin-config";
 
 export interface PiWebPluginCatalogDiagnostic {
   code: PiWebPluginCatalogDiagnosticCode;
@@ -175,6 +176,16 @@ export class PiWebPluginCatalog {
     const config = await this.configProvider();
     const diagnostics: PiWebPluginCatalogDiagnostic[] = [];
     const plugins = await this.discoverPlugins(this.reporter(diagnostics), options.scope);
+    if (config.plugins?.[REQUIRED_TERMINAL_PLUGIN_ID]?.enabled === false && plugins.some(isBundledTerminalPlugin)) {
+      const message = "plugins.terminal.enabled=false is ignored because Terminal is required; use serverPlugins.safeStart=none for recovery";
+      diagnostics.push({
+        code: "required-plugin-config",
+        source: "config",
+        message,
+        pluginId: REQUIRED_TERMINAL_PLUGIN_ID,
+      });
+      this.warningSink(message);
+    }
     return {
       plugins: plugins.map((plugin) => applyDesiredState(plugin, config)),
       diagnostics,
@@ -688,10 +699,16 @@ function applyDesiredState(plugin: PiWebPluginPackageEntry, config: PiWebConfig)
   const settings = { ...(pluginConfig?.settings ?? {}) };
   return {
     ...plugin,
-    enabled: pluginConfig?.enabled !== false,
+    enabled: isBundledTerminalPlugin(plugin) || pluginConfig?.enabled !== false,
     settings,
     settingsRevision: pluginSettingsRevision(settings),
   };
+}
+
+function isBundledTerminalPlugin(plugin: PiWebPluginPackageEntry): boolean {
+  return plugin.id === REQUIRED_TERMINAL_PLUGIN_ID
+    && plugin.scope === "bundled"
+    && plugin.source === "bundled";
 }
 
 function pluginSettingsRevision(settings: Readonly<PiWebPluginSettings>): string {

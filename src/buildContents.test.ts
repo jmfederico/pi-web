@@ -206,6 +206,7 @@ async function createCleanPluginBuildFixture(fixtureRoot: string): Promise<void>
     copyFile(join(repoRoot, "tsconfig.json"), join(fixtureRoot, "tsconfig.json")),
     copyFile(join(repoRoot, "tsconfig.plugins.json"), join(fixtureRoot, "tsconfig.plugins.json")),
     copyFile(join(repoRoot, "scripts", "build-plugins.mjs"), join(fixtureRoot, "scripts", "build-plugins.mjs")),
+    copyFile(join(repoRoot, "scripts", "build-plugins.d.mts"), join(fixtureRoot, "scripts", "build-plugins.d.mts")),
     // npm 10 runs `prepare` even under `pack --ignore-scripts`; the hook installer exits 0 without a .git directory.
     copyFile(join(repoRoot, "scripts", "install-git-hooks.mjs"), join(fixtureRoot, "scripts", "install-git-hooks.mjs")),
     symlink(

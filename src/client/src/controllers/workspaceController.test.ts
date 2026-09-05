@@ -34,7 +34,11 @@ function requireWorkspaceProvider(workspace: Workspace): NonNullable<Workspace["
   return workspace.provider;
 }
 
-type LoadWorkspaces = (projectId: string, machineId?: string) => Promise<Workspace[]>;
+type LoadWorkspaces = (
+  projectId: string,
+  machineId?: string,
+  options?: { signal?: AbortSignal },
+) => Promise<Workspace[]>;
 
 interface Harness {
   controller: WorkspaceController;
@@ -67,7 +71,10 @@ function harness(
     sessions,
     undefined,
     {
-      api: { workspaces: loadWorkspaces, sessions: vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>().mockResolvedValue([]) },
+      api: {
+        workspaces: loadWorkspaces,
+        sessions: vi.fn<(path: string, machineId?: string, options?: { signal?: AbortSignal }) => Promise<SessionInfo[]>>().mockResolvedValue([]),
+      },
       onBackgroundError: (message, error) => { backgroundErrors.push({ message, error }); },
       topologyRefreshDebounceMs: options.topologyRefreshDebounceMs ?? 0,
     },
@@ -119,7 +126,6 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
         workspacesByProjectId: { [repo.id]: [main, selected] },
         selectedSession: session(selected.path),
         sessions: [session(selected.path)],
-        selectedTerminalId: "t1",
       },
       loadWorkspaces,
     );
@@ -131,7 +137,6 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(after.selectedWorkspace).toBe(selected);
     expect(after.selectedSession).toBe(before.selectedSession);
     expect(after.sessions).toBe(before.sessions);
-    expect(after.selectedTerminalId).toBe("t1");
     expect(test.clearActiveSession).not.toHaveBeenCalled();
     expect(test.updateUrl).not.toHaveBeenCalled();
   });
@@ -489,6 +494,51 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
 
     // The last response wins, so the newly created worktree stays visible.
     expect(test.state().workspaces).toEqual([main, created]);
+  });
+
+  it("does not apply a deferred deletion reconciliation after cancellation and an A-to-B-to-A scope return", async () => {
+    const repo = project("p1", "/repo");
+    const otherRepo = project("p2", "/other");
+    const target = workspace(repo.id, "/repo-feature");
+    const fallback = workspace(repo.id, repo.path, { isMain: true });
+    const other = workspace(otherRepo.id, otherRepo.path, { isMain: true });
+    let resolveWorkspaces: ((workspaces: Workspace[]) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    const loadWorkspaces = vi.fn((_projectId: string, _machineId?: string, options?: { signal?: AbortSignal }) => {
+      requestSignal = options?.signal;
+      return new Promise<Workspace[]>((resolve) => { resolveWorkspaces = resolve; });
+    });
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo, otherRepo],
+        selectedProject: repo,
+        selectedWorkspace: target,
+        workspaces: [target],
+        workspacesByProjectId: { [repo.id]: [target], [otherRepo.id]: [other] },
+      },
+      loadWorkspaces,
+    );
+    const controller = new AbortController();
+    let generation = 1;
+
+    const refreshing = test.controller.refreshAfterWorkspaceDeleted(repo.id, target.id, "local", {
+      signal: controller.signal,
+      isCurrent: () => generation === 1,
+    });
+    await vi.waitFor(() => { expect(loadWorkspaces).toHaveBeenCalledOnce(); });
+
+    controller.abort();
+    generation = 2;
+    test.setState({ selectedProject: otherRepo, selectedWorkspace: other, workspaces: [other] });
+    test.setState({ selectedProject: repo, selectedWorkspace: target, workspaces: [target] });
+    resolveWorkspaces?.([fallback]);
+    await refreshing;
+
+    expect(requestSignal?.aborted).toBe(true);
+    expect(test.state().selectedWorkspace).toBe(target);
+    expect(test.state().workspaces).toEqual([target]);
+    expect(test.clearActiveSession).not.toHaveBeenCalled();
   });
 
   it("does not request anything when no project is selected", async () => {

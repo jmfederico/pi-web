@@ -403,7 +403,7 @@ The `plugins` key controls desired enablement and JSON settings for PI WEB brows
 }
 ```
 
-Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active backend until that restart. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
+Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active backend until that restart. The bundled `terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
 
 #### Desired versus active plugin state
 
@@ -436,7 +436,7 @@ pi-web plugins safe-start set none --restart
 pi-web plugins safe-start clear --restart
 ```
 
-`disable` persists `plugins.<id>.enabled: false`. Safe-start state is stored under `serverPlugins.safeStart`: `bundled-only` filters external server packages before discovery/import, while `none` imports no server plugins and retains the kernel project-folder workspace. `clear` restores ordinary configured discovery on the next start. An unsupported `serverPlugins.safeStart` shape or value in otherwise valid JSON fails closed as effective `none`; use `safe-start show`, then `set` or `clear`, to repair it offline.
+`disable` persists `plugins.<id>.enabled: false`, but rejects required `terminal` with no-plugin safe-start recovery guidance. Safe-start state is stored under `serverPlugins.safeStart`: `bundled-only` filters external server packages before discovery/import while still requiring bundled Terminal, whereas `none` imports no server plugins and retains the kernel project-folder and diagnosis/settings surfaces without Terminal or Terminal-backed commands. `clear` restores ordinary configured discovery on the next start. An unsupported `serverPlugins.safeStart` shape or value in otherwise valid JSON fails closed as effective `none`; use `safe-start show`, then `set` or `clear`, to repair it offline.
 
 `--restart` performs a restart only for a recognized safe installed-service plan; otherwise it prints manual instructions. The config mutation is durable before PI WEB attempts the restart. If the service-manager command itself fails, restart sessiond manually.
 

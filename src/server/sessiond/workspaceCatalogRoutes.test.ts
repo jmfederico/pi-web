@@ -146,7 +146,8 @@ describe("session daemon workspace catalog routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
+      terminalMode: "required",
       safeStart: "bundled-only",
       records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", settingsRevision: "sha256:settings", machineSpecific: true, state: "active", name: "Git" }],
       health: [{ pluginId: "git", health: { status: "healthy" } }],

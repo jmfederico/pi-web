@@ -39,6 +39,13 @@ describe("plugin recovery CLI", () => {
     await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects disabling required Terminal with safe-start recovery guidance", async () => {
+    expect(() => {
+      runPluginRecoveryCli(["disable", "terminal", "--config", configPath], dependencies([]));
+    }).toThrow("safe-start set none --restart");
+    await expect(readFile(configPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("disables through an explicit config path and prints restart guidance", async () => {
     const lines: string[] = [];
 

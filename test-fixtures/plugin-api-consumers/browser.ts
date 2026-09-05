@@ -2,6 +2,8 @@ import type {
   JsonValue,
   PiWebPlugin,
   Workspace,
+  WorkspaceBackend,
+  WorkspaceBackendV1,
   WorkspaceFiles,
   WorkspaceFilesCapabilityV1,
   WorkspaceFilesContextValue,
@@ -47,8 +49,16 @@ function capabilityV1(files: WorkspaceFilesContextValue): WorkspaceFilesCapabili
   return files.capabilityVersion === 1 ? files : undefined;
 }
 
+function pairedBackendV1(backend: WorkspaceBackend): WorkspaceBackendV1 | undefined {
+  return isPairedBackendV1(backend) ? backend : undefined;
+}
+
+function isPairedBackendV1(backend: WorkspaceBackend): backend is WorkspaceBackendV1 {
+  return backend.capabilityVersion === 1;
+}
+
 const echoJson = (value: JsonValue): JsonValue => value;
-export { capabilityV1, echoJson, plugin };
+export { capabilityV1, echoJson, pairedBackendV1, plugin };
 export type {
   BrowserWorkspace,
   ExtendedWorkspaceFiles,

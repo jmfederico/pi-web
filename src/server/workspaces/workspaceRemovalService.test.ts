@@ -9,7 +9,7 @@ import type { ServerNotice, TerminalCommandRun, WorkspaceListing } from "../../s
 import type { ServerNoticeCreator } from "../notices/serverNoticeService.js";
 import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
 import type { Project } from "../types.js";
-import type { RunTerminalCommandOptions } from "../terminals/terminalService.js";
+import type { RunTerminalCommandOptions } from "../terminals/requiredTerminalService.js";
 import {
   WorkspaceProviderRegistry,
   type WorkspaceProviderRemovalTarget,
@@ -114,6 +114,10 @@ describe("WorkspaceRemovalService", () => {
         "pi.operation": "workspace.delete",
         "target.workspaceId": target.id,
         "target.workspacePath": hostPath("/board-views/roadmap"),
+      },
+      failureNotice: {
+        message: "Workspace removal failed. See terminal output.",
+        context: { projectId: project.id, targetWorkspaceId: target.id },
       },
     }]);
     expect(run).toMatchObject({

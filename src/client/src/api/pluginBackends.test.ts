@@ -49,8 +49,9 @@ describe("browser plugin backend helper", () => {
       headers: { "content-type": "application/json" },
     }));
     vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
 
-    await expect(requestPluginBackend(target, "cards.summary", { cards: ["alpha", "beta"], includeClosed: false })).resolves.toEqual({
+    await expect(requestPluginBackend(target, "cards.summary", { cards: ["alpha", "beta"], includeClosed: false }, { signal: controller.signal })).resolves.toEqual({
       counts: { open: 2 },
       cursor: "next",
     });
@@ -62,6 +63,7 @@ describe("browser plugin backend helper", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ revision: "server-r1", input: { cards: ["alpha", "beta"], includeClosed: false } }),
+      signal: controller.signal,
     });
   });
 
@@ -77,6 +79,22 @@ describe("browser plugin backend helper", () => {
     await expect(requestPluginBackend(target, "cards.summary", { invalid: Number.NaN })).rejects.toThrow("finite JSON numbers");
     await expect(requestPluginBackend({ ...target, backendRevision: "" }, "cards.summary", null)).rejects.toThrow("revision must be a non-empty string");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("preserves an attributed caller cancellation instead of wrapping it as transport loss", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, rejectPromise) => {
+      init?.signal?.addEventListener("abort", () => {
+        const reason: unknown = init.signal?.reason;
+        rejectPromise(reason instanceof Error ? reason : new Error("request aborted", { cause: reason }));
+      }, { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = requestPluginBackend(target, "cards.summary", null, { signal: controller.signal });
+
+    controller.abort(new DOMException("Panel closed", "AbortError"));
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", message: "Panel closed" });
   });
 
   it("cancels responses that exceed the bounded JSON wire contract", async () => {
