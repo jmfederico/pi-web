@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WORKSPACE_FILE_VIEW_MODE,
   WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY,
   adoptWorkspaceFileViewMode,
+  createWorkspaceFileViewModeStore,
   parseWorkspaceFileViewMode,
   publishWorkspaceFileViewMode,
   readStoredWorkspaceFileViewMode,
@@ -45,6 +46,20 @@ describe("workspace file view mode", () => {
     const storage = fakeStorage({ [WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY]: "rendered" });
     expect(readStoredWorkspaceFileViewMode(storage)).toBeUndefined();
     expect(adoptWorkspaceFileViewMode(fakeRoute(), storage)).toBe("raw");
+  });
+
+  it("binds mode restoration and replacement to scoped host navigation", () => {
+    const set = vi.fn();
+    const store = createWorkspaceFileViewModeStore({
+      version: 1,
+      contributionId: "files:workspace.files",
+      query: { mode: "preview" },
+      set,
+    }, fakeStorage());
+
+    expect(store.adopt()).toBe("preview");
+    store.publish("raw");
+    expect(set).toHaveBeenCalledWith("mode", "raw", { replace: true });
   });
 
   it("publishes the displayed mode to both the address bar and storage", () => {

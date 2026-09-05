@@ -1,13 +1,18 @@
 import { html, svg } from "lit";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { PiWebPluginRegistration, PluginAction, PluginRuntimeContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
+import type { PiWebPluginRegistration, PluginAction, PluginRuntimeContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
 
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
 const qualifiedContributionIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
 const routeAliasPattern = /^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/u;
 const pluginRuntimeScopes = new WeakMap<PluginRuntimeContext, (pluginId: string) => PluginRuntimeContext>();
-const workspacePanelScopes = new WeakMap<WorkspacePanelContext, (binding: WorkspacePluginBinding) => WorkspacePanelContext>();
+type WorkspacePanelScope = (
+  binding: WorkspacePluginBinding,
+  contributionId: QualifiedContributionId,
+  navigationAliases: readonly QualifiedContributionId[],
+) => WorkspacePanelContext;
+const workspacePanelScopes = new WeakMap<WorkspacePanelContext, WorkspacePanelScope>();
 const workspaceLabelScopes = new WeakMap<WorkspaceLabelContext, (binding: WorkspacePluginBinding) => WorkspaceLabelContext>();
 
 type RegisteredPluginAction = Omit<PluginAction, "id"> & {
@@ -129,10 +134,31 @@ export class PluginRegistry {
   }
 
   async invalidateWorkspacePanels(context: WorkspacePanelContext, panelId?: QualifiedContributionId): Promise<void> {
+    await this.invalidateMatchingWorkspacePanels(
+      context,
+      (panel) => panelId === undefined || panel.id === panelId,
+    );
+  }
+
+  async invalidateWorkspaceResources(context: WorkspacePanelContext, invalidation: WorkspaceInvalidation): Promise<void> {
+    const resources = new Set(invalidation.resources);
+    await this.invalidateMatchingWorkspacePanels(
+      context,
+      (panel) => panel.invalidationResources?.some((resource) => resources.has(resource)) === true,
+      invalidation,
+    );
+  }
+
+  private async invalidateMatchingWorkspacePanels(
+    context: WorkspacePanelContext,
+    matches: (panel: QualifiedWorkspacePanelContribution) => boolean,
+    invalidation?: WorkspaceInvalidation,
+  ): Promise<void> {
     await Promise.all(this.workspacePanels.map(async (panel) => {
-      if (panel.onInvalidate === undefined || (panelId !== undefined && panel.id !== panelId)) return;
+      if (panel.onInvalidate === undefined || !matches(panel)) return;
       try {
-        await panel.onInvalidate(context);
+        if (invalidation === undefined) await panel.onInvalidate(context);
+        else await panel.onInvalidate(context, invalidation);
       } catch (error) {
         console.warn(`Failed to invalidate PI WEB plugin panel ${panel.id}`, error);
       }
@@ -192,18 +218,27 @@ export class PluginRegistry {
     const binding = workspacePluginBinding(pluginId, sourcePluginId, backendRevision);
     const sourceId = `${sourcePluginId ?? pluginId}:${panel.id}`;
     const routeAliases = this.parseRouteAliases(id, panel.routeAliases, sourceId);
+    const navigationAliases = this.parseNavigationAliases(id, panel.navigationAliases, sourceId);
+    const invalidationResources = this.parseInvalidationResources(id, panel.invalidationResources);
+    const scopedContext = (context: WorkspacePanelContext) => workspacePanelContextFor(context, binding, id, navigationAliases);
     return {
       ...panel,
       id,
       pluginId,
       localId: panel.id,
       ...(routeAliases.length === 0 ? {} : { routeAliases }),
+      navigationAliases,
+      ...(panel.invalidationResources === undefined ? {} : { invalidationResources }),
       ...(machineId === undefined ? {} : { machineId }),
       ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
-      visible: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) && (visible?.(workspacePanelContextFor(context, binding)) ?? true),
-      ...(badge === undefined ? {} : { badge: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? badge(workspacePanelContextFor(context, binding)) : undefined }),
-      ...(onInvalidate === undefined ? {} : { onInvalidate: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? onInvalidate(workspacePanelContextFor(context, binding)) : undefined }),
-      render: (context: WorkspacePanelContext) => panel.render(workspacePanelContextFor(context, binding)),
+      visible: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) && (visible?.(scopedContext(context)) ?? true),
+      ...(badge === undefined ? {} : { badge: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? badge(scopedContext(context)) : undefined }),
+      ...(onInvalidate === undefined ? {} : { onInvalidate: (context: WorkspacePanelContext, invalidation?: WorkspaceInvalidation) => {
+        if (!this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId)) return undefined;
+        const contextForPanel = scopedContext(context);
+        return invalidation === undefined ? onInvalidate(contextForPanel) : onInvalidate(contextForPanel, invalidation);
+      } }),
+      render: (context: WorkspacePanelContext) => panel.render(scopedContext(context)),
     };
   }
 
@@ -302,6 +337,24 @@ export class PluginRegistry {
     return parsed;
   }
 
+  private parseNavigationAliases(id: QualifiedContributionId, aliases: readonly string[] | undefined, sourceId: string): QualifiedContributionId[] {
+    const parsed = [...new Set([...(aliases ?? []), sourceId])].filter((alias) => alias !== id);
+    const invalid = parsed.find((alias) => !isQualifiedContributionId(alias));
+    if (invalid !== undefined) throw new Error(`Invalid workspace panel navigation alias for ${id}: ${invalid}`);
+    return parsed.filter(isQualifiedContributionId);
+  }
+
+  private parseInvalidationResources(id: QualifiedContributionId, value: unknown): WorkspaceResource[] {
+    if (value === undefined) return [];
+    if (!isUnknownArray(value)) throw new Error(`Invalid workspace-panel invalidation resources for ${id}`);
+    const resources: WorkspaceResource[] = [];
+    for (const resource of value) {
+      if (resource !== "workspace.files") throw new Error(`Invalid workspace-panel invalidation resource for ${id}: ${formatUnknownValue(resource)}`);
+      if (!resources.includes(resource)) resources.push(resource);
+    }
+    return resources;
+  }
+
   private validatePluginId(pluginId: string): void {
     if (!idPattern.test(pluginId)) throw new Error(`Invalid plugin id: ${pluginId}`);
   }
@@ -330,8 +383,13 @@ function pluginRuntimeContextFor(context: PluginRuntimeContext, pluginId: string
   return pluginRuntimeScopes.get(context)?.(pluginId) ?? context;
 }
 
-function workspacePanelContextFor(context: WorkspacePanelContext, binding: WorkspacePluginBinding): WorkspacePanelContext {
-  return workspacePanelScopes.get(context)?.(binding) ?? context;
+function workspacePanelContextFor(
+  context: WorkspacePanelContext,
+  binding: WorkspacePluginBinding,
+  contributionId: QualifiedContributionId,
+  navigationAliases: readonly QualifiedContributionId[],
+): WorkspacePanelContext {
+  return workspacePanelScopes.get(context)?.(binding, contributionId, navigationAliases) ?? context;
 }
 
 function workspaceLabelContextFor(context: WorkspaceLabelContext, binding: WorkspacePluginBinding): WorkspaceLabelContext {
@@ -345,7 +403,7 @@ export function installPluginRuntimeScope(context: PluginRuntimeContext, scope: 
 
 export function installWorkspacePanelScope(
   context: WorkspacePanelContext,
-  scope: (binding: WorkspacePluginBinding) => WorkspacePanelContext,
+  scope: WorkspacePanelScope,
 ): WorkspacePanelContext {
   workspacePanelScopes.set(context, scope);
   return context;
@@ -375,6 +433,10 @@ function addMappedSetValue(map: Map<string, Set<string>>, key: string, value: st
   const existing = map.get(key);
   if (existing === undefined) map.set(key, new Set([value]));
   else existing.add(value);
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
 }
 
 function isQualifiedContributionId(value: string): value is QualifiedContributionId {

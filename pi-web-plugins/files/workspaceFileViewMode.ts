@@ -1,33 +1,21 @@
-import { queryNamespace, readNamespacedString, setNamespacedQueryKey } from "./namespacedQueryArgs";
+import type { WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
 
 export type WorkspaceFileViewMode = "preview" | "raw";
 
-/**
- * Raw source is the default: a workspace file opens as its literal, escaped
- * bytes, and a rendered preview is something the user asks for.
- */
+/** Raw source remains the safe default until the user asks for a preview. */
 export const DEFAULT_WORKSPACE_FILE_VIEW_MODE: WorkspaceFileViewMode = "raw";
 export const WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY = "pi-web.workspace.files.viewMode";
 export const WORKSPACE_FILE_VIEW_MODE_QUERY_KEY = "mode";
 
-const FILES_ROUTE_NAMESPACE = queryNamespace("core:workspace.files");
-
 export type WorkspaceFileViewModeStorage = Pick<Storage, "getItem" | "setItem">;
 
-/** Address-bar seam, so the deep-link contract can be tested without a browser. */
 export interface WorkspaceFileViewModeRoute {
   read(): string | undefined;
   write(mode: WorkspaceFileViewMode): void;
 }
 
 export interface WorkspaceFileViewModeStore {
-  /**
-   * Effective mode for a viewer that has not been switched yet: a deep link
-   * wins and is adopted as this device's preference, otherwise the stored
-   * preference applies, otherwise raw.
-   */
   adopt(): WorkspaceFileViewMode;
-  /** Record the displayed mode as the device preference and in the address bar. */
   publish(mode: WorkspaceFileViewMode): void;
 }
 
@@ -41,7 +29,6 @@ export function adoptWorkspaceFileViewMode(
 ): WorkspaceFileViewMode {
   const linked = parseWorkspaceFileViewMode(route.read());
   if (linked !== undefined) {
-    // A shared link reproduces what its author saw, and becomes the preference.
     writeStoredWorkspaceFileViewMode(linked, storage);
     return linked;
   }
@@ -71,24 +58,29 @@ export function writeStoredWorkspaceFileViewMode(mode: WorkspaceFileViewMode, st
   try {
     storage.setItem(WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY, mode);
   } catch {
-    // Ignore storage quota/privacy errors; the mode still applies to this tab.
+    // The tab still owns the selected mode when storage is unavailable.
   }
 }
 
-/** Default store bound to the live address bar and this device's storage. */
-export const workspaceFileViewModeStore: WorkspaceFileViewModeStore = {
-  adopt: () => adoptWorkspaceFileViewMode(browserRoute(), browserStorage()),
-  publish: (mode) => { publishWorkspaceFileViewMode(mode, browserRoute(), browserStorage()); },
-};
-
-function browserRoute(): WorkspaceFileViewModeRoute {
-  return {
-    read: () => (typeof window === "undefined" ? undefined : readNamespacedString(FILES_ROUTE_NAMESPACE, WORKSPACE_FILE_VIEW_MODE_QUERY_KEY)),
-    write: (mode) => {
-      if (typeof window === "undefined") return;
-      setNamespacedQueryKey(FILES_ROUTE_NAMESPACE, WORKSPACE_FILE_VIEW_MODE_QUERY_KEY, mode, { replace: true });
-    },
+export function createWorkspaceFileViewModeStore(
+  navigation: WorkspacePanelNavigationV1 | undefined,
+  storage: WorkspaceFileViewModeStorage | undefined = browserStorage(),
+): WorkspaceFileViewModeStore {
+  const route: WorkspaceFileViewModeRoute = {
+    read: () => firstQueryString(navigation?.query[WORKSPACE_FILE_VIEW_MODE_QUERY_KEY]),
+    write: (mode) => { navigation?.set(WORKSPACE_FILE_VIEW_MODE_QUERY_KEY, mode, { replace: true }); },
   };
+  return {
+    adopt: () => adoptWorkspaceFileViewMode(route, storage),
+    publish: (mode) => { publishWorkspaceFileViewMode(mode, route, storage); },
+  };
+}
+
+/** Test/default store used when no scoped host navigation is supplied. */
+export const workspaceFileViewModeStore: WorkspaceFileViewModeStore = createWorkspaceFileViewModeStore(undefined);
+
+function firstQueryString(value: string | readonly string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : value?.[0];
 }
 
 function browserStorage(): WorkspaceFileViewModeStorage | undefined {

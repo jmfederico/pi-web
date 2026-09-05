@@ -4,15 +4,22 @@ import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } fro
 import { dirname, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { build as viteBuild } from "vite";
+
+const bundledPluginsSourceDir = resolve("pi-web-plugins");
+const bundledPluginsOutputDir = resolve("dist/pi-web-plugins");
+const filesPluginSourceDir = resolve(bundledPluginsSourceDir, "files");
+const filesPluginOutputDir = resolve(bundledPluginsOutputDir, "files");
 
 // Two independent source trees ship inside the npm package: bundled PI WEB
 // plugins (discovered by directory scan, see PiWebPluginCatalog) and Pi
 // packages that ship alongside them without being discovered that way (for
-// example a Pi package that is installed rather than scanned). Both are
-// built the same way, just into separate output directories, so neither one
-// becomes a discovery root for the other.
+// example a Pi package that is installed rather than scanned). They retain
+// separate output roots so neither becomes a discovery root for the other.
+// Files is the one concrete exception to plain transpilation: it is replaced
+// below by a self-contained browser bundle.
 const buildTargets = [
-  { rootDir: resolve("pi-web-plugins"), outDir: resolve("dist/pi-web-plugins"), label: "plugin" },
+  { rootDir: bundledPluginsSourceDir, outDir: bundledPluginsOutputDir, label: "plugin" },
   { rootDir: resolve("pi-packages"), outDir: resolve("dist/pi-packages"), label: "package" },
 ];
 const watchMode = process.argv.includes("--watch");
@@ -29,20 +36,29 @@ if (isDirectExecution()) {
 async function buildAll() {
   for (const target of buildTargets) {
     await rm(target.outDir, { recursive: true, force: true });
-    const result = await buildDirectory(target.rootDir, target.outDir);
+    const excludedDirectories = target.rootDir === bundledPluginsSourceDir
+      ? new Set([await realpath(filesPluginSourceDir)])
+      : new Set();
+    const result = await buildDirectory(target.rootDir, target.outDir, new Set(), excludedDirectories);
+    if (target.rootDir === bundledPluginsSourceDir) {
+      await buildFilesBrowserPackage(filesPluginSourceDir, filesPluginOutputDir);
+    }
     const suffix = result.transpiled === 1 ? "file" : "files";
-    console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix} into ${relative(cwd, target.outDir)}`);
+    const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files browser bundle" : "";
+    console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix}${bundleSuffix} into ${relative(cwd, target.outDir)}`);
   }
 }
 
-export async function buildDirectory(sourceDir, targetDir, visited = new Set()) {
+export async function buildDirectory(sourceDir, targetDir, visited = new Set(), excludedDirectories = new Set()) {
   // Mirrors findWatchDirs's visited-realpath guard below: a symlinked
   // directory can point at one of its own ancestors, and recursing on the
   // symlink's own (ever-lengthening) path would never terminate. Resolving
   // each directory to its realpath before descending catches that cycle
   // regardless of how many symlink hops produced it.
   const realSourceDir = await realpath(sourceDir).catch(() => undefined);
-  if (realSourceDir === undefined || visited.has(realSourceDir)) return { copied: 0, transpiled: 0 };
+  if (realSourceDir === undefined || visited.has(realSourceDir) || excludedDirectories.has(realSourceDir)) {
+    return { copied: 0, transpiled: 0 };
+  }
   visited.add(realSourceDir);
 
   const entries = await readDirectory(sourceDir);
@@ -62,7 +78,7 @@ export async function buildDirectory(sourceDir, targetDir, visited = new Set()) 
 
     if (entry.isDirectory() || linked?.isDirectory() === true) {
       if (entry.name === "node_modules") continue;
-      const result = await buildDirectory(sourcePath, targetPath, visited);
+      const result = await buildDirectory(sourcePath, targetPath, visited, excludedDirectories);
       copied += result.copied;
       transpiled += result.transpiled;
       continue;
@@ -84,6 +100,44 @@ export async function buildDirectory(sourceDir, targetDir, visited = new Set()) 
   }
 
   return { copied, transpiled };
+}
+
+export function filesBrowserBuildConfig(sourceDir, targetDir) {
+  return {
+    configFile: false,
+    root: sourceDir,
+    base: "./",
+    publicDir: false,
+    logLevel: "silent",
+    build: {
+      outDir: resolve(targetDir, "browser"),
+      emptyOutDir: true,
+      copyPublicDir: false,
+      target: "es2022",
+      minify: true,
+      cssMinify: true,
+      sourcemap: false,
+      assetsInlineLimit: 0,
+      reportCompressedSize: false,
+      rollupOptions: {
+        input: resolve(sourceDir, "pi-web-plugin.ts"),
+        preserveEntrySignatures: "strict",
+        output: {
+          format: "es",
+          entryFileNames: "pi-web-plugin.js",
+          chunkFileNames: "assets/[name]-[hash].js",
+          assetFileNames: "assets/[name]-[hash][extname]",
+        },
+      },
+    },
+  };
+}
+
+export async function buildFilesBrowserPackage(sourceDir, targetDir, buildBrowser = viteBuild) {
+  await rm(targetDir, { recursive: true, force: true });
+  await mkdir(targetDir, { recursive: true });
+  await copyFile(resolve(sourceDir, "package.json"), resolve(targetDir, "package.json"));
+  await buildBrowser(filesBrowserBuildConfig(sourceDir, targetDir));
 }
 
 async function buildFile(file, outputPath) {
@@ -114,7 +168,7 @@ async function buildFile(file, outputPath) {
  * symlinked build inputs, so editing a canonical file living outside the
  * plugin tree still triggers a rebuild.
  */
-async function findWatchDirs(dir) {
+export async function findWatchDirs(dir) {
   const dirs = [];
   const visited = new Set();
   const pending = [dir];

@@ -102,28 +102,12 @@ export function createCoreActions(): PluginAction[] {
       run: (context) => { context.focusPrompt(); },
     },
     {
-      id: "view.files",
-      title: "Go to Files",
-      shortcut: "mod+2",
-      group: "Navigation",
-      enabled: hasWorkspace,
-      run: (context) => { context.selectMainView("core:workspace.files"); },
-    },
-    {
       id: "view.terminal",
       title: "Go to Terminal",
       shortcut: "mod+4",
       group: "Navigation",
       enabled: hasWorkspace,
       run: (context) => { context.selectMainView("core:workspace.terminal"); },
-    },
-    {
-      id: "workspace.refresh-files",
-      title: "Refresh Files",
-      shortcut: "mod+shift+f",
-      group: "Workspace",
-      enabled: hasWorkspace,
-      run: (context) => context.refreshFiles(),
     },
     {
       id: "workspace.delete",

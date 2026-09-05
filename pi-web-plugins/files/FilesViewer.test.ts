@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FileContentResponse } from "../api";
-import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
-import { workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "../workspaceFileViewMode";
-import { WorkspaceFileViewer, workspaceFilePreviewKind, workspaceFileViewerIdentityKey, type WorkspaceFileViewerIdentity } from "./WorkspaceFileViewer";
+import type { FileContentResponse } from "@jmfederico/pi-web/plugin-api";
+import type { WorkspaceFileViewMode, WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
+import { DEFAULT_MAX_INLINE_PREVIEW_BYTES as MAX_INLINE_PREVIEW_BYTES, WorkspaceFileViewer, workspaceFilePreviewKind, workspaceFileViewerIdentityKey, type WorkspaceFileViewerIdentity } from "./FilesViewer";
+
+if (customElements.get("pi-web-files-viewer") === undefined) customElements.define("pi-web-files-viewer", WorkspaceFileViewer);
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -33,7 +34,7 @@ describe("workspace-file-viewer", () => {
     viewer.file = textFile("other.md", "# Wrong file", { mediaType: "markdown", language: "markdown" });
     await viewer.updateComplete;
     expect(statusMessage(viewer)).toBe("Unable to preview notes.md: loaded content belongs to other.md.");
-    expect(viewer.shadowRoot?.querySelector("a, iframe, code-viewer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("a, iframe, pi-web-files-code-viewer")).toBeNull();
   });
 
   it("opens HTML as literal raw source and previews it in an exactly sandboxed frame on request", async () => {
@@ -50,7 +51,7 @@ describe("workspace-file-viewer", () => {
     expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
     expect(modeButton(viewer, "Preview").getAttribute("aria-pressed")).toBe("false");
     expect(viewer.shadowRoot?.querySelector("iframe")).toBeNull();
-    expect(requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("code-viewer"), "raw code viewer").content).toBe(source);
+    expect(requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("pi-web-files-code-viewer"), "raw code viewer").content).toBe(source);
     expect(viewer.shadowRoot?.querySelector("h1, script")).toBeNull();
 
     const open = anchorWithText(viewer, "Open ↗");
@@ -66,7 +67,7 @@ describe("workspace-file-viewer", () => {
     await viewer.updateComplete;
 
     expect(modeButton(viewer, "Preview").getAttribute("aria-pressed")).toBe("true");
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).toBeNull();
     const frame = requiredElement(viewer.shadowRoot?.querySelector<HTMLIFrameElement>("iframe"), "HTML preview frame");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("allow")).toBe("");
@@ -76,7 +77,7 @@ describe("workspace-file-viewer", () => {
     modeButton(viewer, "Raw").click();
     await viewer.updateComplete;
     expect(viewer.shadowRoot?.querySelector("iframe")).toBeNull();
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).not.toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
   });
 
   it("opens Markdown as literal raw source and renders it through the safe renderer on request", async () => {
@@ -85,7 +86,7 @@ describe("workspace-file-viewer", () => {
     const viewer = await mountViewer(file);
 
     expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
-    const raw = requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("code-viewer"), "raw Markdown viewer");
+    const raw = requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("pi-web-files-code-viewer"), "raw Markdown viewer");
     expect(raw.content).toBe(source);
     expect(viewer.shadowRoot?.querySelector(".markdown-preview")).toBeNull();
 
@@ -142,44 +143,20 @@ describe("workspace-file-viewer", () => {
     expect(store.published).toEqual(["preview", "raw"]);
   });
 
-  it("restores each file history entry's rendered mode through Back and Forward", async () => {
-    const first = textFile("first.html", "<p>first</p>", { mediaType: "html", language: "html" });
-    const second = textFile("second.html", "<p>second</p>", { mediaType: "html", language: "html" });
-    replaceWorkspaceFileHistory(first.path, "raw");
-    const viewer = await mountViewer(first, { modeStore: workspaceFileViewModeStore });
-    expectHtmlMode(viewer, first.path, "raw");
+  it("restores the rendered mode when host navigation supplies a new snapshot", async () => {
+    const file = textFile("first.html", "<p>first</p>", { mediaType: "html", language: "html" });
+    const viewer = await mountViewer(file, { modeStore: fakeModeStore("raw") });
+    expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
 
-    const files = new Map([[first.path, first], [second.path, second]]);
-    const restoreFileFromRoute = (): void => {
-      const selectedPath = workspaceFileHistoryValue(WORKSPACE_FILE_PATH_QUERY_KEY) ?? undefined;
-      viewer.selectedPath = selectedPath;
-      viewer.file = selectedPath === undefined ? undefined : files.get(selectedPath);
-    };
-    window.addEventListener("popstate", restoreFileFromRoute);
-    try {
-      // Ordinary file selection pushes a history entry while retaining the
-      // current mode preference.
-      pushWorkspaceFileHistory(second.path);
-      viewer.selectedPath = second.path;
-      viewer.file = second;
-      await viewer.updateComplete;
-      expectHtmlMode(viewer, second.path, "raw");
+    viewer.modeStore = fakeModeStore("preview");
+    await viewer.updateComplete;
+    expect(modeButton(viewer, "Preview").getAttribute("aria-pressed")).toBe("true");
+    expect(viewer.shadowRoot?.querySelector("iframe")).not.toBeNull();
 
-      // A mode switch replaces that file's current history entry.
-      modeButton(viewer, "Preview").click();
-      await viewer.updateComplete;
-      expectHtmlMode(viewer, second.path, "preview");
-
-      window.history.back();
-      await viewer.updateComplete;
-      expectHtmlMode(viewer, first.path, "raw");
-
-      window.history.forward();
-      await viewer.updateComplete;
-      expectHtmlMode(viewer, second.path, "preview");
-    } finally {
-      window.removeEventListener("popstate", restoreFileFromRoute);
-    }
+    viewer.modeStore = fakeModeStore("raw");
+    await viewer.updateComplete;
+    expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
   });
 
   it("ignores stale mode controls after a different file is selected", async () => {
@@ -199,7 +176,7 @@ describe("workspace-file-viewer", () => {
     detachedPreviewButton.click();
     await viewer.updateComplete;
     expect(viewer.shadowRoot?.querySelector("img")).not.toBeNull();
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).toBeNull();
 
     // The stale click must not have changed the remembered mode either.
     const notes = textFile("notes.md", "# notes", { mediaType: "markdown", language: "markdown" });
@@ -208,7 +185,7 @@ describe("workspace-file-viewer", () => {
     await viewer.updateComplete;
     expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
     expect(viewer.shadowRoot?.querySelector(".markdown-preview")).toBeNull();
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).not.toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
   });
 
   it("ignores stale embedded-preview failures and exposes recovery for the current file", async () => {
@@ -255,7 +232,7 @@ describe("workspace-file-viewer", () => {
 
     expect(modeButton(viewer, "Raw").getAttribute("aria-pressed")).toBe("true");
     expect(viewer.shadowRoot?.querySelector("img")).toBeNull();
-    const raw = requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("code-viewer"), "raw SVG viewer");
+    const raw = requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("pi-web-files-code-viewer"), "raw SVG viewer");
     expect(raw.content).toBe(source);
     expect(viewer.shadowRoot?.querySelector("svg, script")).toBeNull();
 
@@ -263,7 +240,7 @@ describe("workspace-file-viewer", () => {
     await viewer.updateComplete;
 
     expect(modeButton(viewer, "Preview").getAttribute("aria-pressed")).toBe("true");
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).toBeNull();
     const image = requiredElement(viewer.shadowRoot?.querySelector<HTMLImageElement>("img"), "SVG preview image");
     expect(new URL(image.src).searchParams.get("path")).toBe(file.path);
     expect(image.getAttribute("alt")).toBe("Preview of assets/diagram.svg");
@@ -302,7 +279,7 @@ describe("workspace-file-viewer", () => {
     expect(viewer.shadowRoot?.textContent).not.toContain("Preview failed");
     expect(viewer.shadowRoot?.querySelector("iframe")).not.toBeNull();
     expect(modeButton(viewer, "Preview").getAttribute("aria-pressed")).toBe("true");
-    expect(viewer.shadowRoot?.querySelector("code-viewer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).toBeNull();
   });
 
   it("keeps empty, oversized, unsupported, and truncated states explicit", async () => {
@@ -322,7 +299,7 @@ describe("workspace-file-viewer", () => {
     viewer.file = oversizedHtml;
     await viewer.updateComplete;
     expect(viewer.shadowRoot?.querySelector("[role='status']")?.textContent).toContain("Raw source is truncated");
-    expect(requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("code-viewer"), "oversized raw source").content).toBe("<p>first capped bytes</p>");
+    expect(requiredElement(viewer.shadowRoot?.querySelector<HTMLElement & { content: string }>("pi-web-files-code-viewer"), "oversized raw source").content).toBe("<p>first capped bytes</p>");
     expect(viewer.shadowRoot?.textContent).not.toContain("Open ↗");
     expect(viewer.shadowRoot?.querySelector("a[download]")).not.toBeNull();
 
@@ -420,35 +397,6 @@ async function mountViewer(file: FileContentResponse | undefined, patch: ViewerP
   document.body.append(viewer);
   await viewer.updateComplete;
   return viewer;
-}
-
-const WORKSPACE_FILE_PATH_QUERY_KEY = "core.workspace.files--file";
-const WORKSPACE_FILE_MODE_QUERY_KEY = "core.workspace.files--mode";
-
-function replaceWorkspaceFileHistory(path: string, mode: WorkspaceFileViewMode): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set(WORKSPACE_FILE_PATH_QUERY_KEY, path);
-  url.searchParams.set(WORKSPACE_FILE_MODE_QUERY_KEY, mode);
-  window.history.replaceState({}, "", url);
-}
-
-function pushWorkspaceFileHistory(path: string): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set(WORKSPACE_FILE_PATH_QUERY_KEY, path);
-  window.history.pushState({}, "", url);
-}
-
-function workspaceFileHistoryValue(key: string): string | null {
-  return new URL(window.location.href).searchParams.get(key);
-}
-
-function expectHtmlMode(viewer: WorkspaceFileViewer, path: string, mode: WorkspaceFileViewMode): void {
-  expect(workspaceFileHistoryValue(WORKSPACE_FILE_PATH_QUERY_KEY)).toBe(path);
-  expect(workspaceFileHistoryValue(WORKSPACE_FILE_MODE_QUERY_KEY)).toBe(mode);
-  expect(modeButton(viewer, mode === "raw" ? "Raw" : "Preview").getAttribute("aria-pressed")).toBe("true");
-  expect(modeButton(viewer, mode === "raw" ? "Preview" : "Raw").getAttribute("aria-pressed")).toBe("false");
-  expect(viewer.shadowRoot?.querySelector("code-viewer") !== null).toBe(mode === "raw");
-  expect(viewer.shadowRoot?.querySelector("iframe") !== null).toBe(mode === "preview");
 }
 
 const inertPreviewUrl: WorkspaceFileViewer["previewUrlBuilder"] = (_projectId, _workspaceId, path, options) => {

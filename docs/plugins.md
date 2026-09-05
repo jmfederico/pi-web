@@ -304,6 +304,25 @@ PI WEB ships core, discoverable plugins in the main `@jmfederico/pi-web` npm pac
 
 Built-in plugins can be managed from **Settings → PI WEB plugins** or with the top-level `plugins` config key.
 
+### Files
+
+**Plugin id:** `files`
+**What it does:** provides the Files workspace panel, file viewers, uploads, and the **Go to Files** / **Refresh Files** actions through the same browser plugin API v2 contract available to third-party plugins.
+
+Files is a normal browser-only bundled plugin. It is enabled by default and can be disabled in **Settings → PI WEB plugins** or with:
+
+```json
+{
+  "plugins": {
+    "files": { "enabled": false }
+  }
+}
+```
+
+Reload the browser after changing its enablement; no session-daemon restart is required. Disabling Files removes its product panel and actions, but the host's mandatory workspace-files capability remains available to attachments and other plugins. Chat and any other available workspace panels remain usable, and PI WEB selects an available panel without requiring Files.
+
+Legacy `files` / `core:workspace.files` routes, namespaced query state, and saved shortcut identities continue through explicit aliases.
+
 ### Git
 
 **Plugin id:** `git`
@@ -513,6 +532,8 @@ const iconUrl = new URL("./assets/icon.svg", import.meta.url);
 
 The final installed plugin package must contain `assets/icon.svg` at that path relative to the final built module and inside `browserRoot`. PI WEB serves files that already exist in the package; it does not copy a source `public/` directory or apply Vite-style public-directory semantics. Configure the plugin build and package contents to emit or copy the asset into its final module-relative location.
 
+Treat `browserRoot` as the plugin's complete distributable browser graph. Bundle or emit every runtime dependency, style, chunk, and asset inside it; built browser code must not retain bare package imports, private PI WEB source imports, or private `dist/**` imports. Module-relative imports between emitted files are supported and preserve nested-deployment and selected-machine routing.
+
 PI WEB returns executable JavaScript MIME types for both `.js` and `.mjs`. JSON, CSS, HTML, and SVG receive their corresponding content types; unknown file types are served as octet-stream.
 
 ## Pi packages shipped alongside bundled plugins
@@ -580,6 +601,8 @@ interface PluginActivationContext {
 `activate()` is called once when the UI loads the plugin. Keep it cheap and synchronous: define contributions there, but move expensive or async work into actions, custom elements, or explicit user interactions.
 
 Browser API v2 is a deliberate break: the host rejects browser v1 entries with the plugin/module identity and expected version; there is no v1 compatibility shim. Migrate a browser entry by setting `apiVersion: 2`, using stable `pluginId` for package/provider ownership, and using `runtimePluginId` when constructing a host-qualified contribution reference. Replace browser-v1 `refreshGit` with `refreshWorkspacePanels()` plus panel `onInvalidate()`. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `workspace.branch` aliases were removed; use the provider-authored `workspace.label` for generic presentation, and keep provider-specific facts in `workspace.provider.metadata` or the owning backend. The former `@jmfederico/pi-web/plugin-api/unstable` type path is not part of v2 and is no longer exported.
+
+Workspace-files capability v1, contribution navigation v1, and resource invalidation are additive parts of browser API v2; they do not require `apiVersion: 3`. Existing v2 plugins and test fakes that expose only the original structural file methods remain compatible. Feature-detect `context.files.capabilityVersion === 1` before using the added file methods, and treat `context.navigation` and the second `onInvalidate` argument as optional. An older host does not claim support it lacks.
 
 Contribution ids authored in arrays remain local to the plugin. PI WEB qualifies them internally under the runtime identity:
 
@@ -841,9 +864,14 @@ interface WorkspacePanelContribution {
   icon?: TemplateResult;
   order?: number;
   routeAliases?: string[];
+  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
-  onInvalidate?: (context: WorkspacePanelContext) => void | Promise<void>;
+  invalidationResources?: readonly WorkspaceResource[];
+  onInvalidate?: (
+    context: WorkspacePanelContext,
+    invalidation?: WorkspaceInvalidation,
+  ) => void | Promise<void>;
   render: (context: WorkspacePanelContext) => TemplateResult;
 }
 
@@ -851,13 +879,7 @@ interface WorkspacePanelContext {
   machine: PluginMachine;
   workspace: Workspace;
   state?: PluginRuntimeState;
-  files: {
-    readFile(path: string): Promise<FileContentResponse>;
-    listFiles(path: string): Promise<FileTreeResponse>;
-    writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
-    deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
-    moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
-  };
+  files: WorkspaceFilesContextValue;
   backend?: {
     request(operation: string, input: JsonValue): Promise<JsonValue>;
   };
@@ -871,6 +893,7 @@ interface WorkspacePanelContext {
       open?: boolean;
     }): Promise<TerminalCommandRunHandle>;
   };
+  navigation?: WorkspacePanelNavigationV1;
   host: {
     requestRender(): void;
   };
@@ -879,7 +902,9 @@ interface WorkspacePanelContext {
 
 `icon` is optional and is used in the compact mobile tab bar. Prefer an SVG rendered with the `svg` helper from `PluginActivationContext`; use `currentColor` so PI WEB themes can style it. If `icon` is omitted, mobile tabs fall back to initials from the panel title, or to the full title when initials collide.
 
-`machine`, `workspace`, `files`, optional `backend`, `prompt`, `terminal`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files). A browser entry with a paired active provider uses `backend.request()` instead of constructing API routes — see [Calling paired workspace backends](#calling-paired-workspace-backends). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. `routeAliases` is only for migrating former URL tool/view values. Implement `onInvalidate()` to refresh plugin-owned panel data when an action or host refresh calls `refreshWorkspacePanels()`; call `host.requestRender()` when async state changes should make PI WEB re-evaluate `badge`, `visible`, or `render`.
+`machine`, `workspace`, `files`, optional `backend`, `prompt`, `terminal`, optional `navigation`, and `host` are documented as stable for panel callbacks. The base `files` methods are covered under [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files); feature-detect the [workspace-files capability v1](#workspace-files-capability-v1) additions. A browser entry with a paired active provider uses `backend.request()` instead of constructing API routes — see [Calling paired workspace backends](#calling-paired-workspace-backends). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal.
+
+`routeAliases` migrates former URL tool/view values. `navigationAliases` migrates former qualified query namespaces; use the scoped `navigation` helper for current deep-link state. `invalidationResources` opts a panel into automatic resource events. Implement `onInvalidate()` to refresh plugin-owned state, then call `host.requestRender()` when async changes should make PI WEB re-evaluate `badge`, `visible`, or `render`.
 
 Useful workspace and machine shapes:
 
@@ -908,6 +933,141 @@ interface Workspace {
 `machine.id` is included in panel contexts so plugins can keep caches machine-scoped. Do not infer the selected machine from global browser state. Use the provider-authored `workspace.label` for provider-neutral presentation. `workspace.provider.pluginId` is the stable source id, and provider-published details such as Git status live in `workspace.provider.metadata`, which the server provider fills from browser-public `publicMetadata`. Provider-specific browser code may interpret metadata it owns; PI WEB core does not assign branch semantics to the generic workspace shape. `capabilities.remove` describes only this workspace, not the provider in general. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `branch` aliases were removed.
 
 Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel content when possible. Do not assume a panel owns the whole page; keep layout contained.
+
+#### Workspace-files capability v1
+
+`WorkspaceFiles` and its `WorkspacePanelFiles` alias retain the extendable and implementable five-operation shape published for browser API v2 adapters and test fakes. Callback contexts expose the separately named discriminated value type so current hosts can add capability v1 without replacing that source-compatible base:
+
+```ts
+interface WorkspaceFiles {
+  readFile(path: string): Promise<FileContentResponse>;
+  listFiles(path: string): Promise<FileTreeResponse>;
+  writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
+  deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
+  moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
+}
+
+type WorkspacePanelFiles = WorkspaceFiles;
+
+interface LegacyWorkspaceFiles extends WorkspaceFiles {
+  readonly capabilityVersion?: undefined;
+}
+
+interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
+  readonly capabilityVersion: 1;
+  readonly defaultUploadFolder: string;
+  readonly maxInlinePreviewBytes: number;
+
+  readFile(path: string, options?: { signal?: AbortSignal }): Promise<FileContentResponse>;
+  listFiles(path: string, options?: { signal?: AbortSignal }): Promise<FileTreeResponse>;
+
+  previewUrl(path: string, options?: { version?: string }): string;
+  downloadUrl(path: string, options?: { version?: string }): string;
+  uploadFile(file: File, options?: {
+    destinationFolder?: string;
+    createDirs?: boolean;
+    overwrite?: boolean;
+    onProgress?: (progress: {
+      loaded: number;
+      total: number;
+      percent: number;
+      lengthComputable: boolean;
+    }) => void;
+  }): {
+    readonly path: string;
+    readonly completed: Promise<WriteWorkspaceFileResponse>;
+    cancel(): void;
+  };
+}
+
+type WorkspaceFilesContextValue =
+  | LegacyWorkspaceFiles
+  | WorkspaceFilesCapabilityV1;
+```
+
+Check the context-value discriminator before using the v1 additions:
+
+```js
+const files = context.files;
+if (files.capabilityVersion !== 1) {
+  throw new Error("This plugin requires workspace-files capability v1");
+}
+
+const previewHref = files.previewUrl("reports/result.html", {
+  version: "2026-06-25T00:00:00.000Z",
+});
+console.log(previewHref);
+
+const upload = files.uploadFile(new File(["report\n"], "report.txt"), {
+  destinationFolder: files.defaultUploadFolder,
+  onProgress: ({ percent }) => console.log(`${Math.round(percent * 100)}%`),
+});
+console.log("Uploading to", upload.path);
+// Retain upload.cancel() for an explicit Cancel control.
+await upload.completed;
+```
+
+The host binds the helper to the callback's machine and workspace. Plugins never supply machine, project, workspace, provider, or filesystem-root authority. `previewUrl()` and `downloadUrl()` return browser-ready absolute URLs with path encoding, the selected-machine route, and the nested application base already applied exactly once. Use them unchanged as `href`/`src` values; do not prefix, resolve, or reconstruct private preview routes. The optional `version` is an opaque cache discriminator, normally the file's `modifiedAt` value.
+
+`defaultUploadFolder` is the workspace-effective host setting, and `maxInlinePreviewBytes` exposes the host's preview limit. `uploadFile()` starts one browser `File` transport operation; omitting `destinationFolder` uses that default, `createDirs` defaults to `true`, and `overwrite` defaults to `false`. Progress `percent` is a fraction from `0` to `1`. The returned `path` is the resolved workspace-relative destination, `completed` rejects ordinary failures, and cancellation makes it reject with an error whose `name` is `"AbortError"`. A plugin owns multi-file batching, sequencing, aggregate progress, results, and dialog state.
+
+`readFile()` and `listFiles()` accept caller cancellation through `AbortSignal`. Successful writes, deletes, moves, and uploads publish a scoped `workspace.files` mutation invalidation; failed or cancelled operations do not. All operations still use the host's path policy, containment, content limits, federation, and request bounds, and failures reject instead of becoming empty data or false success.
+
+#### Contribution-scoped navigation
+
+A workspace panel receives optional host-owned address-bar state for its qualified contribution and current machine/workspace:
+
+```ts
+type ContributionQueryValue =
+  | string
+  | number
+  | boolean
+  | readonly (string | number | boolean)[];
+
+interface WorkspacePanelNavigationV1 {
+  readonly version: 1;
+  readonly contributionId: QualifiedContributionId;
+  readonly query: Readonly<Record<string, string | readonly string[]>>;
+  set(
+    key: string,
+    value: ContributionQueryValue | undefined | null,
+    options?: { replace?: boolean },
+  ): void;
+}
+```
+
+Read `context.navigation?.query` on each current panel callback or custom-element update. Call `set(key, value)` to push a history entry, pass `{ replace: true }` to replace it, or pass `undefined`/`null` to remove the key. Local keys use plugin-id syntax such as `file` or `view-mode`; PI WEB owns the qualified query namespace, serialization, browser history, and restoration. Do not read or write `window.location` for panel-owned state. Navigation state is bounded to 64 distinct namespaced parameters, 16 values per parameter, 256 characters per full namespaced parameter, 4,096 characters per serialized value, and 65,536 aggregate decoded key/value characters. Malformed or excess restored URL state is ignored within those bounds. An invalid or over-limit `set()` call throws before browser history or the current URL changes.
+
+The snapshot is normally populated while the address-bar machine, project, and workspace match the bound context. During host-controlled route restoration, such as remembered machine navigation, PI WEB may supply an exact target-identity snapshot before publishing that target in the address bar so the panel can restore in order. Writes remain fenced to the live address-bar identity, so a write from that pre-publication or any other stale context is ignored. Browser back/forward produces a fresh snapshot through the normal host render/restoration path. `navigationAliases` lists former qualified contribution ids for migration only: canonical values win, and a write removes matching alias values and writes the canonical namespace.
+
+#### Scope-aware invalidation
+
+Panels opt into fixed host resource events instead of listening to a global event bus:
+
+```ts
+type WorkspaceResource = "workspace.files";
+type WorkspaceInvalidationReason = "manual" | "mutation" | "agent-activity";
+
+interface WorkspaceInvalidation {
+  readonly reason: WorkspaceInvalidationReason;
+  readonly resources: readonly WorkspaceResource[];
+}
+
+workspacePanels: [{
+  id: "workspace.index",
+  title: "Index",
+  invalidationResources: ["workspace.files"],
+  onInvalidate: async (context, invalidation) => {
+    await reloadPluginCache(context, invalidation);
+    context.host.requestRender();
+  },
+  render: (context) => html`<!-- plugin-owned view -->`,
+}]
+```
+
+Automatic mutation and completed-agent-activity events go only to panels that declare the matching resource, with machine/workspace authority supplied by `context`. A successful host file mutation or upload uses reason `"mutation"`; relevant agent active→inactive completion uses `"agent-activity"`. Callback failures are attributed and isolated from other panels.
+
+`refreshWorkspacePanels(panelId?)` keeps the original browser API v2 manual behavior: it calls every panel callback, or one qualified panel, regardless of resource subscriptions, and the optional invalidation argument is absent. The deprecated `refreshFiles()` runtime alias instead publishes `{ reason: "manual", resources: ["workspace.files"] }` to matching subscribers for the selected workspace. In every case the panel decides whether to reload now or mark its own cache stale.
 
 ### Workspace labels
 
@@ -946,13 +1106,7 @@ interface WorkspaceLabelContext {
   machine: PluginMachine;
   workspace: Workspace;
   state?: PluginRuntimeState;
-  files: {
-    readFile(path: string): Promise<FileContentResponse>;
-    listFiles(path: string): Promise<FileTreeResponse>;
-    writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
-    deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
-    moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
-  };
+  files: WorkspaceFilesContextValue;
   backend?: {
     request(operation: string, input: JsonValue): Promise<JsonValue>;
   };
@@ -962,7 +1116,7 @@ interface WorkspaceLabelContext {
 }
 ```
 
-`machine`, `workspace`, `files`, optional `backend`, and `host` are documented as stable for label callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files). A browser entry with a paired active provider can call `backend.request()` from a label-owned async cache after checking that the optional helper is present. Include `machine.id` in caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
+`machine`, `workspace`, `files`, optional `backend`, and `host` are documented as stable for label callbacks. The `files` helper includes the compatible base operations plus the feature-detected [workspace-files capability v1](#workspace-files-capability-v1) additions. A browser entry with a paired active provider can call `backend.request()` from a label-owned async cache after checking that the optional helper is present. Include `machine.id` in caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
 
 Items are sorted by `order` and then id. Return an empty array to render nothing. Keep callbacks synchronous and lightweight; start async work from the callback, return cached items, then call `host.requestRender()` when the cache changes.
 
@@ -1228,7 +1382,7 @@ All file mutations share the same safety layer:
 - Deleting a directory returns an error.
 - Intermediate directory creation with `createDirs: false` fails if the parent directory does not exist.
 
-After any mutation (`writeFile`, `deleteFile`, or `moveFile`), the File Explorer updates automatically. No explicit `refreshFiles()` call is needed from plugin code. For label and badge updates, call `context.host.requestRender()` if the UI should reflect the change.
+After any successful mutation (`writeFile`, `deleteFile`, or `moveFile`), PI WEB publishes scoped `workspace.files` invalidation automatically; subscribers such as the built-in Files plugin decide how to refresh. No explicit `refreshFiles()` call is needed from plugin code. For label and badge updates, call `context.host.requestRender()` if the UI should reflect the change.
 
 ### Security
 
@@ -1278,11 +1432,11 @@ If you are an AI agent building or editing a PI WEB plugin, follow this checklis
 5. In a browser entry, use source `pluginId` for ownership and `runtimePluginId` for qualified contribution references; return contributions synchronously and use the activation context's `html`/`svg` tags.
 6. Add actions for command-palette operations, panels for larger workspace UI, and labels for compact inline metadata.
 7. Return arrays synchronously from workspace label `items()`; return an empty array to render nothing.
-8. Use documented browser helpers first: `files`, `terminal`, `backend`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Never construct PI WEB backend, federation, or absolute asset URLs.
+8. Use documented browser helpers first: `files`, `terminal`, `backend`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Feature-detect versioned `files` and `navigation` helpers, and never construct PI WEB backend, file-preview, federation, or absolute plugin-asset URLs.
 9. In a server entry, return only the demonstrated lifecycle callbacks and at most one `workspaceProvider`; treat every supplied `AbortSignal` as operation-scoped and forward it to bounded work.
 10. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON data/metadata, and optional request/removal capabilities.
 11. Keep backend operations JSON-only, bounded, and provider-owned. Put no secrets in `publicMetadata`, browser responses, removal wording, or diagnostics.
-12. Keep the installed package at or below 4,096 entries and 16 MiB, and keep every browser-public file inside a narrow `browserRoot`.
+12. Keep the installed package at or below 4,096 entries and 16 MiB. Use a narrow, self-contained `browserRoot` that includes every emitted runtime dependency, style, chunk, and asset without private PI WEB imports.
 13. Treat both entries as trusted code. A server module shares sessiond's process and user permissions.
 14. For browser-only edits, reload or hard-reload the page. For a server-backed edit, restart sessiond and then reload the page.
 15. Warn that restarting `pi-web-sessiond.service` may interrupt active sessions/runtime ownership.

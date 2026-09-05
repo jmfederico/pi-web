@@ -564,6 +564,24 @@ describe("machine-scoped terminal command-run API", () => {
   });
 });
 
+describe("workspace file read API", () => {
+  it("forwards caller cancellation through selected-machine tree and file requests", async () => {
+    const fetchMock = stubSequenceFetch([
+      jsonResponse({ path: "src", entries: [], scannedAt: "2026-06-25T00:00:00.000Z", truncated: false }),
+      jsonResponse({ path: "README.md", encoding: "utf8", size: 2, modifiedAt: "2026-06-25T00:00:00.000Z", content: "hi", truncated: false, binary: false }),
+    ]);
+    const controller = new AbortController();
+
+    await workspacesApi.workspaceTree("p 1", "w/1", "src", "remote a", { signal: controller.signal });
+    await workspacesApi.workspaceFile("p 1", "w/1", "README.md", "remote a", { signal: controller.signal });
+
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1/tree?path=src");
+    expect(fetchCall(fetchMock, 1)[0]).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1/file?path=README.md");
+    expect(fetchCall(fetchMock, 0)[1]?.signal).toBe(controller.signal);
+    expect(fetchCall(fetchMock, 1)[1]?.signal).toBe(controller.signal);
+  });
+});
+
 describe("workspace file write API", () => {
   it("sends text content with Content-Type text/plain", async () => {
     const fetchMock = stubJsonFetch({ path: "hello.txt", size: 11, modifiedAt: "2026-06-10T00:00:00.000Z", created: true });

@@ -107,6 +107,7 @@ export interface PluginRuntimeContext {
   selectMainView: (view: string) => void;
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
+  /** @deprecated Compatibility alias that publishes `workspace.files` invalidation for the selected workspace. */
   refreshFiles: () => void | Promise<void>;
   /** Invalidate plugin workspace-panel data for the selected workspace, optionally targeting one qualified panel id. */
   refreshWorkspacePanels: (panelId?: QualifiedContributionId) => void | Promise<void>;
@@ -144,6 +145,36 @@ export interface Workspace {
   readonly removal?: WorkspaceRemovalPresentation;
 }
 
+export interface WorkspaceFileRequestOptions {
+  readonly signal?: AbortSignal;
+}
+
+export interface WorkspaceFileReferenceOptions {
+  /** Opaque cache discriminator, such as the file's modified time. */
+  readonly version?: string;
+}
+
+export interface WorkspaceFileUploadProgress {
+  readonly loaded: number;
+  readonly total: number;
+  readonly percent: number;
+  readonly lengthComputable: boolean;
+}
+
+export interface WorkspaceFileUploadOptions {
+  readonly destinationFolder?: string;
+  readonly createDirs?: boolean;
+  readonly overwrite?: boolean;
+  readonly onProgress?: (progress: WorkspaceFileUploadProgress) => void;
+}
+
+export interface WorkspaceFileUploadTask {
+  readonly path: string;
+  readonly completed: Promise<WriteWorkspaceFileResponse>;
+  cancel(): void;
+}
+
+/** The five workspace-file operations published by browser API v2 hosts. */
 export interface WorkspaceFiles {
   /** Read a file from the workspace. Works for local and federated machines. */
   readFile(path: string): Promise<FileContentResponse>;
@@ -151,17 +182,36 @@ export interface WorkspaceFiles {
    *  Works for local and federated machines. Rejects when the directory does not
    *  exist or cannot be read, matching readFile error behavior. */
   listFiles(path: string): Promise<FileTreeResponse>;
-  /** Write content to a workspace file. Creates intermediate directories by default.
-   *  Works for local and federated machines. Auto-refreshes the file explorer after success. */
+  /** Write content to a workspace file. Creates intermediate directories by default. */
   writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
-  /** Delete a file from the workspace. Idempotent — returns { existed: false } if file doesn't exist.
-   *  Deletes the entry itself (for symlinks, removes the symlink not the target). */
+  /** Delete a file from the workspace. Idempotent — returns { existed: false } if it does not exist. */
   deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
-  /** Move or rename a file within the workspace. Unix mv semantics.
-   *  Default overwrite: false (safer than writeFile). Auto-refreshes the file explorer after success. */
+  /** Move or rename a file within the workspace. Default overwrite: false. */
   moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
 }
 
+/** Structural workspace-files value supplied by browser API v2 hosts before capability versioning. */
+export interface LegacyWorkspaceFiles extends WorkspaceFiles {
+  readonly capabilityVersion?: undefined;
+}
+
+/** Versioned workspace-scoped host capability available to first- and third-party browser plugins. */
+export interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
+  readonly capabilityVersion: 1;
+  readonly defaultUploadFolder: string;
+  readonly maxInlinePreviewBytes: number;
+  readFile(path: string, options?: WorkspaceFileRequestOptions): Promise<FileContentResponse>;
+  listFiles(path: string, options?: WorkspaceFileRequestOptions): Promise<FileTreeResponse>;
+  /** Return a browser-ready URL already resolved by the host for this deployment and machine. */
+  previewUrl(path: string, options?: WorkspaceFileReferenceOptions): string;
+  /** Return a browser-ready download URL already resolved by the host for this deployment and machine. */
+  downloadUrl(path: string, options?: WorkspaceFileReferenceOptions): string;
+  /** Start one upload transport operation. Cancellation rejects `completed` with an AbortError. */
+  uploadFile(file: File, options?: WorkspaceFileUploadOptions): WorkspaceFileUploadTask;
+}
+
+/** Host context value used to feature-detect versioned workspace-file additions. */
+export type WorkspaceFilesContextValue = LegacyWorkspaceFiles | WorkspaceFilesCapabilityV1;
 export type WorkspacePanelFiles = WorkspaceFiles;
 
 /** JSON-only request path to the server module that currently owns this workspace. */
@@ -179,7 +229,7 @@ export interface WorkspaceContext {
   machine: PluginMachine;
   workspace: Workspace;
   state?: PluginRuntimeState;
-  files: WorkspaceFiles;
+  files: WorkspaceFilesContextValue;
   /** Present only when this browser entry has a paired active server backend. */
   backend?: WorkspaceBackend;
   host: WorkspaceHost;
@@ -197,12 +247,30 @@ export interface WorkspacePanelTerminal {
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
 }
 
+export type ContributionQueryValue = string | number | boolean | readonly (string | number | boolean)[];
+
+export interface WorkspacePanelNavigationV1 {
+  readonly version: 1;
+  readonly contributionId: QualifiedContributionId;
+  readonly query: Readonly<Record<string, string | readonly string[]>>;
+  set(key: string, value: ContributionQueryValue | undefined | null, options?: { replace?: boolean | undefined }): void;
+}
+
 export interface WorkspacePanelContext extends WorkspaceContext {
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
+  /** Contribution-scoped address-bar state for deep links and browser history. */
+  navigation?: WorkspacePanelNavigationV1;
 }
 
 export type WorkspacePanelIcon = TemplateResult;
+export type WorkspaceResource = "workspace.files";
+export type WorkspaceInvalidationReason = "manual" | "mutation" | "agent-activity";
+
+export interface WorkspaceInvalidation {
+  readonly reason: WorkspaceInvalidationReason;
+  readonly resources: readonly WorkspaceResource[];
+}
 
 export interface WorkspacePanelContribution {
   id: LocalContributionId;
@@ -211,10 +279,14 @@ export interface WorkspacePanelContribution {
   order?: number;
   /** Former URL tool/view values that should resolve to this panel. */
   routeAliases?: string[];
+  /** Former qualified contribution ids whose namespaced query keys remain readable. */
+  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
-  /** Called when the host invalidates workspace-panel data. */
-  onInvalidate?: (context: WorkspacePanelContext) => void | Promise<void>;
+  /** Fixed workspace resources whose automatic invalidations this contribution receives. */
+  invalidationResources?: readonly WorkspaceResource[];
+  /** Called for manual panel invalidation or a declared resource invalidation. */
+  onInvalidate?: (context: WorkspacePanelContext, invalidation?: WorkspaceInvalidation) => void | Promise<void>;
   render: (context: WorkspacePanelContext) => TemplateResult;
 }
 
@@ -222,7 +294,7 @@ export interface WorkspaceLabelContext extends WorkspaceContext {
   machine: PluginMachine;
   workspace: Workspace;
   state?: PluginRuntimeState;
-  files: WorkspaceFiles;
+  files: WorkspaceFilesContextValue;
   host: WorkspaceHost;
 }
 

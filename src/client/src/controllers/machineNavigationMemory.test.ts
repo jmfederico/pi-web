@@ -8,7 +8,7 @@ describe("InMemoryMachineNavigationMemory", () => {
   it("remembers independent navigation snapshots per machine", () => {
     const memory = new InMemoryMachineNavigationMemory();
 
-    memory.remember({ machineId: "local", projectId: "local-project", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", projectId: "local-project", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     memory.remember({ machineId: "remote", projectId: "remote-project", workspaceId: "remote-workspace", sessionId: "remote-session", surface: {} });
 
     expect(memory.latest("local")?.projectId).toBe("local-project");
@@ -23,11 +23,11 @@ describe("InMemoryMachineNavigationMemory", () => {
   it("returns cloned snapshots so callers cannot mutate memory", () => {
     const memory = new InMemoryMachineNavigationMemory();
 
-    memory.remember({ machineId: "local", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     const snapshot = memory.latest("local");
-    if (snapshot !== undefined) snapshot.surface.selectedFilePath = "changed.ts";
+    if (snapshot?.surface.contributionQuery !== undefined) snapshot.surface.contributionQuery["core.workspace.files--file"] = "changed.ts";
 
-    expect(memory.latest("local")?.surface.selectedFilePath).toBe("README.md");
+    expect(memory.latest("local")?.surface.contributionQuery?.["core.workspace.files--file"]).toBe("README.md");
   });
 });
 
@@ -36,7 +36,7 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const storage = memoryStorage();
     const memory = new SessionStorageMachineNavigationMemory(storage);
 
-    memory.remember({ machineId: "local", projectId: "local-project", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", projectId: "local-project", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     memory.remember({ machineId: "remote", projectId: "remote-project", workspaceId: "remote-workspace", sessionId: "remote-session", surface: {} });
 
     const restored = new SessionStorageMachineNavigationMemory(storage);
@@ -58,8 +58,29 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const memory = new SessionStorageMachineNavigationMemory(storage);
 
     expect(memory.latest("local")?.tool).toBeUndefined();
-    expect(memory.latest("local")?.surface.selectedFilePath).toBe("README.md");
+    expect(memory.latest("local")?.surface.contributionQuery).toEqual({ "core.workspace.files--file": "README.md" });
     expect(memory.latest("remote")).toBeUndefined();
+  });
+
+  it("migrates the v1 Files field without overriding an already captured canonical query", () => {
+    const storage = memoryStorage({
+      "pi-web:machine-navigation:v1": JSON.stringify({ version: 1, entries: [["local", {
+        machineId: "local",
+        surface: {
+          selectedFilePath: "legacy.ts",
+          contributionQuery: {
+            "core.workspace.files--file": "canonical.ts",
+            "git.workspace.git--diff": ["a", "b"],
+            malformed: "ignored",
+          },
+        },
+      }]] }),
+    });
+
+    expect(new SessionStorageMachineNavigationMemory(storage).latest("local")?.surface.contributionQuery).toEqual({
+      "core.workspace.files--file": "canonical.ts",
+      "git.workspace.git--diff": ["a", "b"],
+    });
   });
 
   it("retains qualified legacy panel ids for plugin route migration", () => {
@@ -89,11 +110,13 @@ describe("machineNavigationSnapshotFromState", () => {
       selectedSession: session("session"),
       workspaceTool: "core:workspace.files",
       mainView: "core:workspace.files",
-      selectedFilePath: "src/main.ts",
       selectedTerminalId: "terminal-1",
     };
 
-    expect(machineNavigationSnapshotFromState(state)).toEqual({
+    expect(machineNavigationSnapshotFromState(state, {
+      "core.workspace.files--file": "src/main.ts",
+      "git.workspace.git--diff": ["README.md", "package.json"],
+    })).toEqual({
       machineId: "remote",
       projectId: "project",
       workspaceId: "workspace",
@@ -101,7 +124,10 @@ describe("machineNavigationSnapshotFromState", () => {
       tool: "core:workspace.files",
       view: "core:workspace.files",
       surface: {
-        selectedFilePath: "src/main.ts",
+        contributionQuery: {
+          "core.workspace.files--file": "src/main.ts",
+          "git.workspace.git--diff": ["README.md", "package.json"],
+        },
         selectedTerminalId: "terminal-1",
       },
     });
@@ -110,12 +136,10 @@ describe("machineNavigationSnapshotFromState", () => {
   it("does not carry workspace surface without a selected workspace", () => {
     const state: AppState = {
       ...initialAppState(),
-      selectedFilePath: "src/main.ts",
       selectedTerminalId: "terminal-1",
     };
 
-    expect(machineNavigationSnapshotFromState(state).surface).toEqual({
-      selectedFilePath: undefined,
+    expect(machineNavigationSnapshotFromState(state, { "core.workspace.files--file": "src/main.ts" }).surface).toEqual({
       selectedTerminalId: undefined,
     });
   });

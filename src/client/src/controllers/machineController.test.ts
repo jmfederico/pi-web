@@ -58,8 +58,6 @@ describe("MachineController", () => {
       selectedProject: project,
       selectedWorkspace: workspace,
       selectedSession: session,
-      fileTree: [{ name: "index.ts", path: "src/index.ts", type: "file" }],
-      selectedFilePath: "src/index.ts",
       activeTerminalCount: 2,
       error: "stale error",
     };
@@ -86,8 +84,6 @@ describe("MachineController", () => {
     expect(state.selectedProject).toBeUndefined();
     expect(state.selectedWorkspace).toBeUndefined();
     expect(state.selectedSession).toBeUndefined();
-    expect(state.fileTree).toEqual([]);
-    expect(state.selectedFilePath).toBeUndefined();
     expect(state.activeTerminalCount).toBe(0);
     expect(state.error).toBe("");
     expect(projects.loadProjects).toHaveBeenCalledOnce();

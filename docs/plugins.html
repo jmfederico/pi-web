@@ -348,7 +348,29 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 <li><code>browserRoot: "."</code> makes almost the whole scanned package browser-public, so prefer a narrow build directory and put no secrets inside it.</li>
                 <li>The package-wide scan allows at most 4,096 entries and 16 MiB of file content, excluding traversal into <code>.git</code> and <code>node_modules</code>; files outside the browser root still count.</li>
                 <li>Both <code>.js</code> and <code>.mjs</code> are served with executable JavaScript MIME types. Prefer module-relative asset URLs for federation and nested deployments.</li>
+                <li>Treat <code>browserRoot</code> as the complete distributable browser graph: bundle or emit every runtime dependency, style, chunk, and asset inside it, with no bare package imports or private PI WEB source/<code>dist/**</code> imports.</li>
               </ul>
+
+              <h3>Workspace files, navigation, and invalidation</h3>
+              <p>
+                Workspace-files capability v1, contribution navigation v1, and scoped invalidation are additive parts of
+                browser API v2. Existing v2 plugins that extend or implement the five-operation
+                <code>WorkspaceFiles</code> or <code>WorkspacePanelFiles</code> base remain source compatible;
+                callback contexts use the separate discriminated <code>WorkspaceFilesContextValue</code>. Check
+                <code>context.files.capabilityVersion === 1</code> before using the added file methods, and treat
+                <code>context.navigation</code> and the second <code>onInvalidate</code> argument as optional on older
+                hosts.
+              </p>
+              <ul>
+                <li>The host binds file helpers to the callback's selected machine and workspace. Capability v1 adds cancellable reads/listings, the workspace-effective upload folder and preview limit, plus browser-ready preview/download URLs with nested-deployment and federation routing already applied exactly once.</li>
+                <li><code>uploadFile()</code> starts one cancellable browser-file transport with progress. It defaults to creating directories without overwriting, rejects cancellation as <code>AbortError</code>, and leaves multi-file batches and UI state to the plugin.</li>
+                <li>Optional panel navigation owns bounded namespaced deep-link state and browser history for one contribution; malformed restored state is ignored, and invalid or over-limit <code>set()</code> calls fail before changing the URL. During host-controlled route restoration, an exact target-identity snapshot may be supplied before URL publication, while writes remain fenced to the live address-bar identity.</li>
+                <li>Panels declare <code>workspace.files</code> to receive scoped successful-mutation and completed-agent-activity invalidations. Manual <code>refreshWorkspacePanels()</code> behavior remains compatible with existing v2 callbacks.</li>
+              </ul>
+              <p>
+                See the <a href="plugins.md#workspace-files-capability-v1">full workspace-files, navigation, and
+                invalidation contracts</a> in the Markdown API reference.
+              </p>
             </section>
 
             <section id="provider-contract">
@@ -405,6 +427,31 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               <p>
                 Built-in plugins can be managed from <strong>Settings → PI WEB plugins</strong> or with the top-level
                 <code>plugins</code> config key.
+              </p>
+
+              <h3>Files</h3>
+              <p>
+                <strong>Files</strong> is a normal browser-only bundled plugin that supplies the Files workspace panel,
+                viewers, uploads, and its navigation/refresh actions through browser API v2. It is enabled by default.
+                Disable <code>files</code> in Settings or config, then reload the page; no session-daemon restart is
+                required.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Disable Files</strong>
+                  <button class="copy-button" data-copy="#files-disable">Copy</button>
+                </div>
+                <pre id="files-disable"><code>{
+  "plugins": {
+    "files": { "enabled": false }
+  }
+}</code></pre>
+              </div>
+              <p>
+                Disabling Files removes its product panel and actions, but not the mandatory host workspace-file access
+                used by attachments and other plugins. Chat and other available workspace panels remain usable, and PI
+                WEB selects an available panel generically. Legacy <code>files</code> /
+                <code>core:workspace.files</code> routes, query state, and saved shortcuts continue through aliases.
               </p>
 
               <h3>Git</h3>

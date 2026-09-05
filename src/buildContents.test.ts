@@ -151,6 +151,16 @@ describe("production build contents", () => {
       expect(builtPluginFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
       expect(builtPluginFiles.some((path) => path.includes("/relays/"))).toBe(false);
 
+      const filesPluginFiles = builtPluginFiles.filter((path) => path.startsWith("dist/pi-web-plugins/files/"));
+      expect(filesPluginFiles).toEqual(expect.arrayContaining([
+        "dist/pi-web-plugins/files/package.json",
+        "dist/pi-web-plugins/files/browser/pi-web-plugin.js",
+      ]));
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/viewerDependencies-[^/]+\.js$/u.test(path))).toBe(false);
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/files-icon-[^/]+\.svg$/u.test(path))).toBe(true);
+      expect(filesPluginFiles.every((path) => path.endsWith("/package.json") || path.includes("/browser/"))).toBe(true);
+      expect(packagedFiles).toEqual(expect.arrayContaining(filesPluginFiles));
+
       // pi-packages/ ships Pi packages (like relays) alongside bundled plugins
       // without becoming a bundled/local discovery root for them (see
       // PiWebPluginCatalog). The same clean build:plugins command still emits

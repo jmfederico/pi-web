@@ -7,7 +7,7 @@ import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
 import { PluginRegistry, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
 import { themePackPlugin } from "./themes";
-import type { PiWebPlugin, PluginRuntimeContext, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePluginBinding } from "./types";
+import type { PiWebPlugin, PluginRuntimeContext, QualifiedContributionId, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
 import { createPluginWorkspaceBackend } from "./workspaceBackend";
 import type { PluginBackendRequestTarget } from "../api/pluginBackends";
 
@@ -42,7 +42,7 @@ function createContext(statePatch: Partial<AppState> = {}) {
     openModelPicker: vi.fn(() => { calls.push("openModelPicker"); }),
     openThinkingLevelPicker: vi.fn(() => { calls.push("openThinkingLevelPicker"); }),
     selectMainView: vi.fn((view: AppState["mainView"]) => { calls.push(`selectMainView:${view}`); }),
-    selectWorkspaceTool: vi.fn((tool: AppState["workspaceTool"]) => { calls.push(`selectWorkspaceTool:${tool}`); }),
+    selectWorkspaceTool: vi.fn((tool: QualifiedContributionId) => { calls.push(`selectWorkspaceTool:${tool}`); }),
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),
     refreshFiles: vi.fn(() => { calls.push("refreshFiles"); }),
     refreshWorkspacePanels: vi.fn(() => { calls.push("refreshWorkspacePanels"); }),
@@ -64,7 +64,9 @@ describe("PluginRegistry", () => {
     registry.register({ id: "core", plugin: corePlugin });
 
     expect(registry.getActions(createContext().context).some((action) => action.id === "core:actions.show")).toBe(true);
-    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.files", "core:workspace.terminal"]);
+    expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual(["core:workspace.terminal"]);
+    expect(registry.resolveWorkspacePanelRouteId("files", "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("core:workspace.files", "local")).toBeUndefined();
   });
 
   it("rejects legacy browser plugins with an attributed API-version error", () => {
@@ -137,7 +139,13 @@ describe("PluginRegistry", () => {
       activate: () => ({
         contributions: {
           actions: [{ id: "view.vcs", title: "View VCS", shortcutAliases: ["core:view.vcs"], run: () => undefined }],
-          workspacePanels: [{ id: "workspace.vcs", title: "VCS", routeAliases: ["vcs", "core:workspace.vcs"], render: () => html`<p>VCS</p>` }],
+          workspacePanels: [{
+            id: "workspace.vcs",
+            title: "VCS",
+            routeAliases: ["vcs", "core:workspace.vcs"],
+            navigationAliases: ["core:workspace.vcs"],
+            render: () => html`<p>VCS</p>`,
+          }],
         },
       }),
     };
@@ -149,6 +157,73 @@ describe("PluginRegistry", () => {
     expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBe(`${remotePluginId}:workspace.vcs`);
     expect(registry.getActions(createContext({ selectedMachine: testMachine("remote-1") }).context)[0]?.shortcutAliases)
       .toEqual(["core:view.vcs", "vcs:view.vcs"]);
+    expect(registry.getWorkspacePanels().find((panel) => panel.id === "vcs:workspace.vcs")?.navigationAliases)
+      .toEqual(["core:workspace.vcs"]);
+    expect(registry.getWorkspacePanels().find((panel) => panel.id === `${remotePluginId}:workspace.vcs`)?.navigationAliases)
+      .toEqual(["core:workspace.vcs", "vcs:workspace.vcs"]);
+  });
+
+  it("binds panel navigation to the qualified runtime contribution and validated aliases", () => {
+    const registry = new PluginRegistry();
+    let renderedNavigation: WorkspacePanelContext["navigation"];
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 2,
+        name: "Example",
+        activate: () => ({
+          contributions: {
+            workspacePanels: [{
+              id: "workspace.panel",
+              title: "Panel",
+              navigationAliases: ["legacy:workspace.panel"],
+              render: (context) => {
+                renderedNavigation = context.navigation;
+                return html`<p>Panel</p>`;
+              },
+            }],
+          },
+        }),
+      },
+    });
+    const base = createWorkspacePanelContext("local");
+    const context = installWorkspacePanelScope(base, (binding, contributionId, aliases) => ({
+      ...base,
+      navigation: {
+        version: 1,
+        contributionId,
+        query: { binding: binding.sourcePluginId, aliases },
+        set: vi.fn(),
+      },
+    }));
+
+    registry.getWorkspacePanels()[0]?.render(context);
+
+    expect(renderedNavigation).toMatchObject({
+      version: 1,
+      contributionId: "example:workspace.panel",
+      query: { binding: "example", aliases: ["legacy:workspace.panel"] },
+    });
+  });
+
+  it("rejects invalid panel navigation aliases transactionally", () => {
+    const registry = new PluginRegistry();
+    const panel: WorkspacePanelContribution = {
+      id: "workspace.panel",
+      title: "Panel",
+      render: () => html`<p>Panel</p>`,
+    };
+    Reflect.set(panel, "navigationAliases", ["not-qualified"]);
+    const plugin: PiWebPlugin = {
+      apiVersion: 2,
+      name: "Invalid navigation",
+      activate: () => ({ contributions: { workspacePanels: [panel] } }),
+    };
+
+    expect(() => { registry.register({ id: "invalid-navigation", plugin }); })
+      .toThrow("Invalid workspace panel navigation alias for invalid-navigation:workspace.panel: not-qualified");
+    expect(registry.hasPlugin("invalid-navigation")).toBe(false);
+    expect(registry.getWorkspacePanels()).toEqual([]);
   });
 
   it("provides html and svg helpers to plugin activation and callbacks", () => {
@@ -277,17 +352,19 @@ describe("PluginRegistry", () => {
         activate: () => ({
           contributions: {
             workspacePanels: [
-              { id: "broken", title: "Broken", onInvalidate: () => { throw new Error("broken refresh"); }, render: () => html`<p>Broken</p>` },
-              { id: "healthy", title: "Healthy", onInvalidate: invalidated, render: () => html`<p>Healthy</p>` },
+              { id: "broken", title: "Broken", invalidationResources: ["workspace.files"], onInvalidate: () => { throw new Error("broken refresh"); }, render: () => html`<p>Broken</p>` },
+              { id: "healthy", title: "Healthy", invalidationResources: ["workspace.files"], onInvalidate: invalidated, render: () => html`<p>Healthy</p>` },
             ],
           },
         }),
       },
     });
 
-    await registry.invalidateWorkspacePanels(createWorkspacePanelContext("local"));
+    const invalidation: WorkspaceInvalidation = { reason: "mutation", resources: ["workspace.files"] };
+    await registry.invalidateWorkspaceResources(createWorkspacePanelContext("local"), invalidation);
 
     expect(invalidated).toHaveBeenCalledOnce();
+    expect(invalidated).toHaveBeenCalledWith(expect.any(Object), invalidation);
     expect(warning).toHaveBeenCalledWith("Failed to invalidate PI WEB plugin panel example:broken", expect.objectContaining({ message: "broken refresh" }));
 
     invalidated.mockClear();
@@ -297,6 +374,54 @@ describe("PluginRegistry", () => {
     expect(warning).not.toHaveBeenCalled();
   });
 
+  it("keeps automatic resource invalidation subscribed while manual v2 invalidation remains broad", async () => {
+    const registry = new PluginRegistry();
+    const subscribed = vi.fn();
+    const legacy = vi.fn();
+    registry.register({
+      id: "example",
+      plugin: {
+        apiVersion: 2,
+        name: "Example",
+        activate: () => ({
+          contributions: {
+            workspacePanels: [
+              { id: "subscribed", title: "Subscribed", invalidationResources: ["workspace.files"], onInvalidate: subscribed, render: () => html`<p>Subscribed</p>` },
+              { id: "legacy", title: "Legacy", onInvalidate: legacy, render: () => html`<p>Legacy</p>` },
+            ],
+          },
+        }),
+      },
+    });
+    const context = createWorkspacePanelContext("remote-1");
+    const invalidation: WorkspaceInvalidation = { reason: "agent-activity", resources: ["workspace.files"] };
+
+    await registry.invalidateWorkspaceResources(context, invalidation);
+
+    expect(subscribed).toHaveBeenCalledWith(context, invalidation);
+    expect(legacy).not.toHaveBeenCalled();
+
+    await registry.invalidateWorkspacePanels(context);
+
+    expect(subscribed).toHaveBeenLastCalledWith(context);
+    expect(legacy).toHaveBeenCalledWith(context);
+  });
+
+  it("rejects unsupported workspace invalidation resources transactionally", () => {
+    const registry = new PluginRegistry();
+    const panel = { id: "files", title: "Files", render: () => html`<p>Files</p>` };
+    Reflect.set(panel, "invalidationResources", ["workspace.unknown"]);
+
+    expect(() => {
+      registry.register({
+        id: "example",
+        plugin: { apiVersion: 2, name: "Example", activate: () => ({ contributions: { workspacePanels: [panel] } }) },
+      });
+    }).toThrow("Invalid workspace-panel invalidation resource for example:files: workspace.unknown");
+    expect(registry.hasPlugin("example")).toBe(false);
+    expect(registry.getWorkspacePanels()).toEqual([]);
+  });
+
   it("evaluates core action enablement against runtime state", () => {
     const registry = new PluginRegistry();
     registry.register({ id: "core", plugin: corePlugin });
@@ -304,9 +429,9 @@ describe("PluginRegistry", () => {
     const inactive = registry.getActions(createContext().context);
     const active = registry.getActions(createContext({ selectedWorkspace: testWorkspace() }).context);
 
-    expect(inactive.find((action) => action.id === "core:view.files")?.enabled).toBe(false);
+    expect(inactive.find((action) => action.id === "core:view.files")).toBeUndefined();
     expect(inactive.find((action) => action.id === "core:view.terminal")?.enabled).toBe(false);
-    expect(active.find((action) => action.id === "core:view.files")?.enabled).toBe(true);
+    expect(active.find((action) => action.id === "core:view.files")).toBeUndefined();
     expect(active.find((action) => action.id === "core:view.terminal")?.enabled).toBe(true);
     expect(active.find((action) => action.id === "core:workspace.delete")?.enabled).toBe(false);
 
@@ -502,9 +627,7 @@ describe("PluginRegistry", () => {
       ["core:prompt.focus", "mod+g c"],
       ["core:settings.open", "mod+,"],
       ["core:view.chat", "mod+1"],
-      ["core:view.files", "mod+2"],
       ["core:view.terminal", "mod+4"],
-      ["core:workspace.refresh-files", "mod+shift+f"],
       ["core:session.start", "mod+enter"],
       ["core:session.stop", "mod+."],
     ]);
@@ -953,22 +1076,9 @@ function createWorkspacePanelContext(machineId: string, prompt: WorkspacePanelCo
     prompt,
     terminal: { open: vi.fn(), runCommand: vi.fn() },
     host: { requestRender: vi.fn() },
-    fileTree: [],
-    expandedDirs: {},
-    selectedFilePath: undefined,
-    selectedFileContent: undefined,
-    selectedFileLoadError: undefined,
-    fileTreeStale: false,
     activeTerminalCount: 0,
     selectedTerminalId: undefined,
     terminalAutoStart: false,
-    workspaceUploadDefaultFolder: ".pi-web/uploads",
-    onRefreshFiles: vi.fn(),
-    onExpandDir: vi.fn(),
-    onSelectFile: vi.fn(),
-    onStartWorkspaceUpload: vi.fn(),
-    onCancelWorkspaceUpload: vi.fn(),
-    onClearWorkspaceUpload: vi.fn(),
     onSelectTerminal: vi.fn(),
   };
 }

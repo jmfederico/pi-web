@@ -1,14 +1,25 @@
-import { css, html, LitElement, type TemplateResult } from "lit";
-import { customElement, property } from "lit/decorators.js";
+import type { FileContentResponse } from "@jmfederico/pi-web/plugin-api";
+import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
+import { property } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
-import type { FileContentResponse } from "../api";
-import { workspaceFilePreviewUrl } from "../api/urls";
-import { renderWorkspaceMarkdownHtml } from "../formatting/workspaceMarkdown";
-import { MAX_INLINE_PREVIEW_BYTES, MAX_INLINE_PREVIEW_LABEL, workspaceFileName } from "../../../shared/workspaceFiles";
-import { formatFileSize } from "../utils/format";
-import { workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "../workspaceFileViewMode";
-import { formattedTextStyles } from "./shared";
+import { renderWorkspaceMarkdownHtml } from "./workspaceMarkdown";
+import { workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
+
+export const DEFAULT_MAX_INLINE_PREVIEW_BYTES = 1024 * 1024;
+
+export interface WorkspaceFilePreviewUrlOptions {
+  modifiedAt?: string;
+  machineId?: string;
+  download?: boolean;
+}
+
+export type WorkspaceFilePreviewUrlBuilder = (
+  projectId: string,
+  workspaceId: string,
+  path: string,
+  options?: WorkspaceFilePreviewUrlOptions,
+) => string;
 
 export type WorkspaceFilePreviewKind = "image" | "html" | "pdf" | "markdown" | "download" | "code";
 
@@ -20,7 +31,6 @@ export interface WorkspaceFileViewerIdentity {
   file: FileContentResponse | undefined;
 }
 
-@customElement("workspace-file-viewer")
 export class WorkspaceFileViewer extends LitElement {
   @property({ attribute: false }) machineId = "";
   @property({ attribute: false }) projectId = "";
@@ -28,8 +38,9 @@ export class WorkspaceFileViewer extends LitElement {
   @property({ attribute: false }) selectedPath: string | undefined;
   @property({ attribute: false }) file: FileContentResponse | undefined;
   @property({ attribute: false }) loadError: string | undefined;
-  @property({ attribute: false }) previewUrlBuilder: typeof workspaceFilePreviewUrl = workspaceFilePreviewUrl;
+  @property({ attribute: false }) previewUrlBuilder: WorkspaceFilePreviewUrlBuilder = () => "about:blank";
   @property({ attribute: false }) modeStore: WorkspaceFileViewModeStore = workspaceFileViewModeStore;
+  @property({ attribute: false }) maxInlinePreviewBytes = DEFAULT_MAX_INLINE_PREVIEW_BYTES;
 
   /** Undefined until the first render adopts the deep-linked or stored mode. */
   private mode: WorkspaceFileViewMode | undefined;
@@ -43,27 +54,13 @@ export class WorkspaceFileViewer extends LitElement {
    */
   private selectionToken = 0;
   private failedPreviewToken: number | undefined;
-  private readonly restoreModeFromHistory = (): void => {
-    this.mode = this.modeStore.adopt();
-    // The restored entry owns the address-bar value. Forget the prior entry's
-    // publication so this render can canonicalize a missing/invalid mode too.
-    this.publishedMode = undefined;
-    this.failedPreviewToken = undefined;
-    this.requestUpdate();
-  };
 
-  override connectedCallback(): void {
-    super.connectedCallback();
-    window.addEventListener("popstate", this.restoreModeFromHistory);
-  }
-
-  override disconnectedCallback(): void {
-    window.removeEventListener("popstate", this.restoreModeFromHistory);
-    super.disconnectedCallback();
-  }
-
-  protected override willUpdate(): void {
-    this.mode ??= this.modeStore.adopt();
+  protected override willUpdate(changedProperties: PropertyValues<this>): void {
+    if (this.mode === undefined || changedProperties.has("modeStore")) {
+      this.mode = this.modeStore.adopt();
+      this.publishedMode = undefined;
+      this.failedPreviewToken = undefined;
+    }
     const nextKey = this.currentFileKey();
     if (nextKey === this.activeFileKey) return;
     this.activeFileKey = nextKey;
@@ -99,7 +96,7 @@ export class WorkspaceFileViewer extends LitElement {
 
     const token = this.selectionToken;
     const kind = workspaceFilePreviewKind(file);
-    const canOpen = isBrowserPreviewKind(kind) && file.size > 0 && file.size <= MAX_INLINE_PREVIEW_BYTES;
+    const canOpen = isBrowserPreviewKind(kind) && file.size > 0 && file.size <= this.maxInlinePreviewBytes;
     return html`
       ${this.renderViewerHeader(file, metadataForFile(file, kind), canOpen)}
       ${hasRawAndPreviewModes(file, kind) ? this.renderModeControls(file, token) : null}
@@ -166,15 +163,14 @@ export class WorkspaceFileViewer extends LitElement {
 
   private renderRawSource(file: FileContentResponse): TemplateResult {
     if (file.size === 0) return this.renderStatus("This file is empty.");
-    loadCodeViewer();
     return html`
       ${file.truncated ? html`<p class="preview-note" role="status">Raw source is truncated. Use Download for the complete file.</p>` : null}
-      <code-viewer .content=${file.content} .language=${file.language}></code-viewer>
+      <pi-web-files-code-viewer .content=${file.content} .language=${file.language}></pi-web-files-code-viewer>
     `;
   }
 
   private renderMarkdownPreview(file: FileContentResponse): TemplateResult {
-    if (file.size > MAX_INLINE_PREVIEW_BYTES) return this.renderPreviewTooLarge(file);
+    if (file.size > this.maxInlinePreviewBytes) return this.renderPreviewTooLarge(file);
     try {
       const sanitized = renderWorkspaceMarkdownHtml(file.content);
       return html`
@@ -187,7 +183,7 @@ export class WorkspaceFileViewer extends LitElement {
   }
 
   private renderImagePreview(file: FileContentResponse, token: number): TemplateResult {
-    if (file.size > MAX_INLINE_PREVIEW_BYTES) return this.renderPreviewTooLarge(file);
+    if (file.size > this.maxInlinePreviewBytes) return this.renderPreviewTooLarge(file);
     if (this.failedPreviewToken === token) return this.renderPreviewFailure(file, token);
     const src = this.previewUrl(file);
     return html`
@@ -204,7 +200,7 @@ export class WorkspaceFileViewer extends LitElement {
   }
 
   private renderFramePreview(file: FileContentResponse, kind: "html" | "pdf", token: number): TemplateResult {
-    if (file.size > MAX_INLINE_PREVIEW_BYTES) return this.renderPreviewTooLarge(file);
+    if (file.size > this.maxInlinePreviewBytes) return this.renderPreviewTooLarge(file);
     if (this.failedPreviewToken === token) return this.renderPreviewFailure(file, token);
     const src = this.previewUrl(file);
 
@@ -248,7 +244,7 @@ export class WorkspaceFileViewer extends LitElement {
   }
 
   private renderPreviewTooLarge(file: FileContentResponse): TemplateResult {
-    return this.renderStatus(`File too large to preview: ${formatFileSize(file.size)} · limit ${MAX_INLINE_PREVIEW_LABEL}. Use Download above.`);
+    return this.renderStatus(`File too large to preview: ${formatFileSize(file.size)} · limit ${formatFileSize(this.maxInlinePreviewBytes)}. Use Download above.`);
   }
 
   private renderStatus(message: string, alert = false): TemplateResult {
@@ -302,7 +298,7 @@ export class WorkspaceFileViewer extends LitElement {
   }
 
   static override styles = [
-    formattedTextStyles,
+    formattedTextStyles(),
     css`
       :host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; color: var(--pi-text); font: 14px system-ui, sans-serif; }
       .viewer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
@@ -317,7 +313,7 @@ export class WorkspaceFileViewer extends LitElement {
       .viewer-mode button { font-size: 12px; }
       .viewer-mode button[aria-pressed="true"] { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
       .viewer-mode button:focus-visible, .preview-state button:focus-visible, a:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
-      code-viewer { flex: 1 1 auto; min-height: 0; }
+      pi-web-files-code-viewer { flex: 1 1 auto; min-height: 0; }
       .markdown-preview { flex: 1 1 auto; min-height: 0; box-sizing: border-box; overflow: auto; padding: 16px; }
       .preview-note { flex: 0 0 auto; margin: 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-surface); color: var(--pi-muted); padding: 7px 10px; font-size: 12px; }
       .image-preview { flex: 1 1 auto; min-height: 0; box-sizing: border-box; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 16px; }
@@ -405,6 +401,47 @@ function metadataForFile(file: FileContentResponse, kind: WorkspaceFilePreviewKi
   return `${format} · ${formatFileSize(file.size)}${file.truncated ? " · truncated" : ""}`;
 }
 
-function loadCodeViewer(): void {
-  void import("./CodeViewer");
+function workspaceFileName(path: string): string {
+  return path.split(/[\\/]/u).at(-1) ?? path;
+}
+
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size < 0) return "0 B";
+  if (size < 1024) return `${String(size)} B`;
+  const kib = size / 1024;
+  if (kib < 1024) return `${formatScaledFileSize(kib)} KB`;
+  const mib = kib / 1024;
+  if (mib < 1024) return `${formatScaledFileSize(mib)} MB`;
+  return `${formatScaledFileSize(mib / 1024)} GB`;
+}
+
+function formatScaledFileSize(value: number): string {
+  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+}
+
+function formattedTextStyles(): ReturnType<typeof css> {
+  return css`
+  :host { display: block; }
+  .formatted { white-space: normal; overflow-wrap: anywhere; line-height: 1.45; text-align: start; unicode-bidi: plaintext; }
+  p, ul, ol, pre, blockquote, .table-scroll { margin: 0 0 10px; }
+  :is(p, ul, ol, pre, blockquote, .table-scroll):last-child { margin-bottom: 0; }
+  ul, ol { padding-left: 22px; }
+  li + li { margin-top: 3px; }
+  code { border: 1px solid var(--pi-border); border-radius: 4px; background: var(--pi-bg); padding: 1px 4px; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  pre { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); padding: 10px; overflow-x: auto; overflow-y: hidden; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  pre code { border: 0; padding: 0; background: transparent; }
+  blockquote { border-left: 3px solid var(--pi-border); padding-left: 10px; color: var(--pi-muted); }
+  a { color: var(--pi-accent); }
+  h1, h2, h3, h4 { margin: 14px 0 8px; line-height: 1.2; }
+  h1:first-child, h2:first-child, h3:first-child, h4:first-child { margin-top: 0; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 17px; }
+  h3 { font-size: 15px; }
+  h4 { font-size: 14px; }
+  .table-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+  .table-scroll:focus-visible { outline: 1px solid var(--pi-accent); outline-offset: 2px; }
+  table { border-collapse: collapse; width: max-content; min-width: 100%; max-width: none; }
+  th, td { border: 1px solid var(--pi-border); padding: 4px 8px; max-width: 48ch; overflow-wrap: anywhere; }
+  th { background: var(--pi-surface); }
+  `;
 }

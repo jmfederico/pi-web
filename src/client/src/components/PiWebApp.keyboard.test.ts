@@ -2,14 +2,12 @@
 
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionInfo, Workspace } from "../api";
+import type { SessionInfo } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { AuthDialog } from "./AuthDialog";
 import { ChatView } from "./ChatView";
 import { ModalSurface } from "./ModalSurface";
 import { PiWebApp } from "./PiWebApp";
-import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
-import { WorkspacePanel } from "./WorkspacePanel";
 
 const IMAGE_DATA = "iVBORw0KGgo=";
 
@@ -50,7 +48,7 @@ describe("PiWebApp global shortcut modality boundary", () => {
 
   it.each([
     { name: "native image zoom", open: openImageZoom },
-    { name: "internal upload review", open: openUploadReview },
+    { name: "composed native dialog", open: openComposedNativeDialog },
   ])("leaves capture-phase keyboard handling with the $name", async ({ open }) => {
     const app = new PiWebApp();
     const target = await open(app);
@@ -174,28 +172,18 @@ async function openImageZoom(app: PiWebApp): Promise<HTMLElement> {
   return requiredElement(dialog.querySelector<HTMLElement>(".image-zoom-close"), "image zoom close button");
 }
 
-async function openUploadReview(app: PiWebApp): Promise<HTMLElement> {
-  const selectedWorkspace = workspace();
-  setAppState(app, {
-    selectedWorkspace,
-    workspaces: [selectedWorkspace],
-    workspaceTool: "core:workspace.files",
-  });
-  const container = renderApp(app);
-  const panelHost = requiredElement(container.querySelector<WorkspacePanel>("workspace-panel"), "workspace panel");
-  await panelHost.updateComplete;
-  const panel = requiredElement(panelHost.shadowRoot?.querySelector<WorkspaceFilesPanel>("workspace-files-panel"), "workspace files panel");
-  await panel.updateComplete;
-  const uploadButton = buttonWithText(panel.shadowRoot, "Upload");
-  uploadButton.focus();
-  const input = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-input"), "workspace upload input");
-  Object.defineProperty(input, "files", { configurable: true, value: [new File(["hello"], "hello.txt")] });
-  input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  await panel.updateComplete;
-  await panel.updateComplete;
-  const destination = requiredElement(panel.shadowRoot?.querySelector<HTMLElement>("#workspace-upload-destination"), "upload destination");
-  expect(panel.shadowRoot?.activeElement).toBe(destination);
-  return destination;
+function openComposedNativeDialog(): Promise<HTMLElement> {
+  const host = document.createElement("div");
+  const root = host.attachShadow({ mode: "open" });
+  const dialog = document.createElement("dialog");
+  const button = document.createElement("button");
+  button.textContent = "Plugin modal action";
+  dialog.append(button);
+  root.append(dialog);
+  document.body.append(host);
+  dialog.showModal();
+  button.focus();
+  return Promise.resolve(button);
 }
 
 function renderApp(app: PiWebApp): HTMLDivElement {
@@ -251,11 +239,6 @@ function appendKeyTarget(): HTMLButtonElement {
   return button;
 }
 
-function buttonWithText(root: ParentNode | null | undefined, text: string): HTMLButtonElement {
-  const button = [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((candidate) => candidate.textContent.trim() === text);
-  return requiredElement(button, `${text} button`);
-}
-
 function requiredElement<T>(value: T | null | undefined, label: string): T {
   if (value === null || value === undefined) throw new Error(`Expected ${label}`);
   return value;
@@ -270,16 +253,5 @@ function session(id: string): SessionInfo {
     modified: "2026-07-20T00:00:00.000Z",
     messageCount: 1,
     firstMessage: id,
-  };
-}
-
-function workspace(): Workspace {
-  return {
-    id: "workspace-1",
-    projectId: "project-1",
-    path: "/repo",
-    label: "main",
-    isMain: true,
-    effectiveConfig: {},
   };
 }

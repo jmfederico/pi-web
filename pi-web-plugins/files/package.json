@@ -1,0 +1,15 @@
+{
+  "name": "@pi-web/files-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "files",
+        "browserRoot": "browser",
+        "module": "browser/pi-web-plugin.js",
+        "machineSpecific": false
+      }
+    ]
+  }
+}

@@ -83,6 +83,20 @@ describe("rendered modal layer visibility", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("detects an unregistered native dialog through a plugin shadow boundary", () => {
+    const host = document.createElement("div");
+    const root = host.attachShadow({ mode: "open" });
+    const dialog = document.createElement("dialog");
+    root.append(dialog);
+    document.body.append(host);
+
+    expect(hasRenderedModal(document)).toBe(false);
+    dialog.showModal();
+    expect(hasRenderedModal(document)).toBe(true);
+    dialog.close();
+    expect(hasRenderedModal(document)).toBe(false);
+  });
+
   it("keeps a native top-layer dialog registered while it is still closed", () => {
     // Hosts capture the pre-modal focus target by registering before
     // `showModal()`, so the dialog is still `display: none` at that moment and

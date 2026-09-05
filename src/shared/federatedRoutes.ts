@@ -14,6 +14,10 @@ export type FederatedHttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 export const PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const SESSION_TREE_FORK_PROXY_TIMEOUT_MS = 5 * 60_000;
+export const WORKSPACE_FILE_FEDERATION_TIMEOUT_MS = 30_000;
+// Accommodates the bounded 1,000-entry tree and escaped paths/content while
+// keeping every workspace-file JSON hop finite after response headers.
+export const WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES = 32 * 1024 * 1024;
 export const WORKSPACE_FILE_PREVIEW_ROUTE_PATH = "/projects/:projectId/workspaces/:workspaceId/file/preview";
 
 export interface FederatedHttpRouteSpec {
@@ -58,11 +62,41 @@ export const FEDERATED_HTTP_ROUTES = [
     timeoutMs: WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS,
     propagateCancellation: true,
   },
-  { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/tree" },
-  { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/file" },
-  { method: "PUT", path: "/projects/:projectId/workspaces/:workspaceId/file" },
-  { method: "DELETE", path: "/projects/:projectId/workspaces/:workspaceId/file" },
-  { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/file/move" },
+  {
+    method: "GET",
+    path: "/projects/:projectId/workspaces/:workspaceId/tree",
+    timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+    responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+    propagateCancellation: true,
+  },
+  {
+    method: "GET",
+    path: "/projects/:projectId/workspaces/:workspaceId/file",
+    timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+    responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+    propagateCancellation: true,
+  },
+  {
+    method: "PUT",
+    path: "/projects/:projectId/workspaces/:workspaceId/file",
+    timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+    responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+    propagateCancellation: true,
+  },
+  {
+    method: "DELETE",
+    path: "/projects/:projectId/workspaces/:workspaceId/file",
+    timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+    responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+    propagateCancellation: true,
+  },
+  {
+    method: "POST",
+    path: "/projects/:projectId/workspaces/:workspaceId/file/move",
+    timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+    responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+    propagateCancellation: true,
+  },
   {
     method: "GET",
     path: WORKSPACE_FILE_PREVIEW_ROUTE_PATH,
