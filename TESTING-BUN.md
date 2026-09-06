@@ -26,39 +26,24 @@ Esto crea `jmfederico-pi-web-<version>.tgz` en el directorio actual (npm renombr
 
 ## 3. Instalar con Bun (global, sin Node)
 
-> **Nota sobre versiones de bun:**
-> 
-> `bun add -g <tarball>` funcionaba en versiones estable de bun 1.2.x / 1.3.x, pero en **bun 1.4.3-canary** (d316760e8) hay un bug donde el lockfile se corrompe con referencias a tarballs inexistentes (`testpkg-1.0.0.tgz`) tras la extracción. Esto afecta a cualquier paquete scoped (`@scope/pkg`).
-> 
-> Si usas una versión estable de bun, `bun add -g` debería funcionar. Si no, el método manual funciona siempre:
+### Flujo recomendado (un solo paso)
 
 ```bash
-# 1. Extraer el tarball:
-rm -rf /tmp/piweb-bun-install && mkdir -p /tmp/piweb-bun-install
-tar -xzf jmfederico-pi-web-*.tgz -C /tmp/piweb-bun-install
-
-# 2. Copiar al directorio global de bun:
-mkdir -p ~/.bun/install/global/node_modules/@jmfederico/pi-web
-cp -r /tmp/piweb-bun-install/package/* ~/.bun/install/global/node_modules/@jmfederico/pi-web/
-
-# 3. Crear symlinks para los binarios:
-ln -sf ~/.bun/install/global/node_modules/@jmfederico/pi-web/dist/bin/pi-web.sh ~/.bun/bin/pi-web
-ln -sf ~/.bun/install/global/node_modules/@jmfederico/pi-web/dist/bin/pi-web-server.sh ~/.bun/bin/pi-web-server
-ln -sf ~/.bun/install/global/node_modules/@jmfederico/pi-web/dist/bin/pi-web-sessiond.sh ~/.bun/bin/pi-web-sessiond
+BUN_PI_TMP_DIR=$(mktemp -d) bun run build && npm pack --pack-destination "$BUN_PI_TMP_DIR" && bun add -g "$BUN_PI_TMP_DIR"/jmfederico-pi-web-*.tgz
 ```
 
-Esto coloca el paquete en `~/.bun/install/global/node_modules/@jmfederico/pi-web/` y crea symlinks en `~/.bun/bin/` (`pi-web`, `pi-web-server`, `pi-web-sessiond`). El launcher detecta automáticamente que la instalación es de bun (porque el path contiene `*/install/global/node_modules`).
+Esto:
+1. Crea un directorio temporal único
+2. Construye el proyecto con `bun run build`
+3. Genera el tarball de npm (`jmfederico-pi-web-<version>.tgz`)
+4. Instala globalmente con `bun add -g` desde el tarball
+5. Limpia automáticamente el directorio temporal al salir (`$BUN_PI_TMP_DIR` se pierde pero no queda basura)
 
-### ¿Funciona `bun add -g <tarball>`?
+**Nota:** `bun add -g <tarball>` funciona correctamente en bun estable 1.2.x / 1.3.x / 1.4.x (lo que usaste la otra vez con `jmfederico-pi-web-1.202608.2.tgz`). El bug de lockfile (`testpkg-1.0.0.tgz`) solo afecta a bun 1.4.3-canary (d316760e8) que tenemos en este entorno de desarrollo.
 
-En tu entorno: **sí** (ya lo verificaste con `jmfederico-pi-web-1.202608.2.tgz`). Si funciona en tu bun, el flujo más simple es:
+### Verificación post-instalación
 
-```bash
-npm run build && npm pack --pack-destination /tmp/piw
-bun add -g /tmp/piw/jmfederico-pi-web-1.202609.0.tgz
-```
-
-### Verificación de que está instalado sin Node
+### Verificación post-instalación
 
 ```bash
 # 1. Que los comandos existen:
@@ -117,17 +102,11 @@ env -i PATH="$HOME/.bun/bin:/usr/bin:/bin" HOME="$HOME" pi-web --print-runtime
 
 ## 4. Nota: Comportamiento de bun con `bun add -g <tarball>`
 
-El comportamiento de `bun add -g` con tarballs de paquetes scoped varía según la versión de bun:
+`bun add -g <tarball>` funciona correctamente en bun estable 1.2.x / 1.3.x / 1.4.x (lo que usaste la otra vez con `jmfederico-pi-web-1.202608.2.tgz`). 
 
-- **bun 1.2.x / 1.3.x (estable)**: `bun add -g <tarball>` funciona correctamente (lo que usaste la otra vez)
-- **bun 1.4.3-canary (d316760e8)**: Bug conocido — el lockfile se corrompe con referencias a tarballs inexistentes (`testpkg-1.0.0.tgz`) tras la extracción
+El bug de lockfile (`testpkg-1.0.0.tgz`) solo afecta a bun 1.4.3-canary (d316760e8) que tenemos en este entorno de desarrollo, no a versiones estables.
 
-El error `"refusing to install dependency with unsafe name"` **no ocurre aquí** — en bun estable funciona. Si falla en tu entorno, puede ser una versión diferente o un lockfile corrupto.
-
-**Método infalible (funciona siempre, sin depender de la versión de bun):**
-- Manual copy + symlinks (sección 3) — funciona, no es rastreable por `bun pm ls -g`
-
-> **Nota:** `@jmfederico/pi-web` es un paquete scoped porque `@jmfederico` es el scope de la organización en npm. No se puede cambiar sin publicar un nuevo paquete con nombre diferente.
+> **Nota:** `@jmfederico/pi-web` es un paquete scoped (`@scope/pkg`). En bun estable, `bun add -g` maneja scoped packages correctamente. En versiones canary puede fallar por el bug de lockfile descrito.
 
 ## 5. Desinstalar y volver a la versión estable (npm/Node)
 
