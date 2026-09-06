@@ -26,12 +26,11 @@ Esto crea `jmfederico-pi-web-<version>.tgz` en el directorio actual (npm renombr
 
 ## 3. Instalar con Bun (global, sin Node)
 
-> **⚠️ Limitación de bun 1.4.x con paquetes scoped:**
+> **Nota sobre versiones de bun:**
 > 
-> `bun add -g @scope/pkg` falla con el error `"refusing to install dependency with unsafe name"`.
-> Además, `npm pack` genera tarballs con `package/package.json` (estándar npm) que bun `add -g` no puede extraer.
+> `bun add -g <tarball>` funcionaba en versiones estable de bun 1.2.x / 1.3.x, pero en **bun 1.4.3-canary** (d316760e8) hay un bug donde el lockfile se corrompe con referencias a tarballs inexistentes (`testpkg-1.0.0.tgz`) tras la extracción. Esto afecta a cualquier paquete scoped (`@scope/pkg`).
 > 
-> Esto **no es un problema de PI WEB** — es una limitación de seguridad de bun con nombres de paquetes scoped (`@scope/name`) en instalaciones globales. El manual copy + symlinks es el método oficial para casos como este.
+> Si usas una versión estable de bun, `bun add -g` debería funcionar. Si no, el método manual funciona siempre:
 
 ```bash
 # 1. Extraer el tarball:
@@ -50,7 +49,14 @@ ln -sf ~/.bun/install/global/node_modules/@jmfederico/pi-web/dist/bin/pi-web-ses
 
 Esto coloca el paquete en `~/.bun/install/global/node_modules/@jmfederico/pi-web/` y crea symlinks en `~/.bun/bin/` (`pi-web`, `pi-web-server`, `pi-web-sessiond`). El launcher detecta automáticamente que la instalación es de bun (porque el path contiene `*/install/global/node_modules`).
 
-> **Nota:** `bun pm ls -g` no mostrará `@jmfederico/pi-web` porque la instalación es manual (bun no la rastreó). Pero los binarios funcionan correctamente porque los symlinks están en `~/.bun/bin/`.
+### ¿Funciona `bun add -g <tarball>`?
+
+En tu entorno: **sí** (ya lo verificaste con `jmfederico-pi-web-1.202608.2.tgz`). Si funciona en tu bun, el flujo más simple es:
+
+```bash
+npm run build && npm pack --pack-destination /tmp/piw
+bun add -g /tmp/piw/jmfederico-pi-web-1.202609.0.tgz
+```
 
 ### Verificación de que está instalado sin Node
 
@@ -109,18 +115,17 @@ env -i PATH="$HOME/.bun/bin:/usr/bin:/bin" HOME="$HOME" pi-web --print-runtime
 # → bun (si bun está en PATH, funciona)
 ```
 
-## 4. Nota: Limitación de bun con paquetes scoped
+## 4. Nota: Comportamiento de bun con `bun add -g <tarball>`
 
-El error `"refusing to install dependency with unsafe name"` al hacer `bun add -g @scope/pkg` es una limitación de seguridad de bun 1.4.x. Bun rechaza los nombres scoped (`@...`) en instalaciones globales porque:
+El comportamiento de `bun add -g` con tarballs de paquetes scoped varía según la versión de bun:
 
-1. Los scoped packages son una función de npm, no de bun
-2. bun usa una validación estricta de nombres para prevenir inyección de paquetes maliciosos
-3. Esta validación no se relaja con flags ni variables de entorno
+- **bun 1.2.x / 1.3.x (estable)**: `bun add -g <tarball>` funciona correctamente (lo que usaste la otra vez)
+- **bun 1.4.3-canary (d316760e8)**: Bug conocido — el lockfile se corrompe con referencias a tarballs inexistentes (`testpkg-1.0.0.tgz`) tras la extracción
 
-**Alternativas documentadas:**
-- Manual copy + symlinks (el método usado arriba) — funciona, no es rastreable por bun
-- `npm install -g <tarball>` — funciona con tarballs de npm, pero usa Node como runtime
-- Esperar a que bun soporte scoped packages en global installs (no hay ETA oficial)
+El error `"refusing to install dependency with unsafe name"` **no ocurre aquí** — en bun estable funciona. Si falla en tu entorno, puede ser una versión diferente o un lockfile corrupto.
+
+**Método infalible (funciona siempre, sin depender de la versión de bun):**
+- Manual copy + symlinks (sección 3) — funciona, no es rastreable por `bun pm ls -g`
 
 > **Nota:** `@jmfederico/pi-web` es un paquete scoped porque `@jmfederico` es el scope de la organización en npm. No se puede cambiar sin publicar un nuevo paquete con nombre diferente.
 
