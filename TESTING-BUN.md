@@ -29,7 +29,7 @@ Esto crea `jmfederico-pi-web-<version>.tgz` en el directorio actual (npm renombr
 ### Flujo recomendado (un solo paso)
 
 ```bash
-BUN_PI_TMP_DIR=$(mktemp -d) bun run build && npm pack --pack-destination "$BUN_PI_TMP_DIR" && bun add -g "$BUN_PI_TMP_DIR"/jmfederico-pi-web-*.tgz
+BUN_PI_TMP_DIR=$(mktemp -d) bun run build && bunx npm pack --pack-destination "$BUN_PI_TMP_DIR" && bun add -g "$BUN_PI_TMP_DIR"/jmfederico-pi-web-*.tgz
 ```
 
 Esto:
