@@ -29,10 +29,16 @@
   "ignoreDependencies": [
     "@hicaru/pi-rlm",
     "pi-effort",
+    "@hicaru/pi-rlm",
+    "pi-effort",
     "pi-mcp-adapter",
     "pi-subagents",
     "version",
     "view"
+  ],
+  "ignoreBinaries": [
+    "mkfifo",
+    "ps"
   ],
   "ignoreExportsUsedInFile": true
 }
