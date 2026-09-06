@@ -42,6 +42,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
   const component = value["component"];
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
+  const runtimeEngine = value["runtimeEngine"];
   const piVersion = value["piVersion"];
   const runtime = value["runtime"];
   const available = value["available"];
@@ -57,6 +58,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
     component,
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
+    ...(typeof runtimeEngine === "string" ? { runtimeEngine } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
     ...(runtime === "bun" || runtime === "node" ? { runtime } : {}),
     available,
@@ -95,6 +97,7 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
   const component = value["component"];
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
+  const runtimeEngine = value["runtimeEngine"];
   const installedVersion = value["installedVersion"];
   const piVersion = value["piVersion"];
   const runtime = value["runtime"];
@@ -108,6 +111,7 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
     component,
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
+    ...(typeof runtimeEngine === "string" ? { runtimeEngine } : {}),
     ...(typeof installedVersion === "string" ? { installedVersion } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
     // An unknown value is dropped rather than guessed: reporting a runtime the component never

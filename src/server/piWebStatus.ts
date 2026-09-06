@@ -84,12 +84,19 @@ export interface PiWebStatusOptions {
 const latestReleaseLookupCache = createPiWebReleaseLookupCache(fetchLatestNpmVersion);
 const runtimePackageInfo = readPackageInfoSync();
 
+function runtimeEngineVersion(): string {
+  const bun: unknown = Reflect.get(globalThis, "Bun");
+  if (typeof bun === "object" && bun !== null && typeof Reflect.get(bun, "version") === "string") return String(Reflect.get(bun, "version"));
+  return process.version;
+}
+
 export function getPiWebRuntimeComponent(component: PiWebServiceComponent, capabilities: readonly PiWebCapability[] = [], deprecatedAgentInputs: readonly PiWebDeprecatedAgentInput[] = []): PiWebRuntimeComponent {
   return {
     component,
     label: component === "web" ? "Web/UI" : "Session daemon",
     runtimeVersion: runtimePackageInfo?.version ?? DEFAULT_VERSION,
     runtime: piWebRuntimeKind(),
+    runtimeEngine: runtimeEngineVersion(),
     piVersion: PI_CODING_AGENT_VERSION,
     available: true,
     capabilities: [...capabilities],
@@ -151,7 +158,7 @@ export async function getPiWebComponentStatus(component: PiWebServiceComponent, 
     // Only the web/UI status is computed inside the process it describes. The session daemon's
     // runtime comes from the daemon's own report, and is omitted rather than inferred when the
     // daemon predates runtime reporting.
-    ...(component === "web" ? { runtime: piWebRuntimeKind() } : {}),
+    ...(component === "web" ? { runtime: piWebRuntimeKind(), runtimeEngine: runtimeEngineVersion() } : {}),
     ...(installedVersion === undefined ? {} : { installedVersion }),
     piVersion: PI_CODING_AGENT_VERSION,
     stale: isInstalledVersionNewer(installedVersion, runtimeVersion),
@@ -373,6 +380,7 @@ async function getSessiondComponentStatus(daemon: PiWebStatusDaemon, options: Pi
     return {
       ...status,
       ...(runtime.runtime === undefined ? {} : { runtime: runtime.runtime }),
+      ...(runtime.runtimeEngine === undefined ? {} : { runtimeEngine: runtime.runtimeEngine }),
       ...(runtimeVersion === undefined ? {} : { runtimeVersion }),
       // The daemon reports the Pi version it has loaded in its own process;
       // the spread of `status` already carries this process's Pi version as
