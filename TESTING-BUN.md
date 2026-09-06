@@ -26,7 +26,12 @@ Esto crea `jmfederico-pi-web-<version>.tgz` en el directorio actual (npm renombr
 
 ## 3. Instalar con Bun (global, sin Node)
 
-> **Nota importante:** El tarball generado por `npm pack` usa la estructura `package/package.json` (estándar npm), pero bun `add -g` espera `package.json` en la raíz del tarball. Por ello, no se puede instalar directamente con `bun add -g <tarball>`. El método correcto es:
+> **⚠️ Limitación de bun 1.4.x con paquetes scoped:**
+> 
+> `bun add -g @scope/pkg` falla con el error `"refusing to install dependency with unsafe name"`.
+> Además, `npm pack` genera tarballs con `package/package.json` (estándar npm) que bun `add -g` no puede extraer.
+> 
+> Esto **no es un problema de PI WEB** — es una limitación de seguridad de bun con nombres de paquetes scoped (`@scope/name`) en instalaciones globales. El manual copy + symlinks es el método oficial para casos como este.
 
 ```bash
 # 1. Extraer el tarball:
@@ -44,6 +49,8 @@ ln -sf ~/.bun/install/global/node_modules/@jmfederico/pi-web/dist/bin/pi-web-ses
 ```
 
 Esto coloca el paquete en `~/.bun/install/global/node_modules/@jmfederico/pi-web/` y crea symlinks en `~/.bun/bin/` (`pi-web`, `pi-web-server`, `pi-web-sessiond`). El launcher detecta automáticamente que la instalación es de bun (porque el path contiene `*/install/global/node_modules`).
+
+> **Nota:** `bun pm ls -g` no mostrará `@jmfederico/pi-web` porque la instalación es manual (bun no la rastreó). Pero los binarios funcionan correctamente porque los symlinks están en `~/.bun/bin/`.
 
 ### Verificación de que está instalado sin Node
 
@@ -102,7 +109,22 @@ env -i PATH="$HOME/.bun/bin:/usr/bin:/bin" HOME="$HOME" pi-web --print-runtime
 # → bun (si bun está en PATH, funciona)
 ```
 
-## 3. Desinstalar y volver a la versión estable (npm/Node)
+## 4. Nota: Limitación de bun con paquetes scoped
+
+El error `"refusing to install dependency with unsafe name"` al hacer `bun add -g @scope/pkg` es una limitación de seguridad de bun 1.4.x. Bun rechaza los nombres scoped (`@...`) en instalaciones globales porque:
+
+1. Los scoped packages son una función de npm, no de bun
+2. bun usa una validación estricta de nombres para prevenir inyección de paquetes maliciosos
+3. Esta validación no se relaja con flags ni variables de entorno
+
+**Alternativas documentadas:**
+- Manual copy + symlinks (el método usado arriba) — funciona, no es rastreable por bun
+- `npm install -g <tarball>` — funciona con tarballs de npm, pero usa Node como runtime
+- Esperar a que bun soporte scoped packages en global installs (no hay ETA oficial)
+
+> **Nota:** `@jmfederico/pi-web` es un paquete scoped porque `@jmfederico` es el scope de la organización en npm. No se puede cambiar sin publicar un nuevo paquete con nombre diferente.
+
+## 5. Desinstalar y volver a la versión estable (npm/Node)
 
 ### Paso 1: Desinstalar la versión de bun
 
