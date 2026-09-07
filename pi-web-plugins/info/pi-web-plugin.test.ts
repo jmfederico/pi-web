@@ -58,6 +58,7 @@ function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntim
     configureAuth: noop,
     logoutAuth: noop,
     openThemePicker: noop,
+    selectProject: () => Promise.resolve(false),
     selectMainView: noop,
     selectWorkspaceTool: noop,
     openTerminal: noop,

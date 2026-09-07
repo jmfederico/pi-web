@@ -41,6 +41,7 @@ function createContext(statePatch: Partial<AppState> = {}) {
     openThemePicker: vi.fn(() => { calls.push("openThemePicker"); }),
     openModelPicker: vi.fn(() => { calls.push("openModelPicker"); }),
     openThinkingLevelPicker: vi.fn(() => { calls.push("openThinkingLevelPicker"); }),
+    selectProject: vi.fn((projectId: string) => { calls.push(`selectProject:${projectId}`); return Promise.resolve(true); }),
     selectMainView: vi.fn((view: AppState["mainView"]) => { calls.push(`selectMainView:${view}`); }),
     selectWorkspaceTool: vi.fn((tool: AppState["workspaceTool"]) => { calls.push(`selectWorkspaceTool:${tool}`); }),
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),

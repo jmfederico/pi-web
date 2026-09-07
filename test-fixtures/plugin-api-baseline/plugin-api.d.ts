@@ -68,6 +68,12 @@ export interface PluginRuntimeContext {
     configureAuth: () => void | Promise<void>;
     logoutAuth: () => void | Promise<void>;
     openThemePicker: () => void;
+    /** Select one of the selected machine's projects, optionally targeting a workspace
+     *  inside it. Without `workspaceId` the host applies its usual preferred-workspace
+     *  choice. Resolves false when no project on the selected machine has that id. */
+    selectProject: (projectId: string, options?: {
+        workspaceId?: string;
+    }) => Promise<boolean>;
     selectMainView: (view: string) => void;
     selectWorkspaceTool: (tool: QualifiedContributionId) => void;
     openTerminal: (options?: {
