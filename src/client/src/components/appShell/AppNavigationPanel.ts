@@ -2,7 +2,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
-import type { WorkspaceLabelItem } from "../../plugins/types";
+import type { HeaderItem, WorkspaceLabelItem } from "../../plugins/types";
 import { selectedMachineId } from "../../controllers/types";
 import type { NavigationSection } from "../../appShell/navigationState";
 import { NAVIGATION_SECTION_ORDER } from "../../appShell/navigationState";
@@ -38,6 +38,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) refreshControl: unknown;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) compact = false;
+  @property({ attribute: false }) headerItems: readonly HeaderItem[] = [];
   @property({ type: Boolean }) machinesCollapsed = false;
   @property({ type: Boolean }) projectsCollapsed = false;
   @property({ type: Boolean }) workspacesCollapsed = false;
@@ -108,6 +109,11 @@ export class AppNavigationPanel extends LitElement {
           ${this.refreshControl}
           <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
         </div>
+        ${this.headerItems.length === 0 ? null : html`
+          <div class="header-items">
+            ${this.headerItems.map((item) => html`<div class="header-item" role="group" aria-label=${item.title}>${item.render()}</div>`)}
+          </div>
+        `}
       </header>
       ${this.compact && shouldShowMachinesSection(this.machines) ? html`
         <machine-list
@@ -219,10 +225,17 @@ export class AppNavigationPanel extends LitElement {
   static override styles = css`
     :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
     :host([compact]) { flex: 1 1 auto; }
-    header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
+    header { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     header strong { flex: 0 0 auto; }
     machine-switcher { flex: 1 1 auto; min-width: 0; }
     :host([compact]) header { display: none; }
+    /* Contributed items take their own row instead of sharing the identity row: the panel
+       is often narrow (around 210px at an 800px window) and machine-switcher has
+       min-width: 0, so an item beside it squeezes the switcher to nothing. They render
+       after the actions row for the same reason wrap order matters — put them before it
+       and the Actions button wraps onto a third row. Both seen on a live stand, not
+       theorised. */
+    .header-items { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
     .header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
     /* Expanded sections share the panel height equally, so collapsing one
        section distributes its space to every remaining section, not just the

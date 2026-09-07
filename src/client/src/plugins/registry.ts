@@ -1,6 +1,6 @@
 import { html, svg } from "lit";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { PiWebPluginRegistration, PluginAction, PluginRuntimeContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
+import type { HeaderItem, HeaderItemContribution, PiWebPluginRegistration, PluginAction, PluginRuntimeContext, QualifiedContributionId, QualifiedHeaderItemContribution, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
 
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
@@ -20,6 +20,7 @@ type RegisteredPluginAction = Omit<PluginAction, "id"> & {
 
 export class PluginRegistry {
   private readonly actions: RegisteredPluginAction[] = [];
+  private readonly headerItems: QualifiedHeaderItemContribution[] = [];
   private readonly workspacePanels: QualifiedWorkspacePanelContribution[] = [];
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
@@ -57,6 +58,7 @@ export class PluginRegistry {
       const actions = (contributions.actions ?? []).map((action) => this.qualifyAction(runtimePluginId, action, registration.machineId, registration.sourcePluginId, contributionIds));
       const workspacePanels = (contributions.workspacePanels ?? []).map((panel) => this.qualifyWorkspacePanel(runtimePluginId, panel, registration.machineId, registration.sourcePluginId, backendRevision, contributionIds));
       const workspaceLabels = (contributions.workspaceLabels ?? []).map((contribution) => this.qualifyWorkspaceLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, contributionIds));
+      const headerItems = (contributions.headerItems ?? []).map((contribution) => this.qualifyHeaderItem(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, contributionIds));
       const themes = registration.machineId === undefined
         ? (contributions.themes ?? []).map((theme) => this.qualifyTheme(runtimePluginId, theme, contributionIds))
         : [];
@@ -67,6 +69,7 @@ export class PluginRegistry {
       this.pluginIds.add(runtimePluginId);
       for (const contributionId of contributionIds) this.contributionIds.add(contributionId);
       this.actions.push(...actions);
+      this.headerItems.push(...headerItems);
       this.workspacePanels.push(...workspacePanels);
       this.workspaceLabels.push(...workspaceLabels);
       this.themes.push(...themes);
@@ -112,6 +115,18 @@ export class PluginRegistry {
       if (disabledReason !== undefined && disabledReason !== "") qualified.disabledReason = disabledReason;
       return qualified;
     });
+  }
+
+  getHeaderItems(context: PluginRuntimeContext): HeaderItem[] {
+    const selectedMachineId = runtimeContextMachineId(context);
+    return [...this.headerItems]
+      .filter((item) => this.isContributionActive(item.pluginId, item.machineId, selectedMachineId, item.sourcePluginId))
+      .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.id.localeCompare(right.id))
+      .flatMap((item) => {
+        const scopedContext = pluginRuntimeContextFor(context, item.pluginId);
+        if (item.visible?.(scopedContext) === false) return [];
+        return [{ id: item.id, title: item.title, render: () => item.render(scopedContext) }];
+      });
   }
 
   getWorkspacePanels(): QualifiedWorkspacePanelContribution[] {
@@ -204,6 +219,24 @@ export class PluginRegistry {
       ...(badge === undefined ? {} : { badge: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? badge(workspacePanelContextFor(context, binding)) : undefined }),
       ...(onInvalidate === undefined ? {} : { onInvalidate: (context: WorkspacePanelContext) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? onInvalidate(workspacePanelContextFor(context, binding)) : undefined }),
       render: (context: WorkspacePanelContext) => panel.render(workspacePanelContextFor(context, binding)),
+    };
+  }
+
+  private qualifyHeaderItem(
+    pluginId: string,
+    contribution: HeaderItemContribution,
+    machineId: string | undefined,
+    sourcePluginId: string | undefined,
+    contributionIds: Set<QualifiedContributionId>,
+  ): QualifiedHeaderItemContribution {
+    const id = this.qualify(pluginId, contribution.id, contributionIds);
+    return {
+      ...contribution,
+      id,
+      pluginId,
+      localId: contribution.id,
+      ...(machineId === undefined ? {} : { machineId }),
+      ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
     };
   }
 

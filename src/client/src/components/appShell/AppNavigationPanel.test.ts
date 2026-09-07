@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
+import { html } from "lit";
 import type { Machine, Project, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../../machineStatus.testSupport";
@@ -47,6 +48,27 @@ describe("header identity", () => {
   });
 });
 
+describe("plugin header items", () => {
+  it("renders each contributed item in the header under its own accessible name", async () => {
+    const panel = await mountPanelWithHeaderItems([
+      { id: "modes:header.switch", title: "Working mode", render: () => html`<button class="mode">Cowork</button>` },
+      { id: "status:header.badge", title: "Sync status", render: () => html`<span class="badge">2</span>` },
+    ]);
+
+    const groups = [...(panel.shadowRoot?.querySelectorAll(".header-items [role=\"group\"]") ?? [])];
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Working mode", "Sync status"]);
+    expect(groups[0]?.querySelector("button.mode")?.textContent).toBe("Cowork");
+    expect(groups[1]?.querySelector("span.badge")?.textContent).toBe("2");
+  });
+
+  it("leaves no empty container when no plugin contributes one", async () => {
+    const panel = await mountPanelWithHeaderItems([]);
+
+    expect(panel.shadowRoot?.querySelector(".header-items")).toBeNull();
+    expect(panel.shadowRoot?.querySelector("header")).not.toBeNull();
+  });
+});
+
 describe("machine status wiring", () => {
   it("gives machine sections every snapshot and project and workspace sections the selected machine's", async () => {
     const local = machineStatusSnapshot({ machine: { "core:working": true } });
@@ -78,6 +100,17 @@ describe("machine status wiring", () => {
     expect(section(panel, "workspace-list", WorkspaceList).statusSnapshot).toBeUndefined();
   });
 });
+
+async function mountPanelWithHeaderItems(headerItems: AppNavigationPanel["headerItems"]): Promise<AppNavigationPanel> {
+  // Not compact: the header is hidden in the mobile layout, where the context bar
+  // carries these items instead.
+  const panel = new AppNavigationPanel();
+  panel.machines = [machine("local")];
+  panel.headerItems = headerItems;
+  document.body.append(panel);
+  await panel.updateComplete;
+  return panel;
+}
 
 async function mountPanel(machineStatusSnapshots: Record<string, MachineStatusSnapshot>, selectedMachine: Machine | undefined): Promise<AppNavigationPanel> {
   const panel = new AppNavigationPanel();
