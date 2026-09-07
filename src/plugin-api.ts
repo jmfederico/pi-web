@@ -62,6 +62,7 @@ export interface PluginActivationResult {
 
 export interface PluginContributions {
   actions?: PluginAction[];
+  hiddenProjects?: HiddenProjectsContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
@@ -203,6 +204,27 @@ export interface WorkspacePanelContext extends WorkspaceContext {
 }
 
 export type WorkspacePanelIcon = TemplateResult;
+
+/**
+ * Projects the project section should not list, named by the plugin that already knows
+ * how to reach them.
+ *
+ * For a provider whose projects are one implied context each, a row in the project list is
+ * a second door into a place the plugin already offers its own way into — and the section
+ * is a scarce resource on a narrow panel. The host cannot work this out by itself: it
+ * learns a project's provider only after resolving that project's workspaces, and it does
+ * that lazily for the selected project alone. The plugin usually resolved them already.
+ *
+ * The bargain is explicit: hiding a project means the plugin takes responsibility for
+ * offering the way in. The host keeps two guarantees regardless — the selected project is
+ * always listed, so nothing you are working in disappears, and every project stays
+ * reachable by URL and by adding it again.
+ */
+export interface HiddenProjectsContribution {
+  id: LocalContributionId;
+  /** Project ids to leave out of the list. Called on every render, so keep it cheap. */
+  projects: (context: PluginRuntimeContext) => readonly string[];
+}
 
 export interface WorkspacePanelContribution {
   id: LocalContributionId;

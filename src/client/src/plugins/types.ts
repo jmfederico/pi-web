@@ -46,6 +46,7 @@ export interface PluginActivationResult {
 
 export interface PluginContributions {
   actions?: PluginAction[];
+  hiddenProjects?: HiddenProjectsContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
@@ -239,6 +240,19 @@ export interface WorkspaceLabelLinkItem {
 export interface WorkspaceLabelRenderItem {
   type: "render";
   render: () => TemplateResult;
+}
+
+export interface HiddenProjectsContribution {
+  id: LocalContributionId;
+  projects: (context: PluginRuntimeContext) => readonly string[];
+}
+
+export interface QualifiedHiddenProjectsContribution extends HiddenProjectsContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
+  sourcePluginId?: string;
 }
 
 export interface WorkspaceLabelContribution {
