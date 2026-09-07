@@ -13,6 +13,7 @@ const backendSourcePath = join(terminalsSourceDir, "backend.ts");
 const loaderSourcePath = join(terminalsSourceDir, "nodePtyModule.ts");
 const runtimeSourcePath = join(repoRoot, "src", "shared", "piWebRuntime.ts");
 const sharedLoaderRelativePath = "src/server/terminals/nodePtyModule.ts";
+const pluginLoaderRelativePath = "pi-web-plugins/terminal/server/nodePtyModule.ts";
 
 /**
  * F1 regression guard.
@@ -67,7 +68,7 @@ describe("NodePTYBackend under real Node ESM", () => {
  * loader and shows doctor's default path goes through it.
  */
 describe("node-pty loader ownership (SPEC D4)", () => {
-  it("keeps exactly one module that loads node-pty", async () => {
+  it("keeps exactly one module that loads node-pty per tree", async () => {
     const loaders: string[] = [];
     for (const path of await sourceFiles(join(repoRoot, "src"))) {
       if (path.endsWith(".test.ts")) continue;
@@ -75,6 +76,16 @@ describe("node-pty loader ownership (SPEC D4)", () => {
     }
 
     expect(loaders).toEqual([sharedLoaderRelativePath]);
+
+    // The bundled Terminal plugin is a separate source tree with its own loader counterpart
+    // (see pi-web-plugins/terminal/server/nodePtyModule.ts): assert the same invariant there,
+    // so a stray direct import can never reintroduce the r1 doctor-vs-terminals drift.
+    const pluginLoaders: string[] = [];
+    for (const path of await sourceFiles(join(repoRoot, "pi-web-plugins", "terminal"))) {
+      if (path.endsWith(".test.ts")) continue;
+      if (nodePtyModuleLoaders(readFileSync(path, "utf8"))) pluginLoaders.push(relativeToRepo(path));
+    }
+    expect(pluginLoaders).toEqual([pluginLoaderRelativePath]);
   });
 
   it("has the terminal backend and the doctor check consume the shared loader", () => {
@@ -85,6 +96,16 @@ describe("node-pty loader ownership (SPEC D4)", () => {
       expect(contents, `${path} must load node-pty through the shared loader`).toMatch(/from\s+"[^"]*nodePtyModule\.js"/u);
       expect(contents, `${path} must reference the shared loader`).toMatch(/\bloadNodePtyModule\b/u);
     }
+  });
+
+  it("keeps the Terminal plugin server free of static node-pty imports", () => {
+    // The r1 daemon crash: a missing optional node-pty killed the required Terminal plugin at
+    // import time even under Bun, where the plugin never needs it. The plugin may only reach
+    // node-pty lazily through its loader, selected by the backend factory.
+    const servicePath = join(repoRoot, "pi-web-plugins", "terminal", "server", "terminalService.ts");
+    const service = readFileSync(servicePath, "utf8");
+    expect(service).not.toMatch(/from\s+["']node-pty["']/u);
+    expect(service).toMatch(/from\s+["']\.\/ptyBackend\.js["']/u);
   });
 });
 

@@ -3,6 +3,7 @@ import { loadNodePtyModule } from "../terminals/nodePtyModule.js";
 import {
   checkNodePtyNativeModule,
   formatNodePtyNativeModuleCheck,
+  nodePtyInstallLayoutForModulePath,
   NODE_PTY_GLOBAL_REINSTALL_COMMAND,
 } from "./nodePtyNativeModule.js";
 
@@ -52,5 +53,34 @@ describe("node-pty native module diagnostics", () => {
     expect(formatted.lines).toContain(`    ${NODE_PTY_GLOBAL_REINSTALL_COMMAND}`);
     expect(formatted.lines).toContain("  Then run `pi-web doctor` again.");
     expect(formatted.lines.join("\n")).not.toContain("dangerously-allow-all-scripts");
+  });
+});
+
+describe("node-pty failure advice by installation layout", () => {
+  const failed = { status: "load-failed" as const, message: "Cannot find module 'node-pty'" };
+
+  it("recommends the bun trust flow for a bun global install", () => {
+    const report = formatNodePtyNativeModuleCheck(failed, "bun-global");
+    const text = report.lines.join("\n");
+    expect(text).toContain("bun add node-pty && bun pm trust node-pty");
+    expect(text).not.toContain(NODE_PTY_GLOBAL_REINSTALL_COMMAND);
+  });
+
+  it("keeps the npm reinstall advice for npm layouts", () => {
+    const report = formatNodePtyNativeModuleCheck(failed, "npm");
+    const text = report.lines.join("\n");
+    expect(text).toContain(NODE_PTY_GLOBAL_REINSTALL_COMMAND);
+    expect(text).not.toContain("bun pm trust");
+  });
+
+  it("detects the bun global layout from a module path", () => {
+    expect(nodePtyInstallLayoutForModulePath("/home/u/.bun/install/global/node_modules/@jmfederico/pi-web/dist/server/diagnostics/x.js")).toBe("bun-global");
+    expect(nodePtyInstallLayoutForModulePath("C:\\Users\\u\\.bun\\install\\global\\node_modules\\@jmfederico\\pi-web\\dist\\x.js")).toBe("bun-global");
+    expect(nodePtyInstallLayoutForModulePath("/usr/lib/node_modules/@jmfederico/pi-web/dist/x.js")).toBe("npm");
+  });
+
+  it("defaults to layout detection from this module's own location", () => {
+    // The repo checkout is not a bun global install, so the default must be the npm advice.
+    expect(formatNodePtyNativeModuleCheck(failed).lines.join("\n")).toContain(NODE_PTY_GLOBAL_REINSTALL_COMMAND);
   });
 });

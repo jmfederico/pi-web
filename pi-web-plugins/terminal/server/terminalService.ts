@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
-import { isBunRuntime } from "@pi-web/src/server/diagnostics/bunRuntime.js";
+import { createDefaultBackend, type TerminalBackend } from "./ptyBackend.js"; (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
 
 const MAX_REPLAY_BUFFER = 200_000;
 
@@ -265,7 +265,7 @@ async function loadNodePtyBackend(): Promise<NodePtyTerminalBackend | null> {
 
 // Terminal record that abstracts away the backend
 interface TerminalRecord extends TerminalInfo, TerminalWorkspaceScope {
-  backend: TerminalBackend | null;
+  backendId: string; (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
   buffer: string;
   events: EventEmitter;
   commandRunId?: string;
@@ -322,10 +322,16 @@ function createTerminalBackend(
 export class TerminalService {
   private readonly terminals = new Map<string, TerminalRecord>();
   private readonly commandRuns = new Map<string, TerminalCommandRun>();
+  private readonly backend: TerminalBackend;
   private activitySink: TerminalActivitySink | undefined;
   private disposed = false;
 
-  constructor(private readonly recordNotice?: (input: ServerPluginNoticeInput) => void) {}
+  constructor(
+    private readonly recordNotice?: (input: ServerPluginNoticeInput) => void,
+    backend?: TerminalBackend,
+  ) {
+    this.backend = backend ?? createDefaultBackend();
+  }
 
   bindActivitySink(sink: TerminalActivitySink): void {
     if (this.activitySink !== undefined) throw new Error("Terminal activity sink is already bound");
@@ -464,13 +470,13 @@ export class TerminalService {
 
   write(scope: TerminalWorkspaceScope, id: string, data: string): void {
     const terminal = this.requireScoped(scope, id);
-    if (!terminal.exited && terminal.backend) terminal.backend.write(data);
+    if (!terminal.exited) this.backend.write(terminal.backendId, data); (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
   }
 
   resize(scope: TerminalWorkspaceScope, id: string, cols: number, rows: number): void {
     const terminal = this.requireScoped(scope, id);
-    if (!terminal.exited && terminal.backend && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-      terminal.backend.resize(Math.floor(cols), Math.floor(rows));
+    if (!terminal.exited && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+      this.backend.resize(terminal.backendId, Math.floor(cols), Math.floor(rows)); (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
     }
   }
 
@@ -484,14 +490,15 @@ export class TerminalService {
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    try {
-      const backend = createTerminalBackend(shell, interactiveShellArgs(shell), record.cwd);
-      record.backend = backend.backend;
-      this.attachTerminalEvents(record);
-    } catch {
-      // Terminal backend unavailable (e.g., node-pty not installed)
-      throw new Error("Terminal backend unavailable: cannot create PTY");
-    }
+    record.backendId = this.backend.create({
+      cwd: record.cwd,
+      shell,
+      shellArgs: interactiveShellArgs(shell),
+      cols: 100,
+      rows: 30,
+      env: terminalEnvironment(),
+    }).id;
+    this.attachPtyEvents(record); (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
     const info = toInfo(record);
     this.activitySink?.updateTerminal(info);
     return info;
@@ -516,6 +523,7 @@ export class TerminalService {
     if (this.disposed) return;
     this.disposed = true;
     for (const terminal of [...this.terminals.values()]) this.closeRecord(terminal);
+    this.backend.dispose();
   }
 
   private createTerminal(options: CreateTerminalOptions & { id?: string; shellArgs: string[]; commandRunId?: string; failureNotice?: TerminalCommandFailureNotice }): TerminalInfo {
@@ -524,16 +532,14 @@ export class TerminalService {
     const id = options.id ?? randomUUID();
     const createdAt = new Date().toISOString();
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    
-    let backend: TerminalBackend | null = null;
-    try {
-      const result = createTerminalBackend(shell, options.shellArgs, options.cwd);
-      backend = result.backend;
-    } catch (error) {
-      // Terminal backend unavailable (e.g., node-pty not installed)
-      throw new Error(`Terminal backend unavailable: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
+    const backendId = this.backend.create({
+      cwd: options.cwd,
+      shell,
+      shellArgs: options.shellArgs,
+      cols: options.cols ?? 100,
+      rows: options.rows ?? 30,
+      env: terminalEnvironment(),
+    }).id; (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
     const requestedName = options.name?.trim();
     const record: TerminalRecord = {
       id,
@@ -543,7 +549,7 @@ export class TerminalService {
       name: requestedName !== undefined && requestedName !== "" ? requestedName : `Shell ${String(this.list(options).length + 1)}`,
       createdAt,
       exited: false,
-      backend,
+      backendId, (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
       buffer: "",
       events: new EventEmitter(),
       ...(options.commandRunId === undefined ? {} : { commandRunId: options.commandRunId }),
@@ -556,20 +562,21 @@ export class TerminalService {
     return info;
   }
 
-  private attachTerminalEvents(record: TerminalRecord): void {
-    if (!record.backend) return;
-    
-    record.backend.onData((data) => {
-      record.buffer = trimReplayBuffer(record.buffer + data);
-      record.events.emit("output", data);
-    });
-    record.backend.onExit(({ exitCode }) => {
-      record.exited = true;
-      record.exitCode = exitCode;
-      this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
-      record.events.emit("exit", exitCode);
-      const info = toInfo(record);
-      this.activitySink?.updateTerminal(info);
+  private attachPtyEvents(record: TerminalRecord): void {
+    this.backend.attach(record.backendId, {
+      output: (data) => {
+        record.buffer = trimReplayBuffer(record.buffer + data);
+        record.events.emit("output", data);
+      },
+      exit: (exitCode) => {
+        record.exited = true;
+        if (exitCode === undefined) delete record.exitCode;
+        else record.exitCode = exitCode;
+        this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
+        record.events.emit("exit", exitCode);
+        const info = toInfo(record);
+        this.activitySink?.updateTerminal(info);
+      }, (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
     });
   }
 
@@ -617,7 +624,7 @@ export class TerminalService {
     if (isTerminalCommandRunFinal(run.status)) return copyCommandRun(run);
     const terminal = this.terminals.get(run.terminalId);
     if (terminal === undefined) throw new Error("Terminal not found");
-    if (!terminal.exited && terminal.backend) terminal.backend.write("\x03");
+    if (!terminal.exited) this.backend.write(terminal.backendId, "\x03"); (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
     return copyCommandRun(run);
   }
 
@@ -626,7 +633,7 @@ export class TerminalService {
     terminal.events.emit("closed");
     terminal.events.removeAllListeners();
     this.activitySink?.removeTerminal(terminal.id, terminal.cwd);
-    if (!terminal.exited && terminal.backend) terminal.backend.kill();
+    if (!terminal.exited) this.backend.kill(terminal.backendId); (feat(terminal): native Bun.Terminal backend with lazy node-pty loading)
   }
 
   private requireAvailable(): void {

@@ -42,9 +42,15 @@ export function formatTerminalRuntimeCheck(inspection: TerminalRuntimeInspection
   if (inspection.backend === "bun") {
     return { ok: true, lines: [...lines, "✓ terminals: Bun native PTY (Bun.Terminal)"] };
   }
-  // An older bun still serves terminals, just through node-pty — name the stack before judging it.
+  // Under Bun without Bun.Terminal, terminals fall back to node-pty. A missing optional
+  // dependency build under bun is a non-blocking advisory, not a daemon-crash class failure,
+  // because the server can still boot and serve terminals once node-pty becomes available
+  // (SPEC D4/F5). Under Node.js, node-pty is required and a load failure is fatal.
   if (inspection.runtime === "bun") {
-    lines.push("! terminals: Bun.Terminal unavailable — falling back to node-pty");
+    if (inspection.nodePty.status === "ok") {
+      return { ok: true, lines: [...lines, "✓ terminals: node-pty (Bun.Terminal unavailable — legacy fallback)"] };
+    }
+    return { ok: true, lines: [...lines, "! terminals: Bun.Terminal unavailable — node-pty will be used when installed"] };
   }
   const nodePty = formatNodePtyNativeModuleCheck(inspection.nodePty);
   return { ok: nodePty.ok, lines: [...lines, ...nodePty.lines] };
