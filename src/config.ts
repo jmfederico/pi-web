@@ -14,8 +14,9 @@ export interface LoadedPiWebConfig {
   deprecatedAgentInputs: readonly DeprecatedAgentInput[];
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "safeTunnel" | "spawnSessions" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "safeTunnel" | "spawnSessions" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
+  attachments: NonNullable<PiWebConfig["attachments"]>;
   safeTunnel: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
@@ -51,6 +52,12 @@ export function defaultPiWebDataDir(): string {
 export const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
 
 export const DEFAULT_UPLOADS_FOLDER = ".pi-web/uploads";
+
+/**
+ * Default workspace-relative folder used when saving pasted/dropped prompt
+ * attachments for the agent to read with its own tools.
+ */
+export const DEFAULT_ATTACHMENT_FOLDER = ".pi-web/attachments";
 
 /**
  * Default auto-cancel delay for extension dialogs whose extension set no
@@ -129,6 +136,10 @@ export function effectiveUploadsConfig(config: Pick<PiWebConfig, "uploads"> = {}
   return { defaultFolder: config.uploads?.defaultFolder ?? DEFAULT_UPLOADS_FOLDER };
 }
 
+export function effectiveAttachmentsConfig(config: Pick<PiWebConfig, "attachments"> = {}): NonNullable<PiWebConfig["attachments"]> {
+  return { defaultFolder: config.attachments?.defaultFolder ?? DEFAULT_ATTACHMENT_FOLDER };
+}
+
 export function maxUploadBytes(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): number {
   const fromEnv = env["PI_WEB_MAX_UPLOAD_BYTES"];
   if (fromEnv !== undefined && fromEnv !== "") {
@@ -183,6 +194,7 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       ...(allowedHosts !== undefined && allowedHosts !== "" ? { allowedHosts: parseAllowedHostsEnv(allowedHosts) } : {}),
       ...(maxUpload !== undefined && maxUpload !== "" ? { maxUploadBytes: parseMaxUploadBytes(maxUpload, "PI_WEB_MAX_UPLOAD_BYTES") } : {}),
       uploads: effectiveUploadsConfig(loaded.config),
+      attachments: effectiveAttachmentsConfig(loaded.config),
       // Availability is a startup snapshot, distinct from Safe Tunnel's
       // durable desired runtime state. Offline mode always dominates opt-in.
       safeTunnel: safeTunnelAvailable(env, loaded.config),
@@ -218,6 +230,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["plugins"];
   delete existing["pathAccess"];
   delete existing["uploads"];
+  delete existing["attachments"];
   delete existing["maxUploadBytes"];
   delete existing["safeTunnel"];
   delete existing["spawnSessions"];
@@ -248,6 +261,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.plugins !== undefined ? { plugins: config.plugins } : {}),
     ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
+    ...(config.attachments !== undefined ? { attachments: config.attachments } : {}),
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.safeTunnel !== undefined ? { safeTunnel: config.safeTunnel } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
@@ -267,6 +281,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["plugins"] !== undefined ? { plugins: parsePlugins(value["plugins"], path) } : {}),
     ...(value["pathAccess"] !== undefined ? { pathAccess: parsePathAccessConfig(value["pathAccess"], path) } : {}),
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
+    ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
     ...(value["safeTunnel"] !== undefined ? { safeTunnel: parseBooleanKey(value["safeTunnel"], "safeTunnel", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
@@ -493,6 +508,14 @@ export function parseUploadsConfig(value: unknown, path: string): NonNullable<Pi
   const defaultFolder = value["defaultFolder"];
   return {
     ...(defaultFolder !== undefined ? { defaultFolder: parseWorkspaceRelativeFolder(defaultFolder, "uploads.defaultFolder", path) } : {}),
+  };
+}
+
+export function parseAttachmentsConfig(value: unknown, path: string): NonNullable<PiWebConfigValues["attachments"]> {
+  if (!isRecord(value)) throw new Error(`PI WEB config attachments must be an object: ${path}`);
+  const defaultFolder = value["defaultFolder"];
+  return {
+    ...(defaultFolder !== undefined ? { defaultFolder: parseWorkspaceRelativeFolder(defaultFolder, "attachments.defaultFolder", path) } : {}),
   };
 }
 

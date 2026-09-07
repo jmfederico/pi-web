@@ -19,6 +19,8 @@ export type NavigationFocusTarget = NavigationSection | "chat";
 export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selectedMachine?: Machine;
+  /** PWA display mode: surfaces the single-machine identity bubble in the header. */
+  @property({ type: Boolean }) locationIndicator = false;
   @property({ attribute: false }) machineStatuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) machineStatusSnapshots: Record<string, MachineStatusSnapshot> = {};
   @property({ attribute: false }) projects: Project[] = [];
@@ -91,18 +93,17 @@ export class AppNavigationPanel extends LitElement {
     return html`
       <header>
         <strong>PI WEB</strong>
-        ${shouldShowMachinesSection(this.machines) ? html`
-          <machine-switcher
-            .machines=${this.machines}
-            .selected=${this.selectedMachine}
-            .statuses=${this.machineStatuses}
-            .statusSnapshots=${this.machineStatusSnapshots}
-            .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
-            .onRemove=${(machine: Machine) => this.onRemoveMachine?.(machine)}
-            .onFocusNextSection=${() => { this.focusNextFrom("machines"); }}
-            .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
-          ></machine-switcher>
-        ` : null}
+        <machine-switcher
+          .machines=${this.machines}
+          .selected=${this.selectedMachine}
+          .locationIndicator=${this.locationIndicator}
+          .statuses=${this.machineStatuses}
+          .statusSnapshots=${this.machineStatusSnapshots}
+          .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
+          .onRemove=${(machine: Machine) => this.onRemoveMachine?.(machine)}
+          .onFocusNextSection=${() => { this.focusNextFrom("machines"); }}
+          .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+        ></machine-switcher>
         <div class="header-actions">
           ${this.refreshControl}
           <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
@@ -249,6 +250,8 @@ function nextVisibleNavigationTarget(section: NavigationSection, machines: reado
   return sections[sections.indexOf(section) + 1] ?? "chat";
 }
 
+// Only a machine choice makes the machines section navigable: with a single
+// machine the switcher is a static bubble, and compact mode has no list.
 function visibleNavigationSections(machines: readonly Machine[]): NavigationSection[] {
   return NAVIGATION_SECTION_ORDER.filter((section) => section !== "machines" || shouldShowMachinesSection(machines));
 }

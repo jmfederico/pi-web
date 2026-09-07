@@ -217,8 +217,7 @@ describe("SessionController session tree navigation", () => {
     await expect(controller.navigateTree("root", { mode: "none" })).rejects.toThrow("authoritative history refresh failed");
 
     expect(state.treeDialog).toBe(tree);
-    expect(state.error).toContain("authoritative history refresh failed");
-    expect(loadDraft(cacheKey)).toBe("recovered draft");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("authoritative history refresh failed");    expect(loadDraft(cacheKey)).toBe("recovered draft");
     expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered draft" });
   });
 
@@ -251,8 +250,7 @@ describe("SessionController session tree navigation", () => {
 
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "authoritative branch" }] }]);
     expect(state.treeDialog).toBe(tree);
-    expect(state.error).toContain("prompt editor replacement failed");
-  });
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("prompt editor replacement failed");  });
 
   it("explicitly clears the editor draft when navigating to a non-user entry", async () => {
     const cacheKey = machineSessionKey("local", oldSession.id);
@@ -300,8 +298,7 @@ describe("SessionController session tree navigation", () => {
 
     await expect(controller.navigateTree("root", { mode: "none" })).rejects.toThrow("reopen /tree");
     expect(state.treeDialog).toBe(tree);
-    expect(state.error).toContain("reopen /tree");
-
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("reopen /tree");
     await controller.abortTreeNavigation();
     expect(abort).toHaveBeenCalledWith(oldSession, "local");
     controller.closeTreeDialog();
@@ -329,8 +326,7 @@ describe("SessionController session tree navigation", () => {
     await controller.selectSession(oldSession, { updateUrl: false });
     socket.emit({ type: "message.append", message: { role: "assistant", content: "live after failed refresh" }, seq: 1 });
 
-    expect(state.error).toContain("history refresh failed");
-    expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "live after failed refresh" }] }]);
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("history refresh failed");    expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "live after failed refresh" }] }]);
   });
 
   it("does not reopen a disposed controller when navigation settles late", async () => {
@@ -526,7 +522,7 @@ describe("SessionController session tree navigation", () => {
     await run;
 
     expect(state.treeDialog).toBeUndefined();
-    expect(state.error).toContain("needs input; open the session and run it again");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("needs input; open the session and run it again");
   });
 
   it("requires a delayed interactive tree command to be rerun after its session is no longer selected", async () => {
@@ -554,7 +550,7 @@ describe("SessionController session tree navigation", () => {
     await run;
 
     expect(state.treeDialog).toBeUndefined();
-    expect(state.error).toContain("needs input; open the session and run it again");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("needs input; open the session and run it again");
   });
 });
 
@@ -641,8 +637,7 @@ describe("SessionController session tree fork", () => {
     await expect(controller.forkFromTree("root")).rejects.toThrow("Stop current activity before forking.");
 
     expect(state.treeDialog).toBe(tree);
-    expect(state.error).toContain("Stop current activity before forking.");
-  });
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("Stop current activity before forking.");  });
 
   it("reports unavailable forks from older daemons without closing the navigator", async () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], treeDialog: tree };
@@ -659,8 +654,7 @@ describe("SessionController session tree fork", () => {
     await expect(controller.forkFromTree("root")).rejects.toThrow(SessionTreeForkUnavailableError);
 
     expect(state.treeDialog).toBe(tree);
-    expect(state.error).toContain("Fork from the session tree is unavailable");
-  });
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("Fork from the session tree is unavailable");  });
 
   it("rejects forks when the navigator is unavailable", async () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };

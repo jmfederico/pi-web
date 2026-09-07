@@ -98,7 +98,7 @@ async function smokeInstalledTerminalService(packageRoot) {
     throw new Error(`Installed package resolved a non-stable node-pty version: ${String(nodePtyPackage.version)}`);
   }
 
-  const terminalModuleUrl = pathToFileURL(join(packageRoot, "dist", "server", "terminals", "terminalService.js")).href;
+  const terminalModuleUrl = pathToFileURL(join(packageRoot, "dist", "pi-web-plugins", "terminal", "terminalService.js")).href;
   const { TerminalService } = await import(terminalModuleUrl);
   const previousShell = process.env["SHELL"];
   process.env["SHELL"] = "/bin/sh";
@@ -117,7 +117,7 @@ async function smokeInstalledTerminalService(packageRoot) {
     const exitCode = await new Promise((resolvePromise, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Timed out waiting for installed node-pty output: ${JSON.stringify(output)}`)), 10_000);
       try {
-        detach = service.attach(run.terminalId, {
+        detach = service.attach({ projectId: "package-smoke", workspaceId: "package-smoke", cwd: packageRoot }, run.terminalId, {
           output: (data) => { output += data; },
           exit: (code) => {
             clearTimeout(timeout);

@@ -1,6 +1,11 @@
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionTreeNavigateRequest, SessionTreeSummaryChoice } from "../../shared/apiTypes.js";
 import { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
+import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
 import { PiSessionService, type PiAgentSession, type PiSessionManager, type PiSessionServiceDependencies } from "./piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModel, testModelRuntime, type TestSession } from "./piSessionService.testSupport.js";
 import type { ProjectableSessionTreeNode } from "./sessionTreeProjection.js";
@@ -114,6 +119,170 @@ describe("PiSessionService session-tree behavior", () => {
     expect(fake.calls.dispose).toBe(0);
 
     await service.dispose();
+  });
+
+  it("restores editor semantics when an editable message is already the active leaf", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "pi-web-active-tree-target-"));
+    const workspace = join(tempDir, "workspace");
+    const agentDir = join(tempDir, "agent");
+    await mkdir(workspace, { recursive: true });
+    const manager = SessionManager.inMemory(workspace, { id: SESSION_ID });
+    const { session: piSession } = await createAgentSession({
+      cwd: workspace,
+      agentDir,
+      modelRuntime: testModelRuntime,
+      noTools: "all",
+      sessionManager: manager,
+    });
+    const navigateTree = vi.fn<NavigateTree>((targetId, options) => piSession.navigateTree(targetId, options));
+    const fake = fakeRuntime(SESSION_ID, {
+      sessionFile: undefined,
+      sessionManager: manager,
+      navigateTree,
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord(SESSION_ID, workspace)]),
+      heartbeatIntervalMs: 60_000,
+    });
+
+    try {
+      manager.resetLeaf();
+      const userId = manager.appendMessage({ role: "user", content: "edit active user", timestamp: Date.now() });
+      await expect(service.navigateTree(sessionRef(SESSION_ID, workspace), {
+        targetId: userId,
+        expectedLeafId: userId,
+        summary: { mode: "none" },
+      })).resolves.toEqual({ cancelled: false, editorText: "edit active user" });
+      expect(manager.getLeafId()).toBeNull();
+
+      const customId = manager.appendCustomMessageEntry("test", "edit active custom", true);
+      await expect(service.navigateTree(sessionRef(SESSION_ID, workspace), {
+        targetId: customId,
+        expectedLeafId: customId,
+        summary: { mode: "none" },
+      })).resolves.toEqual({ cancelled: false, editorText: "edit active custom" });
+      expect(manager.getLeafId()).toBeNull();
+
+      const ordinaryCustomId = manager.appendCustomEntry("test-state", { preserved: true });
+      await expect(service.navigateTree(sessionRef(SESSION_ID, workspace), {
+        targetId: ordinaryCustomId,
+        expectedLeafId: ordinaryCustomId,
+        summary: { mode: "none" },
+      })).resolves.toEqual({ cancelled: false });
+      expect(manager.getLeafId()).toBe(ordinaryCustomId);
+    } finally {
+      await service.dispose();
+      piSession.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores an active editable leaf when the compatibility navigation is cancelled", async () => {
+    let leafId: string | null = "target-1";
+    const parent = { type: "message", id: "parent-1", parentId: null, message: { role: "assistant", content: "answer" } };
+    const target = { type: "message", id: "target-1", parentId: "parent-1", message: { role: "user", content: "edit me" } };
+    const navigateTree = vi.fn<NavigateTree>();
+    navigateTree
+      .mockResolvedValueOnce({ cancelled: false })
+      .mockResolvedValueOnce({ cancelled: true, aborted: true });
+    const { service } = treeHarness({
+      getLeafId: () => leafId,
+      getBranch: () => leafId === "target-1" ? [parent, target] : [parent],
+      branch: (targetId) => { leafId = targetId; },
+      resetLeaf: () => { leafId = null; },
+    }, { navigateTree });
+
+    await expect(service.navigateTree(
+      sessionRef(SESSION_ID),
+      navigationRequest({ mode: "none" }, "target-1"),
+    )).resolves.toEqual({ cancelled: true, aborted: true });
+    expect(leafId).toBe("target-1");
+    await service.dispose();
+  });
+
+  it("releases a no-summary branch when the next prompt is durable beneath an external descendant", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "pi-web-tree-navigation-"));
+    const workspace = join(tempDir, "workspace");
+    const sessionDir = join(tempDir, "sessions");
+    const sessionFile = join(sessionDir, `2026-01-01T00-00-00-000Z_${SESSION_ID}.jsonl`);
+    await Promise.all([mkdir(workspace, { recursive: true }), mkdir(sessionDir, { recursive: true })]);
+    const entry = (id: string, parentId: string | null, role: "user" | "assistant", content: string) => ({
+      type: "message",
+      id,
+      parentId,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { role, content },
+    });
+    const initialEntries = [
+      entry("root-user", null, "user", "original question"),
+      entry("target-1", "root-user", "assistant", "selected answer"),
+      entry("abandoned-user", "target-1", "user", "abandoned follow-up"),
+      entry("leaf-1", "abandoned-user", "assistant", "abandoned answer"),
+    ];
+    await writeFile(sessionFile, `${[
+      { type: "session", version: 3, id: SESSION_ID, timestamp: "2026-01-01T00:00:00.000Z", cwd: workspace },
+      ...initialEntries,
+    ].map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+
+    const manager = SessionManager.open(sessionFile, sessionDir);
+    const navigateTree = vi.fn<NavigateTree>((targetId) => {
+      manager.branch(targetId);
+      return Promise.resolve({ cancelled: false });
+    });
+    const prompt = vi.fn((text: string) => {
+      manager.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+      return Promise.resolve();
+    });
+    const fake = fakeRuntime(SESSION_ID, { sessionFile, sessionManager: manager, navigateTree, prompt });
+    const gateway = createPiSessionManagerGateway({
+      agentDir: join(tempDir, "agent"),
+      env: { PI_CODING_AGENT_SESSION_DIR: sessionDir },
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: gateway,
+      heartbeatIntervalMs: 60_000,
+    });
+
+    try {
+      await expect(service.navigateTree(sessionRef(SESSION_ID, workspace), navigationRequest())).resolves.toEqual({ cancelled: false });
+      expect(navigateTree).toHaveBeenCalledWith("target-1", { summarize: false });
+
+      await expect(service.messages(sessionRef(SESSION_ID, workspace))).resolves.toMatchObject({
+        messages: [
+          { role: "user", content: "original question" },
+          { role: "assistant", content: "selected answer" },
+        ],
+        total: 2,
+      });
+      await expect(service.status(sessionRef(SESSION_ID, workspace))).resolves.toMatchObject({ messageCount: 2 });
+
+      await service.prompt(sessionRef(SESSION_ID, workspace), "continue here");
+      await vi.waitFor(() => { expect(prompt).toHaveBeenCalledWith("continue here", undefined); });
+
+      const promptLeafId = manager.getLeafId();
+      if (promptLeafId === null) throw new Error("Expected the prompt to append a session entry");
+      await appendFile(sessionFile, `${JSON.stringify(entry("external-leaf", promptLeafId, "assistant", "external continuation"))}\n`, "utf8");
+      await expect(service.messages(sessionRef(SESSION_ID, workspace))).resolves.toMatchObject({
+        messages: [
+          { role: "user", content: "original question" },
+          { role: "assistant", content: "selected answer" },
+          { role: "user", content: "continue here" },
+          { role: "assistant", content: "external continuation" },
+        ],
+        total: 4,
+      });
+    } finally {
+      await service.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("validates stale leaves, active work, unavailable runtimes, and custom instruction bounds", async () => {

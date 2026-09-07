@@ -33,7 +33,7 @@ const plugin: PiWebPlugin = {
                 <button
                   ?disabled=${context.backend === undefined}
                   @click=${() => { void refreshSummary(context); }}
-                >Request backend summary</button>
+                >Request owner summary</button>
                 <p aria-live="polite">${summary}</p>
               </section>
             `;
@@ -49,7 +49,7 @@ export default plugin;
 async function refreshSummary(context: WorkspacePanelContext): Promise<void> {
   const key = workspaceKey(context);
   try {
-    if (context.backend === undefined) throw new Error("The paired workspace backend is unavailable");
+    if (context.backend === undefined) throw new Error("The owner-backed workspace backend is unavailable");
     const result = await context.backend.request("summary", null);
     if (typeof result !== "string") throw new Error("The workspace backend returned an invalid summary");
     summaries.set(key, result);

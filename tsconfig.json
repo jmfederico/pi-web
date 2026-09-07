@@ -35,6 +35,7 @@
     "vite.config.ts",
     "vitest.config.ts",
     "extensions/**/*.ts",
-    "pi-web-plugins/**/*.ts"
+    "pi-web-plugins/**/*.ts",
+    "pi-packages/**/*.ts"
   ]
 }

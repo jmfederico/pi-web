@@ -7,22 +7,23 @@ import { ProjectService } from "./projects/projectService.js";
 import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
 import { SessionDaemonWorkspaceCatalog } from "./workspaces/sessionDaemonWorkspaceCatalog.js";
 import { sendWorkspaceRequestError } from "./workspaces/workspaceRouteErrors.js";
-import { loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
+import { loadEffectiveProjectAttachmentsConfig, loadEffectiveProjectUploadsConfig } from "./workspaces/projectPiWebConfig.js";
 import { listDirectorySuggestions } from "./projects/directorySuggestions.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
 import { loadServerPluginRecoveryConfig } from "../serverPluginRecovery.js";
 import { registerSessionProxyRoutes, type SessionProxyDaemon } from "./sessiond/sessionProxyRoutes.js";
 import { registerWorkspaceExplorerRoutes } from "./workspaceExplorerRoutes.js";
 import { registerProjectTrustRoutes } from "./projectTrustRoutes.js";
-import { registerTerminalProxyRoutes } from "./terminalProxyRoutes.js";
 import { registerWorkspaceDeletionRoutes } from "./workspaces/workspaceDeletionRoutes.js";
 import { createFilePiWebConfigService, registerConfigRoutes, registerLocalMachineConfigRoutes, type PiWebConfigService } from "./configRoutes.js";
-import { PiWebPluginService } from "./piWebPluginService.js";
+import { PiWebPluginManifestRuntimeError, PiWebPluginService } from "./piWebPluginService.js";
 import { createActiveProfilePiPackageService, type PiPackageService } from "./piPackageService.js";
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
 import { createPiWebStatusCache, type PiWebStatusCache } from "./piWebStatusCache.js";
-import { getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
+import { detectPiWebInstallation, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
 import { PI_WEB_CAPABILITIES, WEB_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
+import { createDeploymentFlavorResolver, type PiWebDeploymentFlavor } from "./deploymentIdentity.js";
+import { registerDeploymentIdentityAssetRoutes } from "./deploymentIdentityRoutes.js";
 import {
   ActiveAgentProfileAccessError,
   requireActiveAgentProfile,
@@ -32,7 +33,9 @@ import {
 import { MachineService } from "./machines/machineService.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
-import { registerPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
+import { registerPluginBackendChannelProxyRoutes } from "./plugins/pluginBackendChannelProxyRoutes.js";
+import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
+import { registerPairedPluginBackendProxyRoutes, registerPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
 import type { SafeTunnelBridgeService } from "./safeTunnel/safeTunnelBridgeService.js";
@@ -62,6 +65,8 @@ export interface AppDependencies {
    * `false` builds a minimal API-only app for tests.
    */
   clientServing: ClientServing | false;
+  /** Overrides deployment-flavor detection (dev/stable asset identity) in tests. */
+  deploymentFlavor?: () => Promise<PiWebDeploymentFlavor>;
   logger?: FastifyServerOptions["logger"];
   /** Maximum accepted HTTP request body size in bytes. */
   bodyLimit?: number;
@@ -126,7 +131,10 @@ async function resolveWorkspacesWithEffectiveConfig(
 
 async function workspaceEffectiveConfig(projectPath: string, config?: Pick<PiWebConfigService, "read">): Promise<WorkspaceEffectiveConfig> {
   const globalConfig = config === undefined ? {} : (await config.read()).effectiveConfig;
-  return { uploads: await loadEffectiveProjectUploadsConfig(projectPath, globalConfig) };
+  return {
+    uploads: await loadEffectiveProjectUploadsConfig(projectPath, globalConfig),
+    attachments: await loadEffectiveProjectAttachmentsConfig(projectPath, globalConfig),
+  };
 }
 
 async function readEffectiveConfig(config: Pick<PiWebConfigService, "read">) {
@@ -162,8 +170,15 @@ async function withProfileDependency<T>(reply: FastifyReply, operation: () => Pr
   try {
     return await operation();
   } catch (error) {
-    if (!(error instanceof ActiveAgentProfileAccessError)) throw error;
-    return reply.code(503).send({ error: error.message });
+    if (error instanceof ActiveAgentProfileAccessError) return reply.code(503).send({ error: error.message });
+    if (error instanceof PiWebPluginManifestRuntimeError) {
+      return reply.code(error.statusCode).send({
+        error: `Required Terminal plugin runtime is ${error.runtimeStatus}`,
+        code: `required-plugin-runtime-${error.runtimeStatus}`,
+        detail: error.message,
+      });
+    }
+    throw error;
   }
 }
 
@@ -192,6 +207,7 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     threshold: 1024,
   });
   await app.register(fastifyWebsocket);
+  installPluginBackendChannelWebSocketPayloadLimit(app.websocketServer);
 
   const projects = deps.projects ?? new ProjectService(new ProjectStore());
   const configService = deps.config ?? createFilePiWebConfigService();
@@ -280,6 +296,8 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
   registerSessionProxyRoutes(app, sessionDaemon);
   registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
   registerPluginBackendProxyRoutes(app, sessionDaemon);
+  registerPairedPluginBackendProxyRoutes(app, sessionDaemon);
+  registerPluginBackendChannelProxyRoutes(app, sessionDaemon);
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api", { config: configService });
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
   const projectTrustDeps = {
@@ -287,15 +305,20 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
   };
   registerProjectTrustRoutes(app, projects, workspaces, projectTrustDeps);
   registerProjectTrustRoutes(app, projects, workspaces, projectTrustDeps, "/api/machines/local");
-  registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon);
-  registerTerminalProxyRoutes(app, projects, workspaces, sessionDaemon, "/api/machines/local");
   registerWorkspaceDeletionRoutes(app, sessionDaemon);
   registerWorkspaceDeletionRoutes(app, sessionDaemon, "/api/machines/local");
 
   registerMachineProxyRoutes(app, machines);
 
   if (deps.clientServing !== false) {
-    await registerClientServing(app, deps.clientServing);
+    const deploymentFlavor = deps.deploymentFlavor ?? createDeploymentFlavorResolver(
+      async () => {
+        const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
+        return detectPiWebInstallation(activeAgentProfile.status === "available" ? activeAgentProfile.profile.dir : undefined);
+      },
+      (error) => { app.log.warn({ err: error }, "failed to detect PI WEB deployment flavor"); },
+    );
+    await registerClientServing(app, deps.clientServing, deploymentFlavor);
   }
 
   return app;
@@ -307,10 +330,15 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
  * non-API routes; development mode serves nothing and points browsers at the
  * dev-server entrypoint instead.
  */
-async function registerClientServing(app: FastifyInstance, clientServing: ClientServing): Promise<void> {
+async function registerClientServing(
+  app: FastifyInstance,
+  clientServing: ClientServing,
+  deploymentFlavor: () => Promise<PiWebDeploymentFlavor>,
+): Promise<void> {
   if (clientServing.mode === "packaged") {
     requirePackagedClientDist(clientServing.clientDist);
     await app.register(fastifyStatic, { root: clientServing.clientDist });
+    registerDeploymentIdentityAssetRoutes(app, { clientDist: clientServing.clientDist, flavor: deploymentFlavor });
     app.setNotFoundHandler((request, reply) => {
       if (isApiRouteUrl(request.url)) return sendApiNotFound(request.method, request.url, reply);
       return reply.sendFile("index.html");

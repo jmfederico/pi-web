@@ -1,6 +1,6 @@
 {
   "name": "@jmfederico/pi-web",
-  "version": "1.202608.1",
+  "version": "1.202609.0",
   "description": "Web UI for persistent Pi Coding Agent sessions in real workspaces.",
   "license": "MIT",
   "author": "Federico Jaramillo Martinez",
@@ -57,7 +57,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:cached": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/pi-web/typecheck.tsbuildinfo",
     "knip": "knip",
-    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" vite.config.ts vitest.config.ts",
+    "lint": "eslint \"src/**/*.ts\" \"extensions/**/*.ts\" \"pi-web-plugins/**/*.ts\" \"pi-packages/**/*.ts\" vite.config.ts vitest.config.ts",
     "test": "vitest run --config vitest.config.ts",
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
     "verify:staged": "node scripts/verify-staged.mjs",
@@ -105,9 +105,9 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
-    "@earendil-works/pi-agent-core": "^0.84.1",
-    "@earendil-works/pi-ai": "^0.84.1",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-agent-core": "^0.85.1",
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.3",
     "@types/ws": "^8.18.1",
@@ -139,7 +139,7 @@
   "peerDependencies": {
     "@earendil-works/pi-agent-core": ">=0.84.0",
     "@earendil-works/pi-ai": ">=0.84.0",
-    "@earendil-works/pi-coding-agent": ">=0.84.0"
+    "@earendil-works/pi-coding-agent": ">=0.84.0 <0.85.0 || >=0.85.1"
   },
   "keywords": [
     "pi-package",

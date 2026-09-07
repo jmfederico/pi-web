@@ -149,6 +149,40 @@ describe("production build contents", () => {
         .sort();
       expect(packagedFiles.filter((path) => path.startsWith("dist/pi-web-plugins/")).sort()).toEqual(builtPluginFiles);
       expect(builtPluginFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
+      expect(builtPluginFiles.some((path) => path.includes("/relays/"))).toBe(false);
+
+      const filesPluginFiles = builtPluginFiles.filter((path) => path.startsWith("dist/pi-web-plugins/files/"));
+      expect(filesPluginFiles).toEqual(expect.arrayContaining([
+        "dist/pi-web-plugins/files/package.json",
+        "dist/pi-web-plugins/files/browser/pi-web-plugin.js",
+      ]));
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/viewerDependencies-[^/]+\.js$/u.test(path))).toBe(false);
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/files-icon-[^/]+\.svg$/u.test(path))).toBe(true);
+      expect(filesPluginFiles.every((path) => path.endsWith("/package.json") || path.includes("/browser/"))).toBe(true);
+      expect(packagedFiles).toEqual(expect.arrayContaining(filesPluginFiles));
+
+      // pi-packages/ ships Pi packages (like relays) alongside bundled plugins
+      // without becoming a bundled/local discovery root for them (see
+      // PiWebPluginCatalog). The same clean build:plugins command still emits
+      // them into their own dist directory and packs them into the tarball.
+      const builtPackagesRoot = join(fixtureRoot, "dist", "pi-packages");
+      const builtPackageFiles = (await recursiveFiles(builtPackagesRoot))
+        .map((path) => normalizePath(relative(fixtureRoot, path)))
+        .sort();
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
+      expect(builtPackageFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
+      expect(packagedFiles.filter((path) => path.startsWith("dist/pi-packages/")).sort()).toEqual(builtPackageFiles);
+
+      const builtRelaysPackage: unknown = JSON.parse(
+        await readFile(join(builtPackagesRoot, "relays", "package.json"), "utf8"),
+      );
+      if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
+      expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }
@@ -167,10 +201,12 @@ async function createCleanPluginBuildFixture(fixtureRoot: string): Promise<void>
   await Promise.all([
     cp(join(repoRoot, "src"), join(fixtureRoot, "src"), { recursive: true }),
     cp(join(repoRoot, "pi-web-plugins"), join(fixtureRoot, "pi-web-plugins"), { recursive: true }),
+    cp(join(repoRoot, "pi-packages"), join(fixtureRoot, "pi-packages"), { recursive: true }),
     copyFile(join(repoRoot, "package.json"), join(fixtureRoot, "package.json")),
     copyFile(join(repoRoot, "tsconfig.json"), join(fixtureRoot, "tsconfig.json")),
     copyFile(join(repoRoot, "tsconfig.plugins.json"), join(fixtureRoot, "tsconfig.plugins.json")),
     copyFile(join(repoRoot, "scripts", "build-plugins.mjs"), join(fixtureRoot, "scripts", "build-plugins.mjs")),
+    copyFile(join(repoRoot, "scripts", "build-plugins.d.mts"), join(fixtureRoot, "scripts", "build-plugins.d.mts")),
     // npm 10 runs `prepare` even under `pack --ignore-scripts`; the hook installer exits 0 without a .git directory.
     copyFile(join(repoRoot, "scripts", "install-git-hooks.mjs"), join(fixtureRoot, "scripts", "install-git-hooks.mjs")),
     symlink(

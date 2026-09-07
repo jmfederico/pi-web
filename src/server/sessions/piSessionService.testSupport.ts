@@ -55,6 +55,8 @@ export function fakeSessionManager(cwd = "/workspace", patch: Partial<PiSessionM
     getSessionFile: () => undefined,
     getBranch: () => [],
     getLeafId: () => "leaf-1",
+    branch: () => undefined,
+    resetLeaf: () => undefined,
     ...patch,
   };
 }
@@ -153,7 +155,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
     isBashRunning: false,
     pendingMessageCount: 0,
     sessionManager: fakeSessionManager(),
-    settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined, getEnabledModels: () => undefined, setEnabledModels: () => undefined },
+    settingsManager: { getWarnings: () => ({}), setWarnings: () => undefined, getEnabledModels: () => undefined, getProjectSettings: () => ({}), setEnabledModels: () => undefined },
     modelRuntime: testModelRuntime,
     scopedModels: [],
     setScopedModels: () => undefined,

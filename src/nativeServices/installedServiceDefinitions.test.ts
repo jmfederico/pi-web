@@ -440,11 +440,31 @@ describe("installed native-service definition boundary", () => {
     expect(result.message).toContain("busctl returned an unrecognized Environment");
   });
 
+  it("accepts a package-owned global drop-in that does not alter inspected properties", () => {
+    // Fedora ships /usr/lib/systemd/user/service.d/10-timeout-abort.conf for
+    // every user service (issue #190); it must not fail managed inspection.
+    const result = inspectInstalledNativeServiceDefinitions(
+      { kind: "systemd", label: "systemd" },
+      [source],
+      dependencies(undefined, {
+        status: 0,
+        stdout: managerOutput({ DropInPaths: "/usr/lib/systemd/user/service.d/10-timeout-abort.conf" }),
+        stderr: "",
+      }),
+      "doctor",
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
   it.each([
     [
-      "drop-ins",
-      managerOutput({ DropInPaths: "/home/user/.config/systemd/user/pi-web-web.service.d/override.conf" }),
-      "effective drop-ins",
+      "a user-local drop-in overriding the managed environment",
+      managerOutput({
+        DropInPaths: "/home/user/.config/systemd/user/pi-web-web.service.d/override.conf",
+        Environment: "PI_WEB_CONFIG=/elsewhere/config.json",
+      }),
+      "differs",
     ],
     [
       "environment files",

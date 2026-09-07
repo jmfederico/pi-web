@@ -165,5 +165,54 @@ fi
 
 chown -R "$runtime_uid:$runtime_gid" /data /workspace
 
+# Keep login-shell PATH in parity with the inherited environment.
+#
+# Web terminals spawn login shells, and openSUSE's /etc/profile resets PATH to
+# a minimal value before sourcing /etc/profile.d. Agent tools instead inherit
+# the session daemon's environment unchanged, so without a hook terminals
+# resolve fewer commands than agent tools (notably the dev image's
+# /workspace/node_modules/.bin). /etc/profile saves the pre-reset PATH as
+# ORIG_PATH; the hook re-adds any inherited entries the reset dropped, so
+# login shells settle on the same PATH the spawning process had.
+cat > /etc/profile.d/pi-web-path-parity.sh <<'PI_WEB_PROFILE_HOOK'
+# shellcheck shell=sh
+# Login-shell PATH parity for PI WEB containers.
+#
+# Login shells source openSUSE's /etc/profile, which resets PATH to a minimal
+# value before sourcing this directory. PI WEB agent tools instead inherit the
+# session daemon's environment unchanged, so without this hook web terminals
+# resolve fewer commands than agent tools do (for example
+# /workspace/node_modules/.bin in the dev image).
+#
+# /etc/profile saves the pre-reset inherited PATH as ORIG_PATH; this hook
+# prepends any inherited entries the reset dropped, preserving their order, so
+# login shells settle on the same PATH the spawning process had.
+
+if [ -n "${ORIG_PATH:-}" ]; then
+    _pi_web_prefix=
+    _pi_web_old_ifs=$IFS
+    IFS=:
+    # Word-split the inherited colon-separated entries; PATH entries never
+    # contain spaces or glob characters.
+    # shellcheck disable=SC2086
+    for _pi_web_dir in $ORIG_PATH; do
+        if [ -z "$_pi_web_dir" ]; then
+            continue
+        fi
+        case ":$PATH:$_pi_web_prefix:" in
+            *:"$_pi_web_dir":*) ;;
+            *) _pi_web_prefix=${_pi_web_prefix:+$_pi_web_prefix:}$_pi_web_dir ;;
+        esac
+    done
+    IFS=$_pi_web_old_ifs
+    if [ -n "$_pi_web_prefix" ]; then
+        PATH=$_pi_web_prefix:$PATH
+        export PATH
+    fi
+    unset _pi_web_prefix _pi_web_dir _pi_web_old_ifs
+fi
+PI_WEB_PROFILE_HOOK
+chmod 0644 /etc/profile.d/pi-web-path-parity.sh
+
 zypper clean --all
 rm -rf /var/cache/zypp/*

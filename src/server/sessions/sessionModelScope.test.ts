@@ -6,7 +6,7 @@ import { ModelRuntime, ProjectTrustStore, SessionManager, SettingsManager } from
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, sessionGateway } from "./piSessionService.testSupport.js";
-import { applyEnabledModelToggle, catalogWithEnabledFirst, liveScopedModelIds, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions } from "./sessionModelScope.js";
+import { applyEnabledModelToggle, catalogWithEnabledFirst, liveScopedModelIds, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions, scopedModelsFromEnabledIds } from "./sessionModelScope.js";
 
 const PROVIDER = "anthropic";
 const FIRST_MODEL = "claude-opus-4-6";
@@ -287,6 +287,22 @@ describe("liveScopedModelIds", () => {
   });
 });
 
+describe("scopedModelsFromEnabledIds", () => {
+  const available = [
+    { provider: "anthropic", id: "a" },
+    { provider: "anthropic", id: "b" },
+  ];
+
+  it("resolves a partial scope while dropping stale ids", () => {
+    expect(scopedModelsFromEnabledIds(available, ["anthropic/b", "anthropic/gone"]).map(({ model }) => `${model.provider}/${model.id}`)).toEqual(["anthropic/b"]);
+  });
+
+  it("returns an empty SDK scope when every model is enabled", () => {
+    expect(scopedModelsFromEnabledIds(available, null)).toEqual([]);
+    expect(scopedModelsFromEnabledIds(available, ["anthropic/a", "anthropic/b"])).toEqual([]);
+  });
+});
+
 describe("catalogWithEnabledFirst", () => {
   const available = [
     { provider: "anthropic", id: "a" },
@@ -296,25 +312,25 @@ describe("catalogWithEnabledFirst", () => {
 
   it("marks every model enabled in catalog order when nothing is scoped", () => {
     expect(catalogWithEnabledFirst(available, null)).toEqual([
-      { model: available[0], enabled: true },
-      { model: available[1], enabled: true },
-      { model: available[2], enabled: true },
+      { model: available[0], enabled: true, catalogIndex: 0 },
+      { model: available[1], enabled: true, catalogIndex: 1 },
+      { model: available[2], enabled: true, catalogIndex: 2 },
     ]);
   });
 
   it("lists enabled models first in enabled-list order, then the rest in catalog order", () => {
     expect(catalogWithEnabledFirst(available, ["openai/c", "anthropic/a"])).toEqual([
-      { model: available[2], enabled: true },
-      { model: available[0], enabled: true },
-      { model: available[1], enabled: false },
+      { model: available[2], enabled: true, catalogIndex: 2 },
+      { model: available[0], enabled: true, catalogIndex: 0 },
+      { model: available[1], enabled: false, catalogIndex: 1 },
     ]);
   });
 
   it("skips enabled ids that match nothing available and ignores duplicates", () => {
     expect(catalogWithEnabledFirst(available, ["anthropic/gone", "anthropic/a", "anthropic/a"])).toEqual([
-      { model: available[0], enabled: true },
-      { model: available[1], enabled: false },
-      { model: available[2], enabled: false },
+      { model: available[0], enabled: true, catalogIndex: 0 },
+      { model: available[1], enabled: false, catalogIndex: 1 },
+      { model: available[2], enabled: false, catalogIndex: 2 },
     ]);
   });
 });

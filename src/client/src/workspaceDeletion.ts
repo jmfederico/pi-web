@@ -13,11 +13,8 @@ export function workspaceRemovalConfirmation(workspace: Workspace): string | und
   return workspace.removal?.confirmation;
 }
 
-export function workspaceDeletionRunFilter(projectId?: string): { projectId?: string; metadata: Record<string, string> } {
-  return {
-    ...(projectId === undefined ? {} : { projectId }),
-    metadata: { [workspaceDeleteOperationMetadataKey]: workspaceDeleteOperation },
-  };
+export function workspaceDeletionRunFilter(): { metadata: Record<string, string> } {
+  return { metadata: { [workspaceDeleteOperationMetadataKey]: workspaceDeleteOperation } };
 }
 
 export function latestWorkspaceDeletionRuns(runs: TerminalCommandRun[]): Record<string, TerminalCommandRun> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readRoute, resolveAppRoute, writeRoute, type AppRoute } from "./route";
+import { readRoute, resolveAppRoute, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute } from "./route";
 
 const originalWindow = globalThis.window;
 
@@ -33,8 +33,8 @@ function installWindow(href: string): { pushed: string[]; replaced: string[] } {
 }
 
 const routeAliases: Record<string, AppRoute["tool"]> = {
-  files: "core:workspace.files",
-  "core:workspace.files": "core:workspace.files",
+  files: "files:workspace.files",
+  "core:workspace.files": "files:workspace.files",
   git: "git:workspace.git",
   "core:workspace.git": "git:workspace.git",
   "git:workspace.git": "git:workspace.git",
@@ -54,7 +54,7 @@ describe("route helpers", () => {
       workspaceId: "w1",
       sessionId: "s1",
       tool: "git:workspace.git",
-      view: "core:workspace.files",
+      view: "files:workspace.files",
     });
   });
 
@@ -77,6 +77,21 @@ describe("route helpers", () => {
       tool: "git:workspace.git",
       view: "git:workspace.git",
     });
+  });
+
+  it("matches contribution navigation to the exact machine, project, and workspace route", () => {
+    expect(routeMatchesWorkspaceIdentity(
+      { machineId: undefined, projectId: "p1", workspaceId: "w1" },
+      { machineId: "local", projectId: "p1", workspaceId: "w1" },
+    )).toBe(true);
+    expect(routeMatchesWorkspaceIdentity(
+      { machineId: "remote", projectId: "p1", workspaceId: "w1" },
+      { machineId: "local", projectId: "p1", workspaceId: "w1" },
+    )).toBe(false);
+    expect(routeMatchesWorkspaceIdentity(
+      { machineId: "remote", projectId: "p1", workspaceId: "other" },
+      { machineId: "remote", projectId: "p1", workspaceId: "w1" },
+    )).toBe(false);
   });
 
   it("writes compact URLs with push history and preserves path/hash", () => {

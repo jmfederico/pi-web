@@ -94,6 +94,7 @@
             <a href="#when-to-use">When to use it</a>
             <a href="#prepare-machines">Set up another runtime</a>
             <a href="#add-machine">Add a machine</a>
+            <a href="#instance-identity">Which instance is this?</a>
             <a href="#what-is-proxied">What works remotely</a>
             <a href="#auth-credentials">Credentials</a>
             <a href="#plugins">Plugins</a>
@@ -194,13 +195,42 @@ PI WEB gateway you opened
                 <li>Paste an optional bearer token if the remote endpoint requires one.</li>
               </ol>
               <p>
-                The Machines section appears when there is more than one machine. Select a machine, then add projects,
-                workspaces, and sessions on that selected machine.
+                The machine control sits in the header next to the PI WEB brand. With several machines it is a
+                dropdown listing each machine with its own brand icon; the local entry shows the address of the
+                gateway you are connected to. With only the local machine there is nothing to select, so the control
+                stays a plain identity bubble in an installed PWA window, carrying the instance favicon and that
+                gateway address. On narrow layouts the breadcrumb's Machine chip carries the same identity. Select a
+                machine, then add projects, workspaces, and sessions on that selected machine. See
+                <a href="#instance-identity">Which instance is this?</a>.
               </p>
               <div class="callout">
                 Removing a remote machine only removes it from this gateway's registry. It does not stop the remote PI WEB
                 service or delete projects, workspaces, sessions, or credentials on the target machine.
               </div>
+            </section>
+
+            <section id="instance-identity">
+              <h2>Which instance is this?</h2>
+              <p>
+                An installed PWA window has no browser URL bar or tab favicon, so PI WEB names the instance there
+                itself: with several machines, the header dropdown lists every machine with its own brand icon and the
+                local entry shows the gateway address; with only the local machine, a static bubble shows the instance
+                favicon and the gateway address (host and any deployment path). On narrow layouts the breadcrumb leads
+                with a Machine chip carrying the same icon and address. In a regular browser tab these location
+                indicators stay hidden — the browser chrome already identifies the instance — and the machine control
+                remains a pure selector.
+              </p>
+              <p>
+                The address is the ground truth for which gateway serves the window; the selected machine decides which
+                runtime your projects, workspaces, and sessions live on.
+              </p>
+              <p>
+                Development deployments recolor the identity purple instead of the stock teal: the favicon, the PWA
+                icons, and the installed PWA name, which becomes <strong>PI WEB (dev)</strong>. Docker dev containers
+                and source checkouts count as development deployments; package installs and Docker runtime deployments
+                stay teal. Already-installed PWAs keep the icon and name captured at install time, so reinstall the PWA
+                after a deployment changes flavor.
+              </p>
             </section>
 
             <section id="what-is-proxied">

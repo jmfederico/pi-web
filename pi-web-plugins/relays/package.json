@@ -1,9 +1,0 @@
-{
-  "name": "@pi-web/relays-plugin",
-  "private": true,
-  "piWeb": {
-    "plugins": [
-      { "id": "relays", "browserRoot": ".", "module": "pi-web-plugin.js" }
-    ]
-  }
-}

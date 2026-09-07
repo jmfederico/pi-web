@@ -11,11 +11,12 @@ const configResponse: PiWebConfigResponse = {
 };
 
 const pluginsResponse: PiWebPluginsResponse = {
-  lifecycleVersion: 1,
+  lifecycleVersion: 2,
   plugins: [],
   diagnostics: [],
   serverRuntime: {
     status: "available",
+    terminalMode: "recovery-disabled",
     restartRequired: false,
     recovery: {
       showSafeStart: "pi-web plugins safe-start show",

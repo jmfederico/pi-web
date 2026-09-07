@@ -245,6 +245,8 @@ The values PI WEB sets for a container stay authoritative: `HOME`, `XDG_CONFIG_H
 
 The generated `.env` and `.pi-web/docker-compose-dev.generated.env` files serve a different purpose: Docker Compose reads them to fill in placeholders in the Compose files, so keys added there configure Compose itself and do not reach the container process environment.
 
+Interactive terminals and agent tools resolve the same commands. Web terminals start login shells, and openSUSE's `/etc/profile` resets `PATH` to a minimal value, so the image ships `/etc/profile.d/pi-web-path-parity.sh`, which merges back the inherited entries the reset dropped. Terminals therefore settle on the same `PATH` that agent sessions inherit from the session daemon, including image-level entries such as development mode's `/workspace/node_modules/.bin` and any `PATH` override from `container.env`.
+
 ## Localhost binding and remote access
 
 The runtime listens on `0.0.0.0:8504` inside the container but publishes it to `127.0.0.1:8504` on the host by default.

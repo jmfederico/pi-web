@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import gitPlugin from "../../../../pi-web-plugins/git/browser/pi-web-plugin.js";
-import { machineScopedPluginId } from "../../../shared/machinePluginIds";
+import { machineScopedBundledPluginId, machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { loadExternalPlugins, resolvePluginModuleUrl } from "./external";
 import { PluginRegistry } from "./registry";
 
@@ -13,19 +13,69 @@ afterEach(() => {
 });
 
 describe("external plugin manifests", () => {
-  it("fetches the default manifest through the application base", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 404 })));
+  it("treats a missing default manifest as an explicit required-load failure", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 404, statusText: "Not Found" })));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadExternalPlugins()).resolves.toEqual({ registrations: [], failures: [] });
+    await expect(loadExternalPlugins()).rejects.toThrow("Failed to load plugin manifest (404 Not Found)");
 
     expect(fetchMock).toHaveBeenCalledWith("https://pi.example.test/pi-web-plugins/manifest.json", { cache: "no-store" });
+  });
+
+  it("fails closed for network, parse, and required-entry manifest failures", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("manifest network unavailable"))));
+    await expect(loadExternalPlugins()).rejects.toThrow("manifest network unavailable");
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{not-json", {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }))));
+    await expect(loadExternalPlugins()).rejects.toThrow();
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "required",
+      plugins: [{ id: "info", module: "./info/plugin.js", machineSpecific: false }],
+    })))));
+    await expect(loadExternalPlugins(undefined, { moduleLoader: vi.fn() }))
+      .rejects.toThrow("Required Terminal plugin manifest entry is unavailable or out of order");
+  });
+
+  it("rejects a Terminal entry in a recovery-disabled manifest before module import", async () => {
+    const moduleLoader = vi.fn();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "pi-web.terminal", module: "./pi-web.terminal/pi-web-plugin.js", source: "bundled", scope: "bundled", machineSpecific: true }],
+    })))));
+
+    await expect(loadExternalPlugins(undefined, { moduleLoader }))
+      .rejects.toThrow("Recovery-disabled plugin manifest must not publish Terminal");
+    expect(moduleLoader).not.toHaveBeenCalled();
+  });
+
+  it("treats a plain terminal id as an ordinary third-party plugin", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "terminal", module: "./terminal/plugin.js", source: "local", scope: "local" }],
+    })))));
+    const moduleLoader = vi.fn(() => Promise.resolve({
+      default: { apiVersion: 2, name: "Third-party terminal", activate: () => ({ contributions: {} }) },
+    }));
+
+    const result = await loadExternalPlugins(undefined, { moduleLoader });
+
+    expect(result.registrations).toMatchObject([{ id: "terminal", plugin: { name: "Third-party terminal" } }]);
+    expect(result.failures).toEqual([]);
   });
 
   it("loads manifest-relative modules from a nested deployment", async () => {
     const manifestUrl = "https://pi.example.test/test/ai/pi-web-plugins/manifest.json";
     const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({
-      plugins: [{ id: "info", module: "./info/pi-web-plugin.js?v=1", backendRevision: "server-r1", machineSpecific: false }],
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "info", module: "./info/pi-web-plugin.js?v=1", backendRevision: "server-r1", pairedRequestVersion: 1, pairedChannelVersion: 1, machineSpecific: false }],
     }))));
     const moduleLoader = vi.fn(() => Promise.resolve({
       default: { apiVersion: 2, name: "Info", activate: () => ({ contributions: {} }) },
@@ -37,12 +87,88 @@ describe("external plugin manifests", () => {
     expect(fetchMock).toHaveBeenCalledWith(manifestUrl, { cache: "no-store" });
     expect(moduleLoader).toHaveBeenCalledWith("https://pi.example.test/test/ai/pi-web-plugins/info/pi-web-plugin.js?v=1");
     expect(result.failures).toEqual([]);
-    expect(result.registrations).toMatchObject([{ id: "info", backendRevision: "server-r1", machineSpecific: false, plugin: { apiVersion: 2, name: "Info" } }]);
+    expect(result.registrations).toMatchObject([{ id: "info", backendRevision: "server-r1", pairedRequestVersion: 1, pairedChannelVersion: 1, machineSpecific: false, plugin: { apiVersion: 2, name: "Info" } }]);
+  });
+
+  it.each([
+    { pairedRequestVersion: 2, backendRevision: "server-r1" },
+    { pairedRequestVersion: 1 },
+    { pairedChannelVersion: 2, backendRevision: "server-r1" },
+    { pairedChannelVersion: 1 },
+  ])("rejects invalid paired backend capability metadata before module import", async (backend) => {
+    const moduleLoader = vi.fn(() => Promise.resolve({
+      default: { apiVersion: 2, name: "Info", activate: () => ({ contributions: {} }) },
+    }));
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "info", module: "./info/plugin.js", ...backend }],
+    })))));
+
+    await expect(loadExternalPlugins(undefined, { moduleLoader })).rejects.toThrow("Invalid plugin manifest entry");
+    expect(moduleLoader).not.toHaveBeenCalled();
+  });
+
+  it("accepts independently advertised paired request-only and channel-only capabilities", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [
+        { id: "request-only", module: "./request/plugin.js", backendRevision: "request-r1", pairedRequestVersion: 1 },
+        { id: "channel-only", module: "./channel/plugin.js", backendRevision: "channel-r1", pairedChannelVersion: 1 },
+      ],
+    })))));
+    const moduleLoader = vi.fn(() => Promise.resolve({
+      default: { apiVersion: 2, name: "Info", activate: () => ({ contributions: {} }) },
+    }));
+
+    const result = await loadExternalPlugins(undefined, { moduleLoader });
+
+    expect(result.registrations).toMatchObject([
+      { id: "request-only", backendRevision: "request-r1", pairedRequestVersion: 1 },
+      { id: "channel-only", backendRevision: "channel-r1", pairedChannelVersion: 1 },
+    ]);
+  });
+
+  it("loads required Terminal first and stops before ordinary modules when it fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "required",
+      plugins: [
+        {
+          id: "pi-web.terminal",
+          module: "./pi-web.terminal/pi-web-plugin.js",
+          backendRevision: "terminal-r1",
+          pairedRequestVersion: 1,
+          pairedChannelVersion: 1,
+          source: "bundled",
+          scope: "bundled",
+          machineSpecific: true,
+        },
+        { id: "info", module: "./info/pi-web-plugin.js", machineSpecific: false },
+      ],
+    })))));
+    const failure = new Error("Terminal module failed");
+    const moduleLoader = vi.fn((moduleUrl: string) => moduleUrl.includes("/pi-web.terminal/")
+      ? Promise.reject(failure)
+      : Promise.resolve({ default: { apiVersion: 2, name: "Info", activate: () => ({ contributions: {} }) } }));
+
+    const result = await loadExternalPlugins(undefined, { moduleLoader });
+
+    expect(result).toMatchObject({
+      terminalMode: "required",
+      registrations: [],
+      failures: [{ entry: { id: "pi-web.terminal" }, error: failure }],
+    });
+    expect(moduleLoader).toHaveBeenCalledOnce();
+    expect(moduleLoader.mock.calls[0]?.[0]).toContain("/pi-web.terminal/");
   });
 
   it("attributes unsupported browser API versions to the plugin module", async () => {
     const manifestUrl = "https://pi.example.test/pi-web-plugins/manifest.json";
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
       plugins: [{ id: "legacy", module: "./legacy/plugin.js" }],
     })))));
 
@@ -61,7 +187,8 @@ describe("external plugin manifests", () => {
   it("loads the bundled Git browser entry through the same remote manifest and registry path", async () => {
     const manifestUrl = "https://pi.example.test/api/machines/remote-1/pi-web-plugins/manifest.json";
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
-      lifecycleVersion: 1,
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
       plugins: [{ id: "git", module: "./git/pi-web-plugin.js?v=git-r1", backendRevision: "git-server-r1", machineSpecific: true }],
     })))));
     const moduleLoader = vi.fn(() => Promise.resolve({ default: gitPlugin }));
@@ -83,8 +210,39 @@ describe("external plugin manifests", () => {
     expect(registry.getWorkspacePanels().map((panel) => panel.id)).toEqual([`${registrationPluginId}:workspace.git`]);
   });
 
+  it("accepts host-attributed bundled ids locally and through machine-scoped federation", async () => {
+    const manifestUrl = "https://pi.example.test/test/ai/api/machines/remote-1/pi-web-plugins/manifest.json";
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{
+        id: "pi-web.tools",
+        module: "./pi-web.tools/plugin.js",
+        source: "bundled",
+        scope: "bundled",
+        machineSpecific: true,
+      }],
+    })))));
+    const moduleLoader = vi.fn(() => Promise.resolve({
+      default: { apiVersion: 2, name: "Bundled tools", activate: () => ({ contributions: {} }) },
+    }));
+
+    const local = await loadExternalPlugins(manifestUrl, { moduleLoader });
+    const remote = await loadExternalPlugins(manifestUrl, { machineId: "remote-1", moduleLoader });
+
+    expect(local.registrations).toMatchObject([{ id: "pi-web.tools" }]);
+    expect(remote.registrations).toMatchObject([{
+      id: machineScopedBundledPluginId("remote-1", "pi-web.tools"),
+      sourcePluginId: "pi-web.tools",
+      machineId: "remote-1",
+    }]);
+    expect(moduleLoader).toHaveBeenCalledWith("https://pi.example.test/test/ai/api/machines/remote-1/pi-web-plugins/pi-web.tools/plugin.js");
+  });
+
   it("isolates module failures and lets a later load skip registrations that already succeeded", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
       plugins: [
         { id: "stable", module: "./stable/plugin.js" },
         { id: "retry", module: "./retry/plugin.js" },
@@ -120,6 +278,8 @@ describe("external plugin manifests", () => {
 
   it("rejects duplicate manifest ids before importing either module", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
       plugins: [
         { id: "duplicate", module: "./duplicate/one.js" },
         { id: "duplicate", module: "./duplicate/two.js" },
@@ -131,8 +291,10 @@ describe("external plugin manifests", () => {
     expect(moduleLoader).not.toHaveBeenCalled();
   });
 
-  it.each(["core", "themes", "machine.remote.plugin"])('rejects reserved manifest id "%s" before importing modules', async (id) => {
+  it.each(["core", "themes", "machine.remote.plugin", "pi-web", "pi-web.tools"])('rejects reserved manifest id "%s" before importing modules', async (id) => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
       plugins: [{ id, module: `./${id}/plugin.js` }],
     })))));
     const moduleLoader = vi.fn(() => Promise.resolve({ default: { apiVersion: 2, name: id, activate: () => ({ contributions: {} }) } }));
@@ -149,6 +311,18 @@ describe("external plugin manifests", () => {
 
     await expect(loadExternalPlugins("api/machines/remote-1/pi-web-plugins/manifest.json")).rejects.toThrow(
       "Failed to load plugin manifest (409 Conflict): Remote machine plugin lifecycle is incompatible: Update and restart PI WEB on the remote machine.",
+    );
+  });
+
+  it("preserves Fastify messages for required Terminal recovery guidance", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      statusCode: 503,
+      error: "Service Unavailable",
+      message: "Required Terminal browser artifact is stale. Restart the web/API process.",
+    }), { status: 503, statusText: "Service Unavailable" }))));
+
+    await expect(loadExternalPlugins()).rejects.toThrow(
+      "Failed to load plugin manifest (503 Service Unavailable): Required Terminal browser artifact is stale. Restart the web/API process.",
     );
   });
 

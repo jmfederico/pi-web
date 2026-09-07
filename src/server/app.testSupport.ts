@@ -117,13 +117,14 @@ export function registerAppTestHooks(): void {
       config: fakeConfigService(),
       piPackages: fakePiPackageService(),
       piWebPlugins: {
-        manifest: () => Promise.resolve({ lifecycleVersion: 1, plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local", machineSpecific: false }] }),
+        manifest: () => Promise.resolve({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local", machineSpecific: false }] }),
         plugins: () => Promise.resolve({
-          lifecycleVersion: 1,
+          lifecycleVersion: 2,
           plugins: [{ id: "fake", module: "/pi-web-plugins/fake/plugin.js?v=1", source: "test", scope: "local", machineSpecific: false, enabled: true, discovered: true, conflict: false }],
           diagnostics: [],
           serverRuntime: {
             status: "available",
+            terminalMode: "recovery-disabled",
             restartRequired: false,
             recovery: {
               showSafeStart: "pi-web plugins safe-start show",

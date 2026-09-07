@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { loadPiWebConfig, parseAgentConfig, parseUploadsConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
+import { loadPiWebConfig, parseAgentConfig, parseAttachmentsConfig, parseUploadsConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
 import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebManagedAllowedHost } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
 
@@ -16,6 +16,7 @@ export const SELECTED_MACHINE_CONFIG_KEYS = [
   "plugins",
   "pathAccess",
   "uploads",
+  "attachments",
   "maxUploadBytes",
   "spawnSessions",
   "subsessions",
@@ -168,6 +169,7 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   const plugins = value["plugins"];
   const pathAccess = value["pathAccess"];
   const uploads = value["uploads"];
+  const attachments = value["attachments"];
   const maxUploadBytes = value["maxUploadBytes"];
   const safeTunnel = value["safeTunnel"];
   const spawnSessions = value["spawnSessions"];
@@ -187,6 +189,7 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   if (plugins !== undefined) config.plugins = parsePluginsRequest(plugins);
   if (pathAccess !== undefined) config.pathAccess = parsePathAccessRequest(pathAccess);
   if (uploads !== undefined) config.uploads = parseUploadsConfig(uploads, "request");
+  if (attachments !== undefined) config.attachments = parseAttachmentsConfig(attachments, "request");
   if (maxUploadBytes !== undefined) config.maxUploadBytes = parseMaxUploadBytesRequest(maxUploadBytes);
   if (safeTunnel !== undefined) {
     if (typeof safeTunnel !== "boolean") throw new Error("PI WEB config safeTunnel must be a boolean");
@@ -213,6 +216,7 @@ function pickSelectedMachineConfig(config: PiWebConfigValues): PiWebConfig {
     ...(config.plugins !== undefined ? { plugins: config.plugins } : {}),
     ...(config.pathAccess !== undefined ? { pathAccess: config.pathAccess } : {}),
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
+    ...(config.attachments !== undefined ? { attachments: config.attachments } : {}),
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),

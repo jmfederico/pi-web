@@ -149,9 +149,33 @@ export function liveScopedModelIds(enabledIds: readonly string[] | null, availab
   return hasEnabledAvailableModel && !allAvailableModelsEnabled ? enabledIds : null;
 }
 
+/**
+ * Resolve the canonical enabled ids into the SDK's live cycling scope. A null
+ * result means every currently available model is pickable, so the SDK's
+ * empty scoped-model array is intentional rather than an empty selection.
+ */
+export function scopedModelsFromEnabledIds<TModel extends { provider: string; id: string }>(
+  available: readonly TModel[],
+  enabledIds: readonly string[] | null,
+  existingScopedModels: readonly { model: { provider: string; id: string }; thinkingLevel?: ThinkingLevel }[] = [],
+): { model: TModel; thinkingLevel?: ThinkingLevel }[] {
+  const scopeIds = liveScopedModelIds(enabledIds, available.map(modelScopeId));
+  if (scopeIds === null) return [];
+  const modelsById = new Map(available.map((model) => [modelScopeId(model), model]));
+  const thinkingLevelsById = new Map(existingScopedModels.map((scoped) => [modelScopeId(scoped.model), scoped.thinkingLevel]));
+  return scopeIds.flatMap((id) => {
+    const model = modelsById.get(id);
+    if (model === undefined) return [];
+    const thinkingLevel = thinkingLevelsById.get(id);
+    return thinkingLevel === undefined ? [{ model }] : [{ model, thinkingLevel }];
+  });
+}
+
 export interface EnabledModelCatalogEntry<TModel> {
   model: TModel;
   enabled: boolean;
+  /** Position in `available`, retained even though the response is grouped enabled-first. */
+  catalogIndex: number;
 }
 
 /**
@@ -164,20 +188,20 @@ export function catalogWithEnabledFirst<TModel extends { provider: string; id: s
   available: readonly TModel[],
   enabledIds: readonly string[] | null,
 ): EnabledModelCatalogEntry<TModel>[] {
-  if (enabledIds === null) return available.map((model) => ({ model, enabled: true }));
+  if (enabledIds === null) return available.map((model, catalogIndex) => ({ model, enabled: true, catalogIndex }));
   const enabledSet = new Set(enabledIds);
-  const modelsById = new Map(available.map((model) => [modelScopeId(model), model]));
+  const modelsById = new Map(available.map((model, catalogIndex) => [modelScopeId(model), { model, catalogIndex }]));
   const entries: EnabledModelCatalogEntry<TModel>[] = [];
   const listed = new Set<string>();
   for (const id of enabledIds) {
     if (listed.has(id)) continue;
-    const model = modelsById.get(id);
-    if (model === undefined) continue;
+    const indexedModel = modelsById.get(id);
+    if (indexedModel === undefined) continue;
     listed.add(id);
-    entries.push({ model, enabled: true });
+    entries.push({ ...indexedModel, enabled: true });
   }
-  for (const model of available) {
-    if (!enabledSet.has(modelScopeId(model))) entries.push({ model, enabled: false });
-  }
+  available.forEach((model, catalogIndex) => {
+    if (!enabledSet.has(modelScopeId(model))) entries.push({ model, enabled: false, catalogIndex });
+  });
   return entries;
 }

@@ -1,9 +1,9 @@
-import type { AuthProviderOption, CommandOption, CommandResult, ExtensionDialogAnswer, ExtensionDialogCloseReason, FileContentResponse, FileTreeEntry, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PendingAskUser, PendingExtensionDialog, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionModelCatalogEntry, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace } from "./api";
+import type { AuthProviderOption, CommandOption, CommandResult, ExtensionDialogAnswer, ExtensionDialogCloseReason, Machine, MachineHealth, MachineRuntime, OAuthFlowState, PendingAskUser, PendingExtensionDialog, PiWebStatusResponse, Project, QueuedSessionMessage, SessionActivity, SessionInfo, SessionModelCatalogEntry, SessionStatus, SessionTreeSnapshot, TerminalCommandRun, Workspace } from "./api";
 import type { ChatLine } from "./components/shared";
 import type { MachineStatusSnapshot } from "../../shared/machineStatus";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
-import type { WorkspaceUploadBatchState } from "./workspaceUploadState";
+import type { BrowserErrorMap } from "./browserErrors";
 
 export interface AppState {
   machines: Machine[];
@@ -64,30 +64,29 @@ export interface AppState {
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
   treeDialog: SessionTreeSnapshot | undefined;
-  modelDialog: { title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; selectedValue?: string } | undefined;
+  modelDialog: { instanceId: number; origin: ModelDialogOrigin; title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; selectedValue?: string } | undefined;
   thinkingDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
   themeDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
   authDialog: AuthDialogState | undefined;
   actionPaletteOpen: boolean;
   projectDialogOpen: boolean;
   machineDialogOpen: boolean;
-  workspaceTool: QualifiedContributionId;
+  workspaceTool: QualifiedContributionId | undefined;
   mainView: "navigation" | "chat" | QualifiedContributionId;
-  fileTree: FileTreeEntry[];
-  expandedDirs: Record<string, FileTreeEntry[]>;
-  selectedFilePath: string | undefined;
-  selectedFileContent: FileContentResponse | undefined;
-  selectedFileLoadError: string | undefined;
-  fileTreeStale: boolean;
-  /** Manual workspace file upload batches, keyed by client-owned batch id. */
-  workspaceUploadBatches: Record<string, WorkspaceUploadBatchState>;
-  activeTerminalCount: number;
-  selectedTerminalId: string | undefined;
   piWebStatus: PiWebStatusResponse | undefined;
+  /** Browser-local failures retained by their machine/project/workspace/session owner. */
+  browserErrors: BrowserErrorMap;
+  /** Legacy global browser error surface for unmigrated global operations. */
   error: string;
 }
 
 /** A closed extension dialog paired with the record the browser rendered while it was open. */
+export interface ModelDialogOrigin {
+  machineId: string;
+  sessionId: string;
+  cwd: string;
+}
+
 export interface ClosedExtensionDialog {
   dialog: PendingExtensionDialog;
   reason: ExtensionDialogCloseReason;
@@ -108,13 +107,6 @@ export type WorkspaceScopedStateReset = Pick<AppState,
   | "startingSessionCount"
   | "selectedNotificationInbox"
   | "treeDialog"
-  | "fileTree"
-  | "expandedDirs"
-  | "selectedFilePath"
-  | "selectedFileContent"
-  | "selectedFileLoadError"
-  | "fileTreeStale"
-  | "selectedTerminalId"
   | "error"
 >;
 
@@ -125,13 +117,6 @@ export function resetWorkspaceScopedState(): WorkspaceScopedStateReset {
     startingSessionCount: 0,
     selectedNotificationInbox: undefined,
     treeDialog: undefined,
-    fileTree: [],
-    expandedDirs: {},
-    selectedFilePath: undefined,
-    selectedFileContent: undefined,
-    selectedFileLoadError: undefined,
-    fileTreeStale: false,
-    selectedTerminalId: undefined,
     error: "",
   };
 }
@@ -180,18 +165,10 @@ export function initialAppState(): AppState {
     actionPaletteOpen: false,
     projectDialogOpen: false,
     machineDialogOpen: false,
-    workspaceTool: "core:workspace.files",
+    workspaceTool: undefined,
     mainView: "chat",
-    fileTree: [],
-    expandedDirs: {},
-    selectedFilePath: undefined,
-    selectedFileContent: undefined,
-    selectedFileLoadError: undefined,
-    fileTreeStale: false,
-    workspaceUploadBatches: {},
-    activeTerminalCount: 0,
-    selectedTerminalId: undefined,
     piWebStatus: undefined,
+    browserErrors: {},
     error: "",
   };
 }

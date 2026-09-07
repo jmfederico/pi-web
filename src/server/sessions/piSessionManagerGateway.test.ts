@@ -1,11 +1,13 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPiSessionManagerGateway, defaultPiSessionDir, defaultPiSessionsRoot, filterSessionsForCwd, resolveSessionFileInDir, SessionDirResolver } from "./piSessionManagerGateway.js";
+import { DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT } from "./transcriptBranchCache.js";
 import type { PiSessionListEntry } from "./piSessionService.js";
 import type { PiSessionManager } from "./piSessionService.js";
 import { readSessionHeaderSummary } from "./sessionFileHeader.js";
+import { isRecord } from "./sessionFileFormat.js";
 import { rewriteHeaderWithoutParentSession } from "./sessionFileRewrite.testSupport.js";
 import { sep } from "node:path";
 
@@ -183,6 +185,172 @@ describe("Pi session manager gateway", () => {
     await appendFile(path, `${message("m2", "assistant", "hi there")}\n${message("m3", "user", "follow-up")}\n`, "utf8");
 
     await expect(gateway.list(cwd)).resolves.toMatchObject([{ id: "memo-session", cwd, messageCount: 3, firstMessage: "hello" }]);
+  });
+
+  it("opens a fresh transcript snapshot after another process appends", async () => {
+    const sharedSessionDir = join(tempDir, "snapshot-sessions");
+    const path = await writeNamedSessionFile(sharedSessionDir, "snapshot.jsonl", { id: "snapshot-session", cwd });
+    const message = (id: string, parentId: string, role: string, text: string) =>
+      JSON.stringify({ type: "message", id, parentId, timestamp: "2026-01-01T00:01:00.000Z", message: { role, content: [{ type: "text", text }] } });
+    await appendFile(path, `${message("m1", "root", "user", "before")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const before = await readFile(path);
+
+    await expect(gateway.readBranch(path)).resolves.toHaveLength(1);
+    await expect(readFile(path)).resolves.toEqual(before);
+    await appendFile(path, `${message("m2", "m1", "assistant", "after")}\n`, "utf8");
+
+    await expect(gateway.readBranch(path)).resolves.toHaveLength(2);
+  });
+
+  it("serves repeated snapshots of an unchanged file from the memo", async () => {
+    const sharedSessionDir = join(tempDir, "memoized-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "memoized.jsonl", { id: "memoized-session", cwd });
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+
+    const first = await gateway.readBranch(path);
+    // Identity, not just equality: an unchanged file must not be re-parsed.
+    expect(await gateway.readBranch(path)).toBe(first);
+  });
+
+  it("resolves no snapshot for a transcript path with no file on disk, without memoizing the miss", async () => {
+    // A session created in memory and never persisted knows its future path,
+    // but there is no file: absence must read as "no snapshot", not ENOENT.
+    const sharedSessionDir = join(tempDir, "absent-snapshots");
+    const path = join(sharedSessionDir, "absent.jsonl");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+
+    await expect(gateway.readBranch(path)).resolves.toBeUndefined();
+
+    // The miss is not memoized: once the file exists, the same path serves it.
+    await writeNamedSessionFile(sharedSessionDir, "absent.jsonl", { id: "absent-session", cwd });
+    await appendFile(path, `${JSON.stringify({ type: "message", id: "m1", parentId: "root", timestamp: "2026-01-01T00:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "persisted later" }] } })}\n`, "utf8");
+
+    await expect(gateway.readBranch(path)).resolves.toHaveLength(1);
+  });
+
+  it("bounds memoized snapshots, re-reading a file whose snapshot was evicted", async () => {
+    // The daemon outlives any one session: polling many distinct sessions must
+    // not accumulate their parsed transcripts without limit. Filling the memo
+    // past its bound evicts the least recently used snapshot, so the next read
+    // of that file parses it again (fresh instance, same content).
+    const sharedSessionDir = join(tempDir, "bounded-snapshots");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const firstPath = await writeNamedSessionFile(sharedSessionDir, "bounded-0.jsonl", { id: "bounded-0", cwd });
+    await appendFile(firstPath, `${JSON.stringify({ type: "message", id: "m1", parentId: "root", timestamp: "2026-01-01T00:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "evicted and re-read" }] } })}\n`, "utf8");
+
+    const first = await gateway.readBranch(firstPath);
+    for (let i = 1; i < DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT; i += 1) {
+      await gateway.readBranch(await writeNamedSessionFile(sharedSessionDir, `bounded-${String(i)}.jsonl`, { id: `bounded-${String(i)}`, cwd }));
+    }
+    // One read beyond the bound evicts the oldest snapshot (firstPath's).
+    await gateway.readBranch(await writeNamedSessionFile(sharedSessionDir, "bounded-overflow.jsonl", { id: "bounded-overflow", cwd }));
+
+    const reread = await gateway.readBranch(firstPath);
+    expect(reread).not.toBe(first);
+    expect(reread).toEqual(first);
+  });
+
+  it("extends a memoized snapshot from only the appended bytes when the file grows", async () => {
+    const sharedSessionDir = join(tempDir, "growing-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "growing.jsonl", { id: "growing-session", cwd });
+    await appendFile(path, `${snapshotMessage("m1", "root", "before")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+
+    const first = await gateway.readBranch(path);
+    await appendFile(path, `${snapshotMessage("m2", "m1", "middle")}\n`, "utf8");
+    const second = await gateway.readBranch(path);
+    await appendFile(path, `${snapshotMessage("m3", "m2", "after")}\n`, "utf8");
+    const third = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["m1", "m2"]);
+    expect(branchIds(third)).toEqual(["m1", "m2", "m3"]);
+    // Identity, not just equality: re-reading the whole file would mint fresh
+    // objects for the prefix, so identical instances prove only the appended
+    // bytes were parsed and folded into the memoized entries.
+    expect(second).not.toBe(first);
+    expect(second?.[0]).toBe(first?.[0]);
+    expect(third?.[0]).toBe(first?.[0]);
+    expect(third?.[1]).toBe(second?.[1]);
+  });
+
+  it("re-reads the whole transcript when the file shrinks", async () => {
+    // Truncation breaks the append assumption: the memoized size no longer
+    // marks a prefix of the file, so the snapshot must be rebuilt whole.
+    const sharedSessionDir = join(tempDir, "shrinking-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "shrinking.jsonl", { id: "shrinking-session", cwd });
+    await appendFile(path, `${snapshotMessage("m1", "root", "kept")}\n${snapshotMessage("m2", "m1", "dropped")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const first = await gateway.readBranch(path);
+
+    await writeFile(path, `${JSON.stringify({ type: "session", version: 3, id: "shrinking-session", timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n${snapshotMessage("m1", "root", "kept")}\n`, "utf8");
+    const second = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["m1"]);
+    // A full re-read mints fresh objects even where content is unchanged.
+    expect(second?.[0]).not.toBe(first?.[0]);
+  });
+
+  it("re-reads the whole transcript when the file is replaced", async () => {
+    // A rename swaps the inode, so the memoized prefix belongs to a different
+    // file and the replacement must be parsed whole.
+    const sharedSessionDir = join(tempDir, "replaced-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "replaced.jsonl", { id: "replaced-session", cwd });
+    await appendFile(path, `${snapshotMessage("m1", "root", "original")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const first = await gateway.readBranch(path);
+
+    const replacement = join(sharedSessionDir, "replacement.jsonl");
+    await writeFile(replacement, `${JSON.stringify({ type: "session", version: 3, id: "replaced-session", timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n${snapshotMessage("n1", "root", "replacement")}\n`, "utf8");
+    await rename(replacement, path);
+    const second = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["n1"]);
+    expect(second?.[0]).not.toBe(first?.[0]);
+  });
+
+  it("re-reads the whole transcript when the appended bytes do not start with a parseable line", async () => {
+    // A corrupt first appended line means the memoized size did not mark a
+    // real line boundary (or a writer emitted garbage): fall back to a full
+    // re-read, which skips the corrupt line the way it always has.
+    const sharedSessionDir = join(tempDir, "corrupt-append-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "corrupt-append.jsonl", { id: "corrupt-append-session", cwd });
+    await appendFile(path, `${snapshotMessage("m1", "root", "before")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const first = await gateway.readBranch(path);
+
+    await appendFile(path, `{"type":"message","id":"broken"\n${snapshotMessage("m2", "m1", "after")}\n`, "utf8");
+    const second = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["m1", "m2"]);
+    expect(second?.[0]).not.toBe(first?.[0]);
+  });
+
+  it("re-reads the whole transcript when the memoized prefix no longer ends on a line boundary", async () => {
+    // The byte before the append offset must be a newline; otherwise the
+    // cached size is not a line boundary in the file's current content and
+    // the tail read cannot be trusted. Here the cached parse ended at an
+    // unterminated last line, so the next append lands mid-line.
+    const sharedSessionDir = join(tempDir, "unterminated-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "unterminated.jsonl", { id: "unterminated-session", cwd });
+    await appendFile(path, snapshotMessage("m1", "root", "unterminated"), "utf8"); // no trailing newline
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const first = await gateway.readBranch(path);
+
+    await appendFile(path, `\n${snapshotMessage("m2", "m1", "after")}\n`, "utf8");
+    const second = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["m1", "m2"]);
+    expect(second?.[0]).not.toBe(first?.[0]);
   });
 
   it("invalidateSessionFile drops the memo for a header rewritten in place", async () => {
@@ -412,6 +580,16 @@ function hasSessionDir(manager: PiSessionManager): manager is PiSessionManager &
 
 function sessionEntry(id: string, sessionCwd: string): PiSessionListEntry {
   return { path: join(tempDir, `${id}.jsonl`), id, cwd: sessionCwd, created: new Date(), modified: new Date(), messageCount: 0, firstMessage: "", allMessagesText: "" };
+}
+
+/** One transcript message line, as the SDK would append it. */
+function snapshotMessage(id: string, parentId: string, text: string): string {
+  return JSON.stringify({ type: "message", id, parentId, timestamp: "2026-01-01T00:01:00.000Z", message: { role: "user", content: [{ type: "text", text }] } });
+}
+
+/** The entry ids of a transcript snapshot branch, for content assertions. */
+function branchIds(branch: unknown[] | undefined): unknown[] {
+  return (branch ?? []).map((entry) => (isRecord(entry) ? entry["id"] : undefined));
 }
 
 async function writeSessionFile(dir: string, id: string, sessionCwd: string): Promise<void> {

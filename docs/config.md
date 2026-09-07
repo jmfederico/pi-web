@@ -15,7 +15,7 @@ Each PI WEB machine has its own config. When using Fleet/machine federation, Set
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
-If you installed services with a custom config path, `pi-web start`, `pi-web restart`, and `pi-web doctor` automatically use the `PI_WEB_CONFIG` saved in those service definitions for their readiness checks. A nonempty `PI_WEB_CONFIG` supplied when invoking one of those commands overrides the installed path for that command. On systemd, these commands fail rather than guess if active drop-ins, `EnvironmentFile=` inputs, stale manager state, a different loaded fragment, or an effective environment mismatch make the loaded definition untrustworthy. On launchd, `start` and `doctor` likewise fail if an already-loaded label came from another plist or retains a different config path; `restart` reloads the installed plists and can repair that stale state. Rerun `pi-web install --config /path/to/config.json` after changing the managed path or after upgrading from a version that only applied it to the web service; this regenerates service files so the web/API and session daemon use the same config.
+If you installed services with a custom config path, `pi-web start`, `pi-web restart`, and `pi-web doctor` automatically use the `PI_WEB_CONFIG` saved in those service definitions for their readiness checks. A nonempty `PI_WEB_CONFIG` supplied when invoking one of those commands overrides the installed path for that command. On systemd, these commands fail rather than guess if `EnvironmentFile=` inputs, stale manager state, a different loaded fragment, or an effective environment mismatch make the loaded definition untrustworthy. Drop-ins that do not alter the inspected environment (such as distribution-provided global hardening drop-ins) are tolerated. On launchd, `start` and `doctor` likewise fail if an already-loaded label came from another plist or retains a different config path; `restart` reloads the installed plists and can repair that stale state. Rerun `pi-web install --config /path/to/config.json` after changing the managed path or after upgrading from a version that only applied it to the web service; this regenerates service files so the web/API and session daemon use the same config.
 
 ## Reverse-proxy deployment paths
 
@@ -31,7 +31,7 @@ Machine-global runtime values are resolved as:
 defaults → global config file → environment overrides
 ```
 
-Supported project-local settings are then applied for that project's workspaces. For upload defaults, `<project>/.pi-web/config.json` overrides the global value.
+Supported project-local settings are then applied for that project's workspaces. For upload and prompt-attachment defaults, `<project>/.pi-web/config.json` overrides the global value.
 
 Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_SAFE_TUNNEL`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
 
@@ -43,6 +43,7 @@ Process restarts depend on the key:
 - `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
+- `attachments.defaultFolder`: applies to new prompt-attachment saves after config/workspace refresh.
 - `plugins`: browser-only changes apply after a browser-tab reload. Any enablement, settings, package-source, or package-revision change affecting a `serverModule` requires a manual session-daemon restart, then a browser reload for its paired UI.
 - `serverPlugins.safeStart`: persistent offline recovery state applied before server-plugin discovery/import on the next sessiond start; use the `pi-web plugins safe-start ...` CLI rather than hand-editing it.
 - Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with `serverModule`, manually restart `pi-web-sessiond.service`, then reload the browser. If a global Pi extension adds or removes a model provider, or changes a provider's connection settings, the same manual sessiond restart is required; `/reload` cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See [Pi extension provider baseline](#pi-extension-provider-baseline).
@@ -59,6 +60,9 @@ Process restarts depend on the key:
   },
   "uploads": {
     "defaultFolder": ".pi-web/uploads"
+  },
+  "attachments": {
+    "defaultFolder": ".pi-web/attachments"
   },
   "maxUploadBytes": 67108864,
   "safeTunnel": false,
@@ -90,13 +94,16 @@ Project-local config lives at `<project>/.pi-web/config.json`. Use it for settin
   },
   "uploads": {
     "defaultFolder": "manual/uploads"
+  },
+  "attachments": {
+    "defaultFolder": "prompt-attachments"
   }
 }
 ```
 
 Project-local `pathAccess.allowedPaths` entries are merged after the global list and deduplicated. Paths must still be host-absolute or `~`-prefixed; relative roots are not supported.
 
-Project-local `uploads.defaultFolder` overrides the global upload destination for workspaces in that project. PI WEB servers always include this workspace-effective value on the workspace responses used locally and through machine federation.
+Project-local `uploads.defaultFolder` overrides the global upload destination for workspaces in that project, and project-local `attachments.defaultFolder` overrides the global prompt-attachment destination the same way. PI WEB servers always include these workspace-effective values on the workspace responses used locally and through machine federation.
 
 Plugins may own separate project files, such as `.pi-web/tasks.json` for the built-in Workspace Tasks plugin.
 
@@ -145,7 +152,7 @@ worktree_path="$1"
 
 ## Configuration matrix
 
-Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `maxUploadBytes`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, Safe Tunnel availability, keyboard shortcuts, and machine registry/tokens stay local.
+Rows with JSON key `—` are runtime-only environment variables, not config-file keys. `Global` means machine-global. In Settings, selected-machine-safe global keys (`pathAccess`, `uploads`, `attachments`, `maxUploadBytes`, `spawnSessions`, `subsessions`, `askUser`, and `plugins`) are edited for the selected machine; gateway host/port/allowed-hosts, Safe Tunnel availability, keyboard shortcuts, and machine registry/tokens stay local.
 
 | Config | JSON key | Env var | Scope | Project-local behavior | Applies / restart |
 | --- | --- | --- | --- | --- | --- |
@@ -156,6 +163,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Experimental Safe Tunnel availability | `safeTunnel` | `PI_WEB_SAFE_TUNNEL` | Global/gateway web/API | Not supported locally or in selected-machine config | Restart gateway web/API; no session-daemon restart |
 | External filesystem roots | `pathAccess.allowedPaths` | — | Global + project | **Merges**: global roots first, then project roots; duplicates removed | Next file request; refresh existing views if needed |
 | Manual file upload default folder | `uploads.defaultFolder` | — | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New Upload dialogs and direct drag/drop batches after config/workspace refresh |
+| Prompt attachment default folder | `attachments.defaultFolder` | — | Global + project | **Overrides**: project value wins for workspaces in that project; otherwise global/default applies | New prompt-attachment saves after config/workspace refresh |
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
@@ -259,6 +267,24 @@ Manual uploads use the workspace file-write path: paths stay workspace-relative,
 For machine federation, Settings saves the global upload default on the selected machine. Remote PI WEB servers always return `workspace.effectiveConfig.uploads.defaultFolder` on the workspace-list response, and the Files panel uses it as the default upload destination.
 
 The per-request size limit is still controlled by `maxUploadBytes` / `PI_WEB_MAX_UPLOAD_BYTES` on the machine serving the upload.
+
+### Prompt attachment defaults
+
+When the chat composer has pending attachments, its delivery selector offers **Save to …**: the attachments are written into a workspace folder and the prompt references the saved paths, instead of attaching the content inline.
+
+`attachments.defaultFolder` sets the workspace-effective save destination shown in that selector. The built-in default is `.pi-web/attachments`; a global config value applies to every project unless `<project>/.pi-web/config.json` sets a project-local override.
+
+```json
+{
+  "attachments": {
+    "defaultFolder": "prompt-attachments"
+  }
+}
+```
+
+The value must be a non-empty workspace-relative folder. PI WEB normalizes repeated separators and backslashes to `/`, and rejects absolute paths or `..` traversal. Saved attachments always stay inside the workspace root, and an explicit per-request folder on the attachments API overrides the configured default.
+
+For machine federation, Settings saves the global attachments default on the selected machine. Remote PI WEB servers always return `workspace.effectiveConfig.attachments.defaultFolder` on the workspace-list response, and the composer uses it as the default save destination.
 
 ### Agent state directory
 
@@ -397,7 +423,7 @@ The `plugins` key controls desired enablement and JSON settings for PI WEB brows
 }
 ```
 
-Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active backend until that restart. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
+Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active backend until that restart. The bundled `pi-web.terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
 
 #### Desired versus active plugin state
 
@@ -430,7 +456,7 @@ pi-web plugins safe-start set none --restart
 pi-web plugins safe-start clear --restart
 ```
 
-`disable` persists `plugins.<id>.enabled: false`. Safe-start state is stored under `serverPlugins.safeStart`: `bundled-only` filters external server packages before discovery/import, while `none` imports no server plugins and retains the kernel project-folder workspace. `clear` restores ordinary configured discovery on the next start. An unsupported `serverPlugins.safeStart` shape or value in otherwise valid JSON fails closed as effective `none`; use `safe-start show`, then `set` or `clear`, to repair it offline.
+`disable` persists `plugins.<id>.enabled: false`, but rejects required `pi-web.terminal` with no-plugin safe-start recovery guidance. Safe-start state is stored under `serverPlugins.safeStart`: `bundled-only` filters external server packages before discovery/import while still requiring bundled Terminal, whereas `none` imports no server plugins and retains the kernel project-folder and diagnosis/settings surfaces without Terminal or Terminal-backed commands. `clear` restores ordinary configured discovery on the next start. An unsupported `serverPlugins.safeStart` shape or value in otherwise valid JSON fails closed as effective `none`; use `safe-start show`, then `set` or `clear`, to repair it offline.
 
 `--restart` performs a restart only for a recognized safe installed-service plan; otherwise it prints manual instructions. The config mutation is durable before PI WEB attempts the restart. If the service-manager command itself fails, restart sessiond manually.
 

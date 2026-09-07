@@ -63,13 +63,14 @@ describe("SessionController send queue", () => {
 
   it("uploads to the workspace folder and rewrites the prompt for folder delivery", async () => {
     let savedCalledWith: PromptAttachment[] | undefined;
+    let savedFolder: string | undefined;
     let promptText: string | undefined;
     let promptAttachments: PromptAttachment[] | undefined;
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
     const attachments: PromptAttachment[] = [{ kind: "image", mimeType: "image/png", data: "QUJD", name: "shot.png" }];
     const api: typeof defaultApi = {
       ...defaultApi,
-      saveAttachments: (_session, sent) => { savedCalledWith = sent; return Promise.resolve([{ path: ".pi-web/attachments/shot.png", mimeType: "image/png", size: 3 }]); },
+      saveAttachments: (_session, sent, _machineId, folder) => { savedCalledWith = sent; savedFolder = folder; return Promise.resolve([{ path: ".pi-web/attachments/shot.png", mimeType: "image/png", size: 3 }]); },
       prompt: (_session, text, _behavior, _machineId, sentAttachments) => { promptText = text; promptAttachments = sentAttachments; return Promise.resolve({ accepted: true }); },
     };
     const controller = new SessionController(
@@ -83,9 +84,39 @@ describe("SessionController send queue", () => {
     await controller.send("check this", undefined, attachments, "folder");
 
     expect(savedCalledWith).toEqual(attachments);
+    // No composer folder on the send: the request omits it so the server-side
+    // configured-default fallback applies.
+    expect(savedFolder).toBeUndefined();
     expect(promptText).toBe("check this\n\n@.pi-web/attachments/shot.png");
     expect(promptAttachments).toBeUndefined();
     expect(state.sendingPrompts).toEqual({});
+  });
+
+  it("forwards the composer-displayed workspace-effective folder with folder-delivery saves", async () => {
+    let savedFolder: string | undefined;
+    let promptText: string | undefined;
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const attachments: PromptAttachment[] = [{ kind: "image", mimeType: "image/png", data: "QUJD", name: "shot.png" }];
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      saveAttachments: (_session, _sent, _machineId, folder) => { savedFolder = folder; return Promise.resolve([{ path: "project-attachments/shot.png", mimeType: "image/png", size: 3 }]); },
+      prompt: (_session, text) => { promptText = text; return Promise.resolve({ accepted: true }); },
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    // The composer sends the folder its delivery label showed, so the save
+    // destination matches the label even for secondary (worktree) workspaces
+    // whose own cwd resolves a different project config.
+    await controller.send("check this", undefined, attachments, "folder", "project-attachments");
+
+    expect(savedFolder).toBe("project-attachments");
+    expect(promptText).toBe("check this\n\n@project-attachments/shot.png");
   });
 
   it("does not set the sending state for plain text messages", async () => {
@@ -208,8 +239,8 @@ describe("SessionController send queue", () => {
         calls.push(`shell:${sessionLookupId(session)}:${text}`);
         return Promise.resolve({ accepted: true });
       },
-      saveAttachments: (session, sentAttachments) => {
-        calls.push(`save:${sessionLookupId(session)}:${sentAttachments[0]?.name ?? ""}`);
+      saveAttachments: (session, sentAttachments, _machineId, folder) => {
+        calls.push(`save:${sessionLookupId(session)}:${sentAttachments[0]?.name ?? ""}:${folder ?? "no-folder"}`);
         return Promise.resolve([{ path: ".pi-web/attachments/shot.png", mimeType: "image/png", size: 3 }]);
       },
       prompt: (session, text, _behavior, _machineId, sentAttachments) => {
@@ -233,7 +264,7 @@ describe("SessionController send queue", () => {
     await controller.send("/help");
     await controller.send("!pwd");
     await controller.send("look", undefined, attachments, "inline");
-    await controller.send("save", undefined, attachments, "folder");
+    await controller.send("save", undefined, attachments, "folder", "project-attachments");
 
     expect(calls).toEqual([]);
     expect(state.clientQueuedSessionMessages[temporaryId]).toEqual([
@@ -250,7 +281,9 @@ describe("SessionController send queue", () => {
       `command:${started.id}:/help`,
       `shell:${started.id}:!pwd`,
       `prompt:${started.id}:look`,
-      `save:${started.id}:shot.png`,
+      // The queued folder delivery keeps the composer-displayed folder through
+      // the pending-start flush.
+      `save:${started.id}:shot.png:project-attachments`,
       `prompt:${started.id}:save\n\n@.pi-web/attachments/shot.png`,
     ]);
     expect(promptCalls).toEqual([

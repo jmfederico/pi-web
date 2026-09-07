@@ -6,7 +6,7 @@
     <title>PI WEB plugins — extend the UI and workspace providers</title>
     <meta
       name="description"
-      content="Build trusted PI WEB browser-v2 plugins and server-v1 workspace providers through the public package contracts."
+      content="Build trusted PI WEB browser-v2 plugins, server-v1 paired requests and bounded channels, and workspace providers through the public package contracts."
     />
     <link rel="canonical" href="https://pi-web.dev/plugins" />
     <meta property="og:type" content="website" />
@@ -14,7 +14,7 @@
     <meta property="og:title" content="PI WEB plugins — extend the UI and workspace providers" />
     <meta
       property="og:description"
-      content="Customize PI WEB with trusted browser modules and server-backed workspace providers."
+      content="Customize PI WEB with trusted browser modules, paired server backends, and workspace providers."
     />
     <meta property="og:url" content="https://pi-web.dev/plugins" />
     <meta property="og:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
@@ -23,7 +23,7 @@
     <meta name="twitter:title" content="PI WEB plugins — extend the UI and workspace providers" />
     <meta
       name="twitter:description"
-      content="Customize PI WEB with trusted browser modules and server-backed workspace providers."
+      content="Customize PI WEB with trusted browser modules, paired server backends, and workspace providers."
     />
     <meta name="twitter:image" content="https://pi-web.dev/assets/pi-web-banner.png" />
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
@@ -115,12 +115,14 @@
                 <li><strong>Workspace tools and panels</strong> next to Files and Terminal.</li>
                 <li><strong>Workspace labels</strong> in the workspace list, header, and status bar.</li>
                 <li><strong>Browser-public assets</strong> served only from an explicit <code>browserRoot</code>.</li>
-                <li><strong>Browser helpers</strong> for files, terminals, prompts, rendering, and paired backends.</li>
+                <li><strong>Browser helpers</strong> for files, terminals, prompts, rendering, owner-backed requests, and package-paired backends.</li>
                 <li><strong>One workspace provider</strong> from an optional sessiond server entry.</li>
+                <li><strong>One package-paired backend</strong> with independently optional JSON requests and bounded duplex channels.</li>
               </ul>
               <p>
                 The server API is deliberately narrow: lifecycle callbacks, scoped logging/settings, bounded argv
-                execution, one workspace provider, JSON backend requests, and removal planning. Plugins receive no raw
+                execution, one workspace provider, one package-paired backend, owner-backed provider requests,
+                and removal planning. Plugins receive no raw
                 Fastify access, arbitrary routes, concrete services, generic event bus, Pi model-provider registration,
                 or general server hooks.
               </p>
@@ -149,6 +151,32 @@
                 <code>serverModule</code>, or both. Their server API is separate from Pi extensions and cannot register
                 Pi model providers or arbitrary hooks. Plugin enablement is PI WEB config; package installation is a
                 separate Pi package-manager task.
+              </p>
+              <p>
+                Pi loads ordinary Pi resources from installed Pi packages and from its user and project resource
+                locations. PI WEB plugin discovery loads only the declared browser and server entries; enabling or
+                disabling a plugin does not add or remove the package's Pi extensions, skills, prompt templates,
+                themes, or context/system prompt files.
+              </p>
+              <p>
+                Relay follows this split: installing or removing <code>@jmfederico/pi-relay</code> controls the
+                human-gated <code>/relay</code> preparation prompt, its <code>/relay-worktree</code> compatibility alias,
+                the tool-agnostic <code>relay</code> skill, and the opinionated <code>relay-runner</code> profile.
+                Preparation builds a reviewable draft packet while establishing a shared understanding and only the
+                first leg, then requires explicit approval before <code>spawn_session</code>; it does not pre-plan the
+                chain. Fresh-worktree preparation moves the drafts into the target before dispatch. The runner keeps <code>charter.md</code> focused on the goal and scope edges, with execution mechanics in
+                <code>operations.md</code> and project guidance as the quality authority. Relay completion requires
+                both the chartered outcome and the review, approval, and delivery gates recorded in
+                <code>operations.md</code>. The profile treats review as evidence gathering rather than a finding quota;
+                re-review carries earlier decisions forward instead of restarting defect hunting. The normal path is an
+                initial whole-work review plus one re-review when needed. A third attempt is an exceptional, justified
+                contingency, after which a still-blocked Relay stops for human intervention.
+                <code>plugins.relays.enabled</code> controls only the
+                read-only Relays browser panel and its
+                workspace action. Disabling the browser plugin leaves the Pi resources available. At session-daemon
+                startup, PI WEB installs the package automatically for the active agent profile by default; removing it in
+                <strong>Settings → Pi packages</strong> is remembered for that profile, and
+                <strong>Available packages</strong> offers one-click reinstall.
               </p>
               <p>
                 Use <strong>Settings → Pi packages</strong> to view configured Pi packages or install/remove/update a
@@ -286,7 +314,7 @@ After editing, check the manifest endpoint and browser-console failure cases.</c
                   <button class="copy-button" data-copy="#plugin-public-imports">Copy</button>
                 </div>
                 <pre id="plugin-public-imports"><code>import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
-import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/server-plugin-api";</code></pre>
+import type { PairedPluginBackendV1, PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/server-plugin-api";</code></pre>
               </div>
             </section>
 
@@ -295,7 +323,9 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               <p>
                 Browser entries default-export <code>{ apiVersion: 2, name, activate }</code>. The host rejects v1 with
                 an attributed unsupported-version error; no browser-v1 shim is provided. Server entries remain on
-                <code>apiVersion: 1</code>. During migration, replace browser-v1 Git aliases, including top-level
+                <code>apiVersion: 1</code>. A server activation may independently contribute one version-1 package-paired
+                backend with requests, bounded channels, or both, and one workspace provider; the paired backend does not need to own the addressed
+                workspace. During migration, replace browser-v1 Git aliases, including top-level
                 <code>workspace.branch</code>, with provider metadata and
                 <code>refreshWorkspacePanels()</code>/<code>onInvalidate()</code>. Generic presentation uses the
                 provider-authored <code>workspace.label</code>; provider-specific facts belong in
@@ -310,25 +340,101 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 <code>plugin-api/unstable</code> path and private <code>dist/**</code> deep imports are not contracts.
               </p>
               <p>
+                A server activation may feature-detect <code>context.notices?.version === 1</code> and record a bounded
+                <code>info</code>, <code>warning</code>, or <code>error</code> notice. Explicit
+                <code>scope</code> ids alone control global/project/workspace/session visibility on the selected
+                machine; identically named keys in detached JSON <code>context</code> are metadata only. The reporter
+                is live through activation, start, and the active plugin lifetime, then is revoked before rollback or
+                stop cleanup. PI WEB validates each complete record atomically, derives its host-owned
+                <code>plugin:&lt;plugin-id&gt;</code> source, bounds per-plugin and global plugin retention without evicting
+                core notices, and owns publication and dismissal. Current notices have no dedupe/upsert behavior and
+                remain only for the session-daemon lifetime. See the <a href="plugins.md#server-notice-reporter">full
+                notice limits and lifecycle contract</a>.
+              </p>
+              <p>
                 Browser and server module paths must use canonical package-relative form; empty or <code>.</code>
                 segments, traversal, backslashes, and absolute or Windows drive-qualified paths are rejected. Each
                 browser entry must declare a safe package-relative <code>browserRoot</code> containing its module;
                 server-only entries must not declare one. Invalid, missing, package-escaping, symlink-escaping, or
-                module-excluding roots fail discovery. Externally declared ids <code>core</code>, <code>themes</code>,
-                and the <code>machine.*</code> namespace are reserved and rejected.
+                module-excluding roots fail discovery. The exact id <code>pi-web</code> and every
+                <code>pi-web.*</code> id are reserved for PI WEB-owned bundled plugins; external local, dev, and Pi-package
+                declarations are rejected with an attributed diagnostic that asks the author to choose another id.
+                Browser and federated manifest entries in that namespace are also rejected before import unless both
+                <code>source</code> and <code>scope</code> are <code>bundled</code>. Existing <code>core</code>,
+                <code>themes</code>, and <code>machine.*</code> namespaces remain host-reserved.
+                Plain <code>terminal</code> remains available to third-party plugins.
               </p>
               <ul>
                 <li>Only files logically and canonically inside <code>browserRoot</code> are served; everything else in the package stays outside plugin asset routes.</li>
                 <li><code>browserRoot: "."</code> makes almost the whole scanned package browser-public, so prefer a narrow build directory and put no secrets inside it.</li>
                 <li>The package-wide scan allows at most 4,096 entries and 16 MiB of file content, excluding traversal into <code>.git</code> and <code>node_modules</code>; files outside the browser root still count.</li>
                 <li>Both <code>.js</code> and <code>.mjs</code> are served with executable JavaScript MIME types. Prefer module-relative asset URLs for federation and nested deployments.</li>
+                <li>Treat <code>browserRoot</code> as the complete distributable browser graph: bundle or emit every runtime dependency, style, chunk, and asset inside it, with no bare package imports or private PI WEB source/<code>dist/**</code> imports.</li>
               </ul>
+
+              <h3>Workspace files, navigation, and invalidation</h3>
+              <p>
+                Workspace-files capability v1, package-paired requests/channels, contribution navigation v1, and scoped invalidation are additive parts of
+                browser API v2. Existing v2 plugins that implement the original owner-backed
+                <code>WorkspaceBackend.request(operation, input)</code> shape remain source compatible, as do plugins that extend or implement the five-operation
+                <code>WorkspaceFiles</code> or <code>WorkspacePanelFiles</code> base;
+                callback contexts use the separate discriminated <code>WorkspaceFilesContextValue</code>. Check
+                <code>context.files.capabilityVersion === 1</code> before using the added file methods. Detect
+                <code>context.pairedBackend.requestVersion === 1</code> plus <code>request</code>, and
+                <code>context.pairedBackend.channelVersion === 1</code> plus <code>openChannel</code>, independently. Treat <code>context.navigation</code> and the second <code>onInvalidate</code> argument as optional on older
+                hosts.
+              </p>
+              <ul>
+                <li>The host binds file helpers to the callback's selected machine and workspace. Capability v1 adds cancellable reads/listings, the workspace-effective upload folder and preview limit, plus browser-ready preview/download URLs with nested-deployment and federation routing already applied exactly once.</li>
+                <li><code>uploadFile()</code> starts one cancellable browser-file transport with progress. It defaults to creating directories without overwriting, rejects cancellation as <code>AbortError</code>, and leaves multi-file batches and UI state to the plugin.</li>
+                <li>Optional panel navigation owns bounded namespaced deep-link state and browser history for one contribution; malformed restored state is ignored, and invalid or over-limit <code>set()</code> calls fail before changing the URL. During host-controlled route restoration, an exact target-identity snapshot may be supplied before URL publication, while writes remain fenced to the live address-bar identity.</li>
+                <li>Panels declare <code>workspace.files</code> to receive scoped successful-mutation and completed-agent-activity invalidations. Manual <code>refreshWorkspacePanels()</code> behavior remains compatible with existing v2 callbacks.</li>
+              </ul>
+              <p>
+                See the <a href="plugins.md#workspace-files-capability-v1">full workspace-files, navigation, and
+                invalidation contracts</a> in the Markdown API reference.
+              </p>
             </section>
 
             <section id="provider-contract">
-              <h2>Workspace provider contract</h2>
+              <h2>Paired backend and workspace provider contracts</h2>
               <p>
-                Sessiond is the single workspace authority. An enabled server entry can contribute at most one provider.
+                A version-1 package-paired backend implements requests, channels, or both; its public type requires at
+                least one handler, and the capabilities are independently detected. It receives only cloned, frozen
+                host-resolved project/workspace data, bounded
+                JSON, and scoped cancellation signals. The matching revision-paired browser entry can call
+                it for a kernel-folder workspace or a workspace owned by another provider, without receiving that provider's private data. Input is limited to 256 KiB,
+                output to 8 MiB, callbacks to 10 seconds, sessiond dispatch to 25 seconds, and federation to 30 seconds.
+              </p>
+              <p>
+                A paired backend can implement <code>openChannel()</code> with or without a request handler. The host supplies frozen scope,
+                bounded JSON open input, a channel-lifetime signal, and a bounded synchronous <code>send()</code> function;
+                the plugin returns <code>receive()</code>, optional plugin-owned <code>closed</code>, and optional once-only
+                <code>close()</code> members. Resolve <code>closed</code> only after the final <code>send()</code>; the host
+                boundedly drains accepted output frames in order before cleanly closing the browser transport. A clean
+                browser close also drains already accepted <code>receive()</code> callbacks before plugin cleanup.
+                Sessiond is the sole semantic and scoped channel authority: it validates the open envelope, package
+                revision, operation, project/workspace scope, and plugin contribution. Intermediate local and federated
+                hops forward opaque, bounded UTF-8 text without parsing host envelopes or plugin payload fields.
+                Data frames are limited to 64 KiB JSON and queues to 128 frames per direction at each physical hop, with
+                1 MiB browser-to-server and 1.25 MiB server-to-browser byte bounds. A successful <code>send()</code>
+                confirms host queue acceptance, not peer delivery; channels expose no drain signal, so plugins that need
+                continuity should reconnect and replay from their own state. One aggregate edge cap allows 128
+                physically alive proxy channels per web/API process and is shared by local and federated routes. Sessiond
+                separately and authoritatively admits 128 total channels, 32 per plugin, and 8 per plugin/workspace; both
+                accounting layers include channels awaiting connection/open or physical teardown. Each edge has a
+                10-second transport-connect deadline that ends permanently when its upstream WebSocket opens. Sessiond's
+                10-second open-handshake/plugin-open deadline is separate; clean drains are also bounded to 10 seconds,
+                physical teardown of a non-cooperating peer to 1 second, and lifetime to 12 hours with no idle timeout.
+                The directional 1.25 MiB output bound accommodates Terminal's full replay under worst-case JSON escaping
+                plus following live output without reordering. Binary, malformed UTF-8, and over-limit physical frames
+                fail at the edge; semantically invalid bounded text reaches sessiond for JSON/envelope rejection.
+                Overflow, callback failure/timeout, disconnect, expiry, and shutdown close both directions and retain
+                accounting until physical teardown; denied sockets are attributed when possible and then terminated
+                rather than escaping the aggregate while closing.
+              </p>
+              <p>
+                Sessiond is also the single workspace-provider authority. An enabled server entry can contribute at most one provider.
                 Primary providers probe first; bundled Git probes only as a fallback. Exactly one claimant owns the whole
                 project's workspace semantics. Multiple claimants in the winning tier produce a visible conflict rather
                 than import-order selection. If nobody claims, the kernel project-folder workspace remains available.
@@ -336,9 +442,10 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               <p>
                 A server module default-exports <code>{ apiVersion: 1, name, activate }</code>. Activation may return
                 cooperative <code>start</code>, <code>stop</code>, and <code>health</code> callbacks plus at most one
-                provider. Every activation, lifecycle, provider, and request signal is scoped to that one invocation and
-                is aborted when it times out or settles; it is not a plugin-lifetime shutdown signal. Release resources
-                in explicit <code>stop()</code>. Server code is never hot-reloaded.
+                provider and one paired backend. Every activation, lifecycle, provider, request, channel-receive, and channel-close signal is scoped to that one invocation and
+                is aborted when it times out or settles. The <code>openChannel()</code> signal is the deliberate exception:
+                it lasts until disconnect, failure, expiry, or shutdown. Release plugin-global resources in explicit
+                <code>stop()</code>. Server code is never hot-reloaded.
               </p>
               <p>
                 A provider returns stable workspace keys, accessible absolute directories, labels, exactly one main
@@ -354,10 +461,19 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
                 operation in the foreground, and treat shell exit 0 as successful completion.
               </p>
               <p>
-                Panels and labels receive optional <code>context.backend</code> only when their browser entry has a
-                paired active server backend. PI WEB binds <code>backend.request(operation, input)</code> to the original
-                plugin id, active backend revision, selected machine, project, and workspace, and carries it through
-                federation. Plugins should never construct PI WEB backend or machine API URLs. Panels can implement
+                Panels and labels keep the optional owner-backed <code>context.backend</code> contract. The host supplies
+                it only when the contribution's source plugin is the current workspace owner and that provider advertises
+                request support. <code>backend.request(operation, input)</code> dispatches only through the current workspace owner's
+                <code>WorkspaceProvider.request()</code> and preserves access to that provider's private workspace data.
+                The separate optional <code>context.pairedBackend</code> dispatches only to the browser package's
+                revision-matched server contribution, independent of ownership. Its manifest carries
+                <code>backendRevision</code> and advertises requests with <code>pairedRequestVersion: 1</code> and channels
+                with <code>pairedChannelVersion: 1</code>; either marker can appear alone. Check the matching marker and
+                method independently before calling <code>pairedBackend.request(operation, input, { signal? })</code> or
+                <code>pairedBackend.openChannel(operation, input, { signal?, onData })</code>. PI WEB binds both contracts
+                to the selected machine, project, and workspace, preserves their distinct owner/package authority, carries paired cancellation through federation, and
+                attributes stale, missing, invalid, failed, cancelled, timed-out, and bounded-channel failures. Plugins should never
+                construct PI WEB backend or machine API URLs. Panels can implement
                 <code>onInvalidate</code> and actions can call <code>refreshWorkspacePanels()</code>; route aliases and
                 shortcut aliases exist only for browser-v1 migrations.
               </p>
@@ -378,13 +494,69 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               </p>
               <p>
                 Built-in plugins can be managed from <strong>Settings → PI WEB plugins</strong> or with the top-level
-                <code>plugins</code> config key.
+                <code>plugins</code> config key. Settings labels required entries separately and does not offer an
+                enablement toggle for them.
+              </p>
+
+              <h3>Terminal</h3>
+              <p>
+                Plugin id: <code>pi-web.terminal</code>. <strong>Terminal</strong> is the required bundled,
+                machine-specific browser/server plugin. It supplies
+                the Terminal panel and navigation action, Xterm UI and browser state, PTY/replay and command-run
+                service, and its paired request/channel protocol. Normal and <code>bundled-only</code> startup activates
+                it before ordinary plugins and publishes its browser entry only while the matching bundled server entry
+                is active, healthy, revision-matched, and supplies both paired capabilities. The browser entry uses
+                <code>context.pairedBackend</code> for local
+                and selected remote machines, including selection, reconnect/replay, mobile keys, copy behavior,
+                command-run display, and cleanup, instead of calling Terminal-specific application routes.
+              </p>
+              <p>
+                Terminal's activation-only <code>requiredTerminalFacade</code> and
+                <code>requiredTerminalService</code> values are privileged host-only composition ports for the bundled
+                product. They are intentionally absent from the public browser and server declarations and are not
+                third-party plugin APIs. External plugins use the public <code>context.pairedBackend</code> and
+                <code>ServerPluginActivation.pairedBackend</code> contracts instead.
+              </p>
+              <p>
+                Ordinary config, Settings, and <code>pi-web plugins disable pi-web.terminal</code> cannot disable Terminal.
+                Canonical contribution ids use <code>pi-web.terminal:*</code>; the released
+                <code>core:workspace.terminal</code> and <code>core:view.terminal</code> aliases remain supported.
+                Missing, incompatible, failed, or unhealthy startup reports the failure instead of claiming Terminal is
+                available. Only an active session-daemon lifecycle snapshot can declare intentional no-Terminal recovery;
+                unavailable or incompatible runtime state withholds ordinary plugin modules and remains retryable. For
+                recovery, run <code>pi-web plugins safe-start set none --restart</code>; diagnosis and Settings remain
+                available without Terminal, then clear safe start after repairing the installation.
+              </p>
+
+              <h3>Files</h3>
+              <p>
+                <strong>Files</strong> is a normal browser-only bundled plugin that supplies the Files workspace panel,
+                viewers, uploads, and its navigation/refresh actions through browser API v2. It is enabled by default.
+                Disable <code>files</code> in Settings or config, then reload the page; no session-daemon restart is
+                required.
+              </p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Disable Files</strong>
+                  <button class="copy-button" data-copy="#files-disable">Copy</button>
+                </div>
+                <pre id="files-disable"><code>{
+  "plugins": {
+    "files": { "enabled": false }
+  }
+}</code></pre>
+              </div>
+              <p>
+                Disabling Files removes its product panel and actions, but not the mandatory host workspace-file access
+                used by attachments and other plugins. Chat and other available workspace panels remain usable, and PI
+                WEB selects an available panel generically. Legacy <code>files</code> /
+                <code>core:workspace.files</code> routes, query state, and saved shortcuts continue through aliases.
               </p>
 
               <h3>Git</h3>
               <p>
                 <strong>Git</strong> is enabled by default and is PI WEB's bundled fallback workspace provider. It
-                discovers worktrees, owns Git removal plans and status/diff requests, and adds the paired Git panel. An
+                discovers worktrees, owns Git removal plans and status/diff requests, and adds the owner-backed Git panel. An
                 enabled primary third-party provider can claim a project before Git. Disabling <code>git</code> and
                 restarting sessiond leaves the kernel folder workspace plus generic Files, Terminal, and Session features;
                 reload the browser so Git contributions disappear.
@@ -532,9 +704,9 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
 <span class="prompt">$</span> pi-web plugins safe-start clear --restart</code></pre>
               </div>
               <ul>
-                <li><code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config.</li>
-                <li><code>bundled-only</code> filters discovery before external server packages are considered.</li>
-                <li><code>none</code> imports no server plugins; the kernel folder workspace remains available.</li>
+                <li><code>disable</code> persists <code>plugins.&lt;id&gt;.enabled: false</code> while preserving unrelated config. It rejects required <code>pi-web.terminal</code>; use no-plugin safe start only for recovery.</li>
+                <li><code>bundled-only</code> filters discovery before external server packages are considered, while the bundled Terminal entry remains required.</li>
+                <li><code>none</code> imports no server plugins. The kernel folder workspace and diagnosis/Settings surfaces remain available, but Terminal and Terminal-backed command workflows do not.</li>
                 <li><code>clear</code> restores ordinary configured discovery on the next start.</li>
                 <li>An unsupported <code>serverPlugins.safeStart</code> shape or value fails closed as effective <code>none</code>; use <code>show</code>, then <code>set</code> or <code>clear</code>, to repair it offline.</li>
                 <li><code>--restart</code> acts automatically only for a recognized safe installation; otherwise PI WEB prints manual guidance. Config is durable before the restart attempt, so restart manually if that attempt fails.</li>
@@ -551,12 +723,14 @@ import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/se
               <p>
                 With <a href="machines">machine federation</a>, the gateway loads compatible browser entries from the
                 selected remote machine while server entries stay in that target's sessiond. Actions, panels, labels,
-                file/terminal helpers, and <code>context.backend.request()</code> all follow the selected machine.
-                Activation <code>pluginId</code> and workspace-provider ownership keep the stable source id;
-                <code>runtimePluginId</code> may be machine-scoped so qualified contributions remain host-unique.
+                file/terminal helpers, owner-backed <code>context.backend.request()</code>, and package-paired
+                <code>context.pairedBackend</code> requests/channels all follow the selected machine.
+                Activation <code>pluginId</code>, paired backend identity, and workspace-provider ownership keep the
+                stable source id; <code>runtimePluginId</code> may be machine-scoped so qualified contributions remain
+                host-unique.
               </p>
               <ul>
-                <li>Paired backend requests carry the source plugin id and active target revision through the gateway.</li>
+                <li>Owner-backed requests retain workspace-provider ownership; paired requests and channels carry the source plugin id and active target revision through distinct bounded gateway transports.</li>
                 <li>Server-backed browser code is served only for an exact active package/source/scope/settings/revision pairing.</li>
                 <li><code>machineSpecific</code> decides whether a browser-only gateway copy is portable; dual entries are always machine-specific.</li>
                 <li>Remote theme contributions remain ignored because themes are app-wide.</li>

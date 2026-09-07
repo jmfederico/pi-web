@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { CommandOption, SessionModelCatalogEntry } from "../api";
+import { repeat } from "lit/directives/repeat.js";
+import type { CommandOption, SessionModelCatalogEntry, SessionModelScopeMode } from "../api";
 import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEventTarget";
 import "./ModalSurface";
 import { scrollWhenSelected } from "./scrollWhenSelected";
@@ -12,11 +13,9 @@ import { scrollWhenSelected } from "./scrollWhenSelected";
  */
 export type ModelPickerMode = "enabled" | "all";
 
-/** Filtered All-mode catalog view. Catalog order (enabled first) is preserved. */
+/** Filtered All-mode catalog view in the machine catalog's natural order. */
 export interface ModelCatalogView {
   rows: SessionModelCatalogEntry[];
-  /** Group headers only help the unfiltered list; while searching, one flat list is clearer. */
-  showGroupHeaders: boolean;
 }
 
 /** The wire value identifying one model row: `${provider}/${id}`. */
@@ -31,14 +30,68 @@ export function filterModelOptions(options: readonly CommandOption[], query: str
   return options.filter((option) => `${option.label} ${option.description ?? ""} ${option.value}`.toLowerCase().includes(normalized));
 }
 
-/** Case-insensitive substring filter over the All-mode catalog, mirroring pi's model search text (id, provider, name). */
-export function modelCatalogView(catalog: readonly SessionModelCatalogEntry[], query: string): ModelCatalogView {
+function modelCatalogInNaturalOrder(catalog: readonly SessionModelCatalogEntry[]): SessionModelCatalogEntry[] {
+  if (!catalog.every((entry) => entry.catalogIndex !== undefined)) return [...catalog];
+  return [...catalog].sort((left, right) => (left.catalogIndex ?? 0) - (right.catalogIndex ?? 0));
+}
+
+/**
+ * Case-insensitive substring filter over the All-mode catalog, mirroring pi's
+ * model search text (id, provider, name). A dialog-owned stable order can be
+ * supplied so a response from an older server cannot regroup rows mid-edit.
+ */
+export function modelCatalogView(
+  catalog: readonly SessionModelCatalogEntry[],
+  query: string,
+  stableOrder?: readonly string[],
+): ModelCatalogView {
+  const naturalRows = modelCatalogInNaturalOrder(catalog);
+  const rowsByValue = new Map(naturalRows.map((entry) => [modelCatalogEntryValue(entry), entry]));
+  const listed = new Set<string>();
+  const orderedRows = stableOrder === undefined
+    ? naturalRows
+    : [
+        ...stableOrder.flatMap((value) => {
+          const entry = rowsByValue.get(value);
+          if (entry === undefined || listed.has(value)) return [];
+          listed.add(value);
+          return [entry];
+        }),
+        ...naturalRows.filter((entry) => !listed.has(modelCatalogEntryValue(entry))),
+      ];
   const normalized = query.trim().toLowerCase();
-  const rows = normalized === ""
-    ? [...catalog]
-    : catalog.filter((entry) => `${entry.provider} ${entry.id} ${entry.name ?? ""}`.toLowerCase().includes(normalized));
-  const showGroupHeaders = normalized === "" && rows.some((entry) => entry.enabled) && rows.some((entry) => !entry.enabled);
-  return { rows, showGroupHeaders };
+  return {
+    rows: normalized === ""
+      ? orderedRows
+      : orderedRows.filter((entry) => `${entry.provider} ${entry.id} ${entry.name ?? ""}`.toLowerCase().includes(normalized)),
+  };
+}
+
+export interface ModelCatalogToggleAllPlan {
+  mode: SessionModelScopeMode;
+  /** False when narrowing the scope cannot identify the current model to retain. */
+  canApply: boolean;
+  hasChanges: boolean;
+}
+
+/** Toggle between every model and the smallest usable scope: the current model. */
+export function modelCatalogToggleAllPlan(
+  catalog: readonly SessionModelCatalogEntry[],
+  currentValue: string | undefined,
+): ModelCatalogToggleAllPlan {
+  const enabledEntries = catalog.filter((entry) => entry.enabled);
+  const current = currentValue === undefined
+    ? undefined
+    : catalog.find((entry) => modelCatalogEntryValue(entry) === currentValue);
+  const onlyCurrentEnabled = current?.enabled === true && enabledEntries.length === 1;
+  const mode: SessionModelScopeMode = enabledEntries.length === 0 || onlyCurrentEnabled ? "all" : "current";
+  return {
+    mode,
+    canApply: mode === "all" || current !== undefined,
+    hasChanges: mode === "all"
+      ? enabledEntries.length < catalog.length
+      : current !== undefined && (!current.enabled || enabledEntries.some((entry) => entry !== current)),
+  };
 }
 
 interface ModelPickerRow {
@@ -49,15 +102,17 @@ interface ModelPickerRow {
 /**
  * The session model selection dialog. Enabled mode keeps the classic
  * searchable pick list; All models mode lists the machine's full catalog with
- * per-model checkboxes editing pi's enabled-models scope (shared with the pi
- * TUI). Scope is selection UX only, never an authorization boundary.
+ * per-model membership controls editing pi's enabled-models scope (shared with
+ * the pi TUI). Workspace `.pi/settings.json` overrides are displayed but
+ * read-only because this picker edits global settings only. Scope is selection
+ * UX only, never an authorization boundary.
  */
 @customElement("model-picker")
 export class ModelPicker extends LitElement {
   @property() override title = "Select Model";
   /** Enabled-mode rows: the session's pickable models, pre-labeled by the host. */
   @property({ attribute: false }) options: CommandOption[] = [];
-  /** All-mode rows: the machine's catalog, already grouped enabled-first by the server. */
+  /** All-mode rows, including enabled state and (on current servers) each model's natural catalog index. Workspace overrides mark rows `editable: false`. */
   @property({ attribute: false }) catalog: SessionModelCatalogEntry[] = [];
   @property({ attribute: false }) selectedValue?: string;
   @property({ attribute: false }) onPick?: (value: string) => void;
@@ -68,11 +123,18 @@ export class ModelPicker extends LitElement {
    * failure); the checkbox is controlled, so it tracks the catalog, not clicks.
    */
   @property({ attribute: false }) onToggleEnabled?: (provider: string, modelId: string, enabled: boolean) => unknown;
+  /** Atomically applies the bulk availability preset selected by the toggle-all action. */
+  @property({ attribute: false }) onSetScope?: (mode: SessionModelScopeMode) => unknown;
 
   @state() private mode: ModelPickerMode = "enabled";
   @state() private selectedIndex = 0;
   @state() private query = "";
   @state() private pendingToggles: ReadonlySet<string> = new Set();
+  @state() private toggleAllPending = false;
+  /** Stable for this dialog's lifetime so membership responses never move natural rows. */
+  private catalogOrder: string[] = [];
+  private catalogScrollTopBeforeUpdate: number | undefined;
+  private focusAfterToggle: HTMLElement | undefined;
 
   override render() {
     const rows = this.visibleRows();
@@ -91,8 +153,23 @@ export class ModelPicker extends LitElement {
           ${this.renderScopeToggleButton("enabled", "Enabled")}
           ${this.renderScopeToggleButton("all", "All models")}
         </div>
-        <input class="search" placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>
-        <div class="options" tabindex="0">
+        ${!this.modelScopeEditable ? html`
+          <div class="scope-notice" role="status">
+            <strong>Project override</strong>
+            <span>Showing models from this workspace’s <code>.pi/settings.json</code>. Model availability selection is disabled.</span>
+          </div>
+        ` : nothing}
+        <div class="search-row">
+          <input class="search" aria-label="Search models" placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>
+          ${this.mode === "all" ? this.renderToggleAllButton() : nothing}
+        </div>
+        <div
+          class="options"
+          role="region"
+          aria-label=${this.mode === "all" ? "All models in catalog order" : "Enabled models"}
+          tabindex="0"
+          aria-busy=${this.membershipChangePending ? "true" : "false"}
+        >
           ${this.mode === "all" ? this.renderCatalogList() : this.renderEnabledList()}
           ${rows.length === 0 ? html`<div class="empty">No matching options</div>` : null}
         </div>
@@ -105,27 +182,74 @@ export class ModelPicker extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (!changed.has("catalog") || this.mode !== "all") return;
-    // A toggle regroups the catalog (enabled first): keep the selection on the
-    // same row rather than on the same numeric index.
+    if (!changed.has("catalog")) return;
+    if (this.mode === "all") {
+      this.catalogScrollTopBeforeUpdate = this.shadowRoot?.querySelector<HTMLElement>(".options")?.scrollTop;
+    }
+    this.rememberCatalogOrder();
+    if (this.mode !== "all") return;
+
+    // The server keeps scope order enabled-first. Anchor keyboard selection by
+    // value while the dialog's natural row order stays fixed across responses.
     const previousCatalog = changed.get("catalog");
     if (previousCatalog === undefined) return;
-    const previousRows = modelCatalogView(previousCatalog, this.query).rows;
+    const previousRows = modelCatalogView(previousCatalog, this.query, this.catalogOrder).rows;
     const anchored = previousRows[this.selectedIndex];
-    const rows = modelCatalogView(this.catalog, this.query).rows;
+    const rows = modelCatalogView(this.catalog, this.query, this.catalogOrder).rows;
     const anchoredValue = anchored === undefined ? undefined : modelCatalogEntryValue(anchored);
     const nextIndex = anchoredValue === undefined ? -1 : rows.findIndex((entry) => modelCatalogEntryValue(entry) === anchoredValue);
     this.selectedIndex = nextIndex >= 0 ? nextIndex : Math.min(this.selectedIndex, Math.max(rows.length - 1, 0));
   }
 
+  protected override updated(changed: PropertyValues<this>): void {
+    if (!changed.has("catalog") || this.catalogScrollTopBeforeUpdate === undefined) return;
+    const options = this.shadowRoot?.querySelector<HTMLElement>(".options");
+    if (options !== null && options !== undefined) options.scrollTop = this.catalogScrollTopBeforeUpdate;
+    this.catalogScrollTopBeforeUpdate = undefined;
+  }
+
+  private get membershipChangePending(): boolean {
+    return this.toggleAllPending || this.pendingToggles.size > 0;
+  }
+
+  private get modelScopeEditable(): boolean {
+    return this.catalog.every((entry) => entry.editable !== false);
+  }
+
   private renderScopeToggleButton(mode: ModelPickerMode, label: string): TemplateResult {
-    return html`<button aria-pressed=${this.mode === mode ? "true" : "false"} @click=${() => { this.selectMode(mode); }}>${label}</button>`;
+    return html`<button ?disabled=${this.membershipChangePending} aria-pressed=${this.mode === mode ? "true" : "false"} @click=${() => { this.selectMode(mode); }}>${label}</button>`;
+  }
+
+  private renderToggleAllButton(): TemplateResult {
+    const plan = modelCatalogToggleAllPlan(this.catalog, this.selectedValue);
+    const label = plan.mode === "all" ? "Select all" : "Deselect all";
+    return html`
+      <button
+        class="toggle-all"
+        ?disabled=${!this.modelScopeEditable || !plan.canApply || !plan.hasChanges || this.toggleAllPending || this.pendingToggles.size > 0}
+        aria-describedby="model-scope-status"
+        title=${!this.modelScopeEditable ? "Workspace settings control model availability" : !plan.canApply ? "The current model is unavailable" : nothing}
+        @click=${() => { this.requestToggleAll(); }}
+      >${label}</button>
+      <span id="model-scope-status" class="scope-status" aria-live="polite">${this.membershipChangePending ? "Updating model availability" : !this.modelScopeEditable ? "Workspace settings control model availability" : !plan.canApply ? "The current model is unavailable" : nothing}</span>
+    `;
+  }
+
+  private rememberCatalogOrder(): void {
+    const knownCatalogValues = new Set(this.catalogOrder);
+    for (const entry of modelCatalogView(this.catalog, "").rows) {
+      const value = modelCatalogEntryValue(entry);
+      if (knownCatalogValues.has(value)) continue;
+      knownCatalogValues.add(value);
+      this.catalogOrder.push(value);
+    }
   }
 
   private renderEnabledList(): TemplateResult[] {
     return filterModelOptions(this.options, this.query).map((option, index) => html`
       <button
         class=${index === this.selectedIndex ? "selected" : ""}
+        ?disabled=${this.membershipChangePending}
         aria-current=${index === this.selectedIndex ? "true" : nothing}
         ${scrollWhenSelected(index === this.selectedIndex, option.value)}
         @focus=${() => { this.selectedIndex = index; }}
@@ -137,38 +261,37 @@ export class ModelPicker extends LitElement {
     `);
   }
 
-  private renderCatalogList(): TemplateResult[] {
-    const view = modelCatalogView(this.catalog, this.query);
-    const rendered: TemplateResult[] = [];
-    let lastGroup: boolean | undefined;
-    view.rows.forEach((entry, index) => {
-      if (view.showGroupHeaders && entry.enabled !== lastGroup) {
-        rendered.push(html`<div class="group-header">${entry.enabled ? "Enabled" : "Other models"}</div>`);
-      }
-      lastGroup = entry.enabled;
-      rendered.push(this.renderCatalogRow(entry, index));
-    });
-    return rendered;
+  private renderCatalogList(): TemplateResult {
+    const rows = modelCatalogView(this.catalog, this.query, this.catalogOrder).rows;
+    return html`${repeat(rows, modelCatalogEntryValue, (entry, index) => this.renderCatalogRow(entry, index))}`;
   }
 
   private renderCatalogRow(entry: SessionModelCatalogEntry, index: number): TemplateResult {
     const value = modelCatalogEntryValue(entry);
     const selected = index === this.selectedIndex;
-    const pending = this.pendingToggles.has(value);
+    const protectsCurrentModel = value === this.selectedValue && entry.enabled;
+    const membershipDisabled = !this.modelScopeEditable || this.membershipChangePending || protectsCurrentModel;
+    const membershipLabel = !this.modelScopeEditable
+      ? `Model availability for ${value} is controlled by workspace settings`
+      : protectsCurrentModel ? `Current model ${value} cannot be deselected` : `${entry.enabled ? "Disable" : "Enable"} ${value}`;
     return html`
-      <div class="catalog-row ${selected ? "selected" : ""}" ${scrollWhenSelected(selected, value)}>
+      <div class="catalog-row ${selected ? "selected" : ""}" data-model-value=${value} ${scrollWhenSelected(selected, value)}>
         <input
           type="checkbox"
           .checked=${entry.enabled}
-          ?disabled=${pending}
-          aria-label=${`${entry.enabled ? "Disable" : "Enable"} ${value}`}
+          ?disabled=${membershipDisabled}
+          aria-label=${membershipLabel}
+          title=${!this.modelScopeEditable ? "Workspace settings control model availability" : protectsCurrentModel ? "The current model must remain enabled" : nothing}
+          @focus=${() => { this.selectedIndex = index; }}
           @click=${(event: MouseEvent) => { this.handleEnableToggleClick(entry, event); }}
         />
         <button
-          class="pick"
-          aria-current=${selected ? "true" : nothing}
+          class="membership"
+          ?disabled=${membershipDisabled}
+          aria-label=${membershipLabel}
+          aria-current=${value === this.selectedValue ? "true" : nothing}
           @focus=${() => { this.selectedIndex = index; }}
-          @click=${() => this.onPick?.(value)}
+          @click=${(event: MouseEvent) => { this.requestEnabledToggle(entry, event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined); }}
         >
           <span>${entry.id}${value === this.selectedValue ? " ✓ current" : ""}</span>
           <small>${entry.provider}</small>
@@ -179,7 +302,7 @@ export class ModelPicker extends LitElement {
 
   private visibleRows(): ModelPickerRow[] {
     if (this.mode === "all") {
-      return modelCatalogView(this.catalog, this.query).rows.map((entry) => ({ value: modelCatalogEntryValue(entry), entry }));
+      return modelCatalogView(this.catalog, this.query, this.catalogOrder).rows.map((entry) => ({ value: modelCatalogEntryValue(entry), entry }));
     }
     return filterModelOptions(this.options, this.query).map((option) => ({ value: option.value }));
   }
@@ -208,9 +331,24 @@ export class ModelPicker extends LitElement {
 
   // Escape and backdrop presses are owned by the modal surface (routed to
   // `onCancel`). Search and list-container keys retain the broadened option
-  // navigation idiom, while focused native buttons keep their own semantics.
+  // navigation idiom, while focused row controls keep their own semantics.
   private handleKeyDown(event: KeyboardEvent) {
+    const focusedCheckbox = event.composedPath().find((target): target is HTMLInputElement => target instanceof HTMLInputElement && target.type === "checkbox");
+    if (focusedCheckbox !== undefined) {
+      // Browsers do not consistently activate checkboxes with Enter. Support it
+      // explicitly, but never let row-navigation keys move a hidden selection
+      // away from the checkbox that still holds focus.
+      if (event.key === "Enter") {
+        event.preventDefault();
+        focusedCheckbox.click();
+      }
+      return;
+    }
     if (keyboardEventOriginatesFromNativeActivationControl(event)) return;
+    if (this.membershipChangePending && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      return;
+    }
     const rows = this.visibleRows();
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -221,7 +359,8 @@ export class ModelPicker extends LitElement {
     } else if (event.key === "Enter") {
       event.preventDefault();
       const row = rows[this.selectedIndex];
-      if (row !== undefined) this.onPick?.(row.value);
+      if (row?.entry !== undefined) this.requestEnabledToggle(row.entry);
+      else if (row !== undefined) this.onPick?.(row.value);
     } else if (event.key === " " && this.mode === "all") {
       // Space toggles the selected row only when it did not land on an input:
       // a focused checkbox toggles through its own click and the search input
@@ -238,17 +377,37 @@ export class ModelPicker extends LitElement {
     // The checkbox is controlled: cancel the native flip so the rendered state
     // keeps reflecting the catalog until the host applies the fresh one.
     event.preventDefault();
-    if (event.currentTarget instanceof HTMLInputElement) event.currentTarget.checked = entry.enabled;
-    this.requestEnabledToggle(entry);
+    const checkbox = event.currentTarget instanceof HTMLInputElement ? event.currentTarget : undefined;
+    if (checkbox !== undefined) checkbox.checked = entry.enabled;
+    this.requestEnabledToggle(entry, checkbox);
   }
 
-  private requestEnabledToggle(entry: SessionModelCatalogEntry): void {
+  private requestEnabledToggle(entry: SessionModelCatalogEntry, focusTarget?: HTMLElement): void {
     const value = modelCatalogEntryValue(entry);
-    if (this.pendingToggles.has(value)) return;
+    if (!this.modelScopeEditable || (value === this.selectedValue && entry.enabled) || this.membershipChangePending) return;
+    if (focusTarget !== undefined && this.shadowRoot?.activeElement === focusTarget) this.focusAfterToggle = focusTarget;
     const pending = new Set(this.pendingToggles);
     pending.add(value);
     this.pendingToggles = pending;
     void this.settleEnabledToggle(value, entry);
+  }
+
+  private requestToggleAll(): void {
+    if (!this.modelScopeEditable || this.toggleAllPending || this.pendingToggles.size > 0) return;
+    const plan = modelCatalogToggleAllPlan(this.catalog, this.selectedValue);
+    if (!plan.canApply || !plan.hasChanges) return;
+    this.toggleAllPending = true;
+    void this.settleToggleAll(plan.mode);
+  }
+
+  private async settleToggleAll(mode: SessionModelScopeMode): Promise<void> {
+    try {
+      await this.onSetScope?.(mode);
+    } catch (error: unknown) {
+      console.warn(`Failed to ${mode === "all" ? "enable all models" : "keep only the current model"}`, error);
+    } finally {
+      this.toggleAllPending = false;
+    }
   }
 
   private async settleEnabledToggle(value: string, entry: SessionModelCatalogEntry): Promise<void> {
@@ -262,6 +421,12 @@ export class ModelPicker extends LitElement {
       const settled = new Set(this.pendingToggles);
       settled.delete(value);
       this.pendingToggles = settled;
+      const focusTarget = this.focusAfterToggle;
+      this.focusAfterToggle = undefined;
+      await this.updateComplete;
+      if (focusTarget?.isConnected === true && this.shadowRoot?.activeElement === null) {
+        focusTarget.focus({ preventScroll: true });
+      }
     }
   }
 
@@ -272,18 +437,25 @@ export class ModelPicker extends LitElement {
     .scope-toggle { display: flex; gap: 4px; margin: 10px 12px 0; padding: 3px; border: 1px solid var(--pi-border); border-radius: 8px; }
     .scope-toggle button { flex: 1; padding: 6px 10px; border-radius: 6px; color: var(--pi-muted); }
     .scope-toggle button[aria-pressed="true"] { background: var(--pi-selection-bg); color: var(--pi-text); }
+    .scope-notice { display: grid; gap: 3px; margin: 10px 12px 0; padding: 8px 10px; border: 1px solid var(--pi-border); border-radius: 8px; color: var(--pi-muted); }
+    .scope-notice strong { color: var(--pi-text); }
+    .scope-notice code { font: inherit; color: var(--pi-text); }
     .options { min-height: 0; overflow: auto; outline: none; }
     button { border: 0; background: transparent; color: var(--pi-text); cursor: pointer; }
     header button { font-size: 20px; color: var(--pi-muted); }
-    input.search { margin: 10px 12px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); padding: 8px 10px; outline: none; }
+    .search-row { display: flex; align-items: center; gap: 8px; margin: 10px 12px; }
+    input.search { flex: 1; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); padding: 8px 10px; outline: none; }
     input.search:focus { border-color: var(--pi-accent); }
+    .toggle-all { flex: none; padding: 8px 10px; border: 1px solid var(--pi-border); border-radius: 8px; white-space: nowrap; }
+    .toggle-all:hover:not(:disabled) { background: var(--pi-selection-bg); }
+    .toggle-all:disabled { cursor: default; opacity: 0.55; }
+    .scope-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .options > button { display: block; width: 100%; padding: 10px 12px; border-bottom: 1px solid var(--pi-border-muted); text-align: left; }
     .options > button.selected, .options > button:hover { background: var(--pi-selection-bg); }
     .catalog-row { display: flex; align-items: center; border-bottom: 1px solid var(--pi-border-muted); }
     .catalog-row.selected, .catalog-row:hover { background: var(--pi-selection-bg); }
     .catalog-row input[type="checkbox"] { margin: 0 0 0 12px; accent-color: var(--pi-accent); }
-    .catalog-row .pick { flex: 1; min-width: 0; display: block; padding: 10px 12px; text-align: left; }
-    .group-header { padding: 8px 12px 4px; color: var(--pi-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .catalog-row .membership { flex: 1; min-width: 0; display: block; padding: 10px 12px; text-align: left; }
     small { display: block; margin-top: 4px; color: var(--pi-muted); }
     .empty { padding: 24px; color: var(--pi-muted); text-align: center; }
   `;

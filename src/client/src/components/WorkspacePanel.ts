@@ -16,7 +16,7 @@ export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) panelContext: WorkspacePanelContext | undefined;
   @property({ attribute: false }) emptyState: WorkspacePanelEmptyState | undefined;
-  @property() tool: QualifiedContributionId = "core:workspace.files";
+  @property() tool: QualifiedContributionId | undefined;
   @property({ attribute: false }) panels: QualifiedWorkspacePanelContribution[] = [];
   @property({ type: Boolean }) hideToolTabs = false;
   @property({ attribute: false }) onSelectTool: (tool: QualifiedContributionId) => void = () => undefined;

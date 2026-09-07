@@ -740,6 +740,54 @@ describe("session routes", () => {
     }
   });
 
+  it("forwards atomic model-scope presets and returns the updated catalog", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    routeService.setModelScopeResponse = [{ provider: "anthropic", id: "claude-opus-4-6", enabled: true }];
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const response = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/models/scope",
+        payload: { cwd: requestCwd, mode: "current" },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ models: routeService.setModelScopeResponse });
+      expect(routeService.setModelScopeCalls).toEqual([{ lookup: { id: "session-1", cwd: requestCwd }, mode: "current" }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("rejects malformed model-scope presets before calling the service", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const missing = await routeApp.inject({ method: "POST", url: "/sessions/session-1/models/scope", payload: { cwd: requestCwd } });
+      const invalid = await routeApp.inject({ method: "POST", url: "/sessions/session-1/models/scope", payload: { cwd: requestCwd, mode: "none" } });
+
+      expect(missing.statusCode).toBe(400);
+      expect(missing.json()).toEqual({ error: "mode field must be all or current" });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json()).toEqual({ error: "mode field must be all or current" });
+      expect(routeService.setModelScopeCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("rejects malformed enable edits before calling the service", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1348,6 +1396,14 @@ class CapturingRouteSessionService implements SessionRouteService {
     this.setModelEnabledCalls.push({ lookup, provider, modelId, enabled });
     if (this.setModelEnabledError !== undefined) return Promise.reject(this.setModelEnabledError);
     return Promise.resolve(this.setModelEnabledResponse);
+  }
+  setModelScopeCalls: { lookup: SessionRouteRef; mode: "all" | "current" }[] = [];
+  setModelScopeResponse: SessionModelCatalogEntry[] = [];
+  setModelScopeError: Error | undefined;
+  setModelScope(lookup: SessionRouteRef, mode: "all" | "current"): Promise<SessionModelCatalogEntry[]> {
+    this.setModelScopeCalls.push({ lookup, mode });
+    if (this.setModelScopeError !== undefined) return Promise.reject(this.setModelScopeError);
+    return Promise.resolve(this.setModelScopeResponse);
   }
   setModel(): never { throw unusedRouteMethod("setModel"); }
   cycleModel(): never { throw unusedRouteMethod("cycleModel"); }

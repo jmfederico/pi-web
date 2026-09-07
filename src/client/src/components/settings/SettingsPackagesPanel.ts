@@ -1,6 +1,6 @@
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { PiPackageInfo, PiPackageScope, PiPackagesResponse } from "../../api";
+import type { PiPackageInfo, PiPackageInstallableSuggestion, PiPackageScope, PiPackagesResponse } from "../../api";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageOperationState, type PiPackageTargetContext } from "./piPackageSettings";
@@ -60,8 +60,36 @@ export class SettingsPackagesPanel extends LitElement {
       return html`<div class="loading-card">${this.loading ? `Loading Pi packages from ${targetLabel}…` : `Pi package list unavailable for ${targetLabel}. Use Reload to try again.`}</div>`;
     }
     return html`
+      ${this.renderInstallableKnownPackages(targetLabel)}
       ${this.renderInstallForm(targetLabel)}
       ${this.renderPackageList(packages, target)}
+    `;
+  }
+
+  private renderInstallableKnownPackages(targetLabel: string): TemplateResult | null {
+    const suggestions = this.packagesResponse?.installableKnownPackages ?? [];
+    if (suggestions.length === 0) return null;
+    return html`
+      <section class="known-package-section" aria-label="Available known Pi packages">
+        <h3>Available packages</h3>
+        <p>PI WEB ships these packages so you can install them on ${targetLabel} with one click, with no path to type — including one you previously removed.</p>
+        <div class="known-package-list">
+          ${suggestions.map((suggestion) => this.renderInstallableKnownPackage(suggestion))}
+        </div>
+      </section>
+    `;
+  }
+
+  private renderInstallableKnownPackage(suggestion: PiPackageInstallableSuggestion): TemplateResult {
+    const installing = isPiPackageOperationPending(this.operation, "install", suggestion.source);
+    return html`
+      <article class="known-package-card">
+        <div class="package-main">
+          <strong>${suggestion.label}</strong>
+          <small>${suggestion.description}</small>
+        </div>
+        <button title=${`Install ${suggestion.label}`} ?disabled=${this.isOperating} @click=${() => { void this.installKnownPackage(suggestion.source); }}>${installing ? "Installing…" : "Install"}</button>
+      </article>
     `;
   }
 
@@ -163,6 +191,14 @@ export class SettingsPackagesPanel extends LitElement {
     }
   }
 
+  private async installKnownPackage(source: string): Promise<void> {
+    try {
+      await this.onInstallPackage?.(source);
+    } catch {
+      // The parent owns network error presentation so package errors are consistent across Settings.
+    }
+  }
+
   private async updatePackage(source?: string): Promise<void> {
     try {
       await this.onUpdatePackage?.(source);
@@ -198,6 +234,9 @@ export class SettingsPackagesPanel extends LitElement {
     .install-card { display: grid; gap: 8px; }
     .install-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
     .package-section { display: block; }
+    .known-package-section { display: grid; gap: 8px; margin-bottom: 14px; }
+    .known-package-list { display: grid; gap: 10px; }
+    .known-package-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
     .loading-card, .action-note { color: var(--pi-muted); }
     .action-note { margin-bottom: 10px; font-size: 12px; }
     .package-list { display: grid; gap: 10px; }
@@ -210,7 +249,7 @@ export class SettingsPackagesPanel extends LitElement {
     @media (max-width: 760px) {
       .package-toolbar { display: grid; gap: 12px; }
       .package-toolbar .secondary { justify-self: start; }
-      .install-row, .package-card { grid-template-columns: minmax(0, 1fr); align-items: start; }
+      .install-row, .package-card, .known-package-card { grid-template-columns: minmax(0, 1fr); align-items: start; }
       .package-actions { justify-self: start; flex-wrap: wrap; }
       .package-main strong, .package-main small { white-space: normal; }
     }

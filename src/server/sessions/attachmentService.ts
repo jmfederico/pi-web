@@ -2,15 +2,10 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { formatDimensionNote, resizeImage } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_ATTACHMENT_FOLDER } from "../../config.js";
 import type { PromptAttachment, PromptImageAttachment, SavedPromptAttachment } from "../../shared/apiTypes.js";
 import { extensionForImageMimeType } from "../../shared/promptAttachments.js";
 import { ensureInside, isNodeErrorWithCode, resolveParentInsideWorkspace } from "../workspaces/pathSafety.js";
-
-/**
- * Default workspace-relative folder used when saving pasted/dropped
- * attachments for the agent to read with its own tools.
- */
-export const DEFAULT_ATTACHMENT_FOLDER = ".pi-web/attachments";
 
 export interface InlineImage {
   image: ImageContent;
@@ -42,7 +37,7 @@ export async function attachmentsToInlineImages(attachments: PromptImageAttachme
 }
 
 export interface SaveAttachmentsOptions {
-  /** Workspace-relative folder to write into. Defaults to `.pi-web/attachments`. */
+  /** Workspace-relative folder to write into. `.pi-web/attachments` only applies when omitted; production save paths pass the resolved effective folder. */
   folder?: string;
   /** Clock injection for deterministic tests. */
   now?: () => Date;

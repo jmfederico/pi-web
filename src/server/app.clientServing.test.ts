@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 
 const tempDirectories: string[] = [];
+const STOCK_MANIFEST = JSON.stringify({ name: "PI WEB", short_name: "PI WEB", theme_color: "#0d1117" });
 
 afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map((path) => (
@@ -34,6 +35,30 @@ describe("app client serving modes", () => {
         message: "Route GET:/api/not-a-route not found",
         error: "Not Found",
         statusCode: 404,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("serves the detected deployment identity from the packaged client root", async () => {
+    const clientDist = await createClientDist();
+    const app = await buildApp({
+      clientServing: { mode: "packaged", clientDist },
+      deploymentFlavor: () => Promise.resolve("dev"),
+      logger: false,
+    });
+
+    try {
+      const favicon = await app.inject({ method: "GET", url: "/favicon.svg" });
+      const manifest = await app.inject({ method: "GET", url: "/manifest.webmanifest" });
+
+      expect(favicon.statusCode).toBe(200);
+      expect(favicon.body).toBe("dev favicon");
+      expect(manifest.json()).toMatchObject({
+        name: "PI WEB (dev)",
+        short_name: "PI WEB (dev)",
+        theme_color: "#21132f",
       });
     } finally {
       await app.close();
@@ -97,7 +122,12 @@ describe("app client serving modes", () => {
 
 async function createClientDist(): Promise<string> {
   const directory = await createTempDirectory();
-  await writeFile(join(directory, "index.html"), "<html>PI WEB</html>", "utf8");
+  await Promise.all([
+    writeFile(join(directory, "index.html"), "<html>PI WEB</html>", "utf8"),
+    writeFile(join(directory, "favicon.svg"), "stock favicon", "utf8"),
+    writeFile(join(directory, "favicon-dev.svg"), "dev favicon", "utf8"),
+    writeFile(join(directory, "manifest.webmanifest"), STOCK_MANIFEST, "utf8"),
+  ]);
   return directory;
 }
 

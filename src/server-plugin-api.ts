@@ -1,6 +1,18 @@
-import type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
+import type {
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  WorkspaceProviderMetadata,
+  WorkspaceRemovalPresentation,
+} from "./shared/pluginApiTypes.js";
 
-export type { JsonObject, JsonPrimitive, JsonValue, WorkspaceRemovalPresentation };
+export type {
+  JsonObject,
+  JsonPrimitive,
+  JsonValue,
+  WorkspaceProviderMetadata,
+  WorkspaceRemovalPresentation,
+};
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -18,6 +30,8 @@ export interface ServerPluginActivationContext {
   readonly packageRoot: string;
   readonly logger: ServerPluginLogger;
   readonly settings: JsonObject;
+  /** Record a host-attributed application notice when this capability is available. */
+  readonly notices?: ServerPluginNoticeReporterV1;
   /**
    * Execute an argv-based command through host-owned output and time bounds.
    * The caller must forward the signal for its current bounded operation.
@@ -28,6 +42,36 @@ export interface ServerPluginActivationContext {
    * out or settles; it is not a plugin-lifetime shutdown signal.
    */
   readonly signal: AbortSignal;
+}
+
+export type ServerPluginNoticeSeverity = "info" | "warning" | "error";
+
+/** Browser-visibility selectors, matched only against the selected machine context; each id is at most 512 characters. */
+export type ServerPluginNoticeScope =
+  | { readonly projectId: string; readonly workspaceId?: string; readonly sessionId?: string }
+  | { readonly projectId?: string; readonly workspaceId: string; readonly sessionId?: string }
+  | { readonly projectId?: string; readonly workspaceId?: string; readonly sessionId: string };
+
+/** Plugin-authored notice data. The host supplies the immutable source identity. */
+export interface ServerPluginNoticeInput {
+  readonly severity: ServerPluginNoticeSeverity;
+  /** Non-empty human-readable text, limited to 4 KiB of UTF-8. */
+  readonly message: string;
+  /** Omit for a global notice; a supplied scope must contain at least one id. */
+  readonly scope?: ServerPluginNoticeScope;
+  /** Detached metadata; keys never affect visibility. Limited to 16 KiB and JSON depth 32. */
+  readonly context?: JsonObject;
+}
+
+/**
+ * Optional versioned capability for recording host-owned server notices.
+ * It is live during activation, start, and the active plugin lifetime, then is
+ * revoked before failed-start rollback or ordinary stop cleanup begins.
+ */
+export interface ServerPluginNoticeReporterV1 {
+  readonly version: 1;
+  /** Throws after reporter revocation or when the complete input is invalid. */
+  readonly record: (input: ServerPluginNoticeInput) => void;
 }
 
 /** Host-owned logger supplied through the frozen activation context. */
@@ -66,6 +110,8 @@ export interface ServerPluginExecFileResult {
  */
 export interface ServerPluginActivation {
   workspaceProvider?: WorkspaceProvider;
+  /** Serve bounded requests and optional duplex channels from this package's paired browser entry. */
+  pairedBackend?: PairedPluginBackendV1;
   /** Initialize resources within one host-bounded start invocation. */
   start?(signal: AbortSignal): MaybePromise<void>;
   /** Release resources within one host-bounded stop invocation. */
@@ -78,6 +124,83 @@ export interface ServerPluginHealth {
   status: "healthy" | "degraded" | "unhealthy";
   message?: string;
   details?: JsonObject;
+}
+
+/**
+ * Capabilities for this package's matching browser entry. An activation may
+ * supply a request handler, a channel handler, or both, but never neither.
+ */
+export type PairedPluginBackendV1 =
+  | {
+      readonly version: 1;
+      request(context: PairedPluginRequestContext): MaybePromise<JsonValue>;
+      /** Open one finite-lived, host-bounded duplex channel. */
+      openChannel?(context: PairedPluginChannelOpenContext): MaybePromise<PairedPluginChannel>;
+    }
+  | {
+      readonly version: 1;
+      request?: undefined;
+      /** Open one finite-lived, host-bounded duplex channel. */
+      openChannel(context: PairedPluginChannelOpenContext): MaybePromise<PairedPluginChannel>;
+    };
+
+/** Channel instance returned by `openChannel()` after the host validates scope. */
+export interface PairedPluginChannel {
+  /** Consume one browser-authored JSON frame in accepted order within a host-bounded invocation. */
+  receive(data: JsonValue, signal: AbortSignal): MaybePromise<void>;
+  /**
+   * Optional plugin-owned completion signal. Resolve it only after the final
+   * send; the host boundedly drains accepted transport work before physical
+   * close and admission release.
+   */
+  readonly closed?: PromiseLike<void>;
+  /** Release channel resources once after disconnect, failure, expiry, shutdown, or plugin completion. */
+  close?(context: PairedPluginChannelCloseContext): MaybePromise<void>;
+}
+
+export interface PairedPluginChannelCloseContext {
+  readonly code: number;
+  readonly reason: string;
+  /** Signal for this bounded close invocation, not the already-ended channel lifetime. */
+  readonly signal: AbortSignal;
+}
+
+/** Host-resolved, browser-visible workspace projection without provider-private data. */
+export interface PairedPluginWorkspace {
+  readonly id: string;
+  readonly projectId: string;
+  readonly path: string;
+  readonly label: string;
+  readonly isMain: boolean;
+  readonly provider?: WorkspaceProviderMetadata;
+}
+
+/**
+ * Every value is host-derived, cloned, and frozen. The signal belongs only to
+ * this callback and is aborted when the request times out, is cancelled, or
+ * settles.
+ */
+export interface PairedPluginRequestContext {
+  readonly project: ProjectInput;
+  readonly workspace: PairedPluginWorkspace;
+  readonly operation: string;
+  readonly input: JsonValue;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * Host-resolved channel scope. `signal` remains live for the channel lifetime
+ * and is aborted on disconnect, failure, expiry, or shutdown. `send()` clones
+ * and bounds one JSON frame synchronously; success means queue acceptance, not
+ * remote receipt. Invalid data or host queue overflow throws and closes the channel.
+ */
+export interface PairedPluginChannelOpenContext {
+  readonly project: ProjectInput;
+  readonly workspace: PairedPluginWorkspace;
+  readonly operation: string;
+  readonly input: JsonValue;
+  readonly signal: AbortSignal;
+  readonly send: (data: JsonValue) => void;
 }
 
 /**

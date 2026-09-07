@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
-import { registerPluginBackendProxyRoutes } from "./pluginBackendProxyRoutes.js";
+import { registerPairedPluginBackendProxyRoutes, registerPluginBackendProxyRoutes } from "./pluginBackendProxyRoutes.js";
 
 let app: FastifyInstance;
 let request: ReturnType<typeof vi.fn<SessionDaemonRequestClient["request"]>>;
@@ -14,6 +14,7 @@ beforeEach(() => {
     body: JSON.stringify({ counts: { open: 2 } }),
   }));
   registerPluginBackendProxyRoutes(app, { request });
+  registerPairedPluginBackendProxyRoutes(app, { request });
 });
 
 afterEach(async () => {
@@ -32,11 +33,29 @@ describe("local plugin backend proxy route", () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.json()).toEqual({ counts: { open: 2 } });
-    expect(request).toHaveBeenCalledWith(
+    expect(request.mock.calls[0]?.slice(0, 3)).toEqual([
       "POST",
       "/plugin-backends/board/projects/project%20one/workspaces/workspace%231/cards.summary",
       payload,
-    );
+    ]);
+    expect(request.mock.calls[0]?.[3]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("forwards package-paired requests through the distinct paired daemon route", async () => {
+    const payload = { revision: "server-r1", input: null };
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/paired-plugin-backends/board/projects/p1/workspaces/w1/cards.summary",
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(request.mock.calls[0]?.slice(0, 3)).toEqual([
+      "POST",
+      "/paired-plugin-backends/board/projects/p1/workspaces/w1/cards.summary",
+      payload,
+    ]);
   });
 
   it("preserves JSON primitives and attributable upstream failures", async () => {

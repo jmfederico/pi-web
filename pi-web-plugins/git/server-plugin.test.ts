@@ -385,6 +385,7 @@ async function providerFor(execFile: ServerPluginActivationContext["execFile"]):
     signal: new AbortController().signal,
   });
   const workspaceProvider = activation.workspaceProvider;
+  if (activation.pairedBackend !== undefined) throw new Error("Bundled Git must remain owner-backed");
   if (workspaceProvider === undefined) throw new Error("Bundled Git did not activate its workspace provider");
   return workspaceProvider;
 }

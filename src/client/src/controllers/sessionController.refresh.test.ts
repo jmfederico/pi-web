@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
+import { browserErrorScopeKey, sessionBrowserErrorScope, visibleBrowserErrors } from "../browserErrors";
+import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { SessionController } from "./sessionController";
-import { defaultApi, deferred, FakeSocket, oldSession, replacementSession, sessionLookupId, status, workspace, type AppState, type MessagePage, type SessionStatus } from "./sessionController.testSupport";
+import { defaultApi, deferred, FakeSocket, oldSession, replacementSession, sessionLookupId, status, workspace, type AppState, type MessagePage, type SessionStatus, type SessionStreamSnapshot } from "./sessionController.testSupport";
 
 function page(text: string, total: number): MessagePage {
   return { messages: [{ role: "assistant", content: text }], start: 0, total };
@@ -157,5 +159,291 @@ describe("SessionController selected-session refresh", () => {
     await controller.refreshSelectedSession();
 
     expect(snapshotLookups).toEqual([oldSession.id]);
+  });
+});
+
+describe("SessionController selected-session refresh errors", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function failingRefreshSetup() {
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => Promise.reject(new Error("poll boom")),
+      status: () => Promise.resolve(status(oldSession.id)),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+    return { controller, getState: () => state };
+  }
+
+  it("logs a silent background refresh failure without touching the global error state", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const harness = failingRefreshSetup();
+
+    await harness.controller.refreshSelectedSession(oldSession.id, { silent: true });
+
+    expect(harness.getState().error).toBe("");
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces a user-triggered refresh failure in the selected session scope", async () => {
+    const harness = failingRefreshSetup();
+
+    await harness.controller.refreshSelectedSession();
+
+    expect(harness.getState().error).toBe("");
+    expect(visibleBrowserErrors(harness.getState().browserErrors, {
+      machineId: "local",
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+      sessionId: oldSession.id,
+      cwd: oldSession.cwd,
+    }).map((entry) => entry.message)).toContain("Error: poll boom");
+  });
+});
+
+describe("SessionController scoped refresh errors", () => {
+  it("retains a late failure under its originating session instead of the newer selection", async () => {
+    const messages = deferred<MessagePage>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession, replacementSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => messages.promise,
+      status: () => Promise.resolve(status(oldSession.id)),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    const refresh = controller.refreshSelectedSession(oldSession.id);
+    await Promise.resolve();
+    state = { ...state, selectedSession: replacementSession };
+    messages.reject(new Error("old transcript unavailable"));
+    await refresh;
+
+    const oldScope = sessionBrowserErrorScope("local", oldSession.id, { cwd: oldSession.cwd, projectId: workspace.projectId, workspaceId: workspace.id });
+    expect(state.error).toBe("");
+    expect(state.browserErrors[browserErrorScopeKey(oldScope)]?.message).toBe("Error: old transcript unavailable");
+    expect(state.browserErrors[browserErrorScopeKey(sessionBrowserErrorScope("local", replacementSession.id, { cwd: replacementSession.cwd }))]).toBeUndefined();
+  });
+
+  it("captures session workspace ownership before a machine switch", async () => {
+    const machineA: NonNullable<AppState["selectedMachine"]> = {
+      id: "machine-a",
+      name: "Machine A",
+      kind: "remote",
+      createdAt: "now",
+      updatedAt: "now",
+    };
+    const machineB: NonNullable<AppState["selectedMachine"]> = {
+      ...machineA,
+      id: "machine-b",
+      name: "Machine B",
+    };
+    const workspaceA = { ...workspace, id: "workspace-a", projectId: "project-a" };
+    const workspaceB = { ...workspace, id: "workspace-b", projectId: "project-b" };
+    const projectA: NonNullable<AppState["selectedProject"]> = { id: workspaceA.projectId, name: "Project A", path: workspaceA.path, createdAt: "now" };
+    const projectB: NonNullable<AppState["selectedProject"]> = { id: workspaceB.projectId, name: "Project B", path: workspaceB.path, createdAt: "now" };
+    const messages = deferred<MessagePage>();
+    let state: AppState = {
+      ...initialAppState(),
+      selectedMachine: machineA,
+      selectedProject: projectA,
+      selectedWorkspace: workspaceA,
+      selectedSession: oldSession,
+      sessions: [oldSession],
+    };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => messages.promise,
+      status: () => Promise.resolve(status(oldSession.id)),
+      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+
+    const refresh = controller.refreshSelectedSession(oldSession.id);
+    await Promise.resolve();
+    state = {
+      ...state,
+      selectedMachine: machineB,
+      selectedProject: projectB,
+      selectedWorkspace: workspaceB,
+      selectedSession: undefined,
+      sessions: [],
+    };
+    messages.reject(new Error("machine A transcript unavailable"));
+    await refresh;
+
+    const originScope = sessionBrowserErrorScope(machineA.id, oldSession.id, {
+      cwd: oldSession.cwd,
+      projectId: workspaceA.projectId,
+      workspaceId: workspaceA.id,
+    });
+    expect(state.browserErrors[browserErrorScopeKey(originScope)]?.message).toBe("Error: machine A transcript unavailable");
+    expect(visibleBrowserErrors(state.browserErrors, {
+      machineId: machineB.id,
+      projectId: workspaceB.projectId,
+      workspaceId: workspaceB.id,
+    })).toEqual([]);
+    expect(visibleBrowserErrors(state.browserErrors, {
+      machineId: machineA.id,
+      projectId: workspaceA.projectId,
+      workspaceId: workspaceA.id,
+      sessionId: oldSession.id,
+      cwd: oldSession.cwd,
+    })).toEqual([{ scope: originScope, message: "Error: machine A transcript unavailable" }]);
+  });
+});
+
+describe("SessionController unchanged selected-session refresh", () => {
+  interface RefreshPoll {
+    page: MessagePage;
+    sessionStatus: SessionStatus;
+    snapshot: SessionStreamSnapshot;
+  }
+
+  function idlePoll(): RefreshPoll {
+    return { page: page("idle", 1), sessionStatus: { ...status(oldSession.id), messageCount: 1 }, snapshot: { seq: 4, partial: null } };
+  }
+
+  // The refresh invokes messages/status/streamSnapshot in order per poll, so the
+  // poll index advances on the last of the three.
+  function controllerWithPolls(polls: RefreshPoll[]) {
+    const cacheWrites: string[] = [];
+    let pollCalls = 0;
+    let setStateCalls = 0;
+    const poll = (): RefreshPoll => {
+      const current = polls[Math.min(pollCalls, polls.length - 1)];
+      if (current === undefined) throw new Error("controllerWithPolls requires at least one poll");
+      return current;
+    };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      messages: () => Promise.resolve(poll().page),
+      status: () => Promise.resolve(poll().sessionStatus),
+      streamSnapshot: () => {
+        const snapshot = poll().snapshot;
+        pollCalls += 1;
+        return Promise.resolve(snapshot);
+      },
+      thinkingLevels: () => Promise.resolve({ levels: [] }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { setStateCalls += 1; state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api,
+        socket: new FakeSocket(),
+        transcripts: new ChatTranscriptStore({
+          read: () => undefined,
+          write: (sessionId) => { cacheWrites.push(sessionId); },
+        }),
+      },
+    );
+    return {
+      controller,
+      getState: () => state,
+      setStateCalls: () => setStateCalls,
+      appliedRefreshes: () => cacheWrites.length,
+    };
+  }
+
+  it("skips the merge, cache rewrite, and state update when a poll changes nothing", async () => {
+    const harness = controllerWithPolls([idlePoll()]);
+
+    await harness.controller.refreshSelectedSession();
+    expect(harness.appliedRefreshes()).toBe(1);
+    const setStateCallsAfterFirst = harness.setStateCalls();
+    const messagesAfterFirst = harness.getState().messages;
+    expect(setStateCallsAfterFirst).toBeGreaterThan(0);
+
+    await harness.controller.refreshSelectedSession();
+
+    expect(harness.appliedRefreshes()).toBe(1);
+    expect(harness.setStateCalls()).toBe(setStateCallsAfterFirst);
+    expect(harness.getState().messages).toBe(messagesAfterFirst);
+  });
+
+  it("applies a poll whose page grew", async () => {
+    const grown: RefreshPoll = {
+      page: { messages: [{ role: "assistant", content: "idle" }, { role: "assistant", content: "new" }], start: 0, total: 2 },
+      sessionStatus: { ...status(oldSession.id), messageCount: 2 },
+      snapshot: { seq: 5, partial: null },
+    };
+    const harness = controllerWithPolls([idlePoll(), grown]);
+
+    await harness.controller.refreshSelectedSession();
+    await harness.controller.refreshSelectedSession();
+
+    expect(harness.appliedRefreshes()).toBe(2);
+    expect(harness.getState().messages).toHaveLength(2);
+    expect(harness.getState().status?.messageCount).toBe(2);
+  });
+
+  it("applies a poll whose only change is the status", async () => {
+    const busier: RefreshPoll = { ...idlePoll(), sessionStatus: { ...status(oldSession.id), messageCount: 1, cost: 7 } };
+    const harness = controllerWithPolls([idlePoll(), busier]);
+
+    await harness.controller.refreshSelectedSession();
+    await harness.controller.refreshSelectedSession();
+
+    expect(harness.appliedRefreshes()).toBe(2);
+    expect(harness.getState().status?.cost).toBe(7);
+  });
+
+  it("applies a poll whose in-flight partial changed", async () => {
+    const streaming: RefreshPoll = {
+      ...idlePoll(),
+      snapshot: { seq: 5, partial: { role: "assistant", content: [{ type: "text", text: "partial" }] } },
+    };
+    const harness = controllerWithPolls([idlePoll(), streaming]);
+
+    await harness.controller.refreshSelectedSession();
+    await harness.controller.refreshSelectedSession();
+
+    expect(harness.appliedRefreshes()).toBe(2);
+    expect(harness.getState().messages).toHaveLength(2);
+    expect(harness.getState().messages[1]).toEqual({ role: "assistant", parts: [{ type: "text", text: "partial" }] });
+  });
+
+  it("re-applies fully after reselection even when the poll data is unchanged", async () => {
+    const harness = controllerWithPolls([idlePoll()]);
+
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.appliedRefreshes()).toBe(1);
+
+    await harness.controller.refreshSelectedSession();
+    expect(harness.appliedRefreshes()).toBe(1);
+
+    // Reselection resets the state baseline, so the join refresh must run the
+    // full path (re-seed partial and watermark) rather than skip as unchanged.
+    await harness.controller.selectSession(oldSession, { updateUrl: false });
+    expect(harness.appliedRefreshes()).toBe(2);
+
+    await harness.controller.refreshSelectedSession();
+    expect(harness.appliedRefreshes()).toBe(2);
   });
 });

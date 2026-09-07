@@ -1,10 +1,13 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+  PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
   utf8ByteLength,
 } from "../../shared/pluginBackendProtocol.js";
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
+import { requestCancellation } from "../requestCancellation.js";
 
 interface PluginBackendProxyParams {
   pluginId: string;
@@ -13,58 +16,76 @@ interface PluginBackendProxyParams {
   operation: string;
 }
 
-/** Browser-facing local route; all owner resolution and execution stays in sessiond. */
-export function registerPluginBackendProxyRoutes(
+/** Browser-facing owner-backed route; workspace authority and execution stay in sessiond. */
+export function registerPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
+  registerPluginBackendProxyRoutesAt(app, daemon, PLUGIN_BACKEND_REQUEST_ROUTE_PATH, "plugin-backends");
+}
+
+/** Browser-facing package-paired route; package and workspace authority stay in sessiond. */
+export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
+  registerPluginBackendProxyRoutesAt(app, daemon, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, "paired-plugin-backends");
+}
+
+function registerPluginBackendProxyRoutesAt(
   app: FastifyInstance,
   daemon: SessionDaemonRequestClient,
-  prefix = "/api/plugin-backends",
+  routePath: string,
+  collection: "plugin-backends" | "paired-plugin-backends",
 ): void {
   app.post<{ Params: PluginBackendProxyParams; Body: unknown }>(
-    `${prefix}/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation`,
+    `/api${routePath}`,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
-      const path = daemonPluginBackendPath(request.params);
-      let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
+      const path = daemonPluginBackendPath(request.params, collection);
+      const cancellation = requestCancellation(request, reply);
       try {
-        upstream = await daemon.request("POST", path, request.body);
-      } catch (error) {
-        return reply.code(502).send({
-          error: `Session daemon unavailable: ${errorMessage(error)}`,
-          code: "daemon-unavailable",
-          pluginId: request.params.pluginId,
-          operation: request.params.operation,
-        });
-      }
+        let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
+        try {
+          upstream = await daemon.request("POST", path, request.body, { signal: cancellation.signal });
+        } catch (error) {
+          return await reply.code(502).send({
+            error: `Session daemon unavailable: ${errorMessage(error)}`,
+            code: "daemon-unavailable",
+            pluginId: request.params.pluginId,
+            operation: request.params.operation,
+          });
+        }
 
-      if (upstream.body === "" || utf8ByteLength(upstream.body) > PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES) {
-        return daemonProtocolError(reply, request.params, "Session daemon plugin backend returned an invalid response size");
-      }
+        if (upstream.body === "" || utf8ByteLength(upstream.body) > PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES) {
+          return await daemonProtocolError(reply, request.params, "Session daemon plugin backend returned an invalid response size");
+        }
 
-      let body: unknown;
-      try {
-        body = JSON.parse(upstream.body);
-      } catch {
-        return daemonProtocolError(reply, request.params, "Session daemon plugin backend returned invalid JSON");
-      }
-      if (isUnknownPluginBackendRoute(upstream.statusCode, body)) {
-        return daemonProtocolError(
-          reply,
-          request.params,
-          "Session daemon does not support plugin backend requests; restart or upgrade the session daemon",
-        );
-      }
+        let body: unknown;
+        try {
+          body = JSON.parse(upstream.body);
+        } catch {
+          return await daemonProtocolError(reply, request.params, "Session daemon plugin backend returned invalid JSON");
+        }
+        if (isUnknownPluginBackendRoute(upstream.statusCode, body)) {
+          return await daemonProtocolError(
+            reply,
+            request.params,
+            "Session daemon does not support plugin backend requests; restart or upgrade the session daemon",
+          );
+        }
 
-      return await reply
-        .code(upstream.statusCode)
-        .type("application/json; charset=utf-8")
-        .send(upstream.body);
+        return await reply
+          .code(upstream.statusCode)
+          .type("application/json; charset=utf-8")
+          .send(upstream.body);
+      } finally {
+        cancellation.dispose();
+      }
     },
   );
 }
 
-function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
+function daemonPluginBackendPath(
+  params: PluginBackendProxyParams,
+  collection: "plugin-backends" | "paired-plugin-backends",
+): string {
   return [
-    "/plugin-backends",
+    `/${collection}`,
     encodeURIComponent(params.pluginId),
     "projects",
     encodeURIComponent(params.projectId),

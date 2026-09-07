@@ -59,7 +59,7 @@ export interface WorkspaceProviderRegistryOptions {
   pathInspector?: WorkspacePathInspector;
 }
 
-export interface WorkspaceProviderRequest {
+export interface PluginBackendRequest {
   pluginId: string;
   moduleRevision: string;
   project: Project;
@@ -67,6 +67,9 @@ export interface WorkspaceProviderRequest {
   operation: string;
   input: unknown;
 }
+
+/** Compatibility name retained for the legacy owner-backed dispatcher. */
+export type WorkspaceProviderRequest = PluginBackendRequest;
 
 /** Current owner snapshot used by the host-owned workspace removal orchestrator. */
 export interface WorkspaceProviderRemovalTarget {
@@ -101,7 +104,7 @@ export class WorkspaceProviderRemovalError extends Error {
   }
 }
 
-export type WorkspaceProviderRequestErrorCode =
+export type PluginBackendRequestErrorCode =
   | "inactive-plugin"
   | "stale-plugin-revision"
   | "invalid-operation"
@@ -109,24 +112,33 @@ export type WorkspaceProviderRequestErrorCode =
   | "owner-conflict"
   | "owner-mismatch"
   | "workspace-not-found"
+  | "invalid-scope"
   | "resolution-failed"
   | "resolution-timeout"
   | "operation-unavailable"
   | "request-failed"
   | "request-timeout"
+  | "request-cancelled"
   | "invalid-result";
 
-export class WorkspaceProviderRequestError extends Error {
-  override name = "WorkspaceProviderRequestError";
+export type WorkspaceProviderRequestErrorCode = PluginBackendRequestErrorCode;
+
+export class PluginBackendRequestError extends Error {
+  override name = "PluginBackendRequestError";
 
   constructor(
-    readonly code: WorkspaceProviderRequestErrorCode,
+    readonly code: PluginBackendRequestErrorCode,
     readonly statusCode: number,
     message: string,
     options: ErrorOptions = {},
   ) {
     super(message, options);
   }
+}
+
+/** Compatibility subtype used by the legacy owner-backed dispatcher. */
+export class WorkspaceProviderRequestError extends PluginBackendRequestError {
+  override name = "WorkspaceProviderRequestError";
 }
 
 interface ParsedProviderWorkspace {
@@ -203,8 +215,12 @@ export class WorkspaceProviderRegistry {
    * Only identical work already in flight is shared; the entry is removed before
    * callers observe completion so ownership and topology are never cached.
    */
-  async resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution> {
+  async resolve(project: Project, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
     const input = snapshotProject(project);
+    // A cancellable request must own its resolution work. Sharing it would let
+    // one disconnected caller abort another caller's authority lookup.
+    if (signal !== undefined) return await this.resolveSnapshot(input, signal);
+
     const key = workspaceResolutionKey(input);
     const existing = this.pendingResolutions.get(key);
     if (existing !== undefined) return existing;
@@ -218,11 +234,11 @@ export class WorkspaceProviderRegistry {
     }
   }
 
-  private async resolveSnapshot(input: ProjectInput): Promise<WorkspaceProviderAuthorityResolution> {
+  private async resolveSnapshot(input: ProjectInput, signal?: AbortSignal): Promise<WorkspaceProviderAuthorityResolution> {
     const diagnostics: WorkspaceProviderDiagnostic[] = [];
 
     for (const tier of ["primary", "fallback"] as const) {
-      const selection = await this.selectInTier(input, tier, diagnostics);
+      const selection = await this.selectInTier(input, tier, diagnostics, signal);
       if (selection.kind === "none") continue;
       if (selection.kind === "conflict") {
         const message = `Workspace provider conflict in ${tier} tier: ${selection.pluginIds.join(", ")}`;
@@ -236,9 +252,10 @@ export class WorkspaceProviderRegistry {
         this.options.logger.warn({ projectId: input.id, tier, pluginIds: selection.pluginIds }, "workspace provider claim conflict");
         return degradedResolution(input, diagnostics);
       }
-      return await this.resolveWinner(input, tier, selection.contribution, diagnostics);
+      return await this.resolveWinner(input, tier, selection.contribution, diagnostics, signal);
     }
 
+    throwIfAborted(signal);
     return Object.freeze({
       status: "folder",
       projectId: input.id,
@@ -251,13 +268,14 @@ export class WorkspaceProviderRegistry {
    * Re-resolve the current owner and its private workspace snapshot before
    * invoking one bounded provider operation. Callers never supply owner data.
    */
-  async request(request: WorkspaceProviderRequest): Promise<JsonValue> {
+  async request(request: WorkspaceProviderRequest, signal?: AbortSignal): Promise<JsonValue> {
     try {
       return await runBoundedProviderOperation(
         request.pluginId,
         "request",
         this.requestTimeoutMs,
-        (signal) => this.dispatchRequest(request, signal),
+        (operationSignal) => this.dispatchRequest(request, operationSignal),
+        signal,
       );
     } catch (error) {
       if (error instanceof WorkspaceProviderTimeoutError) {
@@ -581,6 +599,7 @@ export class WorkspaceProviderRegistry {
     tier: ProviderTier,
     contribution: ServerPluginProviderContribution,
     diagnostics: WorkspaceProviderDiagnostic[],
+    dispatchSignal?: AbortSignal,
   ): Promise<WorkspaceProviderAuthorityResolution> {
     try {
       const listed: unknown = await runBoundedProviderOperation(
@@ -588,8 +607,9 @@ export class WorkspaceProviderRegistry {
         "list",
         this.providerTimeoutMs,
         (signal) => contribution.provider.list(project, signal),
+        dispatchSignal,
       );
-      const validated = await validateProviderWorkspaces(project, contribution, listed, this.pathInspector);
+      const validated = await validateProviderWorkspaces(project, contribution, listed, this.pathInspector, dispatchSignal);
       return Object.freeze({
         status: "provider",
         projectId: project.id,
@@ -598,6 +618,7 @@ export class WorkspaceProviderRegistry {
         diagnostics: Object.freeze([...diagnostics]),
       });
     } catch (error) {
+      if (dispatchSignal?.aborted === true) throw abortError(dispatchSignal);
       const message = errorMessage(error);
       diagnostics.push(freezeDiagnostic({
         code: "list-failed",

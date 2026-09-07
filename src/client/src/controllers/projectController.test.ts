@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
 import type { Project, Workspace } from "../api";
+import { browserErrorScopeKey, machineBrowserErrorScope, projectBrowserErrorScope } from "../browserErrors";
 import { ProjectController } from "./projectController";
 
 function project(id: string, path: string): Project {
@@ -13,6 +14,107 @@ function workspace(projectId: string, path: string): Workspace {
 }
 
 describe("ProjectController", () => {
+  it("reports project loading failures under the selected machine", async () => {
+    let state: AppState = { ...initialAppState(), error: "A global failure" };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const failure = new Error("Projects unavailable");
+    const controller = new ProjectController(
+      () => state,
+      setState,
+      { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn() },
+      {
+        api: {
+          projects: vi.fn().mockRejectedValue(failure),
+          addProject: vi.fn(),
+          closeProject: vi.fn(),
+          setWorkspaceTrust: vi.fn(),
+        },
+      },
+    );
+
+    await controller.loadProjects();
+
+    expect(state.error).toBe("A global failure");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope("local"))]?.message).toBe(String(failure));
+  });
+
+  it("reports project close failures under that project without overwriting a global error", async () => {
+    let state: AppState = { ...initialAppState(), error: "A global failure" };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const failure = new Error("Project is busy");
+    const controller = new ProjectController(
+      () => state,
+      setState,
+      { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn() },
+      {
+        api: {
+          projects: vi.fn(),
+          addProject: vi.fn(),
+          closeProject: vi.fn().mockRejectedValue(failure),
+          setWorkspaceTrust: vi.fn(),
+        },
+      },
+    );
+
+    await controller.closeProject("project-a");
+
+    expect(state.error).toBe("A global failure");
+    expect(state.browserErrors[browserErrorScopeKey(projectBrowserErrorScope("local", "project-a"))]?.message).toBe(String(failure));
+  });
+
+  it("reports a project creation failure under the selected machine", async () => {
+    let state: AppState = { ...initialAppState(), error: "A global failure" };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const failure = new Error("Project path is invalid");
+    const controller = new ProjectController(
+      () => state,
+      setState,
+      { selectProject: vi.fn(), forgetProject: vi.fn(), clearSelection: vi.fn() },
+      {
+        api: {
+          projects: vi.fn(),
+          addProject: vi.fn().mockRejectedValue(failure),
+          closeProject: vi.fn(),
+          setWorkspaceTrust: vi.fn(),
+        },
+      },
+    );
+
+    await controller.addProject("/invalid");
+
+    expect(state.error).toBe("A global failure");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope("local"))]?.message).toBe(String(failure));
+  });
+
+  it("reports trust-write failures under the project that was added", async () => {
+    const addedProject = project("added", "/added");
+    const addedWorkspace = workspace(addedProject.id, addedProject.path);
+    let state: AppState = { ...initialAppState() };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const failure = new Error("Trust write failed");
+    const selectProject = vi.fn(() => {
+      state = { ...state, workspaces: [addedWorkspace] };
+      return Promise.resolve();
+    });
+    const controller = new ProjectController(
+      () => state,
+      setState,
+      { selectProject, forgetProject: vi.fn(), clearSelection: vi.fn() },
+      {
+        api: {
+          projects: vi.fn(),
+          addProject: vi.fn().mockResolvedValue(addedProject),
+          closeProject: vi.fn(),
+          setWorkspaceTrust: vi.fn().mockRejectedValue(failure),
+        },
+      },
+    );
+
+    await controller.addProject("/added", undefined, { trusted: true, changed: true });
+
+    expect(state.browserErrors[browserErrorScopeKey(projectBrowserErrorScope("local", addedProject.id))]?.message).toBe(String(failure));
+  });
+
   it("drops cached workspaces for projects a reload no longer lists", async () => {
     const currentProject = project("current", "/current");
     const removedProject = project("removed", "/removed");

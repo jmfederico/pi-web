@@ -7,6 +7,12 @@ interface AppRouteLocation {
   sessionId: string | undefined;
 }
 
+export interface WorkspaceRouteIdentity {
+  machineId: string;
+  projectId: string;
+  workspaceId: string;
+}
+
 /** Route values after plugin-contributed workspace panel aliases are resolved. */
 export interface AppRoute extends AppRouteLocation {
   tool: QualifiedContributionId | undefined;
@@ -50,6 +56,15 @@ export function resolveAppRoute(route: ParsedAppRoute, resolveWorkspacePanel: Wo
 
 export function resolveWorkspacePanelRouteValue(value: string, resolveWorkspacePanel: WorkspacePanelRouteResolver): QualifiedContributionId | undefined {
   return resolveWorkspacePanel(value) ?? (isQualifiedContributionId(value) ? value : undefined);
+}
+
+export function routeMatchesWorkspaceIdentity(
+  route: Pick<ParsedAppRoute, "machineId" | "projectId" | "workspaceId">,
+  identity: WorkspaceRouteIdentity,
+): boolean {
+  return (route.machineId ?? "local") === identity.machineId
+    && route.projectId === identity.projectId
+    && route.workspaceId === identity.workspaceId;
 }
 
 export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean | undefined }): void {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
-import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
+import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseRealtimeStreamEvent, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves interactive API-key flow hints and defaults providers without one", () => {
@@ -48,19 +48,19 @@ describe("API parsers", () => {
     expect(() => parseOAuthFlowState({ ...flow, prompt: { requestId: "text", message: "Value", promptType: "kind" } })).toThrow("Invalid OAuth prompt type");
   });
 
-  it("parses PI WEB config responses including Safe Tunnel availability", () => {
+  it("parses PI WEB config responses including attachments and Safe Tunnel availability", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, safeTunnel: true, spawnSessions: false, subsessions: false, askUser: false },
       managedAllowedHosts: [{ source: "safe-tunnel", hostname: "machine.namespace.tunnels.example.test" }],
     })).toEqual({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, safeTunnel: true, spawnSessions: false, subsessions: false, askUser: false },
       managedAllowedHosts: [{ source: "safe-tunnel", hostname: "machine.namespace.tunnels.example.test" }],
     });
@@ -80,6 +80,19 @@ describe("API parsers", () => {
       ...response,
       managedAllowedHosts: [{ source: "request", hostname: "attacker.test" }],
     })).toThrow("Invalid PI WEB managedAllowedHosts source");
+  });
+
+  it("rejects malformed PI WEB attachments config fields", () => {
+    const response = {
+      path: "/tmp/config.json",
+      exists: true,
+      config: {},
+      effectiveConfig: {},
+      envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
+    };
+
+    expect(() => parsePiWebConfigResponse({ ...response, config: { attachments: "saved/attachments" } })).toThrow("Invalid PI WEB attachments field");
+    expect(() => parsePiWebConfigResponse({ ...response, effectiveConfig: { attachments: [] } })).toThrow("Invalid PI WEB attachments field");
   });
 
   it("rejects malformed Safe Tunnel config response fields", () => {
@@ -218,6 +231,22 @@ describe("API parsers", () => {
     expect(() => parsePiPackagesResponse({ packages: [{ source: "npm:@acme/tools", scope: "user", filtered: "no" }] })).toThrow("Expected boolean field: filtered");
   });
 
+  it("parses installable known package suggestions when present and omits the field when absent", () => {
+    const installableKnownPackages = [{ id: "@jmfederico/pi-relay", label: "Relays", description: "Relay method prompts and skill.", source: "/pi-web/dist/pi-packages/relays" }];
+
+    expect(parsePiPackagesResponse({ packages: [], installableKnownPackages })).toEqual({ packages: [], installableKnownPackages });
+    expect(parsePiPackagesResponse({ packages: [] })).toEqual({ packages: [] });
+    expect(parsePiPackageMutationResponse({ action: "install", packages: [], installableKnownPackages })).toEqual({
+      action: "install",
+      packages: [],
+      installableKnownPackages,
+    });
+  });
+
+  it("rejects malformed installable known package suggestions", () => {
+    expect(() => parsePiPackagesResponse({ packages: [], installableKnownPackages: [{ id: "@acme/known", label: "Known", description: "desc" }] })).toThrow("Expected string field: source");
+  });
+
   it("parses Docker PI WEB installation metadata", () => {
     const response = {
       packageName: "@jmfederico/pi-web",
@@ -255,7 +284,7 @@ describe("API parsers", () => {
       clearSafeStart: "pi-web plugins safe-start clear --restart",
     };
     const response = {
-      lifecycleVersion: 1,
+      lifecycleVersion: 2,
       plugins: [
         {
           id: "info",
@@ -279,7 +308,7 @@ describe("API parsers", () => {
         { id: "workspace-provider", source: "local", scope: "user", enabled: true, discovered: false, conflict: false },
       ],
       diagnostics: [{ kind: "conflict", snapshot: "desired", source: "local", message: "Duplicate id", pluginId: "info" }],
-      serverRuntime: { status: "available", safeStart: "bundled-only", desiredSafeStart: "off", restartRequired: true, recovery },
+      serverRuntime: { status: "available", terminalMode: "required", safeStart: "bundled-only", desiredSafeStart: "off", restartRequired: true, recovery },
     };
 
     expect(parsePiWebPluginsResponse(response)).toEqual({
@@ -294,19 +323,20 @@ describe("API parsers", () => {
     });
 
     expect(parsed.plugins).toEqual([expect.objectContaining({ id: "info", enabled: true, discovered: true, conflict: false })]);
-    expect(parsed.serverRuntime).toMatchObject({ status: "incompatible", restartRequired: false });
+    expect(parsed.serverRuntime).toMatchObject({ status: "incompatible", terminalMode: "required", restartRequired: false });
     expect(parsed.serverRuntime.message).toContain("Update and restart PI WEB");
   });
 
   it("rejects malformed plugin lifecycle versions and recovery state", () => {
-    expect(() => parsePiWebPluginsResponse({ lifecycleVersion: 2, plugins: [], diagnostics: [], serverRuntime: {} }))
+    expect(() => parsePiWebPluginsResponse({ lifecycleVersion: 3, plugins: [], diagnostics: [], serverRuntime: {} }))
       .toThrow("Unsupported PI WEB plugin lifecycle version");
     expect(() => parsePiWebPluginsResponse({
-      lifecycleVersion: 1,
+      lifecycleVersion: 2,
       plugins: [],
       diagnostics: [],
       serverRuntime: {
         status: "available",
+        terminalMode: "required",
         desiredSafeStart: "future",
         restartRequired: false,
         recovery: {
@@ -318,11 +348,12 @@ describe("API parsers", () => {
       },
     })).toThrow("Invalid desired PI WEB server-plugin safe-start state");
     expect(() => parsePiWebPluginsResponse({
-      lifecycleVersion: 1,
+      lifecycleVersion: 2,
       plugins: [],
       diagnostics: [],
       serverRuntime: {
         status: "available",
+        terminalMode: "required",
         restartRequired: false,
         recovery: {
           showSafeStart: "pi-web plugins safe-start show --token secret",
@@ -332,6 +363,22 @@ describe("API parsers", () => {
         },
       },
     })).toThrow("Invalid PI WEB server plugin recovery commands");
+    expect(() => parsePiWebPluginsResponse({
+      lifecycleVersion: 2,
+      plugins: [],
+      diagnostics: [],
+      serverRuntime: {
+        status: "unavailable",
+        terminalMode: "recovery-disabled",
+        restartRequired: false,
+        recovery: {
+          showSafeStart: "pi-web plugins safe-start show",
+          bundledOnly: "pi-web plugins safe-start set bundled-only --restart",
+          noServerPlugins: "pi-web plugins safe-start set none --restart",
+          clearSafeStart: "pi-web plugins safe-start clear --restart",
+        },
+      },
+    })).toThrow("Unavailable PI WEB runtime cannot declare Terminal recovery mode");
   });
 
   it("parses paged message responses and rejects legacy array message pages", () => {
@@ -536,16 +583,16 @@ describe("API parsers", () => {
     expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", persisted: "yes", created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected optional boolean field: persisted");
   });
 
-  it("parses the model catalog with per-model enabled state", () => {
+  it("parses the model catalog with enabled state and natural catalog positions", () => {
     expect(parseSessionModelCatalogResponse({
       models: [
-        { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, reasoning: { effort: "high" }, enabled: true },
-        { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false },
+        { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, reasoning: { effort: "high" }, enabled: true, catalogIndex: 1 },
+        { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false, editable: false, catalogIndex: 0 },
       ],
     })).toEqual({
       models: [
-        { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, reasoning: { effort: "high" }, enabled: true },
-        { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false },
+        { provider: "anthropic", id: "claude-opus-4-6", name: "Claude Opus", contextWindow: 200_000, reasoning: { effort: "high" }, enabled: true, catalogIndex: 1 },
+        { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false, editable: false, catalogIndex: 0 },
       ],
     });
   });
@@ -555,6 +602,8 @@ describe("API parsers", () => {
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", enabled: true }] })).toThrow("Expected string field: id");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", enabled: "yes" }] })).toThrow("Expected boolean field: enabled");
     expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", name: 4, enabled: true }] })).toThrow("Expected optional string field: name");
+    expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", enabled: true, editable: "yes" }] })).toThrow("Invalid PI WEB editable field");
+    expect(() => parseSessionModelCatalogResponse({ models: [{ provider: "p", id: "m", enabled: true, catalogIndex: -1 }] })).toThrow("Expected non-negative safe integer field: catalogIndex");
     expect(() => parseSessionModelCatalogResponse({})).toThrow("Expected array response");
   });
 
@@ -643,7 +692,7 @@ describe("API parsers", () => {
     })).toThrow("Invalid session warning severity");
   });
 
-  it("parses workspace effective upload config without retaining the removed top-level branch alias", () => {
+  it("parses workspace effective upload and attachments config without retaining the removed top-level branch alias", () => {
     const workspace = parseWorkspace({
       id: "w1",
       projectId: "p1",
@@ -651,7 +700,7 @@ describe("API parsers", () => {
       label: "main",
       branch: "legacy-wire-alias",
       isMain: true,
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
 
     expect(workspace).toEqual({
@@ -660,7 +709,7 @@ describe("API parsers", () => {
       path: "/repo",
       label: "main",
       isMain: true,
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
     expect(workspace).not.toHaveProperty("branch");
   });
@@ -708,7 +757,7 @@ describe("API parsers", () => {
         metadata: { nested: [{ ready: true }] },
       },
       removal: { actionLabel: "Remove workspace", confirmation: "Remove secondary?", precondition: "v1.confirmed" },
-      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" } },
+      effectiveConfig: { uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" } },
     });
     const nested = workspace.provider?.metadata?.["nested"];
     if (!Array.isArray(nested)) throw new Error("Expected nested workspace metadata fixture");
@@ -722,6 +771,7 @@ describe("API parsers", () => {
     expect(Object.isFrozen(workspace.removal)).toBe(true);
     expect(Object.isFrozen(workspace.effectiveConfig)).toBe(true);
     expect(Object.isFrozen(workspace.effectiveConfig.uploads)).toBe(true);
+    expect(Object.isFrozen(workspace.effectiveConfig.attachments)).toBe(true);
   });
 
   it("parses provider-neutral workspace resolution ownership and diagnostics", () => {
@@ -865,61 +915,6 @@ describe("API parsers", () => {
     expect(() => parseFileContentResponse({ ...textFile, mediaType: "video" })).toThrow("Invalid file media type");
   });
 
-  it("parses terminal info with optional command-run ownership", () => {
-    expect(parseTerminalInfo({
-      id: "t1",
-      cwd: "/repo",
-      name: "Build",
-      createdAt: "now",
-      exited: false,
-      commandRunId: "run1",
-    })).toMatchObject({ id: "t1", commandRunId: "run1" });
-  });
-
-  it("parses terminal command runs", () => {
-    expect(parseTerminalCommandRun({
-      id: "run1",
-      origin: "core",
-      projectId: "p1",
-      workspaceId: "w1",
-      terminalId: "t1",
-      title: "Build",
-      command: "npm run build",
-      status: "succeeded",
-      exitCode: 0,
-      createdAt: "now",
-      startedAt: "then",
-      completedAt: "later",
-      metadata: { "pi.operation": "test" },
-    })).toEqual({
-      id: "run1",
-      origin: "core",
-      projectId: "p1",
-      workspaceId: "w1",
-      terminalId: "t1",
-      title: "Build",
-      command: "npm run build",
-      status: "succeeded",
-      exitCode: 0,
-      createdAt: "now",
-      startedAt: "then",
-      completedAt: "later",
-      metadata: { "pi.operation": "test" },
-    });
-    expect(() => parseTerminalCommandRun({
-      id: "run1",
-      origin: "core",
-      projectId: "p1",
-      workspaceId: "w1",
-      terminalId: "t1",
-      title: "Build",
-      command: "npm run build",
-      status: "done",
-      createdAt: "now",
-      metadata: {},
-    })).toThrow("Invalid terminal command run status");
-  });
-
   it("parses command result variants", () => {
     const tree = sessionTreeWire();
     expect(parseCommandResult({ type: "unsupported", message: "nope" })).toEqual({ type: "unsupported", message: "nope" });
@@ -994,6 +989,8 @@ describe("API parsers", () => {
       dismissThrough: { order: 2, overflowWatermark: 0 },
       delta: { kind: "added", notification: notificationWire(2, "warning") },
     })).toMatchObject({ type: "notifications.inbox", delta: { kind: "added", notification: { severity: "warning" } } });
+    expect(parseRealtimeStreamEvent({ type: "models.changed", revision: 3 })).toEqual({ type: "models.changed", revision: 3 });
+    expect(() => parseRealtimeStreamEvent({ type: "models.changed", revision: -1 })).toThrow("safe integer");
   });
 
   it("rejects malformed, unsafe, over-cap, and oversized notification payloads", () => {

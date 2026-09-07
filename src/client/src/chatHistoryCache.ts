@@ -58,6 +58,22 @@ export function mergeChatHistory(existing: RawMessagePage | undefined, incoming:
   return { start, total: Math.max(existing.total, incoming.total), messages };
 }
 
+/**
+ * True when `page` is exactly the already-held tail of `history`, so merging it
+ * would reproduce `history` unchanged. Poll responses arrive as fresh JSON
+ * objects, so identity never holds; the messages are compared by JSON text,
+ * which is exact for values that crossed the wire as JSON. The selected-session
+ * poll uses this to skip a redundant merge, storage rewrite, and render when a
+ * tick returns what is already shown.
+ */
+export function isHistoryTailSlice(history: RawMessagePage | undefined, page: RawMessagePage): boolean {
+  if (history === undefined || !isValidMessagePage(page)) return false;
+  if (page.total !== history.total) return false;
+  const offset = page.start - history.start;
+  if (offset < 0 || offset + page.messages.length !== history.messages.length) return false;
+  return JSON.stringify(page.messages) === JSON.stringify(history.messages.slice(offset));
+}
+
 function isCompleteReplacement(existing: RawMessagePage, incoming: RawMessagePage): boolean {
   return existing.total > incoming.total && existing.start === 0 && incoming.start === 0 && incoming.messages.length === incoming.total;
 }

@@ -1,4 +1,5 @@
 import type { MachineStatusUiEvent } from "./machineStatus.js";
+import type { TerminalPluginMode } from "./requiredTerminalPlugin.js";
 import type {
   SafeTunnelAccountAccessNotice,
   SafeTunnelDesiredState,
@@ -67,15 +68,6 @@ export type {
   WriteWorkspaceFileResponse,
 };
 
-/** Internal query shape for PI WEB's terminal-command-runs host protocol. */
-export interface TerminalCommandRunFilter {
-  projectId?: string;
-  workspaceId?: string;
-  terminalId?: string;
-  statuses?: TerminalCommandRunStatus[];
-  metadata?: Record<string, string>;
-}
-
 export type MachineStatus = "unknown" | "online" | "offline" | "error";
 
 /**
@@ -142,6 +134,10 @@ export interface PiWebUploadsConfig {
   defaultFolder?: string;
 }
 
+export interface PiWebAttachmentsConfig {
+  defaultFolder?: string;
+}
+
 export interface PiWebAgentConfig {
   /** Deprecated and ignored: the multi-implementation CLI abstraction was removed; sessions always run on the bundled pi SDK. Detected for the deprecation warning. */
   command?: string;
@@ -175,6 +171,8 @@ export interface PiWebConfigValues {
   pathAccess?: PiWebPathAccessConfig;
   /** Workspace-relative defaults for manual file uploads. */
   uploads?: PiWebUploadsConfig;
+  /** Workspace-relative defaults for prompt attachments saved into the workspace. */
+  attachments?: PiWebAttachmentsConfig;
   /** Maximum accepted HTTP request body size in bytes (uploads/attachments). */
   maxUploadBytes?: number;
   /** Experimental, web/API-owned Safe Tunnel availability. Off by default and requires a web/API restart. */
@@ -212,7 +210,7 @@ export interface PiWebConfigValues {
 
 export type PiWebPluginScope = "bundled" | "local" | "user" | "project";
 
-export const PI_WEB_PLUGIN_LIFECYCLE_VERSION = 1;
+export const PI_WEB_PLUGIN_LIFECYCLE_VERSION = 2;
 
 export type PiWebPluginServerState = "active" | "failed" | "incompatible" | "disabled" | "missing" | "unknown";
 export type PiWebPluginLifecyclePhase = "import" | "activate" | "validate" | "start" | "health" | "stop";
@@ -238,6 +236,8 @@ export interface PiWebPluginServerInfo {
 
 export interface PiWebPluginInfo {
   id: string;
+  /** The bundled Terminal package is required outside explicit recovery mode. */
+  required?: true;
   /** Browser module URL for the currently discovered package, if any. */
   module?: string;
   source: string;
@@ -269,6 +269,7 @@ export interface PiWebPluginRecoveryCommands {
 
 export interface PiWebPluginRuntimeInfo {
   status: PiWebPluginRuntimeStatus;
+  terminalMode: TerminalPluginMode;
   /** Safe-start level active in sessiond; absence means sessiond started normally. */
   safeStart?: PiWebPluginSafeStart;
   /** Current offline recovery config, including explicit `off` when known. */
@@ -296,6 +297,25 @@ export interface PiPackageInfo {
 
 export interface PiPackagesResponse {
   packages: PiPackageInfo[];
+  /**
+   * Known Pi packages PI WEB ships and can auto-install (see the
+   * `relay-pi-package-autoinstall` relay) that are not currently configured
+   * for the active profile — omitted or empty once every known package is
+   * configured. Lets the Settings UI offer a one-click (re)install with no
+   * path typing for a package the user dismissed or never installed.
+   */
+  installableKnownPackages?: PiPackageInstallableSuggestion[];
+}
+
+export interface PiPackageInstallableSuggestion {
+  /** The package's own declared `name` (e.g. `@jmfederico/pi-relay`). */
+  id: string;
+  /** Short human-friendly name for display. */
+  label: string;
+  /** Short human-friendly description for display. */
+  description: string;
+  /** Shipped local install source for a one-click install; installs at Pi's default (`user`) scope, same as the free-text install form. */
+  source: string;
 }
 
 export interface PiPackageInstallRequest {
@@ -460,6 +480,7 @@ export interface Project {
 
 export interface WorkspaceEffectiveConfig {
   readonly uploads?: Readonly<PiWebUploadsConfig>;
+  readonly attachments?: Readonly<PiWebAttachmentsConfig>;
 }
 
 /** Host-only removal state carried by PI WEB's browser/sessiond protocol. */
@@ -530,6 +551,46 @@ export type WorkspaceProviderAuthorityResolution = Omit<WorkspaceProviderResolut
 export interface SessionRef {
   id: string;
   cwd: string;
+}
+
+export type ServerNoticeSeverity = "info" | "warning" | "error";
+
+/** Browser-visibility selectors for one server notice. */
+export type ServerNoticeScope =
+  | { projectId: string; workspaceId?: string; sessionId?: string }
+  | { projectId?: string; workspaceId: string; sessionId?: string }
+  | { projectId?: string; workspaceId?: string; sessionId: string };
+
+/** One independent server-created event retained until dismissal, eligible plugin eviction, or daemon end. */
+export interface ServerNotice {
+  id: string;
+  severity: ServerNoticeSeverity;
+  message: string;
+  createdAt: string;
+  source?: string;
+  /** Omitted for global visibility. */
+  scope?: ServerNoticeScope;
+  /** Detached diagnostic metadata that never controls visibility. */
+  context?: JsonObject;
+}
+
+/** Current undismissed server notices for one session-daemon instance. */
+export interface ServerNoticeSnapshot {
+  daemonInstanceId: string;
+  /** Monotonic only for this daemon instance's current notice projection. */
+  revision: number;
+  notices: ServerNotice[];
+}
+
+export interface ServerNoticeDismissRequest {
+  daemonInstanceId: string;
+  noticeId: string;
+}
+
+/** Full current notice projection published on the existing global realtime socket. */
+export interface ServerNoticeEvent {
+  type: "notices.updated";
+  snapshot: ServerNoticeSnapshot;
 }
 
 export const SESSION_UNREAD_LIMIT = 1_000;
@@ -1067,8 +1128,10 @@ export interface SessionModel {
 
 /**
  * One row of a session machine's full available-model catalog: the model plus
- * its membership in pi's enabled-models scope (`enabledModels` setting). Model
- * scope is selection UX for picking/cycling, never an authorization boundary.
+ * its membership in pi's effective enabled-models scope (`enabledModels`
+ * setting). Model scope is selection UX for picking/cycling, never an
+ * authorization boundary. Workspace overrides mark rows non-editable because
+ * PI WEB's picker writes only the global setting.
  */
 export interface SessionModelCatalogEntry {
   provider: string;
@@ -1077,17 +1140,25 @@ export interface SessionModelCatalogEntry {
   contextWindow?: number;
   reasoning?: unknown;
   enabled: boolean;
+  /** False when a workspace `.pi/settings.json` override controls membership and the global picker is read-only. */
+  editable?: boolean;
+  /** Stable zero-based position in the machine's unscoped catalog. Optional for compatibility with older servers. */
+  catalogIndex?: number;
 }
 
 /**
  * The session machine's full available model catalog with per-model enabled
  * state. Enabled models come first — in the same set and order as the
  * session's pickable ("Enabled") model list — followed by the remaining
- * models in catalog order.
+ * models in catalog order. Each row's `catalogIndex` preserves its natural
+ * unscoped position independently of this enabled-first response order.
  */
 export interface SessionModelCatalogResponse {
   models: SessionModelCatalogEntry[];
 }
+
+/** Canonical model-scope presets exposed by the model picker's bulk toggle. */
+export type SessionModelScopeMode = "all" | "current";
 
 // Domain type is owned by pi and re-exported from the shared thinking-levels
 // module. Wire/data fields below intentionally use `string` so an unknown level
@@ -1217,24 +1288,6 @@ export interface FileSuggestion {
   kind: "tracked" | "untracked" | "other";
 }
 
-export interface TerminalInfo {
-  id: string;
-  cwd: string;
-  name: string;
-  createdAt: string;
-  exited: boolean;
-  exitCode?: number;
-  commandRunId?: string;
-}
-
-export interface RunTerminalCommandInput {
-  workspace: Workspace;
-  title: string;
-  command: string;
-  metadata?: Record<string, string>;
-  open?: boolean;
-}
-
 /** Secret-free identity of the pi agent state directory fixed for one sessiond lifetime. */
 export interface ActiveAgentProfileDescriptor {
   readonly schemaVersion: 2;
@@ -1265,11 +1318,6 @@ export interface PiWebRuntimeResponse {
   };
   capabilities: PiWebCapability[];
 }
-
-export type TerminalUiEvent =
-  | { type: "terminal.created"; terminal: TerminalInfo }
-  | { type: "terminal.exited"; terminal: TerminalInfo }
-  | { type: "terminal.closed"; terminalId: string; cwd: string };
 
 export interface CommandOption {
   value: string;
@@ -1403,9 +1451,17 @@ type SessionUiEventBody =
   | { type: "session.created"; session: SessionInfo }
   | { type: "pi.event"; eventType: string };
 
+/** Global invalidation for the daemon-owned enabled-model scope. */
+export interface ModelScopeChangedEvent {
+  type: "models.changed";
+  revision: number;
+}
+
 export type GlobalSessionEvent =
   | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
   | SessionNotificationSummaryEvent
   | SessionUnreadEvent
-  | SessionStartupProgressEvent;
-export type RealtimeEvent = GlobalSessionEvent | TerminalUiEvent | MachineStatusUiEvent;
+  | SessionStartupProgressEvent
+  | ModelScopeChangedEvent
+  | ServerNoticeEvent;
+export type RealtimeEvent = GlobalSessionEvent | MachineStatusUiEvent;

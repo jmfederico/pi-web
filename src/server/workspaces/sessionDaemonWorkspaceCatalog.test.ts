@@ -73,21 +73,27 @@ describe("SessionDaemonWorkspaceCatalog", () => {
 
   it("parses the immutable provider runtime and startup-health snapshot", async () => {
     const request = vi.fn<SessionDaemonRequestClient["request"]>(() => Promise.resolve(jsonResponse({
-      protocolVersion: 1,
+      protocolVersion: 2,
+      terminalMode: "required",
       safeStart: "bundled-only",
       records: [{
-        pluginId: "git",
-        source: "bundled",
-        scope: "bundled",
+        pluginId: "paired-tools",
+        source: "local",
+        scope: "local",
         moduleRevision: "sha256:abc",
         browserRevision: "sha256:browser",
         settingsRevision: "sha256:settings",
         machineSpecific: true,
+        pairedRequestVersion: 1,
+        pairedChannelVersion: 1,
         state: "active",
-        name: "Git",
+        name: "Paired tools",
       }],
-      health: [{ pluginId: "git", health: { status: "degraded", message: "Git is old", details: { version: 1, nested: ["ok", { ready: true }] } } }],
-      diagnostics: [{ code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: git", pluginId: "git" }],
+      health: [{ pluginId: "paired-tools", health: { status: "degraded", message: "Paired tools are old", details: { version: 1, nested: ["ok", { ready: true }] } } }],
+      diagnostics: [
+        { code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: paired-tools", pluginId: "paired-tools" },
+        { code: "reserved-id", source: "npm:@acme/tools", message: "Choose a different id", pluginId: "pi-web.tools" },
+      ],
     })));
     const catalog = new SessionDaemonWorkspaceCatalog({ request });
 
@@ -95,11 +101,15 @@ describe("SessionDaemonWorkspaceCatalog", () => {
 
     expect(request).toHaveBeenCalledWith("GET", "/workspace-catalog/provider-runtime");
     expect(snapshot).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
+      terminalMode: "required",
       safeStart: "bundled-only",
-      records: [{ pluginId: "git", source: "bundled", scope: "bundled", moduleRevision: "sha256:abc", browserRevision: "sha256:browser", settingsRevision: "sha256:settings", machineSpecific: true, state: "active", name: "Git" }],
-      health: [{ pluginId: "git", health: { status: "degraded", message: "Git is old", details: { version: 1, nested: ["ok", { ready: true }] } } }],
-      diagnostics: [{ code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: git", pluginId: "git" }],
+      records: [{ pluginId: "paired-tools", source: "local", scope: "local", moduleRevision: "sha256:abc", browserRevision: "sha256:browser", settingsRevision: "sha256:settings", machineSpecific: true, pairedRequestVersion: 1, pairedChannelVersion: 1, state: "active", name: "Paired tools" }],
+      health: [{ pluginId: "paired-tools", health: { status: "degraded", message: "Paired tools are old", details: { version: 1, nested: ["ok", { ready: true }] } } }],
+      diagnostics: [
+        { code: "duplicate-id", source: "local", message: "Duplicate PI WEB plugin id: paired-tools", pluginId: "paired-tools" },
+        { code: "reserved-id", source: "npm:@acme/tools", message: "Choose a different id", pluginId: "pi-web.tools" },
+      ],
     });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.records)).toBe(true);

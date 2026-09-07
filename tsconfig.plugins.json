@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["pi-web-plugins/**/*.ts"]
+  "include": ["pi-web-plugins/**/*.ts", "pi-packages/**/*.ts"]
 }

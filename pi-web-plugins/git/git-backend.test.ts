@@ -35,6 +35,11 @@ const backendContext: ServerPluginActivationContext = {
   signal: new AbortController().signal,
 };
 
+// The fixture suites below drive real Git commands (init, submodule add,
+// commit, status with inner recursion); on loaded Windows CI runners a
+// single test can exceed the 5 s default timeout, so give them headroom.
+const FIXTURE_TEST_TIMEOUT_MS = 30_000;
+
 const created: string[] = [];
 afterAll(() => { for (const dir of created) rmSync(dir, { recursive: true, force: true }); });
 
@@ -97,7 +102,7 @@ function createSpacedPathFixture(): { dir: string } {
   return { dir: sup };
 }
 
-describe("Git changes backend", () => {
+describe("Git changes backend", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("preserves staged, unstaged, and untracked file behavior", async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "root.txt"), "root\nstaged\n");
@@ -152,7 +157,7 @@ describe("Git command failures", () => {
   });
 });
 
-describe("gitStatus with submodules", () => {
+describe("gitStatus with submodules", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("surfaces a moved commit pointer with short SHAs and no inner files", async () => {
     const { dir, c1, c2 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]); // move the pointer, leave the tree clean
@@ -280,7 +285,7 @@ describe("gitStatus with submodules", () => {
   });
 });
 
-describe("submodule paths containing spaces", () => {
+describe("submodule paths containing spaces", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("expands status and routes diffs into the space-named submodule", async () => {
     const { dir } = createSpacedPathFixture();
     writeFileSync(join(dir, "my sub", "a.txt"), "v1\nchanged\n");
@@ -296,7 +301,7 @@ describe("submodule paths containing spaces", () => {
   });
 });
 
-describe("gitDiff routing into submodules", () => {
+describe("gitDiff routing into submodules", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("returns real content for a tracked file inside the submodule", async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "a.txt"), "v2\nchanged\n");

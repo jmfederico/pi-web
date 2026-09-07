@@ -69,6 +69,12 @@ describe("staged validation planning", () => {
     });
   });
 
+  it("adds the plugin public API test for Pi packages shipped alongside bundled plugins", () => {
+    const plan = createValidationPlan(["pi-packages/relays/relayDiscovery.ts"], { pathExists: () => true });
+
+    expect(plan.tests.files).toContain("pi-web-plugins/pluginPublicApi.test.ts");
+  });
+
   it("includes both public declaration entrypoints in related type-aware checks", () => {
     const plan = createValidationPlan(["plugin-api.d.ts", "server-plugin-api.d.ts"], { pathExists: () => true });
 

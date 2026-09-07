@@ -11,6 +11,7 @@ import type {
   SessionNotificationDismissAllRequest,
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
+  SessionModelScopeMode,
   SessionUnreadAcknowledgeRequest,
   SessionUnreadCatalogSnapshot,
 } from "../../shared/apiTypes.js";
@@ -73,6 +74,8 @@ export interface SessionRouteService {
   setModel(ref: SessionRouteRef, provider: string, modelId: string): Promise<ClientSessionStatus>;
   /** Add/remove one model to/from pi's enabled-models scope; returns the updated full catalog. */
   setModelEnabled(ref: SessionRouteRef, provider: string, modelId: string, enabled: boolean): Promise<ClientSessionModelCatalogEntry[]>;
+  /** Atomically select every model or retain only the session's current model. */
+  setModelScope(ref: SessionRouteRef, mode: SessionModelScopeMode): Promise<ClientSessionModelCatalogEntry[]>;
   cycleModel(ref: SessionRouteRef, direction: "forward" | "backward"): Promise<ClientSessionStatus>;
   availableThinkingLevels(ref: SessionRouteRef): Promise<ClientThinkingLevel[]>;
   setThinkingLevel(ref: SessionRouteRef, level: string): Promise<ClientSessionStatus>;

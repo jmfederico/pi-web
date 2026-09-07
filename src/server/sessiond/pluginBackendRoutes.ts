@@ -1,17 +1,20 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { isPiWebPluginId } from "../../shared/pluginIds.js";
 import {
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   parsePluginBackendRequestEnvelope,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
+  PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
   requirePluginBackendOperation,
   serializeBoundedPluginBackendJson,
   type PluginBackendRequestEnvelope,
 } from "../../shared/pluginBackendProtocol.js";
+import { requestCancellation } from "../requestCancellation.js";
 import type { Project } from "../types.js";
 import {
-  WorkspaceProviderRequestError,
-  type WorkspaceProviderRequest,
+  PluginBackendRequestError,
+  type PluginBackendRequest,
 } from "../workspaces/workspaceProviderRegistry.js";
 
 interface PluginBackendRouteParams {
@@ -26,14 +29,14 @@ export interface PluginBackendProjectReader {
 }
 
 export interface PluginBackendDispatcher {
-  request(request: WorkspaceProviderRequest): Promise<unknown>;
+  request(request: PluginBackendRequest, signal?: AbortSignal): Promise<unknown>;
 }
 
 export interface PluginBackendRouteDependencies {
   projects: PluginBackendProjectReader;
   backends: PluginBackendDispatcher;
   /**
-   * Reports that the project's workspaces may have changed. A provider
+   * Reports that the project's workspaces may have changed. A backend
    * operation is opaque here, so every completed request is reported rather
    * than guessing which operations create or remove a workspace.
    */
@@ -41,13 +44,22 @@ export interface PluginBackendRouteDependencies {
 }
 
 /** JSON-only sessiond boundary for the active owner of one current workspace. */
-export function registerPluginBackendRoutes(
+export function registerPluginBackendRoutes(app: FastifyInstance, dependencies: PluginBackendRouteDependencies): void {
+  registerPluginBackendRoutesAt(app, dependencies, PLUGIN_BACKEND_REQUEST_ROUTE_PATH);
+}
+
+/** JSON-only sessiond boundary for one revision-paired package and current workspace. */
+export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependencies: PluginBackendRouteDependencies): void {
+  registerPluginBackendRoutesAt(app, dependencies, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH);
+}
+
+function registerPluginBackendRoutesAt(
   app: FastifyInstance,
   dependencies: PluginBackendRouteDependencies,
-  prefix = "/plugin-backends",
+  routePath: string,
 ): void {
   app.post<{ Params: PluginBackendRouteParams; Body: unknown }>(
-    `${prefix}/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation`,
+    routePath,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
       const { pluginId, projectId, workspaceId } = request.params;
@@ -78,6 +90,7 @@ export function registerPluginBackendRoutes(
         );
       }
 
+      const cancellation = requestCancellation(request, reply);
       try {
         const result = await dependencies.backends.request({
           pluginId,
@@ -86,7 +99,7 @@ export function registerPluginBackendRoutes(
           workspaceId,
           operation,
           input: envelope.input,
-        });
+        }, cancellation.signal);
         const serialized = serializeBoundedPluginBackendJson(
           result,
           `Server plugin ${pluginId} operation ${operation} result`,
@@ -97,6 +110,7 @@ export function registerPluginBackendRoutes(
         return await pluginBackendRequestFailed(reply, error, pluginId, operation);
       } finally {
         dependencies.onWorkspacesMutated();
+        cancellation.dispose();
       }
     },
   );
@@ -108,7 +122,7 @@ function pluginBackendRequestFailed(
   pluginId: string,
   operation: string,
 ): FastifyReply {
-  if (error instanceof WorkspaceProviderRequestError) {
+  if (error instanceof PluginBackendRequestError) {
     return attributedError(reply, error.statusCode, error.message, error.code, pluginId, operation);
   }
   return attributedError(

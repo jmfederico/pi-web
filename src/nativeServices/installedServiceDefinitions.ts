@@ -173,12 +173,11 @@ function inspectEffectiveSystemdDefinition(
         : `Systemd unit ${source.systemdName} reports unrecognized NeedDaemonReload=${JSON.stringify(needDaemonReload)}.`,
     };
   }
-  if (dropInPaths !== "") {
-    return {
-      ok: false,
-      message: `Systemd unit ${source.systemdName} uses effective drop-ins (${dropInPaths}); PI WEB cannot safely inspect managed config through systemd drop-ins.`,
-    };
-  }
+  // Drop-ins (including package-owned global ones such as Fedora's
+  // service.d/10-timeout-abort.conf) are tolerated: every drop-in-settable
+  // property inspected here (Environment, EnvironmentFiles) is reported by
+  // systemctl as the drop-in-merged effective value and is strictly verified
+  // below, so a drop-in cannot silently alter what this inspection sees.
   const environmentFiles = parsed.value.properties.get("EnvironmentFiles") ?? [];
   const configuredEnvironmentFiles = environmentFiles.filter((value) => value !== "");
   if (configuredEnvironmentFiles.length > 0) {

@@ -1,5 +1,6 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
+import { BrowserErrorReporter, projectBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
@@ -15,9 +16,15 @@ export interface WorkspaceControllerDependencies {
   topologyRefreshDebounceMs?: number;
 }
 
+interface WorkspaceMutationGuard {
+  signal?: AbortSignal | undefined;
+  isCurrent?: (() => boolean) | undefined;
+}
+
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
+  private readonly browserErrors: BrowserErrorReporter;
   private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
 
   constructor(
@@ -30,6 +37,7 @@ export class WorkspaceController {
   ) {
     this.api = deps.api ?? defaultApi;
     this.onBackgroundError = deps.onBackgroundError ?? ((message, error) => { console.warn(message, error); });
+    this.browserErrors = new BrowserErrorReporter(getState, setState);
     this.topologyRefreshes = new TrailingRefreshCoordinator(
       deps.topologyRefreshDebounceMs ?? WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS,
     );
@@ -42,13 +50,16 @@ export class WorkspaceController {
   }
 
   forgetProject(projectId: string): void {
-    this.workspaceSelection.forgetProject(machineProjectKey(selectedMachineId(this.getState()), projectId));
+    const machineId = selectedMachineId(this.getState());
+    this.browserErrors.discard(projectBrowserErrorScope(machineId, projectId));
+    this.workspaceSelection.forgetProject(machineProjectKey(machineId, projectId));
     const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
     this.setState({ workspacesByProjectId });
   }
 
   async selectProject(project: Project, target?: RouteTarget) {
     const machineId = selectedMachineId(this.getState());
+    const errorScope = projectBrowserErrorScope(machineId, project.id);
     this.sessions.clearActiveSession();
     this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
@@ -59,33 +70,57 @@ export class WorkspaceController {
       if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedProject?.id === project.id) this.setState({ error: String(error), isLoadingWorkspaces: false });
+      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedProject?.id === project.id) this.setState({ isLoadingWorkspaces: false });
+      this.browserErrors.report(errorScope, String(error));
     }
   }
 
-  async selectWorkspace(workspace: Workspace, target?: { sessionId?: string | undefined; updateUrl?: boolean | undefined }) {
+  async selectWorkspace(workspace: Workspace, target?: {
+    sessionId?: string | undefined;
+    updateUrl?: boolean | undefined;
+    signal?: AbortSignal | undefined;
+    isCurrent?: (() => boolean) | undefined;
+  }) {
+    if (!workspaceMutationIsCurrent(target)) return;
     const machineId = selectedMachineId(this.getState());
+    const errorScope = workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id);
     this.workspaceSelection.rememberWorkspace({ ...workspace, projectId: machineProjectKey(machineId, workspace.projectId) });
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     try {
-      const sessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path, machineId), machineId);
-      if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedWorkspace?.id !== workspace.id || this.getState().selectedProject?.id !== workspace.projectId) return;
+      const loadedSessions = target?.signal === undefined
+        ? await this.api.sessions(workspace.path, machineId)
+        : await this.api.sessions(workspace.path, machineId, { signal: target.signal });
+      const sessions = mergeCachedNewSessions(workspace.path, loadedSessions, machineId);
+      if (!workspaceMutationIsCurrent(target)
+        || selectedMachineId(this.getState()) !== machineId
+        || this.getState().selectedWorkspace?.id !== workspace.id
+        || this.getState().selectedProject?.id !== workspace.projectId) return;
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
+      if (!workspaceMutationIsCurrent(target)) return;
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
+      this.browserErrors.report(errorScope, String(error));
     }
   }
 
 
-  async refreshProjectWorkspaces(projectId: string): Promise<Workspace[]> {
+  async refreshProjectWorkspaces(
+    projectId: string,
+    machineId = selectedMachineId(this.getState()),
+    options?: WorkspaceMutationGuard,
+  ): Promise<Workspace[]> {
+    if (!workspaceMutationIsCurrent(options)) return [];
     const project = this.getState().projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) throw new Error("Project not found");
-    const workspaces = await this.api.workspaces(project.id, selectedMachineId(this.getState()));
-    this.applyProjectWorkspaces(project.id, workspaces);
+    const workspaces = options?.signal === undefined
+      ? await this.api.workspaces(project.id, machineId)
+      : await this.api.workspaces(project.id, machineId, { signal: options.signal });
+    if (workspaceMutationIsCurrent(options) && selectedMachineId(this.getState()) === machineId) {
+      this.applyProjectWorkspaces(project.id, workspaces);
+    }
     return workspaces;
   }
 
@@ -123,14 +158,22 @@ export class WorkspaceController {
     });
   }
 
-  async refreshAfterWorkspaceDeleted(projectId: string, workspaceId: string): Promise<void> {
-    const workspaces = await this.refreshProjectWorkspaces(projectId);
+  async refreshAfterWorkspaceDeleted(
+    projectId: string,
+    workspaceId: string,
+    machineId = selectedMachineId(this.getState()),
+    options?: WorkspaceMutationGuard,
+  ): Promise<void> {
+    if (!workspaceMutationIsCurrent(options)) return;
+    const workspaces = await this.refreshProjectWorkspaces(projectId, machineId, options);
+    if (!workspaceMutationIsCurrent(options)) return;
     const state = this.getState();
-    if (state.selectedProject?.id !== projectId || state.selectedWorkspace?.id !== workspaceId) return;
+    if (selectedMachineId(state) !== machineId || state.selectedProject?.id !== projectId || state.selectedWorkspace?.id !== workspaceId) return;
 
     const fallback = selectFallbackWorkspace(workspaces);
-    if (fallback !== undefined) await this.selectWorkspace(fallback);
-    else this.clearSelection();
+    if (!workspaceMutationIsCurrent(options)) return;
+    if (fallback !== undefined) await this.selectWorkspace(fallback, options);
+    else if (workspaceMutationIsCurrent(options)) this.clearSelection();
   }
 
   private applyProjectWorkspaces(projectId: string, workspaces: Workspace[]): void {
@@ -157,6 +200,10 @@ export class WorkspaceController {
     if (refreshed === undefined || sameWorkspaceSnapshot(selected, refreshed)) return undefined;
     return { selectedWorkspace: refreshed };
   }
+}
+
+function workspaceMutationIsCurrent(options: WorkspaceMutationGuard | undefined): boolean {
+  return options?.signal?.aborted !== true && options?.isCurrent?.() !== false;
 }
 
 function selectFallbackWorkspace(workspaces: Workspace[]): Workspace | undefined {

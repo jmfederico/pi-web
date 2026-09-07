@@ -1,0 +1,5 @@
+# Force LF line endings for checked-in text files, regardless of the
+# checkout platform's default `core.autocrlf` behavior (Windows CI runners
+# default to converting to CRLF on checkout, which breaks code that parses
+# file content expecting `\n`, e.g. Markdown frontmatter parsing in tests).
+* text=auto eol=lf

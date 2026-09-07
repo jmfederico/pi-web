@@ -5,6 +5,7 @@ import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { api, type Machine, type MachineRuntime } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import type { AppAction } from "../actions";
+import { ServerNoticesController } from "../serverNotices";
 import { SessionUnreadController } from "../sessionUnread";
 import { PiWebApp } from "./PiWebApp";
 
@@ -109,33 +110,39 @@ describe("PiWebApp Safe Tunnel availability gate", () => {
     expect(new URL(window.location.href).searchParams.get("settings")).toBe("safe-tunnel");
   });
 
-  it("discovers activation when the gateway realtime socket reconnects", async () => {
+  it("discovers gateway activation while refreshing selected-machine notices on realtime reconnect", async () => {
     const app = new PiWebApp();
-    setAppState(app, { machineRuntimes: { local: runtime("local", []) } });
+    setAppState(app, {
+      selectedMachine: remoteMachine,
+      machineRuntimes: { local: runtime("local", []) },
+    });
     vi.spyOn(api, "runtime").mockResolvedValue(
       runtime("local", [PI_WEB_CAPABILITIES.safeTunnel]),
     );
-    const onOpen = captureRealtimeOpen(app);
+    const { onOpen, serverNoticesRefresh } = captureRealtimeOpen(app);
 
     onOpen();
 
     await vi.waitFor(() => { expect(safeTunnelAction(app)).toBeDefined(); });
     expect(api.runtime).toHaveBeenCalledWith("local", true);
+    expect(serverNoticesRefresh).toHaveBeenCalledWith(remoteMachine.id);
   });
 
-  it("fails activation closed while refreshing after gateway reconnect", async () => {
+  it("fails activation closed while refreshing after a remote machine reconnect", async () => {
     const app = new PiWebApp();
     setAppState(app, {
+      selectedMachine: remoteMachine,
       machineRuntimes: { local: runtime("local", [PI_WEB_CAPABILITIES.safeTunnel]) },
     });
     vi.spyOn(api, "runtime").mockResolvedValue(runtime("local", []));
     void safeTunnelAction(app)?.run();
     expect(settingsSection(app)).toBe("safe-tunnel");
-    const onOpen = captureRealtimeOpen(app);
+    const { onOpen, serverNoticesRefresh } = captureRealtimeOpen(app);
 
     onOpen();
 
     expect(safeTunnelAction(app)).toBeUndefined();
+    expect(serverNoticesRefresh).toHaveBeenCalledWith(remoteMachine.id);
     expect(settingsSection(app)).toBe("safe-tunnel");
     await vi.waitFor(() => { expect(settingsSection(app)).toBe("general"); });
     expect(api.runtime).toHaveBeenCalledWith("local", true);
@@ -161,12 +168,17 @@ function runtime(machineId: string, capabilities: NonNullable<MachineRuntime["ca
   };
 }
 
-function captureRealtimeOpen(app: PiWebApp): () => void {
+function captureRealtimeOpen(app: PiWebApp) {
   const sessionUnread: unknown = Reflect.get(app, "sessionUnread");
   if (!(sessionUnread instanceof SessionUnreadController)) {
     throw new Error("PiWebApp session unread controller was unavailable");
   }
   vi.spyOn(sessionUnread, "refresh").mockResolvedValue();
+  const serverNotices: unknown = Reflect.get(app, "serverNotices");
+  if (!(serverNotices instanceof ServerNoticesController)) {
+    throw new Error("PiWebApp server notices controller was unavailable");
+  }
+  const serverNoticesRefresh = vi.spyOn(serverNotices, "refresh").mockResolvedValue();
 
   let onOpen: (() => void) | undefined;
   const realtime = {
@@ -177,7 +189,7 @@ function captureRealtimeOpen(app: PiWebApp): () => void {
   if (!Reflect.set(app, "realtime", realtime)) throw new Error("Could not replace PiWebApp realtime socket");
   callAppMethod(app, "connectRealtime");
   if (onOpen === undefined) throw new Error("PiWebApp realtime open callback was unavailable");
-  return onOpen;
+  return { onOpen, serverNoticesRefresh };
 }
 
 function safeTunnelAction(app: PiWebApp): AppAction | undefined {
