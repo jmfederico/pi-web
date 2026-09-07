@@ -25,6 +25,7 @@ export type {
   TerminalCommandRunStatus,
   WorkspaceProviderCapabilities,
   WorkspaceProviderMetadata,
+  WorkspaceProviderNavigationMetadata,
   WorkspaceRemovalPresentation,
   WriteWorkspaceFileOptions,
   WriteWorkspaceFileResponse,

@@ -47,6 +47,23 @@ describe("header identity", () => {
   });
 });
 
+describe("provider-owned navigation", () => {
+  it("drops the project section and renames the workspace section for a provider that owns the context", async () => {
+    const panel = await mountPanelWithWorkspace(providerWorkspace({ hideProjects: true, workspacesTitle: "Cases" }));
+
+    expect(panel.shadowRoot?.querySelector("project-list")).toBeNull();
+    const list = section(panel, "workspace-list", WorkspaceList);
+    expect(list.sectionTitle).toBe("Cases");
+  });
+
+  it("keeps the project section for an ordinary workspace", async () => {
+    const panel = await mountPanelWithWorkspace(workspace("ws-1", "project-1"));
+
+    expect(panel.shadowRoot?.querySelector("project-list")).not.toBeNull();
+    expect(section(panel, "workspace-list", WorkspaceList).sectionTitle).toBeUndefined();
+  });
+});
+
 describe("machine status wiring", () => {
   it("gives machine sections every snapshot and project and workspace sections the selected machine's", async () => {
     const local = machineStatusSnapshot({ machine: { "core:working": true } });
@@ -78,6 +95,24 @@ describe("machine status wiring", () => {
     expect(section(panel, "workspace-list", WorkspaceList).statusSnapshot).toBeUndefined();
   });
 });
+
+async function mountPanelWithWorkspace(selectedWorkspace: Workspace): Promise<AppNavigationPanel> {
+  const panel = new AppNavigationPanel();
+  panel.machines = [machine("local")];
+  panel.projects = [project("project-1")];
+  panel.workspaces = [selectedWorkspace];
+  panel.selectedWorkspace = selectedWorkspace;
+  document.body.append(panel);
+  await panel.updateComplete;
+  return panel;
+}
+
+function providerWorkspace(navigation: { hideProjects?: boolean; workspacesTitle?: string }): Workspace {
+  return {
+    ...workspace("inbox", "project-1"),
+    provider: { pluginId: "modes", capabilities: { request: true, remove: false }, metadata: { navigation } },
+  };
+}
 
 async function mountPanel(machineStatusSnapshots: Record<string, MachineStatusSnapshot>, selectedMachine: Machine | undefined): Promise<AppNavigationPanel> {
   const panel = new AppNavigationPanel();
