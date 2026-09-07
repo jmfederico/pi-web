@@ -66,6 +66,21 @@ export interface PluginContributions {
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
+  /**
+   * Raw CSS to apply across the PI WEB UI. Each string is adopted into the
+   * document and into every shadow root the app creates, so a plugin can
+   * restyle the host's own components (navigation, headers, session list, …)
+   * without patching `attachShadow` or hard-coding shadow-root injection.
+   *
+   * Selectors are matched inside each shadow root independently, so target the
+   * internal tag/class names of whichever components you mean; rules that match
+   * nothing in a given root are simply inert there. Prefer theme tokens
+   * (`--pi-*`) for colors so your styles follow the active theme.
+   *
+   * Like theme contributions, styles are collected only from gateway (local)
+   * plugins — remote-machine plugins cannot restyle the app-wide UI.
+   */
+  styles?: string[];
 }
 
 export interface PluginMachine {

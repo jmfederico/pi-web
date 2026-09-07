@@ -1,6 +1,6 @@
 import { html, svg } from "lit";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { PiWebPluginRegistration, PluginAction, PluginRuntimeContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
+import type { PiWebPluginRegistration, PluginAction, PluginRuntimeContext, PluginStyleEntry, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
 
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
@@ -24,6 +24,7 @@ export class PluginRegistry {
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
   private readonly themePairs: QualifiedThemePairContribution[] = [];
+  private readonly styles: PluginStyleEntry[] = [];
   private readonly pluginIds = new Set<string>();
   private readonly registeringPluginIds = new Set<string>();
   private readonly gatewayPluginIds = new Set<string>();
@@ -63,6 +64,9 @@ export class PluginRegistry {
       const themePairs = registration.machineId === undefined
         ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
         : [];
+      const styles: PluginStyleEntry[] = registration.machineId === undefined
+        ? (contributions.styles ?? []).filter((css): css is string => typeof css === "string").map((css) => ({ pluginId: runtimePluginId, css }))
+        : [];
 
       this.pluginIds.add(runtimePluginId);
       for (const contributionId of contributionIds) this.contributionIds.add(contributionId);
@@ -71,6 +75,7 @@ export class PluginRegistry {
       this.workspaceLabels.push(...workspaceLabels);
       this.themes.push(...themes);
       this.themePairs.push(...themePairs);
+      this.styles.push(...styles);
       if (registration.machineId === undefined) {
         this.gatewayPluginIds.add(runtimePluginId);
         if (machineSpecific) this.gatewayMachineSpecificPluginIds.add(runtimePluginId);
@@ -145,6 +150,10 @@ export class PluginRegistry {
 
   getThemePairs(): QualifiedThemePairContribution[] {
     return [...this.themePairs].sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.name.localeCompare(right.name));
+  }
+
+  getStyles(): PluginStyleEntry[] {
+    return [...this.styles];
   }
 
   getWorkspaceLabelItems(context: WorkspaceLabelContext): WorkspaceLabelItem[] {
