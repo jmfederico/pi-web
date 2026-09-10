@@ -39,6 +39,29 @@ describe("PromptEditor command completions", () => {
       { kind: "command", replaceFrom: 0, replaceTo: 2, insertText: "/tree", detail: "builtin" },
     ]);
   });
+
+  it("keeps the initial menu compact but shows every command after filtering", async () => {
+    vi.spyOn(api, "commands").mockResolvedValue(Array.from({ length: 40 }, (_, index) => ({
+      name: `skill:skill-${String(index)}`,
+      source: "skill" as const,
+    })));
+    const editor = new PromptEditor();
+    editor.sessionId = "session-1";
+    editor.cwd = "/repo";
+
+    await refreshCompletions(editor, "/");
+    expect(currentCompletions(editor)).toHaveLength(12);
+
+    await refreshCompletions(editor, "/skill:");
+    expect(currentCompletions(editor)).toHaveLength(40);
+    expect(currentCompletions(editor)).toContainEqual({
+      kind: "command",
+      replaceFrom: 0,
+      replaceTo: 7,
+      insertText: "/skill:skill-39",
+      detail: "skill",
+    });
+  });
 });
 
 // refreshCompletions is private and driven by CodeMirror updates in production;
