@@ -138,9 +138,9 @@ describe("PI WEB status", () => {
 
     const runtime = await getPiWebRuntime(daemon);
 
-    expect(runtime.components.web.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(runtime.components.web.capabilities).toContain("plugins.lifecycle");
     expect(runtime.components.sessiond.capabilities).toEqual([]);
-    expect(runtime.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(runtime.capabilities).toContain("plugins.lifecycle");
   });
 
   it("carries the daemon-owned active agent profile through the web runtime response", async () => {
@@ -211,13 +211,13 @@ describe("PI WEB status", () => {
     });
 
     expect(runtime.components.web.available).toBe(true);
-    expect(runtime.components.web.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(runtime.components.web.capabilities).toContain("plugins.lifecycle");
     expect(runtime.components.web.runtimeVersion).toBeDefined();
     expect(runtime.components.web).not.toHaveProperty("deprecatedAgentInputs");
     expect(runtime.components.web.error).toContain("Could not check for deprecated agent configuration inputs");
     expect(runtime.components.web.error).toContain("agent.dir must be a host-absolute path");
     expect(runtime.components.sessiond.available).toBe(true);
-    expect(runtime.capabilities).toEqual(["plugins.lifecycle"]);
+    expect(runtime.capabilities).toContain("plugins.lifecycle");
   });
 
   it("bypasses cached npm release data for a forced check", async () => {

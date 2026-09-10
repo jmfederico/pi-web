@@ -78,6 +78,30 @@ describe("buildApp remote machine proxy routes", () => {
     expect(request).toHaveBeenNthCalledWith(2, "POST", "/api/pi-packages/install", installBody, { timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS });
   });
 
+  it("forwards a selected session backend verbatim through the generic remote session-create proxy", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    const request = vi.fn<MachineClient["request"]>((method, path, body) => {
+      const backend = typeof body === "object" && body !== null && "backend" in body ? body.backend : undefined;
+      return Promise.resolve({
+        statusCode: 200,
+        headers: { "content-type": "application/json" },
+        body: Readable.from([JSON.stringify({ id: "s1", path: "/tmp/s1.jsonl", cwd: "/repo", created: "now", modified: "now", messageCount: 0, firstMessage: "", ...(backend === undefined ? {} : { backend }) })]),
+      });
+    });
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const legacyResponse = await appTestContext.app.inject({ method: "POST", url: `/api/machines/${remote.id}/sessions`, payload: { cwd: "/repo" } });
+    const ompResponse = await appTestContext.app.inject({ method: "POST", url: `/api/machines/${remote.id}/sessions`, payload: { cwd: "/repo", backend: "omp" } });
+
+    expect(legacyResponse.statusCode).toBe(200);
+    expect(legacyResponse.json()).not.toHaveProperty("backend");
+    expect(ompResponse.statusCode).toBe(200);
+    expect(ompResponse.json()).toMatchObject({ backend: "omp" });
+    expect(request).toHaveBeenNthCalledWith(1, "POST", "/api/sessions", { cwd: "/repo" });
+    expect(request).toHaveBeenNthCalledWith(2, "POST", "/api/sessions", { cwd: "/repo", backend: "omp" });
+  });
+
   it("forwards remote session tree navigation with the model-operation timeout", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

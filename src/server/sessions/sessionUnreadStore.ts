@@ -8,6 +8,7 @@ import {
   SESSION_UNREAD_CWD_MAX_LENGTH,
   SESSION_UNREAD_LIMIT,
   SESSION_UNREAD_SESSION_ID_MAX_LENGTH,
+  type SessionBackend,
   type SessionUnreadAcknowledgeRequest,
   type SessionUnreadCatalogSnapshot,
   type SessionUnreadEvent,
@@ -214,19 +215,23 @@ export class SessionUnreadStore {
     return mutations;
   }
 
-  reconcileCwd(cwd: string, sessionIds: Iterable<string>): SessionUnreadMutation[] {
+  reconcileCwd(cwd: string, sessionIds: Iterable<string>, backend?: SessionBackend): SessionUnreadMutation[] {
     this.requireLoaded();
     const boundedCwd = requireBoundedNonEmptyString(cwd, "cwd", SESSION_UNREAD_CWD_MAX_LENGTH);
     const retained = new Set(sessionIds);
+    const isStale = (identity: SessionUnreadIdentity): boolean =>
+      identity.cwd === boundedCwd
+      && (backend === undefined || (identity.sessionId.startsWith("omp:") ? "omp" : "pi") === backend)
+      && !retained.has(identity.sessionId);
     const removed = [...this.unreadByIdentity.entries()]
-      .filter(([, summary]) => summary.cwd === boundedCwd && !retained.has(summary.sessionId));
+      .filter(([, summary]) => isStale(summary));
     this.assertRevisionCapacity(removed.length);
 
     for (const [key, identity] of this.activeByIdentity) {
-      if (identity.cwd === boundedCwd && !retained.has(identity.sessionId)) this.activeByIdentity.delete(key);
+      if (isStale(identity)) this.activeByIdentity.delete(key);
     }
     for (const [key, identity] of this.excludedByIdentity) {
-      if (identity.cwd === boundedCwd && !retained.has(identity.sessionId)) this.excludedByIdentity.delete(key);
+      if (isStale(identity)) this.excludedByIdentity.delete(key);
     }
 
     const mutations: SessionUnreadMutation[] = [];

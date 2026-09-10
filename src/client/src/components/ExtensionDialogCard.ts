@@ -111,7 +111,7 @@ export class ExtensionDialogCard extends LitElement {
     const identity = this.currentIdentity();
     if (identity !== this.dialogIdentity) {
       this.dialogIdentity = identity;
-      this.inputValue = "";
+      this.inputValue = this.dialog?.kind === "input" ? this.dialog.initialValue ?? "" : "";
       this.closing = false;
     }
     this.syncCountdownTimer();
@@ -172,8 +172,20 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   private renderInputBody(dialog: PendingExtensionDialog): TemplateResult {
-    return html`
-      <form class="dialog-input-form" @submit=${(event: SubmitEvent) => { this.submitInput(event, dialog); }}>
+    const field = dialog.multiline === true
+      ? html`
+        <textarea
+          class="dialog-input"
+          name="dialog-answer"
+          aria-label="Your answer"
+          placeholder=${ifDefined(dialog.placeholder)}
+          maxlength=${String(EXTENSION_DIALOG_INPUT_MAX_LENGTH)}
+          .value=${this.inputValue}
+          ?disabled=${this.closing}
+          @input=${(event: Event) => { this.changeInput(event); }}
+        ></textarea>
+      `
+      : html`
         <input
           class="dialog-input"
           type="text"
@@ -185,6 +197,10 @@ export class ExtensionDialogCard extends LitElement {
           ?disabled=${this.closing}
           @input=${(event: Event) => { this.changeInput(event); }}
         />
+      `;
+    return html`
+      <form class="dialog-input-form" @submit=${(event: SubmitEvent) => { this.submitInput(event, dialog); }}>
+        ${field}
         <footer class="dialog-footer">
           <button class="secondary-action" type="button" ?disabled=${this.closing} @click=${() => { this.cancelDialog(dialog); }}>Cancel</button>
           <button class="primary-action" type="submit" ?disabled=${this.closing}>${this.closing ? "Sending…" : "Send"}</button>
@@ -239,7 +255,7 @@ export class ExtensionDialogCard extends LitElement {
 
   private changeInput(event: Event): void {
     const input = event.currentTarget;
-    if (!(input instanceof HTMLInputElement)) return;
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLTextAreaElement)) return;
     this.inputValue = input.value;
   }
 
@@ -338,6 +354,7 @@ export class ExtensionDialogCard extends LitElement {
       padding: 8px;
       font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, system-ui, sans-serif);
     }
+    textarea.dialog-input { min-height: 96px; resize: vertical; }
     .dialog-footer {
       display: flex;
       flex-wrap: wrap;

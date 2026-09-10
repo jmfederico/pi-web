@@ -73,6 +73,29 @@ describe("PendingExtensionDialogStore open", () => {
     });
   });
 
+  it("carries a multiline flag and prefilled initial value through for an input dialog", () => {
+    const store = testStore();
+
+    const dialog = store.open({
+      sessionId,
+      kind: "input",
+      title: "Describe the change",
+      multiline: true,
+      initialValue: "draft text",
+      runScoped: false,
+    });
+
+    expect(dialog).toEqual({
+      dialogId: "dialog-1",
+      kind: "input",
+      title: "Describe the change",
+      multiline: true,
+      initialValue: "draft text",
+      askedAt: "2026-01-01T00:00:00.000Z",
+      runScoped: false,
+    });
+  });
+
   it("keeps each session's dialogs separate", () => {
     const store = testStore();
     store.open({ sessionId, kind: "confirm", title: "One?", runScoped: false });

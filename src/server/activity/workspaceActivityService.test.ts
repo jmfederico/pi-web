@@ -87,6 +87,21 @@ describe("WorkspaceActivityService", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it.each<"pi" | "omp">(["pi", "omp"])("reconciles %s activity without erasing the other backend", (backend) => {
+    const { service } = activityRecord();
+    const piId = "pi-session";
+    const ompId = "omp:01a08abd-8f22-77d9-8ec5-e1b97c908b2b";
+    for (const sessionId of [piId, ompId]) {
+      service.applySessionActivity("/repo", { sessionId, phase: "active", label: "running tool", at: "now" });
+    }
+
+    service.reconcileSessionActivity("/repo", [], backend);
+
+    expect(service.snapshot().workspaces).toEqual([{ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false }]);
+    service.removeSession(backend === "pi" ? ompId : piId);
+    expect(service.snapshot().workspaces).toEqual([]);
+  });
+
   it("combines sessions and terminals and clears closed terminals", () => {
     const { service, onChanged } = activityRecord();
 

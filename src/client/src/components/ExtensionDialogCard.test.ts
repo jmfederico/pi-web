@@ -135,6 +135,41 @@ describe("extension-dialog-card input dialog", () => {
   });
 });
 
+describe("extension-dialog-card multiline input dialog", () => {
+  it("renders a textarea prefilled with the initial value instead of a single-line input", async () => {
+    const card = await mountOpenDialog(openDialog({ kind: "input", title: "Describe the change", multiline: true, initialValue: "draft text" }));
+    const root = renderRoot(card);
+
+    expect(root.querySelector("input")).toBeNull();
+    const textarea = requiredElement(root.querySelector("textarea"), "dialog textarea");
+    expect(textarea.value).toBe("draft text");
+    expect(textarea.maxLength).toBe(4000);
+  });
+
+  it("sends the edited textarea value through the same answer path as a single-line input", async () => {
+    const onAnswer = vi.fn<ExtensionDialogAnswerCallback>();
+    const card = await mountOpenDialog(openDialog({ kind: "input", title: "Describe the change", multiline: true, initialValue: "draft text" }), { onAnswer });
+    const root = renderRoot(card);
+    const textarea = requiredElement(root.querySelector("textarea"), "dialog textarea");
+
+    textarea.value = "draft text, revised";
+    textarea.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await card.updateComplete;
+    buttonWithText(root, "Send").click();
+    await Promise.resolve();
+
+    expect(onAnswer).toHaveBeenCalledWith("dlg-1", "draft text, revised");
+  });
+
+  it("keeps rendering a single-line input, not a textarea, for an ordinary input dialog without the multiline flag", async () => {
+    const card = await mountOpenDialog(openDialog({ kind: "input", title: "Name the branch" }));
+    const root = renderRoot(card);
+
+    expect(root.querySelector("textarea")).toBeNull();
+    expect(root.querySelector("input")).not.toBeNull();
+  });
+});
+
 describe("extension-dialog-card countdown", () => {
   it("shows the remaining time and ticks down each second", async () => {
     vi.useFakeTimers();

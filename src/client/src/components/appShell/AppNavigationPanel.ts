@@ -1,6 +1,6 @@
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
-import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
+import type { Machine, MachineHealth, Project, SessionActivity, SessionBackend, SessionInfo, SessionStatus, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import type { WorkspaceLabelItem } from "../../plugins/types";
 import { selectedMachineId } from "../../controllers/types";
@@ -44,6 +44,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ type: Boolean }) sessionsCollapsed = false;
   @property({ type: Number }) startingSessionCount = 0;
   @property({ type: Boolean }) canStartSession = false;
+  @property({ type: Boolean }) ompBackendSelectable = true;
   @property({ attribute: false }) onShowActions?: () => void;
   @property({ attribute: false }) onToggleMachines?: () => void;
   @property({ attribute: false }) onToggleProjects?: () => void;
@@ -53,7 +54,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onCloseProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onSelectWorkspace?: (workspace: Workspace) => void | Promise<void>;
   @property({ attribute: false }) onDeleteWorkspace?: (workspace: Workspace) => void | Promise<void>;
-  @property({ attribute: false }) onStartSession?: () => void | Promise<void>;
+  @property({ attribute: false }) onStartSession?: (backend: SessionBackend) => void | Promise<void>;
   @property({ attribute: false }) onSelectSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchiveSession?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onArchiveSessionWithDescendants?: (session: SessionInfo) => void | Promise<void>;
@@ -162,11 +163,12 @@ export class AppNavigationPanel extends LitElement {
         .selected=${this.selectedSession}
         .startingCount=${this.startingSessionCount}
         .canStart=${this.canStartSession}
+        .ompBackendSelectable=${this.ompBackendSelectable}
         .collapsible=${this.collapsible}
         .collapsed=${this.sessionsCollapsed}
         .onToggleCollapsed=${() => { this.onToggleSessions?.(); }}
         .onArchivedCollapsed=${() => this.onArchivedCollapsed?.()}
-        .onStart=${() => this.onStartSession?.()}
+        .onStart=${(backend: SessionBackend) => this.onStartSession?.(backend)}
         .onSelect=${(session: SessionInfo) => this.onSelectSession?.(session)}
         .onArchive=${(session: SessionInfo) => this.onArchiveSession?.(session)}
         .onArchiveWithDescendants=${(session: SessionInfo) => this.onArchiveSessionWithDescendants?.(session)}

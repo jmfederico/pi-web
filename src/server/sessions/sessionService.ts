@@ -4,6 +4,7 @@ import type {
   ExtensionDialogAnswer,
   ExtensionDialogCloseResponse,
   SavedPromptAttachment,
+  SessionBackend,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
   SessionBulkMutationRef,
@@ -50,9 +51,10 @@ export interface SessionRouteService {
   /**
    * Create a session. `startupToken` is an opaque label the caller supplies so
    * it can recognise this construction's startup progress reports; the service
-   * echoes it and never interprets it.
+   * echoes it and never interprets it. `backend` selects the owning
+   * coding-agent runtime; absent means Pi.
    */
-  start(cwd: string, options?: { startupToken?: string }): Promise<ClientSession>;
+  start(cwd: string, options?: { startupToken?: string; backend?: SessionBackend }): Promise<ClientSession>;
   messages(ref: SessionRouteRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage>;
   status(ref: SessionRouteRef): Promise<ClientSessionStatus>;
   streamSnapshot(ref: SessionRouteRef): Promise<SessionStreamSnapshot>;

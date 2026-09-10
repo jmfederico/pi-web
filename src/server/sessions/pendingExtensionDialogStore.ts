@@ -29,6 +29,15 @@ export interface PendingExtensionDialogOpenInput {
   message?: string | undefined;
   options?: string[] | undefined;
   placeholder?: string | undefined;
+  /** Multiline text-area rendering hint; meaningful only for kind "input" (e.g. OMP's "editor" method maps here). */
+  multiline?: boolean | undefined;
+  /**
+   * Prefilled starting text; meaningful only for kind "input". An empty
+   * string is a valid "start blank" prefill, distinct from an absent value,
+   * so it is never collapsed the way {@link optionalText} treats blank
+   * cosmetic prose.
+   */
+  initialValue?: string | undefined;
   /** Effective timeout in milliseconds; omit (or have the caller resolve `0`) to wait forever. */
   timeoutMs?: number | undefined;
   /** True when opened while a run is in flight; run-scoped dialogs are settled on `agent_end`. */
@@ -179,7 +188,7 @@ function validateAnswer(dialog: PendingExtensionDialog, value: ExtensionDialogAn
 function kindFields(
   kind: ExtensionDialogKind,
   input: PendingExtensionDialogOpenInput,
-): Pick<PendingExtensionDialog, "message" | "options" | "placeholder"> {
+): Pick<PendingExtensionDialog, "message" | "options" | "placeholder"> & { multiline?: boolean; initialValue?: string } {
   switch (kind) {
     case "confirm": {
       const message = optionalText(input.message, "dialog message");
@@ -189,9 +198,20 @@ function kindFields(
       return { options: validateOptions(input.options) };
     case "input": {
       const placeholder = optionalText(input.placeholder, "dialog placeholder");
-      return placeholder === undefined ? {} : { placeholder };
+      return {
+        ...(placeholder === undefined ? {} : { placeholder }),
+        ...(input.multiline === true ? { multiline: true } : {}),
+        ...(input.initialValue === undefined ? {} : { initialValue: boundedInitialValue(input.initialValue) }),
+      };
     }
   }
+}
+
+function boundedInitialValue(value: string): string {
+  if (value.length > EXTENSION_DIALOG_INPUT_MAX_LENGTH) {
+    throw new PendingExtensionDialogValidationError("dialog initial value exceeds its length limit");
+  }
+  return value;
 }
 
 function validateOptions(options: string[] | undefined): string[] {

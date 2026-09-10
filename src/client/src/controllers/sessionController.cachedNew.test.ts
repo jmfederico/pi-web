@@ -4,7 +4,7 @@ import { isCachedNewSessionInfo, loadCachedNewSessions, markCachedNewSessionInfo
 import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { SessionController } from "./sessionController";
-import { defaultApi, emptyPage, FakeSocket, MemoryStorage, oldSession, replacementSession, sessionKey, sessionLookupId, status, workspace, type AppState } from "./sessionController.testSupport";
+import { defaultApi, emptyPage, FakeSocket, MemoryStorage, oldSession, replacementSession, sessionKey, sessionLookupId, status, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
 
 describe("SessionController cached-new sessions", () => {
   it("keeps live message count updates when a cached new session becomes persisted", async () => {
@@ -124,6 +124,45 @@ describe("SessionController cached-new sessions", () => {
     // swapping in a fresh MemoryStorage), so clear explicitly to avoid leaking
     // this attachment into a later test that reuses the same id.
     clearStagedAttachments(sessionKey(replacementSession.id));
+  });
+
+  it("preserves the original backend when recreating a missing browser-cached new session", async () => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    const ompOldSession: SessionInfo = { ...oldSession, backend: "omp" };
+    const ompReplacementSession: SessionInfo = { ...replacementSession, backend: "omp" };
+    rememberCachedNewSession(ompOldSession);
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [markCachedNewSessionInfo(ompOldSession)] };
+    const startCalls: unknown[] = [];
+    const socket = new FakeSocket();
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      startSession: (cwd, machineId, startupToken, backend) => {
+        startCalls.push({ cwd, machineId, startupToken, backend });
+        return Promise.resolve(ompReplacementSession);
+      },
+      messages: (session) => {
+        if (sessionLookupId(session) === ompOldSession.id) return Promise.reject(new Error("Session not found"));
+        return Promise.resolve(emptyPage);
+      },
+      status: (session) => Promise.resolve(status(sessionLookupId(session))),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket },
+    );
+
+    await controller.selectSession(markCachedNewSessionInfo(ompOldSession), { updateUrl: false });
+
+    // The user chose OMP for this row before it ever reached the server;
+    // recreating a session the daemon lost track of must not silently
+    // downgrade it back to the Pi default.
+    expect(startCalls).toEqual([{ cwd: ompOldSession.cwd, machineId: "local", startupToken: undefined, backend: "omp" }]);
+    expect(state.selectedSession?.backend).toBe("omp");
+    clearStagedAttachments(sessionKey(ompReplacementSession.id));
   });
 
   it("stores command prompt drafts for replacement sessions before selecting them", async () => {

@@ -100,6 +100,14 @@ describe("project PI WEB config", () => {
       defaultFolder: DEFAULT_ATTACHMENT_FOLDER,
     });
   });
+
+  it("does not merge an omp section from project-local config; omp stays global-only", async () => {
+    await writeProjectConfig({ version: 1, omp: { agentDir: "/project/omp/agent" } });
+
+    const loaded = await loadProjectPiWebConfig(projectPath);
+
+    expect(loaded.config).not.toHaveProperty("omp");
+  });
 });
 
 describe("mergePathAccessConfigs", () => {

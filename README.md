@@ -5,7 +5,7 @@
 [![Node.js](https://img.shields.io/node/v/@jmfederico/pi-web)](package.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**PI WEB is a web UI for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) that keeps agent sessions running in real workspaces on your machine or server.**
+**PI WEB is a web UI for [Pi Coding Agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent), with optional [OMP sessions](docs/config.md#omp-sessions), that keeps agent sessions running in real workspaces on your machine or server.**
 
 Run agents where your code, tools, credentials, and build caches live. Supervise them from any browser.
 
@@ -79,7 +79,7 @@ PI WEB organizes work like this:
 Machine     a local or remote PI WEB runtime endpoint
 Project     a folder on that machine
 Workspace   a provider-owned working folder; bundled Git discovers worktrees, otherwise the project folder
-Session     a Pi Coding Agent chat running inside a workspace
+Session     a Pi or OMP chat running inside a workspace
 ```
 
 A typical flow:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
+import { ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
 import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseRealtimeStreamEvent, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
 
 describe("API parsers", () => {
@@ -555,6 +555,17 @@ describe("API parsers", () => {
     expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", persisted: "yes", created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected optional boolean field: persisted");
   });
 
+  it("defaults session info to no backend for legacy Pi wire payloads and passes a valid backend through", () => {
+    const wire = { id: "s1", path: "/sessions/s1.jsonl", cwd: "/repo", created: "now", modified: "now", messageCount: 0, firstMessage: "" };
+    expect(parseSessionInfo(wire).backend).toBeUndefined();
+    expect(parseSessionInfo({ ...wire, backend: "omp" })).toEqual({ ...wire, backend: "omp" });
+    expect(parseSessionInfo({ ...wire, backend: "pi" })).toEqual({ ...wire, backend: "pi" });
+  });
+
+  it("fails closed on an unrecognized session info backend instead of silently falling back to Pi", () => {
+    expect(() => parseSessionInfo({ id: "s1", path: "/s.jsonl", cwd: "/repo", created: "now", modified: "now", messageCount: 0, firstMessage: "", backend: "bogus" })).toThrow();
+  });
+
   it("parses the model catalog with enabled state and natural catalog positions", () => {
     expect(parseSessionModelCatalogResponse({
       models: [
@@ -609,6 +620,25 @@ describe("API parsers", () => {
       contextUsage: { tokens: null, contextWindow: 100, percent: 0.5 },
       thinkingLevel: "medium",
     });
+  });
+
+  it("defaults session status to no backend for legacy Pi wire payloads and passes a valid backend through", () => {
+    expect(parseSessionStatus(statusWire()).backend).toBeUndefined();
+    expect(parseSessionStatus({ ...statusWire(), backend: "omp" })).toEqual({ ...statusWire(), backend: "omp" });
+  });
+
+  it("fails closed on an unrecognized session status backend instead of silently falling back to Pi", () => {
+    expect(() => parseSessionStatus({ ...statusWire(), backend: "bogus" })).toThrow();
+  });
+
+  it("parses backend capability flags, treating every absent flag as supported", () => {
+    const parsed = parseSessionStatus({ ...statusWire(), capabilities: { askUser: false, queueClear: false, cycleModelBackward: false } });
+    expect(parsed.capabilities).toEqual({ askUser: false, queueClear: false, cycleModelBackward: false });
+    expect(parseSessionStatus(statusWire()).capabilities).toBeUndefined();
+  });
+
+  it("rejects a non-boolean capability flag", () => {
+    expect(() => parseSessionStatus({ ...statusWire(), capabilities: { askUser: "no" } })).toThrow();
   });
 
   it("parses live session warnings including optional source and path", () => {
@@ -1086,6 +1116,26 @@ describe("API parsers", () => {
       { dialogId: "dialog-2", kind: "select", title: "Pick a database", options: ["Postgres", "SQLite"], askedAt: "2026-07-20T00:01:00.000Z", timeoutAt: "2026-07-20T00:06:00.000Z", runScoped: false },
       { dialogId: "dialog-3", kind: "input", title: "Name the branch", placeholder: "feature/...", askedAt: "2026-07-20T00:02:00.000Z", runScoped: false },
     ]);
+  });
+
+  it("parses an input dialog's optional multiline flag and prefilled initial value", () => {
+    const parsed = parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...inputDialogWire(), multiline: true, initialValue: "draft text" }] });
+
+    expect(parsed.pendingDialogs).toEqual([
+      { dialogId: "dialog-3", kind: "input", title: "Name the branch", placeholder: "feature/...", askedAt: "2026-07-20T00:02:00.000Z", runScoped: false, multiline: true, initialValue: "draft text" },
+    ]);
+  });
+
+  it("allows an explicit empty initial value, distinct from omitting it entirely", () => {
+    const withEmpty = parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...inputDialogWire(), initialValue: "" }] });
+    const withoutField = parseSessionStatus({ ...statusWire(), pendingDialogs: [inputDialogWire()] });
+
+    expect(withEmpty.pendingDialogs?.[0]?.initialValue).toBe("");
+    expect(withoutField.pendingDialogs?.[0]?.initialValue).toBeUndefined();
+  });
+
+  it("rejects an initial value longer than the answer length bound", () => {
+    expect(() => parseSessionStatus({ ...statusWire(), pendingDialogs: [{ ...inputDialogWire(), initialValue: "x".repeat(EXTENSION_DIALOG_INPUT_MAX_LENGTH + 1) }] })).toThrow();
   });
 
   it("omits pending dialogs entirely when the field is absent", () => {

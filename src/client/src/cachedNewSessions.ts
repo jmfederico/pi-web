@@ -58,6 +58,7 @@ export function stripCachedNewSessionMarker(session: SessionInfo): SessionInfo {
     ...("machineId" in session && typeof session.machineId === "string" ? { machineId: session.machineId } : { machineId: defaultMachineId }),
     ...(session.archived === true ? { archived: true } : {}),
     ...(session.archivedAt === undefined ? {} : { archivedAt: session.archivedAt }),
+    ...(session.backend === undefined ? {} : { backend: session.backend }),
   };
 }
 
@@ -95,6 +96,7 @@ function parseCachedSession(value: unknown): CachedNewSessionInfo[] {
   const name = optionalStringField(value, "name");
   const parentSessionPath = optionalStringField(value, "parentSessionPath");
   const machineId = optionalStringField(value, "machineId") ?? defaultMachineId;
+  const backend = backendField(value, "backend");
   return [{
     id,
     path,
@@ -106,8 +108,14 @@ function parseCachedSession(value: unknown): CachedNewSessionInfo[] {
     firstMessage,
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
     machineId,
+    ...(backend === undefined ? {} : { backend }),
     browserCachedNew: true,
   }];
+}
+
+function backendField(record: Record<string, unknown>, key: string): "pi" | "omp" | undefined {
+  const value = record[key];
+  return value === "pi" || value === "omp" ? value : undefined;
 }
 
 function hasCachedNewMarker(session: SessionInfo): session is SessionInfo & { browserCachedNew: unknown } {

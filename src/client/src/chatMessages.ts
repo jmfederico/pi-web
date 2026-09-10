@@ -47,6 +47,15 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   if (isChatLine(message)) return [message];
   if (getString(message, "role") === "bashExecution") return [withMessageMeta(normalizeBashExecution(message), message)];
   const rawRole = getString(message, "role");
+  if (rawRole === "custom" && getBoolean(message, "display") === false) return [];
+  if (rawRole === "compactionSummary" || rawRole === "branchSummary") {
+    const summary = getString(message, "summary");
+    if (summary === undefined) return [];
+    const source = rawRole === "compactionSummary" ? "compaction" : "branch_summary";
+    const label = rawRole === "compactionSummary" ? "Compacted history" : "Branch summary";
+    const blocks = rawRole === "compactionSummary" ? normalizeContent(getProperty(message, "blocks"), message) : [];
+    return [withMessageMeta({ role: "system", parts: [{ type: "text", text: `${label}:\n\n${summary}` }, ...blocks], source }, message)];
+  }
   const role = normalizeRole(rawRole);
   const contentParts = normalizeContent(getProperty(message, "content"), message);
   const supersededRecord = rawRole === "toolResult"

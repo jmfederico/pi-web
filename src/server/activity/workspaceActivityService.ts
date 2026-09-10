@@ -1,5 +1,5 @@
 import { isSessionActive } from "../../shared/activity.js";
-import type { SessionActivity, SessionStatus } from "../../shared/apiTypes.js";
+import type { SessionActivity, SessionBackend, SessionStatus } from "../../shared/apiTypes.js";
 
 /** One working directory that currently has session or terminal activity. */
 export interface ActiveWorkspaceActivity {
@@ -58,11 +58,12 @@ export class WorkspaceActivityService {
     this.notifyCwd(previousCwd);
   }
 
-  reconcileSessionActivity(cwd: string, sessionIds: Iterable<string>): void {
+  reconcileSessionActivity(cwd: string, sessionIds: Iterable<string>, backend?: SessionBackend): void {
     const knownSessionIds = new Set(sessionIds);
     let changed = false;
     for (const [sessionId, record] of this.sessions.entries()) {
       if (record.cwd !== cwd || knownSessionIds.has(sessionId)) continue;
+      if (backend !== undefined && (sessionId.startsWith("omp:") ? "omp" : "pi") !== backend) continue;
       this.sessions.delete(sessionId);
       changed = true;
     }

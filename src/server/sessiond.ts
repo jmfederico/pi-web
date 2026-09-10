@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import Fastify from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { WorkspaceActivityService } from "./activity/workspaceActivityService.js";
@@ -17,6 +18,10 @@ import { registerAuthRoutes } from "./sessions/authRoutes.js";
 import { ModelCatalogRefresher } from "./sessions/modelCatalogRefresher.js";
 import { PiSessionService } from "./sessions/piSessionService.js";
 import { createPiSessionManagerGateway } from "./sessions/piSessionManagerGateway.js";
+import { OmpRpcClient } from "./sessions/omp/ompRpcClient.js";
+import { OmpSessionService } from "./sessions/omp/ompSessionService.js";
+import { OmpSessionStore } from "./sessions/omp/ompSessionStore.js";
+import { SessionBackendRouter } from "./sessions/sessionBackendRouter.js";
 import { registerSessionRoutes } from "./sessions/sessionRoutes.js";
 import { SessionNotificationStore } from "./sessions/sessionNotificationStore.js";
 import { SessionArchiveStore, defaultSessionArchiveFilePath } from "./sessions/sessionArchiveStore.js";
@@ -263,7 +268,7 @@ async function createSessionDaemonRuntime() {
     machineStatus.notifyChanged();
     const projectWorkspaceDeps = { projects, workspaces: workspaceProviders };
     const spawnTargets = config.spawnSessions ? new ProjectScopedSpawnTargetResolver(projectWorkspaceDeps) : undefined;
-    const sessions = new PiSessionService(eventHub, sessionServiceDependencies({
+    const piSessions = new PiSessionService(eventHub, sessionServiceDependencies({
       modelRuntime: auth.runtime,
       agentDir: activeAgentProfile.dir,
       archiveStore: new SessionArchiveStore(defaultSessionArchiveFilePath(daemonEnvironment)),
@@ -299,7 +304,32 @@ async function createSessionDaemonRuntime() {
         env: daemonEnvironment,
       }),
     }));
-    auth.subscribe((change) => { sessions.applyAuthChange(change); });
+    // Resolved once here (rather than left to OmpSessionService's own
+    // default) so the injected OmpSessionStore reads the exact directory the
+    // service itself uses. node:os homedir(), not process.env.HOME: the
+    // latter is unset on Windows (USERPROFILE instead).
+    const ompAgentDir = config.omp?.agentDir ?? join(homedir(), ".omp", "agent");
+    const ompSessions = new OmpSessionService(eventHub, {
+      agentDir: ompAgentDir,
+      ...(config.omp?.command === undefined ? {} : { command: config.omp.command }),
+      env: daemonEnvironment,
+      createRpcClient: (options) => new OmpRpcClient(options),
+      store: new OmpSessionStore(ompAgentDir),
+      // Shared with PiSessionService (sessionId-keyed; the omp: prefix
+      // cannot collide with Pi's raw ids), so notification/unread catalogs
+      // stay coherent across both engines without router-side merging.
+      notificationStore,
+      unreadStore,
+      workspaceActivity,
+      onUnreadChanged: () => { machineStatus.notifyChanged(); },
+      // Deliberately omits archiveStore: OmpSessionService defaults to its
+      // own file under PI_WEB_DATA_DIR/omp/, never Pi's archiveStore above.
+      // SessionArchiveStore.archive() physically moves the transcript file
+      // keyed by basename, so a shared instance would let Pi's own cleanup
+      // discover/delete OMP archives.
+    });
+    const sessions = new SessionBackendRouter({ pi: piSessions, omp: ompSessions });
+    auth.subscribe((change) => { piSessions.applyAuthChange(change); });
     const terminals = serverPlugins.requiredTerminalService();
     terminals.bindActivitySink({
       updateTerminal: (terminal) => { workspaceActivity.updateTerminal(terminal); },

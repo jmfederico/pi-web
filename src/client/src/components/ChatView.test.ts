@@ -62,6 +62,15 @@ describe("chatQueuedSectionShowsClearAction", () => {
   it("never shows the server action for the separate client pending-start queue", () => {
     expect(chatQueuedSectionShowsClearAction(clientSection, true)).toBe(false);
   });
+
+  it("hides the action when the backend does not support clearing the queue, even with a clear handler wired", () => {
+    expect(chatQueuedSectionShowsClearAction(serverSection, true, false)).toBe(false);
+  });
+
+  it("keeps the action available by default when the capability flag is omitted, for unchanged Pi behavior", () => {
+    expect(chatQueuedSectionShowsClearAction(serverSection, true)).toBe(true);
+    expect(chatQueuedSectionShowsClearAction(serverSection, true, true)).toBe(true);
+  });
 });
 
 describe("ChatView queued-message clear wiring", () => {
@@ -113,6 +122,22 @@ describe("chatSessionWarningRows", () => {
   it("derives no rows when there are no warnings or status is unset", () => {
     expect(chatSessionWarningRows(warningStatus([]))).toEqual([]);
     expect(chatSessionWarningRows(undefined)).toEqual([]);
+  });
+
+  it("omits every dismiss id when the backend cannot dismiss warnings, even for a warning that carries its own dismiss capability", () => {
+    const rows = chatSessionWarningRows(warningStatus([
+      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
+    ]), false);
+
+    expect(rows.map((row) => row.dismissId)).toEqual([undefined]);
+  });
+
+  it("keeps per-warning dismiss ids by default when the capability flag is omitted, for unchanged Pi behavior", () => {
+    const rows = chatSessionWarningRows(warningStatus([
+      { severity: "warning", message: "subscription auth is active", dismiss: { id: "x" } },
+    ]));
+
+    expect(rows.map((row) => row.dismissId)).toEqual(["x"]);
   });
 });
 

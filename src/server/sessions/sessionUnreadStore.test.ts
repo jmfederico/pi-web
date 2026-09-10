@@ -45,6 +45,29 @@ describe("SessionUnreadStore", () => {
     expect(store.observeActivityState("session-1", "/repo", false)).toEqual([]);
   });
 
+  it.each<"pi" | "omp">(["pi", "omp"])("reconciles %s unread state without clearing the other backend", (backend) => {
+    const store = storeAt("2026-07-20T00:00:00.000Z", "catalog-a");
+    const id = (owner: "pi" | "omp", index: number) => `${owner === "omp" ? "omp:" : ""}00000000-0000-4000-8000-00000000000${String(index)}`;
+    const other = backend === "pi" ? "omp" : "pi";
+    complete(store, id(backend, 1), "/repo");
+    complete(store, id(other, 1), "/repo");
+    store.observeActivityState(id(backend, 2), "/repo", true);
+    store.observeActivityState(id(other, 2), "/repo", true);
+    store.excludeSession(id(backend, 3), "/repo");
+    store.excludeSession(id(other, 3), "/repo");
+
+    const removed = store.reconcileCwd("/repo", [], backend);
+
+    expect(removed.map((mutation) => mutation.event.sessionId)).toEqual([id(backend, 1)]);
+    expect(store.catalogSnapshot().sessions.map((session) => session.sessionId)).toEqual([id(other, 1)]);
+    store.observeActivityState(id(backend, 2), "/repo", false);
+    store.observeActivityState(id(other, 2), "/repo", false);
+    complete(store, id(other, 3), "/repo");
+    expect(store.catalogSnapshot().sessions.map((session) => session.sessionId)).toEqual([id(other, 2), id(other, 1)]);
+    complete(store, id(backend, 3), "/repo");
+    expect(store.catalogSnapshot().sessions.map((session) => session.sessionId)).toEqual([id(backend, 3), id(other, 2), id(other, 1)]);
+  });
+
   it("uses monotonic completion orders so stale acknowledgements cannot clear newer work", () => {
     const store = storeAt("2026-07-20T00:00:00.000Z", "catalog-a");
     complete(store, "session-1", "/repo");

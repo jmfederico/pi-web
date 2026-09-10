@@ -1,4 +1,4 @@
-import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
+import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBackend, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState, ClosedExtensionDialog } from "../appState";
 import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope, type SessionBrowserErrorOwner } from "../browserErrors";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
@@ -200,15 +200,15 @@ export class SessionController {
     this.deselectSession({ forgetRememberedSelection: true });
   }
 
-  async startSession() {
+  async startSession(backend?: SessionBackend) {
     const workspace = this.getState().selectedWorkspace;
     if (!workspace) return;
     const machineId = selectedMachineId(this.getState());
-    const pending = this.createPendingSessionStart(workspace, machineId);
+    const pending = this.createPendingSessionStart(workspace, machineId, backend);
     this.pendingSessionStarts.set(pending.tempId, pending);
     this.insertAndSelectPendingSession(pending.session);
     try {
-      const session = await this.api.startSession(workspace.path, machineId, pending.tempId);
+      const session = await this.api.startSession(workspace.path, machineId, pending.tempId, backend);
       await this.resolvePendingSessionStart(pending.tempId, session);
     } catch (error) {
       this.failPendingSessionStart(pending.tempId, error);
@@ -1288,7 +1288,7 @@ export class SessionController {
     });
   }
 
-  private createPendingSessionStart(workspace: Workspace, machineId: string): PendingSessionStart {
+  private createPendingSessionStart(workspace: Workspace, machineId: string, backend?: SessionBackend): PendingSessionStart {
     const tempId = `pending-session-${String(++this.pendingSessionStartSeq)}-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
     const session: ClientPendingStartSessionInfo = {
@@ -1303,6 +1303,7 @@ export class SessionController {
       firstMessage: "",
       clientPendingStart: true,
       machineId,
+      ...(backend === undefined ? {} : { backend }),
     };
     return { tempId, originWorkspace: workspace, workspaceId: workspace.id, cwd: workspace.path, machineId, session, queuedSends: [], discarded: false };
   }
@@ -1352,6 +1353,14 @@ export class SessionController {
   private async resolvePendingSessionStart(tempId: string, session: SessionInfo): Promise<void> {
     const pending = this.pendingSessionStarts.get(tempId);
     if (pending === undefined) return;
+    const requestedBackend = pending.session.backend ?? "pi";
+    const returnedBackend = session.backend ?? "pi";
+    if (requestedBackend !== returnedBackend) {
+      void this.api.stop(session, pending.machineId).catch(() => {
+        // Best-effort cleanup: this backend was not the one the user requested.
+      });
+      throw new Error(`Incompatible session backend response: requested ${requestedBackend}, received ${returnedBackend}`);
+    }
     this.pendingSessionStarts.delete(tempId);
     const queuedSends = pending.queuedSends.splice(0);
     const releasedCreatedSessions = this.takeSuppressedCreatedSessionsFor(pending.cwd, pending.machineId, session.id);
@@ -1484,7 +1493,11 @@ export class SessionController {
   private async recreateCachedNewSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }, errorOwner = this.captureSessionErrorOwner(session)): Promise<void> {
     const machineId = selectedMachineId(this.getState());
     try {
-      const replacement = await this.api.startSession(session.cwd, machineId);
+      // The user's original backend choice is not re-offered here: the daemon
+      // lost track of a session that never really started, so recreating it
+      // must preserve what was already chosen rather than silently reverting
+      // to the Pi default.
+      const replacement = await this.api.startSession(session.cwd, machineId, undefined, session.backend);
       rememberCachedNewSession(replacement, machineId);
       moveDraft(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
       moveStagedAttachments(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));

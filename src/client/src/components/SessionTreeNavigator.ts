@@ -10,7 +10,7 @@ import "./ModalSurface";
 const EMPTY_TREE: SessionTreeSnapshot = { nodes: [], activeLeafId: null, activePathIds: [] };
 const MAX_SESSION_TREE_VISUAL_DEPTH = 8;
 type NavigatorStep = "tree" | "action";
-type NavigatorOperation = "continue" | "fork";
+export type NavigatorOperation = "continue" | "fork";
 type PendingFocus = "tree" | "operation" | "summary" | "custom";
 
 export type SessionTreeKindTone = "user" | "assistant" | "tool" | "shell" | "context" | "metadata";
@@ -40,6 +40,10 @@ const SESSION_TREE_KIND_PRESENTATION = {
 @customElement("session-tree-navigator")
 export class SessionTreeNavigator extends LitElement {
   @property({ attribute: false }) tree: SessionTreeSnapshot = EMPTY_TREE;
+  /** False when the backend cannot continue/branch in this session file (e.g. a native navigate RPC is unsupported); the "Continue" option is then hidden. */
+  @property({ type: Boolean }) navigateAvailable = true;
+  /** False when the backend cannot fork a new session file; the "Fork" option is then hidden. */
+  @property({ type: Boolean }) forkAvailable = true;
   @property({ attribute: false }) onNavigate?: (targetId: string, summaryChoice: SessionTreeSummaryChoice) => Promise<SessionTreeNavigateResult>;
   @property({ attribute: false }) onFork?: (entryId: string) => Promise<SessionTreeForkResult>;
   @property({ attribute: false }) onAbort?: () => Promise<void>;
@@ -62,6 +66,11 @@ export class SessionTreeNavigator extends LitElement {
 
   protected override willUpdate(changedProperties: PropertyValues<this>): void {
     if (changedProperties.has("tree")) this.resetTree();
+    // Never leave the selected operation pointing at a hidden option: a
+    // capability change while the dialog is open must not submit an
+    // operation the backend cannot perform.
+    if (!this.navigateAvailable && this.operation === "continue") this.operation = "fork";
+    else if (!this.forkAvailable && this.operation === "fork") this.operation = "continue";
   }
 
   protected override updated(): void {
@@ -191,8 +200,8 @@ export class SessionTreeNavigator extends LitElement {
           `}
           <fieldset ?disabled=${this.busy}>
             <legend>How would you like to continue?</legend>
-            ${this.renderOperationOption("continue", "Continue in this session", "Branch from the selected entry in this session file and keep its other branches.")}
-            ${this.renderOperationOption("fork", "Fork into a new session", "Create and switch to a separate session file while leaving the original unchanged.")}
+            ${sessionTreeAvailableOperations(this.navigateAvailable, this.forkAvailable).includes("continue") ? this.renderOperationOption("continue", "Continue in this session", "Branch from the selected entry in this session file and keep its other branches.") : null}
+            ${sessionTreeAvailableOperations(this.navigateAvailable, this.forkAvailable).includes("fork") ? this.renderOperationOption("fork", "Fork into a new session", "Create and switch to a separate session file while leaving the original unchanged.") : null}
           </fieldset>
           ${this.operation === "continue" ? html`
             <fieldset ?disabled=${this.busy}>
@@ -624,6 +633,14 @@ export class SessionTreeNavigator extends LitElement {
 
 export function sessionTreeVisualDepth(depth: number): number {
   return Math.min(Math.max(0, depth), MAX_SESSION_TREE_VISUAL_DEPTH);
+}
+
+/** Which continue/fork operations the current backend supports, in fixed display order. */
+export function sessionTreeAvailableOperations(navigateAvailable: boolean, forkAvailable: boolean): NavigatorOperation[] {
+  return [
+    ...(navigateAvailable ? (["continue"] as const) : []),
+    ...(forkAvailable ? (["fork"] as const) : []),
+  ];
 }
 
 export function sessionTreeEntryReturnsToEditor(kind: SessionTreeNodeKind): boolean {

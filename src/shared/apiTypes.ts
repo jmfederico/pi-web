@@ -73,6 +73,7 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
  */
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
+  ompSessionBackend: "sessions.backend.omp",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -199,6 +200,8 @@ export interface PiWebConfigValues {
   extensionDialogsTimeoutMs?: number;
   /** Deprecated agent-configuration keys, still honored as aliases during the deprecation window and detected for the deprecation warning (see PiWebAgentConfig). */
   agent?: PiWebAgentConfig;
+  /** Global-only OMP backend configuration; absent resolves the OMP agent dir from `HOME/.omp/agent` independently of the Pi daemon's own agent dir. */
+  omp?: { agentDir?: string; command?: string };
 }
 
 export type PiWebPluginScope = "bundled" | "local" | "user" | "project";
@@ -434,6 +437,9 @@ export interface SessionRef {
   cwd: string;
 }
 
+/** Which coding-agent runtime owns a session. Absent on the wire means `"pi"`, for rolling compatibility with older clients/servers. */
+export type SessionBackend = "pi" | "omp";
+
 export type ServerNoticeSeverity = "info" | "warning" | "error";
 
 /** Browser-visibility selectors for one server notice. */
@@ -614,6 +620,8 @@ export interface SessionInfo extends SessionRef {
   parentSessionPath?: string;
   archived?: boolean;
   archivedAt?: string;
+  /** Owning coding-agent runtime; absent means `"pi"`. Set once at creation and never changed afterward. */
+  backend?: SessionBackend;
 }
 
 export interface ArchiveSessionsResponse {
@@ -878,6 +886,10 @@ export interface PendingExtensionDialog {
   options?: string[];
   /** Placeholder text of an `input` dialog. */
   placeholder?: string;
+  /** Prefilled text of an `input` dialog; renders in a multiline text area when {@link PendingExtensionDialog.multiline} is true. */
+  initialValue?: string;
+  /** Renders an `input` dialog as a multiline text area instead of a single-line field. */
+  multiline?: boolean;
   askedAt: string;
   /**
    * When the dialog auto-cancels, as ISO: the sooner of the extension's own
@@ -1123,8 +1135,31 @@ export interface SessionWarning {
   dismiss?: { id: string };
 }
 
+/**
+ * Per-session operation support, reported by the owning backend. Every flag is
+ * absent-means-supported so Pi (which never sets this field) and older
+ * clients/servers see every control as available, unchanged. A backend that
+ * cannot support an operation sets the matching flag `false`; the browser
+ * hides or disables the corresponding control rather than sending a request
+ * the backend would reject.
+ */
+export interface SessionCapabilities {
+  askUser?: boolean;
+  queueClear?: boolean;
+  warnings?: boolean;
+  modelScope?: boolean;
+  treeNavigate?: boolean;
+  treeFork?: boolean;
+  interactiveCommands?: boolean;
+  detachParent?: boolean;
+  shellStreaming?: boolean;
+  cycleModelBackward?: boolean;
+}
+
 export interface SessionStatus {
   sessionId: string;
+  /** Owning coding-agent runtime; absent means `"pi"`. */
+  backend?: SessionBackend;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
   model?: SessionModel;
@@ -1156,6 +1191,8 @@ export interface SessionStatus {
    * restarts. Several may be open at once; the UI presents them as a queue.
    */
   pendingDialogs?: PendingExtensionDialog[];
+  /** Operations this session's backend does not support, if any. Absent means every operation is supported. */
+  capabilities?: SessionCapabilities;
 }
 
 export interface SlashCommand {
