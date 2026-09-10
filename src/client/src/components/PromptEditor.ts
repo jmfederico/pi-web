@@ -21,6 +21,8 @@ import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, ren
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
 
+const UNFILTERED_COMMAND_COMPLETION_LIMIT = 12;
+
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
@@ -357,9 +359,9 @@ export class PromptEditor extends LitElement {
     if (trigger.kind === "command" && this.sessionId !== undefined && this.sessionId !== "" && this.cwd !== undefined && this.cwd !== "") {
       const commands = await api.commands({ id: this.sessionId, cwd: this.cwd }, this.machineId).catch(emptySlashCommands);
       if (version !== this.requestVersion) return;
-      this.completions = commands
-        .filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()))
-        .slice(0, 12)
+      const matchingCommands = commands.filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()));
+      const visibleCommands = trigger.query === "" ? matchingCommands.slice(0, UNFILTERED_COMMAND_COMPLETION_LIMIT) : matchingCommands;
+      this.completions = visibleCommands
         .map((command) => ({
           kind: "command",
           replaceFrom: trigger.from,
@@ -613,4 +615,3 @@ function inputAssistanceContentAttributes(draftBeforeCursor: string): Record<str
   // CodeMirror is optimized for code and disables these by default, but the chat prompt is usually prose.
   return inputModeForDraft(draftBeforeCursor).kind === "normal" ? proseInputAssistanceAttributes : codeLikeInputAssistanceAttributes;
 }
-
