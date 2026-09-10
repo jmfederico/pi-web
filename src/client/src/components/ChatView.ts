@@ -134,8 +134,8 @@ export function chatMessageGroupLabel(defaultOpen: boolean): string {
 }
 
 /** Whether a queued-message section shows the server clear-queue action. */
-export function chatQueuedSectionShowsClearAction(section: QueuedMessageSection, hasClearHandler: boolean): boolean {
-  return section.source === "server" && hasClearHandler;
+export function chatQueuedSectionShowsClearAction(section: QueuedMessageSection, hasClearHandler: boolean, queueClearable = true): boolean {
+  return section.source === "server" && hasClearHandler && queueClearable;
 }
 
 /** A rendered session-warning row derived from live status warnings. */
@@ -148,15 +148,15 @@ export interface ChatSessionWarningRow {
   dismissId?: string;
 }
 
-/** Derive one severity-tagged warning row per live status warning, in order. */
-export function chatSessionWarningRows(status: SessionStatus | undefined): ChatSessionWarningRow[] {
+/** Derive one severity-tagged row per live status warning, in order. */
+export function chatSessionWarningRows(status: SessionStatus | undefined, dismissable = true): ChatSessionWarningRow[] {
   return (status?.warnings ?? []).map((warning) => ({
     severity: warning.severity,
     severityClass: `session-warning ${warning.severity}`,
     message: warning.message,
     ...(warning.source === undefined ? {} : { source: warning.source }),
     ...(warning.path === undefined ? {} : { path: warning.path }),
-    ...(warning.dismiss === undefined ? {} : { dismissId: warning.dismiss.id }),
+    ...(warning.dismiss === undefined || !dismissable ? {} : { dismissId: warning.dismiss.id }),
   }));
 }
 
@@ -211,8 +211,12 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) onDismissNotification?: (notificationId: string) => void;
   @property({ attribute: false }) onDismissAllNotifications?: () => void;
   @property({ type: Boolean }) warningsVisible = true;
+  /** False when the backend cannot dismiss warnings; the dismiss control is then hidden even for warnings that carry their own dismiss capability. */
+  @property({ type: Boolean }) warningsDismissible = true;
   @property({ attribute: false }) onToggleWarnings?: () => void;
   @property({ attribute: false }) onLoadMore?: () => void;
+  /** False when the backend cannot clear the server-side prompt queue; the Clear queue action is then hidden. */
+  @property({ type: Boolean }) queueClearable = true;
   @query(".chat") private chat?: HTMLDivElement;
   @query("dialog.image-zoom") private imageZoomDialog?: HTMLDialogElement;
   @state() private pinnedToBottom = true;
@@ -579,7 +583,7 @@ export class ChatView extends LitElement {
   }
 
   private renderWarnings() {
-    const rows = chatSessionWarningRows(this.status);
+    const rows = chatSessionWarningRows(this.status, this.warningsDismissible);
     if (!this.warningsVisible || rows.length === 0) return null;
     return html`
       <aside class="session-warnings" role="alert" aria-live="polite">
@@ -684,7 +688,7 @@ export class ChatView extends LitElement {
   }
 
   private renderQueuedMessageList(section: QueuedMessageSection) {
-    const canClear = chatQueuedSectionShowsClearAction(section, this.onClearServerQueue !== undefined);
+    const canClear = chatQueuedSectionShowsClearAction(section, this.onClearServerQueue !== undefined, this.queueClearable);
     return html`
       <aside class="queued-messages" aria-live="polite">
         <div class="queued-header">

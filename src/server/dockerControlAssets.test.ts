@@ -206,6 +206,7 @@ describe("Docker command assets", () => {
     const installDir = await createRuntimeInstall();
     const devRoot = await createDevGeneratedEnv({ uid: 1234, gid: 2345, dockerGid: 3456 });
     const fakeDocker = await installFakeDocker();
+    await installFakeId(fakeDocker.binDir, 1234, 2345);
 
     const runtimeDoctor = await runDockerCommand(["doctor"], runtimeHostEnv(fakeDocker, installDir));
     const devDoctor = await runDockerCommand(["--dev", "doctor"], {
@@ -634,6 +635,7 @@ describe("Docker command assets", () => {
   dockerCommandIt("reuses the recorded Docker host setup for dev Compose inside a container", async () => {
     const devRoot = await createDevRepoFixture();
     const fakeDocker = await installFakeDocker();
+    await installFakeId(fakeDocker.binDir, 1234, 2345);
     await mkdir(join(devRoot, ".pi-web"), { recursive: true });
     await writeFile(join(devRoot, ".pi-web", "docker-compose-dev.generated.env"), [
       "PI_WEB_UID=1234",

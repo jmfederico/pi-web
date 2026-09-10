@@ -3,12 +3,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandOption, SessionModelCatalogEntry } from "../api";
 import { deepActiveElement, dialogSurface, pressKey, requiredElement, settleRenderedDialog } from "./modalSurfaceTestSupport";
-import { ModelPicker } from "./ModelPicker";
+import { capabilityGatedModelCatalog, ModelPicker } from "./ModelPicker";
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+describe("capabilityGatedModelCatalog", () => {
+  const catalog: SessionModelCatalogEntry[] = [
+    { provider: "anthropic", id: "claude-opus-4-6", enabled: true, editable: true },
+    { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false },
+  ];
+
+  it("passes the catalog through unchanged when the backend supports editing model scope", () => {
+    expect(capabilityGatedModelCatalog(catalog, undefined)).toEqual(catalog);
+    expect(capabilityGatedModelCatalog(catalog, { modelScope: true })).toEqual(catalog);
+  });
+
+  it("locks every catalog entry read-only when the backend cannot edit model scope", () => {
+    expect(capabilityGatedModelCatalog(catalog, { modelScope: false })).toEqual([
+      { provider: "anthropic", id: "claude-opus-4-6", enabled: true, editable: false },
+      { provider: "anthropic", id: "claude-sonnet-4-5", enabled: false, editable: false },
+    ]);
+  });
 });
 
 describe("model-picker Enabled mode", () => {
@@ -71,7 +90,7 @@ describe("model-picker All models mode", () => {
     expect(membershipButton(currentRow).disabled).toBe(true);
   });
 
-  it("makes membership controls read-only for a workspace settings override", async () => {
+  it("keeps backend-owned model scope read-only without attributing it to Pi project settings", async () => {
     const picker = await mountPicker({
       selectedValue: "openai/gpt-5",
       catalog: defaultCatalog().map((row) => ({ ...row, editable: false })),
@@ -81,13 +100,23 @@ describe("model-picker All models mode", () => {
     scopeToggle(picker, "All models").click();
     await settleRenderedDialog(picker);
 
+    const rows = catalogRows(picker);
+    const notice = requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-notice"), "read-only model scope notice");
+    const status = requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-status"), "read-only model scope status");
+    const ownershipCopy = [
+      notice.textContent,
+      status.textContent,
+      toggleAllButton(picker).title,
+      ...rows.flatMap((row) => [
+        rowCheckbox(row).title,
+        rowCheckbox(row).getAttribute("aria-label") ?? "",
+        membershipButton(row).getAttribute("aria-label") ?? "",
+      ]),
+    ];
+
     expect(toggleAllButton(picker).disabled).toBe(true);
-    const notice = requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-notice"), "project override notice");
-    expect(notice.textContent).toContain("Project override");
-    expect(notice.textContent).toContain(".pi/settings.json");
-    expect(notice.textContent).toContain("Model availability selection is disabled");
-    expect(requiredElement(picker.shadowRoot?.querySelector<HTMLElement>(".scope-status"), "model scope status").textContent).toBe("Workspace settings control model availability");
-    expect(catalogRows(picker).every((row) => rowCheckbox(row).disabled && membershipButton(row).disabled)).toBe(true);
+    expect(ownershipCopy.join(" ")).not.toMatch(/project override|workspace settings|\.pi\/settings\.json/i);
+    expect(rows.every((row) => rowCheckbox(row).disabled && membershipButton(row).disabled)).toBe(true);
     expect(scopeToggle(picker, "Enabled").disabled).toBe(false);
   });
 

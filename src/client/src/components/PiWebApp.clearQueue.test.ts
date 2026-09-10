@@ -33,6 +33,41 @@ describe("PiWebApp queued-message clear wiring", () => {
   });
 });
 
+describe("PiWebApp capability-gated chat controls", () => {
+  it("defaults queueClearable and warningsDismissible to true when the session reports no capabilities, for unchanged Pi behavior", () => {
+    const app = createApp();
+    const state = stateWithQueuedSession();
+    setAppState(app, state);
+
+    expect(templateValueAfterMarker(renderChatView(app, state), ".queueClearable=")).toBe(true);
+    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsDismissible=")).toBe(true);
+  });
+
+  it("passes queueClearable through from the selected session's queueClear capability", () => {
+    const app = createApp();
+    const capableState = { ...stateWithQueuedSession(), status: { ...queuedStatus(), capabilities: { queueClear: true } } };
+    const incapableState = { ...stateWithQueuedSession(), status: { ...queuedStatus(), capabilities: { queueClear: false } } };
+
+    setAppState(app, capableState);
+    expect(templateValueAfterMarker(renderChatView(app, capableState), ".queueClearable=")).toBe(true);
+
+    setAppState(app, incapableState);
+    expect(templateValueAfterMarker(renderChatView(app, incapableState), ".queueClearable=")).toBe(false);
+  });
+
+  it("passes warningsDismissible through from the selected session's warnings capability", () => {
+    const app = createApp();
+    const dismissibleState = { ...stateWithQueuedSession(), status: { ...queuedStatus(), capabilities: { warnings: true } } };
+    const nonDismissibleState = { ...stateWithQueuedSession(), status: { ...queuedStatus(), capabilities: { warnings: false } } };
+
+    setAppState(app, dismissibleState);
+    expect(templateValueAfterMarker(renderChatView(app, dismissibleState), ".warningsDismissible=")).toBe(true);
+
+    setAppState(app, nonDismissibleState);
+    expect(templateValueAfterMarker(renderChatView(app, nonDismissibleState), ".warningsDismissible=")).toBe(false);
+  });
+});
+
 type RenderChatView = (this: PiWebApp, state: AppState, session: SessionInfo) => TemplateResult;
 type ClearServerQueueCallback = () => void;
 

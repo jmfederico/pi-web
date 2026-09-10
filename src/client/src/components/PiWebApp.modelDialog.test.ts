@@ -47,6 +47,42 @@ describe("PiWebApp model dialog", () => {
     expect(dialog?.catalog).toEqual(catalog);
   });
 
+  it("locks the model dialog catalog read-only when the session's backend cannot edit model scope", async () => {
+    const app = new PiWebApp();
+    const selectedSession = session("session-1");
+    setAppState(app, {
+      selectedSession,
+      sessions: [selectedSession],
+      status: sessionStatus(selectedSession.id, { provider: "openai", id: "gpt-5" }, { modelScope: false }),
+    });
+    vi.spyOn(SessionController.prototype, "listModels").mockResolvedValue([{ provider: "openai", id: "gpt-5" }]);
+    vi.spyOn(SessionController.prototype, "listModelCatalog").mockResolvedValue([
+      { provider: "openai", id: "gpt-5", enabled: true, editable: true },
+    ]);
+
+    await callAppMethod(app, "openModelDialog");
+
+    expect(appModelDialog(app)?.catalog).toEqual([{ provider: "openai", id: "gpt-5", enabled: true, editable: false }]);
+  });
+
+  it("keeps the catalog editable by default when the session reports no capabilities, for unchanged Pi behavior", async () => {
+    const app = new PiWebApp();
+    const selectedSession = session("session-1");
+    setAppState(app, {
+      selectedSession,
+      sessions: [selectedSession],
+      status: sessionStatus(selectedSession.id, { provider: "openai", id: "gpt-5" }),
+    });
+    vi.spyOn(SessionController.prototype, "listModels").mockResolvedValue([{ provider: "openai", id: "gpt-5" }]);
+    vi.spyOn(SessionController.prototype, "listModelCatalog").mockResolvedValue([
+      { provider: "openai", id: "gpt-5", enabled: true, editable: true },
+    ]);
+
+    await callAppMethod(app, "openModelDialog");
+
+    expect(appModelDialog(app)?.catalog).toEqual([{ provider: "openai", id: "gpt-5", enabled: true, editable: true }]);
+  });
+
   it("refreshes an open dialog after a global model-scope change", async () => {
     const app = new PiWebApp();
     const selectedSession = session("session-1");
@@ -355,7 +391,7 @@ function session(id: string): SessionInfo {
   };
 }
 
-function sessionStatus(sessionId: string, model?: SessionModel): SessionStatus {
+function sessionStatus(sessionId: string, model?: SessionModel, capabilities?: SessionStatus["capabilities"]): SessionStatus {
   return {
     sessionId,
     isStreaming: false,
@@ -366,5 +402,6 @@ function sessionStatus(sessionId: string, model?: SessionModel): SessionStatus {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
     ...(model === undefined ? {} : { model }),
+    ...(capabilities === undefined ? {} : { capabilities }),
   };
 }

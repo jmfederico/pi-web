@@ -15,7 +15,7 @@ import {
   templateValues,
   type TemplateEventHandler,
 } from "../templateInspection.testSupport";
-import { SessionList, sessionRowActivityKind, sessionRowsForCurrentTree, sessionRowUnread, unreadSessionCount } from "./SessionList";
+import { SessionList, sessionRowActivityKind, sessionRowBackendBadge, sessionRowsForCurrentTree, sessionRowUnread, unreadSessionCount } from "./SessionList";
 
 describe("sessionRowActivityKind", () => {
   const idle = sessionStatus("s");
@@ -44,6 +44,14 @@ describe("sessionRowActivityKind", () => {
   it("never shows an indicator for archived or cached-new sessions, even while sending", () => {
     expect(sessionRowActivityKind({ ...session("s"), archived: true }, idle, undefined, true)).toBeUndefined();
     expect(sessionRowActivityKind(markCachedNewSessionInfo(session("s")), idle, undefined, true)).toBeUndefined();
+  });
+});
+
+describe("sessionRowBackendBadge", () => {
+  it("labels only OMP sessions, leaving Pi and backend-less legacy rows unlabeled", () => {
+    expect(sessionRowBackendBadge(session("s"))).toBeUndefined();
+    expect(sessionRowBackendBadge(session("s", { backend: "pi" }))).toBeUndefined();
+    expect(sessionRowBackendBadge(session("s", { backend: "omp" }))).toBe("OMP");
   });
 });
 

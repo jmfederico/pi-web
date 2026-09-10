@@ -46,6 +46,65 @@ describe("chat message normalization", () => {
     ]);
   });
 
+  it("omits hidden OMP custom messages while retaining visible ones", () => {
+    expect(normalizeMessages([
+      { role: "custom", customType: "omp-startup", content: "hidden system prompt", display: false, timestamp: 1_757_493_000_000 },
+      { role: "custom", customType: "omp-notice", content: "visible extension notice", display: true, timestamp: 1_757_493_001_000 },
+    ])).toEqual([
+      expect.objectContaining({
+        role: "system",
+        parts: [{ type: "text", text: "visible extension notice" }],
+      }),
+    ]);
+  });
+
+  it("preserves native OMP compaction and branch summaries as transcript context", () => {
+    expect(normalizeMessages([
+      { role: "compactionSummary", summary: "Preserved compaction context", tokensBefore: 42_000, timestamp: 1_757_493_002_000 },
+      { role: "branchSummary", summary: "Preserved branch context", fromId: "entry-7", timestamp: 1_757_493_003_000 },
+    ])).toEqual([
+      expect.objectContaining({
+        role: "system",
+        parts: [{ type: "text", text: "Compacted history:\n\nPreserved compaction context" }],
+        source: "compaction",
+      }),
+      expect.objectContaining({
+        role: "system",
+        parts: [{ type: "text", text: "Branch summary:\n\nPreserved branch context" }],
+        source: "branch_summary",
+      }),
+    ]);
+  });
+
+  it("preserves native OMP compaction blocks once and in order", () => {
+    const frame = { type: "image", data: "QUJD", mimeType: "image/png", detail: "high" };
+
+    expect(normalizeMessage({
+      role: "compactionSummary",
+      summary: "Preserved compaction context",
+      shortSummary: "Compacted",
+      tokensBefore: 42_000,
+      blocks: [
+        { type: "text", text: "oldest archived context" },
+        frame,
+        { type: "text", text: "newest archived context" },
+      ],
+      images: [frame],
+      timestamp: 1_757_493_004_000,
+    })).toEqual([
+      expect.objectContaining({
+        role: "system",
+        source: "compaction",
+        parts: [
+          { type: "text", text: "Compacted history:\n\nPreserved compaction context" },
+          { type: "text", text: "oldest archived context" },
+          { type: "image", data: "QUJD", mimeType: "image/png" },
+          { type: "text", text: "newest archived context" },
+        ],
+      }),
+    ]);
+  });
+
   it("preserves already-normalized chat lines", () => {
     const line = { role: "assistant" as const, parts: [{ type: "text" as const, text: "cached" }] };
 

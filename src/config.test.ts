@@ -267,6 +267,50 @@ describe("PI WEB config persistence", () => {
   });
 });
 
+describe("PI WEB omp config", () => {
+  it("persists and reads omp config keys", () => {
+    savePiWebConfig({ omp: { agentDir: "/opt/omp/agent", command: "/usr/local/bin/omp" } }, testOptions());
+
+    expect(loadPiWebConfig(testOptions()).config.omp).toEqual({ agentDir: "/opt/omp/agent", command: "/usr/local/bin/omp" });
+  });
+
+  it("allows configuring only one of agentDir/command", () => {
+    savePiWebConfig({ omp: { command: "omp-canary" } }, testOptions());
+
+    expect(loadPiWebConfig(testOptions()).config.omp).toEqual({ command: "omp-canary" });
+  });
+
+  it("leaves omp config omitted when nothing is configured, unlike the always-resolved uploads/attachments sections", () => {
+    expect(effectivePiWebConfig(testOptions()).config.omp).toBeUndefined();
+  });
+
+  it("passes an explicit omp override through the effective config unresolved, so OmpSessionService's own default applies to whatever is omitted", () => {
+    savePiWebConfig({ omp: { agentDir: "/opt/omp/agent" } }, testOptions());
+
+    expect(effectivePiWebConfig(testOptions()).config.omp).toEqual({ agentDir: "/opt/omp/agent" });
+  });
+
+  it("rejects a non-object omp config", async () => {
+    await writeFile(configPath, `${JSON.stringify({ omp: "omp" }, null, 2)}\n`, "utf8");
+
+    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config omp must be an object");
+  });
+
+  it("rejects an unknown omp config key", async () => {
+    await writeFile(configPath, `${JSON.stringify({ omp: { agentDir: "/opt/omp/agent", extra: true } }, null, 2)}\n`, "utf8");
+
+    expect(() => loadPiWebConfig(testOptions())).toThrow('PI WEB config omp accepts only "agentDir" and "command"; unknown key "extra"');
+  });
+
+  it.each(["agentDir", "command"] as const)("rejects an invalid omp.%s", async (key) => {
+    for (const value of ["", 42, null, []]) {
+      await writeFile(configPath, `${JSON.stringify({ omp: { [key]: value } }, null, 2)}\n`, "utf8");
+
+      expect(() => loadPiWebConfig(testOptions())).toThrow(`PI WEB config omp.${key} must be a non-empty string`);
+    }
+  });
+});
+
 describe("maxUploadBytes", () => {
   it("defaults when nothing is configured", () => {
     expect(maxUploadBytes({}, {})).toBe(DEFAULT_MAX_UPLOAD_BYTES);

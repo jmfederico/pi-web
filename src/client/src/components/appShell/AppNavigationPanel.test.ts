@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Machine, Project, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../../machineStatus.testSupport";
 import { MachineList } from "../MachineList";
 import { MachineSwitcher } from "../MachineSwitcher";
 import { ProjectList } from "../ProjectList";
+import { SessionList } from "../SessionList";
 import { WorkspaceList } from "../WorkspaceList";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
 
@@ -22,6 +23,36 @@ describe("shouldShowMachinesSection", () => {
 
   it("shows machine navigation when there are multiple machines", () => {
     expect(shouldShowMachinesSection([machine("local"), machine("remote-a")])).toBe(true);
+  });
+});
+
+describe("session creation wiring", () => {
+  it("forwards the chosen backend from session-list's start action through to onStartSession", async () => {
+    const panel = new AppNavigationPanel();
+    const onStartSession = vi.fn();
+    panel.onStartSession = onStartSession;
+    document.body.append(panel);
+    await panel.updateComplete;
+
+    const sessionList = section(panel, "session-list", SessionList);
+    sessionList.onStart?.("omp");
+
+    expect(onStartSession).toHaveBeenCalledExactlyOnceWith("omp");
+  });
+
+  it("disables only the OMP choice when the selected machine authoritatively lacks OMP sessions", async () => {
+    const panel = new AppNavigationPanel();
+    if (!Reflect.set(panel, "ompBackendSelectable", false)) throw new Error("Could not set OMP backend support");
+    document.body.append(panel);
+    await panel.updateComplete;
+
+    const sessionList = section(panel, "session-list", SessionList);
+    await sessionList.updateComplete;
+    const piOption = sessionList.shadowRoot?.querySelector<HTMLOptionElement>('.new-session-backend option[value="pi"]');
+    const ompOption = sessionList.shadowRoot?.querySelector<HTMLOptionElement>('.new-session-backend option[value="omp"]');
+
+    expect(piOption?.disabled).toBe(false);
+    expect(ompOption?.disabled).toBe(true);
   });
 });
 

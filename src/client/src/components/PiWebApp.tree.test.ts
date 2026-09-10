@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeSnapshot, SessionTreeSummaryChoice } from "../api";
+import type { SessionStatus, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeSnapshot, SessionTreeSummaryChoice } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { SessionController } from "../controllers/sessionController";
 // This node-environment test uses the shared, type-guarded template inspection
@@ -90,6 +90,26 @@ describe("PiWebApp session tree wiring", () => {
 
     expect(focusChatComposer).not.toHaveBeenCalled();
   });
+
+  it("passes navigateAvailable and forkAvailable through from the selected session's capabilities", () => {
+    const app = createApp();
+    const state = setAppTree(app, tree(), { treeNavigate: false, treeFork: false });
+
+    const rendered = renderSessionTreeNavigator(app, state);
+
+    expect(templateValueAfterMarker(rendered, ".navigateAvailable=")).toBe(false);
+    expect(templateValueAfterMarker(rendered, ".forkAvailable=")).toBe(false);
+  });
+
+  it("defaults navigateAvailable and forkAvailable to true when the session reports no capabilities, for unchanged Pi behavior", () => {
+    const app = createApp();
+    const state = setAppTree(app, tree());
+
+    const rendered = renderSessionTreeNavigator(app, state);
+
+    expect(templateValueAfterMarker(rendered, ".navigateAvailable=")).toBe(true);
+    expect(templateValueAfterMarker(rendered, ".forkAvailable=")).toBe(true);
+  });
 });
 
 function createApp(): PiWebApp {
@@ -102,12 +122,23 @@ function createApp(): PiWebApp {
   return new PiWebApp();
 }
 
-function setAppTree(app: PiWebApp, treeSnapshot: SessionTreeSnapshot): AppState {
+function setAppTree(app: PiWebApp, treeSnapshot: SessionTreeSnapshot, capabilities?: SessionStatus["capabilities"]): AppState {
   const selectedSession = {
     ...session(),
     id: "session-1",
   };
-  const state = { ...initialAppState(), selectedSession, sessions: [selectedSession], treeDialog: treeSnapshot };
+  const status: SessionStatus | undefined = capabilities === undefined ? undefined : {
+    sessionId: selectedSession.id,
+    isStreaming: false,
+    isCompacting: false,
+    isBashRunning: false,
+    pendingMessageCount: 0,
+    queuedMessages: [],
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: 0,
+    capabilities,
+  };
+  const state = { ...initialAppState(), selectedSession, sessions: [selectedSession], treeDialog: treeSnapshot, ...(status === undefined ? {} : { status }) };
   if (!Reflect.set(app, "state", state)) throw new Error("Could not set PiWebApp tree state");
   return state;
 }

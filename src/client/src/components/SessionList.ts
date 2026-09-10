@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { SessionActivity, SessionInfo, SessionStatus } from "../api";
+import type { SessionActivity, SessionBackend, SessionInfo, SessionStatus } from "../api";
 import { isCachedNewSessionInfo } from "../cachedNewSessions";
 import { shortSessionId } from "../sessionLabels";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
@@ -43,10 +43,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) selected?: SessionInfo;
   @property({ type: Number }) startingCount = 0;
   @property({ type: Boolean }) canStart = false;
+  @property({ type: Boolean }) ompBackendSelectable = true;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (session: SessionInfo) => void;
-  @property({ attribute: false }) onStart?: () => void;
+  @property({ attribute: false }) onStart?: (backend: SessionBackend) => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
   @property({ attribute: false }) onArchivedCollapsed?: () => void;
   @property({ attribute: false }) onFocusPreviousSection?: () => void | Promise<void>;
@@ -70,6 +71,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @state() private archivedExpanded = false;
   @state() private selectionScopes: ReadonlySet<SessionSelectionScope> = new Set();
   @state() private selectedSessionIds: ReadonlySet<string> = new Set();
+  @state() private newSessionBackend: SessionBackend = "pi";
 
   private readonly onDocumentClick = (event: MouseEvent) => {
     if (event.composedPath().includes(this)) return;
@@ -196,7 +198,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderStartButton() {
     const title = this.startingCount > 0 ? "Start another session" : "Start a new session";
-    return html`<button class="start-session-button" title=${title} aria-label=${title} ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(); }}>+</button>`;
+    const selectedBackend = this.ompBackendSelectable ? this.newSessionBackend : "pi";
+    return html`
+      <select class="new-session-backend" aria-label="New session backend" .value=${selectedBackend} @change=${(event: Event) => { this.newSessionBackend = selectBackend(event); }}>
+        <option value="pi">Pi</option>
+        <option value="omp" title="Uses this machine's OMP login/config, not your Pi account" ?disabled=${!this.ompBackendSelectable}>OMP</option>
+      </select>
+      <button class="start-session-button" title=${title} aria-label=${title} ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(selectedBackend); }}>+</button>
+    `;
   }
 
   private renderStartingSession() {
@@ -344,8 +353,13 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
    * hide them.
    */
   private renderRowBadges(row: SessionRow) {
-    if (row.depth <= 2) return null;
-    return html`<span class="row-badges"><span class="badge">depth ${row.depth}</span></span>`;
+    const backendBadge = sessionRowBackendBadge(row.session);
+    const badges = [
+      ...(backendBadge === undefined ? [] : [html`<span class="badge backend-badge" title="This session runs on OMP, not Pi">${backendBadge}</span>`]),
+      ...(row.depth > 2 ? [html`<span class="badge">depth ${row.depth}</span>`] : []),
+    ];
+    if (badges.length === 0) return null;
+    return html`<span class="row-badges">${badges}</span>`;
   }
 
   private handleSessionKeydown(event: KeyboardEvent, session: SessionInfo, scope: SessionSelectionScope): void {
@@ -484,6 +498,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     h2 > .section-count { flex: 0 0 auto; display: inline; color: var(--pi-muted); font-size: inherit; }
     h2 > .section-unread-count { flex: 0 0 auto; display: inline; color: var(--pi-accent); font-size: inherit; text-transform: none; }
     .bulk-select-entry { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; font-size: 13px; line-height: 1; text-transform: none; }
+    .new-session-backend { box-sizing: border-box; flex: 0 0 auto; height: 30px; padding: 0 4px; font-size: 12px; text-transform: none; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-text); }
     .start-session-button { box-sizing: border-box; flex: 0 0 auto; display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 9px; }
     .cleanup-entry { flex: 0 0 auto; padding: 5px 7px; font-size: 12px; text-transform: none; }
     .bulk-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 6px; }
@@ -512,6 +527,15 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .action-main.selecting { padding-left: calc(32px + var(--depth, 0) * 16px); }
     .session-checkbox { position: absolute; top: 9px; left: calc(8px + var(--depth, 0) * 16px); z-index: 2; margin: 0; }
   `];
+}
+
+/** Labels only OMP sessions, so a mixed list stays visually distinguishable; Pi and backend-less legacy rows render no badge. */
+export function sessionRowBackendBadge(session: SessionInfo): string | undefined {
+  return session.backend === "omp" ? "OMP" : undefined;
+}
+
+function selectBackend(event: Event): SessionBackend {
+  return event.target instanceof HTMLSelectElement && event.target.value === "omp" ? "omp" : "pi";
 }
 
 export function unreadSessionCount(

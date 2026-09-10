@@ -1,6 +1,6 @@
 import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserCloseResponse, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type PendingAskUser, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
 import { parseMachineStatusSnapshot, type MachineStatusSnapshot, type MachineStatusUiEvent } from "../../../shared/machineStatus";
-import type { JsonValue, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
+import type { JsonValue, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionBackend, SessionCapabilities, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
 
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 import { parseDeprecatedAgentInputs } from "../../../shared/piWebStatusParsing";
@@ -277,7 +277,16 @@ export function parseSessionInfo(value: unknown): SessionInfo {
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
     ...(record["archived"] === true ? { archived: true } : {}),
     ...(archivedAt === undefined ? {} : { archivedAt }),
+    ...optionalField("backend", parseOptionalSessionBackend(record, "backend")),
   };
+}
+
+/** A session's owning coding-agent runtime never falls back silently: an unrecognized value is rejected rather than treated as Pi. */
+function parseOptionalSessionBackend(record: Record<string, unknown>, key: string): SessionBackend | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (value !== "pi" && value !== "omp") throw new Error(`Invalid session backend: ${key}`);
+  return value;
 }
 
 function parseSessionWarningSeverity(value: unknown): SessionWarningSeverity {
@@ -489,6 +498,8 @@ function parsePendingExtensionDialog(value: unknown): PendingExtensionDialog {
     ...optionalField("message", optionalBoundedNonEmptyString(record, "message", EXTENSION_DIALOG_TEXT_MAX_LENGTH)),
     ...(options === undefined ? {} : { options }),
     ...optionalField("placeholder", optionalBoundedNonEmptyString(record, "placeholder", EXTENSION_DIALOG_TEXT_MAX_LENGTH)),
+    ...optionalField("initialValue", optionalBoundedString(record, "initialValue", EXTENSION_DIALOG_INPUT_MAX_LENGTH)),
+    ...optionalField("multiline", parseOptionalBoolean(record["multiline"], "multiline")),
     askedAt: requireNonEmptyString(record, "askedAt"),
     ...optionalField("timeoutAt", optionalNonEmptyString(record, "timeoutAt")),
     runScoped: requireBoolean(record, "runScoped"),
@@ -545,10 +556,23 @@ function optionalNonEmptyString(record: Record<string, unknown>, key: string): s
   return value;
 }
 
+/**
+ * Unlike `placeholder`, an empty `initialValue` is a real, meaningful prefill
+ * (an editor dialog opened intentionally blank) rather than "absent" — so
+ * empty strings are accepted here instead of rejected.
+ */
+function optionalBoundedString(record: Record<string, unknown>, key: string, maxLength: number): string | undefined {
+  const value = optionalString(record, key);
+  if (value === undefined) return undefined;
+  if (value.length > maxLength) throw new Error(`String field exceeds limit: ${key}`);
+  return value;
+}
+
 export function parseSessionStatus(value: unknown): SessionStatus {
   const record = requireRecord(value);
   return {
     sessionId: requireString(record, "sessionId"),
+    ...optionalField("backend", parseOptionalSessionBackend(record, "backend")),
     ...optionalField("persisted", parseOptionalBoolean(record["persisted"], "persisted")),
     isStreaming: requireBoolean(record, "isStreaming"),
     isCompacting: requireBoolean(record, "isCompacting"),
@@ -564,6 +588,25 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     ...optionalWarnings(record["warnings"]),
     ...optionalPendingAsk(record["pendingAsk"]),
     ...optionalPendingDialogs(record["pendingDialogs"]),
+    ...optionalField("capabilities", parseOptionalSessionCapabilities(record["capabilities"])),
+  };
+}
+
+/** Every flag is absent-means-supported, so Pi (which never sets this field) and old clients/servers need no changes. */
+function parseOptionalSessionCapabilities(value: unknown): SessionCapabilities | undefined {
+  if (value === undefined) return undefined;
+  const record = requireRecord(value);
+  return {
+    ...optionalField("askUser", parseOptionalBoolean(record["askUser"], "askUser")),
+    ...optionalField("queueClear", parseOptionalBoolean(record["queueClear"], "queueClear")),
+    ...optionalField("warnings", parseOptionalBoolean(record["warnings"], "warnings")),
+    ...optionalField("modelScope", parseOptionalBoolean(record["modelScope"], "modelScope")),
+    ...optionalField("treeNavigate", parseOptionalBoolean(record["treeNavigate"], "treeNavigate")),
+    ...optionalField("treeFork", parseOptionalBoolean(record["treeFork"], "treeFork")),
+    ...optionalField("interactiveCommands", parseOptionalBoolean(record["interactiveCommands"], "interactiveCommands")),
+    ...optionalField("detachParent", parseOptionalBoolean(record["detachParent"], "detachParent")),
+    ...optionalField("shellStreaming", parseOptionalBoolean(record["shellStreaming"], "shellStreaming")),
+    ...optionalField("cycleModelBackward", parseOptionalBoolean(record["cycleModelBackward"], "cycleModelBackward")),
   };
 }
 

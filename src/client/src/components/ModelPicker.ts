@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import type { CommandOption, SessionModelCatalogEntry, SessionModelScopeMode } from "../api";
+import type { CommandOption, SessionCapabilities, SessionModelCatalogEntry, SessionModelScopeMode } from "../api";
 import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEventTarget";
 import "./ModalSurface";
 import { scrollWhenSelected } from "./scrollWhenSelected";
@@ -21,6 +21,16 @@ export interface ModelCatalogView {
 /** The wire value identifying one model row: `${provider}/${id}`. */
 export function modelCatalogEntryValue(entry: Pick<SessionModelCatalogEntry, "provider" | "id">): string {
   return `${entry.provider}/${entry.id}`;
+}
+
+/**
+ * Locks every catalog entry read-only when the backend cannot edit model
+ * scope, reusing the same `editable:false` project-override lock the picker
+ * already renders for workspace-controlled catalogs.
+ */
+export function capabilityGatedModelCatalog(catalog: SessionModelCatalogEntry[], capabilities: SessionCapabilities | undefined): SessionModelCatalogEntry[] {
+  if (capabilities?.modelScope !== false) return catalog;
+  return catalog.map((entry) => ({ ...entry, editable: false }));
 }
 
 /** Case-insensitive substring filter over the Enabled-mode options (CommandPicker semantics). */
@@ -155,8 +165,8 @@ export class ModelPicker extends LitElement {
         </div>
         ${!this.modelScopeEditable ? html`
           <div class="scope-notice" role="status">
-            <strong>Project override</strong>
-            <span>Showing models from this workspace’s <code>.pi/settings.json</code>. Model availability selection is disabled.</span>
+            <strong>Read-only model availability</strong>
+            <span>This session’s coding agent controls which models are available. Selection is disabled.</span>
           </div>
         ` : nothing}
         <div class="search-row">
@@ -228,10 +238,10 @@ export class ModelPicker extends LitElement {
         class="toggle-all"
         ?disabled=${!this.modelScopeEditable || !plan.canApply || !plan.hasChanges || this.toggleAllPending || this.pendingToggles.size > 0}
         aria-describedby="model-scope-status"
-        title=${!this.modelScopeEditable ? "Workspace settings control model availability" : !plan.canApply ? "The current model is unavailable" : nothing}
+        title=${!this.modelScopeEditable ? "This session’s coding agent controls model availability" : !plan.canApply ? "The current model is unavailable" : nothing}
         @click=${() => { this.requestToggleAll(); }}
       >${label}</button>
-      <span id="model-scope-status" class="scope-status" aria-live="polite">${this.membershipChangePending ? "Updating model availability" : !this.modelScopeEditable ? "Workspace settings control model availability" : !plan.canApply ? "The current model is unavailable" : nothing}</span>
+      <span id="model-scope-status" class="scope-status" aria-live="polite">${this.membershipChangePending ? "Updating model availability" : !this.modelScopeEditable ? "This session’s coding agent controls model availability" : !plan.canApply ? "The current model is unavailable" : nothing}</span>
     `;
   }
 
@@ -272,7 +282,7 @@ export class ModelPicker extends LitElement {
     const protectsCurrentModel = value === this.selectedValue && entry.enabled;
     const membershipDisabled = !this.modelScopeEditable || this.membershipChangePending || protectsCurrentModel;
     const membershipLabel = !this.modelScopeEditable
-      ? `Model availability for ${value} is controlled by workspace settings`
+      ? `Model availability for ${value} is controlled by this session’s coding agent`
       : protectsCurrentModel ? `Current model ${value} cannot be deselected` : `${entry.enabled ? "Disable" : "Enable"} ${value}`;
     return html`
       <div class="catalog-row ${selected ? "selected" : ""}" data-model-value=${value} ${scrollWhenSelected(selected, value)}>
@@ -281,7 +291,7 @@ export class ModelPicker extends LitElement {
           .checked=${entry.enabled}
           ?disabled=${membershipDisabled}
           aria-label=${membershipLabel}
-          title=${!this.modelScopeEditable ? "Workspace settings control model availability" : protectsCurrentModel ? "The current model must remain enabled" : nothing}
+          title=${!this.modelScopeEditable ? "This session’s coding agent controls model availability" : protectsCurrentModel ? "The current model must remain enabled" : nothing}
           @focus=${() => { this.selectedIndex = index; }}
           @click=${(event: MouseEvent) => { this.handleEnableToggleClick(entry, event); }}
         />

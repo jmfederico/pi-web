@@ -263,6 +263,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.askUser !== undefined ? { askUser: config.askUser } : {}),
     ...(config.environmentFacts !== undefined ? { environmentFacts: config.environmentFacts } : {}),
     ...(config.agent !== undefined ? { agent: config.agent } : {}),
+    ...(config.omp !== undefined ? { omp: config.omp } : {}),
   };
 }
 
@@ -283,6 +284,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["environmentFacts"] !== undefined ? { environmentFacts: parseBooleanKey(value["environmentFacts"], "environmentFacts", path) } : {}),
     ...(value["extensionDialogsTimeoutMs"] !== undefined ? { extensionDialogsTimeoutMs: parseExtensionDialogsTimeoutMs(value["extensionDialogsTimeoutMs"], path) } : {}),
     ...(value["agent"] !== undefined ? { agent: parseAgentConfig(value["agent"], path) } : {}),
+    ...(value["omp"] !== undefined ? { omp: parseOmpConfig(value["omp"], path) } : {}),
   };
 }
 
@@ -497,6 +499,25 @@ export function parseAttachmentsConfig(value: unknown, path: string): NonNullabl
   const defaultFolder = value["defaultFolder"];
   return {
     ...(defaultFolder !== undefined ? { defaultFolder: parseWorkspaceRelativeFolder(defaultFolder, "attachments.defaultFolder", path) } : {}),
+  };
+}
+
+const OMP_CONFIG_KEYS = new Set(["agentDir", "command"]);
+
+/**
+ * OMP session backend config: `agentDir`/`command` overrides for
+ * OmpSessionService. Both optional; omitted fields let the service apply its
+ * own default (home directory's .omp/agent, "omp" command).
+ */
+export function parseOmpConfig(value: unknown, path: string): NonNullable<PiWebConfigValues["omp"]> {
+  if (!isRecord(value)) throw new Error(`PI WEB config omp must be an object: ${path}`);
+  const unknownKey = Object.keys(value).find((key) => !OMP_CONFIG_KEYS.has(key));
+  if (unknownKey !== undefined) throw new Error(`PI WEB config omp accepts only "agentDir" and "command"; unknown key ${JSON.stringify(unknownKey)}: ${path}`);
+  const agentDir = value["agentDir"];
+  const command = value["command"];
+  return {
+    ...(agentDir !== undefined ? { agentDir: parseString(agentDir, "omp.agentDir", path) } : {}),
+    ...(command !== undefined ? { command: parseString(command, "omp.command", path) } : {}),
   };
 }
 

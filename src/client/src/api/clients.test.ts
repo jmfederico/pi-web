@@ -295,6 +295,36 @@ describe("session API compatibility", () => {
     expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ cwd: "/repo" });
   });
 
+  it("keeps the legacy start payload byte-identical when no backend is chosen, and forwards a selected backend otherwise", async () => {
+    const fetchMock = stubSequenceFetch([
+      jsonResponse(sessionInfoResponse("s 1")),
+      jsonResponse({ ...sessionInfoResponse("s 2"), backend: "omp" }),
+      jsonResponse(sessionInfoResponse("s 3")),
+    ]);
+
+    await sessionsApi.startSession("/repo", "remote a");
+    const ompSession = await sessionsApi.startSession("/repo", "remote a", "pending-session-9", "omp");
+    await sessionsApi.startSession("/repo", "remote a", undefined, "pi");
+
+    // Pi stays the implicit default: omitting the backend sends exactly the old body shape.
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 0)[1]))).toEqual({ cwd: "/repo" });
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ cwd: "/repo", startupToken: "pending-session-9", backend: "omp" });
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 2)[1]))).toEqual({ cwd: "/repo", backend: "pi" });
+    expect(ompSession.backend).toBe("omp");
+  });
+
+  it("preserves each session's own backend when parsing a mixed session list", async () => {
+    stubJsonFetch([
+      sessionInfoResponse("pi-session"),
+      { ...sessionInfoResponse("omp-session"), backend: "omp" },
+    ]);
+
+    await expect(sessionsApi.sessions("/repo", "remote a")).resolves.toEqual([
+      sessionInfoResponse("pi-session"),
+      { ...sessionInfoResponse("omp-session"), backend: "omp" },
+    ]);
+  });
+
   it("adds cwd context when session refs include a workspace", async () => {
     const fetchMock = stubJsonFetch({ accepted: true });
 

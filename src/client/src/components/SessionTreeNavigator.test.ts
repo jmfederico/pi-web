@@ -9,7 +9,7 @@ import type { SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNodeK
 // row/footer wiring in the method-level interaction tests.
 import { templateClickHandlerForText, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 import { deepActiveElement, dialogSurface, pressKey, settleRenderedDialog, surfaceBackdrop } from "./modalSurfaceTestSupport";
-import { SessionTreeNavigator, sessionTreeEntryReturnsToEditor, sessionTreeKindPresentation, sessionTreeVisualDepth } from "./SessionTreeNavigator";
+import { SessionTreeNavigator, sessionTreeAvailableOperations, sessionTreeEntryReturnsToEditor, sessionTreeKindPresentation, sessionTreeVisualDepth } from "./SessionTreeNavigator";
 
 type NavigateCallback = (targetId: string, summaryChoice: SessionTreeSummaryChoice) => Promise<SessionTreeNavigateResult>;
 type ForkCallback = (entryId: string) => Promise<SessionTreeForkResult>;
@@ -21,6 +21,20 @@ afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+describe("sessionTreeAvailableOperations", () => {
+  it("offers both continuing and forking by default, for unchanged Pi behavior", () => {
+    expect(sessionTreeAvailableOperations(true, true)).toEqual(["continue", "fork"]);
+  });
+
+  it("drops forking when the backend cannot fork sessions", () => {
+    expect(sessionTreeAvailableOperations(true, false)).toEqual(["continue"]);
+  });
+
+  it("drops continuing in place when the backend cannot navigate the tree", () => {
+    expect(sessionTreeAvailableOperations(false, true)).toEqual(["fork"]);
+  });
 });
 
 describe("session-tree-navigator modal surface", () => {

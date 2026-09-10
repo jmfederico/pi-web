@@ -1182,6 +1182,36 @@ describe("session routes", () => {
     }
   });
 
+  it("forwards a valid session backend to the service and fails closed on an unrecognized one before calling it", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const requestCwd = resolve("/repo");
+      const piBackend = await routeApp.inject({ method: "POST", url: "/sessions", payload: { cwd: requestCwd, backend: "pi" } });
+      const ompBackend = await routeApp.inject({ method: "POST", url: "/sessions", payload: { cwd: requestCwd, backend: "omp" } });
+      const invalidBackend = await routeApp.inject({ method: "POST", url: "/sessions", payload: { cwd: requestCwd, backend: "bogus" } });
+
+      expect(piBackend.statusCode).toBe(200);
+      expect(ompBackend.statusCode).toBe(200);
+      expect(ompBackend.json()).toMatchObject({ backend: "omp" });
+      // An invalid backend must never silently fall back to Pi: it is rejected
+      // before the service is ever called, and the service only ever sees the
+      // two valid requests above.
+      expect(invalidBackend.statusCode).toBe(400);
+      expect(routeService.startCalls).toEqual([
+        { cwd: requestCwd, startupToken: undefined, backend: "pi" },
+        { cwd: requestCwd, startupToken: undefined, backend: "omp" },
+      ]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("rejects malformed bulk mutation bodies before calling the service", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1228,7 +1258,7 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly cancelAskCalls: { lookup: SessionRouteRef; askId: string }[] = [];
   readonly answerDialogCalls: { lookup: SessionRouteRef; dialogId: string; value: ExtensionDialogAnswer }[] = [];
   readonly cancelDialogCalls: { lookup: SessionRouteRef; dialogId: string }[] = [];
-  readonly startCalls: { cwd: string; startupToken: string | undefined }[] = [];
+  readonly startCalls: { cwd: string; startupToken: string | undefined; backend: "pi" | "omp" | undefined }[] = [];
   askError: Error | undefined;
   dialogError: Error | undefined;
   reloadError: Error | undefined;
@@ -1322,9 +1352,9 @@ class CapturingRouteSessionService implements SessionRouteService {
 
   list(): never { throw unusedRouteMethod("list"); }
 
-  start(cwd: string, options?: { startupToken?: string }): Promise<ClientSession> {
-    this.startCalls.push({ cwd, startupToken: options?.startupToken });
-    return Promise.resolve({ id: "session-1", path: "/tmp/session-1.jsonl", cwd, created: "2026-06-25T00:00:00.000Z", modified: "2026-06-25T00:00:00.000Z", messageCount: 0, firstMessage: "" });
+  start(cwd: string, options?: { startupToken?: string; backend?: "pi" | "omp" }): Promise<ClientSession> {
+    this.startCalls.push({ cwd, startupToken: options?.startupToken, backend: options?.backend });
+    return Promise.resolve({ id: "session-1", path: "/tmp/session-1.jsonl", cwd, created: "2026-06-25T00:00:00.000Z", modified: "2026-06-25T00:00:00.000Z", messageCount: 0, firstMessage: "", ...(options?.backend === undefined ? {} : { backend: options.backend }) });
   }
 
   dismissWarning(lookup: SessionRouteRef, dismissId: string): Promise<SessionStatus> {

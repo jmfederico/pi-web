@@ -39,7 +39,7 @@ Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts` / `omp`: restart the session daemon on that machine.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `attachments.defaultFolder`: applies to new prompt-attachment saves after config/workspace refresh.
@@ -166,6 +166,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | — | Global/session daemon | Not supported locally | Restart session daemon on that machine |
+| OMP executable and agent directory | `omp.command`, `omp.agentDir` | — | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session environment facts | `environmentFacts` | `PI_WEB_ENVIRONMENT_FACTS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | PI WEB plugin desired enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global + sessiond startup snapshot for server entries | Not core local config; plugins may read their own project files | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
 | Server-plugin safe start | `serverPlugins.safeStart` | — | Global/offline recovery | Not supported locally; manage with `pi-web plugins safe-start ...` | Applied before discovery/import on next sessiond start |
@@ -199,7 +200,7 @@ This setting does not change the PI WEB config file selected by `PI_WEB_CONFIG` 
 
 ### Agent process environment
 
-Agent shells, terminals, and spawned sessions inherit the session daemon's environment almost as-is. When the daemon starts, it removes only `NODE_ENV` and `PORT` from the environment agent processes see, so development commands behave normally inside sessions — for example, `npm install` is not affected by a production `NODE_ENV` meant for the daemon. Ordinary variables (`PATH`, `HOME`, proxy settings, and the like) stay visible, and so do the daemon's `PI_WEB_*` configuration keys and the resolved `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` values, so a `pi` CLI started from inside a session uses the same agent state — auth, models, and session storage — as the daemon. The daemon itself keeps using the values it captured at startup.
+Pi agent shells, terminals, and spawned sessions inherit the session daemon's environment almost as-is. When the daemon starts, it removes only `NODE_ENV` and `PORT` from the environment these processes see, so development commands behave normally inside sessions — for example, `npm install` is not affected by a production `NODE_ENV` meant for the daemon. Ordinary variables (`PATH`, `HOME`, proxy settings, and the like) stay visible, and so do the daemon's `PI_WEB_*` configuration keys and the resolved `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` values, so a `pi` CLI started from inside a Pi session uses the same agent state — auth, models, and session storage — as the daemon. The daemon itself keeps using the values it captured at startup. OMP subprocesses receive their separate agent directory instead.
 
 Every process spawned from a session also inherits `PI_WEB_SESSION=1`, marking it as nested inside the running PI WEB instance. The inherited `PI_WEB_*` values point at that live instance, so starting another PI WEB instance from inside a session fails loudly at startup because the live instance owns the state (see [Managed data directory](#managed-data-directory)); running one deliberately requires a distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT`.
 
@@ -266,9 +267,32 @@ The value must be a non-empty workspace-relative folder. PI WEB normalizes repea
 
 For machine federation, Settings saves the global attachments default on the selected machine. Remote PI WEB servers always return `workspace.effectiveConfig.attachments.defaultFolder` on the workspace-list response, and the composer uses it as the default save destination.
 
+### OMP sessions
+
+Choose **Pi** or **OMP** beside the new-session button. Pi remains the default, and the choice applies only to the session being created. Existing sessions keep their original backend.
+
+To use OMP, install and authenticate its CLI on the machine running the session daemon. The daemon must be able to launch `omp` with `--mode rpc-ui`. This integration has been exercised with OMP 18.1.16. Pi-only installations do not need OMP or Bun.
+
+OMP uses `~/.omp/agent` by default, independently of Pi's agent directory. To select another executable or OMP profile, add this optional object to the machine's global PI WEB config:
+
+```json
+{
+  "omp": {
+    "command": "/opt/omp/bin/omp",
+    "agentDir": "/opt/omp-profile"
+  }
+}
+```
+
+`command` is an executable name or path, not a shell command with arguments. Both keys are optional and are not supported in project-local config. Restart the session daemon after changing them.
+
+OMP keeps its own login, model configuration, extensions, and native session files. PI WEB's global Pi account and package settings still manage Pi; they do not configure OMP. Session model controls use the session's backend, and controls for unsupported operations are disabled or hidden. OMP archive metadata is stored separately under `PI_WEB_DATA_DIR/omp`.
+
+OMP 18.1.16 cannot answer blocking extension dialogs during its initial `session_start` hook, before its RPC input loop starts. PI WEB rejects that startup instead of leaving it hung; move the prompt out of initial startup or use an OMP profile without that hook. Dialogs raised after RPC initialization, including new-session hooks, are supported.
+
 ### Agent state directory
 
-PI WEB runs every session on its bundled Pi SDK. `pi-web doctor` and the status/update flow probe the `pi` command on the machine's `PATH`.
+PI sessions run on the bundled Pi SDK. Optional OMP sessions use the separately installed OMP CLI; see [OMP sessions](#omp-sessions). `pi-web doctor` and the status/update flow probe the `pi` command on the machine's `PATH`.
 
 `PI_CODING_AGENT_DIR` selects the Pi agent state directory used for auth providers, models, settings, sessions, Pi packages, and Pi-package-backed PI WEB plugin discovery. It defaults to Pi's own default, `~/.pi/agent`. `PI_CODING_AGENT_SESSION_DIR` overrides session storage separately from the state directory. Both are environment-only; there is no config-file key.
 
@@ -280,7 +304,7 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions
 
 The directory must use the data layout supported by the bundled Pi SDK; PI WEB does not load or convert incompatible formats, migrate profile data, or repartition PI WEB-managed archives when the directory changes.
 
-The session daemon resolves the directory once at startup and exports the resolved values to everything it starts, so sessions, terminals, the bash tool, and subsessions all observe the same `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`. That resolved active directory stays fixed for the daemon lifetime: changing the environment takes effect on the next session-daemon restart on that machine, and until then sessions, Pi package operations, Pi-package-backed PI WEB plugin discovery, status/install detection, and update planning continue to use the daemon-owned active directory; a web/API restart recovers that same active directory instead of applying the new value.
+The session daemon resolves the Pi directory once at startup and exports the resolved values to Pi sessions, terminals, the bash tool, and subsessions through `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`. OMP sessions use their separate agent directory. The resolved Pi directory stays fixed for the daemon lifetime: changing the environment takes effect on the next session-daemon restart on that machine, and until then Pi sessions, package operations, Pi-package-backed PI WEB plugin discovery, status/install detection, and update planning continue to use the daemon-owned active directory; a web/API restart recovers that same active directory instead of applying the new value.
 
 If the session daemon cannot report a valid active directory, profile-dependent Pi package and PI WEB plugin operations report unavailable instead of falling back to independently resolved values. A package-managed update command is shown only when the daemon reports a valid active directory and the `pi` command is on `PATH`, and the command pins that directory for the update. Restart the session daemon on the selected machine to establish the next active directory.
 
@@ -288,7 +312,7 @@ If the session daemon cannot report a valid active directory, profile-dependent 
 
 This policy applies to **Pi runtime extensions that register model providers**, not PI WEB workspace-provider plugins. Pi extensions can call `pi.registerProvider(...)` and follow Pi's extension API. A PI WEB plugin may have a browser `module` and/or a sessiond `serverModule`, but its server entry follows the separate `@jmfederico/pi-web/server-plugin-api` lifecycle and cannot register Pi model providers or arbitrary hooks. See the [PI WEB plugin guide](https://pi-web.dev/plugins).
 
-PI WEB shares one model runtime across all sessions. When the session daemon starts, before any project resources load, it initializes global Pi extensions from the active agent directory, including extensions supplied by globally configured Pi packages. Provider registrations made by synchronous or awaited asynchronous extension factories during this bootstrap join the shared baseline. PI WEB captures both config-form registrations (`pi.registerProvider("id", config)`) and native-provider registrations (`pi.registerProvider(provider)`), alongside Pi built-ins, environment credentials, and providers from the active agent directory's `models.json`.
+PI WEB shares one Pi model runtime across all Pi sessions. When the session daemon starts, before any project resources load, it initializes global Pi extensions from the active agent directory, including extensions supplied by globally configured Pi packages. Provider registrations made by synchronous or awaited asynchronous extension factories during this bootstrap join the shared baseline. PI WEB captures both config-form registrations (`pi.registerProvider("id", config)`) and native-provider registrations (`pi.registerProvider(provider)`), alongside Pi built-ins, environment credentials, and providers from the active agent directory's `models.json`.
 
 After startup capture, a provider's connection settings are fixed for the daemon lifetime. Later attempts to add a provider, replace an existing provider's configuration, register a native provider, or unregister a provider are no-ops, regardless of source or provider ID. This includes project extensions attempting to add or replace a provider, lifecycle callbacks such as `session_start`, and `/reload`. Non-provider Pi extension features continue to load and reload normally.
 
@@ -315,7 +339,7 @@ Configure providers before the daemon starts: use the active agent directory's `
 
 ### Background model catalog refresh
 
-PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Requests never start a catalog fetch of their own, so a slow or unreachable provider cannot stall opening the model selector, starting a session, or the auth dialogs on its own account.
+PI WEB shares one Pi model runtime across all Pi sessions, and its provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Pi session requests never start a catalog fetch of their own, so a slow or unreachable provider cannot stall opening the Pi model selector, starting a Pi session, or the Pi auth dialogs on its own account.
 
 A refresh that is *already* in flight can still briefly delay starting or opening a session, because the shared runtime is read while that refresh is running. PI WEB says so while you wait: the session's activity line names the startup step it is on and adds `provider model lists are refreshing` when a background refresh is running at the same time. That note reports what is happening concurrently, not a proven cause.
 
@@ -385,7 +409,7 @@ Restart the session daemon after changing `askUser` or after upgrading PI WEB to
 
 Pi extensions can ask the user questions from `ctx.ui.confirm()`, `ctx.ui.select()`, and `ctx.ui.input()` — including from `session_start` hooks and in-flight `tool_call` hooks. PI WEB renders these dialogs inline in the session transcript and answers them through a dedicated session-daemon channel, never the prompt queue, so a dialog parked inside a `tool_call` hook cannot deadlock the run. Dialog support is always on; there is no enable flag. See [Pi extension dialogs in PI WEB](https://pi-web.dev/plugins#pi-extension-dialogs) for behavior details and author guidance.
 
-`extensionDialogsTimeoutMs` is the unattended-dialog safety valve: how long the session daemon waits for an answer before settling the dialog with its kind's cancel value (`false` for confirm, `undefined` for select and input). It defaults to `300000` (5 minutes); set it to `0` to wait forever. An extension's own `timeout` option still applies, and the effective deadline is the sooner of the two.
+For Pi sessions, `extensionDialogsTimeoutMs` is the unattended-dialog safety valve: how long the session daemon waits for an answer before settling the dialog with its kind's cancel value (`false` for confirm, `undefined` for select and input). It defaults to `300000` (5 minutes); set it to `0` to wait forever. An extension's own `timeout` option still applies, and the effective deadline is the sooner of the two. This PI WEB setting does not apply to OMP dialogs.
 
 The key is edited directly in the global config file. Restart the session daemon after changing it — for the systemd user service, run `systemctl --user restart pi-web-sessiond`.
 

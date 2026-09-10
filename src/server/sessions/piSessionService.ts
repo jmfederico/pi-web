@@ -1435,8 +1435,8 @@ export class PiSessionService implements SessionRouteService {
     }
     const unarchivedSessions = sessions.filter((session) => !archivedById.has(session.id)).map(clientSessionFromListEntry);
     const reconcilableSessionIds = this.reconcilableSessionIds(cwd, unarchivedSessions.map((session) => session.id), archivedById);
-    this.workspaceActivity?.reconcileSessionActivity(cwd, reconcilableSessionIds);
-    await this.publishUnreadMutations(this.unreadStore.reconcileCwd(canonicalizeStoredCwd(cwd), reconcilableSessionIds));
+    this.workspaceActivity?.reconcileSessionActivity(cwd, reconcilableSessionIds, "pi");
+    await this.publishUnreadMutations(this.unreadStore.reconcileCwd(canonicalizeStoredCwd(cwd), reconcilableSessionIds, "pi"));
     const archivedSessions = archivedForCwd
       .sort(compareArchivedRecords)
       .map((record) => clientSessionFromArchivedRecord(record, sessionsById.get(record.sessionId)))

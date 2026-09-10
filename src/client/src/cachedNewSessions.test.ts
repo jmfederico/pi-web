@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionInfo } from "./api";
-import { forgetCachedNewSession, isCachedNewSessionInfo, loadCachedNewSessions, mergeCachedNewSessions, rememberCachedNewSession } from "./cachedNewSessions";
+import { forgetCachedNewSession, isCachedNewSessionInfo, loadCachedNewSessions, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "./cachedNewSessions";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -82,5 +82,22 @@ describe("cached new sessions", () => {
 
     expect(mergeCachedNewSessions("/repo", [], "local", storage).map((session) => session.id)).toEqual(["session-1"]);
     expect(mergeCachedNewSessions("/repo", [], "remote", storage).map((session) => session.id)).toEqual(["session-2"]);
+  });
+
+  it("preserves a session's backend through the browser-cache round trip", () => {
+    const storage = new MemoryStorage();
+    const ompSession: SessionInfo = { ...baseSession, id: "omp-session", backend: "omp" };
+
+    rememberCachedNewSession(ompSession, "local", storage);
+
+    const cached = loadCachedNewSessions(storage);
+    expect(cached[0]).toMatchObject({ id: "omp-session", backend: "omp" });
+    expect(mergeCachedNewSessions("/repo", [], "local", storage)[0]).toMatchObject({ backend: "omp" });
+  });
+
+  it("keeps a session's backend when the browser-cache marker is stripped after it becomes persisted", () => {
+    const ompSession: SessionInfo = { ...baseSession, id: "omp-session", backend: "omp" };
+
+    expect(stripCachedNewSessionMarker(markCachedNewSessionInfo(ompSession))).toEqual({ ...ompSession, machineId: "local" });
   });
 });
