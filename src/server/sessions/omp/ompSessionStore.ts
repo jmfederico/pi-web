@@ -330,12 +330,19 @@ function readLinesBounded(stream: DestroyableReadStream, onLine: (line: string) 
       settled = true;
       stream.removeAllListeners("data");
       stream.removeAllListeners("end");
-      stream.removeAllListeners("error");
-      if (typeof stream.destroy === "function" && stream.destroyed !== true) {
+      const complete = (): void => {
+        stream.removeAllListeners("error");
+        if (error) reject(error);
+        else resolve();
+      };
+      // EOF/destroy() can precede the asynchronous file-descriptor close.
+      // Hold the worker slot until close, not merely until parsing ends.
+      if (typeof stream.destroy === "function" && !("closed" in stream && stream.closed === true)) {
+        stream.once("close", complete);
         stream.destroy();
+      } else {
+        complete();
       }
-      if (error) reject(error);
-      else resolve();
     };
 
     stream.on("data", (chunk: Buffer | string) => {

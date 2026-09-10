@@ -1,9 +1,9 @@
-import { createReadStream } from "node:fs";
+import { close, createReadStream, open, read } from "node:fs";
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRef } from "../../../shared/apiTypes.js";
 import { ompMessageEntry, writeOmpNestedArtifactSessionFile, writeOmpSessionFile } from "./ompSessionFixture.testSupport.js";
 // `dependencies.createReadStream` is a test-only injection seam beyond the
@@ -638,7 +638,6 @@ describe("OmpSessionStore bounded discovery I/O", () => {
           inFlight--;
         };
         stream.once("close", release);
-        stream.once("error", release);
         return stream;
       },
     });
@@ -648,5 +647,34 @@ describe("OmpSessionStore bounded discovery I/O", () => {
     expect(sessions).toHaveLength(fileCount);
     expect(peakInFlight).toBeGreaterThan(0);
     expect(peakInFlight).toBeLessThanOrEqual(20);
+  });
+
+  it("does not complete discovery until the file descriptor has closed", async () => {
+    await writeOmpSessionFile(sessionsRoot, "-workspace-project", "delayed-close", { id: VALID_ID, cwd: CWD, entries: [] });
+    let releaseClose: (() => void) | undefined;
+    const store = new OmpSessionStore(agentDir, {
+      createReadStream: (path) => createReadStream(path, {
+        fs: {
+          open,
+          read,
+          close: (fd: number, callback: (error: NodeJS.ErrnoException | null) => void) => {
+            releaseClose = () => { close(fd, callback); };
+          },
+        },
+      }),
+    });
+    let settled = false;
+    const listing = store.listAll().then((sessions) => {
+      settled = true;
+      return sessions;
+    });
+    try {
+      await vi.waitFor(() => { expect(releaseClose).toBeDefined(); });
+      expect(settled).toBe(false);
+    } finally {
+      releaseClose?.();
+      await listing;
+    }
+    expect((await listing).map((session) => session.id)).toEqual([toOmpSessionId(VALID_ID)]);
   });
 });

@@ -560,7 +560,7 @@ describe("OmpSessionService: default configuration", () => {
 
     await service.start("/workspace");
 
-    expect(factory.clients[0]?.options.agentDir).toBe("/home/fixture-user/.omp/agent");
+    expect(factory.clients[0]?.options.agentDir).toBe(join("/home/fixture-user", ".omp", "agent"));
   });
 
   it("leaves command undefined by default so the transport's own \"omp\" default applies", async () => {

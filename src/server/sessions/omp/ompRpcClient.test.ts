@@ -803,7 +803,13 @@ describe("OmpRpcClient protocol poisoning terminates a stubborn child", () => {
       expect(proc.alive).toBe(false);
 
       await vi.advanceTimersByTimeAsync(30_000);
-      expect(transport.child.killSignals.length).toBeGreaterThan(0);
+      if (process.platform === "win32") {
+        expect(transport.spawnCalls).toEqual(expect.arrayContaining([
+          expect.objectContaining({ command: "taskkill", args: ["/pid", String(transport.child.pid), "/t", "/f"] }),
+        ]));
+      } else {
+        expect(transport.child.killSignals).toContain("SIGKILL");
+      }
     } finally {
       transport.child.emitExit(0, "SIGKILL");
       await proc.close();
