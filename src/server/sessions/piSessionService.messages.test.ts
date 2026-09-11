@@ -90,4 +90,36 @@ describe("PiSessionService", () => {
       await service.dispose();
     });
   });
+
+  it("reports generated output-token throughput after an agent response", async () => {
+    let outputTokens = 0;
+    let now = new Date("2026-01-01T00:00:00.000Z");
+    const fake = fakeRuntime("session-1", {
+      getSessionStats: () => ({ sessionId: "session-1", totalMessages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, tokens: { input: 0, output: outputTokens, cacheRead: 0, cacheWrite: 0, total: outputTokens }, cost: 0 }),
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("session-1")]),
+      heartbeatIntervalMs: 60_000,
+      now: () => now,
+    });
+    try {
+      await service.status(sessionRef("session-1"));
+      fake.emit({ type: "agent_start" });
+      outputTokens = 20;
+      now = new Date("2026-01-01T00:00:10.000Z");
+      fake.emit({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "Plan" } });
+      outputTokens = 120;
+      now = new Date("2026-01-01T00:00:12.000Z");
+      fake.emit({ type: "agent_end" });
+
+      await expect(service.status(sessionRef("session-1"))).resolves.toMatchObject({ outputTokensPerSecond: 60 });
+      now = new Date("2026-01-01T00:01:12.000Z");
+      await expect(service.status(sessionRef("session-1"))).resolves.toMatchObject({ outputTokensPerSecond: 60 });
+    } finally {
+      await service.dispose();
+    }
+  });
 });

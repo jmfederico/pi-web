@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatFileSize } from "./format";
+import { formatFileSize, formatTokensPerSecond } from "./format";
+
+describe("formatTokensPerSecond", () => {
+  it("keeps fractional precision for lower response rates", () => {
+    expect(formatTokensPerSecond(3.14)).toBe("3.1 tok/s");
+    expect(formatTokensPerSecond(12.6)).toBe("13 tok/s");
+  });
+});
 
 describe("formatFileSize", () => {
   it("keeps small sizes in whole bytes", () => {
