@@ -145,6 +145,8 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/models/scope" },
   { method: "POST", path: "/sessions/:sessionId/model" },
   { method: "POST", path: "/sessions/:sessionId/model/cycle" },
+  { method: "GET", path: "/sessions/:sessionId/defaults" },
+  { method: "POST", path: "/sessions/:sessionId/defaults" },
   { method: "GET", path: "/sessions/:sessionId/thinking-levels" },
   { method: "POST", path: "/sessions/:sessionId/thinking-level" },
   { method: "POST", path: "/sessions/:sessionId/thinking-level/cycle" },

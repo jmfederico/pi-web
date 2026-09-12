@@ -5,6 +5,7 @@ import { isCachedNewSessionInfo, loadCachedNewSessions } from "../cachedNewSessi
 import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { SessionController } from "./sessionController";
+import type { NavigationFreshness } from "./types";
 import { defaultApi, deferred, emptyPage, FakeSocket, MemoryStorage, oldSession, sessionKey, sessionLookupId, status, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
 
 describe("SessionController pending starts", () => {
@@ -45,6 +46,273 @@ describe("SessionController pending starts", () => {
     expect(state.selectedSession?.id).toBe("started-session");
     expect(messageCalls).toEqual(["started-session"]);
     expect(statusCalls).toEqual(["started-session"]);
+  });
+
+  it("publishes the stable session id before replacing a pending rendered selection", async () => {
+    const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
+    const startRequest = deferred<SessionInfo>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    let selectedAtNavigation: string | undefined;
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => startRequest.promise,
+        },
+        socket: new FakeSocket(),
+        navigateToSession: (session) => {
+          selectedAtNavigation = state.selectedSession?.id;
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    const start = controller.startSession({ updateUrl: false });
+    const temporaryId = state.selectedSession?.id;
+    expect(temporaryId).toMatch(/^pending-session-/);
+
+    startRequest.resolve(started);
+    await start;
+
+    expect(selectedAtNavigation).toBe(temporaryId);
+    expect(state.selectedSession?.id).toBe(started.id);
+  });
+
+  it("captures the post-publication route when a pending row removes the session id", async () => {
+    const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
+    const startRequest = deferred<SessionInfo>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    let publishedSessionId: string | undefined = oldSession.id;
+    let expectedSessionId: string | undefined;
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => { publishedSessionId = undefined; },
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => startRequest.promise,
+        },
+        socket: new FakeSocket(),
+        captureNavigation: () => ({
+          machineId: "local",
+          workspaceId: workspace.id,
+          sessionId: publishedSessionId,
+        }),
+        navigateToSession: (session, options) => {
+          expectedSessionId = options?.expected?.sessionId;
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    const start = controller.startSession();
+    startRequest.resolve(started);
+    await start;
+
+    expect(expectedSessionId).toBeUndefined();
+    expect(state.selectedSession?.id).toBe(started.id);
+  });
+
+  it("reconciles a stable session after a view-only route change during startup", async () => {
+    const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
+    const startRequest = deferred<SessionInfo>();
+    let route = {
+      machineId: "local",
+      projectId: workspace.projectId,
+      workspaceId: workspace.id,
+      sessionId: oldSession.id,
+      tool: "core:workspace.terminal",
+      view: "chat",
+    };
+    const expectedRoute = { ...route };
+    const navigation: NavigationFreshness = {
+      generation: 1,
+      scope: ["machine", "project", "workspace", "session"],
+      isCurrent: () => route.machineId === expectedRoute.machineId
+        && route.projectId === expectedRoute.projectId
+        && route.workspaceId === expectedRoute.workspaceId
+        && route.sessionId === expectedRoute.sessionId,
+    };
+    let expectedView: string | undefined;
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => startRequest.promise,
+          messages: () => Promise.resolve(emptyPage),
+          status: (session) => Promise.resolve(status(sessionLookupId(session))),
+        },
+        socket: new FakeSocket(),
+        captureNavigation: () => ({ ...route }),
+        beginNavigationOperation: () => navigation,
+        navigateToSession: (session, options) => {
+          expectedView = options?.expected?.view;
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    const start = controller.startSession({ updateUrl: false });
+    route = { ...route, view: "core:workspace.terminal" };
+    startRequest.resolve(started);
+    await start;
+
+    expect(expectedView).toBe("core:workspace.terminal");
+    expect(state.sessions.map((session) => session.id)).toEqual([started.id, oldSession.id]);
+    expect(state.selectedSession?.id).toBe(started.id);
+  });
+
+  it("does not strand a temporary selection when stable navigation is rejected", async () => {
+    const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
+    const startRequest = deferred<SessionInfo>();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => startRequest.promise,
+          messages: () => Promise.resolve(emptyPage),
+          status: (session) => Promise.resolve(status(sessionLookupId(session))),
+        },
+        socket: new FakeSocket(),
+        navigateToSession: () => Promise.resolve(false),
+      },
+    );
+
+    const start = controller.startSession({ updateUrl: false });
+    startRequest.resolve(started);
+    await start;
+
+    expect(state.sessions.map((session) => session.id)).toEqual([started.id]);
+    expect(state.selectedSession).toBeUndefined();
+    expect(state.activity).toBeUndefined();
+    expect(state.error).toBe("");
+    const scope = workspaceBrowserErrorScope("local", workspace.projectId, workspace.id);
+    expect(state.browserErrors[browserErrorScopeKey(scope)]?.message).toContain("navigation changed");
+  });
+
+  it("leaves a stale completed pending selection unselected without losing its queued send", async () => {
+    const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
+    const startRequest = deferred<SessionInfo>();
+    const promptCalls: string[] = [];
+    const route: { sessionId?: string } = {};
+    const expectedRouteSessionId = route.sessionId;
+    const navigation: NavigationFreshness = {
+      generation: 1,
+      scope: ["machine", "project", "workspace", "session"],
+      isCurrent: () => route.sessionId === expectedRouteSessionId,
+    };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    let navigationCalls = 0;
+    const navigateToSession = (): Promise<boolean> => {
+      navigationCalls += 1;
+      return Promise.resolve(false);
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => startRequest.promise,
+          messages: () => Promise.resolve(emptyPage),
+          status: (session) => Promise.resolve(status(sessionLookupId(session))),
+          prompt: (_session, text) => { promptCalls.push(text); return Promise.resolve({ accepted: true }); },
+        },
+        socket: new FakeSocket(),
+        captureNavigation: () => ({ machineId: "local", projectId: workspace.projectId, workspaceId: workspace.id, sessionId: route.sessionId }),
+        beginNavigationOperation: () => navigation,
+        navigateToSession,
+      },
+    );
+
+    const start = controller.startSession({ updateUrl: false });
+    const temporaryId = state.selectedSession?.id;
+    if (temporaryId === undefined) throw new Error("Expected temporary session id");
+    await controller.send("recover after navigation");
+
+    route.sessionId = "newer-session";
+    startRequest.resolve(started);
+    await start;
+
+    expect(navigationCalls).toBe(0);
+    expect(state.sessions.map((session) => session.id)).toEqual([started.id]);
+    expect(state.selectedSession).toBeUndefined();
+    expect(state.activity).toBeUndefined();
+    expect(state.clientQueuedSessionMessages[started.id]).toBeUndefined();
+    expect(promptCalls).toEqual(["recover after navigation"]);
+    expect(state.clientQueuedSessionMessages[temporaryId]).toBeUndefined();
+  });
+
+  it("keeps overlapping pending completions in list order when the newer start resolves first", async () => {
+    const firstStarted: SessionInfo = { ...oldSession, id: "started-session-1", path: "/tmp/started-session-1.jsonl" };
+    const secondStarted: SessionInfo = { ...oldSession, id: "started-session-2", path: "/tmp/started-session-2.jsonl" };
+    const startRequests: ReturnType<typeof deferred<SessionInfo>>[] = [];
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
+    const navigation: NavigationFreshness = {
+      generation: 1,
+      scope: ["machine", "project", "workspace", "session"],
+      isCurrent: () => true,
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          startSession: () => {
+            const request = deferred<SessionInfo>();
+            startRequests.push(request);
+            return request.promise;
+          },
+          messages: () => Promise.resolve(emptyPage),
+          status: (session) => Promise.resolve(status(sessionLookupId(session))),
+        },
+        socket: new FakeSocket(),
+        beginNavigationOperation: () => navigation,
+        navigateToSession: (session) => {
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    const firstStart = controller.startSession();
+    const firstTemporaryId = state.selectedSession?.id;
+    const secondStart = controller.startSession();
+    const secondTemporaryId = state.selectedSession?.id;
+    if (firstTemporaryId === undefined || secondTemporaryId === undefined) throw new Error("Expected two pending sessions");
+
+    startRequests[1]?.resolve(secondStarted);
+    await secondStart;
+    startRequests[0]?.resolve(firstStarted);
+    await firstStart;
+
+    expect(state.sessions.map((session) => session.id)).toEqual([secondStarted.id, firstStarted.id]);
+    expect(state.selectedSession?.id).toBe(secondStarted.id);
+    expect(state.sessions.some((session) => session.id === firstTemporaryId || session.id === secondTemporaryId)).toBe(false);
   });
 
   it("does not duplicate a started session when its session.created broadcast races the HTTP response", async () => {

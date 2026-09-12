@@ -17,6 +17,12 @@ Pi package settings are separate from PI WEB config. They live in Pi's package-m
 
 If you installed services with a custom config path, `pi-web start`, `pi-web restart`, and `pi-web doctor` automatically use the `PI_WEB_CONFIG` saved in those service definitions for their readiness checks. A nonempty `PI_WEB_CONFIG` supplied when invoking one of those commands overrides the installed path for that command. On systemd, these commands fail rather than guess if `EnvironmentFile=` inputs, stale manager state, a different loaded fragment, or an effective environment mismatch make the loaded definition untrustworthy. Drop-ins that do not alter the inspected environment (such as distribution-provided global hardening drop-ins) are tolerated. On launchd, `start` and `doctor` likewise fail if an already-loaded label came from another plist or retains a different config path; `restart` reloads the installed plists and can repair that stale state. Rerun `pi-web install --config /path/to/config.json` after changing the managed path or after upgrading from a version that only applied it to the web service; this regenerates service files so the web/API and session daemon use the same config.
 
+## Startup model and thinking defaults
+
+Open the model or thinking-level selector and click a row’s star under **New session default** to save it for new sessions. A filled star marks the saved default. Clicking the option itself changes only the current session; setting the default leaves the current session unchanged.
+
+Defaults are saved in Pi’s global `settings.json` on the selected session’s machine (`~/.pi/agent/settings.json` by default), using `defaultProvider`, `defaultModel`, and `defaultThinkingLevel`. They apply to new sessions without restarting. Project `.pi/settings.json` overrides, explicit startup choices, and per-model thinking settings still take precedence. A default model must be enabled; otherwise startup falls back to the first enabled model. Resumed sessions keep their saved model and thinking level.
+
 ## Reverse-proxy deployment paths
 
 The deployment path is not a PI WEB config-file key or environment setting. The published client is portable: one build works at `/` and at canonical trailing-slash prefixes such as `/ai/` or `/test/ai/`.

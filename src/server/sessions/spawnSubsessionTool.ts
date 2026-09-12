@@ -84,7 +84,7 @@ const SpawnSubsessionParams = Type.Object({
     description: "Initial instruction for the tracked child.",
   }),
   model: Type.Optional(Type.String({
-    description: 'Model for the child session, as an exact "provider/model-id" such as "anthropic/claude-sonnet-4-5". When the user references a model as #provider/model-id in their request, forward it here. An unknown value is rejected. Omit to inherit this session\'s model.',
+    description: 'Model override for the child session, as an exact "provider/model-id". Set this field only when instructed to use a specific model or to choose an appropriate one. Otherwise omit it to inherit this session\'s model. An unknown value is rejected.',
   })),
 });
 

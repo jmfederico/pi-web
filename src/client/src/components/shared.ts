@@ -85,6 +85,8 @@ export interface CompletionItem {
   insertText: string;
   detail: string;
   description?: string;
+  /** Pi-style argument hint (e.g. `<PR-URL>`) for commands that declare one. */
+  argumentHint?: string;
   cursorOffset?: number;
 }
 
@@ -508,7 +510,9 @@ export const autocompleteStyles = css`
   button { display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 4px 10px; width: 100%; border: 0; border-bottom: 1px solid var(--pi-border); border-radius: 0; background: transparent; color: var(--pi-text); padding: 8px 10px; text-align: left; cursor: pointer; }
   button:last-child { border-bottom: 0; }
   button.selected, button:hover { background: var(--pi-selection-bg); }
-  span { color: var(--pi-muted); font-size: 12px; }
+  .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .argument-hint { color: var(--pi-muted); font-size: 12px; }
+  .detail { color: var(--pi-muted); font-size: 12px; }
   small { grid-column: 1 / -1; color: var(--pi-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
 
@@ -536,6 +540,7 @@ export const promptEditorStyles = css`
   .markdown-editor .cm-content { min-height: 38px; padding: 8px 44px 8px 8px; caret-color: var(--pi-text); text-align: start; unicode-bidi: plaintext; }
   .markdown-editor .cm-line { padding: 0; unicode-bidi: plaintext; }
   .markdown-editor .cm-placeholder { color: var(--pi-dim); }
+  .markdown-editor .cm-argument-hint { color: var(--pi-dim); pointer-events: none; }
   .markdown-editor .cm-focused { outline: none; }
   /* drawSelection() renders the caret and selection itself, and CodeMirror's
      base colors for them assume a light editor (black caret, pale selection).

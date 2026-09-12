@@ -137,15 +137,16 @@ describe("createSubsessionToolDefinitions", () => {
     expect(firstText(result.content)).toBe("Started tracked subsession child-3 in /repos/a using model openai/gpt-5. Continue other work, then join with yield_to_subsessions; do not poll.");
   });
 
-  it("spawn_subsession teaches the model parameter format and the #provider/model-id reference convention", () => {
+  it("spawn_subsession restricts model overrides to instructions without priming a concrete model", () => {
     const { spawn: spawnTool } = tools({});
 
     expect(spawnTool.parameters).toMatchObject({
       properties: {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
-        model: { description: expect.stringMatching(/provider\/model-id.*#provider\/model-id.*Omit to inherit/s) },
+        model: { description: expect.stringMatching(/provider\/model-id.*only when instructed.*specific model.*choose an appropriate one.*omit it to inherit.*unknown value is rejected/si) },
       },
     });
+    expect(JSON.stringify(spawnTool.parameters)).not.toContain("anthropic/claude-sonnet-4-5");
   });
 
   it("list_subsessions reports the caller's subsessions and their status", async () => {

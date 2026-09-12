@@ -109,17 +109,21 @@ export class TerminalBrowserRuntime {
     return navigationValue(context, "start");
   }
 
-  selectTerminal(context: WorkspacePanelContext, terminalId: string | undefined, options?: { replace?: boolean | undefined }): void {
+  selectTerminal(context: WorkspacePanelContext, terminalId: string | undefined, options?: { replace?: boolean | undefined }): boolean {
+    // WorkspacePanelNavigationV1 is void-returning for portable plugins. The
+    // PI WEB host returns false internally when a retained context is stale;
+    // legacy/third-party undefined results remain accepted.
+    const navigationResult: unknown = context.navigation?.set("terminal", terminalId, options);
+    if (navigationResult === false) return false;
     const scope = this.selectionScope(context);
     if (terminalId === undefined) this.selection.forgetWorkspace(scope);
     else this.selection.rememberTerminal(scope, terminalId);
-    context.navigation?.set("terminal", terminalId, options);
     context.host.requestRender();
+    return true;
   }
 
-  forgetTerminal(context: WorkspacePanelContext, terminalId: string): void {
+  forgetTerminal(terminalId: string): void {
     this.selection.forgetTerminal(terminalId);
-    if (this.selectedTerminalId(context) === terminalId) this.selectTerminal(context, undefined, { replace: true });
   }
 
   private workspaceState(context: WorkspacePanelContext): WorkspaceRuntimeState {

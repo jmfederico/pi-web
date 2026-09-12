@@ -3,6 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { CommandOption } from "../api";
 import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEventTarget";
 import "./ModalSurface";
+import { defaultPin, defaultPinHelp, defaultPinStyles } from "./DefaultPin";
 import { scrollWhenSelected } from "./scrollWhenSelected";
 
 @customElement("command-picker")
@@ -13,6 +14,11 @@ export class CommandPicker extends LitElement {
   @property({ attribute: false }) selectedValue?: string;
   @property({ attribute: false }) onPick?: (value: string) => void;
   @property({ attribute: false }) onCancel?: () => void;
+  @property({ attribute: false }) defaultValue?: string;
+  /** Host applies the default and reports save errors. */
+  @property({ attribute: false }) onSetDefault?: (value: string) => Promise<unknown>;
+  @property({ type: Boolean }) defaultsLoading = false;
+  @state() private defaultPending = false;
   @state() private selectedIndex = 0;
   @state() private query = "";
 
@@ -30,9 +36,10 @@ export class CommandPicker extends LitElement {
           <button aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
         </header>
         ${this.searchable ? html`<input placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>` : null}
+        ${this.onSetDefault ? defaultPinHelp : nothing}
         <div class="options" tabindex="0">
-          ${options.map((option, index) => html`
-            <button
+          ${options.map((option, index) => {
+            const pick = html`<button
               class=${index === this.selectedIndex ? "selected" : ""}
               aria-current=${index === this.selectedIndex ? "true" : nothing}
               ${scrollWhenSelected(index === this.selectedIndex, option.value)}
@@ -41,12 +48,26 @@ export class CommandPicker extends LitElement {
             >
               <span>${option.label}</span>
               ${option.description !== undefined && option.description !== "" ? html`<small>${option.description}</small>` : null}
-            </button>
-          `)}
+            </button>`;
+            return this.onSetDefault ? html`<div class="default-row">${pick}${defaultPin(option.label, option.value === this.defaultValue, this.defaultsLoading || this.defaultPending, () => { void this.setDefault(option.value); })}</div>` : pick;
+          })}
           ${options.length === 0 ? html`<div class="empty">No matching options</div>` : null}
         </div>
       </modal-surface>
     `;
+  }
+
+  private async setDefault(value: string): Promise<void> {
+    if (!this.onSetDefault || this.defaultsLoading || this.defaultPending) return;
+    this.defaultPending = true;
+    try {
+      await this.onSetDefault(value);
+    } catch (error: unknown) {
+      // Hosts own user-facing errors; keep unexpected callback rejections observable.
+      console.warn("Failed to set default option", error);
+    } finally {
+      this.defaultPending = false;
+    }
   }
 
   override firstUpdated() {
@@ -91,7 +112,7 @@ export class CommandPicker extends LitElement {
     }
   }
 
-  static override styles = css`
+  static override styles = [css`
     :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
     modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100vh - 40px)); }
     header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
@@ -104,5 +125,5 @@ export class CommandPicker extends LitElement {
     .options button.selected, .options button:hover { background: var(--pi-selection-bg); }
     small { display: block; margin-top: 4px; color: var(--pi-muted); }
     .empty { padding: 24px; color: var(--pi-muted); text-align: center; }
-  `;
+  `, defaultPinStyles];
 }

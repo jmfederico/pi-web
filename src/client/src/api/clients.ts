@@ -1,3 +1,5 @@
+import { parseSessionDefaults } from "../../../shared/sessionDefaults";
+import type { SessionDefaultsUpdate } from "../../../shared/apiTypes";
 import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, ServerNoticeDismissRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
@@ -259,6 +261,8 @@ export const sessionsApi = {
   setModelScope: (session: SessionRef, mode: SessionModelScopeMode, machineId = "local") => request(sessionPath(session, "models/scope", machineId), parseSessionModelCatalogResponse, { method: "POST", body: sessionBody(session, { mode }) }),
   setModel: (session: SessionRef, provider: string, modelId: string, machineId = "local") => request(sessionPath(session, "model", machineId), parseSessionStatus, { method: "POST", body: sessionBody(session, { provider, modelId }) }),
   cycleModel: (session: SessionRef, direction: "forward" | "backward", machineId = "local") => request(sessionPath(session, "model/cycle", machineId), parseSessionStatus, { method: "POST", body: sessionBody(session, { direction }) }),
+  getSessionDefaults: (session: SessionRef, machineId = "local") => request(sessionQueryPath(session, "defaults", machineId), parseSessionDefaults),
+  setSessionDefaults: (session: SessionRef, defaults: SessionDefaultsUpdate, machineId = "local") => request(sessionPath(session, "defaults", machineId), parseSessionDefaults, { method: "POST", body: sessionBody(session, { ...defaults }) }),
   thinkingLevels: (session: SessionRef, machineId = "local") => request(sessionQueryPath(session, "thinking-levels", machineId), parseThinkingLevelsResponse),
   setThinkingLevel: (session: SessionRef, level: string, machineId = "local") => request(sessionPath(session, "thinking-level", machineId), parseSessionStatus, { method: "POST", body: sessionBody(session, { level }) }),
   cycleThinkingLevel: (session: SessionRef, machineId = "local") => request(sessionPath(session, "thinking-level/cycle", machineId), parseSessionStatus, { method: "POST", body: sessionBody(session) }),

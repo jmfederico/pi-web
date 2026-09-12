@@ -893,6 +893,17 @@ describe("API parsers", () => {
     expect(() => parseFileSuggestion({ path: "a", kind: "deleted" })).toThrow("Invalid file kind");
   });
 
+  it("parses slash command argument hints and rejects malformed ones", () => {
+    expect(parseSlashCommand({ name: "pr", source: "prompt", description: "Review PRs from URLs", argumentHint: "<PR-URL>" })).toEqual({
+      name: "pr",
+      source: "prompt",
+      description: "Review PRs from URLs",
+      argumentHint: "<PR-URL>",
+    });
+    expect(parseSlashCommand({ name: "tree", source: "builtin" })).toEqual({ name: "tree", source: "builtin" });
+    expect(() => parseSlashCommand({ name: "pr", source: "prompt", argumentHint: 7 })).toThrow("Expected optional string field: argumentHint");
+  });
+
   it("validates file content responses", () => {
     const textFile = {
       path: "README.md",

@@ -1356,7 +1356,12 @@ export function parseSlashCommand(value: unknown): SlashCommand {
   const record = requireRecord(value);
   const source = requireString(record, "source");
   if (source !== "extension" && source !== "prompt" && source !== "skill" && source !== "builtin") throw new Error("Invalid command source");
-  return { name: requireString(record, "name"), source, ...optionalField("description", optionalString(record, "description")) };
+  return {
+    name: requireString(record, "name"),
+    source,
+    ...optionalField("description", optionalString(record, "description")),
+    ...optionalField("argumentHint", optionalString(record, "argumentHint")),
+  };
 }
 
 export function parseFileSuggestion(value: unknown): FileSuggestion {

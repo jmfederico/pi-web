@@ -126,6 +126,89 @@ describe("SessionController cached-new sessions", () => {
     clearStagedAttachments(sessionKey(replacementSession.id));
   });
 
+  it.each([false, true])("reconciles rejected cached-session navigation without replacing newer selection (newer: %s)", async (selectNewer) => {
+    const storage = new MemoryStorage();
+    Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+    rememberCachedNewSession(oldSession);
+    saveDraft(sessionKey(oldSession.id), "keep this draft");
+    const cachedSession = markCachedNewSessionInfo(oldSession);
+    const newerSession = { ...oldSession, id: "newer-session" };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [cachedSession, newerSession] };
+    const urlUpdates: unknown[] = [];
+    const socket = new FakeSocket();
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      startSession: () => Promise.resolve(replacementSession),
+      messages: (session) => sessionLookupId(session) === oldSession.id
+        ? Promise.reject(new Error("Session not found"))
+        : Promise.resolve(emptyPage),
+      status: (session) => Promise.resolve(status(sessionLookupId(session))),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      (options) => { urlUpdates.push(options); },
+      undefined,
+      {
+        api,
+        socket,
+        navigateToSession: async (session, options) => {
+          expect(session?.id).toBe(replacementSession.id);
+          expect(options?.expected?.sessionId).toBe(oldSession.id);
+          expect(state.selectedSession?.id).toBe(oldSession.id);
+          if (selectNewer) await controller.selectSession(newerSession, { updateUrl: false });
+          return false;
+        },
+      },
+    );
+
+    await controller.selectSession(cachedSession, { updateUrl: false });
+
+    expect(state.selectedSession?.id).toBe(selectNewer ? newerSession.id : undefined);
+    expect(state.sessions.map((session) => session.id)).toEqual([replacementSession.id, newerSession.id]);
+    expect(loadCachedNewSessions().map((session) => session.id)).toEqual([replacementSession.id]);
+    expect(loadDraft(sessionKey(oldSession.id))).toBe("");
+    expect(loadDraft(sessionKey(replacementSession.id))).toBe("keep this draft");
+    expect(urlUpdates).toEqual([]);
+    controller.dispose();
+  });
+
+  it("publishes a command-result replacement before selecting its session", async () => {
+    let state: AppState = {
+      ...initialAppState(),
+      selectedWorkspace: workspace,
+      selectedSession: oldSession,
+      sessions: [oldSession],
+    };
+    const selectedAtNavigation: string[] = [];
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      runCommand: () => Promise.resolve({ type: "done", message: "Session forked", session: replacementSession, promptDraft: "fork me" }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api,
+        socket: new FakeSocket(),
+        navigateToSession: (session, options) => {
+          selectedAtNavigation.push(state.selectedSession?.id ?? "missing");
+          expect(options?.expected?.sessionId).toBe(oldSession.id);
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    await controller.send("/fork");
+
+    expect(selectedAtNavigation).toEqual([oldSession.id]);
+    expect(state.selectedSession?.id).toBe(replacementSession.id);
+    expect(state.sessions[0]?.id).toBe(replacementSession.id);
+  });
+
   it("stores command prompt drafts for replacement sessions before selecting them", async () => {
     const storage = new MemoryStorage();
     Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });

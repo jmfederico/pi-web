@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type AskUserAnswer, type AskUserSubmission, type ExtensionDialogAnswerRequest, type ExtensionDialogCancelRequest, type SessionBulkMutationRequest, type SessionBulkMutationRef, type SessionCleanupRequest, type SessionModelScopeMode, type SessionTreeForkRequest, type SessionTreeNavigateRequest, type SessionTreeSummaryChoice, type SessionUnreadAcknowledgeRequest } from "../../shared/apiTypes.js";
+import { parseSessionDefaultsUpdate } from "../../shared/sessionDefaults.js";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { normalizeRequestCwd } from "../workingDirectory.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -249,6 +250,23 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       return await sessions.cycleModel(sessionRefFromBody(request.params.sessionId, body), direction ?? "forward");
     } catch (error) {
       return reply.code(mutationErrorStatus(error)).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/defaults`, async (request, reply) => {
+    try {
+      return await sessions.getSessionDefaults(sessionRefFromQuery(request.params.sessionId, request.query));
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.post<{ Params: { sessionId: string }; Body: Record<string, unknown> | undefined }>(`${prefix}/sessions/:sessionId/defaults`, async (request, reply) => {
+    try {
+      const body = requireRecord(request.body);
+      return await sessions.setSessionDefaults(sessionRefFromBody(request.params.sessionId, body), parseSessionDefaultsUpdate(body));
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
     }
   });
 

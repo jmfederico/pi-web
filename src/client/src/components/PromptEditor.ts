@@ -11,6 +11,7 @@ import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePr
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
 import { detectPromptCompletionTrigger, fileCompletionInsertText, modelCompletionChoices, type PromptCompletionTrigger } from "../promptCompletions";
+import { promptArgumentHintExtension, setPromptArgumentHint } from "../promptArgumentHint";
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
@@ -294,6 +295,7 @@ export class PromptEditor extends LitElement {
             blur: () => this.resetEditorModifierState(),
           }),
           placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
+          promptArgumentHintExtension,
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
           EditorView.updateListener.of((update) => {
@@ -357,7 +359,6 @@ export class PromptEditor extends LitElement {
       if (version !== this.requestVersion) return;
       this.completions = commands
         .filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()))
-        .slice(0, 12)
         .map((command) => ({
           kind: "command",
           replaceFrom: trigger.from,
@@ -365,6 +366,7 @@ export class PromptEditor extends LitElement {
           insertText: `/${command.name}`,
           detail: command.source,
           ...(command.description === undefined ? {} : { description: command.description }),
+          ...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
         }));
     } else if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
       const files = await api.files(trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId }).catch(emptyFileSuggestions);
@@ -473,6 +475,7 @@ export class PromptEditor extends LitElement {
       changes: { from: item.replaceFrom, to: replaceTo, insert: `${item.insertText}${suffix}` },
       selection: EditorSelection.cursor(cursor),
       scrollIntoView: true,
+      ...(item.argumentHint === undefined || item.argumentHint === "" ? {} : { effects: setPromptArgumentHint.of({ pos: cursor, text: item.argumentHint }) }),
     });
     this.completions = [];
   }

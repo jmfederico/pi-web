@@ -1,24 +1,45 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildTerminalPackage } from "../../../scripts/build-plugins.mjs";
 
 type FixtureChild = ChildProcessByStdio<null, Readable, Readable>;
 
-const tempRoots: string[] = [];
+const tempRoots = new Set<string>();
 const children = new Set<FixtureChild>();
+const liveTerminalRoot = resolve("dist/pi-web-plugins/terminal");
+let liveTerminalBefore: string;
+
+beforeEach(async () => {
+  liveTerminalBefore = await snapshotDirectory(liveTerminalRoot);
+});
 
 afterEach(async () => {
-  for (const child of children) child.kill("SIGKILL");
+  for (const child of children) {
+    child.kill("SIGKILL");
+    await waitForExit(child, 10_000);
+  }
   children.clear();
-  await Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  for (const root of tempRoots) {
+    assertOwnedRoot(root);
+    if ((await lstat(root)).isSymbolicLink()) throw new Error(`Refusing to clean symlink: ${root}`);
+    await rm(root, { recursive: true, force: true });
+    tempRoots.delete(root);
+  }
+  // Check after cleanup too: the original regression deleted the live bundle here.
+  expect(await snapshotDirectory(liveTerminalRoot)).toBe(liveTerminalBefore);
 });
 
 describe("sessiond persisted server plugin recovery", () => {
+  it("rejects cleanup of the live Terminal bundle and unowned temporary directories", () => {
+    expect(() => { assertOwnedRoot(liveTerminalRoot); }).toThrow("Refusing to clean unowned directory");
+    expect(() => { assertOwnedRoot(join(tmpdir(), "pi-web-sessiond-plugin-unowned")); }).toThrow("Refusing to clean unowned directory");
+  });
   it.each([
     {
       name: "starts from real config and catalog with no server module imports in emergency safe start",
@@ -31,8 +52,7 @@ describe("sessiond persisted server plugin recovery", () => {
       expectedDiagnostic: "No server plugins will be loaded until safe start is repaired",
     },
   ])("$name", async ({ safeStart, expectedDiagnostic }) => {
-    const root = await mkdtemp(join(tmpdir(), "pi-web-sessiond-plugin-recovery-"));
-    tempRoots.push(root);
+    const root = await createDaemonFixture();
     const configPath = join(root, "config.json");
     const dataDir = join(root, "data");
     const pluginRoot = join(dataDir, "plugins", "poison");
@@ -48,20 +68,7 @@ describe("sessiond persisted server plugin recovery", () => {
       process.exit(97);
     `, "utf8");
 
-    const child = spawn(process.execPath, ["--import", "tsx", "src/server/sessiond.ts"], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        HOME: join(root, "home"),
-        PI_WEB_CONFIG: configPath,
-        PI_WEB_DATA_DIR: dataDir,
-        PI_WEB_AGENT_DIR: join(root, "agent"),
-        PI_WEB_OFFLINE: "1",
-        PI_WEB_SESSIOND_PORT: "0",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    children.add(child);
+    const child = spawnFixtureDaemon(root);
 
     const startupOutput = await waitForOutput(child, "Server listening at", 15_000);
     expect(startupOutput).toContain("Server listening at");
@@ -83,13 +90,9 @@ describe("sessiond persisted server plugin recovery", () => {
   // Plugin stop on SIGTERM requires POSIX signal delivery; Windows
   // force-terminates the child without running shutdown handlers.
   it.skipIf(process.platform === "win32")("stops activated plugins when SIGTERM arrives during sessiond startup", async () => {
-    // This source-level child bypasses start:sessiond's build:plugins prerequisite.
-    const terminalPackageRoot = resolve("dist/pi-web-plugins/terminal");
-    tempRoots.push(terminalPackageRoot);
-    await buildTerminalPackage(resolve("pi-web-plugins/terminal"), terminalPackageRoot);
-
-    const root = await mkdtemp(join(tmpdir(), "pi-web-sessiond-plugin-startup-signal-"));
-    tempRoots.push(root);
+    const root = await createDaemonFixture();
+    // The copied catalog resolves bundled plugins relative to this temporary checkout.
+    await buildTerminalPackage(resolve("pi-web-plugins/terminal"), join(root, "dist/pi-web-plugins/terminal"));
     const configPath = join(root, "config.json");
     const dataDir = join(root, "data");
     const pluginRoot = join(dataDir, "plugins", "startup-signal");
@@ -120,20 +123,7 @@ describe("sessiond persisted server plugin recovery", () => {
       };
     `, "utf8");
 
-    const child = spawn(process.execPath, ["--import", "tsx", "src/server/sessiond.ts"], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        HOME: join(root, "home"),
-        PI_WEB_CONFIG: configPath,
-        PI_WEB_DATA_DIR: dataDir,
-        PI_WEB_AGENT_DIR: join(root, "agent"),
-        PI_WEB_OFFLINE: "1",
-        PI_WEB_SESSIOND_PORT: "0",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    children.add(child);
+    const child = spawnFixtureDaemon(root);
 
     await waitForOutput(child, "PLUGIN_STARTED", 15_000);
     expect(existsSync(startedMarker)).toBe(true);
@@ -145,6 +135,67 @@ describe("sessiond persisted server plugin recovery", () => {
     expect(existsSync(stoppedMarker)).toBe(true);
   }, 35_000);
 });
+
+function assertOwnedRoot(root: string): void {
+  if (!tempRoots.has(root) || dirname(root) !== resolve(tmpdir()) || !basename(root).startsWith("pi-web-sessiond-plugin-")) {
+    throw new Error(`Refusing to clean unowned directory: ${root}`);
+  }
+}
+
+async function createDaemonFixture(): Promise<string> {
+  const root = await mkdtemp(join(resolve(tmpdir()), "pi-web-sessiond-plugin-"));
+  tempRoots.add(root);
+  // Keep import.meta.url-based discovery in the fixture without adding a production
+  // environment override. Only dependencies are linked; source and bundles are owned.
+  await cp(resolve("src"), join(root, "src"), { recursive: true });
+  await copyFile(resolve("package.json"), join(root, "package.json"));
+  await symlink(resolve("node_modules"), join(root, "node_modules"), "junction");
+  return root;
+}
+
+function spawnFixtureDaemon(root: string): FixtureChild {
+  assertOwnedRoot(root);
+  // Do not inherit the hosting daemon's PI_WEB_*, agent paths, config or credentials.
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["PATH", "Path", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "TMP", "TEMP", "TMPDIR"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  const child = spawn(process.execPath, ["--import", "tsx", "src/server/sessiond.ts"], {
+    cwd: root,
+    env: {
+      ...env,
+      HOME: join(root, "home"),
+      USERPROFILE: join(root, "home"),
+      XDG_CONFIG_HOME: join(root, "home", ".config"),
+      PI_WEB_CONFIG: join(root, "config.json"),
+      PI_WEB_DATA_DIR: join(root, "data"),
+      PI_CODING_AGENT_DIR: join(root, "agent"),
+      PI_CODING_AGENT_SESSION_DIR: join(root, "agent", "sessions"),
+      PI_WEB_OFFLINE: "1",
+      PI_WEB_SESSIOND_SOCKET: join(root, "sessiond.sock"),
+      PI_WEB_SESSIOND_HOST: "127.0.0.1",
+      PI_WEB_SESSIOND_PORT: "0",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  children.add(child);
+  return child;
+}
+
+async function snapshotDirectory(root: string): Promise<string> {
+  if (!existsSync(root)) return "missing";
+  const hash = createHash("sha256");
+  async function visit(path: string): Promise<void> {
+    const stat = await lstat(path);
+    hash.update(JSON.stringify([path, stat.mode, stat.mtimeMs]));
+    if (stat.isSymbolicLink()) hash.update(await readlink(path));
+    else if (stat.isDirectory()) {
+      for (const name of (await readdir(path)).sort()) await visit(join(path, name));
+    } else hash.update(await readFile(path));
+  }
+  await visit(root);
+  return hash.digest("hex");
+}
 
 function waitForOutput(child: FixtureChild, expected: string, timeoutMs: number): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {

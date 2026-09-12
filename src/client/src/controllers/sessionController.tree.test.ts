@@ -602,6 +602,37 @@ describe("SessionController session tree fork", () => {
     expect(removedKeys).toEqual([oldCacheKey]);
   });
 
+  it("publishes a forked session through the injected navigation boundary", async () => {
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], treeDialog: tree };
+    const selectedAtNavigation: string[] = [];
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      forkTree: () => Promise.resolve({ cancelled: false, session: replacementSession, promptDraft: "fork draft" }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api,
+        socket: new FakeSocket(),
+        navigateToSession: (session, options) => {
+          selectedAtNavigation.push(state.selectedSession?.id ?? "missing");
+          expect(options?.expected?.sessionId).toBe(oldSession.id);
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    await controller.forkFromTree("root");
+
+    expect(selectedAtNavigation).toEqual([oldSession.id]);
+    expect(state.selectedSession?.id).toBe(replacementSession.id);
+    expect(state.treeDialog).toBeUndefined();
+  });
+
   it("keeps the navigator open on cancellation without changing the selection", async () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], treeDialog: tree };
     const forkTree = vi.fn<typeof defaultApi.forkTree>(() => Promise.resolve({ cancelled: true }));

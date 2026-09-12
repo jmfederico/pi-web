@@ -72,21 +72,39 @@ describe("Terminal browser runtime", () => {
     expect(runtime.activeTerminalBadge(context)).toBe(1);
   });
 
-  it("keeps selection in plugin-owned memory and canonical contribution navigation", () => {
+  it("keeps selection in plugin-owned memory and publishes canonical navigation first", () => {
     const memory = new InMemoryTerminalSelectionMemory();
     const runtime = new TerminalBrowserRuntime(memory);
+    const rememberedAtPublication: (string | undefined)[] = [];
     const set = vi.fn();
     const context = workspaceContext("local", vi.fn(), { set });
+    set.mockImplementation(() => { rememberedAtPublication.push(memory.latestTerminalId(runtime.selectionScope(context))); });
 
     runtime.selectTerminal(context, "terminal-2");
 
+    expect(rememberedAtPublication).toEqual([undefined]);
     expect(memory.latestTerminalId(runtime.selectionScope(context))).toBe("terminal-2");
     expect(set).toHaveBeenCalledWith("terminal", "terminal-2", undefined);
     expect(runtime.selectedTerminalId(context)).toBe("terminal-2");
 
     runtime.selectTerminal(context, undefined, { replace: true });
+    expect(rememberedAtPublication).toEqual([undefined, "terminal-2"]);
     expect(memory.latestTerminalId(runtime.selectionScope(context))).toBeUndefined();
     expect(set).toHaveBeenLastCalledWith("terminal", undefined, { replace: true });
+  });
+
+  it("does not update plugin selection when the host rejects stale navigation", () => {
+    const memory = new InMemoryTerminalSelectionMemory();
+    const runtime = new TerminalBrowserRuntime(memory);
+    const requestRender = vi.fn();
+    const context = workspaceContext("local", vi.fn(), { set: vi.fn(() => false) });
+    context.host.requestRender = requestRender;
+    memory.rememberTerminal(runtime.selectionScope(context), "terminal-old");
+
+    expect(runtime.selectTerminal(context, "terminal-stale")).toBe(false);
+
+    expect(memory.latestTerminalId(runtime.selectionScope(context))).toBe("terminal-old");
+    expect(requestRender).not.toHaveBeenCalled();
   });
 
   it("separates authoritative runtime scope from legacy path-keyed selection", () => {

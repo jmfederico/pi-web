@@ -77,11 +77,12 @@ export function machineNavigationSnapshotFromState(
 ): MachineNavigationSnapshot {
   const hasWorkspace = state.selectedWorkspace !== undefined;
   const boundedQuery = hasWorkspace ? normalizeContributionQueryRecord(contributionQuery) : {};
+  const selectedSessionId = isClientPendingSession(state.selectedSession) ? undefined : state.selectedSession?.id;
   return {
     machineId: state.selectedMachine?.id ?? LOCAL_MACHINE_ID,
     projectId: state.selectedProject?.id,
     workspaceId: state.selectedWorkspace?.id,
-    sessionId: state.selectedSession?.id,
+    sessionId: selectedSessionId,
     tool: state.workspaceTool,
     view: state.mainView,
     surface: {
@@ -99,6 +100,10 @@ export function routeFromMachineNavigationSnapshot(snapshot: MachineNavigationSn
     tool: snapshot.tool,
     view: snapshot.view === "navigation" ? undefined : snapshot.view,
   };
+}
+
+function isClientPendingSession(session: AppState["selectedSession"]): boolean {
+  return session !== undefined && Reflect.get(session, "clientPendingStart") === true;
 }
 
 function cloneSnapshot(snapshot: MachineNavigationSnapshot): MachineNavigationSnapshot {

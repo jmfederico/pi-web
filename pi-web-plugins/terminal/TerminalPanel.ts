@@ -31,6 +31,7 @@ interface ScopedPanelOperation {
   readonly runtime: TerminalBrowserRuntime;
   readonly scope: string;
   readonly generation: number;
+  readonly terminalNavigationGeneration: number;
   readonly controller: AbortController;
 }
 
@@ -69,11 +70,14 @@ export class TerminalPanel extends LitElement {
   private channelReconnectAttempt = 0;
   private channelReconnectTimer: number | undefined;
   private loadAbort: AbortController | undefined;
+  private loadTerminalChanges: Map<string, TerminalInfo | undefined> | undefined;
+  private pendingStartNavigationGeneration: number | undefined;
   private loadRetryTimer: number | undefined;
   private loadRetryAttempt = 0;
   private commandRunLoadAbort: AbortController | undefined;
   private readonly operationAborts = new Set<AbortController>();
   private workspaceGeneration = 0;
+  private terminalNavigationGeneration = 0;
   private resizeObserver: ResizeObserver | undefined;
   private intersectionObserver: IntersectionObserver | undefined;
   private themeObserver: MutationObserver | undefined;
@@ -155,6 +159,7 @@ export class TerminalPanel extends LitElement {
     }
     if (workspaceScope !== this.observedWorkspaceScope || runtime !== this.observedRuntime) {
       this.workspaceGeneration += 1;
+      this.terminalNavigationGeneration += 1;
       this.cancelWorkspaceRequests();
       this.observedRuntime = runtime;
       this.observedWorkspaceScope = workspaceScope;
@@ -178,6 +183,7 @@ export class TerminalPanel extends LitElement {
       return;
     }
     if (routedTerminalId !== this.routedTerminalId || requestedTerminalId !== this.requestedTerminalId) {
+      this.terminalNavigationGeneration += 1;
       this.routedTerminalId = routedTerminalId;
       this.requestedTerminalId = requestedTerminalId;
       this.applyRequestedTerminalSelection();
@@ -194,6 +200,17 @@ export class TerminalPanel extends LitElement {
     if (this.hasPendingCommandRuns()) this.updateCommandRunPolling(true);
     this.loadVisibleWorkspaceTerminals();
     if (this.shouldReloadForRequestedTerminal()) void this.loadTerminals();
+    // A list can settle before the host finishes resolving the workspace URL.
+    // Its selection write is correctly rejected then; reconcile with the latest
+    // context even when the routed/remembered terminal IDs have not changed.
+    if (!this.loading
+      && this.observedWorkspaceScope !== undefined
+      && this.loadedWorkspaceScope === this.observedWorkspaceScope
+      && this.selectedId === undefined
+      && this.terminals.length > 0
+      && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) {
+      this.selectPreferredLoadedTerminal({ replaceUrl: true });
+    }
     this.applyAutoStartRequest();
     this.ensureTerminalView();
   }
@@ -218,6 +235,11 @@ export class TerminalPanel extends LitElement {
     this.loadAbort?.abort();
     const controller = new AbortController();
     this.loadAbort = controller;
+    // List snapshots must not erase creates or resurrect closes that settle
+    // while the request is in flight.
+    const terminalChanges = new Map<string, TerminalInfo | undefined>();
+    this.loadTerminalChanges = terminalChanges;
+    const navigationGeneration = this.terminalNavigationGeneration;
     this.loading = true;
     this.error = undefined;
     try {
@@ -229,13 +251,22 @@ export class TerminalPanel extends LitElement {
       if (!this.workspaceIsCurrent(scope, generation, runtime) || controller.signal.aborted) return;
       this.loadedWorkspaceScope = scope;
       this.loadRetryAttempt = 0;
-      this.terminals = terminals;
+      const reconciledTerminals = new Map(terminals.map((terminal) => [terminal.id, terminal]));
+      for (const [id, terminal] of terminalChanges) {
+        if (terminal === undefined) reconciledTerminals.delete(id);
+        else reconciledTerminals.set(id, terminal);
+      }
+      this.terminals = [...reconciledTerminals.values()];
       this.commandRuns = commandRuns;
-      runtime.updateTerminals(context, terminals);
-      this.selectPreferredLoadedTerminal({ replaceUrl: true });
+      runtime.updateTerminals(context, this.terminals);
+      if (navigationGeneration === this.terminalNavigationGeneration
+        && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) {
+        this.selectPreferredLoadedTerminal({ replaceUrl: true });
+      }
       this.updateCommandRunPolling(this.hasPendingCommandRuns(commandRuns));
       const shouldAutoStart = this.consumeAutoStart(scope);
-      if (terminals.length === 0 && shouldAutoStart) await this.startTerminal();
+      if (this.terminals.length === 0 && shouldAutoStart
+        && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) await this.startTerminal();
     } catch (error) {
       if (!controller.signal.aborted && this.workspaceIsCurrent(scope, generation, runtime)) {
         this.loadedWorkspaceScope = undefined;
@@ -243,7 +274,10 @@ export class TerminalPanel extends LitElement {
         this.scheduleWorkspaceLoadRetry(scope, generation, runtime);
       }
     } finally {
-      if (this.loadAbort === controller) this.loadAbort = undefined;
+      if (this.loadAbort === controller) {
+        this.loadAbort = undefined;
+        this.loadTerminalChanges = undefined;
+      }
       if (!controller.signal.aborted && this.workspaceIsCurrent(scope, generation, runtime)) this.loading = false;
     }
   }
@@ -265,9 +299,12 @@ export class TerminalPanel extends LitElement {
     if (request === undefined) return false;
     const key = JSON.stringify([scope, request]);
     const shouldAutoStart = this.consumedAutoStartRequest !== key;
+    // Reject stale host contexts before consuming the request or creating a process.
+    // As with terminal selection, legacy void-returning hosts remain accepted.
+    const navigationResult: unknown = this.context?.navigation?.set("start", undefined, { replace: true });
+    if (navigationResult === false) return false;
     this.consumedAutoStartRequest = key;
     this.requestedAutoStartRequest = undefined;
-    this.context?.navigation?.set("start", undefined, { replace: true });
     return shouldAutoStart;
   }
 
@@ -301,6 +338,8 @@ export class TerminalPanel extends LitElement {
   private cancelWorkspaceRequests(): void {
     this.loadAbort?.abort();
     this.loadAbort = undefined;
+    this.loadTerminalChanges = undefined;
+    this.pendingStartNavigationGeneration = undefined;
     this.loading = false;
     this.clearWorkspaceLoadRetryTimer();
     for (const controller of this.operationAborts) controller.abort();
@@ -325,12 +364,17 @@ export class TerminalPanel extends LitElement {
     if (context === undefined || runtime === undefined || scope === undefined || !this.workspaceIsCurrent(scope, generation, runtime)) return undefined;
     const controller = new AbortController();
     this.operationAborts.add(controller);
-    return { context, runtime, scope, generation, controller };
+    return { context, runtime, scope, generation, terminalNavigationGeneration: this.terminalNavigationGeneration, controller };
   }
 
   private operationIsCurrent(operation: ScopedPanelOperation): boolean {
     return !operation.controller.signal.aborted
       && this.workspaceIsCurrent(operation.scope, operation.generation, operation.runtime);
+  }
+
+  private operationTerminalNavigationIsCurrent(operation: ScopedPanelOperation): boolean {
+    return this.operationIsCurrent(operation)
+      && operation.terminalNavigationGeneration === this.terminalNavigationGeneration;
   }
 
   private finishScopedOperation(operation: ScopedPanelOperation): void {
@@ -349,11 +393,12 @@ export class TerminalPanel extends LitElement {
     });
     if (terminal === undefined && this.requestedTerminalId !== undefined) terminal = selectFallbackTerminal(this.terminals);
     const selectedTerminalId = terminal?.id;
-    this.selectTerminalIdInView(selectedTerminalId);
-    this.requestedTerminalId = selectedTerminalId;
     if (selectedTerminalId !== this.routedTerminalId || selectedTerminalId !== latestTerminalId) {
-      this.publishTerminalSelection(context, runtime, selectedTerminalId, { replace: options?.replaceUrl === true });
+      if (!this.publishTerminalSelection(context, runtime, selectedTerminalId, { replace: options?.replaceUrl === true })) return;
+    } else {
+      this.requestedTerminalId = selectedTerminalId;
     }
+    this.selectTerminalIdInView(selectedTerminalId);
   }
 
   private selectTerminalIdInView(id: string | undefined): void {
@@ -363,19 +408,25 @@ export class TerminalPanel extends LitElement {
   }
 
   private async startTerminal(): Promise<void> {
+    // Starting a terminal is itself a navigation intent: only the latest start
+    // may select its eventual result, regardless of completion order.
+    this.terminalNavigationGeneration += 1;
     const operation = this.beginScopedOperation();
     if (operation === undefined) return;
+    this.pendingStartNavigationGeneration = operation.terminalNavigationGeneration;
     this.error = undefined;
     try {
       const size = this.measureTerminalSize() ?? DEFAULT_TERMINAL_SIZE;
       const terminal = await this.backendClient(operation.context).create(size, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
-      this.terminals = [...this.terminals, terminal];
+      this.loadTerminalChanges?.set(terminal.id, terminal);
+      this.terminals = [...this.terminals.filter((existing) => existing.id !== terminal.id), terminal];
       operation.runtime.updateTerminals(operation.context, this.terminals);
-      this.selectTerminal(terminal.id);
+      if (this.operationTerminalNavigationIsCurrent(operation)) this.selectTerminal(terminal.id);
     } catch (error) {
       if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
+      if (this.pendingStartNavigationGeneration === operation.terminalNavigationGeneration) this.pendingStartNavigationGeneration = undefined;
       this.finishScopedOperation(operation);
     }
   }
@@ -388,14 +439,16 @@ export class TerminalPanel extends LitElement {
       await this.backendClient(operation.context).close(id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       const next = this.terminals.filter((terminal) => terminal.id !== id);
+      this.loadTerminalChanges?.set(id, undefined);
+      const selectionChanged = this.operationTerminalNavigationIsCurrent(operation)
+        && (this.selectedId === id || this.requestedTerminalId === id);
+      const nextSelectedId = selectionChanged ? selectFallbackTerminal(next)?.id : undefined;
+      const selectionPublished = !selectionChanged
+        || this.publishTerminalSelection(operation.context, operation.runtime, nextSelectedId, { replace: true });
       this.terminals = next;
-      operation.runtime.forgetTerminal(operation.context, id);
+      operation.runtime.forgetTerminal(id);
       operation.runtime.updateTerminals(operation.context, next);
-      if (this.selectedId === id || this.requestedTerminalId === id) {
-        const nextSelectedId = selectFallbackTerminal(next)?.id;
-        this.selectTerminalIdInView(nextSelectedId);
-        this.publishTerminalSelection(operation.context, operation.runtime, nextSelectedId, { replace: true });
-      }
+      if (selectionChanged && selectionPublished) this.selectTerminalIdInView(nextSelectedId);
     } catch (error) {
       if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
@@ -407,8 +460,8 @@ export class TerminalPanel extends LitElement {
     const context = this.context;
     const runtime = this.runtime;
     if (context === undefined || runtime === undefined) return;
+    if (!this.publishTerminalSelection(context, runtime, id)) return;
     if (this.selectedId !== id) this.selectTerminalIdInView(id);
-    this.publishTerminalSelection(context, runtime, id);
   }
 
   private publishTerminalSelection(
@@ -416,11 +469,13 @@ export class TerminalPanel extends LitElement {
     runtime: TerminalBrowserRuntime,
     terminalId: string | undefined,
     options?: { replace?: boolean | undefined },
-  ): void {
+  ): boolean {
+    if (!runtime.selectTerminal(context, terminalId, options)) return false;
+    if (terminalId !== this.routedTerminalId || terminalId !== this.requestedTerminalId) this.terminalNavigationGeneration += 1;
     this.pendingTerminalNavigation = { context, terminalId };
     this.routedTerminalId = terminalId;
     this.requestedTerminalId = terminalId;
-    runtime.selectTerminal(context, terminalId, options);
+    return true;
   }
 
   private selectedTerminalInfo(): TerminalInfo | undefined {

@@ -152,6 +152,23 @@
               </p>
             </section>
 
+            <section id="startup-defaults">
+              <h2>Startup model and thinking defaults</h2>
+              <p>
+                Open the model or thinking-level selector and click a row’s star under <strong>New session default</strong>
+                to save it for new sessions. A filled star marks the saved default. Clicking the option itself
+                changes only the current session; setting the default leaves the current session unchanged.
+              </p>
+              <p>
+                Defaults are saved in Pi’s global <code>settings.json</code> on the selected session’s machine
+                (<code>~/.pi/agent/settings.json</code> by default), using <code>defaultProvider</code>,
+                <code>defaultModel</code>, and <code>defaultThinkingLevel</code>. They apply to new sessions without
+                restarting. Project <code>.pi/settings.json</code> overrides, explicit startup choices, and per-model
+                thinking settings still take precedence. A default model must be enabled; otherwise startup falls
+                back to the first enabled model. Resumed sessions keep their saved model and thinking level.
+              </p>
+            </section>
+
             <section id="deployment-paths">
               <h2>Reverse-proxy deployment paths</h2>
               <p>

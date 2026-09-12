@@ -12,6 +12,8 @@ import type {
   SessionNotificationDismissRequest,
   SessionNotificationInboxSnapshot,
   SessionModelScopeMode,
+  SessionDefaults,
+  SessionDefaultsUpdate,
   SessionUnreadAcknowledgeRequest,
   SessionUnreadCatalogSnapshot,
 } from "../../shared/apiTypes.js";
@@ -68,6 +70,8 @@ export interface SessionRouteService {
   answerDialog(ref: SessionRouteRef, dialogId: string, value: ExtensionDialogAnswer): Promise<ExtensionDialogCloseResponse>;
   cancelDialog(ref: SessionRouteRef, dialogId: string): Promise<ExtensionDialogCloseResponse>;
   dismissWarning(ref: SessionRouteRef, dismissId: string): Promise<ClientSessionStatus>;
+  getSessionDefaults(ref: SessionRouteRef): Promise<SessionDefaults>;
+  setSessionDefaults(ref: SessionRouteRef, defaults: SessionDefaultsUpdate): Promise<SessionDefaults>;
   availableModels(ref: SessionRouteRef): Promise<ClientSessionModel[]>;
   /** The session machine's full available-model catalog with per-model enabled state, enabled models first. */
   modelCatalog(ref: SessionRouteRef): Promise<ClientSessionModelCatalogEntry[]>;

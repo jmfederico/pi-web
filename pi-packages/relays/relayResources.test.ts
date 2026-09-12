@@ -83,6 +83,15 @@ describe("Relay Pi package resources", () => {
     expect(runner).toContain("required review, approval, or delivery remains");
   });
 
+  it("inherits the runner model unless model selection was instructed", async () => {
+    const runner = await readFile(join(__dirname, "..", "..", "skills", "relay-runner", "SKILL.md"), "utf8");
+
+    expect(runner).toContain("Keep every Relay handoff on the current runner's model by omitting the `model` argument");
+    expect(runner).toContain("unless instructed to use a specific model or to choose an appropriate one");
+    expect(runner).toContain("Record any Relay-wide model instruction in `operations.md`");
+    expect(runner).not.toContain("Do not assume a particular model is available");
+  });
+
   it("keeps the Relay route adaptive instead of pre-planned", async () => {
     const content = await readFile(join(__dirname, "..", "..", "skills", "relay-runner", "SKILL.md"), "utf8");
 

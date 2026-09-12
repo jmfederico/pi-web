@@ -35,7 +35,6 @@ import type {
 export type {
   WorkspaceProviderAuthorityResolution,
   WorkspaceProviderDiagnostic,
-  WorkspaceProviderDiagnosticCode,
 } from "../../shared/apiTypes.js";
 
 const DEFAULT_PROVIDER_TIMEOUT_MS = PLUGIN_BACKEND_REQUEST_TIMEOUT_MS;

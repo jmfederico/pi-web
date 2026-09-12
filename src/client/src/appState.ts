@@ -64,8 +64,8 @@ export interface AppState {
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
   treeDialog: SessionTreeSnapshot | undefined;
-  modelDialog: { instanceId: number; origin: ModelDialogOrigin; title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; selectedValue?: string } | undefined;
-  thinkingDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
+  modelDialog: { instanceId: number; origin: ModelDialogOrigin; title: string; options: CommandOption[]; catalog: SessionModelCatalogEntry[]; selectedValue?: string; defaultValue?: string; defaultsLoading?: boolean } | undefined;
+  thinkingDialog: { title: string; options: CommandOption[]; selectedValue?: string; origin?: ModelDialogOrigin; defaultValue?: string; defaultsLoading?: boolean } | undefined;
   themeDialog: { title: string; options: CommandOption[]; selectedValue?: string } | undefined;
   authDialog: AuthDialogState | undefined;
   actionPaletteOpen: boolean;

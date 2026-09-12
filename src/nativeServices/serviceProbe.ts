@@ -24,10 +24,10 @@ export interface ProbeCommandRunner {
 }
 
 export interface LaunchdProbeFileSystem {
-  createTemporaryDirectory(prefix: string): Promise<string>;
-  writeFile(path: string, contents: string, mode: number): Promise<void>;
-  readOptionalFile(path: string): Promise<string | null>;
-  removeDirectory(path: string): Promise<void>;
+  createTemporaryDirectory: (prefix: string) => Promise<string>;
+  writeFile: (path: string, contents: string, mode: number) => Promise<void>;
+  readOptionalFile: (path: string) => Promise<string | null>;
+  removeDirectory: (path: string) => Promise<void>;
 }
 
 interface CommonProbeDependencies {
