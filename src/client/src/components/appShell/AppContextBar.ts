@@ -191,6 +191,7 @@ export class AppContextBar extends LitElement {
     .context-chip.empty { border-style: dashed; color: var(--pi-muted); }
     .context-kind { display: none; }
     .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
+    @media (max-width: 760px) { .context-chip { max-width: min(60vw, 240px); min-height: 32px; } .context-value { overflow: hidden; text-overflow: ellipsis; } }
     button { cursor: pointer; }
   `;
 }

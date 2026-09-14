@@ -461,7 +461,7 @@ export class ModelPicker extends LitElement {
 
   static override styles = [css`
     :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100vh - 40px)); }
+    modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100% - 40px)); }
     header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     .scope-toggle { display: flex; gap: 4px; margin: 10px 12px 0; padding: 3px; border: 1px solid var(--pi-border); border-radius: 8px; }
     .scope-toggle button { flex: 1; padding: 6px 10px; border-radius: 6px; color: var(--pi-muted); }
