@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
@@ -911,6 +912,52 @@ describe("session routes", () => {
     }
   });
 
+  it("serves referenced oversized images from the media endpoint by content hash", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    const bigData = "A".repeat(80 * 1024);
+    const mediaId = createHash("sha256").update(bigData).digest("hex");
+    const message = { role: "toolResult", content: [{ type: "image", mimeType: "image/png", data: bigData }] };
+    routeService.messagesResponse = { messages: [message], start: 0, total: 1 };
+    routeService.mediaResponse = { mimeType: "image/png", data: Buffer.from("png-bytes", "utf8") };
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      // Without the opt-in parameter oversized images stay fully inline.
+      const unthrottled = await routeApp.inject({ method: "GET", url: `/sessions/session-1/messages?cwd=${encodeURIComponent("/repo")}` });
+      expect(unthrottled.json()).toEqual({ messages: [message], start: 0, total: 1 });
+
+      // With the opt-in parameter oversized images become media references.
+      const page = await routeApp.inject({ method: "GET", url: `/sessions/session-1/messages?cwd=${encodeURIComponent("/repo")}&maxInlineMedia=65536` });
+      const src = `api/machines/local/sessions/session-1/media/${mediaId}?cwd=${encodeURIComponent("/repo")}`;
+      expect(page.json()).toEqual({
+        messages: [
+          { role: "toolResult", content: [{ type: "image", mimeType: "image/png", src, byteSize: 60 * 1024 }] },
+        ],
+        start: 0,
+        total: 1,
+      });
+
+      const served = await routeApp.inject({ method: "GET", url: `/sessions/session-1/media/${mediaId}?cwd=${encodeURIComponent("/repo")}` });
+      expect(served.statusCode).toBe(200);
+      expect(served.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+      expect(served.json()).toEqual({ mimeType: "image/png", data: Buffer.from("png-bytes", "utf8").toString("base64") });
+
+      // fake 不做哈希校验，显式置空模拟“哈希未命中”
+      routeService.mediaResponse = undefined;
+      const missAfterClear = await routeApp.inject({ method: "GET", url: `/sessions/session-1/media/${"0".repeat(64)}?cwd=${encodeURIComponent("/repo")}` });
+      expect(missAfterClear.statusCode).toBe(404);
+
+      const malformed = await routeApp.inject({ method: "GET", url: "/sessions/session-1/media/not-a-hash?cwd=%2Frepo" });
+      expect(malformed.statusCode).toBe(400);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("forwards prompt attachments and supports the save-attachments route", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1258,6 +1305,8 @@ class CapturingRouteSessionService implements SessionRouteService {
   dismissWarningError: Error | undefined;
   unreadError: Error | undefined;
   messagesResponse: MessagePage = { messages: [], start: 0, total: 0 };
+  mediaResponse: { mimeType: string; data: Buffer } | undefined;
+  mediaCalls: { ref: SessionRouteRef; mediaId: string }[] = [];
   streamSnapshotResponse: SessionStreamSnapshot = { seq: 0, partial: null };
   readonly streamSnapshotCalls: SessionRouteRef[] = [];
   readonly cleanupPreviewCalls: NormalizedSessionCleanupRequest[] = [];
@@ -1402,6 +1451,11 @@ class CapturingRouteSessionService implements SessionRouteService {
 
   messages(): Promise<MessagePage> {
     return Promise.resolve(this.messagesResponse);
+  }
+
+  media(ref: SessionRouteRef, mediaId: string): Promise<{ mimeType: string; data: Buffer } | undefined> {
+    this.mediaCalls.push({ ref, mediaId });
+    return Promise.resolve(this.mediaResponse);
   }
 
   status(lookup: SessionRouteRef) {
