@@ -151,7 +151,7 @@ describe("registerSafeTunnelRoutes", () => {
       url: "/api/safe-tunnel/enable",
       headers,
       payload: {
-        advanced: { controlApiUrl: "https://control.attacker.example" },
+        controlApiUrl: "https://control.attacker.example",
       },
     });
     const disable = await app.inject({
@@ -278,7 +278,7 @@ describe("registerSafeTunnelRoutes", () => {
     expect(service.status).toHaveBeenCalledOnce();
   });
 
-  it("accepts HTTPS Origin port variation and sibling hostnames in the registered provider zone", async () => {
+  it("accepts HTTPS Origin port variation but rejects unregistered sibling hostnames", async () => {
     service.registeredPublicOriginValue = "https://registered.tunnels.pi-web.dev:9443";
 
     const portVariation = await app.inject({
@@ -308,10 +308,10 @@ describe("registerSafeTunnelRoutes", () => {
     });
 
     expect(portVariation.statusCode).toBe(200);
-    expect(siblingMutation.statusCode).toBe(200);
-    expect(siblingRead.statusCode).toBe(200);
-    expect(service.disable).toHaveBeenCalledTimes(2);
-    expect(service.status).toHaveBeenCalledOnce();
+    expect(siblingMutation.statusCode).toBe(403);
+    expect(siblingRead.statusCode).toBe(403);
+    expect(service.disable).toHaveBeenCalledOnce();
+    expect(service.status).not.toHaveBeenCalled();
   });
 
   it("rejects provider-shaped hostnames when no registration is persisted", async () => {
@@ -608,40 +608,36 @@ describe("registerSafeTunnelRoutes", () => {
     );
   });
 
-  it("accepts only explicit advanced development and self-hosting overrides", async () => {
+  it("accepts only the selected development service URL", async () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/safe-tunnel/enable",
       headers: acceptedMutationHeaders,
-      payload: {
-        advanced: {
-          controlApiUrl: " http://127.0.0.1:8787 ",
-          machineName: " Dev Box ",
-          machineSlug: " dev-box ",
-          localPiWebUrl: " http://127.0.0.1:8504 ",
-          frpcPath: " /opt/frpc ",
-        },
-      },
+      payload: { controlApiUrl: " http://127.0.0.1:8787 " },
     });
-
     expect(response.statusCode).toBe(202);
-    expect(service.enable).toHaveBeenCalledWith({
-      advanced: {
-        controlApiUrl: "http://127.0.0.1:8787",
-        machineName: "Dev Box",
-        machineSlug: "dev-box",
-        localPiWebUrl: "http://127.0.0.1:8504",
-        frpcPath: "/opt/frpc",
-      },
-    });
+    expect(service.enable).toHaveBeenCalledWith({ controlApiUrl: "http://127.0.0.1:8787" });
   });
+
+  it.each(["machineName", "machineSlug", "localPiWebUrl", "frpcPath", "advanced"])(
+    "rejects removed user field %s", async (field) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/safe-tunnel/enable",
+        headers: acceptedMutationHeaders,
+        payload: { [field]: "override" },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(service.enable).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects legacy fields, malformed bodies, and malformed overrides", async () => {
     const legacy = await app.inject({
       method: "POST",
       url: "/api/safe-tunnel/enable",
       headers: acceptedMutationHeaders,
-      payload: { controlApiUrl: "https://control.example.test" },
+      payload: { advanced: { controlApiUrl: "https://control.example.test" } },
     });
     const malformedBody = await app.inject({
       method: "POST",
@@ -653,13 +649,13 @@ describe("registerSafeTunnelRoutes", () => {
       method: "POST",
       url: "/api/safe-tunnel/enable",
       headers: acceptedMutationHeaders,
-      payload: { advanced: { machineSlug: "" } },
+      payload: { controlApiUrl: "" },
     });
     const oversizedOverride = await app.inject({
       method: "POST",
       url: "/api/safe-tunnel/enable",
       headers: acceptedMutationHeaders,
-      payload: { advanced: { machineName: "x".repeat(81) } },
+      payload: { controlApiUrl: "x".repeat(2049) },
     });
 
     expect(legacy.statusCode).toBe(400);
@@ -672,11 +668,11 @@ describe("registerSafeTunnelRoutes", () => {
     });
     expect(malformedOverride.statusCode).toBe(400);
     expect(malformedOverride.json()).toEqual({
-      error: "Safe Tunnel advanced machineSlug must be a non-empty string",
+      error: "Safe Tunnel controlApiUrl must be a non-empty string",
     });
     expect(oversizedOverride.statusCode).toBe(400);
     expect(oversizedOverride.json()).toEqual({
-      error: "Safe Tunnel advanced machineName is too long",
+      error: "Safe Tunnel controlApiUrl is too long",
     });
     expect(service.enable).not.toHaveBeenCalled();
   });

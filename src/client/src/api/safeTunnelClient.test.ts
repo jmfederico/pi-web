@@ -27,7 +27,7 @@ describe("Safe Tunnel browser API", () => {
 
     await expect(safeTunnelApi.status()).resolves.toEqual(status);
     await expect(safeTunnelApi.enable({
-      advanced: { controlApiUrl: "http://127.0.0.1:8787", frpcPath: "/opt/frpc" },
+      controlApiUrl: "http://127.0.0.1:8787",
     })).resolves.toEqual(enabled);
     await expect(safeTunnelApi.disable()).resolves.toEqual({ status });
     await expect(safeTunnelApi.operation("op / 1")).resolves.toEqual(operation);
@@ -48,7 +48,7 @@ describe("Safe Tunnel browser API", () => {
       ),
     ).toBe(SAFE_TUNNEL_MUTATION_HEADER_VALUE);
     expect(JSON.parse(requestBody(fetchMock.mock.calls[1]?.[1]))).toEqual({
-      advanced: { controlApiUrl: "http://127.0.0.1:8787", frpcPath: "/opt/frpc" },
+      controlApiUrl: "http://127.0.0.1:8787",
     });
     expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
     expect(requestHeaders(fetchMock.mock.calls[2]?.[1]).get("content-type"))
@@ -68,7 +68,6 @@ function statusResponse() {
     config: {
       exists: false,
       state: "missing",
-      frpcPathConfigured: false,
     },
     desiredState: "disabled",
     runtime: { state: "stopped" },

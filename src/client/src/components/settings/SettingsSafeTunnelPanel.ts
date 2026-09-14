@@ -8,7 +8,6 @@ import type {
 } from "../../../../shared/apiTypes";
 import type { SafeTunnelAccountAccessNotice } from "../../../../shared/safeTunnelTypes";
 import {
-  hasExplicitSafeTunnelHttpPort,
   isSafeTunnelControlApiTransportAllowed,
 } from "../../../../shared/safeTunnelUrlPolicy";
 import { safeTunnelApi, type SafeTunnelApi } from "../../api/safeTunnelClient";
@@ -21,10 +20,6 @@ const maximumUrlCharacters = 2_048;
 
 export interface SafeTunnelAdvancedFields {
   controlApiUrl: string;
-  machineName: string;
-  machineSlug: string;
-  localPiWebUrl: string;
-  frpcPath: string;
 }
 
 export interface SafeTunnelPresentation {
@@ -44,10 +39,6 @@ export class SettingsSafeTunnelPanel extends LitElement {
   @state() private error = "";
   @state() private message = "";
   @state() private controlApiUrl = "";
-  @state() private machineName = "";
-  @state() private machineSlug = "";
-  @state() private localPiWebUrl = "";
-  @state() private frpcPath = "";
   private advancedFieldsInitialized = false;
   private advancedFieldsEdited = false;
   private connectionGeneration = 0;
@@ -75,8 +66,8 @@ export class SettingsSafeTunnelPanel extends LitElement {
         <header>
           <div>
             <span class="eyebrow">Safe Tunnel</span>
-            <h2>Connect this PI WEB through Safe Tunnel</h2>
-            <p>Experimental, gateway-local tunnel management. No connector setup or binary path is required for the managed flow.</p>
+            <h2>Expose this instance through PI WEB Tunnels</h2>
+            <p>Enable the tunnel, approve access, and get a public URL. PI WEB handles setup automatically.</p>
           </div>
           <button type="button" @click=${() => { void this.loadStatus(); }} ?disabled=${this.loading || this.mutating}>Refresh</button>
         </header>
@@ -86,13 +77,13 @@ export class SettingsSafeTunnelPanel extends LitElement {
         ${this.loading && this.status === undefined ? html`<div class="notice">Loading Safe Tunnel status…</div>` : null}
         <div class="notice warning" role="note">
           <strong>Protect the public ingress.</strong>
-          A tunnel makes this PI WEB reachable outside its local network. Use it only when the selected ingress enforces appropriate authentication and access control.
+          A tunnel makes this PI WEB reachable outside its local network. The tunnel service must enforce authentication and access control for your instance.
         </div>
 
         ${this.renderPrimaryCard()}
         ${this.renderOperation()}
         ${this.renderDiagnostics()}
-        ${this.renderAdvancedOverrides()}
+        ${this.renderDevelopmentSettings()}
       </section>
     `;
   }
@@ -134,7 +125,7 @@ export class SettingsSafeTunnelPanel extends LitElement {
         </div>
 
         ${publicUrl === undefined ? html`
-          <p class="help">PI WEB will infer this gateway's local target and machine identity. Service and managed-runtime defaults are applied on the server; ingress authentication remains a deployment requirement.</p>
+          <p class="help">PI WEB will connect this instance to PI WEB Tunnels. If approval is needed, you will receive a link to authorize it.</p>
         ` : html`
           <div class="public-url">
             <span>Public URL</span>
@@ -221,35 +212,18 @@ export class SettingsSafeTunnelPanel extends LitElement {
     `;
   }
 
-  private renderAdvancedOverrides(): TemplateResult {
+  private renderDevelopmentSettings(): TemplateResult {
     const validationMessage = safeTunnelAdvancedValidationMessage(this.advancedFields());
     const status = this.status;
     return html`
       <details class="card advanced-card">
-        <summary>Advanced development and self-hosting overrides</summary>
-        <p class="help">Saved non-default Control API and local-target values are prefilled when available. The values shown, plus any edits, are sent when you next choose Enable Safe Tunnel.</p>
+        <summary>Advanced development settings</summary>
+        <p class="help">Use a development tunnel service for testing. The saved service URL is prefilled; clear it to use production the next time you enable Safe Tunnel.</p>
         <div class="advanced-grid">
           <label>
-            Control API URL
+            Tunnel service API URL
             <input .value=${this.controlApiUrl} placeholder=${productionControlApiUrl} @input=${(event: Event) => { this.advancedFieldsEdited = true; this.controlApiUrl = inputValue(event); }}>
-            <small>Blank uses production, or the saved endpoint when replacing an existing self-hosted registration.</small>
-          </label>
-          <label>
-            Machine name
-            <input .value=${this.machineName} placeholder="Inferred from the OS hostname" @input=${(event: Event) => { this.advancedFieldsEdited = true; this.machineName = inputValue(event); }}>
-          </label>
-          <label>
-            Machine slug
-            <input .value=${this.machineSlug} spellcheck="false" placeholder="Inferred with a collision-resistant suffix" @input=${(event: Event) => { this.advancedFieldsEdited = true; this.machineSlug = inputValue(event); }}>
-          </label>
-          <label>
-            Local PI WEB URL
-            <input .value=${this.localPiWebUrl} placeholder="Inferred from the running listener" @input=${(event: Event) => { this.advancedFieldsEdited = true; this.localPiWebUrl = inputValue(event); }}>
-          </label>
-          <label>
-            frpc path
-            <input .value=${this.frpcPath} placeholder="Managed and verified by PI WEB" @input=${(event: Event) => { this.advancedFieldsEdited = true; this.frpcPath = inputValue(event); }}>
-            <small>An explicit path bypasses managed verification. Blank keeps a saved override, or uses managed frpc when none exists.</small>
+            <small>Blank uses the production tunnel service.</small>
           </label>
         </div>
         ${validationMessage === undefined ? null : html`<p class="bad">${validationMessage}</p>`}
@@ -261,9 +235,8 @@ export class SettingsSafeTunnelPanel extends LitElement {
               ${detailRow("Machine ID", status.config.machine?.machineId)}
               ${detailRow("Machine slug", status.config.machine?.machineSlug)}
               ${detailRow("Public URL", status.config.machine?.publicUrl)}
-              ${detailRow("Control API", status.config.machine?.controlApiBaseUrl)}
+              ${detailRow("Tunnel service API", status.config.controlApiUrl)}
               ${detailRow("Local target", status.config.localPiWebUrl)}
-              ${detailRow("Runtime selection", status.config.frpcPathConfigured === true ? "Saved advanced frpc override" : "PI WEB-managed frpc")}
               ${detailRow("Runtime", safeTunnelRuntimeSummary(status.runtime))}
             </dl>
           </details>
@@ -275,10 +248,6 @@ export class SettingsSafeTunnelPanel extends LitElement {
   private advancedFields(): SafeTunnelAdvancedFields {
     return {
       controlApiUrl: this.controlApiUrl,
-      machineName: this.machineName,
-      machineSlug: this.machineSlug,
-      localPiWebUrl: this.localPiWebUrl,
-      frpcPath: this.frpcPath,
     };
   }
 
@@ -289,10 +258,6 @@ export class SettingsSafeTunnelPanel extends LitElement {
 
     const fields = safeTunnelAdvancedPrefill(status);
     this.controlApiUrl = fields.controlApiUrl;
-    this.machineName = fields.machineName;
-    this.machineSlug = fields.machineSlug;
-    this.localPiWebUrl = fields.localPiWebUrl;
-    this.frpcPath = fields.frpcPath;
   }
 
   private async loadStatus(): Promise<void> {
@@ -534,11 +499,9 @@ export function safeTunnelAdvancedPrefill(
   status: SafeTunnelStatusResponse,
 ): SafeTunnelAdvancedFields {
   return {
-    controlApiUrl: status.config.advancedPrefill?.controlApiUrl ?? "",
-    machineName: "",
-    machineSlug: "",
-    localPiWebUrl: status.config.advancedPrefill?.localPiWebUrl ?? "",
-    frpcPath: "",
+    controlApiUrl: status.config.controlApiUrl?.replace(/\/$/u, "") === productionControlApiUrl
+      ? ""
+      : status.config.controlApiUrl ?? "",
   };
 }
 
@@ -551,26 +514,6 @@ export function safeTunnelAdvancedValidationMessage(
     if (error !== undefined) return error;
   }
 
-  const machineName = normalizedOptionalString(fields.machineName);
-  if (machineName !== undefined && machineName.length > 80) {
-    return "Advanced machine name must be at most 80 characters.";
-  }
-
-  const machineSlug = normalizedOptionalString(fields.machineSlug);
-  if (machineSlug !== undefined && !isValidMachineSlug(machineSlug)) {
-    return "Advanced machine slug must be a lowercase DNS label (letters, numbers, hyphens; no leading or trailing hyphen).";
-  }
-
-  const localPiWebUrl = normalizedOptionalString(fields.localPiWebUrl);
-  if (localPiWebUrl !== undefined) {
-    const error = localPiWebUrlValidationMessage(localPiWebUrl);
-    if (error !== undefined) return error;
-  }
-
-  const frpcPath = normalizedOptionalString(fields.frpcPath);
-  if (frpcPath !== undefined && !looksLikeAbsolutePath(frpcPath)) {
-    return "Advanced frpc path must be absolute.";
-  }
   return undefined;
 }
 
@@ -578,18 +521,7 @@ export function createSafeTunnelEnableRequest(
   fields: SafeTunnelAdvancedFields,
 ): SafeTunnelEnableRequest {
   const controlApiUrl = normalizedOptionalString(fields.controlApiUrl);
-  const machineName = normalizedOptionalString(fields.machineName);
-  const machineSlug = normalizedOptionalString(fields.machineSlug);
-  const localPiWebUrl = normalizedOptionalString(fields.localPiWebUrl);
-  const frpcPath = normalizedOptionalString(fields.frpcPath);
-  const advanced = {
-    ...(controlApiUrl === undefined ? {} : { controlApiUrl }),
-    ...(machineName === undefined ? {} : { machineName }),
-    ...(machineSlug === undefined ? {} : { machineSlug }),
-    ...(localPiWebUrl === undefined ? {} : { localPiWebUrl }),
-    ...(frpcPath === undefined ? {} : { frpcPath }),
-  };
-  return Object.keys(advanced).length === 0 ? {} : { advanced };
+  return controlApiUrl === undefined ? {} : { controlApiUrl };
 }
 
 export function safeTunnelPresentation(
@@ -819,54 +751,24 @@ function controlApiUrlValidationMessage(value: string): string | undefined {
   try {
     url = new URL(value);
   } catch {
-    return "Advanced Control API URL must be a valid URL.";
+    return "Tunnel service API URL must be a valid URL.";
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return "Advanced Control API URL must use http:// or https://.";
+    return "Tunnel service API URL must use http:// or https://.";
   }
   if (value.length > maximumUrlCharacters) {
-    return "Advanced Control API URL must be at most 2048 characters.";
+    return "Tunnel service API URL must be at most 2048 characters.";
   }
   if (!isSafeTunnelControlApiTransportAllowed(url)) {
-    return "Advanced Control API URL must use HTTPS unless it is a literal loopback development endpoint.";
+    return "Tunnel service API URL must use HTTPS unless it is a literal loopback development endpoint.";
   }
   if (url.username !== "" || url.password !== "") {
-    return "Advanced Control API URL must not include credentials.";
+    return "Tunnel service API URL must not include credentials.";
   }
   if (url.search !== "" || url.hash !== "") {
-    return "Advanced Control API URL must not include a query or fragment.";
+    return "Tunnel service API URL must not include a query or fragment.";
   }
   return undefined;
-}
-
-function localPiWebUrlValidationMessage(value: string): string | undefined {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return "Advanced local PI WEB URL must be a valid URL.";
-  }
-  if (url.protocol !== "http:") return "Advanced local PI WEB URL must use http://.";
-  if (url.username !== "" || url.password !== "") {
-    return "Advanced local PI WEB URL must not include credentials.";
-  }
-  if (url.port === "" && !hasExplicitSafeTunnelHttpPort(value)) {
-    return "Advanced local PI WEB URL must include an explicit port.";
-  }
-  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") {
-    return "Advanced local PI WEB URL must not include a path, query, or fragment.";
-  }
-  return undefined;
-}
-
-function looksLikeAbsolutePath(value: string): boolean {
-  return value.startsWith("/")
-    || value.startsWith("\\")
-    || /^[A-Za-z]:[\\/]/u.test(value);
-}
-
-function isValidMachineSlug(value: string): boolean {
-  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(value);
 }
 
 function errorMessage(error: unknown): string {

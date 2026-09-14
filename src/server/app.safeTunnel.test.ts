@@ -156,7 +156,7 @@ describe("Safe Tunnel app composition", () => {
     }
   });
 
-  it("trusts the persisted registration's provider hostnames without allowedHosts entries", async () => {
+  it("trusts only the exact persisted hostname without allowedHosts entries", async () => {
     const fixture = fakeBridge();
     fixture.registeredPublicOrigin.mockResolvedValue(
       "https://my-dev-box.internalslice.tunnels.localhost",
@@ -200,6 +200,29 @@ describe("Safe Tunnel app composition", () => {
         payload: {},
       });
 
+      for (const host of [
+        "sibling.internalslice.tunnels.localhost:8788",
+        "internalslice.tunnels.localhost:8788",
+      ]) {
+        const rejectedRead = await app.inject({
+          method: "GET",
+          url: "/api/safe-tunnel/status",
+          headers: { host },
+        });
+        const rejectedMutation = await app.inject({
+          method: "POST",
+          url: "/api/safe-tunnel/disable",
+          headers: {
+            [SAFE_TUNNEL_MUTATION_HEADER_NAME]: SAFE_TUNNEL_MUTATION_HEADER_VALUE,
+            "sec-fetch-site": "same-origin",
+            host,
+            origin: `http://${host}`,
+          },
+          payload: {},
+        });
+        expect(rejectedRead.statusCode).toBe(403);
+        expect(rejectedMutation.statusCode).toBe(403);
+      }
       expect(mutation.statusCode).toBe(200);
       expect(read.statusCode).toBe(200);
       expect(nonProvider.statusCode).toBe(403);

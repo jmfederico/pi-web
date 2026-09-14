@@ -43,7 +43,7 @@ describe("Safe Tunnel inferred enable defaults", () => {
 
   it("fails clearly before listening or for a socket listener", () => {
     expect(() => safeTunnelLocalPiWebUrlFromServerAddress(null)).toThrow("must be listening");
-    expect(() => safeTunnelLocalPiWebUrlFromServerAddress("/tmp/pi-web.sock")).toThrow("advanced Local PI WEB URL override");
+    expect(() => safeTunnelLocalPiWebUrlFromServerAddress("/tmp/pi-web.sock")).toThrow("requires a TCP listener");
   });
 
   it("prefers the declared browser entrypoint over API-listener inference", () => {
@@ -59,37 +59,6 @@ describe("Safe Tunnel inferred enable defaults", () => {
     })();
 
     expect(defaults.localPiWebUrl).toBe("http://127.0.0.1:8505");
-    expect(serverAddressCalls).toBe(0);
-  });
-
-  it("keeps the advanced local target ahead of the declared browser entrypoint", () => {
-    const defaults = createNodeSafeTunnelEnableDefaultsProvider({
-      serverAddress: () => ({ address: "0.0.0.0", family: "IPv4", port: 8504 }),
-      localBrowserEntrypointUrl: "http://127.0.0.1:8505",
-      hostname: () => "Dev Box",
-      uniqueId: () => "a1b2c3d4-e5f6",
-    })({ localPiWebUrl: "http://[::1]:80" });
-
-    expect(defaults.localPiWebUrl).toBe("http://[::1]:80");
-  });
-
-  it("uses an advanced local target without consulting unavailable listener inference", () => {
-    let serverAddressCalls = 0;
-    const defaults = createNodeSafeTunnelEnableDefaultsProvider({
-      serverAddress: () => {
-        serverAddressCalls += 1;
-        return { address: "fe80::1%lo0", family: "IPv6", port: 8504 };
-      },
-      hostname: () => "Scoped IPv6 machine",
-      uniqueId: () => "12345678-abcd",
-    })({ localPiWebUrl: "http://[::1]:80" });
-
-    expect(defaults).toEqual({
-      controlApiBaseUrl: defaultSafeTunnelControlApiBaseUrl,
-      localPiWebUrl: "http://[::1]:80",
-      machineName: "Scoped IPv6 machine",
-      machineSlug: "scoped-ipv6-machine-12345678",
-    });
     expect(serverAddressCalls).toBe(0);
   });
 

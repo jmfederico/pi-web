@@ -372,12 +372,8 @@ export interface SafeTunnelConfigStatus {
   exists: boolean;
   state: SafeTunnelConfigState;
   localPiWebUrl?: string;
-  frpcPathConfigured?: boolean;
-  /** Saved values that differ from the server's current normal enable defaults. */
-  advancedPrefill?: {
-    controlApiUrl?: string;
-    localPiWebUrl?: string;
-  };
+  /** Saved selected service, including before registration. Omission means production. */
+  controlApiUrl?: string;
   machine?: {
     controlApiBaseUrl: string;
     machineId: string;
@@ -419,21 +415,9 @@ export interface SafeTunnelStatusResponse {
   activeOperation?: SafeTunnelOperationResponse;
 }
 
-export interface SafeTunnelAdvancedOverrides {
-  /** Self-hosted/development Control API override; production is the server-owned default. */
-  controlApiUrl?: string;
-  /** Development override for the inferred OS hostname. */
-  machineName?: string;
-  /** Development override for the inferred collision-resistant DNS slug. */
-  machineSlug?: string;
-  /** Development override for the running PI WEB listener target. */
-  localPiWebUrl?: string;
-  /** Advanced executable override; omission preserves a saved override or uses managed frpc. */
-  frpcPath?: string;
-}
-
 export interface SafeTunnelEnableRequest {
-  advanced?: SafeTunnelAdvancedOverrides;
+  /** Development service selection; omission selects production, clearing a saved override. */
+  controlApiUrl?: string;
 }
 
 export interface SafeTunnelEnableResponse {

@@ -78,10 +78,7 @@ export function parseSafeTunnelDisableResponse(value: unknown): SafeTunnelDisabl
 function parseSafeTunnelConfigStatus(value: unknown): SafeTunnelConfigStatus {
   const record = requireRecord(value);
   const localPiWebUrl = optionalHttpUrl(record, "localPiWebUrl");
-  const frpcPathConfigured = optionalBoolean(record, "frpcPathConfigured");
-  const advancedPrefill = record["advancedPrefill"] === undefined
-    ? undefined
-    : parseSafeTunnelAdvancedPrefill(record["advancedPrefill"]);
+  const controlApiUrl = optionalSafeControlApiUrl(record, "controlApiUrl");
   const machine = record["machine"] === undefined
     ? undefined
     : parseSafeTunnelConfigMachine(record["machine"]);
@@ -90,22 +87,9 @@ function parseSafeTunnelConfigStatus(value: unknown): SafeTunnelConfigStatus {
     exists: requireBoolean(record, "exists"),
     state: requireSafeTunnelConfigState(record, "state"),
     ...(localPiWebUrl === undefined ? {} : { localPiWebUrl }),
-    ...(frpcPathConfigured === undefined ? {} : { frpcPathConfigured }),
-    ...(advancedPrefill === undefined ? {} : { advancedPrefill }),
+    ...(controlApiUrl === undefined ? {} : { controlApiUrl }),
     ...(machine === undefined ? {} : { machine }),
     ...(error === undefined ? {} : { error }),
-  };
-}
-
-function parseSafeTunnelAdvancedPrefill(
-  value: unknown,
-): NonNullable<SafeTunnelConfigStatus["advancedPrefill"]> {
-  const record = requireRecord(value);
-  const controlApiUrl = optionalSafeControlApiUrl(record, "controlApiUrl");
-  const localPiWebUrl = optionalHttpUrl(record, "localPiWebUrl");
-  return {
-    ...(controlApiUrl === undefined ? {} : { controlApiUrl }),
-    ...(localPiWebUrl === undefined ? {} : { localPiWebUrl }),
   };
 }
 
@@ -311,12 +295,5 @@ function requireSafeBrowserUrl(value: string, key: string): string {
 function requireBoolean(record: Record<string, unknown>, key: string): boolean {
   const value = record[key];
   if (typeof value !== "boolean") throw new Error(`Expected boolean field: ${key}`);
-  return value;
-}
-
-function optionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
-  const value = record[key];
-  if (value === undefined) return undefined;
-  if (typeof value !== "boolean") throw new Error(`Expected optional boolean field: ${key}`);
   return value;
 }

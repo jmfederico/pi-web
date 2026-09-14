@@ -16,7 +16,6 @@ export const defaultSafeTunnelLocalPiWebUrl = "http://127.0.0.1:8504";
 const maximumUrlCharacters = 2_048;
 const maximumMachineIdCharacters = 256;
 const maximumBearerCredentialCharacters = 4_096;
-const maximumPathCharacters = 4_096;
 const bearerCredentialPattern = /^[A-Za-z0-9._~+/-]+={0,}$/u;
 
 export type SafeTunnelMachineCredentialStatus = "active" | "rejected";
@@ -40,7 +39,7 @@ export interface SafeTunnelPersistedState {
   readonly stateVersion: typeof safeTunnelStateVersion;
   readonly desiredState: SafeTunnelDesiredState;
   readonly localPiWebUrl: string;
-  readonly frpcPath?: string;
+  readonly controlApiUrl?: string;
   readonly machine?: SafeTunnelMachineCredentials;
 }
 
@@ -144,17 +143,15 @@ export function parseSafeTunnelState(value: unknown): SafeTunnelPersistedState {
 
   const desiredState = requireDesiredState(record["desiredState"]);
   const localPiWebUrl = normalizeSafeTunnelLocalPiWebUrl(record["localPiWebUrl"]);
-  const frpcPath = optionalBoundedStateString(
-    record["frpcPath"],
-    "frpcPath",
-    maximumPathCharacters,
-  );
+  const controlApiUrl = record["controlApiUrl"] === undefined
+    ? undefined
+    : normalizeSafeTunnelControlApiBaseUrl(record["controlApiUrl"]);
   const machine = parseOptionalMachineCredentials(record["machine"]);
   return {
     stateVersion: safeTunnelStateVersion,
     desiredState,
     localPiWebUrl,
-    ...(frpcPath === undefined ? {} : { frpcPath }),
+    ...(controlApiUrl === undefined ? {} : { controlApiUrl }),
     ...(machine === undefined ? {} : { machine }),
   };
 }

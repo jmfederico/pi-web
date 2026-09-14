@@ -35,9 +35,12 @@ describe("Vite managed Safe Tunnel host integration", () => {
 
     await expect(httpStatus(port, managedHostname)).resolves.toBe(200);
     await expect(httpStatus(port, "attacker.example.test")).resolves.toBe(403);
+    await expect(httpStatus(port, "sibling.namespace.tunnels.example.test")).resolves.toBe(403);
     await expect(webSocketUpgradeStatus(port, managedHostname, "/", "vite-hmr"))
       .resolves.toBe(101);
     await expect(webSocketUpgradeStatus(port, "attacker.example.test", "/", "vite-hmr"))
+      .resolves.toBe(400);
+    await expect(webSocketUpgradeStatus(port, "sibling.namespace.tunnels.example.test", "/", "vite-hmr"))
       .resolves.toBe(400);
   });
 
@@ -97,6 +100,8 @@ describe("Vite managed Safe Tunnel host integration", () => {
     const port = vitePort(server);
 
     await expect(webSocketUpgradeStatus(port, "attacker.example.test", "/api/socket"))
+      .resolves.toBe(404);
+    await expect(webSocketUpgradeStatus(port, "sibling.namespace.tunnels.example.test", "/api/socket"))
       .resolves.toBe(404);
     expect(upstreamConnections).toBe(0);
 

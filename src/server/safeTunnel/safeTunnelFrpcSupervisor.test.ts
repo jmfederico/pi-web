@@ -37,7 +37,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
   it("writes one constrained config and launches one owned child", async () => {
     const fixture = createFixture();
 
-    const result = await fixture.supervisor.start({});
+    const result = await fixture.supervisor.start();
 
     expect(result).toEqual({ publicUrl });
     expect(fixture.files.writes).toEqual([fixture.configProvider.config.frpcConfigToml]);
@@ -47,20 +47,11 @@ describe("SafeTunnelFrpcSupervisor", () => {
     expect(await fixture.supervisor.status()).toEqual({ state: "running" });
   });
 
-  it("uses an explicit advanced executable without acquiring managed frpc", async () => {
-    const fixture = createFixture();
-
-    await fixture.supervisor.start({ advancedFrpcPath: "/opt/frpc" });
-
-    expect(fixture.managed.calls).toBe(0);
-    expect(fixture.launcher.requests).toEqual([{ configPath, frpcPath: "/opt/frpc" }]);
-  });
-
-  it("rejects a pre-spawn advanced executable failure before reporting running", async () => {
+  it("rejects a pre-spawn managed executable failure before reporting running", async () => {
     const fixture = createFixture();
     fixture.launcher.startError = new Error("missing executable");
 
-    await expect(fixture.supervisor.start({ advancedFrpcPath: "/missing/frpc" }))
+    await expect(fixture.supervisor.start())
       .rejects.toEqual(new SafeTunnelFrpcSupervisorError("process_launch_failed"));
 
     expect(await fixture.supervisor.status()).toEqual({
@@ -76,7 +67,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
 
   it("reports an ordinary unexpected child exit without starting a retry loop", async () => {
     const fixture = createFixture();
-    await fixture.supervisor.start({});
+    await fixture.supervisor.start();
 
     fixture.launcher.processes[0]?.exit({ exitCode: 1, kind: "exited", signal: null });
     fixture.clock.advance(60_000);
@@ -91,7 +82,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
 
   it("stops only its exact child and removes generated credentials", async () => {
     const fixture = createFixture();
-    await fixture.supervisor.start({});
+    await fixture.supervisor.start();
     const child = fixture.launcher.processes[0];
 
     await fixture.supervisor.stop();
@@ -104,7 +95,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
 
   it("escalates one unresponsive owned child from SIGTERM to SIGKILL", async () => {
     const fixture = createFixture();
-    await fixture.supervisor.start({});
+    await fixture.supervisor.start();
     const child = fixture.launcher.processes[0];
     if (child === undefined) throw new Error("Expected a launched child");
     child.exitOnSignal = "SIGKILL";
@@ -123,7 +114,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
     const fixture = createFixture();
     fixture.configProvider.error = new Error("raw provider response");
 
-    await expect(fixture.supervisor.start({})).rejects.toMatchObject({
+    await expect(fixture.supervisor.start()).rejects.toMatchObject({
       code: "tunnel_config_failed",
     });
     fixture.clock.advance(60_000);
@@ -144,7 +135,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
     });
     fixture.configProvider.error = paymentRequired;
 
-    await expect(fixture.supervisor.start({})).rejects.toBe(paymentRequired);
+    await expect(fixture.supervisor.start()).rejects.toBe(paymentRequired);
 
     expect(fixture.files.writes).toEqual([]);
     expect(fixture.managed.calls).toBe(0);
@@ -162,7 +153,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
       ),
     };
 
-    await expect(fixture.supervisor.start({})).rejects.toMatchObject({
+    await expect(fixture.supervisor.start()).rejects.toMatchObject({
       code: "tunnel_config_failed",
     });
 
@@ -174,7 +165,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
     const fixture = createFixture();
     fixture.configProvider.waitForAbort = true;
 
-    const starting = fixture.supervisor.start({});
+    const starting = fixture.supervisor.start();
     const stopping = fixture.supervisor.stop();
 
     await expect(starting).rejects.toEqual(
@@ -190,7 +181,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
     const fixture = createFixture();
     fixture.managed.waitForAbort = true;
 
-    const starting = fixture.supervisor.start({});
+    const starting = fixture.supervisor.start();
     await fixture.managed.started;
     const stopping = fixture.supervisor.stop();
 
@@ -205,7 +196,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
 
   it("shuts down idempotently and rejects later starts", async () => {
     const fixture = createFixture();
-    await fixture.supervisor.start({});
+    await fixture.supervisor.start();
 
     const first = fixture.supervisor.shutdown();
     const second = fixture.supervisor.shutdown();
@@ -213,7 +204,7 @@ describe("SafeTunnelFrpcSupervisor", () => {
     await first;
 
     expect(fixture.files.removeCalls).toBe(1);
-    await expect(fixture.supervisor.start({})).rejects.toEqual(
+    await expect(fixture.supervisor.start()).rejects.toEqual(
       new SafeTunnelFrpcSupervisorError("supervisor_shutdown"),
     );
   });

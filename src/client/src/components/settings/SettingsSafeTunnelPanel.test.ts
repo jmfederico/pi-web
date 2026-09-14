@@ -36,79 +36,36 @@ describe("Safe Tunnel enable request helpers", () => {
     expect(createSafeTunnelEnableRequest(fields)).toEqual({});
   });
 
-  it("prefills only saved values identified as non-default by the server", () => {
-    const status = safeTunnelStatus();
-    status.config.advancedPrefill = {
-      controlApiUrl: "http://127.0.0.1:8787",
-      localPiWebUrl: "http://127.0.0.1:9500",
-    };
-
-    expect(safeTunnelAdvancedPrefill(status)).toEqual({
-      controlApiUrl: "http://127.0.0.1:8787",
-      machineName: "",
-      machineSlug: "",
-      localPiWebUrl: "http://127.0.0.1:9500",
-      frpcPath: "",
-    });
+  it("prefills the saved development service before registration", () => {
+    const status = safeTunnelStatus({ registered: false });
+    status.config.controlApiUrl = "http://127.0.0.1:8787";
+    expect(safeTunnelAdvancedPrefill(status)).toEqual({ controlApiUrl: status.config.controlApiUrl });
     expect(safeTunnelAdvancedPrefill(safeTunnelStatus())).toEqual(emptyAdvancedFields());
   });
 
-  it("validates and normalizes only explicit advanced overrides", () => {
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      controlApiUrl: "ftp://control.example.test",
-    })).toBe("Advanced Control API URL must use http:// or https://.");
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      controlApiUrl: "http://control.example.test",
-    })).toBe(
-      "Advanced Control API URL must use HTTPS unless it is a literal loopback development endpoint.",
-    );
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      controlApiUrl: "http://localhost:8787",
-    })).toContain("literal loopback");
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      machineSlug: "Dev Box",
-    })).toContain("lowercase DNS label");
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      localPiWebUrl: "http://127.0.0.1",
-    })).toContain("explicit port");
-
-    expect(createSafeTunnelEnableRequest({
-      controlApiUrl: " http://127.0.0.1:8787 ",
-      machineName: " Dev Box ",
-      machineSlug: " dev-box ",
-      localPiWebUrl: " http://127.0.0.1:8504 ",
-      frpcPath: " /opt/frpc ",
-    })).toEqual({
-      advanced: {
-        controlApiUrl: "http://127.0.0.1:8787",
-        machineName: "Dev Box",
-        machineSlug: "dev-box",
-        localPiWebUrl: "http://127.0.0.1:8504",
-        frpcPath: "/opt/frpc",
-      },
-    });
+  it.each(["https://api.tunnels.pi-web.dev", "https://api.tunnels.pi-web.dev/"])("leaves production service %s blank", (controlApiUrl) => {
+    const status = safeTunnelStatus();
+    status.config.controlApiUrl = controlApiUrl;
+    expect(safeTunnelAdvancedPrefill(status)).toEqual(emptyAdvancedFields());
   });
 
   it.each([
-    "http://127.0.0.1:80",
-    "http://[::1]:80",
-  ])("accepts an explicit default port in advanced local target %s", (localPiWebUrl) => {
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      localPiWebUrl,
-    })).toBeUndefined();
+    "ftp://control.example.test",
+    "http://control.example.test",
+    "http://localhost:8787",
+    "https://user:pass@example.test",
+    "https://example.test?query=1",
+    "https://example.test#fragment",
+    "not a URL",
+  ])("rejects unsafe service URL %s", (controlApiUrl) => {
+    expect(safeTunnelAdvancedValidationMessage({ controlApiUrl })).toBeDefined();
   });
 
-  it("rejects a relative advanced frpc path before Enable", () => {
-    expect(safeTunnelAdvancedValidationMessage({
-      ...emptyAdvancedFields(),
-      frpcPath: "relative/frpc",
-    })).toBe("Advanced frpc path must be absolute.");
+  it("normalizes the single service URL and omits blank input", () => {
+    expect(safeTunnelAdvancedValidationMessage({ controlApiUrl: "http://127.0.0.1:8787" })).toBeUndefined();
+    expect(createSafeTunnelEnableRequest({ controlApiUrl: " http://127.0.0.1:8787 " }))
+      .toEqual({ controlApiUrl: "http://127.0.0.1:8787" });
+    expect(createSafeTunnelEnableRequest({ controlApiUrl: "  " })).toEqual({});
   });
 
   it("presents enabled, stopped, disabled, and revoked states as one action", () => {
@@ -163,21 +120,19 @@ describe("settings-safe-tunnel-panel", () => {
     expect(root.textContent).toContain("Protect the public ingress");
     expect(root.textContent).toContain("authentication and access control");
     expect(buttonByText(root, "Enable Safe Tunnel")).toBeDefined();
-    expect(root.textContent).toContain("Advanced development and self-hosting overrides");
+    expect(root.textContent).toContain("Advanced development settings");
+    expect(root.querySelectorAll("input")).toHaveLength(1);
     expect(root.querySelector("details.advanced-card")?.hasAttribute("open")).toBe(false);
     expect(root.textContent).not.toContain("Start tunnel");
     expect(root.textContent).not.toContain("Start login");
   });
 
-  it("prefills and preserves saved non-default technical values", async () => {
+  it("prefills and preserves the saved development service", async () => {
     const initial = safeTunnelStatus({ desiredState: "disabled", runtimeState: "stopped" });
     const machine = initial.config.machine;
     if (machine === undefined) throw new Error("Expected registered Safe Tunnel fixture");
     initial.config.localPiWebUrl = "http://127.0.0.1:9500";
-    initial.config.advancedPrefill = {
-      controlApiUrl: "http://127.0.0.1:8787",
-      localPiWebUrl: "http://127.0.0.1:9500",
-    };
+    initial.config.controlApiUrl = "http://127.0.0.1:8787";
     initial.config.machine = {
       ...machine,
       controlApiBaseUrl: "http://127.0.0.1:8787",
@@ -194,47 +149,33 @@ describe("settings-safe-tunnel-panel", () => {
     const panel = await renderPanel();
     const root = requiredShadowRoot(panel);
 
-    expect(inputByLabel(root, "Control API URL").value).toBe("http://127.0.0.1:8787");
-    expect(inputByLabel(root, "Machine name").value).toBe("");
-    expect(inputByLabel(root, "Machine slug").value).toBe("");
-    expect(inputByLabel(root, "Local PI WEB URL").value).toBe("http://127.0.0.1:9500");
-    expect(inputByLabel(root, "frpc path").value).toBe("");
+    expect(inputByLabel(root, "Tunnel service API URL").value).toBe("http://127.0.0.1:8787");
 
     buttonByText(root, "Enable Safe Tunnel").click();
     await vi.waitFor(() => {
       expect(enableSpy).toHaveBeenCalledWith({
-        advanced: {
-          controlApiUrl: "http://127.0.0.1:8787",
-          localPiWebUrl: "http://127.0.0.1:9500",
-        },
+        controlApiUrl: "http://127.0.0.1:8787",
       });
     });
   });
 
   it("does not overwrite an edited advanced draft on refresh", async () => {
     const initial = safeTunnelStatus();
-    initial.config.advancedPrefill = {
-      controlApiUrl: "http://127.0.0.1:8787",
-      localPiWebUrl: "http://127.0.0.1:9500",
-    };
+    initial.config.controlApiUrl = "http://127.0.0.1:8787";
     const refreshed = safeTunnelStatus();
-    refreshed.config.advancedPrefill = {
-      controlApiUrl: "http://127.0.0.1:8888",
-      localPiWebUrl: "http://127.0.0.1:9600",
-    };
+    refreshed.config.controlApiUrl = "http://127.0.0.1:8888";
     vi.spyOn(safeTunnelApi, "status")
       .mockResolvedValueOnce(initial)
       .mockResolvedValueOnce(refreshed);
 
     const panel = await renderPanel();
     const root = requiredShadowRoot(panel);
-    setInput(root, "Control API URL", "http://127.0.0.1:8989");
+    setInput(root, "Tunnel service API URL", "http://127.0.0.1:8989");
 
     await panelPromise(panel, "loadStatus");
     await panel.updateComplete;
 
-    expect(inputByLabel(root, "Control API URL").value).toBe("http://127.0.0.1:8989");
-    expect(inputByLabel(root, "Local PI WEB URL").value).toBe("http://127.0.0.1:9500");
+    expect(inputByLabel(root, "Tunnel service API URL").value).toBe("http://127.0.0.1:8989");
   });
 
   it("carries approval progress through automatic supervision and public URL", async () => {
@@ -280,7 +221,28 @@ describe("settings-safe-tunnel-panel", () => {
     expect(root.textContent).toContain("https://dev-host-a1b2c3d4.ns.tunnels.pi-web.dev");
   });
 
-  it("sends edited values only through the advanced override envelope", async () => {
+  it("clearing a saved pre-registration service resets to production", async () => {
+    const initial = safeTunnelStatus({ registered: false, desiredState: "disabled" });
+    initial.config.controlApiUrl = "http://127.0.0.1:8787";
+    vi.spyOn(safeTunnelApi, "status").mockResolvedValue(initial);
+    const enableSpy = vi.spyOn(safeTunnelApi, "enable").mockResolvedValue({
+      accepted: true,
+      operation: safeTunnelOperation({ phase: "awaiting_approval" }),
+      status: initial,
+    });
+    const panel = await renderPanel();
+    const root = requiredShadowRoot(panel);
+    expect(inputByLabel(root, "Tunnel service API URL").value).toBe(initial.config.controlApiUrl);
+    setInput(root, "Tunnel service API URL", "");
+    buttonByText(root, "Refresh").click();
+    await vi.waitFor(() => { expect(buttonByText(root, "Enable Safe Tunnel").disabled).toBe(false); });
+    await panel.updateComplete;
+    expect(inputByLabel(root, "Tunnel service API URL").value).toBe("");
+    buttonByText(root, "Enable Safe Tunnel").click();
+    await vi.waitFor(() => { expect(enableSpy).toHaveBeenCalledWith({}); });
+  });
+
+  it("sends the edited service URL as the only enable option", async () => {
     const initial = safeTunnelStatus({ desiredState: "disabled", runtimeState: "stopped" });
     const operation = safeTunnelOperation({ phase: "starting" });
     vi.spyOn(safeTunnelApi, "status").mockResolvedValue(initial);
@@ -292,22 +254,12 @@ describe("settings-safe-tunnel-panel", () => {
     const panel = await renderPanel();
     const root = requiredShadowRoot(panel);
 
-    setInput(root, "Control API URL", "http://127.0.0.1:8787");
-    setInput(root, "Machine name", "Dev Box");
-    setInput(root, "Machine slug", "dev-box");
-    setInput(root, "Local PI WEB URL", "http://127.0.0.1:9500");
-    setInput(root, "frpc path", "/opt/frpc");
+    setInput(root, "Tunnel service API URL", "http://127.0.0.1:8787");
     buttonByText(root, "Enable Safe Tunnel").click();
 
     await vi.waitFor(() => {
       expect(enableSpy).toHaveBeenCalledWith({
-        advanced: {
-          controlApiUrl: "http://127.0.0.1:8787",
-          machineName: "Dev Box",
-          machineSlug: "dev-box",
-          localPiWebUrl: "http://127.0.0.1:9500",
-          frpcPath: "/opt/frpc",
-        },
+        controlApiUrl: "http://127.0.0.1:8787",
       });
     });
   });
@@ -598,10 +550,6 @@ function deferred<T>(): Deferred<T> {
 function emptyAdvancedFields() {
   return {
     controlApiUrl: "",
-    machineName: "",
-    machineSlug: "",
-    localPiWebUrl: "",
-    frpcPath: "",
   };
 }
 
@@ -624,7 +572,6 @@ function safeTunnelStatus(options: SafeTunnelStatusOptions = {}): SafeTunnelStat
       exists: registered,
       state: rejected ? "rejected" : registered ? "registered" : "missing",
       localPiWebUrl: "http://127.0.0.1:8504",
-      frpcPathConfigured: false,
       ...(registered ? {
         machine: {
           controlApiBaseUrl: "https://api.tunnels.pi-web.dev",

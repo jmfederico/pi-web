@@ -15,13 +15,7 @@ export interface SafeTunnelEnableDefaults {
   readonly machineSlug: string;
 }
 
-export interface SafeTunnelEnableDefaultOverrides {
-  readonly localPiWebUrl?: string;
-}
-
-export type SafeTunnelEnableDefaultsProvider = (
-  overrides?: SafeTunnelEnableDefaultOverrides,
-) => SafeTunnelEnableDefaults;
+export type SafeTunnelEnableDefaultsProvider = () => SafeTunnelEnableDefaults;
 
 export type SafeTunnelServerAddress = AddressInfo | string | null;
 
@@ -29,8 +23,7 @@ export interface NodeSafeTunnelEnableDefaultsOptions {
   readonly serverAddress: () => SafeTunnelServerAddress;
   /**
    * Local browser entrypoint declared by development startup wiring (the Vite
-   * dev listener via `PI_WEB_BROWSER_URL`). Wins over API-listener inference;
-   * the advanced `localPiWebUrl` override still wins over it.
+   * dev listener via `PI_WEB_BROWSER_URL`). Wins over API-listener inference.
    */
   readonly localBrowserEntrypointUrl?: string;
   readonly hostname?: () => string;
@@ -39,20 +32,18 @@ export interface NodeSafeTunnelEnableDefaultsOptions {
 
 /**
  * Resolves ordinary enablement inputs at the server boundary. The browser never
- * chooses a listener target or machine identity unless an advanced override is
- * explicitly supplied.
+ * chooses a listener target or machine identity.
  */
 export function createNodeSafeTunnelEnableDefaultsProvider(
   options: NodeSafeTunnelEnableDefaultsOptions,
 ): SafeTunnelEnableDefaultsProvider {
   const hostname = options.hostname ?? operatingSystemHostname;
   const uniqueId = options.uniqueId ?? randomUUID;
-  return (overrides = {}) => {
+  return () => {
     const machineName = normalizeMachineName(hostname());
     return {
       controlApiBaseUrl: defaultSafeTunnelControlApiBaseUrl,
-      localPiWebUrl: overrides.localPiWebUrl
-        ?? options.localBrowserEntrypointUrl
+      localPiWebUrl: options.localBrowserEntrypointUrl
         ?? safeTunnelLocalPiWebUrlFromServerAddress(options.serverAddress()),
       machineName,
       machineSlug: collisionResistantMachineSlug(machineName, uniqueId()),
@@ -68,7 +59,7 @@ export function safeTunnelLocalPiWebUrlFromServerAddress(
   }
   if (typeof address === "string") {
     throw new Error(
-      "Safe Tunnel cannot infer a local target from a socket listener; set the advanced Local PI WEB URL override to the intended PI WEB listener.",
+      "Safe Tunnel requires a TCP listener to infer its local target.",
     );
   }
 
@@ -108,7 +99,7 @@ function localTargetHost(address: string, family: string): string {
   if (address === "0.0.0.0") return "127.0.0.1";
   if (address === "::") return "[::1]";
   if (address.includes("%")) {
-    throw new Error("Safe Tunnel requires an advanced local target for a scoped IPv6 listener.");
+    throw new Error("Safe Tunnel cannot infer a local target from a scoped IPv6 listener.");
   }
   if (family === "IPv6" || address.includes(":")) return `[${address}]`;
   return address;

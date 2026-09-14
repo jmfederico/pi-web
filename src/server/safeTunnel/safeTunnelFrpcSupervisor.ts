@@ -73,17 +73,13 @@ export interface SafeTunnelFrpcConfigProvider {
   }): Promise<SafeTunnelPreparedTunnelConfig>;
 }
 
-export interface SafeTunnelFrpcStartInput {
-  readonly advancedFrpcPath?: string;
-}
-
 export interface SafeTunnelFrpcStartResult {
   readonly publicUrl: string;
 }
 
 export interface SafeTunnelFrpcRuntime {
   shutdown(): Promise<void>;
-  start(input: SafeTunnelFrpcStartInput): Promise<SafeTunnelFrpcStartResult>;
+  start(): Promise<SafeTunnelFrpcStartResult>;
   status(): Promise<SafeTunnelRuntimeStatus>;
   stop(): Promise<void>;
 }
@@ -136,7 +132,7 @@ export class SafeTunnelFrpcSupervisor implements SafeTunnelFrpcRuntime {
     this.policy = normalizePolicy(dependencies.policy);
   }
 
-  start(input: SafeTunnelFrpcStartInput): Promise<SafeTunnelFrpcStartResult> {
+  start(): Promise<SafeTunnelFrpcStartResult> {
     if (this.disposed) {
       return Promise.reject(new SafeTunnelFrpcSupervisorError("supervisor_shutdown"));
     }
@@ -149,7 +145,7 @@ export class SafeTunnelFrpcSupervisor implements SafeTunnelFrpcRuntime {
     this.lastError = undefined;
     this.phase = "starting";
     const controller = new AbortController();
-    const attempt = this.performStart(input, controller);
+    const attempt = this.performStart(controller);
     this.activeAttempt = attempt;
     this.activeAttemptAbortController = controller;
     const clear = (): void => {
@@ -184,7 +180,6 @@ export class SafeTunnelFrpcSupervisor implements SafeTunnelFrpcRuntime {
   }
 
   private async performStart(
-    input: SafeTunnelFrpcStartInput,
     controller: AbortController,
   ): Promise<SafeTunnelFrpcStartResult> {
     let tunnelConfig: SafeTunnelPreparedTunnelConfig;
@@ -216,24 +211,22 @@ export class SafeTunnelFrpcSupervisor implements SafeTunnelFrpcRuntime {
       throw this.failStart(new SafeTunnelFrpcSupervisorError("tunnel_config_failed"));
     }
 
-    let frpcPath = input.advancedFrpcPath;
-    if (frpcPath === undefined) {
-      try {
-        const managedFrpc = await this.dependencies.managedFrpc.ensureManagedFrpc({
-          signal: controller.signal,
-        });
-        frpcPath = managedFrpc.path;
-      } catch (error: unknown) {
-        if (controller.signal.aborted) {
-          throw new SafeTunnelFrpcSupervisorError("start_cancelled");
-        }
-        const detailCode = error instanceof SafeTunnelFrpcAcquisitionError
-          ? error.code
-          : undefined;
-        throw this.failStart(
-          new SafeTunnelFrpcSupervisorError("frpc_acquisition_failed", detailCode),
-        );
+    let frpcPath: string;
+    try {
+      const managedFrpc = await this.dependencies.managedFrpc.ensureManagedFrpc({
+        signal: controller.signal,
+      });
+      frpcPath = managedFrpc.path;
+    } catch (error: unknown) {
+      if (controller.signal.aborted) {
+        throw new SafeTunnelFrpcSupervisorError("start_cancelled");
       }
+      const detailCode = error instanceof SafeTunnelFrpcAcquisitionError
+        ? error.code
+        : undefined;
+      throw this.failStart(
+        new SafeTunnelFrpcSupervisorError("frpc_acquisition_failed", detailCode),
+      );
     }
     this.assertStartActive(controller);
 

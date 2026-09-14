@@ -126,14 +126,31 @@ describe("Safe Tunnel API parsers", () => {
     })).toThrow("secure Control API URL field: dashboardUrl");
   });
 
+  it("parses the selected service before registration without legacy fields", () => {
+    const config = { exists: true, state: "unregistered", controlApiUrl: "http://127.0.0.1:8787" };
+    expect(parseSafeTunnelStatusResponse({
+      config: { ...config, advancedPrefill: { controlApiUrl: "https://old.example.test" }, frpcPathConfigured: true },
+      desiredState: "disabled",
+      runtime: { state: "stopped" },
+    }).config).toEqual(config);
+  });
+
+  it("rejects an insecure selected service URL", () => {
+    expect(() => parseSafeTunnelStatusResponse({
+      config: { exists: true, state: "unregistered", controlApiUrl: "http://remote.example.test" },
+      desiredState: "disabled",
+      runtime: { state: "stopped" },
+    })).toThrow("secure Control API URL field: controlApiUrl");
+  });
+
   it("requires accepted responses and typed optional fields", () => {
     expect(() => parseSafeTunnelEnableResponse({ accepted: false }))
       .toThrow("Expected Safe Tunnel enable accepted response");
     expect(() => parseSafeTunnelStatusResponse({
-      config: { exists: false, state: "missing", frpcPathConfigured: "no" },
+      config: { exists: false, state: "missing", controlApiUrl: 42 },
       desiredState: "disabled",
       runtime: { state: "stopped" },
-    })).toThrow("Expected optional boolean field: frpcPathConfigured");
+    })).toThrow("Expected bounded optional string field: controlApiUrl");
     expect(() => parseSafeTunnelOperationResponse({
       ...operationResponse(),
       verificationUriComplete: "javascript:alert(1)",
@@ -163,11 +180,7 @@ function statusResponse(activeOperation = operationResponse()) {
       exists: true,
       state: "registered",
       localPiWebUrl: "http://127.0.0.1:8504",
-      frpcPathConfigured: false,
-      advancedPrefill: {
-        controlApiUrl: "https://control.example.test",
-        localPiWebUrl: "http://127.0.0.1:8504",
-      },
+      controlApiUrl: "https://control.example.test",
       machine: {
         controlApiBaseUrl: "https://control.example.test",
         machineId: "machine_1",

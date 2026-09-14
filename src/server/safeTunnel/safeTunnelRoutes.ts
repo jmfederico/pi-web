@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
-  SafeTunnelAdvancedOverrides,
   SafeTunnelDisableResponse,
   SafeTunnelEnableRequest,
   SafeTunnelEnableResponse,
@@ -16,15 +15,8 @@ import {
   type SafeTunnelMutationHostConfig,
 } from "./safeTunnelMutationHosts.js";
 
-const enableRequestKeys = new Set(["advanced"]);
+const enableRequestKeys = new Set(["controlApiUrl"]);
 const disableRequestKeys = new Set<string>();
-const advancedOverrideKeys = new Set([
-  "controlApiUrl",
-  "frpcPath",
-  "localPiWebUrl",
-  "machineName",
-  "machineSlug",
-]);
 const unexpectedErrorMessage = "Safe Tunnel request failed.";
 
 export interface SafeTunnelRouteService {
@@ -203,51 +195,10 @@ function parseEnableRequest(body: unknown): SafeTunnelEnableRequest {
     "Safe Tunnel enable request body must be an object",
   );
   assertOnlyKeys(request, enableRequestKeys, "Safe Tunnel enable request");
-  if (request["advanced"] === undefined) return {};
-
-  const advanced = requireRequestObject(
-    request["advanced"],
-    "Safe Tunnel advanced overrides must be an object",
+  const controlApiUrl = optionalNonEmptyString(
+    request["controlApiUrl"], "Safe Tunnel controlApiUrl", 2_048,
   );
-  assertOnlyKeys(advanced, advancedOverrideKeys, "Safe Tunnel advanced overrides");
-
-  const parsed: SafeTunnelAdvancedOverrides = {};
-  copyOptionalString(
-    advanced,
-    parsed,
-    "controlApiUrl",
-    "Safe Tunnel advanced controlApiUrl",
-    2_048,
-  );
-  copyOptionalString(
-    advanced,
-    parsed,
-    "machineName",
-    "Safe Tunnel advanced machineName",
-    80,
-  );
-  copyOptionalString(
-    advanced,
-    parsed,
-    "machineSlug",
-    "Safe Tunnel advanced machineSlug",
-    63,
-  );
-  copyOptionalString(
-    advanced,
-    parsed,
-    "localPiWebUrl",
-    "Safe Tunnel advanced localPiWebUrl",
-    2_048,
-  );
-  copyOptionalString(
-    advanced,
-    parsed,
-    "frpcPath",
-    "Safe Tunnel advanced frpcPath",
-    4_096,
-  );
-  return Object.keys(parsed).length === 0 ? {} : { advanced: parsed };
+  return controlApiUrl === undefined ? {} : { controlApiUrl };
 }
 
 function parseDisableRequest(body: unknown): void {
@@ -256,17 +207,6 @@ function parseDisableRequest(body: unknown): void {
     "Safe Tunnel disable request body must be an object",
   );
   assertOnlyKeys(request, disableRequestKeys, "Safe Tunnel disable request");
-}
-
-function copyOptionalString(
-  source: Readonly<Record<string, unknown>>,
-  target: SafeTunnelAdvancedOverrides,
-  key: keyof SafeTunnelAdvancedOverrides,
-  fieldName: string,
-  maximumCharacters: number,
-): void {
-  const value = optionalNonEmptyString(source[key], fieldName, maximumCharacters);
-  if (value !== undefined) target[key] = value;
 }
 
 function optionalNonEmptyString(

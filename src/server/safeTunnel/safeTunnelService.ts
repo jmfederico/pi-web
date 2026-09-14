@@ -1,4 +1,3 @@
-import { isAbsolute } from "node:path";
 import {
   SafeTunnelControlPlaneError,
   safeTunnelClientVersion,
@@ -43,11 +42,9 @@ export interface SafeTunnelLoginInput {
   readonly machineName: string;
   readonly machineSlug: string;
   readonly localPiWebUrl?: string;
-  readonly frpcPath?: string;
 }
 
 export interface SafeTunnelEnableInput {
-  readonly frpcPath?: string;
   readonly localPiWebUrl?: string;
 }
 
@@ -127,6 +124,20 @@ export class SafeTunnelService {
     const existing = await this.state();
     const login = normalizeLoginInput(input, existing.state);
 
+    // Save service selection before contacting it. Credentials are service-bound:
+    // a failed/cancelled switch must not leave the old registration enabled.
+    await this.mutateState((current) => {
+      const { machine, ...state } = current;
+      return {
+        ...state,
+        desiredState: "disabled",
+        controlApiUrl: login.controlApiBaseUrl,
+        localPiWebUrl: login.localPiWebUrl,
+        ...(machine?.controlApiBaseUrl === login.controlApiBaseUrl ? { machine } : {}),
+      };
+    });
+    throwIfAborted(options.signal);
+
     const started = validateDeviceAuthorization(
       await this.dependencies.controlPlane.startDeviceAuthorization({
         controlApiBaseUrl: login.controlApiBaseUrl,
@@ -193,7 +204,6 @@ export class SafeTunnelService {
       ...current,
       localPiWebUrl: login.localPiWebUrl,
       machine: machineCredentials,
-      ...(login.frpcPath === undefined ? {} : { frpcPath: login.frpcPath }),
     }));
     observer.onMachineRegistered?.();
 
@@ -203,9 +213,6 @@ export class SafeTunnelService {
   async enable(
     input: SafeTunnelEnableInput = {},
   ): Promise<SafeTunnelPersistedState> {
-    const normalizedFrpcPath = input.frpcPath === undefined
-      ? undefined
-      : requireAbsoluteFrpcPath(input.frpcPath);
     let normalizedLocalPiWebUrl: string | undefined;
     try {
       normalizedLocalPiWebUrl = input.localPiWebUrl === undefined
@@ -225,7 +232,6 @@ export class SafeTunnelService {
         ...current,
         desiredState: "enabled",
         ...(normalizedLocalPiWebUrl === undefined ? {} : { localPiWebUrl: normalizedLocalPiWebUrl }),
-        ...(normalizedFrpcPath === undefined ? {} : { frpcPath: normalizedFrpcPath }),
       };
     });
   }
@@ -432,7 +438,6 @@ interface NormalizedSafeTunnelLoginInput {
   readonly machineName: string;
   readonly machineSlug: string;
   readonly localPiWebUrl: string;
-  readonly frpcPath?: string;
 }
 
 function normalizeLoginInput(
@@ -456,16 +461,11 @@ function normalizeLoginInput(
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(machineSlug)) {
     throw new SafeTunnelServiceError("invalid_login");
   }
-  const frpcPath = input.frpcPath === undefined
-    ? undefined
-    : requireAbsoluteFrpcPath(input.frpcPath);
-
   return {
     controlApiBaseUrl,
     machineName,
     machineSlug,
     localPiWebUrl,
-    ...(frpcPath === undefined ? {} : { frpcPath }),
   };
 }
 
@@ -518,12 +518,6 @@ function hasTerminalControl(value: string): boolean {
 function requireNonEmptyString(value: string): string {
   const normalized = value.trim();
   if (normalized === "") throw new SafeTunnelServiceError("invalid_login");
-  return normalized;
-}
-
-function requireAbsoluteFrpcPath(value: string): string {
-  const normalized = requireNonEmptyString(value);
-  if (!isAbsolute(normalized)) throw new SafeTunnelServiceError("invalid_login");
   return normalized;
 }
 

@@ -1,8 +1,8 @@
 # Experimental PI WEB Safe Tunnel
 
-Safe Tunnel is an experimental, gateway-local way to make the running PI WEB reachable through a selected tunnel ingress. It is completely unavailable by default. An operator must first opt the web/API process into availability and then separately choose **Enable Safe Tunnel**. The MVP registers one machine, builds one constrained HTTP tunnel, and owns one `frpc` child.
+Safe Tunnel exposes the running PI WEB instance through **PI WEB Tunnels**. Enable it, approve access through the service, and PI WEB manages the tunnel and its public URL. The only advanced setting selects a different tunnel service API for development testing.
 
-> **Protect the public ingress.** A tunnel can make PI WEB reachable outside its local network. Safe Tunnel does not authenticate PI WEB users. Use it only when the selected hosted or self-hosted ingress enforces appropriate authentication and access control for every HTTP and WebSocket request.
+> **Protect the public ingress.** Safe Tunnel does not authenticate PI WEB users. The tunnel service must enforce appropriate authentication and access control for every HTTP and WebSocket request before you expose your instance.
 
 ## Make Safe Tunnel available
 
@@ -14,154 +14,90 @@ Set the global config key to the JSON boolean `true`:
 }
 ```
 
-Global config lives at `$PI_WEB_CONFIG`, `$XDG_CONFIG_HOME/pi-web/config.json`, or `~/.config/pi-web/config.json`. `safeTunnel` is gateway-only: it is not accepted in project-local or selected-machine config.
+Global config lives at `$PI_WEB_CONFIG`, `$XDG_CONFIG_HOME/pi-web/config.json`, or `~/.config/pi-web/config.json`. Alternatively, set `PI_WEB_SAFE_TUNNEL=1` in the web/API service environment. Restart **web/API**, not the session daemon.
 
-Alternatively, set the web/API service environment:
+Availability is gateway-local and separate from enabled intent. Making the feature available does not start a tunnel. Without opt-in, the Settings entry and API routes are absent, and PI WEB performs no Safe Tunnel state, timer, network, download, or child-process work.
 
-```sh
-PI_WEB_SAFE_TUNNEL=1
-```
+A non-empty `PI_WEB_SAFE_TUNNEL` value overrides config: `1` and case-insensitive `true` enable availability; every other non-empty value disables it. An empty value falls back to config. Any non-empty `PI_WEB_OFFLINE` or `PI_OFFLINE` setting makes Safe Tunnel unavailable. The config key accepts only JSON booleans and is not supported in project-local or selected-machine config.
 
-A non-empty `PI_WEB_SAFE_TUNNEL` value takes precedence over the config file in both directions. `1` and case-insensitive `true` enable availability; `0`, `false`, and every other non-empty value disable it. An empty value is treated as unset. The config-file value must be a JSON boolean; strings, numbers, and `null` are rejected rather than coerced.
+## Enable and disable
 
-Restart the **web/API process** after changing the config key or environment. Availability is a startup snapshot owned by web/API, not `sessiond`, so no session-daemon restart is required.
+1. Open **Settings → Safe Tunnel**, or choose **Manage Safe Tunnel** from the action palette.
+2. Confirm that the tunnel service protects the public ingress.
+3. Choose **Enable Safe Tunnel**.
+4. If approval is needed, open the displayed approval page and follow its instructions.
+5. Wait for the panel to show the running status and public URL.
 
-Any non-empty `PI_WEB_OFFLINE` or `PI_OFFLINE` setting overrides both opt-in mechanisms and keeps Safe Tunnel unavailable. Without active opt-in, PI WEB does not construct the production Safe Tunnel graph, read or write its state, register its routes or lifecycle, start timers, make network or artifact requests, or launch a child. Direct Safe Tunnel API probes receive the same generic `404` as any unknown API route, and the Settings entry is absent.
+PI WEB infers the machine identity and local browser target, installs the pinned tunnel executable when needed, and reuses a valid saved registration for the selected service. Credentials stay in web/API and its private state; the browser receives approval details and bounded progress/status fields.
 
-## Trust browser API hosts
+Choose **Disable Safe Tunnel** to cancel pending approval/startup, save disabled intent, stop heartbeats, and stop the exact child PI WEB launched. If stopping fails, the panel reports the failure and Disable remains available to retry.
 
-Safe Tunnel serves status and operation reads only when the request `Host` is trusted. Enable and Disable additionally require a valid browser `Origin`; the request `Host` and `Origin` must each establish trust independently. These checks contain a gateway-local browser API; they do not replace ingress user authentication.
+### Account restrictions and recovery
 
-PI WEB trusts `localhost`, literal IP addresses (including direct loopback and LAN access), the exact configured web listener hostname, exact names in the global `allowedHosts` array, and the provider hostnames derived from a saved Safe Tunnel registration.
+- **Rejected or revoked machine credential:** PI WEB stops the tunnel and marks the registration rejected. Choose Enable again to request fresh approval.
+- **Payment required or suspended account:** PI WEB preserves the registration and stops the tunnel. Resolve the restriction in the linked service dashboard, then choose Enable to retry.
+- **Permanently deactivated account:** the panel reports that state explicitly; local re-approval is not presented as a remedy.
 
-For a LAN DNS name or reverse proxy, add each browser-facing DNS name—and any different DNS name to which the proxy rewrites `Host`—as an exact `allowedHosts` entry without a scheme or port. `PI_WEB_ALLOWED_HOSTS` supplies the same exact names as a comma-separated list. Preserve the browser `Origin` and `Host` headers when practical. The Vite-only `allowedHosts: true` mode and leading-dot subdomain patterns do not trust arbitrary DNS names for Safe Tunnel requests. Restart web/API after changing this startup-snapshot list.
+An account restriction stays visible even if stopping the child also fails. During initial registration, a restriction may occur before a credential exists; retrying after resolution may require fresh approval.
 
-A saved registration derives trust from the registered tunnel URL, never from request data: the exact registered public hostname is trusted, and when that hostname's parent is a multi-label DNS domain, sibling hostnames beneath that provider base domain are trusted as well. Enable and Disable therefore work from the generated tunnel hostname without adding it to `allowedHosts`, and arbitrary non-provider hostnames stay rejected.
+## Test against the development service
 
-The split development stack also projects the exact saved public hostname into Vite's HTTP, HMR, and proxied application-WebSocket host boundaries. Vite watches the private state location and restarts itself when that hostname is first registered, replaced, or removed; no user edit or manual restart is required. Only the exact saved hostname is added to Vite—never a provider-wide wildcard. **Settings → General → Additional allowed hosts** lists it separately under **Managed hosts — read-only**; it is not copied into the editable `allowedHosts` config.
+Disable a running tunnel first. Under the panel's advanced settings, set **Tunnel service API URL** to your development service API, then choose Enable. The production default is `https://api.tunnels.pi-web.dev`. The panel restores the saved service URL; clear the field to return to production on the next Enable.
 
-For mutations, the browser `Origin` must establish trust independently of the `Host`. An `Origin` on a provider hostname must use HTTPS, with one development exception: plaintext HTTP is accepted on loopback development names (`localhost`, its subdomains, and literal loopback addresses), so the local tunnel development edge can drive Enable/Disable from its own HTTP origin such as `http://<machine>.<namespace>.tunnels.localhost:8788`. The `Origin` does not need to match the registered origin's exact scheme or port, but provider trust never mixes with configured-host trust: a configured `allowedHosts` Origin cannot stand in for a provider Origin, and a provider Origin does not widen configured-host rules. Registered public origins themselves must still use HTTPS, with plaintext accepted only for literal-loopback development origins.
+A different service requires its own registration and approval. PI WEB must not send one service's saved machine credential to another service. This is a single selected-service flow, not a registry of development and production accounts.
 
-## Availability and desired state are separate
+API URLs must use HTTPS, with plain HTTP allowed only for literal loopback development addresses (`127.0.0.0/8` or `[::1]`). They must not contain credentials, a query, or a fragment. The development service must implement the same approval, account-access, and secure relay protocol as production. This setting is not a general-purpose tunnel-provider integration.
 
-| Control | Meaning | Default |
-| --- | --- | --- |
-| Global availability (`safeTunnel` / `PI_WEB_SAFE_TUNNEL`) | Whether this web/API process may expose or run Safe Tunnel | Unavailable |
-| Durable desired state (**Enable Safe Tunnel** / **Disable Safe Tunnel**) | Whether an available Safe Tunnel should be running | Disabled |
-
-Making the feature available does not start a tunnel. Turning availability off and restarting leaves durable desired state untouched while making the feature dormant.
-
-## Enable, approve, inspect, and disable
-
-After opting in and restarting:
-
-1. Open **Settings → Safe Tunnel**, or run **Manage Safe Tunnel** from the action palette.
-2. Confirm that the selected ingress provides the authentication and access control your deployment requires.
-3. Choose **Enable Safe Tunnel**. The normal flow sends no advanced overrides. PI WEB infers the local target from its [local browser entrypoint](#local-target-and-the-browser-entrypoint), derives a machine name and collision-resistant slug, and uses `https://api.tunnels.pi-web.dev` as the Control API.
-4. If registration is needed, open the displayed provider approval page and follow its instructions. The panel polls one operation through preparation, approval, registration, and startup. Private machine credentials stay in web/API and its local state; the browser receives only approval fields and PI WEB-authored progress.
-5. When startup succeeds, the panel shows the public URL and running status.
-
-Hosted relay compatibility is intentionally fail closed. PI WEB accepts only a provider configuration that selects a DNS relay hostname, secure WebSocket (`wss`) on port `443`, relay TLS, one exact HTTP proxy and hostname, the empty frp user, and the saved machine credential metadata. PI WEB preserves WSS while adding its own public-root bundle, relay certificate name, and private local target. It rejects an omitted protocol, direct TCP, plaintext WebSocket, alternate ports, provider-selected trust settings, and extra routes instead of falling back to a direct relay.
-
-This tightens the earlier public-beta contract. When upgrading an existing beta installation, update the hosted or self-hosted Control API and PI WEB together, restart the web/API process, and choose **Enable Safe Tunnel** again if needed. An old client rejects the new WSS field; an updated client rejects old raw-TCP or protocol-omitting configuration. Temporary unavailability is expected during a mismatched rollout, and no `sessiond` restart is required.
-
-PI WEB reuses a valid saved registration. If a heartbeat reports that the Control API rejected or revoked its credential, PI WEB marks that registration rejected, stops its owned child, and shows a fixed approval-required status. The next Enable starts a replacement approval flow. If rejection is first discovered while fetching tunnel configuration, Enable fails and the saved registration is marked rejected; choose Enable again to start replacement approval.
-
-A payment-required, suspended, or permanently deactivated account response is different from a rejected machine credential. At tunnel configuration or heartbeat for an existing registration, PI WEB preserves that registration and credential, stops or does not start its owned tunnel, and displays the Control API's bounded provider-neutral explanation with a link to the hosted dashboard. For payment-required or suspended access, resolve the account state there and then choose **Enable Safe Tunnel** to retry with the existing registration. Permanent deactivation is shown explicitly and does not offer re-approval or imply that Enable can restore the account. An account denial during initial machine registration occurs before a machine credential exists; after recoverable access is restored, a new Enable attempt may require fresh owner approval.
-
-Choose **Disable Safe Tunnel** to cancel an in-progress enable operation, persist disabled intent, cancel the periodic heartbeat, and stop only the exact child PI WEB launched. If that exact child cannot stop, the account denial remains the primary status, the fixed runtime failure remains visible, and Disable remains available to retry. Browser status and operation responses use a small fixed set of PI WEB-authored fields and error categories, plus validated provider-neutral account-access guidance when tunnel operation is blocked. They do not include machine tokens, generated TOML, provider response bodies, artifact URLs, or raw child output.
+Machine name, slug, local target, and executable path are managed by PI WEB rather than editable tunnel settings.
 
 ## Local target and the browser entrypoint
 
-Safe Tunnel forwards public traffic to a local PI WEB URL. The normal flow infers it from PI WEB's explicit notion of the local browser entrypoint — the URL a browser on the same machine actually uses — not from the request that triggered Enable:
+PI WEB selects the target from its running deployment, never from the incoming Enable request:
 
-1. The advanced **Local PI WEB URL** override, when supplied, always wins.
-2. In development stacks, the `PI_WEB_BROWSER_URL` environment variable declares the browser entrypoint. `npm run dev:web` (also used by `npm run dev`) and the Docker `--dev` stack set it to the Vite dev listener (`http://127.0.0.1:8505`), so the tunnel targets the same hot-reloading UI the browser sees instead of the API process.
-3. Otherwise, PI WEB uses its active web/API TCP listener, honoring the configured `host` and `port`. This is the packaged and `npm start` case, where the API process itself serves the built browser client.
+- **Packaged/server mode:** use the active web/API TCP listener, including its configured host and port.
+- **Development mode:** `PI_WEB_BROWSER_URL` declares the local browser entrypoint. `npm run dev:web` and the Docker development stack point it at the Vite listener (`http://127.0.0.1:8505`), so the tunnel exposes the hot-reloading UI rather than the API-only listener.
 
-If the web/API process listens on a socket instead of TCP, there is no URL to infer: Enable fails with a clear error directing you to the advanced **Local PI WEB URL** override.
+A socket-only web/API listener needs a declared browser entrypoint; there is no user-supplied tunnel target override.
 
-What the web/API process serves for non-API browser requests is the same explicit decision, never a probe of the source tree:
+Client serving follows the same explicit deployment choice. With `PI_WEB_BROWSER_URL` unset, web/API serves the built `dist/client` and fails startup if it is missing. With the variable set, web/API serves no client and answers non-API browser requests with a pointer to the development UI.
 
-- **Packaged/server mode** (`PI_WEB_BROWSER_URL` unset): the API process serves the built client from `dist/client`. Startup fails with an actionable error when the build output is missing; run `npm run build` first (packaged installs ship it). Raw `src/client` sources with unresolved `%BASE_URL%` placeholders are never served.
-- **Development mode** (`PI_WEB_BROWSER_URL` set): the API process serves no client at all. Non-API requests receive a short pointer to the dev server URL.
+## Browser host trust
 
-## Durable state and restart behavior
+Safe Tunnel API reads require a trusted `Host`. Enable and Disable additionally require marked JSON requests and an independently trusted browser `Origin`. These provenance checks do not replace ingress authentication.
 
-PI WEB stores private Safe Tunnel state at:
+PI WEB trusts localhost, literal IP addresses, the configured listener hostname, exact global `allowedHosts` entries, and the **exact registered tunnel hostname**. Registration does not grant trust to sibling provider hostnames. For additional LAN or reverse-proxy DNS names, configure exact names through `allowedHosts` or `PI_WEB_ALLOWED_HOSTS` and restart web/API. Vite's `allowedHosts: true` and leading-dot patterns do not grant broad Safe Tunnel API trust.
 
-```text
-$PI_WEB_DATA_DIR/safe-tunnel/config.json
-```
+Registered-host browser origins must use HTTPS, except that HTTP is accepted for loopback development names and addresses. Configured-host and registered-host provenance rules remain separate.
 
-`PI_WEB_DATA_DIR` defaults to `~/.pi-web`. The state contains desired intent, the local target, an optional advanced `frpc` path, private machine credentials and their active/rejected status, the Control API location, and non-secret machine/public URL metadata. It does not contain process IDs, raw diagnostics, heartbeat history, or generated tunnel configuration. On POSIX systems, PI WEB restricts the directory to `0700` and atomically replaced state file to `0600`; treat the file as a secret on every platform.
+The split development stack automatically projects the exact saved public hostname into Vite's HTTP, HMR, and proxied application-WebSocket checks. It restarts Vite when that hostname changes. **Settings → General → Additional allowed hosts** displays the hostname as managed read-only state; PI WEB does not write it into the editable `allowedHosts` list.
 
-While the child is running, PI WEB generates `frpc.toml` and `frps-roots.pem` in the same private directory. It discards child output rather than maintaining a tunnel log. A graceful web/API shutdown stops the exact owned child and removes those generated files without changing enabled intent.
+## Storage and restart behavior
 
-If availability remains on, the next web/API start reads enabled intent and makes one tunnel start attempt. Overlapping browser Enable requests are rejected before they can replace that attempt's heartbeat ownership. The first heartbeat waits for tunnel configuration and startup to finish; later heartbeats continue at a bounded provider-directed interval and do not add history to durable state. An unexpected child exit remains stopped; a failed start is reported with the fixed `runtime_failed` category. A payment-required, suspended, or permanently deactivated response at config/heartbeat leaves enabled intent and the active machine credential intact while stopping the runtime; a failed stop instead reports the denial and fixed runtime failure together until the exact child stops. PI WEB does not run an automatic child-restart loop. After correcting an ordinary runtime cause, use **Disable Safe Tunnel** and then **Enable Safe Tunnel**, or restart web/API for another intent-restore attempt. After resolving payment-required or suspended access in the linked hosted dashboard, **Enable Safe Tunnel** directly retries the preserved registration; permanent deactivation remains a hosted account state rather than a local credential failure.
+Private state lives at `$PI_WEB_DATA_DIR/safe-tunnel/config.json` (`PI_WEB_DATA_DIR` defaults to `~/.pi-web`). It stores enabled intent, the selected service, inferred target, and registration/credentials. On POSIX, the directory is restricted to `0700` and the atomically replaced state file to `0600`; treat it as a secret on every platform.
 
-To make the feature dormant, turn availability off and gracefully restart web/API. The old process stops its child; the new process performs no Safe Tunnel state, timer, network, artifact, or child work. Re-enabling availability later preserves the prior intent and makes one restore attempt.
+While running, PI WEB writes private `frpc.toml` and `frps-roots.pem` files beside that state. Graceful web/API shutdown stops the owned child and removes those generated files without changing enabled intent. It does not maintain raw child-output logs.
 
-## MVP responsibility and trust boundary
+If availability and saved intent remain enabled, the next web/API startup makes one restore attempt. Heartbeats begin after startup and use a bounded service-directed interval. An unexpected child exit stays stopped; there is no automatic child-restart loop. After correcting an ordinary runtime failure, Disable and Enable again, or restart web/API. Account restriction recovery follows the separate rules above.
 
-PI WEB owns these boundaries:
+Turning availability off and restarting makes the feature dormant while preserving intent. Re-enabling availability later permits another restore attempt. No session-daemon restart is required.
 
-- **Ingress authentication remains an operator requirement.** Tunnel transport is not evidence that the public endpoint authenticates users.
-- **Browser routes are gateway-local and host-bound.** Reads require a trusted `Host`; mutations also require the explicit JSON marker and an independently trusted `Origin`.
-- **Control API credentials use protected transport.** Production and self-hosted Control API URLs must use HTTPS. Plain HTTP is accepted only for literal loopback development endpoints in `127.0.0.0/8` or `[::1]`; names such as `localhost` are not exceptions.
-- **The tunnel is structurally constrained.** PI WEB accepts one expected HTTP proxy and canonical hostname, requires a DNS relay hostname with WSS and TLS on port `443`, preserves the empty frp user and exact saved-machine metadata, regenerates the local target from PI WEB-owned desired state, and rejects extra routes or provider-selected local targets, relay identity, and trust roots.
-- **External requests are bounded and cancellable.** Control API and managed-artifact requests have response-size limits and timeouts. Disable and shutdown cancel work at their owned boundaries.
-- **Known credentials stay private.** PI WEB omits the credential fields it holds from browser responses and stores durable credentials in its private data directory.
+## Supported platforms and tunnel safety
 
-The MVP trusts the configured Control API and credential issuer to generate independent, unguessable credentials and to keep secrets out of public metadata. It also relies on DNS, HTTPS/TLS and configured CA trust, Node.js and operating-system primitives, and the official pinned `frpc` artifact source to honor their documented contracts. PI WEB validates response shape, direct credentials, and the tunnel structure it launches; it does not try to detect transformed or encoded credentials in otherwise public provider values, independently verify DNS/TLS, or protect its private directory from a hostile process running as the same service account. Contract failures may stop the flow with a fixed PI WEB-authored error.
+Managed installation supports **Linux arm64 and Linux x64**. Other platforms report `unsupported_platform`; there is no executable-path bypass.
 
-## Managed `frpc` support
+PI WEB downloads the pinned official `fatedier/frp` release **0.69.1**, verifies archive and executable sizes and SHA-256 digests, and installs it beneath `$PI_WEB_DATA_DIR/safe-tunnel/frpc/versions/0.69.1/<platform>-<architecture>/frpc`.
 
-The managed flow pins one official `fatedier/frp` release, **0.69.1**, for exactly these Node platform/architecture pairs:
+The service configuration must select one exact HTTP proxy and hostname, a DNS relay over secure WebSocket (`wss`) on port `443`, TLS, the empty frp user, and the saved machine credential metadata. PI WEB supplies its own relay trust roots and local target, rejects extra routes and downgraded transport, and launches the child directly without a shell or inherited web-process environment.
 
-| Platform | Architecture | Managed support |
-| --- | --- | --- |
-| Linux | `arm64` | Pinned official archive and executable |
-| Linux | `x64` (x86-64/amd64) | Pinned official archive and executable |
-
-PI WEB downloads the selected archive over HTTPS only when Enable needs it, verifies the pinned archive and executable sizes and SHA-256 digests, extracts the expected executable, and installs it privately beneath:
-
-```text
-$PI_WEB_DATA_DIR/safe-tunnel/frpc/versions/0.69.1/<platform>-<architecture>/frpc
-```
-
-There is no managed fallback to another release. Every other platform/architecture fails as `unsupported_platform` before download. On those systems, an operator may provide a user-supplied **absolute** executable path under the advanced disclosure. That path bypasses managed download and integrity verification, but not PI WEB's single-proxy configuration or relay TLS requirements. The operator owns that binary's provenance, compatibility, permissions, and updates. PI WEB launches it directly without a shell or inherited web-process environment and owns only the returned child.
-
-## Advanced development and self-hosting overrides
-
-The advanced form keeps inferred identity and fixed production defaults blank. When browser-safe saved state is available, it prefills non-default Control API and local-target values shown under **Saved technical state**. Those prefills, plus any edits, become overrides on the next Enable request. A saved `frpc` override remains effective, but its private filesystem path is not returned to the browser, so that field stays blank.
-
-| Field | Behavior |
-| --- | --- |
-| Control API URL | Uses production by default. A self-hosted URL must satisfy the HTTPS/literal-loopback policy and contain no credentials, query, or fragment. Its tunnel response must still provide the exact WSS-on-`443` relay contract; raw TCP and plaintext WebSocket are not self-hosted fallbacks. |
-| Machine name / slug | Replaces inferred identity. The slug must be one lowercase DNS label. |
-| Local PI WEB URL | Replaces the inferred [browser-entrypoint target](#local-target-and-the-browser-entrypoint). It must be an `http://` origin with an explicit port and no credentials, path, query, or fragment. Point it only at the intended PI WEB listener. |
-| `frpc` path | Uses the absolute executable directly instead of managed acquisition. |
-
-A saved self-hosted Control API or `frpc` override remains in effect when its field is left blank. Explicit Control API/name/slug changes request replacement registration; local-target or `frpc`-path changes can reuse a valid registration.
+Control API and artifact requests are bounded, timed out, and cancellable. Browser responses exclude machine tokens, generated TOML, artifact URLs, provider response bodies, and raw child output. PI WEB relies on the service to issue independent, unguessable credentials and keep secrets out of public metadata, and on DNS/TLS, the pinned artifact source, and operating-system security.
 
 ## Local browser API
 
-These gateway-local routes exist only while Safe Tunnel availability is active. Every route applies the trusted-Host contract; mutation routes also require the marked JSON same-origin request contract.
+These gateway-local routes exist only while Safe Tunnel is available:
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/safe-tunnel/status` | Read redacted desired state, registration/runtime status, validated provider-neutral account-access guidance when present, and the active operation. |
-| `POST /api/safe-tunnel/enable` | Start one approval-through-child-start operation. The normal body is `{}`; optional overrides are under `advanced`. |
-| `POST /api/safe-tunnel/disable` | Cancel enablement, persist disabled intent, cancel heartbeat work, and stop the owned child. |
-| `GET /api/safe-tunnel/operations/:operationId` | Poll PI WEB-authored approval/startup progress and terminal outcome. |
-
-## Development and service ownership
-
-Safe Tunnel runs only in the PI WEB web/API process:
-
-```sh
-npm run dev:web
-```
-
-It does not run in `sessiond` and needs no separate connector package, command, service, PID file, or connector-owned config path. Restart web/API after changing availability; do not restart the long-lived session daemon for this feature.
+| `GET /api/safe-tunnel/status` | Read safe configuration, runtime/account status, and active operation. |
+| `POST /api/safe-tunnel/enable` | Start approval and startup; body `{}` uses production, or `{ "controlApiUrl": "https://dev-api.example.com" }` selects the development service. |
+| `POST /api/safe-tunnel/disable` | Cancel enablement, save disabled intent, and stop the tunnel. |
+| `GET /api/safe-tunnel/operations/:operationId` | Poll approval/startup progress and outcome. |

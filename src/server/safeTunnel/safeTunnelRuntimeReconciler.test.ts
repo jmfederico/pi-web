@@ -8,7 +8,6 @@ import {
 } from "./safeTunnelControlPlane.js";
 import type {
   SafeTunnelFrpcRuntime,
-  SafeTunnelFrpcStartInput,
   SafeTunnelFrpcStartResult,
   SafeTunnelScheduledTask,
   SafeTunnelSupervisorClock,
@@ -49,7 +48,7 @@ const accountAccessCases = [
 describe("SafeTunnelRuntimeReconciler", () => {
   it("restores enabled intent and clamps hosted heartbeat intervals", async () => {
     const fixture = createFixture();
-    fixture.safeTunnel.loaded = registeredEnabledState({ frpcPath: "/advanced/frpc" });
+    fixture.safeTunnel.loaded = registeredEnabledState();
     fixture.safeTunnel.heartbeatResults = [
       () => Promise.resolve(heartbeatResult(1)),
       () => Promise.resolve(heartbeatResult(999)),
@@ -58,7 +57,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     await fixture.reconciler.startup();
     await waitForCondition(() => fixture.clock.scheduledDelays.at(-1) === 0);
 
-    expect(fixture.runtime.startCalls).toEqual([{ advancedFrpcPath: "/advanced/frpc" }]);
+    expect(fixture.runtime.startCalls).toBe(1);
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.clock.scheduledDelays.at(-1) === 20_000);
     expect(fixture.safeTunnel.heartbeatCalls).toEqual([{ tunnelStatus: "running" }]);
@@ -74,8 +73,8 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const deferredStart = createDeferred<SafeTunnelFrpcStartResult>();
     fixture.runtime.startResult = deferredStart.promise;
 
-    const starting = fixture.reconciler.start({});
-    await waitForCondition(() => fixture.runtime.startCalls.length === 1);
+    const starting = fixture.reconciler.start();
+    await waitForCondition(() => fixture.runtime.startCalls === 1);
     fixture.clock.advance(0);
     await flushAsyncWork();
 
@@ -95,9 +94,9 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const deferredStart = createDeferred<SafeTunnelFrpcStartResult>();
     fixture.runtime.startResult = deferredStart.promise;
 
-    const startupRestoration = fixture.reconciler.start({});
-    await waitForCondition(() => fixture.runtime.startCalls.length === 1);
-    await expect(fixture.reconciler.start({ advancedFrpcPath: "/new/frpc" }))
+    const startupRestoration = fixture.reconciler.start();
+    await waitForCondition(() => fixture.runtime.startCalls === 1);
+    await expect(fixture.reconciler.start())
       .rejects.toMatchObject({ code: "already_running" });
 
     deferredStart.resolve({ publicUrl: "https://dev-box.ns.tunnels.pi-web.dev" });
@@ -105,7 +104,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.clock.activeTaskCount() === 1);
 
-    expect(fixture.runtime.startCalls).toEqual([{}]);
+    expect(fixture.runtime.startCalls).toBe(1);
     expect(fixture.safeTunnel.heartbeatCalls).toEqual([{ tunnelStatus: "running" }]);
     expect(fixture.clock.activeTaskCount()).toBe(1);
     await expect(fixture.reconciler.status()).resolves.toEqual({ state: "running" });
@@ -117,12 +116,12 @@ describe("SafeTunnelRuntimeReconciler", () => {
 
     await fixture.reconciler.startup();
     await waitForCondition(() => fixture.clock.scheduledDelays.at(-1) === 0);
-    await expect(fixture.reconciler.start({ advancedFrpcPath: "/new/frpc" }))
+    await expect(fixture.reconciler.start())
       .rejects.toMatchObject({ code: "already_running" });
 
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.clock.activeTaskCount() === 1);
-    expect(fixture.runtime.startCalls).toEqual([{}]);
+    expect(fixture.runtime.startCalls).toBe(1);
     expect(fixture.safeTunnel.heartbeatCalls).toEqual([{ tunnelStatus: "running" }]);
     await expect(fixture.reconciler.status()).resolves.toEqual({ state: "running" });
   });
@@ -133,15 +132,15 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const accessError = accountAccessCases[0][1];
     fixture.runtime.startResult = deferredStart.promise;
 
-    const startupRestoration = fixture.reconciler.start({});
+    const startupRestoration = fixture.reconciler.start();
     const startupRejection = startupRestoration.catch((error: unknown) => error);
-    await waitForCondition(() => fixture.runtime.startCalls.length === 1);
-    await expect(fixture.reconciler.start({}))
+    await waitForCondition(() => fixture.runtime.startCalls === 1);
+    await expect(fixture.reconciler.start())
       .rejects.toMatchObject({ code: "already_running" });
     deferredStart.reject(accessError);
     expect(await startupRejection).toBe(accessError);
 
-    expect(fixture.runtime.startCalls).toEqual([{}]);
+    expect(fixture.runtime.startCalls).toBe(1);
     expect(fixture.clock.activeTaskCount()).toBe(0);
     await expect(fixture.reconciler.status()).resolves.toEqual({
       state: "stopped",
@@ -154,8 +153,8 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const deferredStart = createDeferred<SafeTunnelFrpcStartResult>();
     fixture.runtime.startResult = deferredStart.promise;
 
-    const starting = fixture.reconciler.start({});
-    await waitForCondition(() => fixture.runtime.startCalls.length === 1);
+    const starting = fixture.reconciler.start();
+    await waitForCondition(() => fixture.runtime.startCalls === 1);
     await fixture.reconciler.stop();
     deferredStart.resolve({ publicUrl: "https://dev-box.ns.tunnels.pi-web.dev" });
     await starting;
@@ -172,7 +171,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     await fixture.reconciler.startup();
     await fixture.reconciler.startup();
 
-    expect(fixture.runtime.startCalls).toEqual([]);
+    expect(fixture.runtime.startCalls).toBe(0);
     expect(fixture.runtime.stopCalls).toBe(0);
     expect(fixture.safeTunnel.heartbeatCalls).toEqual([]);
     expect(fixture.clock.activeTaskCount()).toBe(0);
@@ -186,7 +185,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     };
     await missing.reconciler.startup();
 
-    expect(missing.runtime.startCalls).toEqual([]);
+    expect(missing.runtime.startCalls).toBe(0);
     await expect(missing.reconciler.status()).resolves.toMatchObject({
       state: "stopped",
       diagnosticCode: "registration_required",
@@ -205,7 +204,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     };
     await rejected.reconciler.startup();
 
-    expect(rejected.runtime.startCalls).toEqual([]);
+    expect(rejected.runtime.startCalls).toBe(0);
     await expect(rejected.reconciler.status()).resolves.toMatchObject({
       state: "stopped",
       diagnosticCode: "credentials_rejected",
@@ -219,7 +218,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
       () => Promise.resolve(heartbeatResult(30)),
     ];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.clock.scheduledDelays.at(-1) === 20_000);
 
@@ -242,7 +241,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
       const fixture = createFixture();
       fixture.runtime.startError = accessError;
 
-      await expect(fixture.reconciler.start({})).rejects.toBe(accessError);
+      await expect(fixture.reconciler.start()).rejects.toBe(accessError);
       fixture.clock.advance(100_000);
 
       expect(fixture.safeTunnel.heartbeatCalls).toEqual([]);
@@ -261,7 +260,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
       const fixture = createFixture();
       fixture.safeTunnel.heartbeatResults = [() => Promise.reject(accessError)];
 
-      await fixture.reconciler.start({});
+      await fixture.reconciler.start();
       fixture.clock.advance(0);
       await waitForCondition(() => fixture.runtime.stopCalls === 1);
       fixture.clock.advance(100_000);
@@ -282,7 +281,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     fixture.runtime.stopResult = pendingStop.promise;
     fixture.safeTunnel.heartbeatResults = [() => Promise.reject(accessError)];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.runtime.stopCalls === 1);
 
@@ -306,7 +305,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     fixture.runtime.stopError = stopError;
     fixture.safeTunnel.heartbeatResults = [() => Promise.reject(accessError)];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.runtime.stopCalls === 1);
 
@@ -338,7 +337,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const fixture = createFixture();
     fixture.safeTunnel.heartbeatResults = [() => Promise.reject(rejection)];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => fixture.runtime.stopCalls === 1);
     fixture.clock.advance(100_000);
@@ -358,7 +357,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     await fixture.reconciler.startup();
     fixture.clock.advance(100_000);
 
-    expect(fixture.runtime.startCalls).toEqual([]);
+    expect(fixture.runtime.startCalls).toBe(0);
     expect(fixture.clock.activeTaskCount()).toBe(0);
     await expect(fixture.reconciler.status()).resolves.toEqual({
       state: "stopped",
@@ -371,11 +370,11 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const fixture = createFixture();
     fixture.runtime.startError = new Error("private launch detail");
 
-    await expect(fixture.reconciler.start({})).rejects.toBe(fixture.runtime.startError);
+    await expect(fixture.reconciler.start()).rejects.toBe(fixture.runtime.startError);
     fixture.clock.advance(100_000);
     await flushAsyncWork();
 
-    expect(fixture.runtime.startCalls).toEqual([{}]);
+    expect(fixture.runtime.startCalls).toBe(1);
     expect(fixture.safeTunnel.heartbeatCalls).toEqual([]);
     expect(fixture.clock.activeTaskCount()).toBe(0);
     await expect(fixture.reconciler.status()).resolves.toMatchObject({
@@ -388,7 +387,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const fixture = createFixture(order);
     fixture.safeTunnel.heartbeatResults = [pendingHeartbeatUntilAbort];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => order.includes("heartbeat:start"));
     await fixture.reconciler.stop();
@@ -407,7 +406,7 @@ describe("SafeTunnelRuntimeReconciler", () => {
     const fixture = createFixture(order);
     fixture.safeTunnel.heartbeatResults = [pendingHeartbeatUntilAbort];
 
-    await fixture.reconciler.start({});
+    await fixture.reconciler.start();
     fixture.clock.advance(0);
     await waitForCondition(() => order.includes("heartbeat:start"));
 
@@ -493,7 +492,7 @@ class FakeReconciliationService implements SafeTunnelRuntimeReconciliationServic
 }
 
 class FakeFrpcRuntime implements SafeTunnelFrpcRuntime {
-  readonly startCalls: SafeTunnelFrpcStartInput[] = [];
+  startCalls = 0;
   startError: Error | undefined;
   startResult: Promise<SafeTunnelFrpcStartResult> | undefined;
   shutdownCalls = 0;
@@ -511,9 +510,9 @@ class FakeFrpcRuntime implements SafeTunnelFrpcRuntime {
     return Promise.resolve();
   }
 
-  start(input: SafeTunnelFrpcStartInput): Promise<SafeTunnelFrpcStartResult> {
+  start(): Promise<SafeTunnelFrpcStartResult> {
     this.order.push("runtime:start");
-    this.startCalls.push(input);
+    this.startCalls += 1;
     if (this.startError !== undefined) return Promise.reject(this.startError);
     const result = this.startResult ?? Promise.resolve({
       publicUrl: "https://dev-box.ns.tunnels.pi-web.dev",

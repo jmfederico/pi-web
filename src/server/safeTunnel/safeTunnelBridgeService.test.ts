@@ -25,20 +25,20 @@ import {
   type SafeTunnelPersistedState,
 } from "./safeTunnelState.js";
 import type {
-  SafeTunnelFrpcStartInput,
   SafeTunnelFrpcStartResult,
 } from "./safeTunnelFrpcSupervisor.js";
 
 const machineToken = "piwt_mtok_v1_private_machine_token";
 const publicUrl = "https://machine.example.test";
 const defaults: SafeTunnelEnableDefaults = {
-  controlApiBaseUrl: "https://control.example.test",
+  controlApiBaseUrl: defaultSafeTunnelControlApiBaseUrl,
   localPiWebUrl: "http://127.0.0.1:8504",
   machineName: "Test machine",
   machineSlug: "test-machine",
 };
 const registeredState: SafeTunnelPersistedState = {
   ...createDefaultSafeTunnelState(),
+  controlApiUrl: defaults.controlApiBaseUrl,
   machine: {
     controlApiBaseUrl: defaults.controlApiBaseUrl,
     credentialStatus: "active",
@@ -64,10 +64,7 @@ describe("DefaultSafeTunnelBridgeService", () => {
         exists: true,
         state: "registered",
         localPiWebUrl: defaults.localPiWebUrl,
-        frpcPathConfigured: false,
-        advancedPrefill: {
-          controlApiUrl: defaults.controlApiBaseUrl,
-        },
+        controlApiUrl: defaults.controlApiBaseUrl,
         machine: {
           controlApiBaseUrl: defaults.controlApiBaseUrl,
           machineId: "machine_123",
@@ -121,7 +118,7 @@ describe("DefaultSafeTunnelBridgeService", () => {
       machineName: defaults.machineName,
       machineSlug: defaults.machineSlug,
     })]);
-    expect(fixture.runtime.startInputs).toEqual([{}]);
+    expect(fixture.runtime.startCalls).toBe(1);
     expect(JSON.stringify(fixture.bridge.operation(response.operation.id))).not.toContain(
       machineToken,
     );
@@ -139,15 +136,11 @@ describe("DefaultSafeTunnelBridgeService", () => {
     }]);
   });
 
-  it("preserves a registration when submitted advanced identity matches saved state", async () => {
+  it("preserves a registration when the normalized selected service matches saved state", async () => {
     const fixture = createFixture(registeredState);
 
     const response = await fixture.bridge.enable({
-      advanced: {
-        controlApiUrl: `${defaults.controlApiBaseUrl}/`,
-        machineSlug: defaults.machineSlug,
-        localPiWebUrl: defaults.localPiWebUrl,
-      },
+      controlApiUrl: `${defaults.controlApiBaseUrl}/`,
     });
     await waitFor(() => fixture.bridge.operation(response.operation.id)?.status === "succeeded");
 
@@ -160,7 +153,7 @@ describe("DefaultSafeTunnelBridgeService", () => {
   it("still replaces registration for changed or rejected identity", async () => {
     const changed = createFixture(registeredState);
     const changedResponse = await changed.bridge.enable({
-      advanced: { controlApiUrl: "https://other-control.example.test" },
+      controlApiUrl: "https://other-control.example.test",
     });
     await waitFor(() => changed.bridge.operation(changedResponse.operation.id)?.status === "succeeded");
     expect(changed.safeTunnel.loginInputs).toEqual([
@@ -174,64 +167,45 @@ describe("DefaultSafeTunnelBridgeService", () => {
       machine: { ...registeredMachine, credentialStatus: "rejected" },
     });
     const rejectedResponse = await rejected.bridge.enable({
-      advanced: {
-        controlApiUrl: defaults.controlApiBaseUrl,
-        machineSlug: defaults.machineSlug,
-      },
+      controlApiUrl: defaults.controlApiBaseUrl,
     });
     await waitFor(() => rejected.bridge.operation(rejectedResponse.operation.id)?.status === "succeeded");
     expect(rejected.safeTunnel.loginInputs).toHaveLength(1);
   });
 
-  it("reports saved endpoint and target values only when they differ from defaults", async () => {
+  it("omitting the service clears a development selection and re-registers in production", async () => {
+    const machine = registeredState.machine;
+    if (machine === undefined) throw new Error("Expected registered fixture state");
     const fixture = createFixture({
       ...registeredState,
-      localPiWebUrl: "http://127.0.0.1:9500",
+      controlApiUrl: "https://dev.example.test",
+      machine: { ...machine, controlApiBaseUrl: "https://dev.example.test" },
     });
-
-    await expect(fixture.bridge.status()).resolves.toMatchObject({
-      config: {
-        advancedPrefill: {
-          controlApiUrl: defaults.controlApiBaseUrl,
-          localPiWebUrl: "http://127.0.0.1:9500",
-        },
-      },
-    });
-  });
-
-  it("omits advanced prefills when saved values match current defaults", async () => {
-    const registeredMachine = registeredState.machine;
-    if (registeredMachine === undefined) throw new Error("Expected registered fixture state");
-    const fixture = createFixture({
-      ...registeredState,
-      machine: {
-        ...registeredMachine,
-        controlApiBaseUrl: defaultSafeTunnelControlApiBaseUrl,
-      },
-    });
-
-    const status = await fixture.bridge.status();
-
-    expect(status.config.advancedPrefill).toBeUndefined();
-  });
-
-  it("lets an advanced local target bypass unavailable listener inference", async () => {
-    const enableDefaults = vi.fn(createNodeSafeTunnelEnableDefaultsProvider({
-      serverAddress: () => ({ address: "fe80::1%lo0", family: "IPv6", port: 8504 }),
-      hostname: () => defaults.machineName,
-      uniqueId: () => "12345678-abcd",
-    }));
-    const fixture = createFixture(createDefaultSafeTunnelState(), { enableDefaults });
-    const localPiWebUrl = "http://[::1]:80";
-
-    const response = await fixture.bridge.enable({ advanced: { localPiWebUrl } });
+    const response = await fixture.bridge.enable({});
     await waitFor(() => fixture.bridge.operation(response.operation.id)?.status === "succeeded");
+    expect(fixture.safeTunnel.loginInputs).toEqual([expect.objectContaining({
+      controlApiBaseUrl: defaultSafeTunnelControlApiBaseUrl,
+    })]);
+  });
 
-    expect(enableDefaults).toHaveBeenCalledWith({ localPiWebUrl });
-    expect(fixture.safeTunnel.loginInputs).toEqual([
-      expect.objectContaining({ localPiWebUrl }),
-    ]);
-    expect(fixture.safeTunnel.enableInputs).toEqual([{ localPiWebUrl }]);
+  it("reports the saved selected service before registration", async () => {
+    const fixture = createFixture({
+      ...createDefaultSafeTunnelState(),
+      controlApiUrl: "https://dev.example.test",
+    });
+    expect((await fixture.bridge.status()).config).toMatchObject({
+      state: "unregistered",
+      controlApiUrl: "https://dev.example.test",
+    });
+  });
+
+  it("fails when the listener target cannot be inferred", async () => {
+    const enableDefaults = createNodeSafeTunnelEnableDefaultsProvider({
+      serverAddress: () => ({ address: "fe80::1%lo0", family: "IPv6", port: 8504 }),
+    });
+    const fixture = createFixture(createDefaultSafeTunnelState(), { enableDefaults });
+    await expect(fixture.bridge.enable({})).rejects.toThrow("cannot infer");
+    expect(fixture.safeTunnel.loginInputs).toEqual([]);
   });
 
   it("restores durable enabled intent once on web/API startup", async () => {
@@ -351,6 +325,23 @@ describe("DefaultSafeTunnelBridgeService", () => {
     expect(JSON.stringify(operation)).not.toContain("provider body");
   });
 
+  it("blocks concurrent Enable and honors Disable while preparing the request", async () => {
+    const fixture = createFixture(createDefaultSafeTunnelState());
+    const preparingStatus = deferred<SafeTunnelRuntimeStatus>();
+    vi.spyOn(fixture.runtime, "status").mockReturnValueOnce(preparingStatus.promise);
+    const enabling = fixture.bridge.enable({});
+    const rejectedEnable = expect(enabling).rejects.toThrow("cancelled");
+    await expect(fixture.bridge.enable({})).rejects.toMatchObject({ code: "operation_in_progress" });
+    await fixture.bridge.disable();
+    preparingStatus.resolve({ state: "stopped" });
+    await rejectedEnable;
+    expect(fixture.safeTunnel.loginInputs).toEqual([]);
+    expect(fixture.runtime.startCalls).toBe(0);
+
+    const retry = await fixture.bridge.enable({});
+    await waitFor(() => fixture.bridge.operation(retry.operation.id)?.status === "succeeded");
+  });
+
   it("cancels active approval and stops the exact runtime on disable", async () => {
     const fixture = createFixture(createDefaultSafeTunnelState());
     fixture.safeTunnel.loginGate = deferred<undefined>();
@@ -368,23 +359,25 @@ describe("DefaultSafeTunnelBridgeService", () => {
   });
 
   it("keeps Enable admission closed until a cancelled registration joins Disable", async () => {
-    const fixture = createFixture(createDefaultSafeTunnelState());
+    let identity = "a";
+    const fixture = createFixture(createDefaultSafeTunnelState(), {
+      enableDefaults: () => ({ ...defaults, machineSlug: `machine-${identity}` }),
+    });
     const firstRegistration = deferred<undefined>();
     fixture.safeTunnel.registrationGates.set("machine-a", firstRegistration);
-    const first = await fixture.bridge.enable({
-      advanced: { machineName: "Machine A", machineSlug: "machine-a" },
-    });
+    const first = await fixture.bridge.enable({});
+    identity = "b";
     await waitFor(() => fixture.bridge.operation(first.operation.id)?.phase === "registering");
 
     const disabling = fixture.bridge.disable();
     await expect(fixture.bridge.enable({
-      advanced: { machineName: "Machine B", machineSlug: "machine-b" },
+      controlApiUrl: "https://other.example.test",
     })).rejects.toMatchObject({ code: "operation_in_progress" });
 
     firstRegistration.resolve(undefined);
     await disabling;
     const second = await fixture.bridge.enable({
-      advanced: { machineName: "Machine B", machineSlug: "machine-b" },
+      controlApiUrl: "https://other.example.test",
     });
     await waitFor(() => fixture.bridge.operation(second.operation.id)?.status === "succeeded");
 
@@ -470,7 +463,6 @@ class FakeSafeTunnelApplication implements SafeTunnelApplicationService {
       ...this.stateValue,
       desiredState: "enabled",
       ...(input.localPiWebUrl === undefined ? {} : { localPiWebUrl: input.localPiWebUrl }),
-      ...(input.frpcPath === undefined ? {} : { frpcPath: input.frpcPath }),
     };
     return Promise.resolve(this.stateValue);
   }
@@ -539,7 +531,7 @@ class FakeRuntime implements SafeTunnelReconciledFrpcRuntime {
   currentStatus: SafeTunnelRuntimeStatus = { state: "stopped" };
   runningMachineId: string | undefined;
   startError: Error | undefined;
-  readonly startInputs: SafeTunnelFrpcStartInput[] = [];
+  startCalls = 0;
   startupCalls = 0;
   stopCalls = 0;
   stopError: Error | undefined;
@@ -554,8 +546,8 @@ class FakeRuntime implements SafeTunnelReconciledFrpcRuntime {
     return Promise.resolve();
   }
 
-  start(input: SafeTunnelFrpcStartInput): Promise<SafeTunnelFrpcStartResult> {
-    this.startInputs.push(input);
+  start(): Promise<SafeTunnelFrpcStartResult> {
+    this.startCalls += 1;
     if (this.startError !== undefined) return Promise.reject(this.startError);
     const machine = this.currentMachine();
     this.currentStatus = { state: "running" };

@@ -79,6 +79,58 @@ afterEach(async () => {
 });
 
 describe("SafeTunnelService", () => {
+  it("persists a service switch and removes old credentials before contacting the new service", async () => {
+    const controlPlane = new FakeControlPlane();
+    const storage = new MemoryStateStorage({
+      ...createDefaultSafeTunnelState(),
+      desiredState: "enabled",
+      controlApiUrl: machine.controlApiBaseUrl,
+      machine,
+    });
+    const service = createService(controlPlane, storage);
+    const newService = "https://other.example.test";
+    const authorizationControlPlane: SafeTunnelControlPlane = controlPlane;
+    const start = vi.spyOn(authorizationControlPlane, "startDeviceAuthorization").mockImplementation(async (input) => {
+      expect(input.controlApiBaseUrl).toBe(newService);
+      expect(JSON.stringify(input)).not.toContain(machineToken);
+      expect(storage.state).toMatchObject({ controlApiUrl: newService, desiredState: "disabled" });
+      expect(storage.state.machine).toBeUndefined();
+      await expect(service.getTunnelConfig()).rejects.toMatchObject({ code: "not_registered" });
+      throw new Error("new service unavailable");
+    });
+
+    await expect(service.login({
+      controlApiBaseUrl: newService,
+      machineName: "Test machine",
+      machineSlug,
+      localPiWebUrl,
+    })).rejects.toThrow("new service unavailable");
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(storage.state.machine).toBeUndefined();
+    expect(storage.state.controlApiUrl).toBe(newService);
+    expect(controlPlane.registerInputs).toEqual([]);
+    await expect(service.enable()).rejects.toMatchObject({ code: "not_registered" });
+  });
+
+  it("uses fresh authorization rather than old credentials when registering with a new service", async () => {
+    const controlPlane = new FakeControlPlane();
+    const storage = new MemoryStateStorage({ ...createDefaultSafeTunnelState(), machine });
+    const service = createService(controlPlane, storage);
+    await service.login({
+      controlApiBaseUrl: "https://other.example.test",
+      machineName: "Test machine",
+      machineSlug,
+      localPiWebUrl,
+    });
+    expect(controlPlane.registerInputs).toEqual([expect.objectContaining({
+      controlApiBaseUrl: "https://other.example.test",
+      connectorAccessToken: connectorToken,
+    })]);
+    expect(JSON.stringify(controlPlane.registerInputs)).not.toContain(machineToken);
+    expect(storage.state.machine?.controlApiBaseUrl).toBe("https://other.example.test");
+  });
+
   it("completes ordinary approval and persists only current intent and credentials", async () => {
     const controlPlane = new FakeControlPlane();
     const storage = new MemoryStateStorage();
@@ -103,6 +155,7 @@ describe("SafeTunnelService", () => {
     expect(result.machineCredentials).toEqual(machine);
     expect(storage.state).toEqual({
       ...createDefaultSafeTunnelState(),
+      controlApiUrl: "https://control.example.test",
       localPiWebUrl,
       machine,
     });
@@ -306,42 +359,15 @@ describe("SafeTunnelService", () => {
       onMachineRegistered: () => { observed.push("registered"); },
     })).rejects.toMatchObject({ code: "invalid_login" });
 
-    // Registration was dispatched, but nothing is persisted or observed for a
-    // machine bound to an account other than the approving one.
+    // Selection is saved, but an unexpected account's credentials never are.
     expect(controlPlane.registerInputs).toHaveLength(1);
     expect(observed).toEqual([]);
-    expect(storage.saves).toEqual([]);
-    expect(storage.state.machine).toBeUndefined();
-  });
-
-  it("rejects relative advanced frpc paths before Control API or durable effects", async () => {
-    const loginControlPlane = new FakeControlPlane();
-    const loginStorage = new MemoryStateStorage();
-    const startAuthorization = vi.spyOn(loginControlPlane, "startDeviceAuthorization");
-    const loginService = createService(loginControlPlane, loginStorage);
-
-    await expect(loginService.login({
-      controlApiBaseUrl: "https://control.example.test",
-      frpcPath: "relative/frpc",
-      localPiWebUrl,
-      machineName: "Test machine",
-      machineSlug,
-    })).rejects.toMatchObject({ code: "invalid_login" });
-    expect(startAuthorization).not.toHaveBeenCalled();
-    expect(loginControlPlane.registerInputs).toEqual([]);
-    expect(loginStorage.saves).toEqual([]);
-
-    const enableControlPlane = new FakeControlPlane();
-    const enableStorage = new MemoryStateStorage({
+    expect(storage.saves).toEqual([{
       ...createDefaultSafeTunnelState(),
-      machine,
-    });
-    const enableService = createService(enableControlPlane, enableStorage);
-
-    await expect(enableService.enable({ frpcPath: "relative/frpc" }))
-      .rejects.toMatchObject({ code: "invalid_login" });
-    expect(enableStorage.state.desiredState).toBe("disabled");
-    expect(enableStorage.saves).toEqual([]);
+      localPiWebUrl,
+      controlApiUrl: "https://control.example.test",
+    }]);
+    expect(storage.state.machine).toBeUndefined();
   });
 
   it("enables, prepares one constrained tunnel, and records a normalized heartbeat", async () => {

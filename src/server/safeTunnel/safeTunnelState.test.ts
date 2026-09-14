@@ -114,6 +114,23 @@ describe("FileSafeTunnelStateStorage", () => {
     await expect(stat(filePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("persists service selection without registration and discards executable overrides", async () => {
+    const filePath = join(tempDirectory, "safe-tunnel", "config.json");
+    const storage = createStorage(filePath);
+    const input = {
+      ...createDefaultSafeTunnelState(),
+      controlApiUrl: "https://dev.example.test/",
+      frpcPath: "/untrusted/frpc",
+    };
+    await storage.save(input);
+    const loaded = await storage.load();
+    expect(loaded.state).toEqual({
+      ...createDefaultSafeTunnelState(),
+      controlApiUrl: "https://dev.example.test",
+    });
+    expect(await readFile(filePath, "utf8")).not.toContain("frpcPath");
+  });
+
   it("atomically persists only current private intent and credentials", async () => {
     const filePath = join(tempDirectory, "data", "safe-tunnel", "config.json");
     const storage = createStorage(filePath);
@@ -121,7 +138,7 @@ describe("FileSafeTunnelStateStorage", () => {
       ...createDefaultSafeTunnelState(),
       desiredState: "enabled" as const,
       localPiWebUrl: "http://127.0.0.1:9000",
-      frpcPath: "/opt/frpc",
+      controlApiUrl: "https://control.example.test",
       machine: {
         controlApiBaseUrl: "https://control.example.test/",
         credentialStatus: "active" as const,

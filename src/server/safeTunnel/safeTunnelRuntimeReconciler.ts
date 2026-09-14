@@ -9,7 +9,6 @@ import {
 import {
   SafeTunnelFrpcSupervisorError,
   type SafeTunnelFrpcRuntime,
-  type SafeTunnelFrpcStartInput,
   type SafeTunnelFrpcStartResult,
   type SafeTunnelScheduledTask,
   type SafeTunnelSupervisorClock,
@@ -94,7 +93,7 @@ export class SafeTunnelRuntimeReconciler implements SafeTunnelReconciledFrpcRunt
     return this.startupInFlight;
   }
 
-  start(input: SafeTunnelFrpcStartInput): Promise<SafeTunnelFrpcStartResult> {
+  start(): Promise<SafeTunnelFrpcStartResult> {
     if (this.disposed) {
       return Promise.reject(new SafeTunnelFrpcSupervisorError("supervisor_shutdown"));
     }
@@ -102,7 +101,7 @@ export class SafeTunnelRuntimeReconciler implements SafeTunnelReconciledFrpcRunt
       return Promise.reject(new SafeTunnelFrpcSupervisorError("already_running"));
     }
 
-    const start = this.startRuntime(input);
+    const start = this.startRuntime();
     this.startInFlight = start;
     const clear = (): void => {
       if (this.startInFlight === start) this.startInFlight = undefined;
@@ -111,9 +110,7 @@ export class SafeTunnelRuntimeReconciler implements SafeTunnelReconciledFrpcRunt
     return start;
   }
 
-  private async startRuntime(
-    input: SafeTunnelFrpcStartInput,
-  ): Promise<SafeTunnelFrpcStartResult> {
+  private async startRuntime(): Promise<SafeTunnelFrpcStartResult> {
     const generation = this.beginHeartbeatSession(true);
     await this.waitForHeartbeat();
     if (!this.isHeartbeatCurrent(generation)) {
@@ -122,7 +119,7 @@ export class SafeTunnelRuntimeReconciler implements SafeTunnelReconciledFrpcRunt
 
     this.lifecycleDiagnostic = undefined;
     try {
-      const result = await this.dependencies.runtime.start(input);
+      const result = await this.dependencies.runtime.start();
       if (this.isHeartbeatCurrent(generation)) {
         this.scheduleHeartbeat(generation, 0);
       }
@@ -215,12 +212,7 @@ export class SafeTunnelRuntimeReconciler implements SafeTunnelReconciledFrpcRunt
       return;
     }
 
-    const input: SafeTunnelFrpcStartInput = {
-      ...(loaded.state.frpcPath === undefined
-        ? {}
-        : { advancedFrpcPath: loaded.state.frpcPath }),
-    };
-    void this.start(input).catch(() => undefined);
+    void this.start().catch(() => undefined);
   }
 
   private scheduleHeartbeat(generation: number, delayMs: number): void {
