@@ -131,6 +131,12 @@ export class MachineController {
     }
   }
 
+  invalidateMachineRuntime(machineId: string): void {
+    const machineRuntimes = this.getState().machineRuntimes;
+    if (machineRuntimes[machineId] === undefined) return;
+    this.setState({ machineRuntimes: omitKey(machineRuntimes, machineId) });
+  }
+
   async refreshMachineRuntime(machineId = this.getState().selectedMachine?.id ?? "local"): Promise<MachineRuntime | undefined> {
     const seq = (this.runtimeRefreshSeqByMachine.get(machineId) ?? 0) + 1;
     this.runtimeRefreshSeqByMachine.set(machineId, seq);

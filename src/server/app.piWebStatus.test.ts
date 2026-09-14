@@ -7,7 +7,7 @@ describe("PI WEB status routes", () => {
     const get = vi.fn(() => Promise.resolve(status("cached")));
     const refresh = vi.fn(() => Promise.resolve(status("forced")));
     const invalidate = vi.fn();
-    const app = await buildApp({ piWebStatusCache: { get, refresh, invalidate }, clientDist: false, logger: false });
+    const app = await buildApp({ piWebStatusCache: { get, refresh, invalidate }, clientServing: false, logger: false });
 
     try {
       const cachedResponse = await app.inject({ method: "GET", url: "/api/pi-web/status" });

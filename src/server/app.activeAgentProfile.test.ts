@@ -36,7 +36,7 @@ describe("buildApp active profile composition", () => {
     const app = await buildApp({
       agentProfileProvider: { getActiveAgentProfile },
       config: emptyConfigService(),
-      clientDist: false,
+      clientServing: false,
       logger: false,
     });
 
@@ -83,7 +83,7 @@ describe("buildApp active profile composition", () => {
         request: () => Promise.reject(new Error("connect ECONNREFUSED")),
         connectWebSocket: () => { throw new Error("sessiond is offline"); },
       },
-      clientDist: false,
+      clientServing: false,
       logger: false,
     });
 
@@ -123,7 +123,7 @@ describe("buildApp active profile composition", () => {
     const app = await buildApp({
       agentProfileProvider: provider,
       config: emptyConfigService(),
-      clientDist: false,
+      clientServing: false,
       logger: false,
     });
 
@@ -176,6 +176,7 @@ function configResponse(config: PiWebConfigResponse["config"]): PiWebConfigRespo
       host: false,
       port: false,
       allowedHosts: false,
+      safeTunnel: false,
       spawnSessions: false,
       subsessions: false,
       askUser: false,
@@ -193,6 +194,7 @@ function emptyConfigService(): PiWebConfigService {
       host: false,
       port: false,
       allowedHosts: false,
+      safeTunnel: false,
       spawnSessions: false,
       subsessions: false,
       askUser: false,

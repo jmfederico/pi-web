@@ -7,9 +7,26 @@ import { defineConfig } from "vite";
 import { effectivePiWebConfig } from "./src/config";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
+import {
+  loadSafeTunnelManagedAllowedHosts,
+  mergeViteAllowedHosts,
+} from "./src/server/safeTunnel/safeTunnelManagedHosts";
+import { defaultSafeTunnelStatePath } from "./src/server/safeTunnel/safeTunnelState";
+import {
+  createSafeTunnelViteHostPlugin,
+  createViteProxyHostBypass,
+} from "./src/server/safeTunnel/safeTunnelVitePlugin";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
+const safeTunnelStatePath = defaultSafeTunnelStatePath();
+const managedAllowedHosts = config.safeTunnel
+  ? await loadSafeTunnelManagedAllowedHosts(safeTunnelStatePath)
+  : [];
+const viteAllowedHosts = mergeViteAllowedHosts(
+  config.allowedHosts,
+  managedAllowedHosts,
+);
 const docsRoot = resolve("docs");
 const docsPrefix = "/site";
 const clientPublicRoot = resolve("src/client/public");
@@ -171,7 +188,16 @@ function devDeploymentIdentityPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin()],
+  plugins: [
+    devDocsPlugin(),
+    devDeploymentIdentityPlugin(),
+    ...(config.safeTunnel && config.allowedHosts !== true
+      ? [createSafeTunnelViteHostPlugin({
+          statePath: safeTunnelStatePath,
+          appliedHosts: managedAllowedHosts,
+        })]
+      : []),
+  ],
   root: "src/client",
   base: "./",
   build: {
@@ -192,11 +218,18 @@ export default defineConfig({
     },
   },
   server: {
+    // Dev browser entrypoint. Keep in sync with PI_WEB_BROWSER_URL in the
+    // `dev:web` script and docker/compose.dev.yml: the API process's dev-mode
+    // pointer and Safe Tunnel's default local target both rely on that wiring.
     port: 8505,
     strictPort: true,
-    ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),
+    allowedHosts: viteAllowedHosts,
     proxy: {
-      "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
+      "/api": {
+        target: `http://localhost:${String(apiPort)}`,
+        ws: true,
+        bypass: createViteProxyHostBypass(viteAllowedHosts),
+      },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
     },
   },

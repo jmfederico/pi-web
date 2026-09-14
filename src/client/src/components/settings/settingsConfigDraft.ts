@@ -71,6 +71,7 @@ function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebCo
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
     ...(baseConfig.attachments === undefined ? {} : { attachments: baseConfig.attachments }),
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
+    ...(baseConfig.safeTunnel === undefined ? {} : { safeTunnel: baseConfig.safeTunnel }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
     ...(baseConfig.askUser === undefined ? {} : { askUser: baseConfig.askUser }),

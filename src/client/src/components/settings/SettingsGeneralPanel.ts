@@ -73,7 +73,7 @@ export class SettingsGeneralPanel extends LitElement {
       <section class="settings-card" aria-label="Gateway server settings">
         <div class="card-heading">
           <h3>Gateway server</h3>
-          <p>Host, port, and allowed hosts are saved in the gateway config. Address changes require the web service to restart before the running server binds to the new address.</p>
+          <p>Host, port, and additional allowed hosts are saved in the gateway config. Address changes require the web service to restart before the running server binds to the new address.</p>
         </div>
         ${config === undefined && this.loading ? html`<div class="loading-card">Loading gateway configuration…</div>` : html`
           <div class="config-path-card">
@@ -102,17 +102,18 @@ export class SettingsGeneralPanel extends LitElement {
 
             <div class="field">
               <span class="field-heading">
-                <span>Allowed hosts</span>
+                <span>Additional allowed hosts</span>
                 ${this.renderOverrideBadge("allowedHosts")}
               </span>
               <select .value=${this.gatewayDraft.allowedHostsMode} @change=${(event: Event) => { this.updateGatewayDraft({ allowedHostsMode: selectValue(event) === "all" ? "all" : "list" }); }}>
-                <option value="list">Only listed hosts</option>
+                <option value="list">Built-in, managed, and listed hosts only</option>
                 <option value="all">Allow every host</option>
               </select>
               <textarea .value=${this.gatewayDraft.allowedHostsText} ?disabled=${this.gatewayDraft.allowedHostsMode === "all"} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ allowedHostsText: textAreaValue(event) }); }}></textarea>
-              <small>Enter one host per line, or choose “Allow every host” to write <code>true</code>.</small>
+              <small>Enter one additional host per line, or choose “Allow every host” to write <code>true</code>.</small>
             </div>
 
+            ${this.renderManagedAllowedHosts(config?.managedAllowedHosts)}
             ${this.renderGatewayEffectiveConfig()}
 
             <footer class="form-actions">
@@ -194,6 +195,21 @@ export class SettingsGeneralPanel extends LitElement {
     return html`<span class="override-badge">environment override</span>`;
   }
 
+  private renderManagedAllowedHosts(
+    hosts: PiWebConfigResponse["managedAllowedHosts"],
+  ): TemplateResult | null {
+    if (hosts === undefined || hosts.length === 0) return null;
+    return html`
+      <section class="managed-hosts" aria-label="Managed allowed hosts">
+        <span class="field-heading">Managed hosts — read-only</span>
+        <ul>
+          ${hosts.map((host) => html`<li><code>${host.hostname}</code><span>Safe Tunnel</span></li>`)}
+        </ul>
+        <small>PI WEB derives these hosts from saved runtime state. They are accepted automatically and are not written to <code>allowedHosts</code>.</small>
+      </section>
+    `;
+  }
+
   private renderGatewayEffectiveConfig(): TemplateResult {
     const effective = this.configResponse?.effectiveConfig ?? {};
     return html`
@@ -202,7 +218,7 @@ export class SettingsGeneralPanel extends LitElement {
         <dl>
           <div><dt>Host</dt><dd>${effective.host ?? html`<span class="muted">127.0.0.1 default</span>`}</dd></div>
           <div><dt>Port</dt><dd>${effective.port ?? html`<span class="muted">8504 default</span>`}</dd></div>
-          <div><dt>Allowed hosts</dt><dd>${formatAllowedHosts(effective.allowedHosts)}</dd></div>
+          <div><dt>Additional hosts</dt><dd>${formatAllowedHosts(effective.allowedHosts)}</dd></div>
         </dl>
       </section>
     `;
@@ -267,7 +283,7 @@ export class SettingsGeneralPanel extends LitElement {
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
     button:disabled { opacity: .55; cursor: not-allowed; }
     .settings-sections { display: grid; gap: 14px; }
-    .settings-card, .message, .loading-card, .config-path-card, .effective-card { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
+    .settings-card, .message, .loading-card, .config-path-card, .effective-card, .managed-hosts { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
     .settings-card { display: grid; gap: 14px; }
     .message { margin-bottom: 12px; }
     .settings-card .message { margin-bottom: 0; }
@@ -276,7 +292,7 @@ export class SettingsGeneralPanel extends LitElement {
     .config-path-card { display: grid; gap: 5px; }
     .config-path-card span, .field-heading, dt { color: var(--pi-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
     code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
-    .config-path-card small, .field small { color: var(--pi-muted); }
+    .config-path-card small, .field small, .managed-hosts small { color: var(--pi-muted); }
     .config-form { display: grid; gap: 14px; }
     .field { display: grid; gap: 7px; }
     .field-heading { display: flex; align-items: center; gap: 8px; }
@@ -285,6 +301,10 @@ export class SettingsGeneralPanel extends LitElement {
     textarea { resize: vertical; min-height: 94px; font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     textarea:disabled { opacity: .55; }
     .override-badge { border: 1px solid var(--pi-warning-border); border-radius: 999px; color: var(--pi-warning); background: var(--pi-warning-surface); padding: 2px 7px; font-size: 11px; font-weight: 600; text-transform: none; }
+    .managed-hosts { display: grid; gap: 9px; }
+    .managed-hosts ul { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; }
+    .managed-hosts li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .managed-hosts li span { color: var(--pi-muted); font-size: 12px; }
     .effective-card { display: grid; gap: 10px; }
     .effective-card dl { display: grid; gap: 8px; margin: 0; }
     .effective-card dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; align-items: baseline; }

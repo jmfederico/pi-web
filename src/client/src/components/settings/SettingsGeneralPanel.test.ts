@@ -17,7 +17,7 @@ describe("settings-general-panel copy", () => {
 
     expect(strings).toContain("<settings-panel-frame");
     expect(strings).toContain("Gateway server fields edit this local gateway. File access and upload defaults edit ");
-    expect(strings).toContain("Host, port, and allowed hosts are saved in the gateway config.");
+    expect(strings).toContain("Host, port, and additional allowed hosts are saved in the gateway config.");
     expect(strings).toContain("External filesystem roots and upload defaults are saved on ");
     expect(values.filter((value) => value === "Lab Mac (remote machine)")).toHaveLength(5);
   });
@@ -249,6 +249,6 @@ function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
   };
 }
