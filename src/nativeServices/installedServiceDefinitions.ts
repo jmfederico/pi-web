@@ -48,6 +48,7 @@ const systemdInspectionProperties = [
 const systemdBusDestination = "org.freedesktop.systemd1";
 const systemdUnitObjectPathPrefix = "/org/freedesktop/systemd1/unit/";
 const legacySystemdUnprintableValue = "[unprintable]";
+const managedSystemdEnvironmentKeys = ["PI_WEB_CONFIG"] as const;
 
 type SystemdInspectionProperty = typeof systemdInspectionProperties[number];
 
@@ -55,9 +56,10 @@ type SystemdInspectionProperty = typeof systemdInspectionProperties[number];
  * Read installed definitions through a strict UTF-8 boundary, parse the
  * manager-relevant environment, and then bind that byte snapshot to the
  * service manager's effective context. Systemd must report the canonical
- * fragment, no unmodeled environment inputs, and the same effective
- * environment; legacy systemctl output is recovered losslessly from the
- * manager's D-Bus property. A loaded LaunchAgent must report the canonical
+ * fragment and the same effective values for PI WEB-managed environment
+ * keys; unrelated environment inputs are outside this assertion. Legacy
+ * systemctl output is recovered losslessly from the manager's D-Bus property.
+ * A loaded LaunchAgent must report the canonical
  * plist and the same PI_WEB_CONFIG. Launchd restart is the exception: its existing
  * bootout/bootstrap path deliberately replaces loaded state before probing.
  */
@@ -174,19 +176,10 @@ function inspectEffectiveSystemdDefinition(
     };
   }
   // Drop-ins (including package-owned global ones such as Fedora's
-  // service.d/10-timeout-abort.conf) are tolerated: every drop-in-settable
-  // property inspected here (Environment, EnvironmentFiles) is reported by
-  // systemctl as the drop-in-merged effective value and is strictly verified
-  // below, so a drop-in cannot silently alter what this inspection sees.
-  const environmentFiles = parsed.value.properties.get("EnvironmentFiles") ?? [];
-  const configuredEnvironmentFiles = environmentFiles.filter((value) => value !== "");
-  if (configuredEnvironmentFiles.length > 0) {
-    return {
-      ok: false,
-      message: `Systemd unit ${source.systemdName} uses EnvironmentFile inputs (${configuredEnvironmentFiles.join(", ")}); PI WEB cannot safely inspect their managed config values.`,
-    };
-  }
-
+  // service.d/10-timeout-abort.conf) are tolerated. The Environment property
+  // is the drop-in-merged effective value, and only PI WEB-managed keys are
+  // verified below. EnvironmentFile sources are not inspected separately;
+  // their managed values must still appear in that effective property.
   let actualFragmentPath: string;
   let expectedFragmentPath: string;
   try {
@@ -212,7 +205,10 @@ function inspectEffectiveSystemdDefinition(
     dependencies,
   );
   if (!effectiveEnvironment.ok) return effectiveEnvironment;
-  if (!recordsEqual(effectiveEnvironment.value, expectedEnvironment)) {
+  if (!recordsEqual(
+    managedEnvironmentValues(effectiveEnvironment.value),
+    managedEnvironmentValues(expectedEnvironment),
+  )) {
     return {
       ok: false,
       message: `Systemd unit ${source.systemdName} has an effective environment that differs from installed definition ${source.path}; run \`systemctl --user daemon-reload\` or reinstall the managed services before probing it.`,
@@ -398,6 +394,17 @@ function unrecognizedSystemdEnvironment(
     ok: false,
     message: `Could not inspect effective systemd unit ${source.systemdName}: ${command} returned an unrecognized Environment value.`,
   };
+}
+
+function managedEnvironmentValues(
+  environment: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  const managed = new Map<string, string>();
+  for (const key of managedSystemdEnvironmentKeys) {
+    const value = ownEnvironmentValue(environment, key);
+    if (value !== undefined) managed.set(key, value);
+  }
+  return Object.fromEntries(managed);
 }
 
 function environmentFromAssignments(assignments: readonly string[]): Readonly<Record<string, string>> | undefined {
