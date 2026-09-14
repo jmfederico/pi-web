@@ -669,9 +669,9 @@ export class ChatView extends LitElement {
     }
     const state = this.activityState();
     if (state === undefined) return null;
-    const active = state !== "idle" || this.activity?.phase === "active";
+    if (state === "idle" && this.activity?.phase !== "active") return null;
     return html`
-      <div class=${active ? "activity-dock active" : "activity-dock"} aria-live="polite">
+      <div class="activity-dock active" aria-live="polite">
         <span class="dot"></span>
         <span class="activity-text">${this.activityText(state)}</span>
       </div>
