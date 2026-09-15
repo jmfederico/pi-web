@@ -21,9 +21,10 @@ const GIT_ENV = Object.fromEntries([
 ]);
 
 const backendContext: ServerPluginActivationContext = {
-  apiVersion: 1,
+  apiVersion: 3,
   pluginId: "git",
   packageRoot: "pi-web-plugins/git",
+  dataDirectory: "/data/plugin-data/git",
   logger: {
     debug() { /* no-op */ },
     info() { /* no-op */ },
@@ -33,6 +34,7 @@ const backendContext: ServerPluginActivationContext = {
   settings: {},
   execFile: createServerPluginExecFile({ env: GIT_ENV }),
   signal: new AbortController().signal,
+  lifetimeSignal: new AbortController().signal,
 };
 
 // The fixture suites below drive real Git commands (init, submodule add,

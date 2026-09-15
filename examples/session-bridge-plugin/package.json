@@ -1,0 +1,26 @@
+{
+  "name": "pi-web-example-workspace-reviews",
+  "description": "Opt-in PI WEB workspace reviews with a native Pi companion and saved findings",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "keywords": ["pi-package"],
+  "scripts": { "build": "tsc -p tsconfig.json" },
+  "devDependencies": {
+    "@jmfederico/pi-web": "^2.202609.0",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.3"
+  },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "pi": { "extensions": ["./src/companion.ts"] },
+  "piWeb": {
+    "plugins": [{
+      "id": "workspace-reviews-example",
+      "browserRoot": "dist/browser",
+      "module": "dist/browser/index.js",
+      "serverModule": "dist/server.js",
+      "machineSpecific": true
+    }]
+  }
+}

@@ -15,14 +15,14 @@ afterEach(async () => {
 });
 
 describe("server plugin runtime child-process fixtures", () => {
-  it("never imports safe-start skips and contains import, activation, start, and stop failures", async () => {
+  it("never imports safe-start skips and contains import, activation, start, and disposal failures", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-server-plugin-child-"));
     tempRoots.push(root);
     const eventsPath = join(root, "events.log");
     const poisonMarker = join(root, "poison-imported");
     const modules = new Map<string, string>([
       ["alpha", lifecycleModule("Alpha", eventsPath, "alpha")],
-      ["bad-activate", `export default { apiVersion: 1, name: "Bad activate", activate() { throw new Error("activate fixture failed"); } };`],
+      ["bad-activate", `export default { apiVersion: 3, name: "Bad activate", activate() { throw new Error("activate fixture failed"); } };`],
       ["bad-import", `throw new Error("import fixture failed");`],
       ["bad-start", lifecycleModule("Bad start", eventsPath, "bad-start", { failStart: true })],
       ["poison", `
@@ -58,6 +58,7 @@ describe("server plugin runtime child-process fixtures", () => {
       const snapshot = { plugins: ${JSON.stringify(entries)}, diagnostics: [] };
       const logger = { debug() {}, info() {}, warn() {}, error() {} };
       const runtime = await createServerPluginRuntime({
+        dataDir: ${JSON.stringify(join(root, "data"))},
         catalog: { snapshot: async () => snapshot },
         safeStart: "bundled-only",
         logger,
@@ -90,7 +91,7 @@ describe("server plugin runtime child-process fixtures", () => {
     expect(findRuntimeRecord(output, "afterStop", "zeta")).toMatchObject({
       pluginId: "zeta",
       state: "failed",
-      phase: "stop",
+      phase: "dispose",
       message: "stop fixture failed",
     });
     expect(existsSync(poisonMarker)).toBe(false);
@@ -105,13 +106,14 @@ describe("server plugin runtime child-process fixtures", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "keeps Terminal's notice reporter active while a later plugin is still stopping",
+    "keeps Terminal's notice reporter active while a later plugin is still disposing",
     async () => {
       const root = await mkdtemp(join(tmpdir(), "pi-web-server-plugin-terminal-stop-child-"));
       tempRoots.push(root);
       const failureMarker = join(root, "fail-terminal-command");
       const runnerPath = join(root, "runner.mjs");
       const runtimeUrl = pathToFileURL(resolve("src/server/plugins/serverPluginRuntime.ts")).href;
+      const terminalCapabilityUrl = pathToFileURL(resolve("src/server/terminals/requiredTerminalService.ts")).href;
       const terminalPluginUrl = pathToFileURL(resolve("pi-web-plugins/terminal/server/server-plugin.ts")).href;
       const terminalModulePath = resolve("pi-web-plugins/terminal/server/server-plugin.ts");
       const commandMarker = `'${failureMarker.replaceAll("'", "'\\''")}'`;
@@ -145,15 +147,16 @@ describe("server plugin runtime child-process fixtures", () => {
         import { writeFileSync } from "node:fs";
         import terminalPlugin from ${JSON.stringify(terminalPluginUrl)};
         import { createServerPluginRuntime } from ${JSON.stringify(runtimeUrl)};
+        import { REQUIRED_TERMINAL_SERVICE_CAPABILITY } from ${JSON.stringify(terminalCapabilityUrl)};
 
         let resolveNotice = () => undefined;
         const noticeObserved = new Promise((resolve) => { resolveNotice = resolve; });
         const blockerPlugin = {
-          apiVersion: 1,
+          apiVersion: 3,
           name: "Stop blocker",
           activate() {
             return {
-              async stop() {
+              async dispose() {
                 writeFileSync(${JSON.stringify(failureMarker)}, "fail");
                 await new Promise((resolve, reject) => {
                   const timeout = setTimeout(() => { reject(new Error("Terminal failure notice was not observed")); }, 2_000);
@@ -166,6 +169,7 @@ describe("server plugin runtime child-process fixtures", () => {
         const notices = [];
         const activity = [];
         const runtime = await createServerPluginRuntime({
+        dataDir: ${JSON.stringify(join(root, "data"))},
           catalog: { snapshot: async () => ({ plugins: ${JSON.stringify(entries)}, diagnostics: [] }) },
           importer: async (url) => url.startsWith(${JSON.stringify(terminalPluginUrl)})
             ? { default: terminalPlugin }
@@ -176,7 +180,7 @@ describe("server plugin runtime child-process fixtures", () => {
             resolveNotice();
           },
         });
-        const terminal = runtime.requiredTerminalService();
+        const terminal = runtime.resolve(REQUIRED_TERMINAL_SERVICE_CAPABILITY);
         terminal.bindActivitySink({
           updateTerminal(value) { activity.push({ kind: "update", ...value }); },
           removeTerminal(id, cwd) { activity.push({ kind: "remove", id, cwd }); },
@@ -246,6 +250,7 @@ describe("server plugin runtime child-process fixtures", () => {
       import { createServerPluginRuntime } from ${JSON.stringify(runtimeUrl)};
       const logger = { debug() {}, info() {}, warn() {}, error() {} };
       const runtime = await createServerPluginRuntime({
+        dataDir: ${JSON.stringify(join(root, "data"))},
         catalog: { snapshot: async () => { throw new Error("safe start must bypass catalog discovery"); } },
         safeStart: "none",
         logger,
@@ -289,7 +294,7 @@ function lifecycleModule(
     import { appendFileSync } from "node:fs";
     const record = (event) => appendFileSync(${JSON.stringify(eventsPath)}, event + "\\n");
     export default {
-      apiVersion: 1,
+      apiVersion: 3,
       name: ${JSON.stringify(name)},
       activate() {
         return {
@@ -301,7 +306,7 @@ function lifecycleModule(
             record(${JSON.stringify(`start:${id}`)});
             ${options.failStart === true ? `throw new Error("start fixture failed");` : ""}
           },
-          stop() {
+          dispose() {
             record(${JSON.stringify(`stop:${id}`)});
             ${options.failStop === true ? `throw new Error("stop fixture failed");` : ""}
           }

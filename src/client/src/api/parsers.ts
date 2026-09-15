@@ -223,7 +223,6 @@ function optionalWorkspaceProviderMetadata(value: unknown): Workspace["provider"
   return Object.freeze({
     pluginId: requireString(value, "pluginId"),
     capabilities: Object.freeze({
-      request: requireBoolean(capabilities, "request"),
       remove: requireBoolean(capabilities, "remove"),
     }),
     ...optionalField("metadata", metadata === undefined ? undefined : parseJsonObject(metadata, "workspace provider metadata")),
@@ -1678,7 +1677,7 @@ function parsePiWebPluginServerInfo(value: unknown, pluginId: string): NonNullab
   if (state !== "active" && state !== "failed" && state !== "incompatible" && state !== "disabled" && state !== "missing" && state !== "unknown") {
     throw new Error("Invalid PI WEB server plugin state");
   }
-  if (phase !== undefined && phase !== "import" && phase !== "activate" && phase !== "validate" && phase !== "start" && phase !== "health" && phase !== "stop") {
+  if (phase !== undefined && phase !== "import" && phase !== "activate" && phase !== "validate" && phase !== "start" && phase !== "health" && phase !== "dispose") {
     throw new Error("Invalid PI WEB server plugin phase");
   }
   const health = record["health"] === undefined ? undefined : parsePiWebPluginHealth(record["health"]);

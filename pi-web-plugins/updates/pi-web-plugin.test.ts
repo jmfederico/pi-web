@@ -5,26 +5,38 @@ import plugin from "./pi-web-plugin.js";
 
 describe("Updates plugin actions", () => {
   it("forces an update check through the host runtime context", async () => {
-    const action = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
+    const action = plugin.activate(activationContext()).contributions.actions.find((candidate) => candidate.id === "check");
     if (action === undefined) throw new Error("Expected update check action");
     const checkForPiWebUpdates = vi.fn(() => Promise.resolve());
     const context = runtimeContext({ checkForPiWebUpdates });
 
-    expect(action.enabled?.(context)).toBe(true);
+    expect(action.enabled(context)).toBe(true);
     await action.run(context);
 
     expect(checkForPiWebUpdates).toHaveBeenCalledOnce();
   });
 
   it("disables the action on older hosts without the update-check helper", () => {
-    const action = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions.actions?.find((candidate) => candidate.id === "check");
+    const action = plugin.activate(activationContext()).contributions.actions.find((candidate) => candidate.id === "check");
     if (action === undefined) throw new Error("Expected update check action");
     const context = runtimeContext();
 
-    expect(action.enabled?.(context)).toBe(false);
-    expect(action.disabledReason?.(context)).toContain("newer PI WEB gateway");
+    expect(action.enabled(context)).toBe(false);
+    expect(action.disabledReason()).toContain("newer PI WEB gateway");
   });
 });
+
+function activationContext() {
+  return {
+    apiVersion: 4 as const,
+    pluginId: "updates",
+    runtimePluginId: "updates",
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  };
+}
 
 function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {
   const noop = () => undefined;

@@ -341,7 +341,7 @@ function contribution(
     source: "fixture",
     scope: "bundled",
     moduleRevision: "terminal-r1",
-    backend: { version: 1, request: () => null, openChannel },
+    backend: { request: () => null, openChannel },
   };
 }
 

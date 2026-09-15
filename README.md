@@ -110,7 +110,7 @@ Read more: [Fleet and machines guide](https://pi-web.dev/machines)
 
 ## PI WEB plugins
 
-PI WEB supports trusted browser plugins plus optional sessiond-backed workspace providers. Bundled Git uses the same public provider and backend contracts available to installed plugins. Use **Settings → PI WEB plugins** to manage desired state on the selected machine.
+PI WEB supports trusted browser plugins and optional sessiond server entries with typed capabilities, exact-package browser/server peers, and workspace providers. Bundled features use the same public contracts available to installed plugins where the host does not need to retain authority. Use **Settings → PI WEB plugins** to manage desired state on the selected machine.
 
 Pi packages are a separate Pi package-manager concept. A Pi package may include a PI WEB plugin, but installing a package and enabling it are different operations. Server-backed changes require a session-daemon restart; see the plugin guide for lifecycle and recovery details.
 

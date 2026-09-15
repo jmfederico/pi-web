@@ -2,8 +2,8 @@ import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
 import { TASKS_CONFIG_PATH } from "./config.js";
 import { defineTasksPanelElement, tasksPanelBadge } from "./tasksPanelElement.js";
 
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Workspace Tasks",
   activate: ({ runtimePluginId, html, svg }) => {
     defineTasksPanelElement();
@@ -45,6 +45,6 @@ const plugin: PiWebPlugin = {
       },
     };
   },
-};
+} satisfies PiWebPlugin;
 
 export default plugin;

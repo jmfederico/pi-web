@@ -1,6 +1,6 @@
 import type { WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { SessionStorageTerminalSelectionMemory, terminalSelectionScope, type TerminalSelectionMemory } from "./terminalSelection";
-import { TerminalBackendClient, type TerminalInfo } from "./terminalProtocol";
+import { TerminalPeerClient, type TerminalInfo } from "./terminalProtocol";
 
 const ACTIVE_TERMINAL_REFRESH_MS = 1_000;
 const ACTIVE_TERMINAL_FAILURE_RETRY_MS = 5_000;
@@ -14,6 +14,7 @@ interface WorkspaceRuntimeState {
   refreshedAt: number;
   retryAt: number;
   refresh: Promise<void> | undefined;
+  refreshController: AbortController | undefined;
   wakeAt: number;
   wakeTimer: TimerId | undefined;
   requestRender: () => void;
@@ -22,6 +23,7 @@ interface WorkspaceRuntimeState {
 /** Browser-product state shared by this activation's panel, badge, and facade. */
 export class TerminalBrowserRuntime {
   private readonly workspaces = new Map<string, WorkspaceRuntimeState>();
+  private disposed = false;
 
   constructor(
     readonly selection: TerminalSelectionMemory = new SessionStorageTerminalSelectionMemory(),
@@ -31,6 +33,7 @@ export class TerminalBrowserRuntime {
   ) {}
 
   activeTerminalBadge(context: WorkspacePanelContext): number | string | undefined {
+    if (this.disposed) return undefined;
     const state = this.workspaceState(context);
     const now = this.now();
     if (now >= state.retryAt && now - state.refreshedAt >= ACTIVE_TERMINAL_REFRESH_MS) {
@@ -43,6 +46,7 @@ export class TerminalBrowserRuntime {
   }
 
   async invalidate(context: WorkspacePanelContext): Promise<void> {
+    this.requireActive();
     const state = this.workspaceState(context);
     state.refreshedAt = 0;
     try {
@@ -56,26 +60,34 @@ export class TerminalBrowserRuntime {
   }
 
   async refresh(context: WorkspacePanelContext): Promise<void> {
-    const pairedBackend = context.pairedBackend;
-    if (pairedBackend === undefined) throw new Error("Required Terminal paired backend is unavailable");
+    this.requireActive();
+    const peer = context.peer;
+    if (peer === undefined) throw new Error("Required Terminal peer is unavailable");
     const state = this.workspaceState(context);
     if (state.refresh !== undefined) return state.refresh;
-    const refresh = new TerminalBackendClient(pairedBackend).list().then((terminals) => {
+    const controller = new AbortController();
+    const refresh = new TerminalPeerClient(peer).list(controller.signal).then((terminals) => {
       this.updateTerminals(context, terminals);
     }).catch((error: unknown) => {
+      if (this.disposed || controller.signal.aborted) throw error;
       state.refreshFailed = true;
       state.retryAt = this.now() + ACTIVE_TERMINAL_FAILURE_RETRY_MS;
       this.scheduleBadgeWake(state, state.retryAt);
       state.requestRender();
       throw error;
     }).finally(() => {
-      if (state.refresh === refresh) state.refresh = undefined;
+      if (state.refresh === refresh) {
+        state.refresh = undefined;
+        state.refreshController = undefined;
+      }
     });
     state.refresh = refresh;
+    state.refreshController = controller;
     return refresh;
   }
 
   updateTerminals(context: WorkspacePanelContext, terminals: readonly TerminalInfo[]): void {
+    if (this.disposed) return;
     const state = this.workspaceState(context);
     const activeCount = terminals.reduce((count, terminal) => count + (terminal.exited ? 0 : 1), 0);
     const changed = state.activeCount !== activeCount;
@@ -123,7 +135,24 @@ export class TerminalBrowserRuntime {
   }
 
   forgetTerminal(terminalId: string): void {
-    this.selection.forgetTerminal(terminalId);
+    if (!this.disposed) this.selection.forgetTerminal(terminalId);
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const state of this.workspaces.values()) {
+      state.refreshController?.abort(new DOMException("Terminal browser runtime disposed", "AbortError"));
+      state.refreshController = undefined;
+      if (state.wakeTimer !== undefined) this.clearTimer(state.wakeTimer);
+      state.wakeTimer = undefined;
+      state.wakeAt = 0;
+    }
+    this.workspaces.clear();
+  }
+
+  private requireActive(): void {
+    if (this.disposed) throw new DOMException("Terminal browser runtime disposed", "AbortError");
   }
 
   private workspaceState(context: WorkspacePanelContext): WorkspaceRuntimeState {
@@ -138,6 +167,7 @@ export class TerminalBrowserRuntime {
       refreshedAt: 0,
       retryAt: 0,
       refresh: undefined,
+      refreshController: undefined,
       wakeAt: 0,
       wakeTimer: undefined,
       requestRender: () => { context.host.requestRender(); },

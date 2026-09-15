@@ -10,7 +10,8 @@
       "types": "./dist/plugin-api.d.ts"
     },
     "./server-plugin-api": {
-      "types": "./dist/server-plugin-api.d.ts"
+      "types": "./dist/server-plugin-api.d.ts",
+      "import": "./dist/server-plugin-api.js"
     }
   },
   "typesVersions": {
@@ -36,6 +37,7 @@
     "LICENSE",
     "extensions",
     "examples/workspace-provider-plugin",
+    "examples/session-bridge-plugin",
     "docs/plugins.md",
     "docs/config.md",
     "docs/assets",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, PairedWorkspaceBackendV1, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeer, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
 import { InMemoryTerminalSelectionMemory } from "./terminalSelection";
 
@@ -10,7 +10,7 @@ afterEach(() => {
 describe("Terminal browser runtime", () => {
   it("owns active-count refresh and badge state for each machine workspace", async () => {
     let now = 1_000;
-    const request = vi.fn((operation: string): Promise<JsonValue> => Promise.resolve(operation === "terminal.list" ? [
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => Promise.resolve(operation === "terminal.list" ? [
       { id: "active", cwd: "/repo", name: "Shell", createdAt: "now", exited: false },
       { id: "exited", cwd: "/repo", name: "Build", createdAt: "now", exited: true, exitCode: 0 },
     ] : []));
@@ -22,7 +22,8 @@ describe("Terminal browser runtime", () => {
     expect(runtime.activeTerminalBadge(context)).toBeUndefined();
     await vi.waitFor(() => { expect(renderRequests).toBe(1); });
     expect(runtime.activeTerminalBadge(context)).toBe(1);
-    expect(request).toHaveBeenCalledWith("terminal.list", null, undefined);
+    expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["terminal.list", null]);
+    expect(request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
 
     now += 999;
     expect(runtime.activeTerminalBadge(context)).toBe(1);
@@ -70,6 +71,38 @@ describe("Terminal browser runtime", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.waitFor(() => { expect(request).toHaveBeenCalledTimes(2); });
     expect(runtime.activeTerminalBadge(context)).toBe(1);
+  });
+
+  it("cancels in-flight refreshes and scheduled badge work when disposed", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((_operation, _input, options): Promise<JsonValue> => new Promise((_resolve, reject) => {
+      const signal = options?.signal;
+      requestSignal = signal;
+      signal?.addEventListener("abort", () => {
+        const reason: unknown = signal.reason;
+        reject(reason instanceof Error ? reason : new Error("Terminal refresh aborted"));
+      }, { once: true });
+    }));
+    const timer = globalThis.setTimeout(() => undefined, 60_000);
+    const setTimer = vi.fn((handler: () => void, timeout: number) => {
+      void handler;
+      void timeout;
+      return timer;
+    });
+    const clearTimer = vi.fn((id: ReturnType<typeof globalThis.setTimeout>) => { globalThis.clearTimeout(id); });
+    const context = workspaceContext("remote-1", request);
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory(), () => 1_000, setTimer, clearTimer);
+    const refresh = runtime.refresh(context);
+    runtime.updateTerminals(context, [{ id: "active", cwd: "/repo", name: "Shell", createdAt: "now", exited: false }]);
+
+    expect(setTimer).toHaveBeenCalledOnce();
+    runtime.dispose();
+
+    expect(requestSignal?.aborted).toBe(true);
+    expect(clearTimer).toHaveBeenCalledWith(timer);
+    await expect(refresh).rejects.toMatchObject({ name: "AbortError" });
+    expect(runtime.activeTerminalBadge(context)).toBeUndefined();
+    await expect(runtime.refresh(context)).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("keeps selection in plugin-owned memory and publishes canonical navigation first", () => {
@@ -156,25 +189,25 @@ describe("Terminal browser runtime", () => {
     expect(runtime.selectedTerminalId(context)).toBe("deep-link");
   });
 
-  it("fails closed when the required paired backend is absent", async () => {
+  it("fails closed when the required peer is absent", async () => {
     const runtime = new TerminalBrowserRuntime();
     const context = workspaceContext("local", vi.fn());
-    Reflect.deleteProperty(context, "pairedBackend");
+    Reflect.deleteProperty(context, "peer");
 
-    await expect(runtime.refresh(context)).rejects.toThrow("Required Terminal paired backend is unavailable");
+    await expect(runtime.refresh(context)).rejects.toThrow("Required Terminal peer is unavailable");
   });
 });
 
 function workspaceContext(
   machineId: string,
-  request: NonNullable<PairedWorkspaceBackendV1["request"]>,
+  request: NonNullable<PluginPeer["request"]>,
   navigation: Partial<NonNullable<WorkspacePanelContext["navigation"]>> = {},
 ): WorkspacePanelContext {
   return {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
     files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    pairedBackend: { version: 1, requestVersion: 1, request },
+    peer: { request },
     host: { requestRender: vi.fn() },
     prompt: { insertText: vi.fn(), getText: vi.fn(() => ""), getSelection: vi.fn(() => null) },
     terminal: { open: vi.fn(), runCommand: vi.fn() },

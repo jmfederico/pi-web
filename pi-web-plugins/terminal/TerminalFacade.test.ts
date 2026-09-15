@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, PairedWorkspaceBackendV1, TerminalCommandRun, Workspace } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeer, TerminalCommandRun, Workspace } from "@jmfederico/pi-web/plugin-api";
 import { TerminalFacade } from "./TerminalFacade";
 
 const workspace: Workspace = {
@@ -35,8 +35,8 @@ afterEach(() => {
 });
 
 describe("Terminal facade", () => {
-  it("runs a command through the paired backend and opens its terminal when requested", async () => {
-    const request = vi.fn((operation: string): Promise<JsonValue> => {
+  it("runs a command through the peer and opens its terminal when requested", async () => {
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => {
       if (operation === "terminal.run") return Promise.resolve(runJson(succeededRun));
       return Promise.reject(new Error(`unexpected operation ${operation}`));
     });
@@ -45,18 +45,19 @@ describe("Terminal facade", () => {
       origin: "actions",
       registrationPluginId: "pi-web.terminal",
       workspace,
-      pairedBackend: backend(request),
+      peer: peer(request),
       host: { navigateWorkspaceContribution },
     });
 
     const handle = await terminal.runCommand({ title: "Build", command: "npm run build", metadata: { source: "task" }, open: true });
 
-    expect(request).toHaveBeenCalledWith("terminal.run", {
+    expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["terminal.run", {
       origin: "actions",
       title: "Build",
       command: "npm run build",
       metadata: { source: "task" },
-    }, undefined);
+    }]);
+    expect(request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     expect(navigateWorkspaceContribution).toHaveBeenCalledWith(workspace, {
       contributionId: "pi-web.terminal:workspace.terminal",
       navigationAliases: ["core:workspace.terminal"],
@@ -65,9 +66,9 @@ describe("Terminal facade", () => {
     await expect(handle.completed).resolves.toEqual(succeededRun);
   });
 
-  it("polls scoped command runs through the same backend until completion", async () => {
+  it("polls scoped command runs through the same peer until completion", async () => {
     vi.useFakeTimers();
-    const request = vi.fn((operation: string): Promise<JsonValue> => {
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => {
       if (operation === "terminal.run") return Promise.resolve(runJson(runningRun));
       if (operation === "terminal.get-run") return Promise.resolve(runJson(succeededRun));
       return Promise.reject(new Error(`unexpected operation ${operation}`));
@@ -77,7 +78,7 @@ describe("Terminal facade", () => {
       origin: "actions",
       registrationPluginId: "pi-web.terminal",
       workspace,
-      pairedBackend: backend(request),
+      peer: peer(request),
       host: { navigateWorkspaceContribution: vi.fn() },
     });
 
@@ -85,7 +86,9 @@ describe("Terminal facade", () => {
     await vi.advanceTimersByTimeAsync(25);
 
     await expect(handle.completed).resolves.toEqual(succeededRun);
-    expect(request).toHaveBeenCalledWith("terminal.get-run", { runId: "run1" }, undefined);
+    const getRunCall = request.mock.calls.find(([operation]) => operation === "terminal.get-run");
+    expect(getRunCall?.slice(0, 2)).toEqual(["terminal.get-run", { runId: "run1" }]);
+    expect(getRunCall?.[2]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("rejects completion when a known command run disappears instead of polling forever", async () => {
@@ -99,7 +102,7 @@ describe("Terminal facade", () => {
       origin: "actions",
       registrationPluginId: "pi-web.terminal",
       workspace,
-      pairedBackend: backend(request),
+      peer: peer(request),
       host: { navigateWorkspaceContribution: vi.fn() },
     });
 
@@ -116,7 +119,7 @@ describe("Terminal facade", () => {
       origin: "actions",
       registrationPluginId: "machine.remote.pi-web.terminal",
       workspace,
-      pairedBackend: backend(vi.fn(() => Promise.resolve(null))),
+      peer: peer(vi.fn(() => Promise.resolve(null))),
       host: { navigateWorkspaceContribution },
     });
 
@@ -144,37 +147,117 @@ describe("Terminal facade", () => {
   });
 
   it("lists command runs with only plugin-owned scoped filters", async () => {
-    const request = vi.fn((): Promise<JsonValue> => Promise.resolve([runJson(runningRun)]));
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((): Promise<JsonValue> => Promise.resolve([runJson(runningRun)]));
     const controller = new AbortController();
     const facade = new TerminalFacade();
 
     await expect(facade.listCommandRuns({
-      pairedBackend: backend(request),
+      peer: peer(request),
       filter: { statuses: ["running"], metadata: { "pi.operation": "workspace.delete" } },
       signal: controller.signal,
     })).resolves.toEqual([runningRun]);
 
-    expect(request).toHaveBeenCalledWith("terminal.list-runs", {
+    expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["terminal.list-runs", {
       statuses: ["running"],
       metadata: { "pi.operation": "workspace.delete" },
-    }, { signal: controller.signal });
+    }]);
+    const requestSignal = request.mock.calls[0]?.[2]?.signal;
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    expect(requestSignal).not.toBe(controller.signal);
   });
 
-  it("fails closed when the paired request capability is absent", () => {
+  it("does not re-arm command polling when an in-flight response settles after disposal", async () => {
+    vi.useFakeTimers();
+    let resolveGetRun: (value: JsonValue) => void = () => undefined;
+    const getRun = new Promise<JsonValue>((resolve) => { resolveGetRun = resolve; });
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation): Promise<JsonValue> => {
+      if (operation === "terminal.run") return Promise.resolve(runJson(runningRun));
+      if (operation === "terminal.get-run") return getRun;
+      return Promise.reject(new Error(`unexpected operation ${operation}`));
+    });
+    const facade = new TerminalFacade({ pollIntervalMs: 25 });
+    const terminal = facade.createWorkspaceTerminal({
+      origin: "actions",
+      registrationPluginId: "pi-web.terminal",
+      workspace,
+      peer: peer(request),
+      host: { navigateWorkspaceContribution: vi.fn() },
+    });
+    const handle = await terminal.runCommand({ title: "Build", command: "npm run build" });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(request.mock.calls.filter(([operation]) => operation === "terminal.get-run")).toHaveLength(1);
+
+    facade.dispose();
+    await expect(handle.completed).rejects.toMatchObject({ name: "AbortError" });
+    resolveGetRun(runJson(runningRun));
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(request.mock.calls.filter(([operation]) => operation === "terminal.get-run")).toHaveLength(1);
+  });
+
+  it("aborts an in-flight command-run listing when disposed", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((_operation, _input, options): Promise<JsonValue> => new Promise((_resolve, reject) => {
+      requestSignal = options?.signal;
+      requestSignal?.addEventListener("abort", () => { reject(new DOMException("Listing aborted", "AbortError")); }, { once: true });
+    }));
+    const facade = new TerminalFacade();
+    const listing = facade.listCommandRuns({ peer: peer(request) });
+    await Promise.resolve();
+
+    facade.dispose();
+
+    expect(requestSignal?.aborted).toBe(true);
+    await expect(listing).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("cancels command polling and rejects retained helpers when disposed", async () => {
+    const timer = globalThis.setTimeout(() => undefined, 60_000);
+    const setTimer = vi.fn((handler: () => void, timeout: number) => {
+      void handler;
+      void timeout;
+      return timer;
+    });
+    const clearTimer = vi.fn((id: ReturnType<typeof globalThis.setTimeout>) => { globalThis.clearTimeout(id); });
+    const request = vi.fn((operation: string): Promise<JsonValue> => {
+      if (operation === "terminal.run") return Promise.resolve(runJson(runningRun));
+      return Promise.reject(new Error(`unexpected operation ${operation}`));
+    });
+    const facade = new TerminalFacade({ pollIntervalMs: 25, setTimeout: setTimer, clearTimeout: clearTimer });
+    const terminal = facade.createWorkspaceTerminal({
+      origin: "actions",
+      registrationPluginId: "pi-web.terminal",
+      workspace,
+      peer: peer(request),
+      host: { navigateWorkspaceContribution: vi.fn() },
+    });
+    const handle = await terminal.runCommand({ title: "Build", command: "npm run build" });
+
+    expect(setTimer).toHaveBeenCalledOnce();
+    facade.dispose();
+
+    await expect(handle.completed).rejects.toMatchObject({ name: "AbortError" });
+    expect(clearTimer).toHaveBeenCalledWith(timer);
+    expect(() => { terminal.open(); }).toThrow(expect.objectContaining({ name: "AbortError" }));
+    await expect(terminal.runCommand({ title: "Again", command: "true" })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("fails closed when the peer request capability is absent", () => {
     const facade = new TerminalFacade();
     expect(() => facade.createWorkspaceTerminal({
       origin: "actions",
       registrationPluginId: "pi-web.terminal",
       workspace,
       // @ts-expect-error Exercise the runtime guard against a malformed host capability.
-      pairedBackend: { version: 1 },
+      peer: {},
       host: { navigateWorkspaceContribution: vi.fn() },
-    })).toThrow("Required Terminal paired request capability v1 is unavailable");
+    })).toThrow("Required Terminal peer request capability is unavailable");
   });
 });
 
-function backend(request: NonNullable<PairedWorkspaceBackendV1["request"]>): PairedWorkspaceBackendV1 {
-  return { version: 1, requestVersion: 1, request };
+function peer(request: NonNullable<PluginPeer["request"]>): PluginPeer {
+  return { request };
 }
 
 function runJson(run: TerminalCommandRun): JsonValue {

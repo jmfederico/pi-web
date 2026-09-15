@@ -20,8 +20,9 @@ afterEach(() => {
 });
 
 describe("PiWebApp global shortcut modality boundary", () => {
-  it("runs a global shortcut when the application has no rendered modal", () => {
+  it("runs a global shortcut when the application has no rendered modal", async () => {
     const app = new PiWebApp();
+    await waitForBuiltInPlugins(app);
     const target = appendKeyTarget();
     const targetKeyDown = vi.fn();
     target.addEventListener("keydown", targetKeyDown);
@@ -62,8 +63,9 @@ describe("PiWebApp global shortcut modality boundary", () => {
     expect(targetKeyDown).toHaveBeenCalledOnce();
   });
 
-  it("does not suppress shortcuts for session-scoped state that cannot render", () => {
+  it("does not suppress shortcuts for session-scoped state that cannot render", async () => {
     const app = new PiWebApp();
+    await waitForBuiltInPlugins(app);
     setAppState(app, { modelDialog: { instanceId: 1, origin: { machineId: "local", sessionId: "session-1", cwd: "/repo" }, title: "Select model", options: [], catalog: [] } });
     const target = appendKeyTarget();
 
@@ -121,6 +123,12 @@ type FocusChatComposer = (this: PiWebApp) => Promise<void>;
 
 interface AutoFocusAppShell {
   shouldAutoFocusPrompt: () => boolean;
+}
+
+async function waitForBuiltInPlugins(app: PiWebApp): Promise<void> {
+  const ready: unknown = Reflect.get(app, "builtInPluginsReady");
+  if (!(ready instanceof Promise)) throw new Error("PiWebApp built-in plugin readiness was unavailable");
+  await ready;
 }
 
 function dispatchShortcutThroughApp(app: PiWebApp, target: HTMLElement): KeyboardEvent {

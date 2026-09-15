@@ -5,10 +5,10 @@ import { styleMap, type StyleInfo } from "lit/directives/style-map.js";
 import { Terminal, type ITerminalOptions, type ITheme } from "@xterm/xterm";
 import { FitAddon, type ITerminalDimensions } from "@xterm/addon-fit";
 import xtermStyles from "@xterm/xterm/css/xterm.css?inline";
-import type { PairedWorkspaceBackendChannel, PairedWorkspaceBackendChannelClose, TerminalCommandRun, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { PluginPeerChannel, PluginPeerChannelClose, TerminalCommandRun, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { writeClipboardText } from "./clipboard";
 import { selectFallbackTerminal, selectPreferredTerminal } from "./terminalSelection";
-import { TerminalBackendClient, terminalChannelFailureMessage, terminalInputFrames, type TerminalClientFrame, type TerminalInfo, type TerminalServerFrame, type TerminalSize } from "./terminalProtocol";
+import { TerminalPeerClient, terminalChannelFailureMessage, terminalInputFrames, type TerminalClientFrame, type TerminalInfo, type TerminalServerFrame, type TerminalSize } from "./terminalProtocol";
 import { createTerminalCopySnapshot, DEFAULT_TERMINAL_ANSI_THEME, type TerminalCopyRunStyle, type TerminalCopySnapshot } from "./terminalCopySnapshot";
 import { createTerminalSoftKeysDefaultEnvironmentMedia, hasTerminalSoftKeysPreference, initialTerminalSoftKeysEnabled, isTerminalSoftKeysDefaultEnvironment, writeTerminalSoftKeysPreference } from "./terminalSoftKeysPreference";
 import type { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
@@ -64,7 +64,7 @@ export class TerminalPanel extends LitElement {
 
   private terminal: Terminal | undefined;
   private fitAddon: FitAddon | undefined;
-  private channel: PairedWorkspaceBackendChannel | undefined;
+  private channel: PluginPeerChannel | undefined;
   private channelAbort: AbortController | undefined;
   private channelGeneration = 0;
   private channelReconnectAttempt = 0;
@@ -243,7 +243,7 @@ export class TerminalPanel extends LitElement {
     this.loading = true;
     this.error = undefined;
     try {
-      const client = this.backendClient(context);
+      const client = this.peerClient(context);
       const [terminals, commandRuns] = await Promise.all([
         client.list(controller.signal),
         client.listCommandRuns({}, controller.signal),
@@ -417,7 +417,7 @@ export class TerminalPanel extends LitElement {
     this.error = undefined;
     try {
       const size = this.measureTerminalSize() ?? DEFAULT_TERMINAL_SIZE;
-      const terminal = await this.backendClient(operation.context).create(size, operation.controller.signal);
+      const terminal = await this.peerClient(operation.context).create(size, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       this.loadTerminalChanges?.set(terminal.id, terminal);
       this.terminals = [...this.terminals.filter((existing) => existing.id !== terminal.id), terminal];
@@ -436,7 +436,7 @@ export class TerminalPanel extends LitElement {
     const operation = this.beginScopedOperation();
     if (operation === undefined) return;
     try {
-      await this.backendClient(operation.context).close(id, operation.controller.signal);
+      await this.peerClient(operation.context).close(id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       const next = this.terminals.filter((terminal) => terminal.id !== id);
       this.loadTerminalChanges?.set(id, undefined);
@@ -494,7 +494,7 @@ export class TerminalPanel extends LitElement {
     if (operation === undefined) return;
     this.commandRunLoadAbort = operation.controller;
     try {
-      const commandRuns = await this.backendClient(operation.context).listCommandRuns({}, operation.controller.signal);
+      const commandRuns = await this.peerClient(operation.context).listCommandRuns({}, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       this.commandRuns = commandRuns;
       this.cancellingRunIds = this.cancellingRunIds.filter((runId) => commandRuns.some((run) => run.id === runId && isCommandRunPending(run)));
@@ -532,7 +532,7 @@ export class TerminalPanel extends LitElement {
     this.error = undefined;
     this.cancellingRunIds = [...this.cancellingRunIds, run.id];
     try {
-      await this.backendClient(operation.context).cancelCommandRun(run.id, operation.controller.signal);
+      await this.peerClient(operation.context).cancelCommandRun(run.id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       await this.loadCommandRuns();
     } catch (error) {
@@ -550,7 +550,7 @@ export class TerminalPanel extends LitElement {
     this.error = undefined;
     this.continuingTerminalIds = [...this.continuingTerminalIds, id];
     try {
-      const terminal = await this.backendClient(operation.context).continue(id, operation.controller.signal);
+      const terminal = await this.peerClient(operation.context).continue(id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       this.terminals = this.terminals.map((item) => item.id === id ? terminal : item);
       operation.runtime.updateTerminals(operation.context, this.terminals);
@@ -599,7 +599,7 @@ export class TerminalPanel extends LitElement {
     this.channelAbort = controller;
     const bufferedFrames: TerminalServerFrame[] = [];
     let readyForFrames = !resetAfterReconnect;
-    void this.backendClient(context).attach({
+    void this.peerClient(context).attach({
       terminalId,
       ...(initialSize === undefined ? {} : { size: initialSize }),
       signal: controller.signal,
@@ -646,7 +646,7 @@ export class TerminalPanel extends LitElement {
     terminal.writeln(`\r\n[terminal error: ${frame.message}]`);
   }
 
-  private handleChannelClosed(generation: number, terminalId: string, terminal: Terminal, close: PairedWorkspaceBackendChannelClose): void {
+  private handleChannelClosed(generation: number, terminalId: string, terminal: Terminal, close: PluginPeerChannelClose): void {
     if (!this.channelIsCurrent(generation, terminalId, terminal)) return;
     this.channel = undefined;
     const failure = terminalChannelFailureMessage(close);
@@ -809,9 +809,9 @@ export class TerminalPanel extends LitElement {
     this.connectionError = undefined;
   }
 
-  private backendClient(context: WorkspacePanelContext): TerminalBackendClient {
-    if (context.pairedBackend === undefined) throw new Error("Required Terminal paired backend is unavailable");
-    return new TerminalBackendClient(context.pairedBackend);
+  private peerClient(context: WorkspacePanelContext): TerminalPeerClient {
+    if (context.peer === undefined) throw new Error("Required Terminal peer is unavailable");
+    return new TerminalPeerClient(context.peer);
   }
 
   private renderCommandRunNotice() {

@@ -1,15 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JsonValue,
-  PairedPluginBackendV1,
-  PairedPluginChannelOpenContext,
-  PairedPluginRequestContext,
-  PairedPluginWorkspace,
+  ServerPluginPeer,
+  ServerPluginPeerChannelOpenContext,
+  ServerPluginPeerRequestContext,
+  ServerPluginPeerWorkspace,
   ProjectInput,
   ServerPluginActivationContext,
   ServerPluginNoticeInput,
 } from "@jmfederico/pi-web/server-plugin-api";
-import { activateTerminalPlugin, createTerminalBackend, terminalOutputFrames } from "./server-plugin.js";
+import {
+  activateTerminalPlugin,
+  createTerminalPeer,
+  TERMINAL_SERVICE_CAPABILITY,
+  terminalOutputFrames,
+} from "./server-plugin.js";
 import { TerminalService } from "./terminalService.js";
 
 const services: TerminalService[] = [];
@@ -18,10 +23,10 @@ afterEach(() => {
   for (const service of services.splice(0)) service.dispose();
 });
 
-describe.skipIf(process.platform === "win32")("Terminal paired server entry", () => {
+describe.skipIf(process.platform === "win32")("Terminal peer server entry", () => {
   it("derives Terminal scope from the host and prevents learned ids crossing workspaces", async () => {
     const service = trackedService();
-    const backend = createTerminalBackend(service);
+    const backend = createTerminalPeer(service);
     const created = await backendRequest(backend, requestContext("terminal.create", { name: "Scoped shell" }));
     const terminalId = jsonString(created, "id");
 
@@ -37,7 +42,7 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
 
   it("owns command-run control operations within the resolved workspace", async () => {
     const service = trackedService();
-    const backend = createTerminalBackend(service);
+    const backend = createTerminalPeer(service);
     const runValue = await backendRequest(backend, requestContext("terminal.run", {
       origin: "tasks",
       title: "Output",
@@ -58,7 +63,7 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
   it("reports a private host-composed command failure without exposing the intent on the run", async () => {
     const records: ServerPluginNoticeInput[] = [];
     const activation = activateTerminalPlugin(activationContext("pi-web.terminal", (input) => { records.push(input); }));
-    const run = activation.requiredTerminalService.runCommand({
+    const run = terminalServiceCapability(activation).runCommand({
       origin: "core",
       projectId: "project-1",
       workspaceId: "workspace-1",
@@ -83,14 +88,14 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
       }]);
     });
     expect(run).not.toHaveProperty("failureNotice");
-    await activation.stop?.(new AbortController().signal);
+    await activation.dispose?.(new AbortController().signal);
   });
 
-  it("does not accept a failure-notice intent from the paired browser protocol", async () => {
+  it("does not accept a failure-notice intent from the browser peer protocol", async () => {
     const records: ServerPluginNoticeInput[] = [];
     const activation = activateTerminalPlugin(activationContext("pi-web.terminal", (input) => { records.push(input); }));
-    const backend = activation.pairedBackend;
-    if (backend === undefined) throw new Error("Expected Terminal paired backend");
+    const backend = activation.peer;
+    if (backend === undefined) throw new Error("Expected Terminal peer");
     const runValue = await backendRequest(backend, requestContext("terminal.run", {
       origin: "browser",
       title: "Fail without host intent",
@@ -108,12 +113,12 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
     });
     expect(records).toEqual([]);
     expect(runValue).not.toHaveProperty("failureNotice");
-    await activation.stop?.(new AbortController().signal);
+    await activation.dispose?.(new AbortController().signal);
   });
 
   it("attaches a bounded JSON channel for input, resize, output, and cleanup", async () => {
     const service = trackedService();
-    const backend = createTerminalBackend(service);
+    const backend = createTerminalPeer(service);
     const created = await backendRequest(backend, requestContext("terminal.create", {}));
     const terminalId = jsonString(created, "id");
     const sent: JsonValue[] = [];
@@ -168,12 +173,14 @@ describe.skipIf(process.platform === "win32")("Terminal paired server entry", ()
 
   it("publishes the required service only for the pi-web.terminal identity", async () => {
     const activation = activateTerminalPlugin(activationContext("pi-web.terminal"));
-    expect(activation.pairedBackend?.version).toBe(1);
-    expect(typeof activation.pairedBackend?.openChannel).toBe("function");
-    expect(typeof activation.requiredTerminalService.closeForCwd).toBe("function");
-    expect(typeof activation.requiredTerminalService.runCommand).toBe("function");
-    expect(typeof activation.requiredTerminalService.bindActivitySink).toBe("function");
-    await activation.stop?.(new AbortController().signal);
+    expect(typeof activation.peer?.request).toBe("function");
+    expect(typeof activation.peer?.openChannel).toBe("function");
+    const capability = terminalServiceCapability(activation);
+    expect(typeof capability.closeForCwd).toBe("function");
+    expect(typeof capability.runCommand).toBe("function");
+    expect(typeof capability.bindActivitySink).toBe("function");
+    expect(activation).not.toHaveProperty("requiredTerminalService");
+    await activation.dispose?.(new AbortController().signal);
 
     expect(() => activateTerminalPlugin(activationContext("other"))).toThrow("must activate as plugin id pi-web.terminal");
 
@@ -190,13 +197,13 @@ function trackedService(): TerminalService {
   return service;
 }
 
-function backendRequest(backend: PairedPluginBackendV1, context: PairedPluginRequestContext): Promise<JsonValue> {
+function backendRequest(backend: ServerPluginPeer, context: ServerPluginPeerRequestContext): Promise<JsonValue> {
   const request = backend.request?.bind(backend);
-  if (request === undefined) throw new Error("Expected Terminal paired request handler");
+  if (request === undefined) throw new Error("Expected Terminal peer request handler");
   return Promise.resolve().then(() => request(context));
 }
 
-function requestContext(operation: string, input: JsonValue, workspaceId = "workspace-1"): PairedPluginRequestContext {
+function requestContext(operation: string, input: JsonValue, workspaceId = "workspace-1"): ServerPluginPeerRequestContext {
   return Object.freeze({
     project: project(),
     workspace: workspace(workspaceId),
@@ -210,7 +217,7 @@ function channelContext(
   input: JsonValue,
   sent: JsonValue[],
   controller: AbortController,
-): PairedPluginChannelOpenContext {
+): ServerPluginPeerChannelOpenContext {
   return Object.freeze({
     project: project(),
     workspace: workspace("workspace-1"),
@@ -225,7 +232,7 @@ function project(): ProjectInput {
   return Object.freeze({ id: "project-1", name: "Project", path: process.cwd() });
 }
 
-function workspace(id: string): PairedPluginWorkspace {
+function workspace(id: string): ServerPluginPeerWorkspace {
   return Object.freeze({
     id,
     projectId: "project-1",
@@ -240,9 +247,10 @@ function activationContext(
   recordNotice: (input: ServerPluginNoticeInput) => void = () => undefined,
 ): ServerPluginActivationContext {
   return Object.freeze({
-    apiVersion: 1,
+    apiVersion: 3,
     pluginId,
     packageRoot: process.cwd(),
+    dataDirectory: "/data/plugin-data/pi-web.terminal",
     logger: Object.freeze({
       debug: () => undefined,
       info: () => undefined,
@@ -253,7 +261,17 @@ function activationContext(
     notices: Object.freeze({ version: 1, record: recordNotice }),
     execFile: () => Promise.reject(new Error("not used")),
     signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
   });
+}
+
+function terminalServiceCapability(activation: ReturnType<typeof activateTerminalPlugin>) {
+  const provision = activation.provides.find(({ capability }) => (
+    capability.pluginId === TERMINAL_SERVICE_CAPABILITY.pluginId
+      && capability.id === TERMINAL_SERVICE_CAPABILITY.id
+  ));
+  if (provision === undefined) throw new Error("Expected Terminal service capability provision");
+  return TERMINAL_SERVICE_CAPABILITY.parse(provision.value);
 }
 
 function jsonString(value: JsonValue, key: string): string {

@@ -1,23 +1,31 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 
+export type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
 export type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 export type HtmlTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 
-export interface PiWebPluginRegistration {
+export interface PiWebPluginRegistrationDeclaration {
   id: PluginId;
-  plugin: PiWebPlugin;
   machineId?: string;
   sourcePluginId?: PluginId;
+  /** Host-attributed package discovery metadata. */
+  manifestSource?: string;
+  manifestScope?: string;
+  machineSpecific?: boolean;
+}
+
+export interface PiWebPluginRegistration extends PiWebPluginRegistrationDeclaration {
+  plugin: PiWebPlugin;
   backendRevision?: string;
   pairedRequestVersion?: 1;
   pairedChannelVersion?: 1;
-  machineSpecific?: boolean;
 }
 
 export interface WorkspacePluginBinding {
@@ -28,24 +36,43 @@ export interface WorkspacePluginBinding {
   pairedChannelVersion?: 1;
 }
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface PiWebPlugin {
-  apiVersion: 2;
+  apiVersion: 4;
   name: string;
-  activate: (context: PluginActivationContext) => PluginActivationResult;
+  requires?: readonly PluginCapability[];
+  activate: (context: PluginActivationContext) => MaybePromise<PluginActivationResult>;
 }
 
 export interface PluginActivationContext {
-  readonly apiVersion: 2;
+  readonly apiVersion: 4;
   /** Stable package/source identity, including on federated machines. */
   readonly pluginId: PluginId;
   /** Host-unique identity for qualified contribution references in this runtime. */
   readonly runtimePluginId: PluginId;
   readonly html: HtmlTemplateTag;
   readonly svg: SvgTemplateTag;
+  /** Signal for this bounded activation invocation, not the plugin lifetime. */
+  readonly signal: AbortSignal;
+  /** Aborted before failed-start rollback or browser-host shutdown disposal. */
+  readonly lifetimeSignal: AbortSignal;
+}
+
+export interface PluginCapabilityResolver {
+  readonly resolve: <Value>(capability: PluginCapability<Value>) => Value;
+}
+
+export interface PluginStartContext {
+  readonly capabilities: PluginCapabilityResolver;
+  readonly signal: AbortSignal;
 }
 
 export interface PluginActivationResult {
   contributions: PluginContributions;
+  provides?: readonly PluginCapabilityProvision[];
+  start?(context: PluginStartContext): MaybePromise<void>;
+  dispose?(signal: AbortSignal): MaybePromise<void>;
 }
 
 export interface PluginContributions {
@@ -115,61 +142,37 @@ export interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
 
 export type WorkspaceFilesContextValue = LegacyWorkspaceFiles | WorkspaceFilesCapabilityV1;
 
-export interface WorkspaceBackend {
-  request(operation: string, input: JsonValue): Promise<JsonValue>;
-}
-
-export interface PairedWorkspaceBackendRequestOptions {
+export interface PluginPeerRequestOptions {
   readonly signal?: AbortSignal;
 }
 
-export interface PairedWorkspaceBackendChannelOptions {
+export interface PluginPeerChannelOptions {
   readonly signal?: AbortSignal;
   readonly onData: (data: JsonValue) => void;
 }
 
-export interface PairedWorkspaceBackendChannelClose {
+export interface PluginPeerChannelClose {
   readonly code: number;
   readonly reason: string;
   readonly wasClean: boolean;
   readonly error?: Readonly<{ code: string; message: string }>;
 }
 
-export interface PairedWorkspaceBackendChannel {
-  readonly closed: Promise<PairedWorkspaceBackendChannelClose>;
+export interface PluginPeerChannel {
+  readonly closed: Promise<PluginPeerChannelClose>;
   send(data: JsonValue): void;
   close(reason?: string): void;
 }
 
-interface PairedWorkspaceBackendBaseV1 {
-  readonly version: 1;
-}
-
-interface PairedWorkspaceBackendRequestCapabilityV1 {
-  readonly requestVersion: 1;
-  request(operation: string, input: JsonValue, options?: PairedWorkspaceBackendRequestOptions): Promise<JsonValue>;
-}
-
-interface PairedWorkspaceBackendWithoutRequest {
-  readonly requestVersion?: undefined;
-  request?: undefined;
-}
-
-interface PairedWorkspaceBackendChannelCapabilityV1 {
-  readonly channelVersion: 1;
-  openChannel(operation: string, input: JsonValue, options: PairedWorkspaceBackendChannelOptions): Promise<PairedWorkspaceBackendChannel>;
-}
-
-interface PairedWorkspaceBackendWithoutChannel {
-  readonly channelVersion?: undefined;
-  openChannel?: undefined;
-}
-
-export type PairedWorkspaceBackendV1 = PairedWorkspaceBackendBaseV1 & (
-  | (PairedWorkspaceBackendRequestCapabilityV1 & PairedWorkspaceBackendWithoutChannel)
-  | (PairedWorkspaceBackendWithoutRequest & PairedWorkspaceBackendChannelCapabilityV1)
-  | (PairedWorkspaceBackendRequestCapabilityV1 & PairedWorkspaceBackendChannelCapabilityV1)
-);
+export type PluginPeer =
+  | {
+      request(operation: string, input: JsonValue, options?: PluginPeerRequestOptions): Promise<JsonValue>;
+      openChannel?(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    }
+  | {
+      request?: undefined;
+      openChannel(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    };
 
 export interface WorkspaceHost {
   requestRender(): void;
@@ -180,8 +183,7 @@ export interface WorkspaceContext {
   workspace: Workspace;
   state: AppState;
   files: WorkspaceFilesContextValue;
-  backend?: WorkspaceBackend;
-  pairedBackend?: PairedWorkspaceBackendV1;
+  peer?: PluginPeer;
   host: WorkspaceHost;
 }
 

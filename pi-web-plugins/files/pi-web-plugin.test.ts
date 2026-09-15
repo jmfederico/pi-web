@@ -19,7 +19,7 @@ describe("Files plugin activation", () => {
     const panel = result.contributions.workspacePanels?.[0];
     const actions = result.contributions.actions ?? [];
 
-    expect(plugin).toMatchObject({ apiVersion: 2, name: "Files" });
+    expect(plugin).toMatchObject({ apiVersion: 4, name: "Files" });
     expect(panel).toMatchObject({
       id: "workspace.files",
       title: "Files",
@@ -94,7 +94,15 @@ describe("Files plugin activation", () => {
 });
 
 function activationContext(runtimePluginId = "files"): PluginActivationContext {
-  return Object.freeze({ apiVersion: 2, pluginId: "files", runtimePluginId, html, svg });
+  return Object.freeze({
+    apiVersion: 4,
+    pluginId: "files",
+    runtimePluginId,
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  });
 }
 
 function createRuntimeContext(overrides: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {

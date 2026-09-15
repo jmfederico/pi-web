@@ -40,7 +40,7 @@ describe("required Terminal browser composition port", () => {
       origin: "tasks",
       registrationPluginId: "pi-web.terminal",
       workspace,
-      pairedBackend: { version: 1, requestVersion: 1, request: vi.fn() },
+      peer: { request: vi.fn() },
       host: { navigateWorkspaceContribution: vi.fn() },
     });
 
@@ -50,7 +50,7 @@ describe("required Terminal browser composition port", () => {
     expect(open).toHaveBeenCalledWith({ terminalId: "terminal-1" });
     expect(handle.run).toEqual(run);
     await expect(handle.completed).resolves.toEqual(run);
-    await expect(facade.listCommandRuns({ pairedBackend: { version: 1, requestVersion: 1, request: vi.fn() } })).resolves.toEqual([run]);
+    await expect(facade.listCommandRuns({ peer: { request: vi.fn() } })).resolves.toEqual([run]);
   });
 
   it("rejects missing facade methods and malformed command records", () => {

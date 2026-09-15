@@ -2,7 +2,7 @@
 
 import { html, render, svg } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, PluginRuntimeContext, Workspace, WorkspaceBackend, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeer, PluginRuntimeContext, Workspace, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { GIT_FILE_VIEW_STORAGE_KEY } from "./browser/gitFileViewPreference.js";
 import plugin from "./browser/pi-web-plugin.js";
 
@@ -15,7 +15,7 @@ const gitWorkspace: Workspace = {
   path: "/repo",
   label: "main",
   isMain: true,
-  provider: { pluginId: "git", capabilities: { request: true, remove: false } },
+  provider: { pluginId: "git", capabilities: { remove: false } },
 };
 
 afterEach(() => {
@@ -40,7 +40,7 @@ describe("bundled Git browser plugin", () => {
     expect(panel.visible?.(panelContext(backend.request, {
       ...gitWorkspace,
       // Legacy Git-shaped data must not override a declared replacement owner.
-      provider: { pluginId: "jj", capabilities: { request: true, remove: false } },
+      provider: { pluginId: "jj", capabilities: { remove: false } },
     }))).toBe(false);
 
     const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
@@ -76,7 +76,7 @@ describe("bundled Git browser plugin", () => {
     expect(panel.visible?.(panelContext(backend.request))).toBe(true);
     expect(panel.visible?.(panelContext(backend.request, {
       ...gitWorkspace,
-      provider: { pluginId: runtimePluginId, capabilities: { request: true, remove: false } },
+      provider: { pluginId: runtimePluginId, capabilities: { remove: false } },
     }))).toBe(false);
 
     const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
@@ -110,7 +110,7 @@ describe("bundled Git browser plugin", () => {
     );
   });
 
-  it("loads status and diffs through context.backend, preserves URL selection, views, grouping, and rich diff rendering", async () => {
+  it("loads status and diffs through context.peer, preserves URL selection, views, grouping, and rich diff rendering", async () => {
     window.history.replaceState({}, "", `/?project=${projectId}&workspace=${workspaceId}`);
     const backend = backendFixture({
       files: [
@@ -259,7 +259,15 @@ describe("bundled Git browser plugin", () => {
 });
 
 function activate(pluginId: string, runtimePluginId = pluginId) {
-  return plugin.activate({ apiVersion: 2, pluginId, runtimePluginId, html, svg }).contributions;
+  return plugin.activate({
+    apiVersion: 4,
+    pluginId,
+    runtimePluginId,
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  }).contributions;
 }
 
 function requiredPanel(contributions: ReturnType<typeof activate>) {
@@ -300,7 +308,7 @@ function changedFile(path: string, patch: Record<string, JsonValue> = {}) {
   return { path, index: "unmodified", workingTree: "modified", ...patch };
 }
 
-function panelContext(request: WorkspaceBackend["request"] | undefined, workspace = gitWorkspace, machineId = "local"): WorkspacePanelContext {
+function panelContext(request: NonNullable<PluginPeer["request"]> | undefined, workspace = gitWorkspace, machineId = "local"): WorkspacePanelContext {
   const noop = () => undefined;
   return {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
@@ -313,7 +321,7 @@ function panelContext(request: WorkspaceBackend["request"] | undefined, workspac
       deleteFile: () => Promise.reject(new Error("not implemented")),
       moveFile: () => Promise.reject(new Error("not implemented")),
     },
-    ...(request === undefined ? {} : { backend: { request } }),
+    ...(request === undefined ? {} : { peer: { request } }),
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },

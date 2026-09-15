@@ -5,15 +5,19 @@ import type {
   FileTreeResponse,
   MoveWorkspaceFileOptions,
   MoveWorkspaceFileResponse,
+  PiWebPlugin,
   PluginActivationContext,
   PluginActivationResult,
+  PluginCapability,
+  PluginCapabilityProvision,
+  PluginCapabilityResolver,
   PluginContributions,
+  PluginStartContext,
   Workspace,
-  WorkspaceBackend,
-  PairedWorkspaceBackendChannel,
-  PairedWorkspaceBackendChannelOptions,
-  PairedWorkspaceBackendRequestOptions,
-  PairedWorkspaceBackendV1,
+  PluginPeerChannel,
+  PluginPeerChannelOptions,
+  PluginPeerRequestOptions,
+  PluginPeer,
   WorkspaceContext,
   WorkspaceFiles,
   WorkspaceFilesCapabilityV1,
@@ -46,10 +50,6 @@ type ReadonlyKeys<Value> = {
 type WritableKeys<Value> = Exclude<keyof Value, ReadonlyKeys<Value>>;
 type IsOptional<Value, Key extends keyof Value> = Pick<Value, Key> extends Required<Pick<Value, Key>> ? false : true;
 
-interface ExistingV2WorkspaceBackend {
-  request(operation: string, input: import("@jmfederico/pi-web/plugin-api").JsonValue): Promise<import("@jmfederico/pi-web/plugin-api").JsonValue>;
-}
-
 interface ExistingV2WorkspaceFiles {
   readFile(path: string): Promise<FileContentResponse>;
   listFiles(path: string): Promise<FileTreeResponse>;
@@ -79,11 +79,12 @@ declare class ImplementedWorkspacePanelFiles implements WorkspacePanelFiles {
 
 describe("public browser plugin API", () => {
   it("keeps host-owned activation and workspace snapshots readonly", () => {
-    expectTypeOf<keyof PluginActivationResult>().toEqualTypeOf<"contributions">();
+    expectTypeOf<keyof PluginActivationResult>().toEqualTypeOf<"contributions" | "provides" | "start" | "dispose">();
     expectTypeOf<ReadonlyKeys<PluginActivationContext>>().toEqualTypeOf<keyof PluginActivationContext>();
     expectTypeOf<ReadonlyKeys<Workspace>>().toEqualTypeOf<keyof Workspace>();
     expectTypeOf<ReadonlyKeys<WorkspaceProviderMetadata>>().toEqualTypeOf<keyof WorkspaceProviderMetadata>();
     expectTypeOf<ReadonlyKeys<WorkspaceProviderCapabilities>>().toEqualTypeOf<keyof WorkspaceProviderCapabilities>();
+    expectTypeOf<keyof WorkspaceProviderCapabilities>().toEqualTypeOf<"remove">();
     expectTypeOf<ReadonlyKeys<WorkspaceRemovalPresentation>>().toEqualTypeOf<keyof WorkspaceRemovalPresentation>();
   });
 
@@ -91,6 +92,21 @@ describe("public browser plugin API", () => {
     expectTypeOf<keyof WorkspaceRemovalPresentation>().toEqualTypeOf<"actionLabel" | "confirmation">();
     expectTypeOf<WritableKeys<PluginActivationResult>>().toEqualTypeOf<keyof PluginActivationResult>();
     expectTypeOf<WritableKeys<PluginContributions>>().toEqualTypeOf<keyof PluginContributions>();
+  });
+
+  it("exposes the v4 dependency-ready browser lifecycle and shared capability contracts", () => {
+    expectTypeOf<PiWebPlugin["apiVersion"]>().toEqualTypeOf<4>();
+    expectTypeOf<PluginActivationContext["apiVersion"]>().toEqualTypeOf<4>();
+    expectTypeOf<keyof PiWebPlugin>().toEqualTypeOf<"apiVersion" | "name" | "requires" | "activate">();
+    expectTypeOf<keyof PluginCapability>().toEqualTypeOf<"pluginId" | "id" | "version" | "parse">();
+    expectTypeOf<keyof PluginCapabilityProvision>().toEqualTypeOf<"capability" | "value">();
+    expectTypeOf<keyof PluginCapabilityResolver>().toEqualTypeOf<"resolve">();
+    expectTypeOf<keyof PluginStartContext>().toEqualTypeOf<"capabilities" | "signal">();
+    expectTypeOf<ReadonlyKeys<PluginActivationContext>>().toEqualTypeOf<keyof PluginActivationContext>();
+    expectTypeOf<ReadonlyKeys<PluginCapability>>().toEqualTypeOf<keyof PluginCapability>();
+    expectTypeOf<ReadonlyKeys<PluginCapabilityProvision>>().toEqualTypeOf<keyof PluginCapabilityProvision>();
+    expectTypeOf<ReadonlyKeys<PluginCapabilityResolver>>().toEqualTypeOf<keyof PluginCapabilityResolver>();
+    expectTypeOf<ReadonlyKeys<PluginStartContext>>().toEqualTypeOf<keyof PluginStartContext>();
   });
 
   it("adds a discriminated workspace-files capability without breaking the existing v2 structural surface", () => {
@@ -105,36 +121,30 @@ describe("public browser plugin API", () => {
     expectTypeOf<ReadonlyKeys<Pick<WorkspaceFilesCapabilityV1, "capabilityVersion" | "defaultUploadFolder" | "maxInlinePreviewBytes">>>().toEqualTypeOf<"capabilityVersion" | "defaultUploadFolder" | "maxInlinePreviewBytes">();
   });
 
-  it("keeps the owner-backed helper unchanged and models paired capabilities as valid detectable combinations", () => {
-    type PairedBackendIsOptional = IsOptional<WorkspaceContext, "pairedBackend">;
-    type PairedRequestIsOptional = IsOptional<PairedWorkspaceBackendV1, "request">;
-    type PairedChannelIsOptional = IsOptional<PairedWorkspaceBackendV1, "openChannel">;
-    type PairedRequest = NonNullable<PairedWorkspaceBackendV1["request"]>;
-    type PairedChannel = NonNullable<PairedWorkspaceBackendV1["openChannel"]>;
-    type EmptyBackendIsValid = { readonly version: 1 } extends PairedWorkspaceBackendV1 ? true : false;
-    type RequestMarkerWithoutMethodIsValid = { readonly version: 1; readonly requestVersion: 1 } extends PairedWorkspaceBackendV1 ? true : false;
-    type RequestMethodWithoutMarkerIsValid = { readonly version: 1; request: PairedRequest } extends PairedWorkspaceBackendV1 ? true : false;
-    type ChannelMarkerWithoutMethodIsValid = { readonly version: 1; readonly channelVersion: 1 } extends PairedWorkspaceBackendV1 ? true : false;
-    type RequestOnlyIsValid = { readonly version: 1; readonly requestVersion: 1; request: PairedRequest } extends PairedWorkspaceBackendV1 ? true : false;
-    type ChannelOnlyIsValid = { readonly version: 1; readonly channelVersion: 1; openChannel: PairedChannel } extends PairedWorkspaceBackendV1 ? true : false;
-    expectTypeOf<ExistingV2WorkspaceBackend>().toExtend<WorkspaceBackend>();
-    expectTypeOf<keyof WorkspaceBackend>().toEqualTypeOf<"request">();
-    expectTypeOf<PairedWorkspaceBackendV1["version"]>().toEqualTypeOf<1>();
-    expectTypeOf<PairedWorkspaceBackendV1["requestVersion"]>().toEqualTypeOf<1 | undefined>();
-    expectTypeOf<PairedWorkspaceBackendV1["channelVersion"]>().toEqualTypeOf<1 | undefined>();
-    expectTypeOf<PairedBackendIsOptional>().toEqualTypeOf<true>();
-    expectTypeOf<PairedRequestIsOptional>().toEqualTypeOf<true>();
-    expectTypeOf<PairedChannelIsOptional>().toEqualTypeOf<true>();
-    expectTypeOf<EmptyBackendIsValid>().toEqualTypeOf<false>();
-    expectTypeOf<RequestMarkerWithoutMethodIsValid>().toEqualTypeOf<false>();
-    expectTypeOf<RequestMethodWithoutMarkerIsValid>().toEqualTypeOf<false>();
-    expectTypeOf<ChannelMarkerWithoutMethodIsValid>().toEqualTypeOf<false>();
+  it("exposes only package peers and models their capabilities as valid detectable combinations", () => {
+    type PeerIsOptional = IsOptional<WorkspaceContext, "peer">;
+    type PeerRequestIsOptional = IsOptional<PluginPeer, "request">;
+    type PeerChannelIsOptional = IsOptional<PluginPeer, "openChannel">;
+    type PeerRequest = NonNullable<PluginPeer["request"]>;
+    type PeerChannel = NonNullable<PluginPeer["openChannel"]>;
+    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.
+    type EmptyPeerIsValid = Record<never, never> extends PluginPeer ? true : false;
+    type RequestOnlyIsValid = { request: PeerRequest } extends PluginPeer ? true : false;
+    type ChannelOnlyIsValid = { openChannel: PeerChannel } extends PluginPeer ? true : false;
+    type BothCapabilitiesAreValid = { request: PeerRequest; openChannel: PeerChannel } extends PluginPeer ? true : false;
+    expectTypeOf<keyof WorkspaceContext>().toEqualTypeOf<"machine" | "workspace" | "state" | "files" | "peer" | "host">();
+    expectTypeOf<keyof PluginPeer>().toEqualTypeOf<"request" | "openChannel">();
+    expectTypeOf<PeerIsOptional>().toEqualTypeOf<true>();
+    expectTypeOf<PeerRequestIsOptional>().toEqualTypeOf<true>();
+    expectTypeOf<PeerChannelIsOptional>().toEqualTypeOf<true>();
+    expectTypeOf<EmptyPeerIsValid>().toEqualTypeOf<false>();
     expectTypeOf<RequestOnlyIsValid>().toEqualTypeOf<true>();
     expectTypeOf<ChannelOnlyIsValid>().toEqualTypeOf<true>();
-    expectTypeOf<ReadonlyKeys<PairedWorkspaceBackendV1>>().toEqualTypeOf<"version" | "requestVersion" | "channelVersion">();
-    expectTypeOf<ReadonlyKeys<PairedWorkspaceBackendRequestOptions>>().toEqualTypeOf<"signal">();
-    expectTypeOf<ReadonlyKeys<PairedWorkspaceBackendChannelOptions>>().toEqualTypeOf<keyof PairedWorkspaceBackendChannelOptions>();
-    expectTypeOf<ReadonlyKeys<Pick<PairedWorkspaceBackendChannel, "closed">>>().toEqualTypeOf<"closed">();
+    expectTypeOf<BothCapabilitiesAreValid>().toEqualTypeOf<true>();
+    expectTypeOf<PluginPeerRequestOptions["signal"]>().toEqualTypeOf<AbortSignal | undefined>();
+    expectTypeOf<ReadonlyKeys<PluginPeerRequestOptions>>().toEqualTypeOf<"signal">();
+    expectTypeOf<ReadonlyKeys<PluginPeerChannelOptions>>().toEqualTypeOf<keyof PluginPeerChannelOptions>();
+    expectTypeOf<ReadonlyKeys<Pick<PluginPeerChannel, "closed">>>().toEqualTypeOf<"closed">();
   });
 
   it("adds optional versioned panel navigation without changing browser API v2 compatibility", () => {

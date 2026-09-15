@@ -8,6 +8,7 @@ import { PiWebPluginCatalog } from "../../src/server/piWebPluginCatalog.js";
 import { PiWebPluginService } from "../../src/server/piWebPluginService.js";
 import { createServerPluginRuntime } from "../../src/server/plugins/serverPluginRuntime.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "../../src/server/workspaces/workspaceCatalog.js";
+import { REQUIRED_TERMINAL_SERVICE_CAPABILITY } from "../../src/server/terminals/requiredTerminalService.js";
 
 const tempRoots: string[] = [];
 
@@ -99,6 +100,7 @@ describe("bundled Terminal package", () => {
     });
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const runtime = await createServerPluginRuntime({
+      dataDir: join(root, "data"),
       catalog,
       logger,
       importer: async (moduleUrl) => {
@@ -120,7 +122,7 @@ describe("bundled Terminal package", () => {
         runtimeProvider: { providerRuntime: () => Promise.resolve(snapshot) },
       });
 
-      expect(runtime.requiredTerminalService()).toBeDefined();
+      expect(runtime.resolve(REQUIRED_TERMINAL_SERVICE_CAPABILITY)).toBeDefined();
       const manifest = await service.manifest();
       expect(manifest).toMatchObject({
         lifecycleVersion: 2,

@@ -409,7 +409,7 @@ The `plugins` key controls desired enablement and JSON settings for PI WEB brows
 }
 ```
 
-Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active backend until that restart. The bundled `pi-web.terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
+Plugins are enabled by default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active server entry until that restart. The bundled `pi-web.terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Server settings are copied into sessiond's startup snapshot, and diagnostics expose only a fingerprint, never the values.
 
 #### Desired versus active plugin state
 
@@ -417,7 +417,7 @@ Sessiond is the single workspace authority and resolves one immutable server-plu
 
 **Settings → PI WEB plugins** shows desired and active state separately, including active, failed, incompatible, disabled, not-active/missing, unknown, conflict, stale-revision, health, safe-mode, and restart-required state. Desired config remains editable when sessiond is unavailable as long as the selected machine's config endpoint works, but PI WEB reports active state as unavailable rather than constructing a second workspace authority.
 
-For machine federation, the panel targets the selected machine. Remote desired state is saved in that target's config and active state comes from that target's sessiond through the gateway. If the versioned plugin lifecycle, the remote manifest, or provider backend routes are unavailable/incompatible, PI WEB reports an explicit unsupported or compatibility error and does not silently use gateway config/code.
+For machine federation, the panel targets the selected machine. Remote desired state is saved in that target's config and active state comes from that target's sessiond through the gateway. If the versioned plugin lifecycle, the remote manifest, or package-peer routes are unavailable/incompatible, PI WEB reports an explicit unsupported or compatibility error and does not silently use gateway config/code.
 
 Mixed-version plugin/provider operation is not supported in either upgrade order. A newer gateway rejects an older target's whole remote plugin manifest, including browser-only contributions, when the target lacks the current lifecycle contract; its Git panel is therefore unavailable. An older gateway still calls legacy core Git routes removed by an updated target, so remote Git status/diff returns `404`. Upgrade gateway and target together, restart their updated web/API processes and the target session daemon, then reload the browser. Other selected-machine settings and features report their own explicit errors.
 

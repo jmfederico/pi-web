@@ -3,9 +3,9 @@ import type {
   JsonValue,
   TerminalCommandRun,
   TerminalCommandRunStatus,
-  PairedWorkspaceBackendChannel,
-  PairedWorkspaceBackendChannelClose,
-  PairedWorkspaceBackendV1,
+  PluginPeerChannel,
+  PluginPeerChannelClose,
+  PluginPeer,
   WorkspaceTerminalCommandInput,
 } from "@jmfederico/pi-web/plugin-api";
 
@@ -49,7 +49,7 @@ export type TerminalServerFrame =
   | { type: "exit"; exitCode?: number }
   | { type: "error"; message: string };
 
-/** The paired channel contract allows at most 64 KiB of plugin JSON per frame. */
+/** The peer channel contract allows at most 64 KiB of plugin JSON per frame. */
 export const TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES = 64 * 1024;
 const EMPTY_TERMINAL_INPUT_FRAME_BYTES = utf8Bytes(JSON.stringify({ type: "input", data: "" }));
 
@@ -68,7 +68,7 @@ export function terminalInputFrames(data: string): TerminalInputFrame[] {
       frameBytes = EMPTY_TERMINAL_INPUT_FRAME_BYTES;
     }
     if (frameBytes + characterBytes > TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES) {
-      throw new Error("Terminal input character exceeds the paired channel frame limit");
+      throw new Error("Terminal input character exceeds the peer channel frame limit");
     }
     characters.push(character);
     frameBytes += characterBytes;
@@ -84,12 +84,12 @@ export interface TerminalAttachOptions {
   onFrame(frame: TerminalServerFrame): void;
 }
 
-/** Typed client for the Terminal package's private paired-backend protocol. */
-export class TerminalBackendClient {
-  private readonly request: NonNullable<PairedWorkspaceBackendV1["request"]>;
+/** Typed client for the Terminal package's private peer protocol. */
+export class TerminalPeerClient {
+  private readonly request: NonNullable<PluginPeer["request"]>;
 
-  constructor(private readonly backend: PairedWorkspaceBackendV1) {
-    this.request = requireRequestBackend(backend);
+  constructor(private readonly peer: PluginPeer) {
+    this.request = requirePeerRequest(peer);
   }
 
   async list(signal?: AbortSignal): Promise<TerminalInfo[]> {
@@ -131,8 +131,8 @@ export class TerminalBackendClient {
     return parseTerminalCommandRun(await this.request("terminal.cancel-run", { runId }, signal === undefined ? undefined : { signal }));
   }
 
-  async attach(options: TerminalAttachOptions): Promise<PairedWorkspaceBackendChannel> {
-    const openChannel = requireChannelBackend(this.backend);
+  async attach(options: TerminalAttachOptions): Promise<PluginPeerChannel> {
+    const openChannel = requirePeerChannel(this.peer);
     return openChannel("terminal.attach", {
       terminalId: options.terminalId,
       ...(options.size ?? {}),
@@ -143,18 +143,18 @@ export class TerminalBackendClient {
   }
 }
 
-function requireRequestBackend(backend: PairedWorkspaceBackendV1): NonNullable<PairedWorkspaceBackendV1["request"]> {
-  if (backend.requestVersion !== 1) {
-    throw new Error("Required Terminal paired request capability v1 is unavailable");
+function requirePeerRequest(peer: PluginPeer): NonNullable<PluginPeer["request"]> {
+  if (peer.request === undefined) {
+    throw new Error("Required Terminal peer request capability is unavailable");
   }
-  return backend.request.bind(backend);
+  return peer.request.bind(peer);
 }
 
-function requireChannelBackend(backend: PairedWorkspaceBackendV1): NonNullable<PairedWorkspaceBackendV1["openChannel"]> {
-  if (backend.channelVersion !== 1) {
-    throw new Error("Required Terminal paired channel v1 is unavailable");
+function requirePeerChannel(peer: PluginPeer): NonNullable<PluginPeer["openChannel"]> {
+  if (peer.openChannel === undefined) {
+    throw new Error("Required Terminal peer channel capability is unavailable");
   }
-  return backend.openChannel.bind(backend);
+  return peer.openChannel.bind(peer);
 }
 
 function terminalCommandRunFilterInput(filter: TerminalCommandRunFilter): JsonValue {
@@ -219,7 +219,7 @@ export function parseTerminalServerFrame(value: unknown): TerminalServerFrame {
   throw new Error("Invalid Terminal channel frame");
 }
 
-export function terminalChannelFailureMessage(close: PairedWorkspaceBackendChannelClose): string | undefined {
+export function terminalChannelFailureMessage(close: PluginPeerChannelClose): string | undefined {
   if (close.error !== undefined) return `${close.error.code}: ${close.error.message}`;
   if (close.code === 1000 && close.wasClean) return undefined;
   return close.reason === "" ? `Terminal channel closed with code ${String(close.code)}` : close.reason;

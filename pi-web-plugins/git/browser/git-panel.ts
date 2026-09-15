@@ -386,10 +386,10 @@ function createGitPanel(
 }
 
 function requestGitBackend(context: WorkspacePanelContext, operation: string, input: JsonValue): Promise<JsonValue> {
-  if (context.backend === undefined || context.workspace.provider?.capabilities.request === false) {
+  if (context.peer?.request === undefined) {
     return Promise.reject(new Error("Git workspace backend is unavailable. Update and restart PI WEB on this machine, then reload the browser."));
   }
-  return context.backend.request(operation, input);
+  return context.peer.request(operation, input);
 }
 
 function renderGitPanel(html: HtmlTemplateTag, controller: GitUiController, context: WorkspacePanelContext) {

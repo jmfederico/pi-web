@@ -17,7 +17,7 @@ const providerWorkspace = {
   isMain: true,
   provider: {
     pluginId: "replacement",
-    capabilities: { request: false, remove: true },
+    capabilities: { remove: true },
     metadata: {
       isGitRepo: true,
       isGitWorktree: true,

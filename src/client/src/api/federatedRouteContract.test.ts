@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_FILE_FEDERATION_TIMEOUT_MS, WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
-import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_REQUEST_ROUTE_PATH, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import { configApi, filesApi, machineStatusApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, trustApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents } from "./sockets";
-import { requestPairedPluginBackend, requestPluginBackend } from "./pluginBackends";
+import { requestPairedPluginBackend } from "./pluginBackends";
 import { workspaceFilePreviewUrl } from "./urls";
 
 const machineId = "remote-a";
@@ -122,7 +122,7 @@ describe("federated route contract", () => {
     }
   });
 
-  it("allowlists distinct bounded owner-backed and paired request routes plus the paired channel route", () => {
+  it("allowlists only the bounded package-paired request and channel routes", () => {
     const boundedRequest = {
       method: "POST" as const,
       timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
@@ -131,7 +131,6 @@ describe("federated route contract", () => {
       propagateCancellation: true,
     };
     expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([
-      { ...boundedRequest, path: PLUGIN_BACKEND_REQUEST_ROUTE_PATH },
       { ...boundedRequest, path: PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH },
     ]);
     expect(FEDERATED_WEBSOCKET_ROUTES.filter((path) => path.includes("plugin-backends"))).toEqual([
@@ -189,7 +188,6 @@ describe("federated route contract", () => {
       ignoreParseFailure(trustApi.workspaceTrust("p 1", "w 1", machineId)),
       ignoreParseFailure(trustApi.setWorkspaceTrust("p 1", "w 1", true, machineId)),
       ignoreParseFailure(trustApi.projectTrust("/repo", machineId)),
-      ignoreParseFailure(requestPluginBackend({ pluginId: "board-tools", backendRevision: "server-r1", machineId, projectId: "p 1", workspaceId: "w 1" }, "cards.summary", { includeClosed: false })),
       ignoreParseFailure(requestPairedPluginBackend({ pluginId: "board-tools", backendRevision: "server-r1", machineId, projectId: "p 1", workspaceId: "w 1" }, "cards.summary", { includeClosed: false })),
       ignoreParseFailure(filesApi.files("README", { kind: "tracked", mode: "file", projectId: "p 1", workspaceId: "w 1", machineId })),
       ignoreParseFailure(sessionsApi.sessions("/repo", machineId)),

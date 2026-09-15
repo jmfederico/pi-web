@@ -80,7 +80,7 @@ describe("bundled Git package metadata", () => {
     const { catalog, root } = await gitCatalogFixture(false);
     const importer = vi.fn(() => Promise.reject(new Error("disabled Git module was imported")));
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const runtime = await createServerPluginRuntime({ catalog, importer, logger, enforceRequiredTerminal: false });
+    const runtime = await createServerPluginRuntime({ catalog, dataDir: join(root, "data"), importer, logger, enforceRequiredTerminal: false });
     const registry = new WorkspaceProviderRegistry({ contributions: runtime.providerContributions(), logger });
 
     const resolution = await registry.resolve({
@@ -101,19 +101,7 @@ describe("bundled Git package metadata", () => {
       workspaces: [{ path: root, isMain: true }],
     });
     expect(resolution.workspaces[0]).not.toHaveProperty("provider");
-    await expect(registry.request({
-      pluginId: "git",
-      moduleRevision: "disabled-revision",
-      project: {
-        id: "project-1",
-        name: "Project",
-        path: root,
-        createdAt: "2026-07-27T00:00:00.000Z",
-      },
-      workspaceId: resolution.workspaces[0]?.id ?? "missing",
-      operation: "status",
-      input: null,
-    })).rejects.toMatchObject({ code: "inactive-plugin", statusCode: 409 });
+    expect(runtime.pairedBackendContributions()).toEqual([]);
     expect(importer).not.toHaveBeenCalled();
     await runtime.stop();
   });

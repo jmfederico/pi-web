@@ -1005,7 +1005,7 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 server-only, and dual-entry plugins. It does not install packages. Plugins default to enabled;
                 <code>plugins.&lt;id&gt;.enabled: false</code> hides a browser-only entry on the next page load. For a
                 server-backed entry, desired disablement takes effect on the next sessiond start, and its paired browser
-                entry continues to follow the still-active backend until then. The bundled
+                entry continues to follow the still-active server entry until then. The bundled
                 <code>pi-web.terminal</code> plugin is required during normal startup; ordinary config cannot disable it,
                 and Settings renders it non-editable.
               </p>
@@ -1034,7 +1034,7 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 unknown, conflict, stale-revision, health, safe-mode, and restart-required state. Desired config remains
                 editable when sessiond is unavailable if the config endpoint works, but active state stays explicitly
                 unavailable. In Fleet, desired and active state both come from the selected target; incompatible settings,
-                lifecycle, manifest, or backend support never silently falls back to the gateway.
+                lifecycle, manifest, or package-peer support never silently falls back to the gateway.
               </p>
               <p>
                 Mixed-version plugin/provider operation is unsupported in either upgrade order. A newer gateway rejects

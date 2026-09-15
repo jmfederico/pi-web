@@ -112,7 +112,7 @@
               <p>
                 After registration, the browser keeps talking to the current PI WEB origin. The gateway contacts the
                 selected remote PI WEB server and routes that machine's projects, provider-owned workspaces, sessions,
-                files, activity, terminals, Pi package operations, and plugin backend requests to the browser UI.
+                files, activity, terminals, Pi package operations, and package-peer requests and channels to the browser UI.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -241,12 +241,12 @@ PI WEB gateway you opened
               </p>
               <ul>
                 <li>Projects and workspaces.</li>
-                <li>Files, previews, and provider-owned workspace features such as bundled Git status and diffs.</li>
+                <li>Files, previews, workspace providers, and package-peer features such as bundled Git status and diffs.</li>
                 <li>Pi sessions, transcripts, prompts, model controls, and commands.</li>
                 <li>Activity indicators and realtime updates.</li>
                 <li>Terminals and terminal command runs.</li>
                 <li>Pi package listing, install, remove, and update from <strong>Settings → Pi packages</strong> when supported by the target PI WEB runtime.</li>
-                <li>Compatible browser plugins and paired workspace-provider backends from the selected machine.</li>
+                <li>Compatible browser plugins and exact-package server peers from the selected machine.</li>
               </ul>
             </section>
 
@@ -284,8 +284,8 @@ PI WEB gateway you opened
               <p>
                 The selected target's sessiond is the single authority for its workspace/provider snapshot. The gateway
                 does not rediscover remote workspaces locally. It loads compatible browser entries from that target and
-                routes documented file, terminal, and <code>context.backend.request()</code> helpers back to the same
-                machine, project, workspace owner, and active backend revision.
+                routes documented file, terminal, and exact-package <code>context.peer</code> helpers back to the same
+                machine, project, current workspace authority, and active server revision.
               </p>
               <p>
                 <strong>Settings → PI WEB plugins</strong> reads and writes desired plugin config for the selected target
@@ -296,9 +296,9 @@ PI WEB gateway you opened
               </p>
               <p>
                 Versioned lifecycle manifests pair remote browser/server package source, scope, settings fingerprint, and
-                revisions. If the target is unavailable, uses an unsupported lifecycle version, lacks the backend route,
+                revisions. If the target is unavailable, uses an unsupported lifecycle version, lacks the peer route,
                 or has stale active code, a current gateway reports an explicit compatibility/unavailable state instead
-                of falling back to gateway code or an unpaired revision.
+                of falling back to gateway code or a mismatched revision.
               </p>
               <p>
                 Mixed-version plugin/provider operation is unsupported in either upgrade order. A newer gateway rejects
@@ -346,7 +346,7 @@ PI WEB gateway you opened
                 <li>Use <strong>Actions → Refresh Selected Machine</strong> to re-check health.</li>
                 <li>Make sure the remote URL is reachable from the gateway server.</li>
                 <li>Open the remote PI WEB directly to verify it is running and to complete model-provider login flows.</li>
-                <li>For plugin lifecycle/backend compatibility errors, upgrade the gateway and target together, restart the updated web/API processes, manually restart the target session daemon, then reload the gateway page.</li>
+                <li>For plugin lifecycle/peer compatibility errors, upgrade the gateway and target together, restart the updated web/API processes, manually restart the target session daemon, then reload the gateway page.</li>
                 <li>Check <code>pi-web logs</code> on both gateway and target for proxy, plugin activation, health, conflict, or revision diagnostics.</li>
                 <li>Use the target's offline <code>pi-web plugins disable</code> or <code>safe-start</code> commands when sessiond cannot start normally.</li>
               </ul>

@@ -1,5 +1,5 @@
 import type { TerminalCommandRun, TerminalCommandRunStatus, Workspace } from "../api";
-import type { ContributionQueryValue, PairedWorkspaceBackendV1, QualifiedContributionId, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "./types";
+import type { ContributionQueryValue, PluginCapability, PluginPeer, QualifiedContributionId, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "./types";
 
 export interface WorkspaceContributionNavigationV1 {
   readonly contributionId: QualifiedContributionId;
@@ -15,12 +15,12 @@ export interface RequiredTerminalWorkspaceBindingV1 {
   readonly origin: string;
   readonly registrationPluginId: string;
   readonly workspace: Workspace;
-  readonly pairedBackend: PairedWorkspaceBackendV1;
+  readonly peer: PluginPeer;
   readonly host: RequiredTerminalFacadeHostV1;
 }
 
 export interface RequiredTerminalCommandRunQueryV1 {
-  readonly pairedBackend: PairedWorkspaceBackendV1;
+  readonly peer: PluginPeer;
   readonly filter?: Readonly<{
     terminalId?: string;
     statuses?: readonly TerminalCommandRunStatus[];
@@ -41,6 +41,14 @@ export interface RequiredTerminalBrowserComposition {
   readonly binding: WorkspacePluginBinding;
   readonly facade: RequiredTerminalBrowserFacadeV1;
 }
+
+/** Host-owned structural token matching Terminal's package-owned capability. */
+export const REQUIRED_TERMINAL_BROWSER_FACADE_CAPABILITY = Object.freeze({
+  pluginId: "pi-web.terminal",
+  id: "browser-facade",
+  version: 1,
+  parse: snapshotRequiredTerminalBrowserFacade,
+}) satisfies PluginCapability<RequiredTerminalBrowserFacadeV1, 1>;
 
 export class RequiredTerminalBrowserUnavailableError extends Error {
   override name = "RequiredTerminalBrowserUnavailableError";

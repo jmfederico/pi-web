@@ -3,9 +3,8 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type {
   JsonValue,
-  ProviderRequestContext,
-  ProviderResponse,
   ServerPluginActivationContext,
+  ServerPluginPeerRequestContext,
   ServerPluginExecFileResult,
 } from "@jmfederico/pi-web/server-plugin-api";
 import {
@@ -46,18 +45,18 @@ interface ValidatedSubmodule {
   cwd: string;
 }
 
-/** Dispatch the Git-owned status/diff schema through the provider's public request seam. */
+/** Dispatch the Git status/diff schema through the package peer request seam. */
 export async function requestGitBackend(
   activationContext: ServerPluginActivationContext,
-  request: ProviderRequestContext,
-): Promise<ProviderResponse> {
+  request: ServerPluginPeerRequestContext,
+): Promise<JsonValue> {
   const runGit = createGitRunner(activationContext, request.signal);
   if (request.operation === GIT_STATUS_OPERATION) {
     requireStatusInput(request.input);
-    return statusProviderResponse(await gitStatusWithRunner(runGit, request.workspace.path));
+    return statusPeerResponse(await gitStatusWithRunner(runGit, request.workspace.path));
   }
   if (request.operation === GIT_DIFF_OPERATION) {
-    return diffProviderResponse(await gitDiffWithRunner(runGit, request.workspace.path, parseDiffInput(request.input)));
+    return diffPeerResponse(await gitDiffWithRunner(runGit, request.workspace.path, parseDiffInput(request.input)));
   }
   throw new Error(`Unsupported Git workspace backend operation: ${request.operation}`);
 }
@@ -426,7 +425,7 @@ function hash(value: string): string {
   return createHash("sha1").update(value).digest("hex");
 }
 
-function statusProviderResponse(status: GitStatusResponse): ProviderResponse {
+function statusPeerResponse(status: GitStatusResponse): JsonValue {
   return {
     isGitRepo: status.isGitRepo,
     hash: status.hash,
@@ -446,7 +445,7 @@ function statusProviderResponse(status: GitStatusResponse): ProviderResponse {
   };
 }
 
-function diffProviderResponse(diff: GitDiffResponse): ProviderResponse {
+function diffPeerResponse(diff: GitDiffResponse): JsonValue {
   return {
     ...(diff.path === undefined ? {} : { path: diff.path }),
     staged: diff.staged,

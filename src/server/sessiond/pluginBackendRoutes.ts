@@ -4,7 +4,6 @@ import {
   PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   parsePluginBackendRequestEnvelope,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
-  PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
   requirePluginBackendOperation,
   serializeBoundedPluginBackendJson,
@@ -15,7 +14,7 @@ import type { Project } from "../types.js";
 import {
   PluginBackendRequestError,
   type PluginBackendRequest,
-} from "../workspaces/workspaceProviderRegistry.js";
+} from "../plugins/pluginBackendRegistry.js";
 
 interface PluginBackendRouteParams {
   pluginId: string;
@@ -43,23 +42,10 @@ export interface PluginBackendRouteDependencies {
   onWorkspacesMutated: () => void;
 }
 
-/** JSON-only sessiond boundary for the active owner of one current workspace. */
-export function registerPluginBackendRoutes(app: FastifyInstance, dependencies: PluginBackendRouteDependencies): void {
-  registerPluginBackendRoutesAt(app, dependencies, PLUGIN_BACKEND_REQUEST_ROUTE_PATH);
-}
-
 /** JSON-only sessiond boundary for one revision-paired package and current workspace. */
 export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependencies: PluginBackendRouteDependencies): void {
-  registerPluginBackendRoutesAt(app, dependencies, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH);
-}
-
-function registerPluginBackendRoutesAt(
-  app: FastifyInstance,
-  dependencies: PluginBackendRouteDependencies,
-  routePath: string,
-): void {
   app.post<{ Params: PluginBackendRouteParams; Body: unknown }>(
-    routePath,
+    PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
       const { pluginId, projectId, workspaceId } = request.params;

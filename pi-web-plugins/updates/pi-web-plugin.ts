@@ -164,8 +164,8 @@ function renderUpdatesPanel(html: HtmlTemplateTag, terminal: WorkspacePanelTermi
   `;
 }
 
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Updates",
   activate: ({ html, svg }) => ({
     contributions: {
@@ -203,6 +203,6 @@ const plugin: PiWebPlugin = {
       ],
     },
   }),
-};
+} satisfies PiWebPlugin;
 
 export default plugin;

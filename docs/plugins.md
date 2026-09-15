@@ -1,19 +1,19 @@
 # PI WEB plugin API
 
-PI WEB plugins are trusted packages that can extend the browser UI, provide workspace semantics in the session daemon, or pair both entries. They are intended for personal, team, and project-local customization, and simple enough for an LLM to create or modify directly.
+PI WEB plugins are trusted packages that can extend the browser UI, run bounded work in the session daemon, provide workspace semantics, or pair browser and server entries. They are intended for personal, team, and project-local customization, and simple enough for an LLM to create or modify directly.
 
 Plugins can currently:
 
-- add action-palette commands;
-- add workspace tools/panels next to Files and Terminal;
-- add compact workspace-label items in the workspace list, panel header, and status bar;
-- call browser APIs and documented PI WEB plugin context helpers;
-- read workspace files and start workspace terminal commands through documented helpers;
+- add action-palette commands, workspace tools/panels, labels, themes, and theme pairs;
+- read and mutate workspace files, start workspace terminal commands, and use other documented browser helpers;
 - serve browser-public files from an explicitly declared `browserRoot`;
-- contribute one server-side workspace provider with optional owner-backed JSON requests and workspace-removal planning; and
-- contribute one bounded package-paired backend with independently optional JSON requests and duplex channels for its matching browser entry.
+- communicate between an exact-revision package's browser and server entries through bounded JSON requests and duplex channels;
+- publish and consume typed, exact-version capabilities within the browser host or within sessiond;
+- store their own data in a host-provided plugin directory and resolve current workspace authority from a server entry;
+- create host-governed Pi conversations, with an optional initial run, from a server entry; and
+- contribute one server-side workspace provider with optional workspace-removal planning.
 
-Browser entries run in the PI WEB page through browser plugin API v2. Declared server entries run in the session daemon through the separate server-plugin API v1. Plugins do not get raw Fastify access, arbitrary routes, concrete core services, a generic event bus, Pi model-provider registration, or a general server-hook API. Neither entry is sandboxed.
+Browser entries run in the PI WEB page through browser plugin API v4. Declared server entries run in the session daemon through server plugin API v3. Plugins do not get raw Fastify access, arbitrary routes, concrete core services, a generic service locator or event bus, Pi model-provider registration, or a general server-hook API. Neither entry is sandboxed.
 
 ## Pi packages, Pi extensions, and PI WEB plugins
 
@@ -21,7 +21,7 @@ Browser entries run in the PI WEB page through browser plugin API v2. Declared s
 
 **Pi extensions** are runtime modules loaded by the session daemon. They can register Pi tools, hooks, commands, and model providers. They are not PI WEB plugins and use a different API and lifecycle.
 
-**PI WEB plugins** are packages discovered from bundled, local, dev, and installed Pi-package sources. A plugin can declare a browser `module`, a sessiond `serverModule`, or both. A server entry can participate only in the documented PI WEB plugin lifecycle, paired-backend, and workspace-provider contracts; it cannot register Pi model providers or arbitrary hooks.
+**PI WEB plugins** are packages discovered from bundled, local, dev, and installed Pi-package sources. A plugin can declare a browser `module`, a sessiond `serverModule`, or both. A server entry can participate only in the documented PI WEB plugin lifecycle, package-peer, typed-capability, and workspace-provider contracts; it cannot register Pi model providers or arbitrary hooks.
 
 Pi loads ordinary Pi resources from installed Pi packages and from its user and project resource locations. PI WEB plugin discovery loads only the browser and server entries declared in `piWeb.plugins`; enabling or disabling a PI WEB plugin does not add or remove the package's Pi extensions, skills, prompt templates, themes, or context/system prompt files.
 
@@ -54,10 +54,10 @@ Treat every plugin package as trusted code:
 - browser entries can call browser APIs, read workspace files, start terminal commands through helpers, and render arbitrary UI;
 - server entries execute in-process inside sessiond with the PI WEB service user's filesystem, environment, and process permissions, and they share sessiond's event loop;
 - a CPU-bound, blocking, or deadlocked callback can stall sessions, terminals, and health endpoints; abort/deadline signals bound only cooperative asynchronous code and cannot preempt code that ignores them;
-- ordinary import, activation, start, health, and stop failures are attributed and quarantined where the host can catch them, but this is a stability boundary rather than a security boundary;
+- ordinary import, activation, start, health, and disposal failures are attributed and quarantined where the host can catch them, but this is a stability boundary rather than a security boundary;
 - plugins should not be installed from untrusted sources.
 
-PI WEB's `/api/...` HTTP and WebSocket endpoints are internal implementation details. Browser code should use the documented owner-backed `context.backend.request()` helper or the independently feature-detected `context.pairedBackend` request/channel capabilities. Server code should use only `@jmfederico/pi-web/server-plugin-api`. Private routes, runtime objects, and source-internal imports are experimental and may change or disappear.
+PI WEB's `/api/...` HTTP and WebSocket endpoints are internal implementation details. Browser code should use documented context helpers, including the exact-package `context.peer` request/channel contract. Server code should use only `@jmfederico/pi-web/server-plugin-api`. Private routes, runtime objects, concrete services, and source-internal imports are experimental and may change or disappear.
 
 ## Workspace providers and replacement ownership
 
@@ -106,7 +106,7 @@ Before coding, read the PI WEB plugin docs:
 https://pi-web.dev/plugins
 Full API reference:
 https://pi-web.dev/plugins.md
-Keep the browser entry on API v2 and any server entry on API v1.
+Keep the browser entry on API v4 and any server entry on API v3.
 After editing, check the manifest endpoint and browser-console failure cases.
 ```
 
@@ -150,7 +150,7 @@ Module shape excerpt:
 
 ```js
 export default {
-  apiVersion: 2,
+  apiVersion: 4,
   name: "Info Plugin",
   activate: ({ html, svg }) => ({
     contributions: {
@@ -187,13 +187,13 @@ import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
 import type { PiWebServerPlugin, WorkspaceProvider } from "@jmfederico/pi-web/server-plugin-api";
 ```
 
-Git declares `machineSpecific: true`, contributes a fallback workspace provider, and implements its status/diff backend and removal plan through the public provider callbacks. It receives no raw routes or private PI WEB services. Use it to understand the demonstrated contract, not as a template for Git-specific fields: replacement providers define their own private data, public metadata, backend operations, and removal wording.
+Git declares `machineSpecific: true`, contributes a fallback workspace provider, implements its removal plan through public provider callbacks, and serves status/diff through its package peer. It receives no raw routes or private PI WEB services. Use it to understand the demonstrated contract, not as a template for Git-specific fields: replacement providers define their own private data, public metadata, peer operations, and removal wording.
 
 ## Copyable standalone workspace-provider example
 
 The repository and published npm package include [`examples/workspace-provider-plugin/`](https://github.com/jmfederico/pi-web/tree/main/examples/workspace-provider-plugin), a small standalone package you can copy without PI WEB source imports. It includes package metadata, a strict NodeNext TypeScript configuration, browser and server source, and build/install instructions.
 
-The example uses browser API v2 and server API v1. Its browser entry compares `workspace.provider.pluginId` with the stable source `pluginId`, uses `runtimePluginId` only to open its qualified panel, displays non-secret `publicMetadata`, and calls the backend owned by the selected workspace. Its server provider conservatively claims only projects containing `.pi-web/example-workspace-provider`. The explicit `browserRoot: "dist/browser"` keeps `dist/server.js`, source, package metadata, and dependencies outside browser asset routes.
+The example uses browser API v4 and server API v3 and requires PI WEB `^2.202609.0`. Its browser entry compares `workspace.provider.pluginId` with the stable source `pluginId`, uses `runtimePluginId` only to open its qualified panel, displays non-secret `publicMetadata`, and calls its exact-package `peer` independently of workspace ownership. Its server provider conservatively claims only projects containing `.pi-web/example-workspace-provider`. The explicit `browserRoot: "dist/browser"` keeps `dist/server.js`, source, package metadata, and dependencies outside browser asset routes.
 
 Copy the example from a checkout or from `node_modules/@jmfederico/pi-web/examples/workspace-provider-plugin`, then follow its README. It deliberately does not advertise removal; use the removal contract below when adding that capability.
 
@@ -216,12 +216,12 @@ When [machine federation](https://pi-web.dev/machines) is enabled, PI WEB loads 
 
 - actions, workspace panels, and workspace labels appear only for the applicable selected machine;
 - file and terminal helpers run against that machine;
-- owner-backed `context.backend.request()` and package-paired `context.pairedBackend` requests/channels are routed through the selected machine while retaining their separate ownership and revision contracts;
-- a server-backed browser module is published only when its package source, scope, settings fingerprint, browser revision, and backend revision match the active sessiond snapshot and the backend is not unhealthy;
+- package-peer `context.peer` requests/channels are routed through the selected machine while retaining exact package and active-revision authority;
+- a server-backed browser module is published only when its package source, scope, settings fingerprint, browser revision, and server revision match the active non-unhealthy sessiond snapshot;
 - if gateway and remote packages share an original id, `machineSpecific` controls whether the portable gateway copy is reused or the selected machine's own copy is required;
 - remote theme contributions are ignored for now because themes are app-wide.
 
-The remote manifest and backend bridge use a versioned lifecycle contract. A future/unsupported lifecycle version, a missing backend route, or a mismatched frontend/backend revision produces an explicit compatibility error; PI WEB does not silently run an unpaired server-backed UI.
+The remote manifest and peer bridge use a versioned lifecycle contract. A future or unsupported lifecycle version, a missing peer route, or a mismatched browser/server revision produces an explicit compatibility error; PI WEB does not silently run a server-backed UI without its matching entry.
 
 Plugin/provider compatibility is intentionally all-or-nothing during a mixed-version fleet rollout. A newer gateway rejects an older target's whole remote plugin manifest when the target lacks the current lifecycle contract, so even that target's browser-only plugin contributions and Git panel are unavailable. In the other upgrade order, an older gateway still calls the legacy core Git routes removed by an updated target, so remote Git status/diff requests return `404`. Upgrade the gateway and target together, restart their updated web/API processes and the target session daemon, then reload the gateway tab. Other machine features remain subject to their own capability negotiation.
 
@@ -238,7 +238,7 @@ For portable plugin assets, prefer URLs relative to the plugin module:
 const url = new URL("./asset.json", import.meta.url);
 ```
 
-In browser API v2, activation `pluginId` is always the stable package/source id, locally and through federation. Compare it directly with `workspace.provider.pluginId` for ownership. `runtimePluginId` is the separately named host-unique id for qualified contribution references such as `${runtimePluginId}:workspace.panel`; a remote host may machine-scope it.
+In browser API v4, activation `pluginId` is always the stable package/source id, locally and through federation. Compare it directly with `workspace.provider.pluginId` for ownership. `runtimePluginId` is the separately named host-unique id for qualified contribution references such as `${runtimePluginId}:workspace.panel`; a remote host may machine-scope it.
 
 Do not construct absolute plugin asset routes from either identity. Module-relative URLs keep the host-selected runtime scope and deployment base automatically; hard-coded `/pi-web-plugins/...` paths can point at the wrong machine or break nested deployments.
 
@@ -266,7 +266,7 @@ Plugins are enabled by default. `plugins.<id>.enabled: false` removes a browser-
 
 ### Desired versus active state
 
-Sessiond resolves one immutable enabled server-plugin snapshot at startup and remains the workspace authority for its lifetime. Saving config or replacing package files changes **desired** state only. The existing backend can remain active until sessiond restarts; conversely, its paired browser module is withheld when active and desired revisions no longer match. A web/API restart or browser reload does not change sessiond's active provider registry.
+Sessiond resolves one immutable enabled server-plugin snapshot at startup and remains the workspace authority for its lifetime. Saving config or replacing package files changes **desired** state only. The existing server entry can remain active until sessiond restarts; conversely, its browser module is withheld when active and desired revisions no longer match. A web/API restart or browser reload does not change sessiond's active provider registry.
 
 Use this sequence:
 
@@ -308,18 +308,18 @@ Built-in plugins can be managed from **Settings → PI WEB plugins** or with the
 ### Terminal
 
 **Plugin id:** `pi-web.terminal`
-**What it does:** supplies PI WEB's Terminal panel and navigation action, Xterm UI and browser state, PTY/replay and command-run service, and its paired request/channel protocol.
+**What it does:** supplies PI WEB's Terminal panel and navigation action, Xterm UI and browser state, PTY/replay and command-run service, and its package-peer request/channel protocol.
 
-Terminal is a bundled machine-specific browser/server plugin and is required during normal and `bundled-only` startup. PI WEB activates it before ordinary plugins and publishes its browser entry only when the bundled server entry is active, healthy, revision-matched, and exposes the paired request/channel contract. The browser entry uses `context.pairedBackend` for local and selected remote machines; it owns terminal selection, reconnect/replay, mobile keys, copy behavior, command-run display, and cleanup instead of calling Terminal-specific application routes. Missing, incompatible, failed, or unhealthy Terminal startup fails visibly with `safe-start set none` recovery guidance rather than claiming Terminal is available. Only an active session-daemon lifecycle snapshot can declare intentional no-Terminal recovery; while runtime state is unavailable or incompatible, ordinary plugin modules remain withheld and the required failure stays retryable.
+Terminal is a bundled machine-specific browser/server plugin and is required during normal and `bundled-only` startup. PI WEB activates it before ordinary plugins and publishes its browser entry only when the bundled server entry is active, healthy, revision-matched, and exposes the peer request/channel contract. The browser entry uses `context.peer` for local and selected remote machines; it owns terminal selection, reconnect/replay, mobile keys, copy behavior, command-run display, and cleanup instead of calling Terminal-specific application routes. Missing, incompatible, failed, or unhealthy Terminal startup fails visibly with `safe-start set none` recovery guidance rather than claiming Terminal is available. Only an active session-daemon lifecycle snapshot can declare intentional no-Terminal recovery; while runtime state is unavailable or incompatible, ordinary plugin modules remain withheld and the required failure stays retryable.
 
-Terminal's activation-only `requiredTerminalFacade` and `requiredTerminalService` values are privileged host-only composition ports for the bundled product. They are intentionally absent from the public browser `PluginActivationResult` and server `ServerPluginActivation` declarations and are **not third-party plugin APIs**. External plugins must not return or depend on them; browser/server package pairing uses the public `context.pairedBackend` and `ServerPluginActivation.pairedBackend` contracts instead.
+Terminal's former activation-only `requiredTerminalFacade` and `requiredTerminalService` fields were private composition escape hatches, not third-party APIs. Browser API v4 and server API v3 reject them. Bundled Terminal now uses the same typed capability mechanism available to third-party plugins, while browser/server package communication uses the public `context.peer` and `ServerPluginActivation.peer` contracts.
 
 `plugins["pi-web.terminal"].enabled: false`, the Settings toggle, and `pi-web plugins disable pi-web.terminal` do not disable Terminal. Its canonical contribution ids are `pi-web.terminal:workspace.terminal` and `pi-web.terminal:view.terminal`; the released `core:workspace.terminal` and `core:view.terminal` aliases remain supported. Use `pi-web plugins safe-start set none --restart` only to bring up diagnosis/settings surfaces without Terminal, repair the installation or config, then clear safe start and restart sessiond.
 
 ### Files
 
 **Plugin id:** `files`
-**What it does:** provides the Files workspace panel, file viewers, uploads, and the **Go to Files** / **Refresh Files** actions through the same browser plugin API v2 contract available to third-party plugins.
+**What it does:** provides the Files workspace panel, file viewers, uploads, and the **Go to Files** / **Refresh Files** actions through the same browser plugin API v4 contract available to third-party plugins.
 
 Files is a normal browser-only bundled plugin. It is enabled by default and can be disabled in **Settings → PI WEB plugins** or with:
 
@@ -338,7 +338,7 @@ Legacy `files` / `core:workspace.files` routes, namespaced query state, and save
 ### Git
 
 **Plugin id:** `git`
-**What it does:** claims Git projects as a fallback workspace provider, discovers worktrees, supplies provider-owned removal plans, and adds the Git status/diff workspace panel through the legacy owner-backed backend helper.
+**What it does:** claims Git projects as a fallback workspace provider, discovers worktrees, supplies provider-owned removal plans, and adds the Git status/diff workspace panel through its public package peer.
 
 Git is enabled by default and is the only production workspace provider bundled with PI WEB. An enabled primary third-party provider can claim a project before Git. Disabling `git` and restarting sessiond leaves the kernel project-folder workspace available; reload the browser afterward so Git contributions disappear. The generic Files, Terminal, and Session features continue to work in that folder workspace.
 
@@ -506,7 +506,7 @@ Discovery hashes the package (without traversing `.git` or `node_modules`) to pr
 
 ### Manifest and assets
 
-The manifest contains a lifecycle version, a `terminalMode` marker, and each publishable browser module. `terminalMode: "required"` puts the compatible bundled Terminal entry first; `"recovery-disabled"` explicitly means no Terminal helper is being published. Current PI WEB releases emit `module` as a leading application-root reference and include `backendRevision` for a browser entry paired with its active server entry. `pairedRequestVersion: 1` advertises package-paired requests and `pairedChannelVersion: 1` advertises bounded duplex channels. These markers are independent; either may appear without the other. The bundled Terminal requires both:
+The manifest contains a lifecycle version, a `terminalMode` marker, and each publishable browser module. `terminalMode: "required"` puts the compatible bundled Terminal entry first; `"recovery-disabled"` explicitly means no Terminal helper is being published. Current PI WEB releases emit `module` as a leading application-root reference and include `backendRevision` for a browser entry paired with its active server entry. `pairedRequestVersion: 1` advertises package-peer requests and `pairedChannelVersion: 1` advertises package-peer bounded duplex channels. These markers are independent; either may appear without the other. The bundled Terminal requires both:
 
 ```json
 {
@@ -572,15 +572,15 @@ PI WEB returns executable JavaScript MIME types for both `.js` and `.mjs`. JSON,
 
 **One-click reinstall.** A profile that dismissed (or never installed) a known auto-installable package can install it again from **Settings → Pi packages** without typing its on-disk path: an **Available packages** section lists every known package not currently configured for the selected target, each with an **Install** button that installs it from its shipped location directly. The section disappears once every known package is configured.
 
-## Browser module shape and v2 migration
+## Browser module shape and API v4 migration
 
-TypeScript browser entries should use a type-only import from the published declaration entrypoint. The built JavaScript must not import PI WEB source internals:
+TypeScript browser entries use a type-only import from the published declaration entrypoint. The built JavaScript must not import PI WEB source internals:
 
 ```ts
 import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
 
 const plugin: PiWebPlugin = {
-  apiVersion: 2,
+  apiVersion: 4,
   name: "My Plugin",
   activate: ({ pluginId, runtimePluginId, html }) => ({
     contributions: {
@@ -604,29 +604,47 @@ const plugin: PiWebPlugin = {
 export default plugin;
 ```
 
-The activation boundary is:
+The lifecycle boundary is:
 
 ```ts
 interface PiWebPlugin {
-  apiVersion: 2;
+  apiVersion: 4;
   name: string;
-  activate(context: PluginActivationContext): PluginActivationResult;
+  requires?: readonly PluginCapability[];
+  activate(context: PluginActivationContext): PluginActivationResult | Promise<PluginActivationResult>;
 }
 
 interface PluginActivationContext {
-  readonly apiVersion: 2;
+  readonly apiVersion: 4;
   readonly pluginId: string;
   readonly runtimePluginId: string;
   readonly html: HtmlTemplateTag;
   readonly svg: SvgTemplateTag;
+  readonly signal: AbortSignal;
+  readonly lifetimeSignal: AbortSignal;
+}
+
+interface PluginActivationResult {
+  contributions: PluginContributions;
+  provides?: readonly PluginCapabilityProvision[];
+  start?(context: PluginStartContext): void | Promise<void>;
+  dispose?(signal: AbortSignal): void | Promise<void>;
 }
 ```
 
-`activate()` is called once when the UI loads the plugin. Keep it cheap and synchronous: define contributions there, but move expensive or async work into actions, custom elements, or explicit user interactions.
+`activate()` runs once under a bounded invocation and may be asynchronous. Declare contributions and capability provisions there, but defer dependency-backed initialization to `start()`. PI WEB calls `start()` only after every exact capability in `requires` is active, and publishes that plugin's contributions and provisions only after start succeeds. A failed activation or start aborts `lifetimeSignal` and invokes bounded `dispose()` when it was returned. On browser-host shutdown, PI WEB stops admitting contribution work, aborts every lifetime, and disposes plugins in reverse dependency/start order.
 
-Browser API v2 is a deliberate break: the host rejects browser v1 entries with the plugin/module identity and expected version; there is no v1 compatibility shim. Migrate a browser entry by setting `apiVersion: 2`, using stable `pluginId` for package/provider ownership, and using `runtimePluginId` when constructing a host-qualified contribution reference. Replace browser-v1 `refreshGit` with `refreshWorkspacePanels()` plus panel `onInvalidate()`. The browser-v1 `isGitRepo`, `isGitWorktree`, and top-level `workspace.branch` aliases were removed; use the provider-authored `workspace.label` for generic presentation, and keep provider-specific facts in `workspace.provider.metadata` or the owning backend. The former `@jmfederico/pi-web/plugin-api/unstable` type path is not part of v2 and is no longer exported.
+The `signal` supplied to `activate()`, `start()`, or `dispose()` belongs only to that invocation and is aborted when its deadline expires or the invocation settles. Retain `lifetimeSignal` for plugin-owned background work; it is aborted before rollback or ordinary disposal starts. Cleanup must still finish cooperatively within `dispose()`'s own signal.
 
-Workspace-files capability v1, package-paired requests/channels, contribution navigation v1, and resource invalidation are additive parts of browser API v2; they do not require `apiVersion: 3`. Existing v2 plugins and test fakes that implement only the original owner-backed `WorkspaceBackend.request(operation, input)` shape remain compatible. Feature-detect `context.files.capabilityVersion === 1` before using the added file methods. For package-paired work, detect `context.pairedBackend?.requestVersion === 1` plus `request`, and detect `context.pairedBackend?.channelVersion === 1` plus `openChannel` independently. Treat `context.navigation` and the second `onInvalidate` argument as optional. An older host does not claim support it lacks.
+Browser API v4 replaces v2 without a compatibility shim. Migrate a v2 browser entry by:
+
+1. setting `apiVersion: 4`;
+2. replacing `context.pairedBackend` with `context.peer`, then checking `peer.request` and `peer.openChannel` directly rather than version marker fields;
+3. replacing owner-backed `context.backend` calls with the package peer or another explicit typed capability—the provider-owner transport and `WorkspaceBackend` type were removed;
+4. removing the private `requiredTerminalFacade` activation field; and
+5. moving dependency-backed setup into `start({ capabilities, signal })`, retaining `lifetimeSignal` for active work, and moving cleanup into `dispose(signal)`.
+
+The earlier browser-v1 Git aliases remain removed: use `refreshWorkspacePanels()` plus panel `onInvalidate()`, provider-authored `workspace.label` for generic presentation, and `workspace.provider.metadata` for provider-specific public facts. The former `@jmfederico/pi-web/plugin-api/unstable` path remains unsupported. Workspace-files capability v1, contribution navigation v1, and resource invalidation remain available in API v4; feature-detect `context.files.capabilityVersion === 1` and optional `context.navigation` when compatibility with older hosts matters.
 
 Contribution ids authored in arrays remain local to the plugin. PI WEB qualifies them internally under the runtime identity:
 
@@ -636,28 +654,20 @@ Contribution ids authored in arrays remain local to the plugin. PI WEB qualifies
 
 For a local plugin the runtime and source ids are normally equal. A federated registration may machine-scope `runtimePluginId`, while `pluginId` and `workspace.provider.pluginId` remain the same source id.
 
-## Server module, paired backend, and workspace provider shape
+## Server module, lifecycle, package peer, and workspace provider shape
 
-TypeScript server entries import the separately published Node declarations with `import type`:
+Server entries import public types from the separate Node entrypoint. The same entrypoint now has a runtime export for PI WEB's frozen host-capability tokens:
 
 ```ts
 import type {
-  PairedPluginBackendV1,
   PiWebServerPlugin,
+  ServerPluginPeer,
   WorkspaceProvider,
 } from "@jmfederico/pi-web/server-plugin-api";
 
-const pairedBackend: PairedPluginBackendV1 = {
-  version: 1,
+const peer: ServerPluginPeer = {
   async request({ project, workspace, operation, input, signal }) {
-    return await handlePairedOperation({ project, workspace, operation, input, signal });
-  },
-  async openChannel({ project, workspace, operation, input, signal, send }) {
-    const connection = await openPluginConnection({ project, workspace, operation, input, signal, send });
-    return {
-      receive: (data, receiveSignal) => connection.receive(data, receiveSignal),
-      close: ({ code, reason, signal: closeSignal }) => connection.close({ code, reason, signal: closeSignal }),
-    };
+    return await handlePeerOperation({ project, workspace, operation, input, signal });
   },
 };
 
@@ -669,20 +679,21 @@ const provider: WorkspaceProvider = {
   async list(project, signal) {
     return await listProviderWorkspaces(project, signal);
   },
-  async request({ project, workspace, operation, input, signal }) {
-    return await handleProviderOperation({ project, workspace, operation, input, signal });
-  },
 };
 
 const plugin: PiWebServerPlugin = {
-  apiVersion: 1,
+  apiVersion: 3,
   name: "My Workspace Provider",
-  activate(context) {
+  activate({ lifetimeSignal }) {
     return {
-      pairedBackend,
+      peer,
       workspaceProvider: provider,
-      health: async (signal) => ({ status: "healthy" }),
-      stop: async (signal) => { /* release plugin-owned resources */ },
+      start({ signal }) {
+        signal.throwIfAborted();
+        lifetimeSignal.addEventListener("abort", stopBackgroundWork, { once: true });
+      },
+      health: async (signal) => ({ status: signal.aborted ? "degraded" : "healthy" }),
+      dispose: async (signal) => { await releasePluginResources(signal); },
     };
   },
 };
@@ -690,23 +701,210 @@ const plugin: PiWebServerPlugin = {
 export default plugin;
 ```
 
-The default export has `apiVersion: 1`, a non-empty `name`, and `activate(context)`. The activation result can contain:
+The API v3 lifecycle shape is:
 
 ```ts
+interface PiWebServerPlugin {
+  apiVersion: 3;
+  name: string;
+  requires?: readonly PluginCapability[];
+  activate(context: ServerPluginActivationContext): ServerPluginActivation | Promise<ServerPluginActivation>;
+}
+
 interface ServerPluginActivation {
   workspaceProvider?: WorkspaceProvider;
-  pairedBackend?: PairedPluginBackendV1;
-  start?(signal: AbortSignal): void | Promise<void>;
-  stop?(signal: AbortSignal): void | Promise<void>;
+  peer?: ServerPluginPeer;
+  provides?: readonly PluginCapabilityProvision[];
+  start?(context: ServerPluginStartContext): void | Promise<void>;
+  dispose?(signal: AbortSignal): void | Promise<void>;
   health?(signal: AbortSignal): ServerPluginHealth | Promise<ServerPluginHealth>;
 }
 ```
 
-A server plugin may contribute at most one `workspaceProvider` and one version-1 `pairedBackend`. Either contribution is optional and independent: a paired backend does not need to own or provide workspaces. A paired backend may provide `request`, `openChannel`, or both, and its public type requires at least one; only the required bundled Terminal must provide both. The host-owned frozen activation context contains its `pluginId`, `packageRoot`, JSON settings snapshot, scoped logger, activation `AbortSignal`, an optional version-1 `notices` reporter, and an argv-based `execFile()` helper. `execFile()` has host-owned timeout/output bounds; pass the current callback's signal into every command request. The API exposes no shell parser, Fastify instance, route registration, concrete service, event bus, or service locator.
+A server plugin may contribute at most one `workspaceProvider` and one package `peer`. Either is optional and independent: a peer does not need to own or provide workspaces. A peer may provide `request`, `openChannel`, or both, and its public type requires at least one; only required bundled Terminal must provide both. The host-owned frozen activation context contains `pluginId`, `packageRoot`, `dataDirectory`, a detached JSON settings snapshot, a scoped logger, an activation `signal`, the complete `lifetimeSignal`, an optional version-1 `notices` reporter, and bounded argv-based `execFile()`. Pass the current callback's signal into every command request. The API exposes no shell parser, Fastify instance, route registration, concrete service, event bus, or generic service locator.
 
-Every activation, lifecycle, provider, request, channel `receive`, and channel `close` signal is scoped to that one invocation. The host aborts it when the invocation times out or settles. The deliberate exception is the signal passed to `openChannel()`: it remains live for that channel's finite lifetime and is aborted on disconnect, failure, expiry, or shutdown. Do not treat any other callback signal as a plugin-lifetime shutdown notification; release plugin-global resources in the explicit `stop()` callback. Deadlines remain cooperative, so plugins must observe each supplied signal.
+`activate()`, `start()`, `dispose()`, `health()`, provider operations, peer requests, channel `receive()`, and channel `close()` each receive a signal scoped to that bounded invocation. The `openChannel()` signal instead lasts for that finite channel. `lifetimeSignal` is the plugin-wide stop-admission signal: PI WEB aborts it before failed-start rollback or ordinary shutdown disposal. Dispose resources cooperatively in `dispose()`; invocation deadlines cannot preempt blocking in-process code.
 
-Sessiond resolves the enabled catalog once per process start. It imports, validates, activates, and starts each server entry before publishing its contributions. A failed entry is attributed and skipped without aborting ordinary activation of other plugins; a failed `start` is rolled back with `stop` when available. Successful plugins stop in reverse activation order. Sessiond inspects each optional `health()` callback once while building the startup workspace authority; an unhealthy provider is excluded, a degraded provider remains eligible, and that inspection is not polled again during the process lifetime. Server entries are never hot-reloaded or unloaded after config/package edits.
+Sessiond stages every enabled entry, starts exact capability dependencies before consumers, and publishes providers, peers, and capability values only after each plugin's start succeeds. Unavailable dependencies, exact-version mismatches, duplicate providers, and dependency cycles fail the affected plugin and its dependents with attributed diagnostics; unrelated plugins continue. Startup failure aborts the lifetime and runs bounded disposal. Shutdown aborts lifetimes, lets dependents clean up first, and disposes in reverse dependency/start order. Sessiond inspects each optional `health()` callback while assembling current plugin/workspace state; an unhealthy provider is excluded and a degraded provider remains eligible. Server entries are never hot-reloaded after config or package edits.
+
+Server API v3 replaces v1 without a compatibility shim. Migrate a v1 entry by setting `apiVersion: 3`, renaming `pairedBackend` to `peer`, replacing `start(signal)` with `start({ capabilities, signal })`, renaming `stop(signal)` to `dispose(signal)`, and using activation `lifetimeSignal` for active-work cancellation. Remove `WorkspaceProvider.request`, the browser owner-backed `context.backend`, and the private `requiredTerminalService` field; package protocols belong on `peer`, and stable host/plugin composition belongs in typed capabilities. Browser and server entries must be migrated together when they communicate.
+
+### Typed capability composition
+
+Browser API v4 and server API v3 use the same declaration shape for composition, but each host resolves its own graph. A capability token gives one value a stable owner, local id, exact positive-integer version, and parser:
+
+```ts
+import type { PluginCapability } from "@jmfederico/pi-web/server-plugin-api";
+
+interface SearchIndexV1 {
+  readonly query: (text: string) => Promise<readonly string[]>;
+}
+
+export const SEARCH_INDEX_CAPABILITY = Object.freeze({
+  pluginId: "search-index",
+  id: "query",
+  version: 1,
+  parse(value: unknown): SearchIndexV1 {
+    if (typeof value !== "object" || value === null || typeof Reflect.get(value, "query") !== "function") {
+      throw new Error("Invalid search-index/query v1 capability");
+    }
+    const query = Reflect.get(value, "query");
+    return Object.freeze({ query: async (text: string) => await Reflect.apply(query, value, [text]) });
+  },
+}) satisfies PluginCapability<SearchIndexV1, 1>;
+```
+
+The provider lists `{ capability: SEARCH_INDEX_CAPABILITY, value }` in activation `provides`. A consumer imports the same public token, lists it in top-level `requires`, and resolves it only after dependencies are ready:
+
+```ts
+const plugin: PiWebServerPlugin = {
+  apiVersion: 3,
+  name: "Search Consumer",
+  requires: [SEARCH_INDEX_CAPABILITY],
+  activate: () => ({
+    start({ capabilities }) {
+      const index = capabilities.resolve(SEARCH_INDEX_CAPABILITY);
+      // Retain index for active plugin work.
+    },
+  }),
+};
+```
+
+Browser activations require `contributions`, even when it is `{}`; server activations do not have that field. The exact rules are:
+
+- Capability identity is the tuple `(pluginId, id, version)`. There is no version range, fallback, generic string lookup, or implicit latest version.
+- A plugin can provide only capabilities whose `pluginId` is its stable source/package id. Duplicate provisions of one exact identity are rejected.
+- The token's `parse()` function validates and snapshots the value at publication and consumption boundaries. Treat values as public contracts and return detached/frozen facades rather than concrete internal services.
+- `capabilities.resolve()` exposes only the exact tokens declared by that consumer in `requires`; resolving an undeclared token or a different version fails.
+- A provision becomes active only after its provider's `start()` succeeds. Missing, failed, invalid, or cyclic dependencies prevent only the affected dependency graph from publishing.
+- Browser capabilities compose within the applicable local or selected-machine browser registration domain. Server capabilities compose within sessiond. They do not cross processes automatically; use the package peer for browser/server communication.
+
+Package authors should export reusable tokens from their own supported modules so providers and consumers do not duplicate contract definitions.
+
+### Plugin data directory
+
+Server plugins receive an absolute `dataDirectory` path in their activation context, created by PI WEB before activation at `$PI_WEB_DATA_DIR/plugin-data/<plugin-id>` (default `~/.pi-web/plugin-data/<plugin-id>`). It is a persistent location scoped by plugin id on the machine running the plugin, separate from `packageRoot` (the installed plugin code). Use it for files, subfolders, or a database; the plugin owns its storage format, safe writes, concurrency, migrations, and cleanup. There is no PI WEB read/write/clear storage API or host-imposed JSON size limit.
+
+```ts
+import { join } from "node:path";
+
+// Inside activate(context), the directory already exists:
+const preferencesPath = join(context.dataDirectory, "preferences.json");
+// Read/write with ordinary Node APIs; handle missing files as appropriate.
+```
+
+The directory is shared across that plugin's projects and workspaces; organize per-project data yourself if needed. Its identity does not change when the plugin package is updated or sessiond restarts. This is a storage-location convention, not a sandbox: server plugins retain ordinary filesystem permissions. `context.settings` still contains only the plugin's configured settings, not the whole PI WEB configuration.
+
+### Host capabilities for server plugins
+
+PI WEB exports three exact server capability tokens as runtime values. Import the tokens normally and import their TypeScript contracts with `import type`:
+
+```ts
+import {
+  PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+  PI_WEB_HOST_WORKSPACES_CAPABILITY,
+} from "@jmfederico/pi-web/server-plugin-api";
+import type {
+  PiWebHostPiSessionsV1,
+  PiWebHostWorkspacesV1,
+  PiWebServerPlugin,
+} from "@jmfederico/pi-web/server-plugin-api";
+
+let workspaces: PiWebHostWorkspacesV1 | undefined;
+let piSessions: PiWebHostPiSessionsV1 | undefined;
+
+const plugin: PiWebServerPlugin = {
+  apiVersion: 3,
+  name: "Host capability consumer",
+  requires: [
+    PI_WEB_HOST_WORKSPACES_CAPABILITY,
+    PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+  ],
+  activate: () => ({
+    start({ capabilities }) {
+      workspaces = capabilities.resolve(PI_WEB_HOST_WORKSPACES_CAPABILITY);
+      piSessions = capabilities.resolve(PI_WEB_HOST_PI_SESSIONS_CAPABILITY);
+    },
+  }),
+};
+```
+
+Each value is created separately for the declaring plugin and revoked with that plugin's lifetime. Requiring a token grants only that narrow contract; it does not expose a PI WEB service or generic locator.
+
+#### Current workspace authority v1
+
+`PI_WEB_HOST_WORKSPACES_CAPABILITY` identifies exact `pi-web.host/workspaces` v1. Call `resolve({ projectId, workspaceId })` at execution time rather than retaining a path or trusting caller-supplied ownership. Every call reloads the project and reruns current provider arbitration. A missing, stale, cross-project, or mismatched selection rejects.
+
+The result is a detached frozen `{ project, workspace }` projection with normalized host-derived paths and browser-visible provider metadata. It never includes provider-private `data`, a provider callback, a transport destination, or authority selected by path. Workspace ownership remains typed authorization/topology metadata; it does not route a request to that provider.
+
+#### Host-governed Pi sessions v1
+
+`PI_WEB_HOST_PI_SESSIONS_CAPABILITY` identifies exact `pi-web.host/pi-sessions` v1. Declare it in `requires` and resolve it in `start()`.
+
+Use `create()` when your companion will begin the work. It accepts only `{ projectId, workspaceId }` (non-empty ids, at most 512 characters each) and returns a frozen `{ sessionId }` after native extension startup and normal UI publication, without submitting a prompt or opening a connection:
+
+```ts
+const { sessionId } = await piSessions.create({ projectId, workspaceId });
+const connection = await sessionEvents.connect({ projectId, workspaceId, sessionId });
+connection.on("my-package:reply", (data) => { /* author-defined reply */ });
+connection.emit("my-package:request", { action: "inspect" });
+```
+
+Declare the separate messaging capability too (below). Have the companion wait for the request before starting agent work; `create()` does not suppress work an extension starts itself during startup. PI WEB installs its observer before native extension startup, and publishes the conversation before `create()` resolves. Use Pi's APIs inside the companion to run the agent. Creation failures reject; there is no initial-run completion promise for `create()`. On an older v1 host without creation support, `create()` rejects with an update-host error while `run()` remains usable.
+
+Use the unchanged `run()` path when you already have the initial prompt:
+
+```ts
+const run = await piSessions.run({
+  projectId,
+  workspaceId,
+  prompt: "Inspect the current workspace and summarize its state.",
+});
+console.log(run.sessionId);
+const completion = await run.completion;
+// { status: "completed" | "cancelled" } or { status: "failed", error }
+```
+
+For `run()`, the only accepted input fields are `projectId`, `workspaceId`, and a non-empty initial `prompt`. Each id is limited to 512 characters; the prompt is limited to 64 KiB of UTF-8. Every admission re-resolves current workspace authority, then PI WEB creates one visible, transcript-preserving session with delegation tools disabled and admits exactly that initial prompt before returning the frozen handle. The plugin receives only `sessionId` and a detached completion promise—no runtime/SDK object, path override, model controls, arbitrary session operations, generic session service, or per-run cancellation handle.
+
+PI WEB observes native extension startup activity and announces the created session before submitting the initial prompt. Both methods re-resolve current workspace authority and use the same non-delegating hosted startup. At most four admissions per plugin may be pending: `create()` holds a slot only until startup/publication settles; `run()` holds it through initial completion. Published conversations are not limited by this admission quota. Admission/start failures reject `run()`; completion describes only the initial submission: `completed`, `cancelled` when aborted, or `failed`, with failure text bounded to 4 KiB of UTF-8. A final provider error counts as failure even when Pi's prompt promise fulfills; a command or handled input can complete without an assistant response.
+
+Once published, the conversation belongs to normal PI WEB hosting. Initial completion or plugin disposal does not close it or abort later user work. Plugin lifetime revocation rejects new admissions and cancels unpublished startup (including pending startup dialogs); cleanup waits for startup to settle, not for published conversations to finish. Users can continue these sessions normally, including after browser disconnection.
+
+#### Hosted Pi package messaging v1
+
+Declare `PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY` in the backend's `requires` and resolve it in `start()`. It identifies exact `pi-web.host/pi-session-events` v1, independently of creation:
+
+```ts
+const connection = await sessionEvents.connect({ projectId, workspaceId, sessionId });
+const unsubscribe = connection.on("my-package:reply", (data) => { /* author-defined reply */ });
+connection.emit("my-package:request", { action: "inspect" });
+// Later: unsubscribe() removes this listener; connection.close() closes the connection.
+```
+
+Select a full session id on the selected machine, whether it came from the normal session UI, `piSessions.create()`, or `piSessions.run()`. `connect()` re-resolves project/workspace authority and requires that exact session to be already hosted in that workspace on this daemon. Sessions still initializing their extensions reject. It does not open saved sessions, create sessions, or adopt independent runtimes. Browser plugins reach their backend on the selected machine through `context.peer`; pass the selected ids rather than retaining a machine-global default. Creation and connection are separate; `run()` already submits its initial prompt before it returns.
+
+The companion uses ordinary `pi.events.on("my-package:request", handler)` and `pi.events.emit("my-package:reply", data)`. Install and enable the companion through normal Pi package configuration and project trust. Register its handlers during extension loading and initialize session state in `session_start`. Subscribe in the backend before emitting: replies may be synchronous. The bus carries native in-process values, without cloning or a JSON envelope. Use package-specific channels and define your own payloads, acknowledgements, correlation, and error replies. Native emit returns immediately, does not await async handlers, and does not confirm that a companion is installed or that agent work succeeded. Pi logs listener errors. There is no buffering or replay of startup emissions.
+
+`connection.signal` aborts when the connection closes, the plugin lifetime ends, or the hosted session closes or is replaced. After that, `on()` and `emit()` throw; `close()` and unsubscribe are idempotent. Closing a connection only detaches its listeners: it never stops agent work or discards the conversation. Browser disconnection alone does not close a backend-owned connection; authors may tie a connection to their peer channel if desired. Same-session `/reload` preserves the host connection while Pi replaces companion handlers; restarting/reopening the runtime requires an explicit new connection, even for the same session id.
+
+Pi remains the agent API: use `pi.sendMessage`, `pi.sendUserMessage`, tools, and native events in the companion. Supported hosted agent activity appears through PI WEB's normal conversation and running-status observation; authors do not send running-status reports. This is trusted-author tooling, not a sandbox or a plugin permission framework. Authors own message meanings and deliberately incompatible behavior that bypasses the supported hosting lifecycle.
+
+#### Try the companion/backend example
+
+[`examples/session-bridge-plugin/`](../examples/session-bridge-plugin/) is **Workspace Reviews**, a useful opt-in Pi package replacing the greeting demo. It is not installed by default. **Start review** creates a dedicated conversation to review the selected workspace's uncommitted changes; **Refresh reviews**, a saved-review selector, and previous/next buttons provide simple plain-text browsing. The browser uses selected-machine `context.peer`; the backend derives project/workspace ids from host-resolved authority, not browser-supplied paths or session ids. See its [README](../examples/session-bridge-plugin/README.md) for building and [usage guide](../examples/session-bridge-plugin/docs/usage.md) for installation, storage, and limitations.
+
+Enable both halves on the target machine: PI WEB discovers the `piWeb` browser/backend entries, while the session's Pi profile loads `pi.extensions` from the package's `pi` manifest. Add the absolute package directory to that profile's `settings.json` `packages` array, preserving other entries and resource filters. The native manifest field is `pi.extensions`; a PI WEB plugin link alone does not enable its companion. Project-local package configuration still needs normal project trust. Use the Pi profile configured for sessiond, which may differ from a terminal's profile. Manually restart sessiond when safe to activate a new backend, then reload the browser; this can interrupt hosted sessions. For an already hosted conversation, enable the companion and use `/reload` before requesting work.
+
+The example declares both session capabilities, calls `create(selection)`, then separately `connect(selection)`, and subscribes before emitting a correlated request. Its native companion uses `pi.sendUserMessage`, message/tool hooks, and `agent_settled` to return final text only after the matching run settles. Receipt is not completion. Provider errors, aborts, failed tools, interfering prompts, and empty/truncated final responses fail conservatively rather than produce successful findings. Model credentials must be configured on the selected machine. Review instructions ask for no modifications but are not a tool sandbox.
+
+An admitted review belongs to the backend lifetime, independently of the browser request. Receipt waits are bounded to five seconds and completion to ten minutes; cleanup removes listeners/timers and closes the connection without stopping the conversation. There is no automatic retry or event replay. Inspect Sessions before retrying a timeout because work may still be running. Plugin-owned JSON records in `dataDirectory` hold status and findings, isolated by workspace identity and atomically replaced. Refresh loads saved metadata and one selected text record; stale running records after a backend restart display as interrupted, never successful. There is no durable job recovery, retention policy, or pagination.
+
+#### Availability, safe start, and shutdown
+
+Package state is available during the early dependency phase. Current workspaces, Pi sessions, and session messaging start together only after sessiond has settled provider topology and constructed host session authority. A plugin that contributes a workspace provider cannot also require any of these late capabilities: doing so would make its own prerequisite depend on the provider registry it helps define, so PI WEB rejects that topology as a capability cycle. Split those responsibilities into separately identified plugins when both are needed.
+
+`bundled-only` safe start excludes external server plugins before their capabilities are created. `none` imports no server plugins and creates no plugin capability consumers; kernel folder workspaces and recovery/diagnostic surfaces remain available, while required Terminal and Terminal-backed workflows do not. During ordinary shutdown PI WEB closes peer ingress and aborts plugin lifetimes while host session authority is still available for startup cleanup, then disposes hosted sessions. A missing or failed optional capability disables its dependent plugins with attributed diagnostics; unrelated kernel and plugin surfaces continue.
 
 ### Server notice reporter
 
@@ -727,50 +925,48 @@ Omitting `scope` makes a notice global. A supplied scope must contain at least o
 
 Messages are limited to 4 KiB of UTF-8. Context is limited to 16 KiB of serialized UTF-8 JSON and a maximum JSON nesting depth of 32. PI WEB validates the complete input before mutation or publication, safely clones and freezes accepted scope/context (including prototype-key, cycle, and sparse-array handling), and throws from `record()` for malformed or oversized input. The host derives the immutable `plugin:<plugin-id>` source from the activating catalog entry. Plugins cannot provide a source, id, publication hook, or dismissal operation, and the reporter exposes no store, route, event, or snapshot access.
 
-The reporter is live during `activate()`, `start()`, and the successfully active plugin lifetime. PI WEB revokes it before failed-start rollback or ordinary `stop()` cleanup begins; later calls throw and cannot record or publish state. Retaining the reporter beyond that lifetime does not extend its authority.
+The reporter is live during `activate()`, `start()`, active operation, and reverse-dependency shutdown cleanup. PI WEB revokes it immediately before failed-start rollback or that plugin's ordinary `dispose()` begins; later calls throw and cannot record or publish state. Retaining the reporter beyond that lifetime does not extend its authority.
 
-Every accepted call is an independent occurrence; v1 has no deduplication, update, or upsert key. PI WEB retains at most 25 current notices from one plugin source and 100 plugin-authored notices globally, evicting the oldest eligible plugin occurrence when a limit overflows (same-source overflow first). Plugin overflow never evicts a core notice. Current notices otherwise remain in sessiond memory until exact-id dismissal or daemon restart; they are not persisted. Existing server API v1 plugins may ignore the optional capability and continue to load on hosts that provide it.
+Every accepted call is an independent occurrence; v1 has no deduplication, update, or upsert key. PI WEB retains at most 25 current notices from one plugin source and 100 plugin-authored notices globally, evicting the oldest eligible plugin occurrence when a limit overflows (same-source overflow first). Plugin overflow never evicts a core notice. Current notices otherwise remain in sessiond memory until exact-id dismissal or daemon restart; they are not persisted. Server API v3 plugins may ignore the optional reporter.
 
-### Paired backend contract
+### Package peer contract
 
 ```ts
-type PairedPluginBackendV1 =
+type ServerPluginPeer =
   | {
-      readonly version: 1;
-      request(context: PairedPluginRequestContext): JsonValue | Promise<JsonValue>;
-      openChannel?(context: PairedPluginChannelOpenContext): PairedPluginChannel | Promise<PairedPluginChannel>;
+      request(context: ServerPluginPeerRequestContext): JsonValue | Promise<JsonValue>;
+      openChannel?(context: ServerPluginPeerChannelOpenContext): ServerPluginPeerChannel | Promise<ServerPluginPeerChannel>;
     }
   | {
-      readonly version: 1;
       request?: undefined;
-      openChannel(context: PairedPluginChannelOpenContext): PairedPluginChannel | Promise<PairedPluginChannel>;
+      openChannel(context: ServerPluginPeerChannelOpenContext): ServerPluginPeerChannel | Promise<ServerPluginPeerChannel>;
     };
 
-interface PairedPluginChannelOpenContext {
+interface ServerPluginPeerChannelOpenContext {
   readonly project: ProjectInput;
-  readonly workspace: PairedPluginWorkspace;
+  readonly workspace: ServerPluginPeerWorkspace;
   readonly operation: string;
   readonly input: JsonValue;
   readonly signal: AbortSignal;
   readonly send: (data: JsonValue) => void;
 }
 
-interface PairedPluginChannel {
+interface ServerPluginPeerChannel {
   receive(data: JsonValue, signal: AbortSignal): void | Promise<void>;
   readonly closed?: PromiseLike<void>;
   close?(context: { readonly code: number; readonly reason: string; readonly signal: AbortSignal }): void | Promise<void>;
 }
 ```
 
-A paired backend must implement at least one of `request()` or `openChannel()`; the two handlers are independently optional. `pairedBackend.request()` is available only to the same package's revision-matched browser entry. Before invoking it, the host authenticates and resolves the selected machine, project, and current workspace, then supplies cloned, frozen project/workspace/JSON values. The workspace projection may describe the kernel folder or a workspace owned by another provider; it includes only browser-visible provider metadata, never provider-private `data`. The callback receives no route, socket, registry, or other plugin handle.
+A server `peer` must implement at least one of `request()` or `openChannel()`; the two handlers are independently optional. `context.peer.request()` is available only to the same package's exact-revision browser entry. Before invoking it, the host authenticates and resolves the selected machine, project, and current workspace, then supplies cloned, frozen project/workspace/JSON values. The workspace may be the kernel folder or owned by another provider; its projection includes browser-visible provider metadata but never provider-private `data`. The callback receives no route, socket, registry, provider callback, or other plugin handle.
 
-The host limits JSON input to 256 KiB, JSON output to 8 MiB, each callback to 10 seconds, sessiond dispatch to 25 seconds, and federation to 30 seconds. Caller cancellation propagates to the operation-scoped signal. Observe that signal in nested work and do not retain it after the callback settles.
+The host limits JSON request input to 256 KiB, output to 8 MiB, each plugin callback to 10 seconds, sessiond dispatch to 25 seconds, and federation to 30 seconds. Caller cancellation propagates to the operation-scoped signal. Observe that signal in nested work and do not retain it after the callback settles.
 
-`pairedBackend.openChannel()` is the optional version-1 duplex addition. It has the same package/revision, selected-machine, project, and current-workspace authority as a direct request and does not require workspace-provider ownership. The host supplies a channel-lifetime signal and a synchronous `send()` function. Return one channel with `receive()`, optional plugin-owned `closed`, and optional `close()` members. Resolve `closed` only after the plugin's final `send()`; the host boundedly drains accepted frames in order before cleanly closing the browser transport and releasing admission. A clean browser close likewise drains already accepted `receive()` callbacks in order before `close()` and release. `close()` is invoked at most once for cleanup. Sessiond is the sole semantic and scoped authority: it validates the open envelope, package revision, operation, project/workspace scope, and plugin contribution. Intermediate local and federated hops forward opaque, bounded UTF-8 text without parsing host envelopes or plugin-authored payload fields.
+`peer.openChannel()` has the same package/revision, selected-machine, project, and current-workspace authority as a direct request and does not require workspace-provider ownership. The host supplies a channel-lifetime signal and synchronous `send()`. Return one channel with `receive()`, optional plugin-owned `closed`, and optional `close()` members. Resolve `closed` only after the plugin's final `send()`; the host boundedly drains accepted frames in order before cleanly closing the browser transport and releasing admission. A clean browser close likewise drains already accepted `receive()` callbacks in order before `close()` and release. `close()` is invoked at most once for cleanup. Sessiond is the sole semantic and scoped authority: it validates the open envelope, package revision, operation, project/workspace scope, and plugin contribution. Intermediate local and federated hops forward opaque, bounded UTF-8 text without parsing host envelopes or plugin-authored payload fields.
 
 Channel limits are fixed host contracts: 256 KiB open input; a 10-second transport-connect deadline at each edge hop, cancelled permanently once that hop's upstream WebSocket reaches `OPEN`; a separate 10-second sessiond open-handshake/plugin-open deadline; 10-second receive, close, and clean-drain deadlines; a 1-second physical-teardown deadline for a non-cooperating peer; 64 KiB JSON per data frame plus host-envelope allowance; 128 queued frames per direction at each physical hop, with 1 MiB browser-to-server and 1.25 MiB server-to-browser byte bounds; 12-hour maximum lifetime with no idle timeout; and a 120-byte close reason. One aggregate edge cap allows 128 physically alive proxy channels per web/API process, shared by local and federated routes. Sessiond separately and authoritatively admits 128 total channels, 32 per plugin, and 8 per plugin/workspace. Both counts include channels awaiting connection/open or physical teardown. The directional 1.25 MiB output bound accommodates the bundled Terminal's full 200,000-character replay even when JSON escaping expands every character, plus following live output without reordering. `send()` has no delivery acknowledgement or drain signal: success means only that the host accepted a frame into its bounded queue. Overflow throws and closes the channel; plugins that need continuity should reconnect and replay from their own state.
 
-Only valid UTF-8 text enters an intermediate proxy. Binary, malformed UTF-8, and over-limit physical frames fail at that hop; semantically invalid bounded text reaches sessiond, which rejects invalid JSON or host envelopes. Stale revisions or workspace scope, either admission or queue overflow, callback failure or timeout, disconnect, cancellation, lifetime expiry, and shutdown abort the lifetime signal, close both directions, invoke plugin cleanup once, and release accounting after physical teardown. A denied socket receives an attributed host error when transport permits and is then terminated rather than escaping accounting while a peer withholds its close handshake. The browser/server plugin never receives Fastify, a raw WebSocket, arbitrary routing, another plugin's backend, or a global event bus.
+Only valid UTF-8 text enters an intermediate proxy. Binary, malformed UTF-8, and over-limit physical frames fail at that hop; semantically invalid bounded text reaches sessiond, which rejects invalid JSON or host envelopes. Stale revisions or workspace scope, either admission or queue overflow, callback failure or timeout, disconnect, cancellation, lifetime expiry, and shutdown abort the lifetime signal, close both directions, invoke plugin cleanup once, and release accounting after physical teardown. A denied socket receives an attributed host error when transport permits and is then terminated rather than escaping accounting while a peer withholds its close handshake. The browser/server plugin never receives Fastify, a raw WebSocket, arbitrary routing, another plugin's peer, or a global event bus.
 
 ### Workspace provider contract
 
@@ -779,7 +975,6 @@ interface WorkspaceProvider {
   fallback?: boolean;
   probe(project: ProjectInput, signal: AbortSignal): Promise<"claim" | "pass">;
   list(project: ProjectInput, signal: AbortSignal): Promise<ProviderWorkspace[]>;
-  request?(context: ProviderRequestContext): Promise<JsonValue>;
   prepareRemove?(context: ProviderRemoveContext): Promise<WorkspaceRemovePlan>;
 }
 
@@ -796,13 +991,13 @@ interface ProviderWorkspace {
 
 - `probe()` must return only `"claim"` or `"pass"`. Leave `fallback` unset/false for a replacement that should run before bundled Git.
 - `list()` runs only for the selected owner. Return stable provider-local keys, accessible absolute directory paths, unique paths/keys, non-empty labels, and exactly one main workspace.
-- `data` is round-tripped privately to that provider during the current resolution. `publicMetadata` appears under `workspace.provider.metadata` and is visible to **all browser code and API consumers**. Never put secrets in `publicMetadata` or removal wording.
-- `request()` is optional and receives a host-validated frozen current owner/workspace projection plus a bounded operation id, JSON input, and operation-scoped abort signal. It must return JSON.
+- `data` is round-tripped privately to that provider during the current resolution and supplied back only for provider-owned operations such as `prepareRemove()`. `publicMetadata` appears under `workspace.provider.metadata` and is visible to **all browser code and API consumers**. Never put secrets in `publicMetadata` or removal wording.
+- Workspace ownership is topology and authorization metadata, not a transport. Put browser/server operations on the package `peer`; a peer request receives only the public workspace projection, never provider-private `data`.
 - `removal` is display text only and requires `prepareRemove()`. It advertises removal for that specific workspace; browser `workspace.provider.capabilities.remove` is true only when that workspace advertises it and the owning provider implements removal.
 - `prepareRemove()` returns a plan for a visible host-owned terminal run; returning the plan approves the operation but does **not** mean removal has completed. `command` is shell source interpreted by the host's login shell. The host chooses a safe current working directory outside the target, so the provider must use the supplied absolute `workspace.path`, shell-quote it, and keep removal in the foreground. The host records completion when the shell exits, with exit status 0 meaning success.
 - Provider failures and conflicts are diagnostics. A claimant that fails `list()` does not permit fallback takeover for the same resolution.
 
-The only supported plugin type entrypoints are the type-only package exports `@jmfederico/pi-web/plugin-api` and `@jmfederico/pi-web/server-plugin-api`. Use them with `import type`; there is no runtime JavaScript export. Private `dist/**` deep imports and any other plugin API subpath are not part of the package contract.
+The only supported plugin entrypoints are `@jmfederico/pi-web/plugin-api` and `@jmfederico/pi-web/server-plugin-api`. The browser entrypoint is type-only. Use `import type` for server declarations too, but import the three `PI_WEB_HOST_*_CAPABILITY` tokens as runtime values from the server entrypoint. No other runtime values are public. Private `dist/**` deep imports and any other plugin API subpath are not package contracts.
 
 ## Contributions
 
@@ -813,6 +1008,8 @@ interface PluginContributions {
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  themes?: ThemeContribution[];
+  themePairs?: ThemePairContribution[];
 }
 ```
 
@@ -985,8 +1182,7 @@ interface WorkspacePanelContext {
   workspace: Workspace;
   state?: PluginRuntimeState;
   files: WorkspaceFilesContextValue;
-  backend?: WorkspaceBackend;
-  pairedBackend?: PairedWorkspaceBackendV1;
+  peer?: PluginPeer;
   prompt: PluginPromptEditor;
   terminal: {
     open(options?: { terminalId?: string }): void;
@@ -1006,7 +1202,7 @@ interface WorkspacePanelContext {
 
 `icon` is optional and is used in the compact mobile tab bar. Prefer an SVG rendered with the `svg` helper from `PluginActivationContext`; use `currentColor` so PI WEB themes can style it. If `icon` is omitted, mobile tabs fall back to initials from the panel title, or to the full title when initials collide.
 
-`machine`, `workspace`, `files`, optional owner-backed `backend`, optional package-paired `pairedBackend`, `prompt`, `terminal`, optional `navigation`, and `host` are documented as stable for panel callbacks. The base `files` methods are covered under [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files); feature-detect the [workspace-files capability v1](#workspace-files-capability-v1) additions. Use `backend.request()` only for the current workspace owner's `WorkspaceProvider.request()` contract. Use independently detected `pairedBackend.request()` or `pairedBackend.openChannel()` for a package's revision-paired server contribution instead of constructing API routes — see [Calling paired workspace backends](#calling-paired-workspace-backends). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the required bundled Terminal panel; pass `{ terminalId }` to deep-link to a specific terminal.
+`machine`, `workspace`, `files`, optional package `peer`, `prompt`, `terminal`, optional `navigation`, and `host` are documented as stable for panel callbacks. The base `files` methods are covered under [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing, deleting, and moving workspace files](#writing-deleting-and-moving-workspace-files); feature-detect the [workspace-files capability v1](#workspace-files-capability-v1) additions. Use `peer.request()` or `peer.openChannel()` for this browser package's exact-revision server contribution instead of constructing API routes—see [Calling the package peer](#calling-the-package-peer). The `prompt` helper supports panel interactions that insert workspace context into the current prompt—see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to required bundled Terminal; pass `{ terminalId }` to deep-link to a specific terminal.
 
 `routeAliases` migrates former URL tool/view values. `navigationAliases` migrates former qualified query namespaces; use the scoped `navigation` helper for current deep-link state. `invalidationResources` opts a panel into automatic resource events. Implement `onInvalidate()` to refresh plugin-owned state, then call `host.requestRender()` when async changes should make PI WEB re-evaluate `badge`, `visible`, or `render`.
 
@@ -1027,7 +1223,7 @@ interface Workspace {
   readonly isMain: boolean;
   readonly provider?: {
     readonly pluginId: string;
-    readonly capabilities: { readonly request: boolean; readonly remove: boolean };
+    readonly capabilities: { readonly remove: boolean };
     readonly metadata?: JsonObject;
   };
   readonly removal?: { readonly actionLabel: string; readonly confirmation: string };
@@ -1040,7 +1236,7 @@ Use existing classes such as `toolbar`, `viewer`, `empty`, and `muted` for panel
 
 #### Workspace-files capability v1
 
-`WorkspaceFiles` and its `WorkspacePanelFiles` alias retain the extendable and implementable five-operation shape published for browser API v2 adapters and test fakes. Callback contexts expose the separately named discriminated value type so current hosts can add capability v1 without replacing that source-compatible base:
+`WorkspaceFiles` and its `WorkspacePanelFiles` alias retain the extendable and implementable five-operation shape first published for browser API v2 adapters and test fakes. Browser API v4 callback contexts expose the separately named discriminated value type, preserving that source-compatible base:
 
 ```ts
 interface WorkspaceFiles {
@@ -1144,7 +1340,7 @@ Read `context.navigation?.query` on each current panel callback or custom-elemen
 
 The snapshot is normally populated while the address-bar machine, project, and workspace match the bound context. During host-controlled route restoration, such as remembered machine navigation, PI WEB may supply an exact target-identity snapshot before publishing that target in the address bar so the panel can restore in order. Writes remain fenced to the live address-bar identity, so a write from that pre-publication or any other stale context is ignored. Browser back/forward produces a fresh snapshot through the normal host render/restoration path. `navigationAliases` lists former qualified contribution ids for migration only: canonical values win, and a write removes matching alias values and writes the canonical namespace.
 
-`set()` is a void-returning v1 API, not an acknowledgement of publication. Portable plugins must not infer acceptance from its return value; read the next current callback's `query` as the authoritative state. The bundled Terminal currently also observes a private PI WEB host result (`false` for a rejected stale write) to avoid updating its remembered selection. That result is not a browser API v2 or navigation v1 guarantee: a conforming older host may return `undefined`, which Terminal accepts for compatibility. In a mixed-version federation, a target's browser module runs on the gateway host, so the target's version alone does not guarantee this rejection feedback. Use an updated gateway for the current Terminal stale-selection protection; a portable acknowledgement contract would require a separately advertised capability.
+`set()` is a void-returning v1 API, not an acknowledgement of publication. Portable plugins must not infer acceptance from its return value; read the next current callback's `query` as the authoritative state. The bundled Terminal currently also observes a private PI WEB host result (`false` for a rejected stale write) to avoid updating its remembered selection. That result is not a browser API v4 or navigation v1 guarantee: a host may return `undefined`, which Terminal accepts for compatibility. In a mixed-version federation, a target's browser module runs on the gateway host, so the target's version alone does not guarantee this rejection feedback. Use an updated gateway for the current Terminal stale-selection protection; a portable acknowledgement contract would require a separately advertised capability.
 
 #### Scope-aware invalidation
 
@@ -1213,15 +1409,14 @@ interface WorkspaceLabelContext {
   workspace: Workspace;
   state?: PluginRuntimeState;
   files: WorkspaceFilesContextValue;
-  backend?: WorkspaceBackend;
-  pairedBackend?: PairedWorkspaceBackendV1;
+  peer?: PluginPeer;
   host: {
     requestRender(): void;
   };
 }
 ```
 
-`machine`, `workspace`, `files`, optional owner-backed `backend`, optional package-paired `pairedBackend`, and `host` are documented as stable for label callbacks. The `files` helper includes the compatible base operations plus the feature-detected [workspace-files capability v1](#workspace-files-capability-v1) additions. A workspace provider's own browser entry can call `backend.request()` from a label-owned async cache; another dual-entry package can use the independently detected paired request helper. Long-lived channels normally belong in a mounted panel/custom element with explicit cancellation and cleanup. Include `machine.id` in caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
+`machine`, `workspace`, `files`, optional package `peer`, and `host` are documented as stable for label callbacks. The `files` helper includes the compatible base operations plus the feature-detected [workspace-files capability v1](#workspace-files-capability-v1) additions. A dual-entry package can call its peer request from a label-owned async cache. Long-lived channels normally belong in a mounted panel/custom element with explicit cancellation and cleanup. Include `machine.id` in caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
 
 Items are sorted by `order` and then id. Return an empty array to render nothing. Keep callbacks synchronous and lightweight; start async work from the callback, return cached items, then call `host.requestRender()` when the cache changes.
 
@@ -1262,7 +1457,7 @@ if (!customElements.get("my-workspace-badge")) {
 }
 
 export default {
-  apiVersion: 2,
+  apiVersion: 4,
   name: "My Plugin",
   activate: ({ html }) => ({
     contributions: {
@@ -1281,44 +1476,32 @@ export default {
 };
 ```
 
-## Calling paired workspace backends
+## Calling the package peer
 
-Workspace panel and label contexts expose two separate JSON-only contracts.
-
-The optional legacy `context.backend` has the unchanged browser-v2 `WorkspaceBackend` shape:
-
-```ts
-interface WorkspaceBackend {
-  request(operation: string, input: JsonValue): Promise<JsonValue>;
-}
-```
-
-The host supplies this helper only when the contribution's source plugin is the current workspace owner and that provider advertises request support. It always dispatches through that owner's `WorkspaceProvider.request()`. The server callback receives that provider's private workspace `data`; no other plugin can retrieve it. Use this helper for provider-owned operations, as bundled Git and the standalone workspace-provider example do. The unversioned helper deliberately has no channel or cancellation marker, and adding a package-paired channel does not redirect its requests.
-
-Use the separate optional `context.pairedBackend` when a browser package needs to call its own revision-matched `ServerPluginActivation.pairedBackend`, independently of workspace ownership. Feature-detect paired requests:
+Workspace panel and label contexts expose optional `context.peer` only when the same package's server entry is active at the exact browser revision and implements at least one peer handler. Request and channel methods are independently optional, so check the method you need:
 
 ```js
-const paired = context.pairedBackend;
-if (paired?.requestVersion !== 1 || paired.request === undefined) {
-  throw new Error("Paired backend requests unavailable");
+const peer = context.peer;
+if (peer?.request === undefined) {
+  throw new Error("Package-peer requests unavailable");
 }
 const controller = new AbortController();
-const result = await paired.request("summary", {
+const result = await peer.request("summary", {
   includeIgnored: false,
 }, { signal: controller.signal });
 ```
 
-PI WEB binds a paired request to the browser module's original package id and active backend revision, plus the callback's selected machine, project, and workspace. It can serve any current host-resolved workspace without becoming its provider. The paired workspace projection contains only browser-visible provider metadata, never provider-private `data`. Passing an `AbortSignal` cancels the local/sessiond/federated paired request cooperatively.
+PI WEB binds the request to the browser module's stable package id, active server revision, selected machine, project, and current workspace. The package can serve any current host-resolved workspace without becoming its provider. The server callback receives only the public workspace projection, never provider-private `data`. Passing an `AbortSignal` cancels the local/sessiond/federated request cooperatively.
 
-Paired requests and channels are independently optional. A channel-only contribution advertises no request method, and a request-only contribution advertises no channel method. Feature-detect bounded duplex channels separately. `openChannel()` resolves only after the matching server entry accepts the open; register `onData` in the options so no accepted server frame races listener setup:
+For a bounded duplex channel, register `onData` in the open options so no accepted server frame races listener setup:
 
 ```js
-const paired = context.pairedBackend;
-if (paired?.channelVersion !== 1 || paired.openChannel === undefined) {
-  throw new Error("Paired backend channels unavailable");
+const peer = context.peer;
+if (peer?.openChannel === undefined) {
+  throw new Error("Package-peer channels unavailable");
 }
 const controller = new AbortController();
-const channel = await paired.openChannel("watch", { cursor: null }, {
+const channel = await peer.openChannel("watch", { cursor: null }, {
   signal: controller.signal,
   onData(data) {
     consumePluginFrame(data);
@@ -1333,7 +1516,7 @@ Operation ids must match `^[a-z][a-z0-9.-]*$` and be at most 128 characters. Inp
 
 `channel.send()` validates and boundedly queues one finite JSON value. A successful call means queue acceptance, not remote delivery; no drain signal is exposed. Invalid data, a closed channel, or queue overflow throws, and continuity-sensitive plugins should reconnect and replay from their own state. `channel.close(reason?)` performs a normal close; aborting the supplied signal closes an opening or live channel. The `closed` promise always reports the WebSocket close code/reason and includes an attributed `{ code, message }` error when a host or server-plugin failure preceded closure. Keep `onData` synchronous and hand off longer work to plugin-owned bounded state.
 
-Both contracts work locally and through machine federation while retaining their distinct owner and package-revision authority. Browser plugins must not construct PI WEB backend or machine API URLs themselves. Missing/inactive backends, stale revisions/workspaces, ownership conflicts, unsupported operations, cancellation, invalid JSON, failures, timeouts, and channel bounds surface as attributed request rejection or channel closure.
+Peers work locally and through machine federation with the same exact package/revision authority. Browser plugins must not construct PI WEB backend or machine API URLs themselves. Missing or inactive peers, stale revisions/workspaces, unsupported operations, cancellation, invalid JSON, failures, timeouts, and channel bounds surface as attributed request rejection or channel closure.
 
 ## Reading workspace files
 
@@ -1549,9 +1732,9 @@ Review command strings carefully. They are trusted shell commands executed in th
 
 ## Private and experimental PI WEB APIs
 
-PI WEB's `/api/...` HTTP and WebSocket routes, runtime-only browser fields, source files, Fastify instance, and internal services are private implementation details. They are outside the supported browser-v2 and server-v1 package contracts and may change or disappear.
+PI WEB's `/api/...` HTTP and WebSocket routes, runtime-only browser fields, source files, Fastify instance, and internal services are private implementation details. They are outside the supported browser-v4 and server-v3 package contracts and may change or disappear.
 
-The stable browser API is the documented helpers and the type-only `@jmfederico/pi-web/plugin-api` export; the stable server API is the narrow type-only `@jmfederico/pi-web/server-plugin-api` export. Use `context.backend.request()` for provider-owner operations, and feature-detect `context.pairedBackend` request and channel capabilities independently for package-paired work. If browser code intentionally relies on another private surface, keep that dependency local and expect to revisit it after PI WEB upgrades. A server plugin must not import PI WEB source internals or private `dist/**` declarations.
+The stable browser API is the documented helpers and type-only `@jmfederico/pi-web/plugin-api` export. The stable server API is the declarations plus the three documented host-capability tokens exported by `@jmfederico/pi-web/server-plugin-api`. Use `context.peer` for package browser/server operations and typed capabilities for stable composition. If browser code intentionally relies on another private surface, keep that dependency local and expect to revisit it after PI WEB upgrades. A server plugin must not import PI WEB source internals, concrete services, or private `dist/**` declarations.
 
 ## Async data and caching
 
@@ -1569,19 +1752,20 @@ If you are an AI agent building or editing a PI WEB plugin, follow this checklis
 
 1. Create or update a package folder with `package.json` and at least one built JavaScript entry. Declare `"type": "module"` when a `.js` server entry is present, or emit it as `.mjs`.
 2. Use `piWeb.plugins` entries shaped as `{ id, browserRoot?, module?, serverModule?, machineSpecific? }`; declare at least one module, give every browser entry a safe root containing its module, and use non-reserved ids matching `^[a-z][a-z0-9.-]*$`.
-3. Import browser types only from `@jmfederico/pi-web/plugin-api` and server types only from `@jmfederico/pi-web/server-plugin-api`, always with `import type`; do not use private subpaths or source internals.
-4. Default-export `{ apiVersion: 2, name, activate }` from a browser entry and `{ apiVersion: 1, name, activate }` from a server entry.
-5. In a browser entry, use source `pluginId` for ownership and `runtimePluginId` for qualified contribution references; return contributions synchronously and use the activation context's `html`/`svg` tags.
-6. Add actions for command-palette operations, panels for larger workspace UI, and labels for compact inline metadata.
-7. Return arrays synchronously from workspace label `items()`; return an empty array to render nothing.
-8. Use documented browser helpers first: `files`, `terminal`, owner-backed `backend`, package-paired `pairedBackend`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Feature-detect versioned `files`, paired request/channel methods, and `navigation` independently, and never construct PI WEB backend, file-preview, federation, or absolute plugin-asset URLs.
-9. In a server entry, return only the demonstrated lifecycle callbacks, at most one `workspaceProvider`, and at most one version-1 `pairedBackend`; feature-detect the optional version-1 `notices` reporter, and treat every supplied `AbortSignal` as operation-scoped and forward it to bounded work.
-10. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON data/metadata, and optional request/removal capabilities.
-11. Keep backend operations JSON-only and bounded. `context.backend` requests remain owner-scoped; `context.pairedBackend` requests and channels may use any host-resolved workspace but never receive provider-private data. Put no secrets in `publicMetadata`, browser responses, removal wording, or diagnostics.
-12. Keep the installed package at or below 4,096 entries and 16 MiB. Use a narrow, self-contained `browserRoot` that includes every emitted runtime dependency, style, chunk, and asset without private PI WEB imports.
-13. Treat both entries as trusted code. A server module shares sessiond's process and user permissions.
-14. For browser-only edits, reload or hard-reload the page. For a server-backed edit, restart sessiond and then reload the page.
-15. Warn that restarting `pi-web-sessiond.service` may interrupt active sessions/runtime ownership.
+3. Import browser types only from `@jmfederico/pi-web/plugin-api` and server types only from `@jmfederico/pi-web/server-plugin-api`. Use `import type` except for the three documented server `PI_WEB_HOST_*_CAPABILITY` runtime tokens; do not use private subpaths or source internals.
+4. Default-export `{ apiVersion: 4, name, activate }` from a browser entry and `{ apiVersion: 3, name, activate }` from a server entry.
+5. Use activation for declarations and cheap setup, `start()` for work that needs exact declared capabilities, `lifetimeSignal` to stop active work, and `dispose()` for bounded cleanup. Do not retain invocation-scoped signals.
+6. In a browser entry, use source `pluginId` for ownership and `runtimePluginId` for qualified contribution references; return at least an empty `contributions` object and use the activation context's `html`/`svg` tags.
+7. Add actions for command-palette operations, panels for larger workspace UI, and labels for compact inline metadata. Return arrays synchronously from workspace label `items()`; return an empty array to render nothing.
+8. Use documented browser helpers first: `files`, `terminal`, package `peer`, `host.requestRender`, `workspace`, `machine`, `state`, and `prompt`. Feature-detect versioned `files`, peer request/channel methods, and `navigation` independently, and never construct PI WEB backend, file-preview, federation, or absolute plugin-asset URLs.
+9. In a server entry, return only the demonstrated lifecycle callbacks, at most one `workspaceProvider`, and at most one `peer`; feature-detect optional `notices`, and forward the current invocation signal to bounded work.
+10. Export typed, versioned tokens for plugin capabilities; declare every dependency in `requires`, provide only identities owned by the plugin, validate/snapshot at `parse()`, and resolve only inside or after `start()`.
+11. Make provider claims conservative. Return exactly one main workspace, stable keys, absolute accessible directories, JSON private/public metadata, and optional removal presentation/plans. Keep transport on the package peer.
+12. Keep peer operations JSON-only and bounded. They may use any host-resolved workspace but never receive provider-private data. Put no secrets in `publicMetadata`, browser responses, removal wording, or diagnostics.
+13. Resolve current workspace authority at execution time before privileged work. Use the host state/session contracts rather than inventing files or importing concrete services, and account for quotas and lifetime revocation.
+14. Keep the installed package at or below 4,096 entries and 16 MiB. Use a narrow, self-contained `browserRoot` that includes every emitted runtime dependency, style, chunk, and asset without private PI WEB imports.
+15. Treat both entries as trusted code. A server module shares sessiond's process and user permissions.
+16. For browser-only edits, reload or hard-reload the page. For a server-backed edit, restart sessiond and then reload the page; warn that restarting `pi-web-sessiond.service` may interrupt active sessions/runtime ownership.
 
 ## Troubleshooting
 
@@ -1600,16 +1784,16 @@ curl http://127.0.0.1:8504/pi-web-plugins/my-plugin/pi-web-plugin.js
 Common issues:
 
 - invalid plugin or contribution id;
-- missing default export, browser `apiVersion: 2` or server `apiVersion: 1`, non-empty `name`, or `activate` function;
+- missing default export, browser `apiVersion: 4` or server `apiVersion: 3`, non-empty `name`, or `activate` function;
 - missing `package.json`, incorrect `piWeb.plugins` metadata, neither module declared, missing/unsafe `browserRoot`, a browser module outside its root, a `.js` server entry without `"type": "module"`, or a dual entry explicitly marked `machineSpecific: false`;
 - legacy shortcuts such as `piWeb.plugin`, string plugin entries, or no-`package.json` fallback;
 - duplicate plugin ids; records are diagnosed, skipped rather than merged, and never renamed;
 - entry/root path is unsafe, points outside the package, enters `.git`/`node_modules`, does not exist, or the package exceeds 4,096 entries/16 MiB;
 - package is not installed through Pi or under `$PI_WEB_DATA_DIR/plugins` (`~/.pi-web/plugins` by default);
-- browser import/activation/render failure; check the browser console;
-- server state is failed, incompatible, unhealthy, disabled, missing, stale, or conflicted; check **Settings → PI WEB plugins** and `pi-web logs` on the target machine;
+- browser import/activation/start/render failure, missing exact capability, invalid provision, or dependency cycle; check the browser console;
+- server state is failed, incompatible, unhealthy, disabled, missing, stale, or conflicted—including missing/wrong-version capabilities or a provider/late-authority cycle; check **Settings → PI WEB plugins** and `pi-web logs` on the target machine;
 - a server-backed browser entry is absent because sessiond is unavailable or its active source/settings/revisions do not match desired package state; restart sessiond, then reload the tab;
-- a federated target lacks the lifecycle/backend capability; update and restart PI WEB on that target instead of falling back to the gateway;
+- a federated target lacks the current lifecycle/peer contract; update and restart PI WEB on that target instead of falling back to the gateway;
 - recovery is needed before plugin discovery/import; use `pi-web plugins safe-start show`, offline disable, or one of the documented safe-start levels.
 
 A manual restart of `pi-web-sessiond.service` may interrupt active sessions/runtime ownership. Inspect active work first and do not assume a web/UI restart is sufficient.

@@ -176,18 +176,20 @@ describe("Files browser package build", () => {
       const imported = await import(firstModuleUrl.href);
       const secondImported = await import(secondModuleUrl.href);
       const template = (strings, ...values) => ({ strings, values });
-      const activated = imported.default.activate({
-        apiVersion: 2,
+      const activated = await imported.default.activate({
+        apiVersion: 4,
         pluginId: "files",
         runtimePluginId: "files",
         html: template,
         svg: template,
+        signal: new AbortController().signal,
+        lifetimeSignal: new AbortController().signal,
       });
       const firstElementConstructor = customElements.get("pi-web-files-panel");
       const firstCodeViewerConstructor = customElements.get("pi-web-files-code-viewer");
       const registry = new PluginRegistry();
-      registry.register({ id: "remote-1.files", sourcePluginId: "files", machineId: "remote-1", plugin: imported.default });
-      registry.register({ id: "remote-2.files", sourcePluginId: "files", machineId: "remote-2", plugin: secondImported.default });
+      await registry.register({ id: "remote-1.files", sourcePluginId: "files", machineId: "remote-1", plugin: imported.default });
+      await registry.register({ id: "remote-2.files", sourcePluginId: "files", machineId: "remote-2", plugin: secondImported.default });
       const panels = registry.getWorkspacePanels();
       const firstContext = builtWorkspacePanelContext("remote-1");
       const secondContext = builtWorkspacePanelContext("remote-2");
@@ -228,8 +230,8 @@ describe("Files browser package build", () => {
         },
       };
     });
-    expect(builtModule.default).toMatchObject({ apiVersion: 2, name: "Files" });
-    expect(secondBuiltModule.default).toMatchObject({ apiVersion: 2, name: "Files" });
+    expect(builtModule.default).toMatchObject({ apiVersion: 4, name: "Files" });
+    expect(secondBuiltModule.default).toMatchObject({ apiVersion: 4, name: "Files" });
     expect(secondBuiltModule.FilesRuntime).not.toBe(builtModule.FilesRuntime);
     expect(registrations.panelMachineIds).toEqual(["remote-1", "remote-2"]);
     expect(registrations.firstElementConstructor).toBeDefined();

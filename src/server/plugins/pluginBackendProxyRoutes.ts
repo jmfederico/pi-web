@@ -2,7 +2,6 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
-  PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
   utf8ByteLength,
 } from "../../shared/pluginBackendProtocol.js";
@@ -16,27 +15,13 @@ interface PluginBackendProxyParams {
   operation: string;
 }
 
-/** Browser-facing owner-backed route; workspace authority and execution stay in sessiond. */
-export function registerPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
-  registerPluginBackendProxyRoutesAt(app, daemon, PLUGIN_BACKEND_REQUEST_ROUTE_PATH, "plugin-backends");
-}
-
 /** Browser-facing package-paired route; package and workspace authority stay in sessiond. */
 export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
-  registerPluginBackendProxyRoutesAt(app, daemon, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, "paired-plugin-backends");
-}
-
-function registerPluginBackendProxyRoutesAt(
-  app: FastifyInstance,
-  daemon: SessionDaemonRequestClient,
-  routePath: string,
-  collection: "plugin-backends" | "paired-plugin-backends",
-): void {
   app.post<{ Params: PluginBackendProxyParams; Body: unknown }>(
-    `/api${routePath}`,
+    `/api${PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH}`,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
-      const path = daemonPluginBackendPath(request.params, collection);
+      const path = daemonPluginBackendPath(request.params);
       const cancellation = requestCancellation(request, reply);
       try {
         let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
@@ -80,12 +65,9 @@ function registerPluginBackendProxyRoutesAt(
   );
 }
 
-function daemonPluginBackendPath(
-  params: PluginBackendProxyParams,
-  collection: "plugin-backends" | "paired-plugin-backends",
-): string {
+function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
   return [
-    `/${collection}`,
+    "/paired-plugin-backends",
     encodeURIComponent(params.pluginId),
     "projects",
     encodeURIComponent(params.projectId),

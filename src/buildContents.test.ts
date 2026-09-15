@@ -54,6 +54,7 @@ describe("production build contents", () => {
         copyFile(join(repoRoot, "server-plugin-api.d.ts"), join(fixtureRoot, "server-plugin-api.d.ts")),
         writeFile(join(fixtureRoot, "dist", "plugin-api.d.ts"), "export {};\n", "utf8"),
         writeFile(join(fixtureRoot, "dist", "server-plugin-api.d.ts"), "export {};\n", "utf8"),
+        writeFile(join(fixtureRoot, "dist", "server-plugin-api.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.testSupport.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.testSupport.js.map"), "{}\n", "utf8"),
@@ -65,6 +66,7 @@ describe("production build contents", () => {
       expect(packagedFiles).toEqual(expect.arrayContaining([
         "dist/plugin-api.d.ts",
         "dist/server-plugin-api.d.ts",
+        "dist/server-plugin-api.js",
         "dist/server/app.js",
         "plugin-api.d.ts",
         "server-plugin-api.d.ts",
@@ -77,13 +79,16 @@ describe("production build contents", () => {
     }
   });
 
-  it("exports and maps only the supported type-only plugin API subpaths", async () => {
+  it("keeps the browser API type-only and exports the supported server runtime contract", async () => {
     const metadata: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
     if (!isRecord(metadata)) throw new Error("package.json was not an object");
 
     expect(metadata["exports"]).toEqual({
       "./plugin-api": { types: "./dist/plugin-api.d.ts" },
-      "./server-plugin-api": { types: "./dist/server-plugin-api.d.ts" },
+      "./server-plugin-api": {
+        types: "./dist/server-plugin-api.d.ts",
+        import: "./dist/server-plugin-api.js",
+      },
     });
     expect(metadata["typesVersions"]).toEqual({
       "*": {
@@ -138,7 +143,7 @@ describe("production build contents", () => {
         if (!isRecord(imported)) throw new Error(`Built server plugin did not import as a module: ${plugin.id}`);
         const pluginExport = imported["default"];
         if (!isRecord(pluginExport)) throw new Error(`Built server plugin has no default object export: ${plugin.id}`);
-        expect(pluginExport["apiVersion"]).toBe(1);
+        expect(pluginExport["apiVersion"]).toBe(3);
         expect(typeof pluginExport["activate"]).toBe("function");
       }
 

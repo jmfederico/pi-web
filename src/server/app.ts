@@ -38,7 +38,7 @@ import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { registerPluginBackendChannelProxyRoutes } from "./plugins/pluginBackendChannelProxyRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
-import { registerPairedPluginBackendProxyRoutes, registerPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
+import { registerPairedPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
 
@@ -250,7 +250,6 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   registerSessionProxyRoutes(app, sessionDaemon);
   registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
-  registerPluginBackendProxyRoutes(app, sessionDaemon);
   registerPairedPluginBackendProxyRoutes(app, sessionDaemon);
   registerPluginBackendChannelProxyRoutes(app, sessionDaemon);
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api", { config: configService });
