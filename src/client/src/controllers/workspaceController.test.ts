@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppState } from "../appState";
 import { initialAppState } from "../appState";
-import type { Machine, Project, SessionInfo, Workspace } from "../api";
+import type { Machine, MessagePage, Project, SessionInfo, SessionRef, Workspace } from "../api";
 import { browserErrorScopeKey, projectBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import type { SessionController } from "./sessionController";
 import type { NavigationFreshness, NavigationScope } from "./types";
@@ -61,6 +61,8 @@ interface Harness {
   controller: WorkspaceController;
   state: () => AppState;
   clearActiveSession: ReturnType<typeof vi.fn>;
+  preferredSession: ReturnType<typeof vi.fn>;
+  selectSession: ReturnType<typeof vi.fn>;
   updateUrl: ReturnType<typeof vi.fn>;
   backgroundErrors: { message: string; error: unknown }[];
   setState: (patch: Partial<AppState>) => void;
@@ -74,15 +76,18 @@ function harness(
     navigateToWorkspace?: WorkspaceControllerDependencies["navigateToWorkspace"];
     beginNavigationOperation?: WorkspaceControllerDependencies["beginNavigationOperation"];
     loadSessions?: LoadSessions;
+    loadMessages?: (session: SessionRef, opts?: { limit?: number; before?: number }, machineId?: string) => Promise<MessagePage>;
   } = {},
 ): Harness {
   let state: AppState = { ...initialAppState(), ...initial };
   const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
   const clearActiveSession = vi.fn();
+  const preferredSession = vi.fn();
+  const selectSession = vi.fn();
   const sessions: Pick<SessionController, "clearActiveSession" | "preferredSession" | "selectSession"> = {
     clearActiveSession,
-    preferredSession: vi.fn(),
-    selectSession: vi.fn(),
+    preferredSession,
+    selectSession,
   };
   const updateUrl = vi.fn();
   const backgroundErrors: { message: string; error: unknown }[] = [];
@@ -96,6 +101,8 @@ function harness(
       api: {
         workspaces: loadWorkspaces,
         sessions: options.loadSessions ?? vi.fn<(path: string, machineId?: string, options?: { signal?: AbortSignal }) => Promise<SessionInfo[]>>().mockResolvedValue([]),
+        // Default: every transcript probe refuses, so unrelated tests keep the pre-probe behavior.
+        messages: options.loadMessages ?? vi.fn<(session: SessionRef, opts?: { limit?: number; before?: number }, machineId?: string) => Promise<MessagePage>>().mockRejectedValue(new Error("session not found")),
       },
       ...(options.navigateToWorkspace === undefined ? {} : { navigateToWorkspace: options.navigateToWorkspace }),
       ...(options.beginNavigationOperation === undefined ? {} : { beginNavigationOperation: options.beginNavigationOperation }),
@@ -103,7 +110,7 @@ function harness(
       topologyRefreshDebounceMs: options.topologyRefreshDebounceMs ?? 0,
     },
   );
-  return { controller, state: () => state, clearActiveSession, updateUrl, backgroundErrors, setState };
+  return { controller, state: () => state, clearActiveSession, preferredSession, selectSession, updateUrl, backgroundErrors, setState };
 }
 
 afterEach(() => {
@@ -747,5 +754,41 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     await test.controller.refreshSelectedProjectTopology();
 
     expect(loadWorkspaces).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceController.selectWorkspace deep-link fallback", () => {
+  it("selects a session absent from the fetched list when the transcript probe confirms content", async () => {
+    const repo = project("p1", "/repo");
+    const ws = workspace(repo.id, "/repo", { isMain: true });
+    const messages = vi.fn().mockResolvedValue({ messages: [{ role: "assistant" }], start: 41, total: 42 });
+    const test = harness(
+      { selectedMachine: machine("local"), projects: [repo], selectedProject: repo, workspaces: [ws], workspacesByProjectId: { [repo.id]: [ws] } },
+      vi.fn().mockResolvedValue([ws]),
+      { loadSessions: vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>().mockResolvedValue([session("/repo", "listed-1")]), loadMessages: messages },
+    );
+    // The mocked preferredSession returns undefined: the deep-linked session is not in the fetched list.
+
+    await test.controller.selectWorkspace(ws, { sessionId: "deep-target", updateUrl: false });
+
+    expect(messages).toHaveBeenCalledWith({ id: "deep-target", cwd: "/repo" }, { limit: 1 }, "local");
+    expect(test.selectSession).toHaveBeenCalledTimes(1);
+    expect(test.selectSession.mock.calls[0]?.[0]).toMatchObject({ id: "deep-target", cwd: "/repo", messageCount: 42, persisted: true });
+  });
+
+  it("keeps the old dead-end behavior when the probe cannot confirm the session", async () => {
+    const repo = project("p1", "/repo");
+    const ws = workspace(repo.id, "/repo", { isMain: true });
+    const test = harness(
+      { selectedMachine: machine("local"), projects: [repo], selectedProject: repo, workspaces: [ws], workspacesByProjectId: { [repo.id]: [ws] } },
+      vi.fn().mockResolvedValue([ws]),
+      { loadSessions: vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>().mockResolvedValue([]) },
+    );
+
+    await test.controller.selectWorkspace(ws, { sessionId: "ghost-target", updateUrl: false });
+
+    expect(test.selectSession).not.toHaveBeenCalled();
+    expect(test.updateUrl).not.toHaveBeenCalled();
+    expect(test.state().selectedSession).toBeUndefined();
   });
 });

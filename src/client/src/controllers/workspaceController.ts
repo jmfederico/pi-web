@@ -1,4 +1,4 @@
-import { api as defaultApi, type Project, type Workspace } from "../api";
+import { api as defaultApi, type Project, type SessionInfo, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { BrowserErrorReporter, projectBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
@@ -12,7 +12,7 @@ const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
 const WORKSPACE_SELECTION_SCOPE = ["machine", "project", "workspace", "session"] as const;
 
 export interface WorkspaceControllerDependencies {
-  api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  api?: Pick<typeof defaultApi, "sessions" | "workspaces" | "messages">;
   navigateToWorkspace?: (workspace: Workspace | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   captureNavigation?: () => NavigationSelection;
   beginNavigationOperation?: (scope: readonly NavigationScope[]) => NavigationFreshness;
@@ -28,7 +28,7 @@ interface WorkspaceMutationGuard {
 type WorkspaceSelectionTarget = RouteTarget & WorkspaceMutationGuard;
 
 export class WorkspaceController {
-  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces" | "messages">;
   private readonly navigateToWorkspace: WorkspaceControllerDependencies["navigateToWorkspace"];
   private readonly captureNavigation: WorkspaceControllerDependencies["captureNavigation"];
   private readonly beginNavigationOperation: WorkspaceControllerDependencies["beginNavigationOperation"];
@@ -118,10 +118,41 @@ export class WorkspaceController {
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
-      if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
-      else if (target?.updateUrl !== false) this.updateUrl();
+      if (session) {
+        await this.sessions.selectSession(session, { updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
+        return;
+      }
+      // Deep-link fallback for sessions absent from the fetched (server-capped) list.
+      const provisional = await this.probeSessionOutsideList(target?.sessionId, workspace, machineId);
+      if (provisional !== undefined
+        && this.navigationIsCurrent(navigation)
+        && workspaceMutationIsCurrent(target)
+        && selectedMachineId(this.getState()) === machineId
+        && this.getState().selectedWorkspace?.id === workspace.id
+        && this.getState().selectedProject?.id === workspace.projectId) {
+        await this.sessions.selectSession(provisional, { updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
+        return;
+      }
+      if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
       if (target?.signal?.aborted !== true) this.browserErrors.report(errorScope, String(error));
+    }
+  }
+
+  /**
+   * Deep-link fallback for sessions absent from the fetched list (e.g. older than the server-side
+   * list cap, which push deep links from long-lived workspaces routinely hit): probe the transcript
+   * endpoint with the known {id, cwd}; when the daemon serves content, select a provisional
+   * SessionInfo so the chat opens instead of dead-ending on an empty session pane.
+   */
+  private async probeSessionOutsideList(sessionId: string | undefined, workspace: Workspace, machineId: string): Promise<SessionInfo | undefined> {
+    if (sessionId === undefined || sessionId === "") return undefined;
+    try {
+      const page = await this.api.messages({ id: sessionId, cwd: workspace.path }, { limit: 1 }, machineId);
+      if (page.total < 1) return undefined;
+      return { id: sessionId, cwd: workspace.path, path: "", created: "", modified: "", messageCount: page.total, firstMessage: "", persisted: true };
+    } catch {
+      return undefined;
     }
   }
 
