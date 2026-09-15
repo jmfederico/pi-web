@@ -20,5 +20,12 @@
     "pi-web-plugins/**/*.ts",
     "pi-packages/**/*.ts"
   ],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "pi-effort",
+    "pi-subagents"
+  ],
+  "ignoreBinaries": [
+    "ps"
+  ]
 }

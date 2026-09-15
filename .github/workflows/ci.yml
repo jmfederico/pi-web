@@ -42,5 +42,17 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run smoke:package-install
 
+      # The Bun path needs a real Bun on PATH: the runner image's own copy is not guaranteed to be
+      # recent enough to provide Bun.Terminal, which the smoke asserts on.
+      - name: Setup Bun
+        if: runner.os == 'Linux'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Smoke test bun global package install
+        if: runner.os == 'Linux'
+        run: npm run smoke:bun-install
+
       - name: Check npm package contents
         run: npm run pack:dry

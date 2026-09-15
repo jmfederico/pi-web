@@ -18,7 +18,7 @@ import {
   type RunningComponentId,
 } from "./piWebVersionReport.js";
 import { checkNodePtyDarwinSpawnHelper, formatNodePtyDarwinSpawnHelperCheck } from "./server/diagnostics/nodePtySpawnHelper.js";
-import { checkNodePtyNativeModule, formatNodePtyNativeModuleCheck } from "./server/diagnostics/nodePtyNativeModule.js";
+import { checkTerminalRuntime, formatTerminalRuntimeCheck } from "./server/diagnostics/terminalRuntime.js";
 import {
   installNativeServiceCandidate,
   nativeServiceInstallFailureNeedsPathAdvice,
@@ -253,8 +253,13 @@ function packageRootPath(): string {
   return dirname(dirname(fileURLToPath(import.meta.url)));
 }
 
-function packageEntrypointPath(name: "server" | "sessiond"): string {
-  return join(packageRootPath(), "dist", "server", name === "server" ? "index.js" : "sessiond.js");
+/**
+ * Bundled POSIX launcher for a service, shipped in `dist/bin`. The unit execs this instead of a
+ * runtime path resolved at install time, so `node`/`bun` (and a bun old enough to lack
+ * `Bun.Terminal`) get decided every time the service starts.
+ */
+function packageLauncherPath(name: "server" | "sessiond"): string {
+  return join(packageRootPath(), "dist", "bin", name === "server" ? "pi-web-server.sh" : "pi-web-sessiond.sh");
 }
 
 export function regularFileExists(path: string): boolean {
@@ -608,8 +613,11 @@ function printServiceStatusReport(backend: ServiceBackend): boolean {
   return statuses.every((status) => status.health === "running");
 }
 
-function configuredServiceCommand(name: "PI_WEB_SERVER_EXEC" | "PI_WEB_SESSIOND_EXEC"): string | undefined {
-  const value = process.env[name];
+function configuredServiceCommand(
+  name: "PI_WEB_SERVER_EXEC" | "PI_WEB_SESSIOND_EXEC",
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const value = environment[name];
   return value === undefined || value.trim() === "" ? undefined : value;
 }
 
@@ -617,6 +625,7 @@ function productionNativeServicePlanInput(
   backend: ServiceBackend,
   shell: NativeServiceShell,
   environment: Readonly<Record<string, string>>,
+  configuredEnvironment: NodeJS.ProcessEnv = process.env,
 ): ProductionNativeServicePlanInput {
   return {
     backend,
@@ -624,14 +633,14 @@ function productionNativeServicePlanInput(
     environment,
     executables: {
       sessiond: {
-        configuredCommand: configuredServiceCommand("PI_WEB_SESSIOND_EXEC"),
+        configuredCommand: configuredServiceCommand("PI_WEB_SESSIOND_EXEC", configuredEnvironment),
         namedCommand: "pi-web-sessiond",
-        bundledEntrypointPath: packageEntrypointPath("sessiond"),
+        bundledLauncherPath: packageLauncherPath("sessiond"),
       },
       web: {
-        configuredCommand: configuredServiceCommand("PI_WEB_SERVER_EXEC"),
+        configuredCommand: configuredServiceCommand("PI_WEB_SERVER_EXEC", configuredEnvironment),
         namedCommand: "pi-web-server",
-        bundledEntrypointPath: packageEntrypointPath("server"),
+        bundledLauncherPath: packageLauncherPath("server"),
       },
     },
   };
@@ -670,10 +679,10 @@ function printNativeServiceInstallFailure(failure: NativeServiceInstallFailure):
     for (const item of failure.failures) {
       if (item.kind === "probe-infrastructure") {
         console.log(`✗ Service-manager probe infrastructure failure (${item.reason}): ${item.message}`);
-      } else if (item.kind === "entrypoint-inspection-failure") {
-        console.log(`✗ Could not inspect bundled ${item.serviceId} entrypoint ${item.entrypointPath}: ${item.message}`);
+      } else if (item.kind === "launcher-inspection-failure") {
+        console.log(`✗ Could not inspect bundled ${item.serviceId} launcher ${item.launcherPath}: ${item.message}`);
       } else {
-        console.log(`✗ ${item.namedCommand} is unavailable to the service manager, and bundled entrypoint ${item.bundledEntrypointPath} is missing.`);
+        console.log(`✗ ${item.namedCommand} is unavailable to the service manager, and bundled launcher ${item.bundledLauncherPath} is missing.`);
         if (item.namedCommandFailure !== null) console.log(`  ${item.namedCommandFailure}`);
       }
     }
@@ -701,7 +710,7 @@ async function install(args: string[]): Promise<void> {
   console.log(`Running PI WEB ${options.mode} install preflight checks...`);
   console.log(`Service backend: ${backend.label}`);
   console.log(`Service shell: ${describeServiceShell()}`);
-  if (!printNodePtyNativeModuleCheck()) {
+  if (!printTerminalRuntimeCheck()) {
     throw new Error("Install preflight checks failed without changing config or services. Fix the failure above, then run `pi-web doctor` for more detail.");
   }
   const result = await installNativeServiceCandidate(candidate, {
@@ -1117,9 +1126,19 @@ function readinessCliCommandDependencies(): ReadinessCliCommandDependencies {
   };
 }
 
-function nativeServiceDoctorTarget(
+/**
+ * The doctor target for the services that are installed right now.
+ *
+ * Production stays prospective — an installed unit does not record which strategy PI WEB chose —
+ * but its start commands are carried along so doctor can tell the user when a unit predates the
+ * runtime launchers. `installedDefinitions` and `environment` are seams for that contract; the
+ * service files themselves are still read from disk.
+ */
+export function nativeServiceDoctorTarget(
   backend: ServiceBackend,
   ids: ReadonlySet<ServiceId>,
+  environment: NodeJS.ProcessEnv = process.env,
+  installedDefinitions?: readonly InstalledNativeServiceDefinition[],
 ): NativeServiceDoctorTarget {
   const mode = inferInstalledNativeServiceMode(ids);
   if (mode === "ambiguous") {
@@ -1131,7 +1150,7 @@ function nativeServiceDoctorTarget(
   if (mode === "none") {
     return {
       kind: "prospective-production",
-      input: productionNativeServicePlanInput(backend, detectServiceShell(), {}),
+      input: productionNativeServicePlanInput(backend, detectServiceShell(), {}, environment),
       reason: "no installed service strategy is available",
     };
   }
@@ -1146,7 +1165,9 @@ function nativeServiceDoctorTarget(
     };
   }
 
-  const definitions = installedServiceDefinitions(backend, expectedIds, "doctor");
+  const definitions = installedDefinitions === undefined
+    ? installedServiceDefinitions(backend, expectedIds, "doctor")
+    : { ok: true as const, value: installedDefinitions };
   if (!definitions.ok) return { kind: "inspection-failure", message: definitions.message };
 
   if (mode === "development") {
@@ -1160,8 +1181,9 @@ function nativeServiceDoctorTarget(
   return inspection.ok
     ? {
         kind: "prospective-production",
-        input: productionNativeServicePlanInput(backend, inspection.value.shell, inspection.value.environment),
+        input: productionNativeServicePlanInput(backend, inspection.value.shell, inspection.value.environment, environment),
         reason: "installed executable strategy is not recorded",
+        installedCommands: inspection.value.commands,
       }
     : { kind: "inspection-failure", message: inspection.message };
 }
@@ -1248,10 +1270,10 @@ export function expectedRunningComponents(
 export function doctorExitCode(
   generalReadinessOk: boolean,
   nativeServicePlanOk: boolean,
-  nodePtyRuntimeOk: boolean,
+  terminalRuntimeOk: boolean,
   runningComponentsOk: boolean,
 ): 0 | 1 {
-  return generalReadinessOk && nativeServicePlanOk && nodePtyRuntimeOk && runningComponentsOk ? 0 : 1;
+  return generalReadinessOk && nativeServicePlanOk && terminalRuntimeOk && runningComponentsOk ? 0 : 1;
 }
 
 async function doctor(context: ReadinessDoctorCommandContext): Promise<void> {
@@ -1277,8 +1299,10 @@ async function doctor(context: ReadinessDoctorCommandContext): Promise<void> {
   printOptionalDoctorChecks();
 
   console.log("\nNative terminal runtime readiness:");
-  const nodePtyNativeModuleOk = printNodePtyNativeModuleCheck();
-  const nodePtySpawnHelperOk = nodePtyNativeModuleOk ? printNodePtyDarwinSpawnHelperCheck() : true;
+  const terminalRuntime = checkTerminalRuntime();
+  const terminalRuntimeOk = printTerminalRuntimeCheck(terminalRuntime);
+  // The helper lives inside node-pty's package; a Bun install with Bun.Terminal never touches it.
+  const darwinSpawnHelperOk = terminalRuntime.backend === "node-pty" ? printNodePtyDarwinSpawnHelperCheck() : true;
 
   let nativeServiceReport: NativeServiceDoctorReport | null = null;
   if (backend !== undefined) {
@@ -1322,11 +1346,11 @@ async function doctor(context: ReadinessDoctorCommandContext): Promise<void> {
     console.log(`\n${manualRunAdvice()}`);
   }
 
-  if (doctorExitCode(generalReadinessOk, nativeServicePlanOk, nodePtyNativeModuleOk && nodePtySpawnHelperOk, runningComponentsOk) !== 0) process.exitCode = 1;
+  if (doctorExitCode(generalReadinessOk, nativeServicePlanOk, terminalRuntimeOk && darwinSpawnHelperOk, runningComponentsOk) !== 0) process.exitCode = 1;
 }
 
-function printNodePtyNativeModuleCheck(): boolean {
-  const result = formatNodePtyNativeModuleCheck(checkNodePtyNativeModule());
+function printTerminalRuntimeCheck(inspection = checkTerminalRuntime()): boolean {
+  const result = formatTerminalRuntimeCheck(inspection);
   for (const line of result.lines) console.log(line);
   return result.ok;
 }

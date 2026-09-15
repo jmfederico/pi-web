@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import * as pty from "node-pty";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
+import { createDefaultBackend, type TerminalBackend } from "./ptyBackend.js";
 
 const MAX_REPLAY_BUFFER = 200_000;
 
@@ -75,7 +75,7 @@ export interface TerminalActivitySink {
 }
 
 interface TerminalRecord extends TerminalInfo, TerminalWorkspaceScope {
-  pty: pty.IPty;
+  backendId: string;
   buffer: string;
   events: EventEmitter;
   commandRunId?: string;
@@ -85,10 +85,16 @@ interface TerminalRecord extends TerminalInfo, TerminalWorkspaceScope {
 export class TerminalService {
   private readonly terminals = new Map<string, TerminalRecord>();
   private readonly commandRuns = new Map<string, TerminalCommandRun>();
+  private readonly backend: TerminalBackend;
   private activitySink: TerminalActivitySink | undefined;
   private disposed = false;
 
-  constructor(private readonly recordNotice?: (input: ServerPluginNoticeInput) => void) {}
+  constructor(
+    private readonly recordNotice?: (input: ServerPluginNoticeInput) => void,
+    backend?: TerminalBackend,
+  ) {
+    this.backend = backend ?? createDefaultBackend();
+  }
 
   bindActivitySink(sink: TerminalActivitySink): void {
     if (this.activitySink !== undefined) throw new Error("Terminal activity sink is already bound");
@@ -227,13 +233,13 @@ export class TerminalService {
 
   write(scope: TerminalWorkspaceScope, id: string, data: string): void {
     const terminal = this.requireScoped(scope, id);
-    if (!terminal.exited) terminal.pty.write(data);
+    if (!terminal.exited) this.backend.write(terminal.backendId, data);
   }
 
   resize(scope: TerminalWorkspaceScope, id: string, cols: number, rows: number): void {
     const terminal = this.requireScoped(scope, id);
     if (!terminal.exited && Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-      terminal.pty.resize(Math.floor(cols), Math.floor(rows));
+      this.backend.resize(terminal.backendId, Math.floor(cols), Math.floor(rows));
     }
   }
 
@@ -247,13 +253,14 @@ export class TerminalService {
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    record.pty = pty.spawn(shell, interactiveShellArgs(shell), {
-      name: "xterm-256color",
+    record.backendId = this.backend.create({
       cwd: record.cwd,
+      shell,
+      shellArgs: interactiveShellArgs(shell),
       cols: 100,
       rows: 30,
       env: terminalEnvironment(),
-    });
+    }).id;
     this.attachPtyEvents(record);
     const info = toInfo(record);
     this.activitySink?.updateTerminal(info);
@@ -279,6 +286,7 @@ export class TerminalService {
     if (this.disposed) return;
     this.disposed = true;
     for (const terminal of [...this.terminals.values()]) this.closeRecord(terminal);
+    this.backend.dispose();
   }
 
   private createTerminal(options: CreateTerminalOptions & { id?: string; shellArgs: string[]; commandRunId?: string; failureNotice?: TerminalCommandFailureNotice }): TerminalInfo {
@@ -287,13 +295,14 @@ export class TerminalService {
     const id = options.id ?? randomUUID();
     const createdAt = new Date().toISOString();
     const shell = process.env["SHELL"] ?? "/bin/bash";
-    const terminal = pty.spawn(shell, options.shellArgs, {
-      name: "xterm-256color",
+    const backendId = this.backend.create({
       cwd: options.cwd,
+      shell,
+      shellArgs: options.shellArgs,
       cols: options.cols ?? 100,
       rows: options.rows ?? 30,
       env: terminalEnvironment(),
-    });
+    }).id;
     const requestedName = options.name?.trim();
     const record: TerminalRecord = {
       id,
@@ -303,7 +312,7 @@ export class TerminalService {
       name: requestedName !== undefined && requestedName !== "" ? requestedName : `Shell ${String(this.list(options).length + 1)}`,
       createdAt,
       exited: false,
-      pty: terminal,
+      backendId,
       buffer: "",
       events: new EventEmitter(),
       ...(options.commandRunId === undefined ? {} : { commandRunId: options.commandRunId }),
@@ -317,17 +326,20 @@ export class TerminalService {
   }
 
   private attachPtyEvents(record: TerminalRecord): void {
-    record.pty.onData((data) => {
-      record.buffer = trimReplayBuffer(record.buffer + data);
-      record.events.emit("output", data);
-    });
-    record.pty.onExit(({ exitCode }) => {
-      record.exited = true;
-      record.exitCode = exitCode;
-      this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
-      record.events.emit("exit", exitCode);
-      const info = toInfo(record);
-      this.activitySink?.updateTerminal(info);
+    this.backend.attach(record.backendId, {
+      output: (data) => {
+        record.buffer = trimReplayBuffer(record.buffer + data);
+        record.events.emit("output", data);
+      },
+      exit: (exitCode) => {
+        record.exited = true;
+        if (exitCode === undefined) delete record.exitCode;
+        else record.exitCode = exitCode;
+        this.completeCommandRun(record.commandRunId, exitCode, record.failureNotice);
+        record.events.emit("exit", exitCode);
+        const info = toInfo(record);
+        this.activitySink?.updateTerminal(info);
+      },
     });
   }
 
@@ -375,7 +387,7 @@ export class TerminalService {
     if (isTerminalCommandRunFinal(run.status)) return copyCommandRun(run);
     const terminal = this.terminals.get(run.terminalId);
     if (terminal === undefined) throw new Error("Terminal not found");
-    if (!terminal.exited) terminal.pty.write("\x03");
+    if (!terminal.exited) this.backend.write(terminal.backendId, "\x03");
     return copyCommandRun(run);
   }
 
@@ -384,7 +396,7 @@ export class TerminalService {
     terminal.events.emit("closed");
     terminal.events.removeAllListeners();
     this.activitySink?.removeTerminal(terminal.id, terminal.cwd);
-    if (!terminal.exited) terminal.pty.kill();
+    if (!terminal.exited) this.backend.kill(terminal.backendId);
   }
 
   private requireAvailable(): void {
