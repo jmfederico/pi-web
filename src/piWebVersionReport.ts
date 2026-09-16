@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { effectivePiWebConfig } from "./config.js";
+import { piWebRuntimeKind } from "./shared/piWebRuntime.js";
 import { SessionDaemonClient } from "./sessiond/sessionDaemonClient.js";
 import type { PiWebComponentStatus, PiWebInstallationInfo, PiWebVersionResponse } from "./shared/apiTypes.js";
 import { parsePiWebComponentStatus, parsePiWebVersionResponse } from "./shared/piWebStatusParsing.js";
@@ -90,6 +91,9 @@ export function packageVersion(): string {
 
 export async function printPiWebVersionReport(options: PiWebVersionReportOptions = {}): Promise<RunningVersionInfo> {
   console.log("PI WEB version");
+  // This command's own runtime: it is not evidence about the long-lived components below, which
+  // report themselves.
+  console.log(`  pi-web CLI runtime: ${piWebRuntimeKind()}`);
   printInstalledPackageVersions();
   const runningInfo = await collectRunningVersionInfo(options);
   printRunningVersionInfo(runningInfo);
@@ -266,6 +270,7 @@ function printComponentVersion(component: PiWebComponentStatus): void {
     console.log(`  running: ${formatVersion(component.runtimeVersion)}; installed: ${formatVersion(component.installedVersion)}`);
   }
   if (component.piVersion !== undefined) console.log(`  pi: ${component.piVersion}`);
+  if (component.runtime !== undefined) console.log(`  runtime: ${component.runtime}`);
   const installation = installationLabel(component.installation);
   if (installation !== undefined) console.log(`  installation: ${installation}`);
   if (component.error !== undefined) console.log(`  ${component.error}`);

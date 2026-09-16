@@ -76,7 +76,10 @@ describe("bundled Terminal package", () => {
       .sort();
     expect(files).toEqual([
       "browser/pi-web-plugin.js",
+      "nodePtyModule.js",
       "package.json",
+      "ptyBackend.js",
+      "ptyRuntime.js",
       "server-plugin.js",
       "terminalService.js",
     ]);
