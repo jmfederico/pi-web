@@ -9,9 +9,13 @@ export interface RealtimeSocket {
   on(event: "close", listener: () => void): unknown;
 }
 
+/** Synchronous per-session event consumer (web push today); must not throw — see {@link SessionEventHub.subscribe}. */
+export type SessionEventListener = (sessionId: string, event: SessionUiEvent) => void;
+
 export class SessionEventHub {
   private readonly socketsBySession = new Map<string, Set<RealtimeSocket>>();
   private readonly globalSockets = new Set<RealtimeSocket>();
+  private readonly sessionListeners = new Set<SessionEventListener>();
   private readonly seqBySession = new Map<string, number>();
   private globalJoinFrame: (() => RealtimeEvent) | undefined;
 
@@ -45,11 +49,25 @@ export class SessionEventHub {
     if (joinFrame !== undefined) this.sendToSocket(this.globalSockets, socket, JSON.stringify(joinFrame));
   }
 
+  /**
+   * Subscribe a non-socket consumer to every per-session event as it is published. Listeners run
+   * synchronously on the publish hot path with the same browser-projected payload sockets receive,
+   * and must never throw: this hub also serves realtime delivery, so listener faults are the
+   * subscriber's problem (the web push notifier translates its own errors internally).
+   * Returns an unsubscribe function.
+   */
+  subscribe(listener: SessionEventListener): () => void {
+    this.sessionListeners.add(listener);
+    return (): void => { this.sessionListeners.delete(listener); };
+  }
+
   publish(sessionId: string, event: SessionUiEvent): void {
     const seq = (this.seqBySession.get(sessionId) ?? 0) + 1;
     this.seqBySession.set(sessionId, seq);
-    const payload = JSON.stringify({ ...projectBrowserSessionEvent(event), seq });
-    this.sendToSockets(this.socketsBySession.get(sessionId), payload);
+    const projected = projectBrowserSessionEvent(event);
+    this.sendToSockets(this.socketsBySession.get(sessionId), JSON.stringify({ ...projected, seq }));
+    // Iterate a copy: listeners may unsubscribe (e.g. notifier teardown) while running.
+    for (const listener of [...this.sessionListeners]) listener(sessionId, projected);
   }
 
   /**

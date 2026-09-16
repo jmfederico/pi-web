@@ -46,7 +46,8 @@ import { BrowserResumeController } from "../appShell/browserResumeController";
 import { NavigationSectionsController, type NavigationSection } from "../appShell/navigationState";
 import { PanelCollapseController, mainViewClass } from "../appShell/panelCollapseController";
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
-import { readRoute, resolveAppRoute, resolveWorkspacePanelRouteValue, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute, type ParsedAppRoute, type WorkspaceRouteIdentity } from "../route";
+import { readRoute, resolveAppRoute, resolveNotificationRoute, resolveWorkspacePanelRouteValue, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute, type ParsedAppRoute, type WorkspaceRouteIdentity } from "../route";
+import { handleServiceWorkerSessionMessage } from "../swMessageRouting";
 import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
 import { canDeleteWorkspace, isWorkspaceDeletionPending, isWorkspaceDeletionRunPending, latestWorkspaceDeletionRuns, pendingWorkspaceDeletionIds, targetWorkspaceIdForRun, workspaceDeletionRunFilter, workspaceRemovalConfirmation } from "../workspaceDeletion";
@@ -327,6 +328,30 @@ export class PiWebApp extends LitElement {
       await this.restoreRoute(false);
     });
   };
+  /** Push-notification deep link from the service worker: switch sessions in-app instead of reloading. */
+  private readonly onWindowMessage = (event: Event): void => {
+    if (!(event instanceof MessageEvent)) return;
+    handleServiceWorkerSessionMessage({ data: event.data, source: event.source }, (target) => {
+      // Pushes always come from the local daemon, so the target is a local session; clear any
+      // remote-machine context. Daemon-provided project/workspace ids route directly (same URL a
+      // shared link uses); payloads without them fall back to the cwd join during restore.
+      writeRoute({
+        machineId: undefined,
+        projectId: target.projectId,
+        workspaceId: target.workspaceId,
+        sessionId: target.sessionId,
+        cwd: target.cwd,
+        tool: undefined,
+        view: target.projectId !== undefined ? "chat" : undefined,
+      });
+      this.invalidateNavigationSelection();
+      this.syncNavigationFreshness();
+      this.routeRestoreSeq += 1;
+      void this.withChatScrollTransition(async () => {
+        await this.restoreRoute(false);
+      });
+    });
+  };
   private readonly onPageShow = () => {
     void this.sessionUnread.refreshAll();
     this.appShell.repairViewportPosition();
@@ -423,6 +448,7 @@ export class PiWebApp extends LitElement {
     super.connectedCallback();
     this.unreadConnected = true;
     window.addEventListener("popstate", this.onPopState);
+    window.addEventListener("message", this.onWindowMessage);
     window.addEventListener("pageshow", this.onPageShow);
     this.browserResume.connect();
     window.addEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
@@ -443,6 +469,7 @@ export class PiWebApp extends LitElement {
     this.readyChatIdentity = undefined;
     this.sessionUnread.retainMachines(new Set<string>());
     window.removeEventListener("popstate", this.onPopState);
+    window.removeEventListener("message", this.onWindowMessage);
     window.removeEventListener("pageshow", this.onPageShow);
     this.browserResume.disconnect();
     window.removeEventListener("keydown", this.onKeyDown, GLOBAL_SHORTCUT_LISTENER_OPTIONS);
@@ -694,9 +721,13 @@ export class PiWebApp extends LitElement {
       }
       await this.loadPluginsForSelectedMachine();
       if (!selectionNavigation.isCurrent()) return;
-      const route = resolveAppRoute(parsedRoute, (value) => this.plugins.resolveWorkspacePanelRouteId(value, selectedMachineId(this.state)));
-      const unavailableToolRoute = parsedRoute.tool !== undefined && route.tool === undefined;
-      const unavailablePanelViewRoute = parsedRoute.view !== undefined && parsedRoute.view !== "chat" && route.view === undefined;
+      // Push deep-link fallback: join the payload cwd into project/workspace ids when the daemon
+      // did not provide them; a resolved route then flows through the canonical pipeline.
+      const notifiedRoute = await this.resolveNotifiedSessionRoute(parsedRoute);
+      if (!selectionNavigation.isCurrent()) return;
+      const route = resolveAppRoute(notifiedRoute, (value) => this.plugins.resolveWorkspacePanelRouteId(value, selectedMachineId(this.state)));
+      const unavailableToolRoute = notifiedRoute.tool !== undefined && route.tool === undefined;
+      const unavailablePanelViewRoute = notifiedRoute.view !== undefined && notifiedRoute.view !== "chat" && route.view === undefined;
       const restoredWorkspaceIdentity = workspaceRouteIdentity(route);
       const finishOptions: WorkspaceRouteFinishOptions = {
         updateUrl,
@@ -705,7 +736,7 @@ export class PiWebApp extends LitElement {
         unavailablePanelViewRoute,
         requestedTool: route.tool,
         requestedView: route.view,
-        requestedRoute: parsedRoute,
+        requestedRoute: notifiedRoute,
         restoreSeq,
         navigation,
         ...(restoredWorkspaceIdentity === undefined ? {} : { restoredWorkspaceIdentity }),
@@ -876,6 +907,22 @@ export class PiWebApp extends LitElement {
   private retireRouteRestoreForSynchronousNavigation(): void {
     this.retireNavigationScope(WORKSPACE_SURFACE_SCOPE);
     this.routeRestoreSeq += 1;
+  }
+
+  /**
+    * Resolve push-notification session links into ordinary project/workspace routes. Current
+    * daemons provide cwd as the direct join key; session-list lookup keeps links from older daemon
+    * processes working until they are restarted.
+   */
+  private async resolveNotifiedSessionRoute(parsedRoute: ParsedAppRoute): Promise<ParsedAppRoute> {
+    const machineId = this.state.selectedMachine?.id ?? "local";
+    return resolveNotificationRoute(
+      parsedRoute,
+      this.state.projects,
+      this.state.workspacesByProjectId,
+      (projectId) => workspacesApi.workspaces(projectId, machineId),
+      (cwd) => sessionsApi.sessions(cwd, machineId),
+    );
   }
 
   private readWorkspaceRouteSurface(route: ParsedAppRoute): WorkspaceRouteSurface {
