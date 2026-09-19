@@ -14,6 +14,15 @@ interface SessionQuery {
 interface MessageQuery extends SessionQuery {
   before?: string;
   limit?: string;
+  /** Opt-in: inline base64 length above which image parts become media references. Absent = inline everything. */
+  maxInlineMedia?: string;
+}
+
+/** Application-relative URL the browser fetches an oversized image from by content hash. */
+function mediaSrcPath(sessionId: string, cwd: string | undefined, mediaId: string): string {
+  const params = new URLSearchParams();
+  if (cwd !== undefined && cwd !== "") params.set("cwd", cwd);
+  return `api/machines/local/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(mediaId)}?${params.toString()}`;
 }
 
 interface PromptRequestBody {
@@ -166,10 +175,25 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     if (ref === undefined) return reply;
     try {
       const page = { ...optionalField("before", optionalNumber(request.query.before)), ...optionalField("limit", optionalNumber(request.query.limit)) };
+      const maxInlineMedia = optionalNumber(request.query.maxInlineMedia);
+      const media = maxInlineMedia !== undefined && maxInlineMedia > 0 ? { mediaSrc: (mediaId: string) => mediaSrcPath(request.params.sessionId, request.query.cwd, mediaId), inlineLimit: maxInlineMedia } : undefined;
       const messages = await sessions.messages(ref, page);
-      return projectBrowserMessageResponse(messages);
+      return projectBrowserMessageResponse(messages, media);
     } catch (error) {
       return reply.code(404).send({ error: errorMessage(error) });
+    }
+  });
+
+  app.get<{ Params: { sessionId: string; mediaId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/media/:mediaId`, async (request, reply) => {
+    const ref = sessionRefFromQueryOr400(request.params.sessionId, request.query, reply);
+    if (ref === undefined) return reply;
+    if (!/^[0-9a-f]{64}$/u.test(request.params.mediaId)) return reply.code(400).send({ error: "mediaId must be a sha-256 hex digest" });
+    try {
+      const media = await sessions.media(ref, request.params.mediaId);
+      if (media === undefined) return await reply.code(404).send({ error: "media not found" });
+      return await reply.header("cache-control", "private, max-age=31536000, immutable").send({ mimeType: media.mimeType, data: media.data.toString("base64") });
+    } catch (error) {
+      return await reply.code(404).send({ error: errorMessage(error) });
     }
   });
 

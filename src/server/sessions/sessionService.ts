@@ -56,6 +56,8 @@ export interface SessionRouteService {
    */
   start(cwd: string, options?: { startupToken?: string }): Promise<ClientSession>;
   messages(ref: SessionRouteRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage>;
+  /** Locate one oversized inline image by content hash; undefined when no stored image matches. */
+  media(ref: SessionRouteRef, mediaId: string): Promise<{ mimeType: string; data: Buffer } | undefined>;
   status(ref: SessionRouteRef): Promise<ClientSessionStatus>;
   streamSnapshot(ref: SessionRouteRef): Promise<SessionStreamSnapshot>;
   notificationCatalog(): SessionNotificationCatalogSnapshot | Promise<SessionNotificationCatalogSnapshot>;
