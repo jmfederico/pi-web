@@ -1,25 +1,34 @@
-import { describe, expect, it, vi } from "vitest";
+// @vitest-environment happy-dom
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TemplateResult } from "lit";
 import type { PiWebConfigResponse, PiWebConfigValues } from "../../api";
 import { SettingsGeneralPanel } from "./SettingsGeneralPanel";
+import type { SettingsPanelFrame } from "./SettingsPanelFrame";
+import { localeStore } from "../../i18n/locale";
 import type { GatewayServerConfigDraft, MachineAccessConfigDraft } from "./settingsConfigDraft";
 
+afterEach(() => {
+  document.body.replaceChildren();
+  localStorage.clear();
+  localeStore.dispose();
+});
+
 describe("settings-general-panel copy", () => {
-  it("uses factual scope copy for gateway and selected-machine settings", () => {
+  it("uses factual scope copy for gateway and selected-machine settings", async () => {
     const panel = new SettingsGeneralPanel();
     panel.targetLabel = "Lab Mac (remote machine)";
     panel.configResponse = configResponse({ host: "127.0.0.1" });
     panel.machineConfigResponse = configResponse({ pathAccess: { allowedPaths: ["/mnt/share"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "manual/attachments" } });
 
-    const template = panel.render();
-    const strings = collectTemplateStrings(template).join("");
-    const values = collectTemplateValues(template);
-
-    expect(strings).toContain("<settings-panel-frame");
-    expect(strings).toContain("Gateway server fields edit this local gateway. File access and upload defaults edit ");
-    expect(strings).toContain("Host, port, and allowed hosts are saved in the gateway config.");
-    expect(strings).toContain("External filesystem roots and upload defaults are saved on ");
-    expect(values.filter((value) => value === "Lab Mac (remote machine)")).toHaveLength(5);
+    document.body.append(panel);
+    await panel.updateComplete;
+    const frame = panel.shadowRoot?.querySelector<SettingsPanelFrame>("settings-panel-frame");
+    if (frame === undefined || frame === null) throw new Error("Expected settings frame");
+    await frame.updateComplete;
+    expect(frame.shadowRoot?.textContent).toContain("Gateway server fields edit this local gateway. File access and upload defaults edit Lab Mac (remote machine).");
+    expect(panel.shadowRoot?.textContent).toContain("Host, port, and allowed hosts are saved in the gateway config.");
+    expect(panel.shadowRoot?.textContent).toContain("External filesystem roots and upload defaults are saved on Lab Mac (remote machine).");
   });
 
   it("shows reload copy when selected-machine access config is unavailable", () => {
@@ -158,23 +167,6 @@ describe("settings-general-panel save payloads", () => {
   });
 });
 
-function collectTemplateStrings(template: TemplateResult): string[] {
-  const strings: string[] = [];
-  visitTemplate(template);
-  return strings;
-
-  function visitTemplate(current: TemplateResult): void {
-    strings.push(...templateStrings(current));
-    for (const value of templateValues(current)) {
-      if (Array.isArray(value)) {
-        for (const item of value) if (isTemplateResult(item)) visitTemplate(item);
-      } else if (isTemplateResult(value)) {
-        visitTemplate(value);
-      }
-    }
-  }
-}
-
 function collectTemplateValues(template: TemplateResult): unknown[] {
   const values: unknown[] = [];
   visit(template);
@@ -191,12 +183,6 @@ function collectTemplateValues(template: TemplateResult): unknown[] {
       visit(value);
     }
   }
-}
-
-function templateStrings(template: TemplateResult): readonly string[] {
-  const strings = Reflect.get(template, "strings");
-  if (!isStringArray(strings)) throw new Error("TemplateResult strings were unavailable");
-  return strings;
 }
 
 function templateValues(template: TemplateResult): readonly unknown[] {

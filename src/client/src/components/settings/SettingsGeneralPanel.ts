@@ -1,5 +1,6 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { LocaleController } from "../../i18n/controller";
 import { DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, DEFAULT_WORKSPACE_UPLOADS_FOLDER, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues } from "../../api";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
@@ -13,10 +14,6 @@ import {
   type GatewayServerConfigDraft,
   type MachineAccessConfigDraft,
 } from "./settingsConfigDraft";
-
-function generalDescription(targetLabel: string): TemplateResult {
-  return html`Gateway server fields edit this local gateway. File access and upload defaults edit ${targetLabel}.`;
-}
 
 @customElement("settings-general-panel")
 export class SettingsGeneralPanel extends LitElement {
@@ -37,6 +34,7 @@ export class SettingsGeneralPanel extends LitElement {
   @state() private machineDraft: MachineAccessConfigDraft = emptyMachineAccessConfigDraft();
   @state() private gatewayLocalError = "";
   @state() private machineLocalError = "";
+  private readonly locale = new LocaleController(this);
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("configResponse") && this.configResponse !== undefined) {
@@ -52,9 +50,9 @@ export class SettingsGeneralPanel extends LitElement {
   override render(): TemplateResult {
     return html`
       <settings-panel-frame
-        heading="General configuration"
-        .description=${generalDescription(this.targetLabel)}
-        actionLabel="Reload"
+        .heading=${this.locale.t("settings.generalConfiguration")}
+        .description=${this.locale.t("settings.generalDescription", { targetLabel: this.targetLabel })}
+        .actionLabel=${this.locale.t("common.reload")}
         .actionDisabled=${this.loading || this.machineLoading}
         .notices=${this.panelNotices()}
         .onAction=${() => { this.reloadAll(); }}
@@ -62,9 +60,35 @@ export class SettingsGeneralPanel extends LitElement {
         <div class="settings-sections">
           ${this.renderGatewayServerSettings()}
           ${this.renderSelectedMachineAccessSettings()}
+          ${this.renderLanguageSettings()}
         </div>
       </settings-panel-frame>
     `;
+  }
+
+  private renderLanguageSettings(): TemplateResult {
+    return html`
+      <section class="settings-card language-card" aria-label=${this.locale.t("language.label")}>
+        <div class="card-heading">
+          <h3>${this.locale.t("settings.languagePreference")}</h3>
+          <p>${this.locale.t("settings.languagePreferenceDescription")}</p>
+        </div>
+        <label class="field">
+          <span class="field-heading"><span>${this.locale.t("language.label")}</span></span>
+          <select .value=${this.locale.preference} @change=${(event: Event) => { this.changeLanguage(event); }}>
+            <option value="auto">${this.locale.t("language.auto")}</option>
+            <option value="en">${this.locale.t("language.english")}</option>
+            <option value="zh-CN">${this.locale.t("language.simplifiedChinese")}</option>
+          </select>
+          <small>${this.locale.t("language.description")}</small>
+        </label>
+      </section>
+    `;
+  }
+
+  private changeLanguage(event: Event): void {
+    const value = event.target instanceof HTMLSelectElement ? event.target.value : "auto";
+    if (value === "en" || value === "zh-CN" || value === "auto") this.locale.setPreference(value);
   }
 
   private renderGatewayServerSettings(): TemplateResult {
