@@ -270,6 +270,36 @@ describe("WorkspaceRemovalService", () => {
     });
   });
 
+  it("aborts admitted removals and rejects new Terminal consumers during shutdown", async () => {
+    const target = hostWorkspace("target", "/linked", false);
+    let operationSignal: AbortSignal | undefined;
+    const operationAborted = vi.fn();
+    const resolveRemoval = vi.fn((_project: Project, _workspaceId: string, signal: AbortSignal) => new Promise<WorkspaceProviderRemovalTarget>((_resolve, rejectPromise) => {
+      operationSignal = signal;
+      signal.addEventListener("abort", () => {
+        operationAborted();
+        const reason: unknown = signal.reason;
+        rejectPromise(reason instanceof Error ? reason : new Error("shutdown", { cause: reason }));
+      }, { once: true });
+    }));
+    const terminals = terminalHost();
+    const removals = new WorkspaceRemovalService({ resolveRemoval }, terminals);
+    const pending = removals.remove(project, target.id, removalPrecondition(target));
+    const rejected = expect(pending).rejects.toMatchObject({ name: "AbortError", message: "removal shutdown" });
+    await vi.waitFor(() => { expect(operationSignal).toBeInstanceOf(AbortSignal); });
+
+    const closing = removals.closeAll("removal shutdown");
+
+    await rejected;
+    await closing;
+    expect(operationSignal?.aborted).toBe(true);
+    expect(operationAborted).toHaveBeenCalledOnce();
+    expect(terminals.closedCwds).toEqual([]);
+    expect(terminals.runOptions).toEqual([]);
+    await expect(removals.remove(project, target.id, removalPrecondition(target)))
+      .rejects.toMatchObject({ name: "AbortError", message: "removal shutdown" });
+  });
+
   it("rejects a stale host-issued confirmation before provider or terminal side effects", async () => {
     const target = hostWorkspace("target", "/linked", false);
     const prepare = vi.fn(() => Promise.resolve({ title: "Remove", command: "neutral remove" }));
@@ -499,7 +529,7 @@ function hostWorkspace(id: string, path: string, isMain: boolean): WorkspaceList
     path,
     label: id,
     isMain,
-    provider: { pluginId: "neutral", capabilities: { request: false, remove: true } },
+    provider: { pluginId: "neutral", capabilities: { remove: true } },
     removal: {
       actionLabel: "Disconnect",
       confirmation: "Disconnect this workspace?",

@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, MachineKind, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebStatusResponse, TerminalCommandRunHandle, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "./shared/pluginApiTypes.js";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, MachineKind, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebStatusResponse, PluginCapability, PluginCapabilityProvision, TerminalCommandRunHandle, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "./shared/pluginApiTypes.js";
 
 export type {
   FileContentMediaType,
@@ -20,6 +20,8 @@ export type {
   PiWebStatusResponse,
   PiWebStatusSeverity,
   PiWebVersionResponse,
+  PluginCapability,
+  PluginCapabilityProvision,
   TerminalCommandRun,
   TerminalCommandRunHandle,
   TerminalCommandRunStatus,
@@ -39,25 +41,51 @@ export type QualifiedContributionId = string;
 export type HtmlTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface PiWebPlugin {
-  apiVersion: 2;
+  apiVersion: 4;
   name: string;
-  activate: (context: PluginActivationContext) => PluginActivationResult;
+  /** Exact capability versions that must be active before this plugin starts. */
+  requires?: readonly PluginCapability[];
+  activate: (context: PluginActivationContext) => MaybePromise<PluginActivationResult>;
 }
 
 /** Host-owned frozen values supplied once during browser plugin activation. */
 export interface PluginActivationContext {
-  readonly apiVersion: 2;
+  readonly apiVersion: 4;
   /** Stable package/source identity, including on federated machines. */
   readonly pluginId: PluginId;
   /** Host-unique identity for qualified contribution references in this runtime. */
   readonly runtimePluginId: PluginId;
   readonly html: HtmlTemplateTag;
   readonly svg: SvgTemplateTag;
+  /** Signal for this bounded activation invocation, not the plugin lifetime. */
+  readonly signal: AbortSignal;
+  /** Aborted before failed-start rollback or browser-host shutdown disposal. */
+  readonly lifetimeSignal: AbortSignal;
+}
+
+/** Resolver containing only the exact capability requirements declared by a plugin. */
+export interface PluginCapabilityResolver {
+  readonly resolve: <Value>(capability: PluginCapability<Value>) => Value;
+}
+
+/** Frozen values supplied after every declared dependency is active. */
+export interface PluginStartContext {
+  readonly capabilities: PluginCapabilityResolver;
+  /** Signal for this bounded start invocation, not the plugin lifetime. */
+  readonly signal: AbortSignal;
 }
 
 export interface PluginActivationResult {
   contributions: PluginContributions;
+  /** Typed capability values owned by this plugin and published only after start succeeds. */
+  provides?: readonly PluginCapabilityProvision[];
+  /** Initialize resources after every exact declared capability requirement is active. */
+  start?(context: PluginStartContext): MaybePromise<void>;
+  /** Release resources within one host-bounded disposal invocation. */
+  dispose?(signal: AbortSignal): MaybePromise<void>;
 }
 
 export interface PluginContributions {
@@ -74,11 +102,22 @@ export interface PluginMachine {
   kind: MachineKind;
 }
 
+/** Selected conversation snapshot, scoped to PluginRuntimeState.selectedMachine. */
+export interface PluginSelectedSession {
+  id: string;
+  /** Workspace working directory. */
+  cwd: string;
+  name?: string;
+  archived: boolean;
+  /** True while the browser is waiting for session creation to finish. */
+  pending: boolean;
+}
+
 export interface PluginRuntimeState {
   /** Identity of the currently selected machine. Undefined only on older hosts or before machines load. */
   selectedMachine?: PluginMachine;
   selectedWorkspace?: Workspace;
-  selectedSession?: unknown;
+  selectedSession?: PluginSelectedSession;
   workspaceTool?: string;
   mainView?: string;
   piWebStatus?: PiWebStatusResponse;
@@ -214,25 +253,20 @@ export interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
 export type WorkspaceFilesContextValue = LegacyWorkspaceFiles | WorkspaceFilesCapabilityV1;
 export type WorkspacePanelFiles = WorkspaceFiles;
 
-/** JSON-only request path to the server module that currently owns this workspace. */
-export interface WorkspaceBackend {
-  request(operation: string, input: JsonValue): Promise<JsonValue>;
-}
-
-export interface PairedWorkspaceBackendRequestOptions {
+export interface PluginPeerRequestOptions {
   /** Cancels this bounded request through local or federated host transport. */
   readonly signal?: AbortSignal;
 }
 
-/** Callbacks and cancellation for one bounded package-paired backend channel. */
-export interface PairedWorkspaceBackendChannelOptions {
+/** Callbacks and cancellation for one bounded package-peer channel. */
+export interface PluginPeerChannelOptions {
   /** Cancels the channel open or closes the live channel through every host hop. */
   readonly signal?: AbortSignal;
   /** Receives one plugin-authored JSON frame after the channel is ready. */
   readonly onData: (data: JsonValue) => void;
 }
 
-export interface PairedWorkspaceBackendChannelClose {
+export interface PluginPeerChannelClose {
   readonly code: number;
   readonly reason: string;
   readonly wasClean: boolean;
@@ -240,8 +274,8 @@ export interface PairedWorkspaceBackendChannelClose {
   readonly error?: Readonly<{ code: string; message: string }>;
 }
 
-export interface PairedWorkspaceBackendChannel {
-  readonly closed: Promise<PairedWorkspaceBackendChannelClose>;
+export interface PluginPeerChannel {
+  readonly closed: Promise<PluginPeerChannelClose>;
   /** Queue one bounded JSON frame or throw. Success means queue acceptance, not remote receipt. */
   send(data: JsonValue): void;
   close(reason?: string): void;
@@ -249,37 +283,17 @@ export interface PairedWorkspaceBackendChannel {
 
 /**
  * Exact revision-paired path to this browser package's active server entry.
- * Request and channel support are advertised independently.
+ * A peer supplies a request handler, a channel handler, or both, but never neither.
  */
-interface PairedWorkspaceBackendBaseV1 {
-  readonly version: 1;
-}
-
-interface PairedWorkspaceBackendRequestCapabilityV1 {
-  readonly requestVersion: 1;
-  request(operation: string, input: JsonValue, options?: PairedWorkspaceBackendRequestOptions): Promise<JsonValue>;
-}
-
-interface PairedWorkspaceBackendWithoutRequest {
-  readonly requestVersion?: undefined;
-  request?: undefined;
-}
-
-interface PairedWorkspaceBackendChannelCapabilityV1 {
-  readonly channelVersion: 1;
-  openChannel(operation: string, input: JsonValue, options: PairedWorkspaceBackendChannelOptions): Promise<PairedWorkspaceBackendChannel>;
-}
-
-interface PairedWorkspaceBackendWithoutChannel {
-  readonly channelVersion?: undefined;
-  openChannel?: undefined;
-}
-
-export type PairedWorkspaceBackendV1 = PairedWorkspaceBackendBaseV1 & (
-  | (PairedWorkspaceBackendRequestCapabilityV1 & PairedWorkspaceBackendWithoutChannel)
-  | (PairedWorkspaceBackendWithoutRequest & PairedWorkspaceBackendChannelCapabilityV1)
-  | (PairedWorkspaceBackendRequestCapabilityV1 & PairedWorkspaceBackendChannelCapabilityV1)
-);
+export type PluginPeer =
+  | {
+      request(operation: string, input: JsonValue, options?: PluginPeerRequestOptions): Promise<JsonValue>;
+      openChannel?(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    }
+  | {
+      request?: undefined;
+      openChannel(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    };
 
 export interface WorkspaceHost {
   requestRender(): void;
@@ -292,10 +306,8 @@ export interface WorkspaceContext {
   workspace: Workspace;
   state?: PluginRuntimeState;
   files: WorkspaceFilesContextValue;
-  /** Legacy request helper for the server plugin that currently owns this workspace. */
-  backend?: WorkspaceBackend;
   /** Exact package-paired request/channel capabilities, independent of workspace ownership. */
-  pairedBackend?: PairedWorkspaceBackendV1;
+  peer?: PluginPeer;
   host: WorkspaceHost;
 }
 
@@ -346,6 +358,8 @@ export interface WorkspacePanelContribution {
   /** Former qualified contribution ids whose namespaced query keys remain readable. */
   navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
+  /** Return a deep-link query to open a workspace-relative file, or undefined if unsupported. */
+  fileOpenQuery?: (context: WorkspacePanelContext, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
   /** Fixed workspace resources whose automatic invalidations this contribution receives. */
   invalidationResources?: readonly WorkspaceResource[];

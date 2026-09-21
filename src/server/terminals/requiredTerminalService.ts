@@ -1,4 +1,6 @@
+import type { PluginCapability } from "../../server-plugin-api.js";
 import type { TerminalCommandRun } from "../../shared/apiTypes.js";
+import { REQUIRED_TERMINAL_PLUGIN_ID } from "../../shared/requiredTerminalPlugin.js";
 
 export interface RequiredTerminalCommandFailureNotice {
   readonly message: string;
@@ -36,6 +38,14 @@ export interface RequiredTerminalService {
   runCommand(options: RunTerminalCommandOptions): TerminalCommandRun;
   bindActivitySink(sink: RequiredTerminalActivitySink): void;
 }
+
+/** Core's typed view of the bundled Terminal service capability. */
+export const REQUIRED_TERMINAL_SERVICE_CAPABILITY = Object.freeze({
+  pluginId: REQUIRED_TERMINAL_PLUGIN_ID,
+  id: "service",
+  version: 1,
+  parse: snapshotRequiredTerminalService,
+}) satisfies PluginCapability<RequiredTerminalService, 1>;
 
 export class RequiredTerminalUnavailableError extends Error {
   override name = "RequiredTerminalUnavailableError";

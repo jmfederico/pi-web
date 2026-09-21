@@ -122,7 +122,7 @@ describe("buildApp remote machine proxy routes", () => {
     expect(request).toHaveBeenCalledWith("POST", "/api/sessions/s1/tree/fork", forkBody, { timeoutMs: SESSION_TREE_FORK_PROXY_TIMEOUT_MS });
   });
 
-  it("proxies distinct owner-backed and paired backend routes with the same bounded cancellable deadline", async () => {
+  it("proxies the paired backend route with a bounded cancellable deadline", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();
     const request = vi.fn<MachineClient["request"]>((method, path, body) => Promise.resolve({
@@ -133,42 +133,38 @@ describe("buildApp remote machine proxy routes", () => {
     appTestContext.remoteClient = fakeRemoteClient({ request });
     const payload = { revision: "server-r1", input: { cards: ["alpha"], includeClosed: false } };
 
-    for (const collection of ["plugin-backends", "paired-plugin-backends"] as const) {
-      const response = await appTestContext.app.inject({
-        method: "POST",
-        url: `/api/machines/${remote.id}/${collection}/board-tools/projects/${encodeURIComponent("p 1")}/workspaces/${encodeURIComponent("w 1")}/cards.summary`,
-        payload,
-      });
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: `/api/machines/${remote.id}/paired-plugin-backends/board-tools/projects/${encodeURIComponent("p 1")}/workspaces/${encodeURIComponent("w 1")}/cards.summary`,
+      payload,
+    });
 
-      expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({
-        method: "POST",
-        path: `/api/${collection}/board-tools/projects/p%201/workspaces/w%201/cards.summary`,
-        body: payload,
-      });
-    }
-    expect(request).toHaveBeenCalledTimes(2);
-    for (const call of request.mock.calls) {
-      expect(call[3]?.timeoutMs).toBe(PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS);
-      expect(call[3]?.signal).toBeInstanceOf(AbortSignal);
-      expect(call[3]?.signal?.aborted).toBe(false);
-    }
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      method: "POST",
+      path: "/api/paired-plugin-backends/board-tools/projects/p%201/workspaces/w%201/cards.summary",
+      body: payload,
+    });
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]?.[3]?.timeoutMs).toBe(PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS);
+    expect(request.mock.calls[0]?.[3]?.signal).toBeInstanceOf(AbortSignal);
+    expect(request.mock.calls[0]?.[3]?.signal?.aborted).toBe(false);
   });
 
-  it("maps an old remote provider-backend route to an explicit lifecycle compatibility error", async () => {
+  it("maps an old remote paired-backend route to an explicit lifecycle compatibility error", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();
     appTestContext.remoteClient = fakeRemoteClient({
       request: vi.fn<MachineClient["request"]>(() => Promise.resolve({
         statusCode: 404,
         headers: { "content-type": "application/json" },
-        body: Readable.from([JSON.stringify({ statusCode: 404, error: "Not Found", message: "Route POST:/api/plugin-backends/tools/projects/p1/workspaces/w1/status not found" })]),
+        body: Readable.from([JSON.stringify({ statusCode: 404, error: "Not Found", message: "Route POST:/api/paired-plugin-backends/tools/projects/p1/workspaces/w1/status not found" })]),
       })),
     });
 
     const response = await appTestContext.app.inject({
       method: "POST",
-      url: `/api/machines/${remote.id}/plugin-backends/tools/projects/p1/workspaces/w1/status`,
+      url: `/api/machines/${remote.id}/paired-plugin-backends/tools/projects/p1/workspaces/w1/status`,
       payload: { revision: "server-r1", input: null },
     });
 
@@ -180,7 +176,7 @@ describe("buildApp remote machine proxy routes", () => {
     });
   });
 
-  it("preserves a provider backend's legitimate resource 404", async () => {
+  it("preserves a package peer's legitimate resource 404", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();
     appTestContext.remoteClient = fakeRemoteClient({
@@ -193,7 +189,7 @@ describe("buildApp remote machine proxy routes", () => {
 
     const response = await appTestContext.app.inject({
       method: "POST",
-      url: `/api/machines/${remote.id}/plugin-backends/tools/projects/p1/workspaces/w1/card.get`,
+      url: `/api/machines/${remote.id}/paired-plugin-backends/tools/projects/p1/workspaces/w1/card.get`,
       payload: { revision: "server-r1", input: { cardId: "gone" } },
     });
 
@@ -213,7 +209,7 @@ describe("buildApp remote machine proxy routes", () => {
 
     const response = await appTestContext.app.inject({
       method: "POST",
-      url: `/api/machines/${remote.id}/plugin-backends/board-tools/projects/p1/workspaces/w1/cards.summary`,
+      url: `/api/machines/${remote.id}/paired-plugin-backends/board-tools/projects/p1/workspaces/w1/cards.summary`,
       payload: { revision: "server-r1", input: null },
     });
 

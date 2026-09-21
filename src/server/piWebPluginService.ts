@@ -49,9 +49,9 @@ export interface PiWebPluginManifestEntry {
   module: string;
   /** Active compatible server revision from sessiond's immutable startup snapshot. */
   backendRevision?: string;
-  /** Versioned request capability exposed through `context.pairedBackend`. */
+  /** Versioned transport metadata used to expose `context.peer.request`. */
   pairedRequestVersion?: 1;
-  /** Versioned channel capability exposed through `context.pairedBackend`. */
+  /** Versioned transport metadata used to expose `context.peer.openChannel`. */
   pairedChannelVersion?: 1;
   source: string;
   scope: PiWebPluginScope;

@@ -33,7 +33,8 @@ describe("native service rendering", () => {
     const unit = renderSystemdUnit(plan, planService(plan, 1));
 
     expect(unit).toContain("Description=PI WEB UI dev server");
-    expect(unit).toContain("After=pi-web-sessiond.service\nWants=pi-web-sessiond.service");
+    expect(unit).not.toContain("After=");
+    expect(unit).not.toContain("Wants=");
     expect(unit).toContain("WorkingDirectory=/checkout\\x20with\\x20space");
     expect(unit).toContain('Environment="PI_WEB_CONFIG=/home/user/config with \\"quote\\".json"');
     expect(unit).toContain('ExecStart=/usr/bin/env "/bin/zsh" -lc "exec /usr/bin/env bash -c \'trap \\"kill 0\\" EXIT;');

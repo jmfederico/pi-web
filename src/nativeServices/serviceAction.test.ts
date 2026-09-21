@@ -255,7 +255,69 @@ describe("awaitServicesReady", () => {
 });
 
 describe("performServiceAction", () => {
-  it("restarts systemd units in one manager job ordered web, uiDev, sessiond, with no launchd steps", async () => {
+  for (const backend of [systemdBackend, launchdBackend]) {
+    for (const action of ["start", "restart"] as const) {
+      it(`${backend.kind} ${action} waits for development web readiness before touching sessiond`, async () => {
+        let releaseWeb!: (ready: boolean) => void;
+        const webReady = new Promise<boolean>((resolve) => { releaseWeb = resolve; });
+        let webProbed!: () => void;
+        const probeReached = new Promise<void>((resolve) => { webProbed = resolve; });
+        const env = fakeEnvironment({ quietStatus: () => 1 });
+        env.deps.isComponentReady = (component) => {
+          if (component !== "web") return Promise.resolve(true);
+          webProbed();
+          return webReady;
+        };
+        const result = performServiceAction(
+          { backend, action, refs: [ref("sessiond"), ref("uiDev")], launchdContext },
+          env.deps,
+          readinessTiming,
+        );
+        await probeReached;
+        expect(env.calls.some((call) => call.args.some((arg) => arg.includes("sessiond")))).toBe(false);
+        releaseWeb(true);
+        expect((await result).unreadyServices).toEqual([]);
+        expect(env.calls.some((call) => call.args.some((arg) => arg.includes("sessiond")))).toBe(true);
+      });
+
+      it(`${backend.kind} ${action} leaves sessiond untouched when development web readiness fails`, async () => {
+        const env = fakeEnvironment({ quietStatus: () => 1, ready: () => false });
+        const result = await performServiceAction(
+          { backend, action, refs: [ref("sessiond"), ref("uiDev")], launchdContext },
+          env.deps,
+          readinessTiming,
+        );
+        expect(result.unreadyServices.map((service) => service.id)).toEqual(["uiDev"]);
+        expect(env.calls.some((call) => call.args.some((arg) => arg.includes("sessiond")))).toBe(false);
+      });
+    }
+  }
+
+  it.each([
+    ["uiDev", 120],
+    ["web", 30],
+    ["sessiond", 30],
+  ] as const)("uses the default readiness budget for %s", async (id, polls) => {
+    const env = fakeEnvironment({ ready: () => false });
+    await performServiceAction(
+      { backend: systemdBackend, action: "restart", refs: [ref(id)], launchdContext },
+      env.deps,
+    );
+    expect(env.sleeps).toEqual(Array<number>(polls).fill(1_000));
+  });
+
+  it("preserves the single systemd job for production start", async () => {
+    const env = fakeEnvironment();
+    await performServiceAction(
+      { backend: systemdBackend, action: "start", refs: [ref("web"), ref("sessiond")], launchdContext },
+      env.deps,
+      readinessTiming,
+    );
+    expect(env.calls).toEqual([
+      { command: "systemctl", args: ["--user", "start", "pi-web-sessiond.service", "pi-web.service"] },
+    ]);
+  });
+  it("restarts systemd web/UI in a separate job before sessiond, with no launchd steps", async () => {
     const env = fakeEnvironment();
     const result = await performServiceAction(
       { backend: systemdBackend, action: "restart", refs: allRefs(), launchdContext },
@@ -264,12 +326,13 @@ describe("performServiceAction", () => {
     );
     expect(result.unreadyServices).toEqual([]);
     expect(env.calls).toEqual([
-      { command: "systemctl", args: ["--user", "restart", "pi-web.service", "pi-web-ui-dev.service", "pi-web-sessiond.service"] },
+      { command: "systemctl", args: ["--user", "restart", "pi-web.service", "pi-web-ui-dev.service"] },
+      { command: "systemctl", args: ["--user", "restart", "pi-web-sessiond.service"] },
     ]);
     expect(env.probedComponents).toEqual(["web", "web", "sessiond"]);
   });
 
-  it("starts systemd units in start order", async () => {
+  it("starts development systemd web/UI in a separate job before sessiond", async () => {
     const env = fakeEnvironment();
     const result = await performServiceAction(
       { backend: systemdBackend, action: "start", refs: allRefs(), launchdContext },
@@ -278,7 +341,8 @@ describe("performServiceAction", () => {
     );
     expect(result.unreadyServices).toEqual([]);
     expect(env.calls).toEqual([
-      { command: "systemctl", args: ["--user", "start", "pi-web-sessiond.service", "pi-web.service", "pi-web-ui-dev.service"] },
+      { command: "systemctl", args: ["--user", "start", "pi-web.service", "pi-web-ui-dev.service"] },
+      { command: "systemctl", args: ["--user", "start", "pi-web-sessiond.service"] },
     ]);
   });
 
@@ -376,6 +440,9 @@ describe("performServiceAction", () => {
       readinessTiming,
     );
     expect(result.unreadyServices.map((service) => service.id)).toEqual(["web"]);
+    expect(env.calls).toEqual([
+      { command: "systemctl", args: ["--user", "restart", "pi-web.service"] },
+    ]);
     expect(env.sleeps).toEqual([1, 1, 1]);
   });
 

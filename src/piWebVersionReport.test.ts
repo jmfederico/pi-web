@@ -27,14 +27,7 @@ describe("probeRunningComponentReady", () => {
     const requests: string[] = [];
     const fetchImplementation: typeof globalThis.fetch = (input) => {
       requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-      return Promise.resolve(new Response(JSON.stringify({
-        packageName: "@jmfederico/pi-web",
-        generatedAt: "2026-08-01T00:00:00.000Z",
-        components: {
-          web: componentStatus(),
-          sessiond: sessiondStatus(),
-        },
-      }), { status: 200, headers: { "content-type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     };
 
     try {
@@ -42,10 +35,42 @@ describe("probeRunningComponentReady", () => {
         configEnv: { PI_WEB_CONFIG: configPath },
         fetch: fetchImplementation,
       })).resolves.toBe(true);
-      expect(requests).toEqual(["http://127.0.0.1:9123/api/pi-web/version"]);
+      expect(requests).toEqual(["http://127.0.0.1:9123/api/pi-web/health"]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("falls back to version reporting only for hosts without the health route", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pi-web-version-probe-"));
+    const configPath = join(directory, "managed.json");
+    writeFileSync(configPath, JSON.stringify({ host: "127.0.0.1", port: 9123 }));
+    const requests: string[] = [];
+    const fetchImplementation: typeof globalThis.fetch = (input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requests.push(url);
+      return Promise.resolve(url.endsWith("/health") ? new Response("Not found", { status: 404 }) : new Response(JSON.stringify({
+        packageName: "@jmfederico/pi-web", generatedAt: "2026-08-01T00:00:00.000Z",
+        components: { web: componentStatus(), sessiond: sessiondStatus({ available: false }) },
+      }), { status: 200 }));
+    };
+    try {
+      await expect(probeRunningComponentReady("web", { configEnv: { PI_WEB_CONFIG: configPath }, fetch: fetchImplementation })).resolves.toBe(true);
+      expect(requests).toEqual(["http://127.0.0.1:9123/api/pi-web/health", "http://127.0.0.1:9123/api/pi-web/version"]);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+
+  it.each([new Response("failed", { status: 503 }), new Response('{"ok":false}'), new Response("not json")])("rejects unhealthy responses without falling back", async (response) => {
+    const directory = mkdtempSync(join(tmpdir(), "pi-web-version-probe-"));
+    const configPath = join(directory, "managed.json");
+    writeFileSync(configPath, JSON.stringify({ port: 9123 }));
+    let calls = 0;
+    try {
+      await expect(probeRunningComponentReady("web", {
+        configEnv: { PI_WEB_CONFIG: configPath }, fetch: () => { calls++; return Promise.resolve(response); },
+      })).resolves.toBe(false);
+      expect(calls).toBe(1);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 
   it("does not probe an endpoint when the selected config is malformed", async () => {

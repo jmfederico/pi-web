@@ -53,6 +53,66 @@ describe("PiWebPluginCatalog", () => {
     expect(plugin?.settingsRevision).toMatch(/^sha256:[0-9a-f]{64}$/u);
   });
 
+  it.each([
+    { defaultEnabled: undefined, configuredEnabled: undefined, enabled: true },
+    { defaultEnabled: true, configuredEnabled: undefined, enabled: true },
+    { defaultEnabled: false, configuredEnabled: undefined, enabled: false },
+    { defaultEnabled: false, configuredEnabled: true, enabled: true },
+    { defaultEnabled: false, configuredEnabled: false, enabled: false },
+    { defaultEnabled: true, configuredEnabled: false, enabled: false },
+  ])("applies installed package defaults with explicit config precedence: %j", async ({ defaultEnabled, configuredEnabled, enabled }) => {
+    const installedPath = join(tempDir, "installed-package");
+    await writePlugin(installedPath, {
+      packageJson: { piWeb: { plugins: [{
+        id: "optional-plugin", browserRoot: "dist", module: "dist/browser.js", serverModule: "server.js",
+        ...(defaultEnabled === undefined ? {} : { defaultEnabled }),
+      }] } },
+      files: { "dist/browser.js": "export default {};", "server.js": "export default {};" },
+    });
+    const catalog = new PiWebPluginCatalog({
+      roots: [],
+      packageProvider: {
+        listPackages: () => [{ source: "npm:@acme/optional", scope: "user", installedPath }],
+        getInstalledPath: () => installedPath,
+      },
+      configProvider: () => ({ plugins: { "optional-plugin": {
+        settings: { color: "blue" },
+        ...(configuredEnabled === undefined ? {} : { enabled: configuredEnabled }),
+      } } }),
+    });
+
+    const snapshot = await catalog.snapshot();
+
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(snapshot.plugins).toMatchObject([{
+      id: "optional-plugin", enabled, source: "npm:@acme/optional", scope: "user", settings: { color: "blue" },
+    }]);
+    expect(snapshot.plugins[0]?.defaultEnabled).toBe(defaultEnabled);
+    // Disabled packages remain discovered and their browser assets resolvable.
+    await expect(catalog.browserPlugin("optional-plugin")).resolves.toMatchObject({ id: "optional-plugin" });
+  });
+
+  it.each([null, "false", 0, 1, {}, []])("rejects malformed defaultEnabled metadata: %j", async (defaultEnabled) => {
+    const pluginsRoot = join(tempDir, "plugins");
+    await writePlugin(join(pluginsRoot, "invalid-default"), {
+      packageJson: { piWeb: { plugins: [{ id: "invalid-default", serverModule: "server.js", defaultEnabled }] } },
+      files: { "server.js": "export default {};" },
+    });
+    const catalog = new PiWebPluginCatalog({
+      roots: [{ path: pluginsRoot, source: "fixture", scope: "local" }],
+      packageProvider: false,
+      configProvider: () => ({ plugins: { "invalid-default": { enabled: true } } }),
+      warningSink: () => undefined,
+    });
+
+    const snapshot = await catalog.snapshot();
+
+    expect(snapshot.plugins).toEqual([]);
+    expect(snapshot.diagnostics).toHaveLength(1);
+    expect(snapshot.diagnostics[0]?.code).toBe("invalid-package");
+    expect(snapshot.diagnostics[0]?.message).toContain("Invalid PI WEB plugin defaultEnabled value for invalid-default");
+  });
+
   it("requires a safe browser root and keeps browser modules inside its logical and canonical boundary", async () => {
     const pluginsRoot = join(tempDir, "plugins");
     await writePlugin(join(pluginsRoot, "valid-root"), {
@@ -665,10 +725,10 @@ describe("PiWebPluginCatalog", () => {
     await expect(catalog.browserPlugin("duplicate")).resolves.toBeUndefined();
   });
 
-  it("keeps the bundled Terminal package enabled and reports ignored disable config", async () => {
+  it.each([undefined, false])("keeps bundled Terminal enabled regardless of metadata default %j and reports ignored disable config", async (defaultEnabled) => {
     const bundledRoot = join(tempDir, "bundled");
     await writePlugin(join(bundledRoot, "terminal"), {
-      packageJson: { piWeb: { plugins: [{ id: "pi-web.terminal", browserRoot: ".", module: "browser.js", serverModule: "server.js", machineSpecific: true }] } },
+      packageJson: { piWeb: { plugins: [{ id: "pi-web.terminal", browserRoot: ".", module: "browser.js", serverModule: "server.js", machineSpecific: true, defaultEnabled }] } },
       files: {
         "browser.js": "export default {};",
         "server.js": "export default {};",

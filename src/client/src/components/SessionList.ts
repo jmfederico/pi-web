@@ -1,5 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { repeat } from "lit/directives/repeat.js";
 import type { SessionActivity, SessionInfo, SessionStatus } from "../api";
 import { isCachedNewSessionInfo } from "../cachedNewSessions";
 import { shortSessionId } from "../sessionLabels";
@@ -71,6 +72,32 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @state() private selectionScopes: ReadonlySet<SessionSelectionScope> = new Set();
   @state() private selectedSessionIds: ReadonlySet<string> = new Set();
 
+  // Sessions are replaced on refresh; transient UI state must not rebuild the tree.
+  private treeCache?: {
+    sessions: SessionInfo[];
+    currentRows: SessionRow[];
+    currentSelectableSessions: SessionInfo[];
+    archivedRows: SessionRow[];
+    archivedSessions: SessionInfo[];
+    descendantCounts?: Map<string, number>;
+  };
+
+  private sessionTree() {
+    if (this.treeCache?.sessions !== this.sessions) {
+      const currentRows = sessionRowsForCurrentTree(this.sessions);
+      const currentRowIds = new Set(currentRows.map((row) => row.session.id));
+      const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
+      this.treeCache = {
+        sessions: this.sessions,
+        currentRows,
+        currentSelectableSessions: currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current"),
+        archivedRows,
+        archivedSessions: archivedRows.map((row) => row.session),
+      };
+    }
+    return this.treeCache;
+  }
+
   private readonly onDocumentClick = (event: MouseEvent) => {
     if (event.composedPath().includes(this)) return;
     this.openMenuSessionId = undefined;
@@ -125,11 +152,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   override render() {
-    const currentRows = sessionRowsForCurrentTree(this.sessions);
-    const currentRowIds = new Set(currentRows.map((row) => row.session.id));
-    const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
-    const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
-    const descendantCounts = unarchivedDescendantCounts(this.sessions);
+    const tree = this.sessionTree();
+    const { currentRows, currentSelectableSessions, archivedRows, archivedSessions } = tree;
+    // The collapsed heading still needs tree counts, but never descendant actions.
+    if (!this.collapsed) tree.descendantCounts ??= unarchivedDescendantCounts(this.sessions);
+    const descendantCounts = tree.descendantCounts;
     const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
     return html`
       <section>
@@ -138,12 +165,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
             ${this.startingCount > 0 ? this.renderStartingSession() : null}
-            ${currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
+            ${repeat(currentRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "current"))}
             ${archivedRows.length > 0 ? html`
-              ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
+              ${this.renderArchivedHeading(archivedSessions)}
               ${this.archivedExpanded ? html`
-                ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session))}
-                ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived"))}
+                ${this.renderArchivedSelectionToolbar(archivedSessions)}
+                ${repeat(archivedRows, (row) => row.session.id, (row) => this.renderSession(row, descendantCounts?.get(row.session.id) ?? 0, "archived"))}
               ` : null}
             ` : null}
           </div>

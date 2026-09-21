@@ -141,15 +141,16 @@ describe("machineNavigationSnapshotFromState", () => {
     expect(machineNavigationSnapshotFromState(state, { "core.workspace.files--file": "src/main.ts" }).surface).toEqual({});
   });
 
-  it("does not publish a temporary pending-start session id", () => {
-    const pending = Object.assign(session("pending"), { clientPendingStart: true });
+  it("publishes the explicit tokenized creation selection", () => {
+    const pending = Object.assign(session("creating:unique-token"), { clientPendingStart: true });
     const state: AppState = {
       ...initialAppState(),
       selectedWorkspace: workspace("workspace", "project"),
       selectedSession: pending,
     };
 
-    expect(machineNavigationSnapshotFromState(state).sessionId).toBeUndefined();
+    const snapshot = machineNavigationSnapshotFromState(state);
+    expect(routeFromMachineNavigationSnapshot(snapshot).sessionId).toBe("creating:unique-token");
   });
 });
 

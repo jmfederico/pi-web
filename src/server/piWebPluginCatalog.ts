@@ -44,6 +44,8 @@ export interface PiWebPluginCatalogBrowserRoot {
 
 export interface PiWebPluginPackageEntry {
   id: string;
+  /** Desired enabled state when configuration is absent; omission means true. */
+  defaultEnabled?: boolean;
   packageRoot: string;
   browserRoot?: PiWebPluginCatalogBrowserRoot;
   browserModule?: PiWebPluginCatalogModule;
@@ -108,6 +110,7 @@ interface PiWebPackageConfig {
 
 interface PiWebPluginMetadataEntry {
   id: string;
+  defaultEnabled?: boolean;
   browserRoot?: string;
   module?: string;
   serverModule?: string;
@@ -367,6 +370,7 @@ async function discoverPluginEntries(
       ...(browserModule === undefined ? {} : { browserModule }),
       ...(serverModule === undefined ? {} : { serverModule }),
       machineSpecific: entry.machineSpecific,
+      ...(entry.defaultEnabled === undefined ? {} : { defaultEnabled: entry.defaultEnabled }),
     });
   }
   return plugins;
@@ -648,7 +652,7 @@ function parsePluginEntries(
   allowPiWebBundledIds: boolean,
 ): PiWebPluginMetadataEntry[] {
   if (piWeb["plugin"] !== undefined) {
-    throw new Error(`Unsupported PI WEB plugin metadata in ${packagePath}: use piWeb.plugins with { id, module?, browserRoot?, serverModule?, machineSpecific? } entries`);
+    throw new Error(`Unsupported PI WEB plugin metadata in ${packagePath}: use piWeb.plugins with { id, module?, browserRoot?, serverModule?, machineSpecific?, defaultEnabled? } entries`);
   }
   const plugins = piWeb["plugins"];
   if (plugins === undefined) return [];
@@ -666,6 +670,10 @@ function parsePluginEntries(
     if (module === undefined && serverModule === undefined) throw new Error(`PI WEB plugin ${id} must declare module or serverModule in ${packagePath}`);
     const browserRoot = parseBrowserRoot(entry["browserRoot"], packagePath, id, module !== undefined);
 
+    const defaultEnabled = entry["defaultEnabled"];
+    if (defaultEnabled !== undefined && typeof defaultEnabled !== "boolean") {
+      throw new Error(`Invalid PI WEB plugin defaultEnabled value for ${id} in ${packagePath}: ${formatUnknownValue(defaultEnabled)}`);
+    }
     const configuredMachineSpecific = parseMachineSpecific(entry["machineSpecific"], packagePath, id);
     if (module !== undefined && serverModule !== undefined && configuredMachineSpecific === false) {
       throw new Error(`PI WEB plugin ${id} has browser and server modules and must be machine-specific in ${packagePath}`);
@@ -677,6 +685,7 @@ function parsePluginEntries(
       ...(module === undefined ? {} : { module }),
       ...(serverModule === undefined ? {} : { serverModule }),
       machineSpecific,
+      ...(defaultEnabled === undefined ? {} : { defaultEnabled }),
     };
   });
 }
@@ -717,7 +726,7 @@ function applyDesiredState(plugin: PiWebPluginPackageEntry, config: PiWebConfig)
   const settings = { ...(pluginConfig?.settings ?? {}) };
   return {
     ...plugin,
-    enabled: isBundledTerminalPlugin(plugin) || pluginConfig?.enabled !== false,
+    enabled: isBundledTerminalPlugin(plugin) || (pluginConfig?.enabled ?? plugin.defaultEnabled ?? true),
     settings,
     settingsRevision: pluginSettingsRevision(settings),
   };

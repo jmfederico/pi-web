@@ -75,7 +75,7 @@ describe("PiSessionService listing of replaced session files", () => {
 
     // The open path must agree with the listing...
     const page = await service.messages(sessionRef("replacement-id", LISTING_CWD));
-    expect(page.messages).toEqual([{ role: "user", content: "replacement transcript" }]);
+    expect(page.messages).toEqual([{ role: "user", content: "replacement transcript", entryId: "r1" }]);
     // ...and the replaced session is really gone.
     await expect(service.messages(sessionRef("original-id", LISTING_CWD))).rejects.toThrow("Session not found");
     await service.dispose();

@@ -4,25 +4,28 @@ import type {
   PiWebServerPlugin,
   ProjectInput,
   ProviderClaim,
-  ProviderRequestContext,
   ProviderWorkspace,
+  ServerPluginPeerRequestContext,
   WorkspaceProvider,
 } from "@jmfederico/pi-web/server-plugin-api";
 
 const markerPath = ".pi-web/example-workspace-provider";
 
 const plugin: PiWebServerPlugin = {
-  apiVersion: 1,
+  apiVersion: 3,
   name: "Example Workspace Provider",
   activate({ pluginId, logger }) {
     logger.info("Activating example workspace provider", { pluginId });
-    return { workspaceProvider: createWorkspaceProvider(pluginId) };
+    return {
+      workspaceProvider: createWorkspaceProvider(),
+      peer: { request: (context) => requestSummary(pluginId, context) },
+    };
   },
 };
 
 export default plugin;
 
-function createWorkspaceProvider(pluginId: string): WorkspaceProvider {
+function createWorkspaceProvider(): WorkspaceProvider {
   return {
     async probe(project: ProjectInput, signal: AbortSignal): Promise<ProviderClaim> {
       signal.throwIfAborted();
@@ -46,14 +49,15 @@ function createWorkspaceProvider(pluginId: string): WorkspaceProvider {
         publicMetadata: { kind: "example", marker: markerPath },
       }];
     },
-    request(context: ProviderRequestContext) {
-      context.signal.throwIfAborted();
-      if (context.operation !== "summary") {
-        throw new Error(`Unsupported example workspace operation: ${context.operation}`);
-      }
-      return Promise.resolve(`${pluginId} owns ${context.workspace.label} at ${context.workspace.path}`);
-    },
   };
+}
+
+function requestSummary(pluginId: string, context: ServerPluginPeerRequestContext): string {
+  context.signal.throwIfAborted();
+  if (context.operation !== "summary") {
+    throw new Error(`Unsupported example workspace operation: ${context.operation}`);
+  }
+  return `${pluginId} owns ${context.workspace.label} at ${context.workspace.path}`;
 }
 
 function isMissingFile(error: unknown): boolean {

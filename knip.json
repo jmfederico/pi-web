@@ -7,11 +7,15 @@
     "src/client/src/api.ts",
     "src/shared/apiTypes.ts",
     "src/server/types.ts",
+    "src/server/sessiond.ts",
     "src/server/piWebPluginService.ts",
     "extensions/pi-web.ts",
     "pi-web-plugins/**/pi-web-plugin.ts",
     "pi-web-plugins/**/server-plugin.ts",
     "pi-packages/**/pi-web-plugin.ts",
+    "pi-packages/captains-log/src/browser/index.ts",
+    "pi-packages/captains-log/src/server.ts",
+    "pi-packages/captains-log/src/companion.ts",
     "scripts/*.mjs"
   ],
   "project": [

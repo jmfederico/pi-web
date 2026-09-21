@@ -36,6 +36,41 @@ beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", { value: new MemoryStorage(), configurable: true });
 });
 
+describe("SessionController message shortcuts", () => {
+  it.each(["fork", "back"] as const)("loads fresh history for %s without opening the navigator", async (action) => {
+    let state: AppState = { ...initialAppState(), selectedSession: oldSession };
+    const runCommand = vi.fn<typeof defaultApi.runCommand>(() => Promise.resolve({ type: "tree", tree }));
+    const forkTree = vi.fn<typeof defaultApi.forkTree>(() => Promise.resolve({ cancelled: true }));
+    const navigateTree = vi.fn<typeof defaultApi.navigateTree>(() => Promise.resolve({ cancelled: true }));
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined,
+      new InMemorySessionSelectionMemory(), { api: { ...defaultApi, runCommand, forkTree, navigateTree }, socket: new FakeSocket() });
+    await controller.actOnMessage("root", action);
+    expect(runCommand).toHaveBeenCalledWith(oldSession, "/tree", "local");
+    expect(state.treeDialog).toBeUndefined();
+    if (action === "fork") {
+      expect(forkTree).toHaveBeenCalledWith(oldSession, { entryId: "root", expectedLeafId: "leaf-1" }, "local");
+      expect(navigateTree).not.toHaveBeenCalled();
+    } else {
+      expect(navigateTree).toHaveBeenCalledWith(oldSession, { targetId: "root", expectedLeafId: "leaf-1", summary: { mode: "none" } }, "local");
+      expect(forkTree).not.toHaveBeenCalled();
+    }
+    await expect(controller.actOnMessage("missing", action)).rejects.toThrow("no longer available");
+  });
+
+  it("does not mutate a different session after history loading", async () => {
+    let state: AppState = { ...initialAppState(), selectedSession: oldSession };
+    const result = deferred<CommandResult>();
+    const forkTree = vi.fn<typeof defaultApi.forkTree>();
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined,
+      new InMemorySessionSelectionMemory(), { api: { ...defaultApi, runCommand: () => result.promise, forkTree }, socket: new FakeSocket() });
+    const action = controller.actOnMessage("root", "fork");
+    state = { ...state, selectedSession: replacementSession };
+    result.resolve({ type: "tree", tree });
+    await action;
+    expect(forkTree).not.toHaveBeenCalled();
+  });
+});
+
 describe("SessionController session tree navigation", () => {
   it("opens tree command results and keeps older-server unsupported results inert", async () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };

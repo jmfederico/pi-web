@@ -48,9 +48,16 @@ export function arrayOf<T>(parse: (value: unknown) => T): (value: unknown) => T[
   };
 }
 
-function parseUnknownArray(value: unknown): unknown[] {
+function parseTranscriptMessages(value: unknown): unknown[] {
   if (!Array.isArray(value)) throw new Error("Expected array response");
-  return value;
+  return value.map((message: unknown) => {
+    // SDK payloads remain opaque, but durable identity is part of our API contract.
+    if (typeof message === "object" && message !== null && "entryId" in message
+      && message.entryId !== undefined && typeof message.entryId !== "string") {
+      throw new Error("Expected string field: entryId");
+    }
+    return message;
+  });
 }
 
 function arrayOfString(value: unknown, key: string): string[] {
@@ -60,7 +67,7 @@ function arrayOfString(value: unknown, key: string): string[] {
 
 export function parseMessagePage(value: unknown): MessagePage {
   const record = requireRecord(value);
-  return { messages: parseUnknownArray(record["messages"]), start: requireNumber(record, "start"), total: requireNumber(record, "total") };
+  return { messages: parseTranscriptMessages(record["messages"]), start: requireNumber(record, "start"), total: requireNumber(record, "total") };
 }
 
 export function parseMachinesResponse(value: unknown): Machine[] {
@@ -216,7 +223,6 @@ function optionalWorkspaceProviderMetadata(value: unknown): Workspace["provider"
   return Object.freeze({
     pluginId: requireString(value, "pluginId"),
     capabilities: Object.freeze({
-      request: requireBoolean(capabilities, "request"),
       remove: requireBoolean(capabilities, "remove"),
     }),
     ...optionalField("metadata", metadata === undefined ? undefined : parseJsonObject(metadata, "workspace provider metadata")),
@@ -1689,7 +1695,7 @@ function parsePiWebPluginServerInfo(value: unknown, pluginId: string): NonNullab
   if (state !== "active" && state !== "failed" && state !== "incompatible" && state !== "disabled" && state !== "missing" && state !== "unknown") {
     throw new Error("Invalid PI WEB server plugin state");
   }
-  if (phase !== undefined && phase !== "import" && phase !== "activate" && phase !== "validate" && phase !== "start" && phase !== "health" && phase !== "stop") {
+  if (phase !== undefined && phase !== "import" && phase !== "activate" && phase !== "validate" && phase !== "start" && phase !== "health" && phase !== "dispose") {
     throw new Error("Invalid PI WEB server plugin phase");
   }
   const health = record["health"] === undefined ? undefined : parsePiWebPluginHealth(record["health"]);

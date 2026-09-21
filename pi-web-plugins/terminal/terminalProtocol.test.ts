@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { JsonValue, PairedWorkspaceBackendChannel, PairedWorkspaceBackendV1 } from "@jmfederico/pi-web/plugin-api";
-import { TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES, TerminalBackendClient, parseTerminalCommandRun, parseTerminalServerFrame, terminalChannelFailureMessage, terminalInputFrames } from "./terminalProtocol";
+import type { JsonValue, PluginPeerChannel, PluginPeer } from "@jmfederico/pi-web/plugin-api";
+import { TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES, TerminalPeerClient, parseTerminalCommandRun, parseTerminalServerFrame, terminalChannelFailureMessage, terminalInputFrames } from "./terminalProtocol";
 
 const terminal = {
   id: "terminal-1",
@@ -23,9 +23,9 @@ const run = {
   metadata: { source: "task" },
 };
 
-describe("Terminal paired-backend protocol", () => {
+describe("Terminal peer protocol", () => {
   it("maps list/create/close/continue and command operations without host scope fields", async () => {
-    const request = vi.fn<NonNullable<PairedWorkspaceBackendV1["request"]>>((operation: string): Promise<JsonValue> => {
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => {
       if (operation === "terminal.list") return Promise.resolve([terminal]);
       if (operation === "terminal.close") return Promise.resolve({ closed: true });
       if (operation === "terminal.get-run") return Promise.resolve(null);
@@ -33,7 +33,7 @@ describe("Terminal paired-backend protocol", () => {
       if (operation === "terminal.create" || operation === "terminal.continue") return Promise.resolve(terminal);
       return Promise.resolve(run);
     });
-    const client = new TerminalBackendClient({ version: 1, requestVersion: 1, request });
+    const client = new TerminalPeerClient({ request });
 
     await expect(client.list()).resolves.toEqual([terminal]);
     await expect(client.create({ cols: 120, rows: 40 })).resolves.toEqual(terminal);
@@ -55,17 +55,17 @@ describe("Terminal paired-backend protocol", () => {
   });
 
   it("opens the bounded attach channel and validates plugin-private frames", async () => {
-    const channel: PairedWorkspaceBackendChannel = {
+    const channel: PluginPeerChannel = {
       closed: Promise.resolve({ code: 1000, reason: "done", wasClean: true }),
       send: vi.fn(),
       close: vi.fn(),
     };
-    const openChannel = vi.fn<NonNullable<PairedWorkspaceBackendV1["openChannel"]>>((_operation, _input, options) => {
+    const openChannel = vi.fn<NonNullable<PluginPeer["openChannel"]>>((_operation, _input, options) => {
       options.onData({ type: "output", data: "hello", replay: true, replayComplete: true });
       return Promise.resolve(channel);
     });
     const frames: unknown[] = [];
-    const client = new TerminalBackendClient({ version: 1, requestVersion: 1, channelVersion: 1, request: vi.fn(), openChannel });
+    const client = new TerminalPeerClient({ request: vi.fn(), openChannel });
 
     await expect(client.attach({ terminalId: "terminal-1", size: { cols: 80, rows: 24 }, onFrame: (frame) => { frames.push(frame); } })).resolves.toBe(channel);
 
@@ -105,9 +105,9 @@ describe("Terminal paired-backend protocol", () => {
     expect(terminalChannelFailureMessage({ code: 1000, reason: "done", wasClean: true })).toBeUndefined();
   });
 
-  it("fails closed when channels are not revision-paired by the host", async () => {
-    const client = new TerminalBackendClient({ version: 1, requestVersion: 1, request: vi.fn() });
+  it("fails closed when the peer has no channel capability", async () => {
+    const client = new TerminalPeerClient({ request: vi.fn() });
     await expect(client.attach({ terminalId: "terminal-1", onFrame: vi.fn() }))
-      .rejects.toThrow("Required Terminal paired channel v1 is unavailable");
+      .rejects.toThrow("Required Terminal peer channel capability is unavailable");
   });
 });

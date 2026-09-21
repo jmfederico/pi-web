@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { sanitizedGitEnv } from "./git/gitEnv.js";
+import { planPiWebDockerDevHostCommand } from "../docker/piWebDockerCommandPlan.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const dockerEntrypoint = join(repoRoot, "docker", "pi-web-docker");
@@ -97,6 +98,17 @@ describe("Docker command assets", () => {
     expect(devCompose).not.toContain("COMPOSE_PROJECT_NAME:");
     expect(devCompose).toContain("/usr/local/sbin/pi-web-dev-sync-node-modules");
     expect(devCompose.match(/volumes: \*pi-web-dev-volumes/g)).toHaveLength(3);
+  });
+
+  it("starts development web after data init and sessiond only after web health", async () => {
+    const compose = await readRepoFile("docker/compose.dev.yml");
+    const sessiond = compose.split("\n  sessiond:")[1]?.split("\n  web:")[0];
+    const web = compose.split("\n  web:")[1];
+    expect(sessiond).toContain("depends_on:\n      web:\n        condition: service_healthy");
+    expect(web).toContain("depends_on:\n      data-init:\n        condition: service_completed_successfully");
+    expect(web).not.toContain("      sessiond:");
+    expect(web).toContain("curl -fsS http://127.0.0.1:8504/api/pi-web/health");
+    expect(web).not.toContain("/api/pi-web/runtime");
   });
 
   it("gives both modes the same user-owned container environment file in the shared data directory", async () => {
@@ -489,6 +501,34 @@ describe("Docker command assets", () => {
     ].join("\n"));
   });
 
+  dockerCommandIt.each([false, true])("sequences development restart according to the typed plan (detached=%s)", async (detached) => {
+    const helperLog = join(tempDir, "dev-helper.log");
+    const devRoot = await createDevRepoFixtureWithFakeHelper(helperLog);
+    const fakeDocker = await installFakeDocker();
+    await installFakeId(fakeDocker.binDir, 1234, 2345);
+    const env = detached ? devRuntimeEnv(fakeDocker, devRoot) : devHostEnv(fakeDocker, devRoot, join(tempDir, "home"));
+    await runDockerCommand(["--dev", ...(detached ? ["__run-detached"] : []), "restart"], env);
+
+    const plan = planPiWebDockerDevHostCommand({ mode: "dev", command: "restart", allowRoot: false, args: [] });
+    if (plan?.kind !== "composeSequence") throw new Error("Expected sequential Compose restart");
+    expect(await readFile(helperLog, "utf8")).toBe(plan.steps.map((step) => `allow=0 args=${step.args.join(" ")}\n`).join(""));
+  });
+
+  dockerCommandIt.each(["restart web", "up -d --no-deps --no-recreate --wait --wait-timeout 120 web"])("does not restart sessiond when %s fails", async (failedCommand) => {
+    const helperLog = join(tempDir, "dev-helper.log");
+    const devRoot = await createDevRepoFixtureWithFakeHelper(helperLog);
+    const fakeDocker = await installFakeDocker();
+    await installFakeId(fakeDocker.binDir, 1234, 2345);
+    const result = await runDockerCommandAllowFailure(["--dev", "restart"], {
+      ...devHostEnv(fakeDocker, devRoot, join(tempDir, "home")),
+      FAKE_COMPOSE_FAIL: failedCommand,
+    });
+    expect(result.exitCode).toBe(17);
+    const log = await readFile(helperLog, "utf8");
+    expect(log).toContain(`args=${failedCommand}\n`);
+    expect(log).not.toContain("args=restart sessiond");
+  });
+
   dockerCommandIt("starts development detached helpers as the generated dev user", async () => {
     const devRoot = await createDevGeneratedEnv({ uid: 1234, gid: 2345, dockerGid: 3456 });
     const fakeDocker = await installFakeDocker();
@@ -789,6 +829,7 @@ async function createDevRepoFixtureWithFakeHelper(logPath: string): Promise<stri
   await writeFile(helperPath, `#!/usr/bin/env sh
 set -eu
 printf 'allow=%s args=%s\n' "\${PI_WEB_DOCKER_ALLOW_ROOT:-}" "$*" >>${shellSingleQuote(logPath)}
+if [ "$*" = "\${FAKE_COMPOSE_FAIL:-}" ]; then exit 17; fi
 `, "utf8");
   await chmod(helperPath, 0o755);
   return devRoot;

@@ -34,6 +34,8 @@ export interface NavigationFreshness {
 }
 
 export interface NavigationDestinationOptions {
+  /** Replace only the expected creation token, retaining the current URL surface. */
+  creationHandoff?: boolean | undefined;
   replace?: boolean | undefined;
   expected?: NavigationSelection | undefined;
 }

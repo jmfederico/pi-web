@@ -2,8 +2,9 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
-import { defineConfig } from "vite";
+import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
@@ -187,10 +188,32 @@ function devDeploymentIdentityPlugin(): Plugin {
   };
 }
 
+function manualRefreshPlugin(): Plugin {
+  const clientEntry = normalizePath(fileURLToPath(new URL("../client/client.mjs", import.meta.resolve("vite"))));
+  const connect = "transport.connect(createHMRHandler(handleMessage));";
+  return {
+    name: "pi-web-manual-refresh",
+    apply: "serve",
+    transform(code, id) {
+      if (id.split("?")[0] !== clientEntry) return;
+      // Vite 8 starts its client even with hmr:false and ws:false. An unanswered
+      // handshake blocks Chromium's subsequent /api WebSockets to the same host.
+      // Keep Vite's helpers (dynamic plugin imports need injectQuery), but never
+      // start its reload transport. Removing the HTML script alone is not enough.
+      // Fail loudly on a Vite upgrade rather than silently reintroducing the hang.
+      if (code.split(connect).length !== 2) {
+        throw new Error("Vite client startup changed; update PI WEB's manual-refresh transform");
+      }
+      return { code: code.replace(connect, "/* PI WEB uses manual browser refresh. */"), map: null };
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     devDocsPlugin(),
     devDeploymentIdentityPlugin(),
+    manualRefreshPlugin(),
     ...(config.safeTunnel && config.allowedHosts !== true
       ? [createSafeTunnelViteHostPlugin({
           statePath: safeTunnelStatePath,
@@ -218,9 +241,14 @@ export default defineConfig({
     },
   },
   server: {
-    // Dev browser entrypoint. Keep in sync with PI_WEB_BROWSER_URL in the
-    // `dev:web` script and docker/compose.dev.yml: the API process's dev-mode
-    // pointer and Safe Tunnel's default local target both rely on that wiring.
+    // Manual UI refresh is intentional: Vite reloads after an established dev
+    // socket disconnects, including when iPadOS suspends a background PWA.
+    // Disable both the listener and client connection (manualRefreshPlugin).
+    // The application's /api WebSocket proxy remains enabled.
+    hmr: false,
+    ws: false,
+    // Keep in sync with scripts/dev-web.mjs and docker/compose.dev.yml: the
+    // API's browser pointer and Safe Tunnel's default local target use this port.
     port: 8505,
     strictPort: true,
     allowedHosts: viteAllowedHosts,

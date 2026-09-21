@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { snapshotRequiredTerminalService, unavailableRequiredTerminalService } from "./requiredTerminalService.js";
+import {
+  REQUIRED_TERMINAL_SERVICE_CAPABILITY,
+  snapshotRequiredTerminalService,
+  unavailableRequiredTerminalService,
+} from "./requiredTerminalService.js";
 
 const run = {
   id: "run-1",
@@ -19,7 +23,12 @@ describe("required Terminal server composition port", () => {
     const closeForCwd = vi.fn();
     const runCommand = vi.fn(() => run);
     const bindActivitySink = vi.fn();
-    const service = snapshotRequiredTerminalService({ closeForCwd, runCommand, bindActivitySink, extra: vi.fn() });
+    expect(REQUIRED_TERMINAL_SERVICE_CAPABILITY).toMatchObject({
+      pluginId: "pi-web.terminal",
+      id: "service",
+      version: 1,
+    });
+    const service = REQUIRED_TERMINAL_SERVICE_CAPABILITY.parse({ closeForCwd, runCommand, bindActivitySink, extra: vi.fn() });
 
     service.closeForCwd("/repo");
     const options = {

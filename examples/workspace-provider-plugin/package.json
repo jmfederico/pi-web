@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@jmfederico/pi-web": "^1.202608.1",
+    "@jmfederico/pi-web": "^2.202609.0",
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3"
   },

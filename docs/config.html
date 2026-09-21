@@ -98,12 +98,14 @@
             <a href="#worktree-pre-remove-hook">Pre-remove hook</a>
             <a href="#keys">Config matrix</a>
             <a href="#safe-tunnel-availability">Safe Tunnel availability</a>
+            <a href="#managed-data-directory">Managed data directory</a>
             <a href="#path-access">External path access</a>
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#prompt-attachments">Prompt attachments</a>
             <a href="#agent-runtime">Agent state directory</a>
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
             <a href="#catalog-refresh">Model catalog refresh</a>
+            <a href="#project-trust">Project trust</a>
             <a href="#session-tools">Session tools</a>
             <a href="#plugin-config">Plugin config and recovery</a>
             <a href="#extension-dialogs">Extension dialogs</a>
@@ -294,8 +296,7 @@
               <p>
                 Project-local <code>uploads.defaultFolder</code> overrides the global upload destination for workspaces in
                 that project, and project-local <code>attachments.defaultFolder</code> overrides the global prompt-attachment
-                destination the same way. PI WEB servers always include these workspace-effective values on local and
-                federated workspace responses.
+                destination the same way. These defaults also apply when accessing the project through Fleet.
               </p>
               <p>
                 Plugins may own separate project files, such as <code>.pi-web/tasks.json</code> for the built-in Workspace
@@ -709,6 +710,31 @@ worktree_path="$1"
               </p>
             </section>
 
+            <section id="managed-data-directory">
+              <h2>Managed data directory</h2>
+              <p>
+                <code>PI_WEB_DATA_DIR</code> sets the root for PI WEB-managed runtime state and defaults to
+                <code>~/.pi-web</code>. Unless overridden separately, it holds project and machine registries, locally
+                discovered plugins, the default session-daemon socket, and session archives.
+              </p>
+              <p>
+                A new root starts with empty registries and no session archives. To carry archives over, stop PI WEB,
+                then copy <code>archived-sessions.json</code> and the <code>archived-sessions/</code> directory from the
+                old root to the new one before starting again.
+              </p>
+              <p>
+                Only one live session daemon may use a data directory. For a second instance, set a distinct
+                <code>PI_WEB_DATA_DIR</code>, <code>PI_WEB_SESSIOND_SOCKET</code> (or <code>PI_WEB_SESSIOND_PORT</code> /
+                <code>PI_WEB_SESSIOND_HOST</code>), and <code>PI_WEB_PORT</code>. Stale ownership markers are normally
+                recovered automatically. If startup still refuses, verify the named owner is no longer running before
+                deleting <code>sessiond-owner.json</code> as the error suggests.
+              </p>
+              <p>
+                This does not change the config file selected by <code>PI_WEB_CONFIG</code> or Pi-owned state such as
+                active session files selected by <code>PI_CODING_AGENT_SESSION_DIR</code>.
+              </p>
+            </section>
+
             <section id="path-access">
               <h2>External path access</h2>
               <p>
@@ -751,14 +777,14 @@ worktree_path="$1"
                 dialog only, clearing the destination field uploads that batch to the workspace root.
               </p>
               <p>
-                Manual uploads use the workspace file-write path: paths stay workspace-relative, parent folder creation is
-                enabled by default, and overwrite is disabled by default. Browser-owned XHR progress is shown per
-                batch/file, and conflicts or errors stay visible in the upload progress UI.
+                Uploads stay inside the workspace, create parent folders by default, and do not overwrite existing files
+                unless you enable overwrite in the review dialog. Direct drag/drop never overwrites. Check the upload
+                progress UI for completion, conflicts, and errors.
               </p>
               <p>
-                For machine federation, Settings saves the global upload default on the selected machine. Remote
-                PI WEB servers always return workspace-effective upload defaults on workspace responses, and the Files
-                panel uses them as the default upload destination.
+                In Fleet, Settings saves the global upload default on the selected machine; the Files panel uses that
+                project's effective destination. The per-request size limit is controlled by <code>maxUploadBytes</code> /
+                <code>PI_WEB_MAX_UPLOAD_BYTES</code> on the machine serving the upload.
               </p>
             </section>
 
@@ -778,9 +804,8 @@ worktree_path="$1"
                 the configured default.
               </p>
               <p>
-                For machine federation, Settings saves the global attachments default on the selected machine. Remote
-                PI WEB servers always return <code>workspace.effectiveConfig.attachments.defaultFolder</code> on workspace
-                responses, and the composer uses it as the default save destination.
+                In Fleet, Settings saves the global attachment default on the selected machine; the composer uses that
+                project's effective destination.
               </p>
             </section>
 
@@ -827,56 +852,22 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
             <section id="pi-extension-provider-baseline">
               <h2>Pi extension provider baseline</h2>
               <p>
-                This policy applies to <strong>Pi runtime extensions that register model providers</strong>, not PI WEB
-                workspace-provider plugins. Pi extensions can call <code>pi.registerProvider(...)</code> through Pi's API.
-                A PI WEB plugin may declare a browser <code>module</code> and/or sessiond <code>serverModule</code>, but its
-                server entry follows <code>@jmfederico/pi-web/server-plugin-api</code> and cannot register Pi model providers
-                or arbitrary hooks. See the <a href="plugins">PI WEB plugin guide</a>.
+                Model providers are shared across all sessions on a machine. PI WEB loads them when the session daemon
+                starts, using Pi's built-in providers, environment credentials, the active agent directory's
+                <code>models.json</code>, and globally installed Pi extensions/packages. PI WEB workspace plugins are
+                separate; see the <a href="plugins">plugin guide</a>.
               </p>
               <p>
-                PI WEB shares one model runtime across all sessions. When the session daemon starts, before any project
-                resources load, it initializes global Pi extensions from the active agent directory,
-                including extensions supplied by globally configured Pi packages. Provider
-                registrations made by synchronous or awaited asynchronous extension factories during this bootstrap join
-                the shared baseline. PI WEB captures both config-form registrations
-                (<code>pi.registerProvider("id", config)</code>) and native-provider registrations
-                (<code>pi.registerProvider(provider)</code>), alongside Pi built-ins, environment credentials, and
-                providers from the active agent directory's <code>models.json</code>.
-              </p>
-              <p>
-                After startup capture, a provider's connection settings are fixed for the daemon lifetime. Later
-                attempts to add a provider, replace an existing provider's configuration, register a native provider, or
-                unregister a provider are no-ops, regardless of source or provider ID. This includes project extensions
-                attempting to add or replace a provider, lifecycle callbacks such as <code>session_start</code>, and
-                <code>/reload</code>. Non-provider Pi extension features continue to load and reload normally.
+                Provider connection settings stay fixed until the daemon restarts. Project extensions and
+                <code>/reload</code> cannot add, replace, or remove providers. Other Pi extension features continue to
+                load and reload normally.
               </p>
 
               <h3>Model list refresh for a known provider</h3>
               <p>
-                One narrow update is applied after startup: a provider captured in the baseline may refresh
-                <strong>its own model list</strong>. Extensions that fetch an updated catalog typically re-send their
-                complete provider configuration, so PI WEB compares the incoming registration against the recorded
-                baseline and applies it only when both hold:
-              </p>
-              <ul>
-                <li>the provider ID is already in the startup baseline, and</li>
-                <li>
-                  every field except the model list is unchanged — <code>name</code>, <code>baseUrl</code>,
-                  <code>apiKey</code>, <code>api</code>, <code>streamSimple</code>, <code>headers</code>,
-                  <code>authHeader</code>, <code>oauth</code>, and <code>refreshModels</code>.
-                </li>
-              </ul>
-              <p>
-                Anything else stays a no-op, including a provider that was not in the baseline and a known provider
-                whose credentials, base URL, or API surface differ from startup. Function-valued fields cannot be
-                compared by value, so a registration that supplies a new <code>streamSimple</code>,
-                <code>refreshModels</code>, or <code>oauth</code> implementation is treated as a change and ignored.
-              </p>
-              <p>
-                An applied refresh becomes the new comparison point, so a provider can refresh repeatedly. Re-sending an
-                unchanged model list is a replay rather than an update and is ignored. Refreshed models are visible to
-                sessions immediately; no restart and no network request is involved, because the extension has already
-                produced the catalog.
+                An extension may refresh an existing provider's <strong>model list</strong> without a restart, provided
+                all other provider settings remain unchanged. Changes to credentials, connection settings, or provider
+                implementation require a daemon restart. Accepted model-list updates are available to sessions immediately.
               </p>
               <p>
                 Model lists are shared daemon-wide state. If extensions in two workspaces register different model lists
@@ -889,10 +880,8 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
 
               <h3>Provider decisions in the daemon log</h3>
               <p>
-                Ignored mutations are written to the session-daemon log once per operation and provider ID, so a
-                replaying extension cannot flood the log. Applied model list refreshes are logged every time, with the
-                resulting model count, because each one changes shared runtime state. Neither entry contains provider
-                configuration or credentials, and PI WEB does not show a session warning or notification.
+                Check the session-daemon log for ignored provider changes and applied model-list refreshes; these do not
+                produce browser notifications. Log entries omit provider configuration and credentials.
               </p>
               <p>
                 This prevents accidental provider, configuration, or credential contamination between projects; it is
@@ -958,6 +947,23 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
               </p>
             </section>
 
+            <section id="project-trust">
+              <h2>Project trust for project-local resources</h2>
+              <p>
+                PI WEB honors Pi's project-trust settings at every session start before loading project-local
+                <code>.pi/</code> resources, including extensions and packages in <code>.pi/settings.json</code>.
+                There is no opt-out config key. Project extensions run arbitrary code with the agent's permissions;
+                trust only repositories whose code you are willing to run.
+              </p>
+              <p>Trust is decided in this order:</p>
+              <ol>
+                <li>Workspaces without trust-requiring resources load normally.</li>
+                <li>Global Pi extensions may decide trust through <code>project_trust</code> and remember the decision.</li>
+                <li>Otherwise, a saved decision in the agent directory's <code>trust.json</code> applies. You can set it through the Pi CLI trust prompt or workspace trust toggle.</li>
+                <li>Otherwise, Pi's <code>defaultProjectTrust</code> applies: <code>always</code> loads project resources; <code>never</code> skips them. <code>ask</code> also skips them because PI WEB has no browser trust prompt.</li>
+              </ol>
+            </section>
+
             <section id="session-tools">
               <h2>Session daemon tools</h2>
               <h3><code>spawnSessions</code></h3>
@@ -987,27 +993,9 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 there.
               </p>
               <p>
-                At a join point, after finishing its independent work, the parent calls
-                <code>yield_to_subsessions</code> alone as the final action in its tool batch. Pi ends a tool batch early
-                only when every result in that batch is terminating. If any tracked child is still working, the action
-                ends the current agent run so the parent becomes idle. If none are working, it does not end the run and
-                clearly reports that there is nothing to wait for.
-              </p>
-              <p>
-                A completion notice wakes an idle parent or queues behind in-flight work. Each notice lists any other
-                tracked children still working, so the parent can continue work or call
-                <code>yield_to_subsessions</code> again at the next join point. Further notices arrive automatically; do
-                not poll. The notice includes the child's final output when it fits. If that output is too long, PI WEB
-                omits it entirely instead of adding a truncated duplicate to the parent's context and directs the parent
-                to retrieve it with <code>check_subsession</code>.
-              </p>
-              <p>
-                <code>list_subsessions</code>, <code>check_subsession</code>, and <code>read_subsession</code> never yield
-                or change control flow. They are for deliberate inspection or recovery, not completion polling. While a
-                child works, agent-facing <code>check_subsession</code> and <code>read_subsession</code> withhold partial
-                output and direct the parent to continue independent work or yield at the join point. Output becomes
-                available when the child stops. Included output and transcripts follow a labeled marker and come last,
-                after PI WEB guidance.
+                The parent can continue independent work or wait for its tracked children. Completion notices arrive
+                automatically and wake an idle parent; no polling is needed. Child output is available to the parent
+                when the child stops.
               </p>
               <p>
                 Both <code>spawn_session</code> and <code>spawn_subsession</code> accept an optional
@@ -1036,11 +1024,9 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 <code>askUser</code> on the selected machine. An environment override makes the toggle read-only.
               </p>
               <p>
-                The tool accepts one set of 1–20 questions. Each question has a unique <code>id</code>, its
-                <code>question</code> text, optional supporting <code>detail</code>, up to 12 options with stable values and
-                user-facing labels, and an optional <code>multiple</code> flag. The browser always adds a
-                <strong>Custom</strong> free-text answer, including when the model supplies no options. No question is
-                required: the user may leave any of them unanswered.
+                Agents can post a form with 1–20 questions, with free-text answers or up to 12 choices per question.
+                Some questions allow multiple selections. A <strong>Custom</strong> free-text answer is always available,
+                and you may leave any question unanswered.
               </p>
               <p>
                 Calling <code>ask_user</code> posts the whole set as one browser form and ends the current agent run
@@ -1070,10 +1056,12 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
               <h2>PI WEB plugin config and recovery</h2>
               <p>
                 The global <code>plugins</code> key controls desired enablement and JSON settings for browser-only,
-                server-only, and dual-entry plugins. It does not install packages. Plugins default to enabled;
+                server-only, and dual-entry plugins. It does not install packages. Plugins default to enabled unless their
+                package metadata declares <code>defaultEnabled: false</code>, as Captain's Log does. Explicit
+                <code>plugins.&lt;id&gt;.enabled</code> config overrides that default.
                 <code>plugins.&lt;id&gt;.enabled: false</code> hides a browser-only entry on the next page load. For a
                 server-backed entry, desired disablement takes effect on the next sessiond start, and its paired browser
-                entry continues to follow the still-active backend until then. The bundled
+                entry continues to follow the still-active server entry until then. The bundled
                 <code>pi-web.terminal</code> plugin is required during normal startup; ordinary config cannot disable it,
                 and Settings renders it non-editable.
               </p>
@@ -1091,26 +1079,23 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
               </div>
               <h3>Desired versus active state</h3>
               <p>
-                Sessiond is the single workspace authority and captures one immutable server-plugin/provider snapshot at
-                startup. Saving config or replacing package files changes desired state only. The old provider and its
-                paired browser entry can remain active until a restart after desired disablement. A paired browser entry
-                is withheld for mismatched source, scope, settings fingerprint, or revisions, and for unsuitable active
-                health/lifecycle compatibility. Web/API restart and browser reload do not replace the active registry.
+                Saving <code>plugins</code> config or replacing package files changes <strong>desired</strong> state,
+                not the running server code. A disabled server plugin and its paired UI may remain active until the
+                session daemon restarts. PI WEB withholds a paired UI when its package/settings no longer match the
+                running server code or the server plugin is unhealthy or incompatible.
               </p>
               <p>
-                <strong>Settings → PI WEB plugins</strong> shows active, failed, incompatible, disabled, not-active,
-                unknown, conflict, stale-revision, health, safe-mode, and restart-required state. Desired config remains
-                editable when sessiond is unavailable if the config endpoint works, but active state stays explicitly
-                unavailable. In Fleet, desired and active state both come from the selected target; incompatible settings,
-                lifecycle, manifest, or backend support never silently falls back to the gateway.
+                <strong>Settings → PI WEB plugins</strong> distinguishes desired from active state and shows failures,
+                compatibility problems, safe mode, and required restarts. If the daemon is unavailable, desired config
+                may still be editable, but active state is unavailable. In Fleet, this panel targets the selected
+                machine. Unsupported or incompatible remote plugin features report errors rather than using gateway
+                config or code.
               </p>
               <p>
-                Mixed-version plugin/provider operation is unsupported in either upgrade order. A newer gateway rejects
-                an older target's entire remote plugin manifest, including browser-only contributions, when the target
-                lacks the lifecycle contract; its Git panel is unavailable. An older gateway still calls legacy core Git
-                routes removed by an updated target, so remote Git status/diff returns <code>404</code>. Upgrade gateway
-                and target together, restart their updated web/API processes and the target session daemon, then reload
-                the browser. Other selected-machine features keep their own capability negotiation.
+                Mixed-version plugin operation is unsupported in either upgrade order. Remote plugins, including Git,
+                may be unavailable or return <code>404</code>. Upgrade gateway and target together, restart their updated
+                web/API processes and the target session daemon, then reload the browser. Other selected-machine
+                features may report their own compatibility errors.
               </p>
               <ol>
                 <li>Install or update the package on the target machine.</li>
@@ -1167,14 +1152,9 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
             <section id="extension-dialogs">
               <h2>Extension dialogs</h2>
               <p>
-                Pi extensions can ask the user questions from <code>ctx.ui.confirm()</code>,
-                <code>ctx.ui.select()</code>, and <code>ctx.ui.input()</code> — including from
-                <code>session_start</code> hooks and in-flight <code>tool_call</code> hooks. PI WEB renders these dialogs
-                inline in the session transcript and answers them through a dedicated session-daemon channel, never the
-                prompt queue, so a dialog parked inside a <code>tool_call</code> hook cannot deadlock the run. Dialog
-                support is always on; there is no enable flag. See
-                <a href="plugins#pi-extension-dialogs">Pi extension dialogs in PI WEB</a> for behavior details and author
-                guidance.
+                Pi extensions can show confirmation, selection, and text-input dialogs inline in the session transcript,
+                including while a session starts or a tool runs. Dialog support is always on; there is no enable flag.
+                See <a href="plugins#pi-extension-dialogs">Pi extension dialogs in PI WEB</a> for details.
               </p>
               <p>
                 <code>extensionDialogsTimeoutMs</code> is the unattended-dialog safety valve: how long the session daemon
@@ -1188,6 +1168,15 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions</code></pre>
                 config file. Restart the session daemon after changing it — for the systemd user service, run
                 <code>systemctl --user restart pi-web-sessiond</code>.
               </div>
+            </section>
+
+            <section id="shortcut-config">
+              <h2>Shortcut config</h2>
+              <p>
+                Shortcut values are keyed by action id. Use strings such as <code>mod+k</code> or <code>mod+g p</code>;
+                <code>null</code> disables that action's shortcut. See the <a href="#global-config">global example</a>.
+                Prefer <strong>Settings → Keyboard</strong> for interactive editing.
+              </p>
             </section>
 
             <section id="prompt-completions">

@@ -14,7 +14,7 @@ const publicApiDeclarationPaths = [
 ] as const;
 
 describe("production build contents", () => {
-  it("builds bundled plugins before every development sessiond entrypoint", async () => {
+  it("keeps development sessiond startup build-free and gives web a single builder", async () => {
     const metadata: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
     if (!isRecord(metadata) || !isRecord(metadata["scripts"])) throw new Error("package.json scripts are missing");
 
@@ -23,9 +23,11 @@ describe("production build contents", () => {
     for (const scriptName of ["dev:sessiond", "start:sessiond"] as const) {
       const command = scripts[scriptName];
       if (typeof command !== "string") throw new Error(`package.json script is missing: ${scriptName}`);
-      expect(command).toMatch(/^npm run build:plugins && /u);
-      expect(command).toContain("src/server/sessiond.ts");
+      expect(command).toMatch(/^node scripts\/dev-sessiond\.mjs(?: --watch)?$/u);
+      expect(command).not.toContain("build:plugins");
     }
+    expect(scripts["dev:web"]).toBe("tsc -p tsconfig.plugins.json && node scripts/dev-web.mjs");
+    expect(scripts["dev:plugins"]).toBe("node scripts/build-plugins.mjs --watch");
   });
 
   // Constructing the full compiler graph can exceed Vitest's default timeout under parallel-suite CPU contention.
@@ -54,17 +56,27 @@ describe("production build contents", () => {
         copyFile(join(repoRoot, "server-plugin-api.d.ts"), join(fixtureRoot, "server-plugin-api.d.ts")),
         writeFile(join(fixtureRoot, "dist", "plugin-api.d.ts"), "export {};\n", "utf8"),
         writeFile(join(fixtureRoot, "dist", "server-plugin-api.d.ts"), "export {};\n", "utf8"),
+        writeFile(join(fixtureRoot, "dist", "server-plugin-api.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.testSupport.js"), "export {};\n", "utf8"),
         writeFile(join(fixtureDist, "app.testSupport.js.map"), "{}\n", "utf8"),
       ]);
 
+      const example = join(fixtureRoot, "examples", "session-bridge-plugin");
+      await mkdir(join(example, "node_modules", "dependency"), { recursive: true });
+      await mkdir(join(example, "dist"), { recursive: true });
+      await writeFile(join(example, "package.json"), '{"name":"example","version":"1.0.0"}\n');
+      await writeFile(join(example, "node_modules", "dependency", "index.d.ts"), "export {};\n");
+      await writeFile(join(example, "dist", "stale.js"), "export {};\n");
       const stdout = await runNpm(["pack", "--dry-run", "--json", "--ignore-scripts"], fixtureRoot);
       const packagedFiles = packageFilePaths(stdout);
 
+      expect(packagedFiles).toContain("examples/session-bridge-plugin/package.json");
+      expect(packagedFiles.some((path) => path.includes("/node_modules/") || path.includes("/session-bridge-plugin/dist/"))).toBe(false);
       expect(packagedFiles).toEqual(expect.arrayContaining([
         "dist/plugin-api.d.ts",
         "dist/server-plugin-api.d.ts",
+        "dist/server-plugin-api.js",
         "dist/server/app.js",
         "plugin-api.d.ts",
         "server-plugin-api.d.ts",
@@ -77,13 +89,16 @@ describe("production build contents", () => {
     }
   });
 
-  it("exports and maps only the supported type-only plugin API subpaths", async () => {
+  it("keeps the browser API type-only and exports the supported server runtime contract", async () => {
     const metadata: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
     if (!isRecord(metadata)) throw new Error("package.json was not an object");
 
     expect(metadata["exports"]).toEqual({
       "./plugin-api": { types: "./dist/plugin-api.d.ts" },
-      "./server-plugin-api": { types: "./dist/server-plugin-api.d.ts" },
+      "./server-plugin-api": {
+        types: "./dist/server-plugin-api.d.ts",
+        import: "./dist/server-plugin-api.js",
+      },
     });
     expect(metadata["typesVersions"]).toEqual({
       "*": {
@@ -123,6 +138,8 @@ describe("production build contents", () => {
     try {
       await createCleanPluginBuildFixture(fixtureRoot);
       await runNpm(["run", "build:plugins"], fixtureRoot, 60_000);
+      const readyPath = join(fixtureRoot, "dist", ".plugins-ready");
+      expect(await readFile(readyPath, "utf8")).toBe("ready\n");
 
       const sourcePlugins = await bundledServerPlugins(join(fixtureRoot, "pi-web-plugins"));
       const builtPluginsRoot = join(fixtureRoot, "dist", "pi-web-plugins");
@@ -138,7 +155,7 @@ describe("production build contents", () => {
         if (!isRecord(imported)) throw new Error(`Built server plugin did not import as a module: ${plugin.id}`);
         const pluginExport = imported["default"];
         if (!isRecord(pluginExport)) throw new Error(`Built server plugin has no default object export: ${plugin.id}`);
-        expect(pluginExport["apiVersion"]).toBe(1);
+        expect(pluginExport["apiVersion"]).toBe(3);
         expect(typeof pluginExport["activate"]).toBe("function");
       }
 
@@ -183,6 +200,11 @@ describe("production build contents", () => {
       );
       if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
       expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
+
+      // An intentionally broken rebuild must not leave a successful cold-start marker behind.
+      await rm(join(fixtureRoot, "pi-web-plugins", "files", "package.json"));
+      await expect(execUtf8(process.execPath, ["scripts/build-plugins.mjs"], fixtureRoot, 30_000)).rejects.toThrow();
+      await expect(readFile(readyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(fixtureRoot, { recursive: true, force: true });
     }

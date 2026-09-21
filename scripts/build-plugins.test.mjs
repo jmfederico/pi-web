@@ -15,6 +15,7 @@ import { PiWebPluginService } from "../src/server/piWebPluginService.js";
 import { PluginRegistry } from "../src/client/src/plugins/registry.js";
 import {
   buildDirectory,
+  buildPiPackages,
   buildFilesBrowserPackage,
   filesBrowserBuildConfig,
   findWatchDirs,
@@ -31,6 +32,32 @@ afterEach(async () => {
 });
 
 describe("buildDirectory", () => {
+  it("ships optional Pi packages with compiled entry graphs and unchanged manifests without including test sources", async () => {
+    const source = join(tempDir, "pi-packages");
+    const packageDir = join(source, "captains-log");
+    await mkdir(join(packageDir, "src"), { recursive: true });
+    await mkdir(join(packageDir, "dist"));
+    await mkdir(join(packageDir, "test"));
+    const manifest = { name: "@jmfederico/pi-captains-log", type: "module", pi: { extensions: ["./dist/index.js"] } };
+    await writeFile(join(packageDir, "tsconfig.json"), JSON.stringify({ compilerOptions: { rootDir: "src", outDir: "dist" }, include: ["src/**/*.ts"] }));
+    await writeFile(join(packageDir, "dist/index.js"), 'throw new Error("stale output");');
+    await writeFile(join(packageDir, "dist/deleted.js"), 'throw new Error("deleted source");');
+    await writeFile(join(packageDir, "test/index.test.mjs"), 'throw new Error("tests must not ship");');
+    await writeFile(join(packageDir, "package.json"), JSON.stringify(manifest));
+    await writeFile(join(packageDir, "src/index.ts"), 'import { name } from "./name.js"; export default function register(): string { return name; }');
+    await writeFile(join(packageDir, "src/name.ts"), 'export const name: string = "Captain’s Log";');
+    await writeFile(join(packageDir, "src/index.test.ts"), 'throw new Error("tests must not ship");');
+    await writeFile(join(packageDir, "src/types.d.ts"), 'export type Name = string;');
+
+    const target = join(tempDir, "dist/pi-packages");
+    await buildPiPackages(source, target);
+    const output = join(target, "captains-log");
+    expect(await recursiveFiles(output)).toEqual(["dist/index.js", "dist/name.js", "package.json", "tsconfig.json"]);
+    expect(JSON.parse(await readFile(join(output, "package.json"), "utf8"))).toEqual(manifest);
+    const compiled = await import(pathToFileURL(join(output, "dist/index.js")).href);
+    expect(compiled.default()).toBe("Captain’s Log");
+  });
+
   it("materializes a symlinked file as a real file", async () => {
     const source = join(tempDir, "source");
     await mkdir(source, { recursive: true });
@@ -176,18 +203,20 @@ describe("Files browser package build", () => {
       const imported = await import(firstModuleUrl.href);
       const secondImported = await import(secondModuleUrl.href);
       const template = (strings, ...values) => ({ strings, values });
-      const activated = imported.default.activate({
-        apiVersion: 2,
+      const activated = await imported.default.activate({
+        apiVersion: 4,
         pluginId: "files",
         runtimePluginId: "files",
         html: template,
         svg: template,
+        signal: new AbortController().signal,
+        lifetimeSignal: new AbortController().signal,
       });
       const firstElementConstructor = customElements.get("pi-web-files-panel");
       const firstCodeViewerConstructor = customElements.get("pi-web-files-code-viewer");
       const registry = new PluginRegistry();
-      registry.register({ id: "remote-1.files", sourcePluginId: "files", machineId: "remote-1", plugin: imported.default });
-      registry.register({ id: "remote-2.files", sourcePluginId: "files", machineId: "remote-2", plugin: secondImported.default });
+      await registry.register({ id: "remote-1.files", sourcePluginId: "files", machineId: "remote-1", plugin: imported.default });
+      await registry.register({ id: "remote-2.files", sourcePluginId: "files", machineId: "remote-2", plugin: secondImported.default });
       const panels = registry.getWorkspacePanels();
       const firstContext = builtWorkspacePanelContext("remote-1");
       const secondContext = builtWorkspacePanelContext("remote-2");
@@ -228,8 +257,8 @@ describe("Files browser package build", () => {
         },
       };
     });
-    expect(builtModule.default).toMatchObject({ apiVersion: 2, name: "Files" });
-    expect(secondBuiltModule.default).toMatchObject({ apiVersion: 2, name: "Files" });
+    expect(builtModule.default).toMatchObject({ apiVersion: 4, name: "Files" });
+    expect(secondBuiltModule.default).toMatchObject({ apiVersion: 4, name: "Files" });
     expect(secondBuiltModule.FilesRuntime).not.toBe(builtModule.FilesRuntime);
     expect(registrations.panelMachineIds).toEqual(["remote-1", "remote-2"]);
     expect(registrations.firstElementConstructor).toBeDefined();

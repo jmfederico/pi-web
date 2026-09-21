@@ -1,6 +1,8 @@
 import { cp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { smokeInstalledCaptainsLog } from "./captains-log-package-smoke.mjs";
 
 const publicApiDeclarationPaths = [
   "plugin-api.d.ts",
@@ -12,8 +14,8 @@ const expectedPackageDeclarationPaths = [
   "plugin-api.d.ts",
   "server-plugin-api.d.ts",
 ].sort();
-const firstBrowserPluginApiV2Version = "1.202608.1";
-const workspaceProviderExamplePiWebRange = `^${firstBrowserPluginApiV2Version}`;
+const minimalPluginPlatformReleaseFloor = "2.202609.0";
+const workspaceProviderExamplePiWebRange = `^${minimalPluginPlatformReleaseFloor}`;
 const pluginConsumerCompilerModes = [
   {
     name: "NodeNext",
@@ -34,6 +36,7 @@ const pluginConsumerCompilerModes = [
 ];
 
 export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRoot }) {
+  await smokeInstalledCaptainsLog({ packageRoot, fixtureRoot });
   await assertPublicApiBaseline(packageRoot, repoRoot);
   await assertInstalledDeclarationArtifacts(packageRoot);
   await assertExampleCompatibilityFloor(packageRoot);
@@ -41,6 +44,7 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
   const consumerRoot = join(fixtureRoot, "plugin-api-consumers");
   await cp(join(repoRoot, "test-fixtures", "plugin-api-consumers"), consumerRoot, { recursive: true });
   await cp(join(packageRoot, "examples", "workspace-provider-plugin"), join(consumerRoot, "dual-entry"), { recursive: true });
+  await cp(join(packageRoot, "examples", "session-bridge-plugin"), join(consumerRoot, "session-bridge"), { recursive: true });
   await Promise.all([
     mkdir(join(consumerRoot, "node_modules", "@jmfederico"), { recursive: true }),
     mkdir(join(consumerRoot, "node_modules", "@types"), { recursive: true }),
@@ -48,8 +52,10 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
   ]);
   await Promise.all([
     symlink(packageRoot, join(consumerRoot, "node_modules", "@jmfederico", "pi-web"), "dir"),
+    symlink(join(repoRoot, "node_modules", "@earendil-works"), join(consumerRoot, "node_modules", "@earendil-works"), "dir"),
     symlink(join(repoRoot, "node_modules", "@types", "node"), join(consumerRoot, "node_modules", "@types", "node"), "dir"),
   ]);
+  await assertServerRuntimeApi(consumerRoot);
 
   const browserPath = join(consumerRoot, "browser.ts");
   const serverPath = join(consumerRoot, "server.ts");
@@ -57,6 +63,8 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
     join(consumerRoot, "dual-entry", "src", "browser", "index.ts"),
     join(consumerRoot, "dual-entry", "src", "server.ts"),
   ];
+
+  await buildSessionBridgeExample(join(consumerRoot, "session-bridge"), repoRoot);
 
   for (const mode of pluginConsumerCompilerModes) {
     assertPluginApiResolution(browserPath, mode.options, packageRoot);
@@ -68,11 +76,42 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
     ]);
+    assertStrictPluginConsumer("session-bridge browser/backend", [
+      join(consumerRoot, "session-bridge", "src", "browser", "index.ts"),
+      join(consumerRoot, "session-bridge", "src", "server.ts"),
+    ], mode, packageRoot, repoRoot, [
+      "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/shared/pluginApiTypes.d.ts",
+    ], ["node"]);
     assertStrictPluginConsumer("dual-entry example", dualEntryPaths, mode, packageRoot, repoRoot, [
       "dist/plugin-api.d.ts",
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
     ], ["node"]);
+  }
+}
+
+async function buildSessionBridgeExample(exampleRoot, repoRoot) {
+  const manifest = JSON.parse(await readFile(join(exampleRoot, "package.json"), "utf8"));
+  if (manifest.devDependencies?.["@jmfederico/pi-web"] !== workspaceProviderExamplePiWebRange) {
+    throw new Error("Session bridge example must use the plugin platform release floor");
+  }
+  const configPath = join(exampleRoot, "tsconfig.json");
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (config.error) throw new Error(formatDiagnostics([config.error], repoRoot));
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, exampleRoot);
+  const program = ts.createProgram(parsed.fileNames, parsed.options);
+  const diagnostics = [...parsed.errors, ...ts.getPreEmitDiagnostics(program)];
+  if (diagnostics.length) throw new Error(formatDiagnostics(diagnostics, repoRoot));
+  const emitted = program.emit();
+  if (emitted.emitSkipped || emitted.diagnostics.length) throw new Error("Session bridge example build failed");
+  // Resolve the shipped manifest, not hardcoded output locations.
+  const entry = manifest.piWeb.plugins[0];
+  const server = await import(pathToFileURL(join(exampleRoot, entry.serverModule)).href);
+  const browser = await import(pathToFileURL(join(exampleRoot, entry.module)).href);
+  await readFile(join(exampleRoot, manifest.pi.extensions[0]), "utf8");
+  if (server.default.apiVersion !== 3 || browser.default.apiVersion !== 4
+    || server.default.requires.length !== 2 || entry.machineSpecific !== true) {
+    throw new Error("Session bridge example manifest/runtime entries are incompatible");
   }
 }
 
@@ -101,6 +140,39 @@ async function assertExampleCompatibilityFloor(packageRoot) {
   const actualRange = manifest?.devDependencies?.["@jmfederico/pi-web"];
   if (actualRange !== workspaceProviderExamplePiWebRange) {
     throw new Error(`Installed workspace-provider example must require @jmfederico/pi-web ${workspaceProviderExamplePiWebRange}; received ${JSON.stringify(actualRange)}`);
+  }
+}
+
+async function assertServerRuntimeApi(consumerRoot) {
+  const fixturePath = join(consumerRoot, "server-runtime.mjs");
+  await writeFile(fixturePath, `
+    import {
+      PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+      PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY,
+      PI_WEB_HOST_WORKSPACES_CAPABILITY,
+    } from "@jmfederico/pi-web/server-plugin-api";
+    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY];
+  `, "utf8");
+  const serverApi = await import(pathToFileURL(fixturePath).href);
+  const [workspacesCapability, piSessionsCapability, sessionEventsCapability] = serverApi.default;
+  if (!Object.isFrozen(sessionEventsCapability) || sessionEventsCapability?.pluginId !== "pi-web.host"
+    || sessionEventsCapability?.id !== "pi-session-events" || sessionEventsCapability?.version !== 1
+    || typeof sessionEventsCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/pi-session-events v1 token");
+  }
+  if (!Object.isFrozen(workspacesCapability)
+    || workspacesCapability?.pluginId !== "pi-web.host"
+    || workspacesCapability?.id !== "workspaces"
+    || workspacesCapability?.version !== 1
+    || typeof workspacesCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/workspaces v1 token");
+  }
+  if (!Object.isFrozen(piSessionsCapability)
+    || piSessionsCapability?.pluginId !== "pi-web.host"
+    || piSessionsCapability?.id !== "pi-sessions"
+    || piSessionsCapability?.version !== 1
+    || typeof piSessionsCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/pi-sessions v1 token");
   }
 }
 

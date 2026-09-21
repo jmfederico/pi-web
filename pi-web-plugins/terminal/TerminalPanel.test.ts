@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { JsonValue, PairedWorkspaceBackendChannelOptions, PairedWorkspaceBackendV1, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeerChannelOptions, PluginPeer, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
 import { Terminal } from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
@@ -33,7 +33,7 @@ describe("Terminal panel lifecycle", () => {
     expect(panel.shadowRoot?.querySelector("pi-web-terminal-soft-keys-terminal")).toBeNull();
   });
 
-  it("closes the paired channel and cancels retries, requests, observers, timers, and Xterm on disconnect", () => {
+  it("closes the peer channel and cancels retries, requests, observers, timers, and Xterm on disconnect", () => {
     vi.useFakeTimers();
     const panel = createTerminalPanel();
     const channelAbort = new AbortController();
@@ -162,7 +162,7 @@ describe("Terminal panel lifecycle", () => {
       Promise.resolve(operation === "terminal.list" ? [terminalInfo("remembered-shell")] : []));
     const rejectedNavigation = vi.fn(() => false);
     const context = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation(), set: rejectedNavigation },
     });
     memory.rememberTerminal(runtime.selectionScope(context), "remembered-shell");
@@ -194,7 +194,7 @@ describe("Terminal panel lifecycle", () => {
     const request = vi.fn((operation: string): Promise<JsonValue> => operation === "terminal.create"
       ? create.promise
       : Promise.resolve(operation === "terminal.list" ? [terminalInfo("old-shell")] : []));
-    panel.context = terminalContext({ pairedBackend: terminalBackend(request), navigation: { ...terminalNavigation(), set: setNavigation } });
+    panel.context = terminalContext({ peer: terminalPeer(request), navigation: { ...terminalNavigation(), set: setNavigation } });
     panel.runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
     Reflect.set(panel, "visible", true);
     callPanelMethod(panel, "willUpdate");
@@ -215,7 +215,7 @@ describe("Terminal panel lifecycle", () => {
       void operation;
       return Promise.resolve([]);
     });
-    Reflect.set(passivePanel, "context", terminalContext({ pairedBackend: terminalBackend(passiveRequest) }));
+    Reflect.set(passivePanel, "context", terminalContext({ peer: terminalPeer(passiveRequest) }));
     Reflect.set(passivePanel, "runtime", new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory()));
     callPanelMethod(passivePanel, "willUpdate");
 
@@ -228,7 +228,7 @@ describe("Terminal panel lifecycle", () => {
     const explicitRequest = vi.fn((operation: string): Promise<JsonValue> =>
       Promise.resolve(operation === "terminal.create" ? terminalInfo("created-terminal") : []));
     Reflect.set(explicitPanel, "context", terminalContext({
-      pairedBackend: terminalBackend(explicitRequest),
+      peer: terminalPeer(explicitRequest),
       navigation: { ...terminalNavigation(undefined, "open-1"), set: setNavigation },
     }));
     Reflect.set(explicitPanel, "runtime", new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory()));
@@ -248,7 +248,7 @@ describe("Terminal panel lifecycle", () => {
     const request = vi.fn((operation: string): Promise<JsonValue> =>
       Promise.resolve(operation === "terminal.create" ? terminalInfo("created-terminal") : []));
     const context = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation(undefined, "open-1"), set: setNavigation },
     });
     Reflect.set(panel, "context", context);
@@ -283,7 +283,7 @@ describe("Terminal panel lifecycle", () => {
     const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
     const pendingCreate = deferred<JsonValue>();
     const request = vi.fn((operation: string): Promise<JsonValue> => operation === "terminal.create" ? pendingCreate.promise : Promise.resolve([]));
-    const initialContext = terminalContext({ pairedBackend: terminalBackend(request) });
+    const initialContext = terminalContext({ peer: terminalPeer(request) });
     Reflect.set(panel, "context", initialContext);
     Reflect.set(panel, "runtime", runtime);
     callPanelMethod(panel, "willUpdate");
@@ -293,7 +293,7 @@ describe("Terminal panel lifecycle", () => {
 
     const setNavigation = vi.fn();
     const newerContext = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation("terminal-newer"), set: setNavigation },
     });
     Reflect.set(panel, "terminals", [terminalInfo("terminal-newer")]);
@@ -320,7 +320,7 @@ describe("Terminal panel lifecycle", () => {
       ? (creates.shift()?.promise ?? Promise.reject(new Error("Unexpected terminal create")))
       : Promise.resolve([]));
     const context = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation(undefined), set: setNavigation },
     });
     Reflect.set(panel, "context", context);
@@ -356,7 +356,7 @@ describe("Terminal panel lifecycle", () => {
       return Promise.resolve([]);
     });
     const context = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation("terminal-old"), set: setNavigation },
     });
     Reflect.set(panel, "context", context);
@@ -399,7 +399,7 @@ describe("Terminal panel lifecycle", () => {
       return Promise.resolve([]);
     });
     const context = terminalContext({
-      pairedBackend: terminalBackend(request),
+      peer: terminalPeer(request),
       navigation: { ...terminalNavigation(), set: setNavigation },
     });
     Reflect.set(panel, "context", context);
@@ -432,7 +432,7 @@ describe("Terminal panel lifecycle", () => {
     const listing = deferred<JsonValue>();
     const request = vi.fn((operation: string): Promise<JsonValue> => operation === "terminal.list"
       ? listing.promise : Promise.resolve(operation === "terminal.close" ? { closed: true } : []));
-    Reflect.set(panel, "context", terminalContext({ pairedBackend: terminalBackend(request) }));
+    Reflect.set(panel, "context", terminalContext({ peer: terminalPeer(request) }));
     Reflect.set(panel, "runtime", new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory()));
     callPanelMethod(panel, "willUpdate");
     Reflect.set(panel, "terminals", [terminalInfo("terminal-old")]);
@@ -453,11 +453,11 @@ describe("Terminal panel lifecycle", () => {
       createSignal = options?.signal;
       return pendingCreate.promise;
     });
-    const contextA = terminalContext({ pairedBackend: terminalBackend(request) });
+    const contextA = terminalContext({ peer: terminalPeer(request) });
     const setContextBNavigation = vi.fn();
     const contextB = terminalContext({
       workspace: { id: "workspace-2", projectId: "project-2", path: "/repo", label: "other", isMain: true },
-      pairedBackend: terminalBackend(vi.fn(() => Promise.resolve([]))),
+      peer: terminalPeer(vi.fn(() => Promise.resolve([]))),
       navigation: { ...terminalNavigation(), set: setContextBNavigation },
     });
     Reflect.set(panel, "context", contextA);
@@ -509,7 +509,7 @@ describe("Terminal panel lifecycle", () => {
     const panel = createTerminalPanel();
     const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
     const request = vi.fn(() => Promise.reject(new Error("offline")));
-    Reflect.set(panel, "context", terminalContext({ pairedBackend: terminalBackend(request) }));
+    Reflect.set(panel, "context", terminalContext({ peer: terminalPeer(request) }));
     Reflect.set(panel, "runtime", runtime);
     callPanelMethod(panel, "willUpdate");
     Reflect.set(panel, "visible", true);
@@ -536,7 +536,7 @@ describe("Terminal panel lifecycle", () => {
       requestSignal = options?.signal;
       return pendingRuns.promise;
     });
-    Reflect.set(panel, "context", terminalContext({ pairedBackend: terminalBackend(request) }));
+    Reflect.set(panel, "context", terminalContext({ peer: terminalPeer(request) }));
     Reflect.set(panel, "runtime", runtime);
     callPanelMethod(panel, "willUpdate");
     Reflect.set(panel, "commandRuns", [commandRun("running")]);
@@ -587,7 +587,7 @@ describe("Terminal panel lifecycle", () => {
     const panel = createTerminalPanel();
     const channel = { closed: new Promise<never>(() => undefined), send: vi.fn(), close: vi.fn() };
     const openChannel = vi.fn(() => Promise.resolve(channel));
-    const context = terminalContext({ pairedBackend: terminalBackend(vi.fn(() => Promise.resolve([])), openChannel) });
+    const context = terminalContext({ peer: terminalPeer(vi.fn(() => Promise.resolve([])), openChannel) });
     const terminal = { reset: vi.fn(), write: vi.fn(), writeln: vi.fn(), dispose: vi.fn() };
     Reflect.set(panel, "context", context);
     Reflect.set(panel, "visible", true);
@@ -609,7 +609,7 @@ describe("Terminal panel lifecycle", () => {
     const panel = createTerminalPanel();
     const channel = { closed: new Promise<never>(() => undefined), send: vi.fn(), close: vi.fn() };
     let attempt = 0;
-    const openChannel: NonNullable<PairedWorkspaceBackendV1["openChannel"]> = vi.fn((operation: string, input: JsonValue, options: PairedWorkspaceBackendChannelOptions) => {
+    const openChannel: NonNullable<PluginPeer["openChannel"]> = vi.fn((operation: string, input: JsonValue, options: PluginPeerChannelOptions) => {
       void operation;
       void input;
       attempt += 1;
@@ -617,7 +617,7 @@ describe("Terminal panel lifecycle", () => {
       options.onData({ type: "output", data: "replayed output", replay: true, replayComplete: true });
       return Promise.resolve(channel);
     });
-    const context = terminalContext({ pairedBackend: terminalBackend(vi.fn(() => Promise.resolve([])), openChannel) });
+    const context = terminalContext({ peer: terminalPeer(vi.fn(() => Promise.resolve([])), openChannel) });
     const terminal = { reset: vi.fn(), write: vi.fn(), writeln: vi.fn(), dispose: vi.fn() };
     Reflect.set(panel, "visible", true);
     Reflect.set(panel, "selectedId", "terminal-1");
@@ -646,7 +646,7 @@ describe("Terminal panel lifecycle", () => {
     const panel = createTerminalPanel();
     const channel = { closed: new Promise<never>(() => undefined), send: vi.fn(), close: vi.fn() };
     const openChannel = vi.fn(() => Promise.resolve(channel));
-    const context = terminalContext({ pairedBackend: terminalBackend(vi.fn(() => Promise.resolve([])), openChannel) });
+    const context = terminalContext({ peer: terminalPeer(vi.fn(() => Promise.resolve([])), openChannel) });
     const terminal = { dispose: vi.fn() };
     Reflect.set(panel, "visible", true);
     Reflect.set(panel, "selectedId", "terminal-1");
@@ -810,7 +810,7 @@ function terminalContext(overrides: Partial<WorkspacePanelContext> = {}): Worksp
     machine: { id: "local", name: "Local", kind: "local" },
     workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
     files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    pairedBackend: terminalBackend(
+    peer: terminalPeer(
       vi.fn(() => Promise.resolve([])),
       vi.fn(() => new Promise<never>(() => undefined)),
     ),
@@ -822,15 +822,13 @@ function terminalContext(overrides: Partial<WorkspacePanelContext> = {}): Worksp
   };
 }
 
-function terminalBackend(
-  request: NonNullable<PairedWorkspaceBackendV1["request"]>,
-  openChannel?: NonNullable<PairedWorkspaceBackendV1["openChannel"]>,
-): PairedWorkspaceBackendV1 {
+function terminalPeer(
+  request: NonNullable<PluginPeer["request"]>,
+  openChannel?: NonNullable<PluginPeer["openChannel"]>,
+): PluginPeer {
   return {
-    version: 1,
-    requestVersion: 1,
     request,
-    ...(openChannel === undefined ? {} : { channelVersion: 1 as const, openChannel }),
+    ...(openChannel === undefined ? {} : { openChannel }),
   };
 }
 

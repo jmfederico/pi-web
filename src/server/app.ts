@@ -35,7 +35,7 @@ import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { registerPluginBackendChannelProxyRoutes } from "./plugins/pluginBackendChannelProxyRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
-import { registerPairedPluginBackendProxyRoutes, registerPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
+import { registerPairedPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
 import type { SafeTunnelBridgeService } from "./safeTunnel/safeTunnelBridgeService.js";
@@ -271,6 +271,9 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
     const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
     return getPiWebVersionStatus(sessionDaemon, activeAgentProfile.status === "available" ? { activeAgentProfile: activeAgentProfile.profile } : {});
   });
+  // Web readiness must not wait for sessiond: dev Compose starts the daemon
+  // only after the web-owned initial build and API startup have completed.
+  app.get("/api/pi-web/health", () => Promise.resolve({ ok: true }));
   app.get("/api/pi-web/runtime", localRuntime);
   app.get("/api/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
   app.get("/api/machines/local/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
@@ -295,7 +298,6 @@ export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> 
 
   registerSessionProxyRoutes(app, sessionDaemon);
   registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
-  registerPluginBackendProxyRoutes(app, sessionDaemon);
   registerPairedPluginBackendProxyRoutes(app, sessionDaemon);
   registerPluginBackendChannelProxyRoutes(app, sessionDaemon);
   registerWorkspaceExplorerRoutes(app, projects, workspaces, "/api", { config: configService });

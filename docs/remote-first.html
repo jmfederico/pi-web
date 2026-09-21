@@ -117,12 +117,12 @@
             <section id="persistence-first">
               <h2>Persistence should not be a workaround</h2>
               <p>
-                Terminals are ephemeral by default. You can patch around that with tmux, screen, background processes,
-                and remote shells, but persistence is still something you bolt on after the fact.
+                A browser disconnect should not stop an agent. PI WEB keeps the session runtime separate from the
+                browser and web/API service, so reconnecting brings you back to the running work.
               </p>
               <p>
-                PI WEB treats persistence as the foundation. Agent sessions live in a long-running runtime, workspaces
-                stay on the machine that runs the tools, and browser disconnects do not end the work.
+                Keep the host and session daemon running. A host shutdown or session-daemon restart can interrupt
+                active work; browser reconnects and web/API restarts do not provide protection against those interruptions.
               </p>
               <div class="callout manifesto-callout">
                 If AI is doing the work, the work should not be tied to your laptop.
@@ -159,8 +159,7 @@
               <p>
                 Your device should not have to be the editor, terminal, build server, and agent runtime. In PI WEB, the
                 browser is the cockpit: supervise sessions, redirect agents, inspect transcripts, and review progress
-                while the development environment stays remote and stable. Under the hood, PI WEB still coordinates the
-                running work like a browser-based control plane.
+                while repositories, tools, and credentials stay on the remote machine.
               </p>
               <p>
                 Laptop, phone, tablet, desktop: they are just windows into the same running work. You remain in control,
@@ -187,11 +186,11 @@
                 SSH tunnel, VPN, private LAN, or an authenticated reverse proxy.
               </p>
               <div class="callout warning">
-                Use the laptop when you want convenience. Use a server or always-on workstation when you want agents to
-                keep working even when the laptop is gone.
+                Do not expose PI WEB directly to the public internet. It can run commands and access files with the
+                server user's permissions. Use a trusted private connection or an authenticated reverse proxy.
               </div>
               <div class="doc-actions">
-                <a class="button primary" href="install">Install PI WEB</a>
+                <a class="button primary" href="install#remote-access">Set up remote access</a>
                 <a class="button" href="faq#laptop-or-server">Laptop or server FAQ</a>
               </div>
             </section>

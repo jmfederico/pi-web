@@ -4,7 +4,6 @@ import type {
   ProjectInput,
   ProviderClaim,
   ProviderRemoveContext,
-  ProviderRequestContext,
   ProviderWorkspace,
   ServerPluginActivationContext,
   ServerPluginExecFileResult,
@@ -33,10 +32,13 @@ interface GitWorktreeInfo {
 }
 
 const plugin: PiWebServerPlugin = {
-  apiVersion: 1,
+  apiVersion: 3,
   name: "Git",
   activate(context) {
-    return { workspaceProvider: createGitWorkspaceProvider(context) };
+    return {
+      workspaceProvider: createGitWorkspaceProvider(context),
+      peer: { request: (request) => requestGitBackend(context, request) },
+    };
   },
 };
 
@@ -109,7 +111,6 @@ export function createGitWorkspaceProvider(context: ServerPluginActivationContex
         };
       });
     },
-    request: (request: ProviderRequestContext) => requestGitBackend(context, request),
     async prepareRemove({ project, workspace, signal }: ProviderRemoveContext): Promise<WorkspaceRemovePlan> {
       const privatePath = gitPrivateWorktreePath(workspace);
       if (resolve(privatePath) !== workspace.path) {

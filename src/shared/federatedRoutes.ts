@@ -3,7 +3,6 @@ import {
   PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
-  PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
 } from "./pluginBackendProtocol.js";
 import { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
@@ -52,14 +51,6 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "DELETE", path: "/projects/:projectId" },
   { method: "GET", path: "/project-directories" },
   { method: "GET", path: "/projects/:projectId/workspaces" },
-  {
-    method: "POST",
-    path: PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
-    timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
-    bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
-    responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
-    propagateCancellation: true,
-  },
   {
     method: "POST",
     path: PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,

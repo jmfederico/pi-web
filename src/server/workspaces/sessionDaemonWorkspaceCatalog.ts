@@ -208,7 +208,6 @@ function parseProvider(value: unknown, workspaceLabel: string): NonNullable<Work
   return Object.freeze({
     pluginId: requirePluginId(value, "pluginId", label),
     capabilities: Object.freeze({
-      request: requireBoolean(capabilities, "request", `${label} capabilities`),
       remove: requireBoolean(capabilities, "remove", `${label} capabilities`),
     }),
     ...(metadata === undefined ? {} : { metadata }),
@@ -404,7 +403,7 @@ function isRuntimeState(value: unknown): value is ServerPluginRuntimeState {
 }
 
 function isLifecyclePhase(value: unknown): value is ServerPluginLifecyclePhase {
-  return value === "import" || value === "activate" || value === "validate" || value === "start" || value === "health" || value === "stop";
+  return value === "import" || value === "activate" || value === "validate" || value === "start" || value === "health" || value === "dispose";
 }
 
 function isCatalogDiagnosticCode(value: unknown): value is PiWebPluginCatalogDiagnosticCode {

@@ -54,21 +54,8 @@ export type PluginBackendWebSocketFactory = (url: string) => WebSocket;
 type PluginBackendPathTarget = Pick<PluginBackendRequestTarget, "pluginId" | "machineId" | "projectId" | "workspaceId">;
 type PluginBackendRequestUrlBuilder = (target: PluginBackendPathTarget, operation: string) => string;
 
-export function pluginBackendRequestPath(target: PluginBackendPathTarget, operation: string): string {
-  return scopedPluginBackendRequestPath(target, operation, "plugin-backends");
-}
-
-export function pluginBackendRequestUrl(
-  target: PluginBackendPathTarget,
-  operation: string,
-  context?: AppUrlContext,
-): string {
-  const path = pluginBackendRequestPath(target, operation);
-  return context === undefined ? resolveAppUrl(path) : resolveAppUrl(path, context);
-}
-
 export function pairedPluginBackendRequestPath(target: PluginBackendPathTarget, operation: string): string {
-  return scopedPluginBackendRequestPath(target, operation, "paired-plugin-backends");
+  return scopedPluginBackendRequestPath(target, operation);
 }
 
 export function pairedPluginBackendRequestUrl(
@@ -93,15 +80,6 @@ export function pairedPluginBackendChannelUrl(
 ): string {
   const path = pairedPluginBackendChannelPath(target, operation);
   return context === undefined ? resolveAppWebSocketUrl(path) : resolveAppWebSocketUrl(path, context);
-}
-
-export function requestPluginBackend(
-  target: PluginBackendRequestTarget,
-  operation: string,
-  input: JsonValue,
-  options: PluginBackendRequestOptions = {},
-): Promise<JsonValue> {
-  return requestPluginBackendAt(target, operation, input, options, pluginBackendRequestUrl);
 }
 
 export function requestPairedPluginBackend(
@@ -243,7 +221,6 @@ export function openPairedPluginBackendChannel(
 function scopedPluginBackendRequestPath(
   target: PluginBackendPathTarget,
   operation: string,
-  collection: "plugin-backends" | "paired-plugin-backends",
 ): string {
   if (!isPiWebPluginId(target.pluginId)) throw new Error(`Invalid PI WEB plugin id: ${target.pluginId}`);
   if (target.machineId === "") throw new Error("Machine id is required");
@@ -253,7 +230,7 @@ function scopedPluginBackendRequestPath(
   const prefix = target.machineId === "local"
     ? "api"
     : `api/machines/${encodeURIComponent(target.machineId)}`;
-  return `${prefix}/${collection}/${encodeURIComponent(target.pluginId)}/projects/${encodeURIComponent(target.projectId)}/workspaces/${encodeURIComponent(target.workspaceId)}/${encodeURIComponent(validatedOperation)}`;
+  return `${prefix}/paired-plugin-backends/${encodeURIComponent(target.pluginId)}/projects/${encodeURIComponent(target.projectId)}/workspaces/${encodeURIComponent(target.workspaceId)}/${encodeURIComponent(validatedOperation)}`;
 }
 
 async function requestPluginBackendAt(

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { watch } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { build as viteBuild } from "vite";
@@ -20,7 +20,8 @@ const terminalPluginOutputDir = resolve(bundledPluginsOutputDir, "terminal");
 // separate output roots so neither becomes a discovery root for the other.
 // Files and Terminal are the concrete exceptions to plain transpilation: each
 // browser entry is replaced below by a self-contained bundle. Terminal also
-// keeps a package-local transpiled server graph.
+// keeps a package-local transpiled server graph. Captain's Log likewise bundles
+// its browser entry after transpiling its standalone package graph.
 const buildTargets = [
   { rootDir: bundledPluginsSourceDir, outDir: bundledPluginsOutputDir, label: "plugin" },
   { rootDir: resolve("pi-packages"), outDir: resolve("dist/pi-packages"), label: "package" },
@@ -37,6 +38,9 @@ if (isDirectExecution()) {
 }
 
 async function buildAll() {
+  // Cold-start readiness only; the supported restart command orders web before sessiond.
+  const readyPath = resolve("dist", ".plugins-ready");
+  await rm(readyPath, { force: true });
   for (const target of buildTargets) {
     await rm(target.outDir, { recursive: true, force: true });
     const excludedDirectories = target.rootDir === bundledPluginsSourceDir
@@ -45,15 +49,73 @@ async function buildAll() {
           await realpath(terminalPluginSourceDir),
         ])
       : new Set();
-    const result = await buildDirectory(target.rootDir, target.outDir, new Set(), excludedDirectories);
+    const result = target.label === "package"
+      ? await buildPiPackages(target.rootDir, target.outDir)
+      : await buildDirectory(target.rootDir, target.outDir, new Set(), excludedDirectories);
     if (target.rootDir === bundledPluginsSourceDir) {
       await buildFilesBrowserPackage(filesPluginSourceDir, filesPluginOutputDir);
       await buildTerminalPackage(terminalPluginSourceDir, terminalPluginOutputDir);
+    } else {
+      await viteBuild({
+        configFile: resolve(target.rootDir, "captains-log/vite.config.mjs"),
+        logLevel: "silent",
+        build: { outDir: resolve(target.outDir, "captains-log/dist/browser") },
+      });
     }
     const suffix = result.transpiled === 1 ? "file" : "files";
     const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files/Terminal browser bundles" : "";
     console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix}${bundleSuffix} into ${relative(cwd, target.outDir)}`);
   }
+  await writeFile(readyPath, "ready\n");
+  process.send?.({ type: "plugin-build-ready" });
+}
+
+// Packages with a standalone tsconfig retain their own src -> dist layout.
+// Rebuild that graph rather than copying locally generated (possibly stale) JS.
+export async function buildPiPackages(sourceDir, targetDir) {
+  const result = { copied: 0, transpiled: 0 };
+  for (const entry of await readDirectory(sourceDir)) {
+    if (!entry.isDirectory() || entry.name === "node_modules") continue;
+    const packageDir = resolve(sourceDir, entry.name);
+    const outputDir = resolve(targetDir, entry.name);
+    const configPath = resolve(packageDir, "tsconfig.json");
+    let configText;
+    try {
+      configText = await readFile(configPath, "utf8");
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") throw error;
+    }
+    let built;
+    if (configText === undefined) {
+      built = await buildDirectory(packageDir, outputDir);
+    } else {
+      const json = ts.parseConfigFileTextToJson(configPath, configText);
+      if (json.error) throw new Error(formatDiagnostics([json.error]));
+      const config = ts.parseJsonConfigFileContent(json.config, ts.sys, packageDir);
+      if (config.errors.length > 0) throw new Error(formatDiagnostics(config.errors));
+      const { rootDir, outDir } = config.options;
+      if (!rootDir || !outDir) throw new Error(`${configPath} must declare rootDir and outDir`);
+      const sourceRoot = packageSubdirectory(packageDir, rootDir);
+      const outputRoot = packageSubdirectory(packageDir, outDir);
+      const copied = await buildDirectory(packageDir, outputDir, new Set(), new Set([
+        await realpath(rootDir),
+        await realpath(outDir).catch(() => outDir),
+      ]));
+      const compiled = await buildDirectory(resolve(packageDir, sourceRoot), resolve(outputDir, outputRoot));
+      built = { copied: copied.copied + compiled.copied, transpiled: copied.transpiled + compiled.transpiled };
+    }
+    result.copied += built.copied;
+    result.transpiled += built.transpiled;
+  }
+  return result;
+}
+
+function packageSubdirectory(packageDir, path) {
+  const subdirectory = relative(packageDir, path);
+  if (!subdirectory || isAbsolute(subdirectory) || subdirectory === ".." || subdirectory.startsWith(`..${sep}`)) {
+    throw new Error(`Package build directory must be inside ${packageDir}: ${path}`);
+  }
+  return subdirectory;
 }
 
 export async function buildDirectory(sourceDir, targetDir, visited = new Set(), excludedDirectories = new Set()) {
@@ -92,7 +154,8 @@ export async function buildDirectory(sourceDir, targetDir, visited = new Set(), 
     }
 
     if (!entry.isFile() && linked?.isFile() !== true) continue;
-    if (entry.name.endsWith(".d.ts") || isTestSource(entry.name)) continue;
+    // npm excludes .gitignore from tarballs; do not emit non-distributable build artifacts.
+    if (entry.name === ".gitignore" || entry.name.endsWith(".d.ts") || isTestSource(entry.name)) continue;
 
     if (isPluginSource(entry.name)) {
       await buildFile(sourcePath, targetPath.replace(/\.ts$/u, ".js"));
@@ -221,7 +284,7 @@ function isPluginSource(fileName) {
 }
 
 function isTestSource(fileName) {
-  return /\.(?:test|spec)\.ts$/u.test(fileName);
+  return /\.(?:test|spec)\.[cm]?[jt]s$/u.test(fileName);
 }
 
 async function hasTypeScriptSource(javaScriptPath) {
@@ -249,6 +312,7 @@ async function watchAndBuild() {
   let timer;
   let building = false;
   let pending = false;
+  let builtOnce = false;
 
   const closeWatchers = () => {
     for (const watcher of watchers) watcher.close();
@@ -272,9 +336,14 @@ async function watchAndBuild() {
         pending = false;
         await refreshWatchers();
         await buildAll();
+        builtOnce = true;
       } while (pending);
     } catch (error) {
       console.error(`[plugins] ${formatUnknownError(error)}`);
+      if (!builtOnce) {
+        closeWatchers();
+        throw error;
+      }
     } finally {
       building = false;
     }

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, ProviderRemoveContext, ProviderRequestContext, ProviderWorkspace, WorkspaceProvider } from "../../server-plugin-api.js";
+import type { ProviderRemoveContext, ProviderWorkspace, WorkspaceProvider } from "../../server-plugin-api.js";
 import type { Project } from "../types.js";
 import type { ServerPluginProviderContribution } from "../plugins/serverPluginRuntime.js";
 import { ProjectScopedSpawnTargetResolver } from "../sessions/spawnTargetResolver.js";
@@ -41,7 +41,6 @@ describe("WorkspaceProviderRegistry", () => {
           removal: { actionLabel: "Remove", confirmation: "Remove linked?" },
         }),
       ]),
-      request: () => Promise.resolve({ ok: true }),
       prepareRemove: () => Promise.resolve({ title: "Remove", command: "tool remove" }),
     });
     const registry = registryFor([
@@ -61,7 +60,7 @@ describe("WorkspaceProviderRegistry", () => {
         isMain: true,
         provider: {
           pluginId: "primary",
-          capabilities: { request: true, remove: false },
+          capabilities: { remove: false },
           metadata: { changeId: "abc", nested: [1, true, null] },
         },
       }),
@@ -70,7 +69,7 @@ describe("WorkspaceProviderRegistry", () => {
         path: hostPath("/linked"),
         provider: {
           pluginId: "primary",
-          capabilities: { request: true, remove: true },
+          capabilities: { remove: true },
         },
       }),
     ]);
@@ -442,196 +441,48 @@ describe("WorkspaceProviderRegistry", () => {
     expect(resolution.diagnostics[0]?.message).toContain(`not an accessible directory: ${hostPath("/gone")}`);
   });
 
-  it("dispatches a neutral JSON operation with the current private workspace snapshot", async () => {
-    let observedContext: ProviderRequestContext | undefined;
-    const privateData: Record<string, JsonValue> = { cursor: "private-7" };
-    Object.defineProperty(privateData, "__proto__", {
-      value: { preserved: true },
-      enumerable: true,
-      configurable: true,
-      writable: true,
-    });
-    const request = vi.fn((context: ProviderRequestContext) => {
-      observedContext = context;
-      const input = requireRecord(context.input, "request input");
-      const cards = input["cards"];
-      const includeClosed = input["includeClosed"];
-      const data = requireRecord(context.workspace.data, "private workspace data");
-      const protoData = requireRecord(data["__proto__"], "private __proto__ data");
-      if (!Array.isArray(cards) || !cards.every((card) => typeof card === "string") || typeof includeClosed !== "boolean" || typeof data["cursor"] !== "string" || protoData["preserved"] !== true) {
-        throw new Error("Invalid neutral fixture input");
-      }
-      return Promise.resolve({
-        openCards: includeClosed ? cards.length : cards.filter((card) => card !== "closed").length,
-        cursor: data["cursor"],
-        protoKeyPreserved: true,
-      });
-    });
-    const registry = registryFor([contribution("board", provider({
+  it("waits for admitted provider work to settle cooperatively after shutdown abort", async () => {
+    const callbackStarted = deferred<undefined>();
+    const callbackAborted = deferred<undefined>();
+    const releaseCallback = deferred<undefined>();
+    let callbackFinished = false;
+    let listedSignal: AbortSignal | undefined;
+    const { registry, logger } = registryFixture([contribution("owner", provider({
       probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true, { data: privateData })]),
-      request,
+      list: async (_project, signal) => {
+        listedSignal = signal;
+        callbackStarted.resolve(undefined);
+        await new Promise<void>((resolveAbort) => {
+          signal.addEventListener("abort", () => { resolveAbort(); }, { once: true });
+        });
+        callbackAborted.resolve(undefined);
+        await releaseCallback.promise;
+        callbackFinished = true;
+        return [];
+      },
     }))]);
-    const resolution = await registry.resolve(project);
-    const workspaceId = resolution.workspaces[0]?.id;
-    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
+    const pending = registry.resolve(project);
+    await callbackStarted.promise;
 
-    await expect(registry.request({
-      pluginId: "board",
-      moduleRevision: "1",
-      project,
-      workspaceId,
-      operation: "cards.summary",
-      input: { cards: ["alpha", "closed"], includeClosed: false },
-    })).resolves.toEqual({ openCards: 1, cursor: "private-7", protoKeyPreserved: true });
+    let closeFinished = false;
+    const closing = registry.closeAll("provider shutdown");
+    void closing.then(
+      () => { closeFinished = true; },
+      () => { closeFinished = true; },
+    );
 
-    expect(request).toHaveBeenCalledOnce();
-    expect(observedContext).toMatchObject({
-      project: { id: project.id, path: project.path },
-      workspace: { key: "main", path: hostPath("/repo"), data: { cursor: "private-7" } },
-      operation: "cards.summary",
-      input: { cards: ["alpha", "closed"], includeClosed: false },
-    });
-    expect(observedContext?.signal.aborted).toBe(true);
-    expect(Object.isFrozen(observedContext)).toBe(true);
-    expect(Object.isFrozen(observedContext?.project)).toBe(true);
-    expect(Object.isFrozen(observedContext?.workspace)).toBe(true);
-    expect(Object.isFrozen(observedContext?.workspace.data)).toBe(true);
-    expect(Object.hasOwn(requireRecord(observedContext?.workspace.data, "observed private data"), "__proto__")).toBe(true);
-  });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError", message: "provider shutdown" });
+    await callbackAborted.promise;
+    await Promise.resolve();
+    expect(closeFinished).toBe(false);
+    expect(callbackFinished).toBe(false);
+    expect(listedSignal?.aborted).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalled();
 
-  it("rejects inactive and stale revisions before dispatch and rechecks owner and workspace identity", async () => {
-    let listed = [workspace("main", hostPath("/repo"), true), workspace("secondary", hostPath("/linked"), false)];
-    const ownerRequest = vi.fn(() => Promise.resolve({ ok: true }));
-    const otherRequest = vi.fn(() => Promise.resolve({ ok: true }));
-    const owner = contribution("owner", provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve(listed),
-      request: ownerRequest,
-    }));
-    const other = contribution("other", provider({
-      probe: () => Promise.resolve("pass"),
-      request: otherRequest,
-    }));
-    const registry = registryFor([owner, other]);
-    const resolution = await registry.resolve(project);
-    const secondaryId = resolution.workspaces.find(({ path }) => path === hostPath("/linked"))?.id;
-    if (secondaryId === undefined) throw new Error("Expected secondary workspace");
-
-    await expect(registry.request({ pluginId: "missing", moduleRevision: "1", project, workspaceId: secondaryId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "inactive-plugin", statusCode: 409 });
-    await expect(registry.request({ pluginId: "owner", moduleRevision: "old", project, workspaceId: secondaryId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "stale-plugin-revision", statusCode: 409 });
-    await expect(registry.request({ pluginId: "other", moduleRevision: "1", project, workspaceId: secondaryId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "owner-mismatch", statusCode: 409 });
-
-    listed = [workspace("main", hostPath("/repo"), true)];
-    await expect(registry.request({ pluginId: "owner", moduleRevision: "1", project, workspaceId: secondaryId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "workspace-not-found", statusCode: 404 });
-    expect(ownerRequest).not.toHaveBeenCalled();
-    expect(otherRequest).not.toHaveBeenCalled();
-
-    const conflictRequest = vi.fn(() => Promise.resolve({ ok: true }));
-    const conflict = registryFor([
-      contribution("one", provider({ probe: () => Promise.resolve("claim"), request: conflictRequest })),
-      contribution("two", provider({ probe: () => Promise.resolve("claim"), request: () => Promise.resolve({ ok: true }) })),
-    ]);
-    await expect(conflict.request({ pluginId: "one", moduleRevision: "1", project, workspaceId: secondaryId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "owner-conflict", statusCode: 409 });
-    expect(conflictRequest).not.toHaveBeenCalled();
-  });
-
-  it("contains invalid operation, input, and result contracts", async () => {
-    const invalidResultProvider = provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
-      request: () => Promise.resolve({ ok: true }),
-    });
-    Object.defineProperty(invalidResultProvider, "request", { value: () => Promise.resolve({ callback: () => undefined }) });
-    const registry = registryFor([contribution("board", invalidResultProvider)]);
-    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
-    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
-
-    await expect(registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "Bad/Operation", input: null }))
-      .rejects.toMatchObject({ code: "invalid-operation", statusCode: 400 });
-    await expect(registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: { invalid: Number.NaN } }))
-      .rejects.toMatchObject({ code: "invalid-input", statusCode: 400 });
-    await expect(registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "invalid-result", statusCode: 502 });
-
-    const unavailable = registryFor([contribution("readonly-board", provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
-    }))]);
-    await expect(unavailable.request({ pluginId: "readonly-board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({ code: "operation-unavailable", statusCode: 501 });
-  });
-
-  it("attributes thrown request handlers without letting them escape the provider boundary", async () => {
-    const registry = registryFor([contribution("board", provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
-      request: () => Promise.reject(new Error("board database unavailable")),
-    }))]);
-    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
-    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
-
-    await expect(registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: null }))
-      .rejects.toMatchObject({
-        code: "request-failed",
-        statusCode: 502,
-        message: "Server plugin board operation cards.summary failed: board database unavailable",
-      });
-  });
-
-  it("applies one end-to-end deadline across owner workspace validation", async () => {
-    vi.useFakeTimers();
-    let hangDuringValidation = false;
-    const request = vi.fn(() => Promise.resolve({ ok: true }));
-    const registry = registryFor([contribution("board", provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
-      request,
-    }))], {
-      providerTimeoutMs: 100,
-      requestTimeoutMs: 25,
-      pathInspector: () => hangDuringValidation ? new Promise<boolean>(() => { /* fixture remains pending */ }) : true,
-    });
-    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
-    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
-    hangDuringValidation = true;
-
-    const pending = registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: null });
-    const expectation = expect(pending).rejects.toMatchObject({ code: "request-timeout", statusCode: 504 });
-    await vi.advanceTimersByTimeAsync(25);
-    await expectation;
-
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it("bounds hanging request handlers and aborts their cooperative signal", async () => {
-    vi.useFakeTimers();
-    let observedSignal: AbortSignal | undefined;
-    const registry = registryFor([contribution("board", provider({
-      probe: () => Promise.resolve("claim"),
-      list: () => Promise.resolve([workspace("main", hostPath("/repo"), true)]),
-      request: ({ signal }) => new Promise((_resolve, rejectPromise) => {
-        observedSignal = signal;
-        signal.addEventListener("abort", () => {
-          const reason: unknown = signal.reason;
-          rejectPromise(reason instanceof Error ? reason : new Error("Fixture request aborted", { cause: reason }));
-        }, { once: true });
-      }),
-    }))], { providerTimeoutMs: 25 });
-    const workspaceId = (await registry.resolve(project)).workspaces[0]?.id;
-    if (workspaceId === undefined) throw new Error("Expected neutral workspace");
-
-    const pending = registry.request({ pluginId: "board", moduleRevision: "1", project, workspaceId, operation: "cards.summary", input: null });
-    const expectation = expect(pending).rejects.toMatchObject({ code: "request-timeout", statusCode: 504 });
-    await vi.advanceTimersByTimeAsync(25);
-    await expectation;
-
-    expect(observedSignal?.aborted).toBe(true);
+    releaseCallback.resolve(undefined);
+    await closing;
+    expect(callbackFinished).toBe(true);
+    await expect(registry.resolve(project)).rejects.toMatchObject({ name: "AbortError", message: "provider shutdown" });
   });
 
   it("propagates caller cancellation through removal resolution and planning", async () => {
@@ -822,7 +673,6 @@ describe("WorkspaceProviderRegistry", () => {
 
 interface RegistryFixtureOptions {
   providerTimeoutMs?: number;
-  requestTimeoutMs?: number;
   pathInspector?: (path: string) => boolean | Promise<boolean>;
 }
 
@@ -843,7 +693,6 @@ function registryFixture(
       contributions,
       logger,
       ...(options.providerTimeoutMs === undefined ? {} : { providerTimeoutMs: options.providerTimeoutMs }),
-      ...(options.requestTimeoutMs === undefined ? {} : { requestTimeoutMs: options.requestTimeoutMs }),
       pathInspector: options.pathInspector ?? (() => true),
     }),
     logger,
@@ -889,9 +738,4 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   const promise = new Promise<T>((resolve) => { resolveDeferred = resolve; });
   if (resolveDeferred === undefined) throw new Error("Deferred promise was not initialized");
   return { promise, resolve: resolveDeferred };
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error(`Expected ${label}`);
-  return Object.fromEntries(Object.entries(value));
 }

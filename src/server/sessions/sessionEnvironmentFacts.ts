@@ -11,9 +11,9 @@
  *
  * The block tells the agent the nesting exists and which precautions follow,
  * so it learns the rules before discovering them by breaking its own session:
- * use a distinct data dir, socket, and ports for another instance; never
- * restart the session daemon hosting the session; and restart the web/API
- * process before the session daemon when restarts are needed.
+ * use a distinct data dir, socket, and ports for another instance; require an
+ * explicit user override before stopping or restarting the hosting daemon;
+ * and restart the web/API process before the session daemon.
  */
 
 import { piWebDataDir } from "../../config.js";
@@ -32,7 +32,8 @@ export function sessionEnvironmentFacts({ env }: SessionEnvironmentFactsInput): 
     `This session runs inside a PI WEB session daemon. Every process spawned from it — the bash tool, terminals, subsessions — inherits \`${PI_WEB_SESSION_ENV}=1\`, marking it as nested inside this PI WEB instance.`,
     `The hosting instance owns the data directory \`${piWebDataDir(env)}\` and its session daemon listens on \`${sessiondEndpointDescription(env)}\`. Spawned processes inherit the daemon's \`PI_WEB_*\` environment, which points at that same live instance.`,
     "Starting another PI WEB instance with those inherited values fails loudly at startup because the live instance owns the state. To run a second instance, give it a distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT`.",
-    "Never restart or stop the session daemon hosting this session: it owns the terminals and the session runtime, so restarting it kills this session's own work. When PI WEB services must be restarted, restart the web/API process before the session daemon.",
+    "Do not restart or stop the session daemon hosting this session unless the user explicitly requests or authorizes that daemon restart or stop. An explicit user request overrides this default restriction, including a request to schedule the operation. The daemon owns the terminals and session runtime, so warn the user that the operation interrupts active sessions and this session's own work. A general request to fix the app is not authorization to restart the daemon.",
+    "For an authorized scheduled daemon restart or stop, use a detached service-manager timer (such as systemd-run --user --on-active), not a sleep process owned by this session. Report the scheduled operation and delay before it runs; do not claim completion without checking. When both PI WEB services must be restarted, restart the web/API process before the session daemon.",
   ];
   return [
     "<pi_web_session_environment>",

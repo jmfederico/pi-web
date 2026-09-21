@@ -10,7 +10,8 @@
       "types": "./dist/plugin-api.d.ts"
     },
     "./server-plugin-api": {
-      "types": "./dist/server-plugin-api.d.ts"
+      "types": "./dist/server-plugin-api.d.ts",
+      "import": "./dist/server-plugin-api.js"
     }
   },
   "typesVersions": {
@@ -36,6 +37,9 @@
     "LICENSE",
     "extensions",
     "examples/workspace-provider-plugin",
+    "examples/session-bridge-plugin",
+    "!examples/**/node_modules",
+    "!examples/**/dist",
     "docs/plugins.md",
     "docs/config.md",
     "docs/safe-tunnel.md",
@@ -45,8 +49,8 @@
   ],
   "scripts": {
     "dev": "bash -c 'trap \"kill 0\" EXIT; npm run dev:sessiond & npm run dev:web & npm run dev:client & wait'",
-    "dev:sessiond": "npm run build:plugins && tsx watch src/server/sessiond.ts",
-    "dev:web": "bash -c 'set -e; npm run build:plugins; trap \"kill 0\" EXIT; npm run dev:plugins & PI_WEB_BROWSER_URL=http://127.0.0.1:8505 tsx watch src/server/index.ts & wait'",
+    "dev:sessiond": "node scripts/dev-sessiond.mjs --watch",
+    "dev:web": "tsc -p tsconfig.plugins.json && node scripts/dev-web.mjs",
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
     "dev:plugins": "node scripts/build-plugins.mjs --watch",
@@ -62,7 +66,7 @@
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
     "verify:staged": "node scripts/verify-staged.mjs",
     "start": "tsx src/server/index.ts",
-    "start:sessiond": "npm run build:plugins && tsx src/server/sessiond.ts",
+    "start:sessiond": "node scripts/dev-sessiond.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",

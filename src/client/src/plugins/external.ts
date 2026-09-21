@@ -4,7 +4,8 @@ import { requirePluginBackendRevision } from "../../../shared/pluginBackendProto
 import { isPiWebBundledPluginId, isPiWebPluginId, isReservedPiWebPluginId } from "../../../shared/pluginIds";
 import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../../../shared/requiredTerminalPlugin";
 import { resolveAppUrl, type AppUrlContext } from "../appUrl";
-import type { PiWebPlugin, PiWebPluginRegistration } from "./types";
+import { adaptPublicPlugin } from "./publicContext";
+import type { PiWebPlugin, PiWebPluginRegistration, PiWebPluginRegistrationDeclaration } from "./types";
 
 export interface PluginManifestEntry {
   id: string;
@@ -35,6 +36,8 @@ export interface ExternalPluginLoadFailure {
 
 export interface ExternalPluginLoadResult {
   terminalMode: TerminalPluginMode;
+  /** Validated manifest intent, retained even when the corresponding import fails. */
+  declarations: PiWebPluginRegistrationDeclaration[];
   registrations: PiWebPluginRegistration[];
   failures: ExternalPluginLoadFailure[];
 }
@@ -43,31 +46,32 @@ export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest
   const resolvedManifestUrl = resolveAppUrl(manifestUrl);
   const manifest = await fetchPluginManifest(resolvedManifestUrl);
 
+  const declarations: PiWebPluginRegistrationDeclaration[] = [];
   const registrations: PiWebPluginRegistration[] = [];
   const failures: ExternalPluginLoadFailure[] = [];
   for (const entry of manifest.plugins) {
     if (options.shouldLoadPlugin?.(entry) === false) continue;
+    const declaration = registrationDeclaration(entry, options.machineId);
+    declarations.push(declaration);
     try {
       const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
       const module = await (options.moduleLoader ?? importPluginModule)(moduleUrl);
       const plugin = parsePluginModule(module, moduleUrl);
       registrations.push({
-        id: options.machineId === undefined ? entry.id : machineScopedManifestPluginId(options.machineId, entry.id),
+        ...declaration,
         plugin,
-        machineSpecific: entry.machineSpecific,
         ...(entry.backendRevision === undefined ? {} : { backendRevision: entry.backendRevision }),
         ...(entry.pairedRequestVersion === undefined ? {} : { pairedRequestVersion: entry.pairedRequestVersion }),
         ...(entry.pairedChannelVersion === undefined ? {} : { pairedChannelVersion: entry.pairedChannelVersion }),
-        ...(options.machineId === undefined ? {} : { machineId: options.machineId, sourcePluginId: entry.id }),
       });
     } catch (error) {
       failures.push({ entry, error });
       if (manifest.terminalMode === "required" && entry.id === REQUIRED_TERMINAL_PLUGIN_ID) {
-        return { terminalMode: manifest.terminalMode, registrations: [], failures };
+        return { terminalMode: manifest.terminalMode, declarations, registrations: [], failures };
       }
     }
   }
-  return { terminalMode: manifest.terminalMode, registrations, failures };
+  return { terminalMode: manifest.terminalMode, declarations, registrations, failures };
 }
 
 export function resolvePluginModuleUrl(moduleReference: string, manifestUrl: string, appUrlContext?: AppUrlContext): string {
@@ -183,18 +187,28 @@ function parseMachineSpecific(value: unknown): boolean {
   return value;
 }
 
+function registrationDeclaration(entry: PluginManifestEntry, machineId: string | undefined): PiWebPluginRegistrationDeclaration {
+  return Object.freeze({
+    id: machineId === undefined ? entry.id : machineScopedManifestPluginId(machineId, entry.id),
+    machineSpecific: entry.machineSpecific,
+    ...(entry.source === undefined ? {} : { manifestSource: entry.source }),
+    ...(entry.scope === undefined ? {} : { manifestScope: entry.scope }),
+    ...(machineId === undefined ? {} : { machineId, sourcePluginId: entry.id }),
+  });
+}
+
 function parsePluginModule(module: unknown, moduleUrl: string): PiWebPlugin {
   if (!isRecord(module)) throw new Error(`Plugin module ${moduleUrl} did not export an object`);
   const plugin = module["default"];
-  if (isRecord(plugin) && plugin["apiVersion"] !== 2) {
-    throw new Error(`Unsupported browser plugin API version for ${moduleUrl}: ${String(plugin["apiVersion"])} (expected 2)`);
+  if (isRecord(plugin) && plugin["apiVersion"] !== 4) {
+    throw new Error(`Unsupported browser plugin API version for ${moduleUrl}: ${String(plugin["apiVersion"])} (expected 4)`);
   }
   if (!isPiWebPlugin(plugin)) throw new Error(`Plugin module ${moduleUrl} default export is not a PiWebPlugin`);
-  return plugin;
+  return adaptPublicPlugin(plugin);
 }
 
 function isPiWebPlugin(value: unknown): value is PiWebPlugin {
-  return isRecord(value) && value["apiVersion"] === 2 && typeof value["name"] === "string" && typeof value["activate"] === "function";
+  return isRecord(value) && value["apiVersion"] === 4 && typeof value["name"] === "string" && typeof value["activate"] === "function";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

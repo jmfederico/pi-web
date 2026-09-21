@@ -44,7 +44,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
       .resolves.toBe(400);
   });
 
-  it("observes the first atomic registration write and requests one Vite rebuild", async () => {
+  it("observes atomic registration with HMR and Vite WebSockets disabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-vite-host-watch-"));
     tempDirectories.push(root);
     await writeFile(join(root, "index.html"), "<html>PI WEB</html>");
@@ -54,7 +54,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
       root,
       logLevel: "silent",
       plugins: [createSafeTunnelViteHostPlugin({ statePath, appliedHosts: [] })],
-      server: { host: "127.0.0.1", port: 0, strictPort: true, allowedHosts: [] },
+      server: { host: "127.0.0.1", port: 0, strictPort: true, allowedHosts: [], hmr: false, ws: false },
     });
     viteServers.push(server);
     await server.listen();
@@ -79,7 +79,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
     expect(restart).toHaveBeenCalledOnce();
   });
 
-  it("blocks untrusted application WebSockets before they reach the API proxy", async () => {
+  it("blocks untrusted application WebSockets with Vite's own WebSocket listener disabled", async () => {
     const upstream = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     webSocketServers.push(upstream);
     await listening(upstream);
@@ -96,7 +96,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
         ws: true,
         bypass: createViteProxyHostBypass([managedHostname]),
       },
-    });
+    }, false);
     const port = vitePort(server);
 
     await expect(webSocketUpgradeStatus(port, "attacker.example.test", "/api/socket"))
@@ -111,7 +111,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
   });
 });
 
-async function startViteServer(proxy?: Record<string, object>): Promise<ViteDevServer> {
+async function startViteServer(proxy?: Record<string, object>, liveReload = true): Promise<ViteDevServer> {
   const root = await mkdtemp(join(tmpdir(), "pi-web-vite-host-"));
   tempDirectories.push(root);
   await writeFile(join(root, "index.html"), "<html>PI WEB</html>");
@@ -124,6 +124,7 @@ async function startViteServer(proxy?: Record<string, object>): Promise<ViteDevS
       port: 0,
       strictPort: true,
       allowedHosts: [managedHostname],
+      ...(liveReload ? {} : { hmr: false as const, ws: false }),
       ...(proxy === undefined ? {} : { proxy }),
     },
   });

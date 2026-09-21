@@ -326,7 +326,7 @@ describe("development native service planning", () => {
           prerequisites: [
             { id: "sessiond.node", kind: "node-version", minimumVersion: "22.19.0" },
             { id: "sessiond.command.npm", kind: "command-available", command: "npm" },
-            { id: "sessiond.package-scripts", kind: "package-scripts", scripts: ["build:plugins", "start:sessiond"] },
+            { id: "sessiond.package-scripts", kind: "package-scripts", scripts: ["start:sessiond"] },
           ],
         },
         {
@@ -335,8 +335,8 @@ describe("development native service planning", () => {
           strategy: { kind: "development-npm-script-group", scripts: ["dev:web", "dev:client"], interpreter: "bash" },
           restart: "never",
           workingDirectory: "/checkout with space",
-          after: ["sessiond"],
-          wants: ["sessiond"],
+          after: [],
+          wants: [],
           prerequisites: [
             { id: "uiDev.node", kind: "node-version", minimumVersion: "22.19.0" },
             { id: "uiDev.command.npm", kind: "command-available", command: "npm" },

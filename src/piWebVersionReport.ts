@@ -53,10 +53,9 @@ export function runningComponentsReady(info: RunningVersionInfo, expected: reado
 
 /**
  * Readiness probe for service lifecycle waits: the web component is ready when
- * the web/API version endpoint (or its legacy status fallback) serves a
- * parseable response; the session daemon is ready when its health endpoint
- * serves version information. Shares the version report's endpoints and
- * parsing so lifecycle readiness matches what `pi-web version` reports.
+ * dependency-free web health endpoint responds. Older hosts fall back to
+ * version/status reporting. The session daemon is ready when its own health
+ * endpoint serves version information.
  */
 export async function probeRunningComponentReady(
   component: RunningComponentId,
@@ -70,6 +69,14 @@ export async function probeRunningComponentReady(
   if (endpoint.endpoint === undefined) return false;
   const fetchImplementation = options.fetch ?? globalThis.fetch;
   try {
+    const response = await fetchImplementation(new URL("./health", endpoint.endpoint).href, {
+      signal: AbortSignal.timeout(PI_WEB_VERSION_TIMEOUT_MS),
+    });
+    if (response.status !== 404) {
+      if (!response.ok) return false;
+      const health: unknown = await response.json();
+      return typeof health === "object" && health !== null && "ok" in health && health.ok === true;
+    }
     await fetchPiWebVersionResponse(endpoint.endpoint, fetchImplementation);
     return true;
   } catch (error) {

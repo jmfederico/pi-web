@@ -342,7 +342,7 @@ export async function resolveProductionNativeServicePlan(
 
 export function createDevelopmentNativeServicePlan(input: DevelopmentNativeServicePlanInput): NativeServicePlan {
   const environment = copyEnvironment(input.environment);
-  const sessiondScripts = ["build:plugins", "start:sessiond"] as const;
+  const sessiondScripts = ["start:sessiond"] as const;
   const uiDevScripts = ["dev:web", "dev:client"] as const;
   const uiDevCommand = 'trap "kill 0" EXIT; npm run dev:web & npm run dev:client & wait';
 
@@ -377,8 +377,8 @@ export function createDevelopmentNativeServicePlan(input: DevelopmentNativeServi
         restart: "never",
         environment,
         workingDirectory: input.workingDirectory,
-        after: ["sessiond"],
-        wants: ["sessiond"],
+        after: [],
+        wants: [],
         prerequisites: [
           nodeRequirement("uiDev"),
           commandRequirement("uiDev", "npm"),

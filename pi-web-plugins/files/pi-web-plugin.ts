@@ -16,11 +16,11 @@ export const FILES_CODE_VIEWER_ELEMENT = "pi-web-files-code-viewer";
 
 const filesCustomElementOwnersKey = Symbol.for("pi-web.files.custom-element-owners.v1");
 
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Files",
   activate: (context) => activateFilesPlugin(context, new FilesRuntime()),
-};
+} satisfies PiWebPlugin;
 
 export default plugin;
 
@@ -42,6 +42,7 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
         routeAliases: ["files", "core:workspace.files"],
         navigationAliases: ["core:workspace.files"],
         invalidationResources: ["workspace.files"],
+        fileOpenQuery: (_workspaceContext, path) => ({ file: path }),
         onInvalidate: (workspaceContext, invalidation) => filesRuntime.invalidate(workspaceContext, invalidation),
         render: (workspaceContext) => context.html`<pi-web-files-panel .context=${workspaceContext} .runtime=${filesRuntime}></pi-web-files-panel>`,
       }],

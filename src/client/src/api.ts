@@ -5,10 +5,7 @@ export {
   pairedPluginBackendChannelUrl,
   pairedPluginBackendRequestPath,
   pairedPluginBackendRequestUrl,
-  pluginBackendRequestPath,
-  pluginBackendRequestUrl,
   requestPairedPluginBackend,
-  requestPluginBackend,
 } from "./api/pluginBackends";
 export { globalSessionEvents, realtimeEvents, sessionEvents } from "./api/sockets";
 export { DEFAULT_WORKSPACE_UPLOADS_FOLDER, effectiveWorkspaceUploadFolder, uploadWorkspaceFile, workspaceEffectiveUploadFolder, workspaceUploadPath, WorkspaceUploadCancelledError } from "./api/workspaceUploads";

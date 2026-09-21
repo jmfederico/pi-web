@@ -58,6 +58,7 @@ export type PiWebDockerDevUpdateStep =
 export type PiWebDockerDevHostPlan =
   | { kind: "compose"; args: string[]; usesGeneratedEnv: true }
   | { kind: "updateSequence"; steps: PiWebDockerDevUpdateStep[]; usesGeneratedEnv: true }
+  | { kind: "composeSequence"; steps: { kind: "compose"; args: string[] }[]; usesGeneratedEnv: true }
   | { kind: "diagnostics"; usesGeneratedEnv: true }
   | { kind: "usage" };
 
@@ -130,7 +131,15 @@ export function planPiWebDockerDevHostCommand(plan: PiWebDockerCommandPlan): PiW
     case "stop":
       return devComposeHostPlan("down");
     case "restart":
-      return devComposeHostPlan("restart", "web", "sessiond");
+      return {
+        kind: "composeSequence",
+        usesGeneratedEnv: true,
+        steps: [
+          { kind: "compose", args: ["restart", "web"] },
+          { kind: "compose", args: ["up", "-d", "--no-deps", "--no-recreate", "--wait", "--wait-timeout", "120", "web"] },
+          { kind: "compose", args: ["restart", "sessiond"] },
+        ],
+      };
     case "restart-web":
       return devComposeHostPlan("restart", "web");
     case "restart-sessiond":

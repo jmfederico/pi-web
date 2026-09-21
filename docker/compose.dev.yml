@@ -75,8 +75,8 @@ services:
     command: ["npm", "run", "start:sessiond"]
     working_dir: /workspace
     depends_on:
-      data-init:
-        condition: service_completed_successfully
+      web:
+        condition: service_healthy
     user: "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}"
     group_add:
       - "${DOCKER_GID:-0}"
@@ -98,8 +98,8 @@ services:
     command: ["bash", "-lc", "trap 'kill 0' EXIT; npm run dev:web & npm run dev:client & wait"]
     working_dir: /workspace
     depends_on:
-      sessiond:
-        condition: service_healthy
+      data-init:
+        condition: service_completed_successfully
     user: "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}"
     group_add:
       - "${DOCKER_GID:-0}"
@@ -119,7 +119,7 @@ services:
       - "${PI_WEB_DEV_BIND_ADDR:-127.0.0.1}:${PI_WEB_DEV_PORT:-8505}:8505"
     volumes: *pi-web-dev-volumes
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8504/api/pi-web/runtime >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8504/api/pi-web/health >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 12

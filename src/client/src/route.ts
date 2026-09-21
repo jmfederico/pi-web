@@ -27,6 +27,11 @@ export interface ParsedAppRoute extends AppRouteLocation {
 
 export type WorkspacePanelRouteResolver = (value: string) => QualifiedContributionId | undefined;
 
+/** Browser-owned creation identity, never a backend session ID or a create command. */
+export function isCreatingSessionId(sessionId: string | undefined): sessionId is `creating:${string}` {
+  return sessionId?.startsWith("creating:") === true;
+}
+
 export function readRoute(): ParsedAppRoute {
   const params = new URLSearchParams(window.location.search);
   return {

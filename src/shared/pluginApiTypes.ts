@@ -8,8 +8,30 @@ export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
+/**
+ * Typed token for one exact host/plugin capability version. The provider id
+ * and package-local id together with the version form the stable capability
+ * identity; matching keys do not imply matching parsers. `parse` validates and
+ * may snapshot values at provider, declared-requirement, and resolution boundaries.
+ * Parsers must be pure (no input mutation or lifecycle side effects) and tolerate
+ * repeated calls; invocation counts and returned object identity are not guaranteed.
+ * A resolver's parser receives the provider-parsed value, not the discarded result
+ * of declared-requirement validation.
+ */
+export interface PluginCapability<Value = unknown, Version extends number = number> {
+  readonly pluginId: string;
+  readonly id: string;
+  readonly version: Version;
+  readonly parse: (value: unknown) => Value;
+}
+
+/** One capability value declaratively published by its owning plugin. */
+export interface PluginCapabilityProvision<Value = unknown, Version extends number = number> {
+  readonly capability: PluginCapability<Value, Version>;
+  readonly value: Value;
+}
+
 export interface WorkspaceProviderCapabilities {
-  readonly request: boolean;
   /** True only when this specific workspace advertises removal. */
   readonly remove: boolean;
 }

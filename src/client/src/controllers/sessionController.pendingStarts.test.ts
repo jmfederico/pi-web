@@ -32,7 +32,7 @@ describe("SessionController pending starts", () => {
     const start = controller.startSession();
     const temporarySession = state.selectedSession;
 
-    expect(temporarySession?.id).toMatch(/^pending-session-/);
+    expect(temporarySession?.id).toMatch(/^creating:[0-9a-f]{32}$/);
     expect(temporarySession?.persisted).toBe(false);
     expect(state.sessions.map((session) => session.id)).toEqual([temporarySession?.id]);
     expect(state.activity).toMatchObject({ sessionId: temporarySession?.id, phase: "active", label: "Creating session" });
@@ -74,7 +74,7 @@ describe("SessionController pending starts", () => {
 
     const start = controller.startSession({ updateUrl: false });
     const temporaryId = state.selectedSession?.id;
-    expect(temporaryId).toMatch(/^pending-session-/);
+    expect(temporaryId).toMatch(/^creating:/);
 
     startRequest.resolve(started);
     await start;
@@ -83,7 +83,7 @@ describe("SessionController pending starts", () => {
     expect(state.selectedSession?.id).toBe(started.id);
   });
 
-  it("captures the post-publication route when a pending row removes the session id", async () => {
+  it("captures the published creation token for a replacing handoff", async () => {
     const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
     const startRequest = deferred<SessionInfo>();
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
@@ -92,7 +92,7 @@ describe("SessionController pending starts", () => {
     const controller = new SessionController(
       () => state,
       (patch) => { state = { ...state, ...patch }; },
-      () => { publishedSessionId = undefined; },
+      () => { publishedSessionId = state.selectedSession?.id; },
       undefined,
       {
         api: {
@@ -107,6 +107,8 @@ describe("SessionController pending starts", () => {
         }),
         navigateToSession: (session, options) => {
           expectedSessionId = options?.expected?.sessionId;
+          expect(options?.replace).toBe(true);
+          expect(options?.creationHandoff).toBe(true);
           state = { ...state, selectedSession: session };
           return Promise.resolve(true);
         },
@@ -117,7 +119,8 @@ describe("SessionController pending starts", () => {
     startRequest.resolve(started);
     await start;
 
-    expect(expectedSessionId).toBeUndefined();
+    expect(expectedSessionId).toBe(publishedSessionId);
+    expect(expectedSessionId).toMatch(/^creating:/);
     expect(state.selectedSession?.id).toBe(started.id);
   });
 
@@ -519,7 +522,7 @@ describe("SessionController pending starts", () => {
     await controller.startSession();
     const temporaryId = state.selectedSession?.id;
 
-    expect(temporaryId).toMatch(/^pending-session-/);
+    expect(temporaryId).toMatch(/^creating:/);
     expect(state.sessions.map((session) => session.id)).toEqual([temporaryId]);
     expect(state.sessions[0]?.persisted).toBe(false);
     expect(state.activity).toMatchObject({ sessionId: temporaryId, phase: "error", label: "Session creation failed" });
@@ -570,7 +573,7 @@ describe("SessionController pending starts", () => {
       workspaceId: workspace.id,
     })).toEqual([{ scope: originScope, message: "Failed to start session: late backend failure" }]);
     expect(state.sessions).toEqual([]);
-    expect(temporaryId).toMatch(/^pending-session-/);
+    expect(temporaryId).toMatch(/^creating:/);
   });
 
   it("stops the backend session if a discarded pending start resolves later", async () => {

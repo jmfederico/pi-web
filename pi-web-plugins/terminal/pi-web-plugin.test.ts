@@ -4,6 +4,7 @@ import type { PluginActivationContext, PluginRuntimeContext, WorkspacePanelConte
 import { html, svg, type TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
+import { TERMINAL_BROWSER_FACADE_CAPABILITY } from "./TerminalFacade";
 import plugin, { TERMINAL_PANEL_ELEMENT, TERMINAL_SOFT_KEYS_ELEMENT, activateTerminalPlugin, terminalPanelElementName, terminalSoftKeysElementName } from "./pi-web-plugin";
 
 afterEach(() => {
@@ -18,8 +19,12 @@ describe("Terminal browser plugin activation", () => {
     const panel = result.contributions.workspacePanels?.[0];
     const action = result.contributions.actions?.[0];
 
-    expect(plugin).toMatchObject({ apiVersion: 2, name: "Terminal" });
-    expect(result.requiredTerminalFacade).toMatchObject({ version: 1 });
+    expect(plugin).toMatchObject({ apiVersion: 4, name: "Terminal" });
+    const provides = result.provides;
+    if (provides === undefined) throw new Error("Expected Terminal facade provision");
+    expect(provides).toHaveLength(1);
+    expect(provides[0]?.capability).toBe(TERMINAL_BROWSER_FACADE_CAPABILITY);
+    expect(TERMINAL_BROWSER_FACADE_CAPABILITY.parse(provides[0]?.value).version).toBe(1);
     expect(panel).toMatchObject({
       id: "workspace.terminal",
       title: "Terminal",
@@ -63,6 +68,31 @@ describe("Terminal browser plugin activation", () => {
     expect(secondRuntime).not.toBe(firstRuntime);
   });
 
+  it("publishes a parsed facade snapshot and disposes plugin-owned runtime resources", async () => {
+    const result = activateTerminalPlugin(activationContext());
+    const provision = result.provides?.[0];
+    if (provision === undefined) throw new Error("Expected Terminal facade provision");
+    const facade = TERMINAL_BROWSER_FACADE_CAPABILITY.parse(provision.value);
+    const context = workspaceContext("local");
+    if (context.peer === undefined) throw new Error("Expected Terminal peer");
+    const rendered = result.contributions.workspacePanels?.[0]?.render(context);
+    const runtime = templateValues(rendered).find((value) => value instanceof TerminalBrowserRuntime);
+    if (!(runtime instanceof TerminalBrowserRuntime)) throw new Error("Expected Terminal browser runtime");
+    const terminal = facade.createWorkspaceTerminal({
+      origin: "test",
+      registrationPluginId: "pi-web.terminal",
+      workspace: context.workspace,
+      peer: context.peer,
+      host: { navigateWorkspaceContribution: vi.fn() },
+    });
+
+    expect(Object.isFrozen(facade)).toBe(true);
+    await result.dispose?.(new AbortController().signal);
+
+    expect(() => { terminal.open(); }).toThrow(expect.objectContaining({ name: "AbortError" }));
+    await expect(runtime.refresh(context)).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("routes the navigation action through the required Terminal host facade", async () => {
     const result = activateTerminalPlugin(activationContext("machine.remote.pi-web.terminal"));
     const openTerminal = vi.fn<PluginRuntimeContext["openTerminal"]>();
@@ -80,7 +110,15 @@ describe("Terminal browser plugin activation", () => {
 });
 
 function activationContext(runtimePluginId = "pi-web.terminal"): PluginActivationContext {
-  return Object.freeze({ apiVersion: 2, pluginId: "pi-web.terminal", runtimePluginId, html, svg });
+  return Object.freeze({
+    apiVersion: 4,
+    pluginId: "pi-web.terminal",
+    runtimePluginId,
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  });
 }
 
 function workspaceContext(machineId: string): WorkspacePanelContext {
@@ -88,7 +126,7 @@ function workspaceContext(machineId: string): WorkspacePanelContext {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
     files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    pairedBackend: { version: 1, requestVersion: 1, channelVersion: 1, request: vi.fn(() => Promise.resolve([])), openChannel: vi.fn() },
+    peer: { request: vi.fn(() => Promise.resolve([])), openChannel: vi.fn() },
     host: { requestRender: vi.fn() },
     prompt: { insertText: vi.fn(), getText: vi.fn(() => ""), getSelection: vi.fn(() => null) },
     terminal: { open: vi.fn(), runCommand: vi.fn() },

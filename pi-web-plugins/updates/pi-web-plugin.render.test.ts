@@ -68,8 +68,16 @@ function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTermin
 }
 
 function renderPanel(value: PiWebStatusResponse, terminal?: WorkspacePanelTerminal): HTMLElement {
-  const contributions = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions;
-  const panel = contributions.workspacePanels?.[0];
+  const contributions = plugin.activate({
+    apiVersion: 4,
+    pluginId: "updates",
+    runtimePluginId: "updates",
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  }).contributions;
+  const panel = contributions.workspacePanels[0];
   if (panel === undefined) throw new Error("Expected Updates workspace panel");
   const container = document.createElement("div");
   document.body.append(container);

@@ -48,8 +48,6 @@ export const PLUGIN_BACKEND_CHANNEL_MAX_LIFETIME_MS = 12 * 60 * 60_000;
 export const PLUGIN_BACKEND_CHANNEL_CLOSE_REASON_MAX_BYTES = 120;
 export const PLUGIN_BACKEND_CHANNEL_ERROR_MESSAGE_MAX_BYTES = 2_048;
 export const PLUGIN_BACKEND_CHANNEL_ERROR_CODE_MAX_LENGTH = 64;
-/** Legacy owner-backed request route retained for browser-v2 compatibility. */
-export const PLUGIN_BACKEND_REQUEST_ROUTE_PATH = "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation";
 export const PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation";
 export const PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/channels/:operation";
 

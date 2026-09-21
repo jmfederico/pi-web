@@ -1,7 +1,7 @@
 import type { PiWebPlugin, PluginActivationContext, PluginActivationResult, PluginRuntimeContext, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { html as staticHtml, unsafeStatic } from "lit/static-html.js";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
-import { TerminalFacade, type RequiredTerminalBrowserFacadeV1 } from "./TerminalFacade";
+import { TERMINAL_BROWSER_FACADE_CAPABILITY, TerminalFacade, type RequiredTerminalBrowserFacadeV1 } from "./TerminalFacade";
 import { TerminalPanel } from "./TerminalPanel";
 import { TerminalSoftKeys } from "./TerminalSoftKeys";
 
@@ -10,24 +10,19 @@ export const TERMINAL_SOFT_KEYS_ELEMENT = terminalSoftKeysElementName("pi-web.te
 
 const terminalCustomElementOwnersKey = Symbol.for("pi-web.terminal.custom-element-owners.v1");
 
-/** Bundled Terminal's privileged host-only composition result; not part of browser plugin API v2. */
-export interface TerminalPluginActivation extends PluginActivationResult {
-  readonly requiredTerminalFacade: RequiredTerminalBrowserFacadeV1;
-}
-
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Terminal",
   activate: (context) => activateTerminalPlugin(context),
-};
+} satisfies PiWebPlugin;
 
 export default plugin;
 
 export function activateTerminalPlugin(
   context: PluginActivationContext,
   runtime = new TerminalBrowserRuntime(),
-  facade: RequiredTerminalBrowserFacadeV1 = new TerminalFacade(),
-): TerminalPluginActivation {
+  facade: RequiredTerminalBrowserFacadeV1 & Partial<Pick<TerminalFacade, "dispose">> = new TerminalFacade(),
+): PluginActivationResult {
   if (context.pluginId !== "pi-web.terminal") {
     throw new Error(`Terminal browser entry must activate as plugin id pi-web.terminal, received ${context.pluginId}`);
   }
@@ -41,8 +36,20 @@ export function activateTerminalPlugin(
       <path d="m7 9 3 3-3 3M13 15h4"></path>
     </svg>
   `;
+  let disposed = false;
+  const disposeResources = (): void => {
+    if (disposed) return;
+    disposed = true;
+    runtime.dispose();
+    facade.dispose?.();
+  };
+  context.lifetimeSignal.addEventListener("abort", disposeResources, { once: true });
   return Object.freeze({
-    requiredTerminalFacade: facade,
+    provides: [{ capability: TERMINAL_BROWSER_FACADE_CAPABILITY, value: facade }],
+    dispose: () => {
+      context.lifetimeSignal.removeEventListener("abort", disposeResources);
+      disposeResources();
+    },
     contributions: {
       workspacePanels: [{
         id: "workspace.terminal",

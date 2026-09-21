@@ -1,5 +1,23 @@
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PiWebServerPlugin, ServerPluginActivation, ServerPluginActivationContext, ServerPluginNoticeInput, ServerPluginNoticeReporterV1, WorkspaceProvider } from "../../server-plugin-api.js";
+import {
+  PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+  PI_WEB_HOST_WORKSPACES_CAPABILITY,
+} from "../../server-plugin-api.js";
+import type {
+  JsonValue,
+  PiWebHostPiSessionsV1,
+  PiWebHostWorkspacesV1,
+  PiWebServerPlugin,
+  PluginCapability,
+  ServerPluginActivation,
+  ServerPluginActivationContext,
+  ServerPluginNoticeInput,
+  ServerPluginNoticeReporterV1,
+  WorkspaceProvider,
+} from "../../server-plugin-api.js";
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
 import {
   SERVER_NOTICE_SCOPE_ID_MAX_LENGTH,
@@ -9,50 +27,139 @@ import {
 } from "../../shared/serverNoticeContract.js";
 import { ServerNoticeService } from "../notices/serverNoticeService.js";
 import { ServerNoticeStore } from "../notices/serverNoticeStore.js";
+import { REQUIRED_TERMINAL_SERVICE_CAPABILITY } from "../terminals/requiredTerminalService.js";
 import type { PiWebPluginCatalogEntry, PiWebPluginCatalogSnapshot } from "../piWebPluginCatalog.js";
 import {
-  createServerPluginRuntime as createServerPluginRuntimeWithRequiredTerminal,
+  createServerPluginRuntime as createRuntime,
   type CreateServerPluginRuntimeOptions,
+  type ServerPluginHostCapabilityFactory,
   type ServerPluginModuleImporter,
 } from "./serverPluginRuntime.js";
 
-afterEach(() => {
+// A test-owned service exercises generic host factory lifetimes, not host storage.
+interface TestScopedService {
+  readonly version: 1;
+  readonly read: () => Promise<JsonValue | undefined>;
+  readonly write: (value: JsonValue) => Promise<void>;
+  readonly clear: () => Promise<void>;
+}
+
+const testScopedService: PluginCapability<TestScopedService, 1> = {
+  pluginId: "fixture.host",
+  id: "scoped-service",
+  version: 1,
+  parse(value) {
+    if (!isTestScopedService(value)) throw new Error("Invalid test service");
+    return {
+      version: 1,
+      read: async () => await value.read(),
+      write: async (input) => { await value.write(input); },
+      clear: async () => { await value.clear(); },
+    };
+  },
+};
+
+function isTestScopedService(value: unknown): value is TestScopedService {
+  return typeof value === "object" && value !== null
+    && Reflect.get(value, "version") === 1
+    && ["read", "write", "clear"].every((key) => typeof Reflect.get(value, key) === "function");
+}
+
+const tempRoots: string[] = [];
+
+afterEach(async () => {
   vi.useRealTimers();
+  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-function createServerPluginRuntime(options: CreateServerPluginRuntimeOptions) {
-  return createServerPluginRuntimeWithRequiredTerminal({ ...options, enforceRequiredTerminal: false });
+async function createServerPluginRuntime(options: Omit<CreateServerPluginRuntimeOptions, "dataDir"> & { dataDir?: string }) {
+  const dataDir = options.dataDir ?? await mkdtemp(join(tmpdir(), "pi-web-plugin-runtime-"));
+  if (options.dataDir === undefined) tempRoots.push(dataDir);
+  return createRuntime({ ...options, dataDir, enforceRequiredTerminal: options.enforceRequiredTerminal ?? false });
+}
+
+function createServerPluginRuntimeWithRequiredTerminal(options: Omit<CreateServerPluginRuntimeOptions, "dataDir">) {
+  return createServerPluginRuntime({ ...options, enforceRequiredTerminal: true });
 }
 
 describe("server plugin runtime", () => {
-  it("activates deterministically, quarantines ordinary failures, publishes transactionally, and stops in reverse", async () => {
+  it("creates isolated persistent directories before activation and retains plugin-owned files across runtimes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-plugin-data-"));
+    tempRoots.push(root);
+    const dataDir = join(root, "data");
+    const directories = new Map<string, string>();
+    const start = (revision: number) => createServerPluginRuntime({
+      dataDir: relative(process.cwd(), dataDir),
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        { ...entry("alpha"), packageRoot: `/packages/revision-${String(revision)}/alpha` },
+        entry("beta"),
+        { ...entry("disabled"), enabled: false },
+      ])) },
+      importer: () => Promise.resolve({ default: plugin("Directory fixture", async (context) => {
+        expect(Object.isFrozen(context)).toBe(true);
+        expect(context.dataDirectory).toBe(resolve(dataDir, "plugin-data", context.pluginId));
+        directories.set(context.pluginId, context.dataDirectory);
+        const filePath = join(context.dataDirectory, "owned.txt");
+        if (revision === 1) await writeFile(filePath, context.pluginId);
+        else expect(await readFile(filePath, "utf8")).toBe(context.pluginId);
+        return {};
+      }) }),
+      logger: testLogger(),
+    });
+    const first = await start(1);
+    expect(first.healthRecords().filter(({ state }) => state === "active")).toHaveLength(2);
+    expect(directories.get("alpha")).not.toBe(directories.get("beta"));
+    await expect(stat(join(dataDir, "plugin-data", "disabled"))).rejects.toMatchObject({ code: "ENOENT" });
+    await first.stop();
+    const second = await start(2);
+    expect(second.healthRecords().filter(({ state }) => state === "active")).toHaveLength(2);
+    await second.stop();
+  });
+
+  it("quarantines directory creation failures without activating the affected plugin", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-web-plugin-data-error-"));
+    tempRoots.push(root);
+    const dataDir = join(root, "not-a-directory");
+    await writeFile(dataDir, "occupied");
+    const activate = vi.fn(() => ({}));
+    const runtime = await createServerPluginRuntime({
+      dataDir,
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("alpha")])) },
+      importer: () => Promise.resolve({ default: plugin("Directory failure", activate) }),
+      logger: testLogger(),
+    });
+    expect(activate).not.toHaveBeenCalled();
+    expect(runtime.healthRecords()).toEqual([expect.objectContaining({ pluginId: "alpha", state: "failed", phase: "activate" })]);
+    await runtime.stop();
+  });
+
+  it("activates deterministically, quarantines ordinary failures, publishes transactionally, and disposes in reverse", async () => {
     const events: string[] = [];
     const provider = testProvider();
     const modules = new Map<string, unknown>([
       ["alpha", pluginModule("Alpha", {
         workspaceProvider: provider,
-        pairedBackend: {
-          version: 1,
+        peer: {
           request: () => ({ ready: true }),
           openChannel: () => ({ receive: () => undefined }),
         },
         start: () => { events.push("start:alpha"); },
-        stop: () => { events.push("stop:alpha"); },
+        dispose: () => { events.push("stop:alpha"); },
       })],
       ["bad-activate", { default: plugin("Bad activate", () => { throw new Error("activate exploded"); }) }],
-      ["bad-api", { default: { apiVersion: 2, name: "Future", activate: () => ({}) } }],
+      ["bad-api", { default: { apiVersion: 2, name: "Legacy", activate: () => ({}) } }],
       ["bad-start", pluginModule("Bad start", {
         workspaceProvider: testProvider(),
         start: () => {
           events.push("start:bad-start");
           throw new Error("start exploded");
         },
-        stop: () => { events.push("rollback:bad-start"); },
+        dispose: () => { events.push("rollback:bad-start"); },
       })],
       ["omega", pluginModule("Omega", {
         workspaceProvider: testProvider(),
         start: () => { events.push("start:omega"); },
-        stop: () => { events.push("stop:omega"); },
+        dispose: () => { events.push("stop:omega"); },
       })],
     ]);
     const imported: string[] = [];
@@ -103,7 +210,619 @@ describe("server plugin runtime", () => {
     expect(runtime.pairedBackendContributions()).toEqual([]);
   });
 
-  it("freezes activation inputs and scopes lifecycle signals to individual invocations", async () => {
+  it("starts exact capability providers before consumers, snapshots values, and disposes in reverse dependency order", async () => {
+    const events: string[] = [];
+    const service = testCapability("zeta.provider", "service", 1);
+    const undeclared = testCapability("other.provider", "service", 1);
+    const sourceValue = { label: "activation snapshot" };
+    const lifetimes = new Map<string, AbortSignal>();
+    let startSignal: AbortSignal | undefined;
+    let resolvedLabel: string | undefined;
+    let undeclaredMessage: string | undefined;
+    let resolverWasFrozen = false;
+    let startContextWasFrozen = false;
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("zeta.provider"), entry("alpha.consumer")])) },
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "zeta.provider") {
+          return Promise.resolve({
+            default: plugin("Provider", (context) => {
+              events.push("activate:provider");
+              lifetimes.set(pluginId, context.lifetimeSignal);
+              return {
+                provides: [{ capability: service, value: sourceValue }],
+                start: () => {
+                  events.push("start:provider");
+                  sourceValue.label = "mutated during start";
+                },
+                dispose: () => { events.push("dispose:provider"); },
+              };
+            }),
+          });
+        }
+        return Promise.resolve({
+          default: plugin("Consumer", (context) => {
+            events.push("activate:consumer");
+            lifetimes.set(pluginId, context.lifetimeSignal);
+            return {
+              start: (startContext) => {
+                events.push("start:consumer");
+                startSignal = startContext.signal;
+                startContextWasFrozen = Object.isFrozen(startContext);
+                resolverWasFrozen = Object.isFrozen(startContext.capabilities);
+                resolvedLabel = startContext.capabilities.resolve(service).label;
+                try {
+                  startContext.capabilities.resolve(undeclared);
+                } catch (error) {
+                  undeclaredMessage = errorMessage(error);
+                }
+              },
+              dispose: () => { events.push("dispose:consumer"); },
+            };
+          }, [service]),
+        });
+      },
+      logger: testLogger(),
+    });
+
+    expect(events).toEqual([
+      "activate:consumer",
+      "activate:provider",
+      "start:provider",
+      "start:consumer",
+    ]);
+    expect(resolvedLabel).toBe("activation snapshot");
+    expect(startSignal?.aborted).toBe(true);
+    expect(startContextWasFrozen).toBe(true);
+    expect(resolverWasFrozen).toBe(true);
+    expect(undeclaredMessage).toContain("did not declare required capability other.provider/service v1");
+    expect(runtime.resolve(service)).toEqual({ label: "activation snapshot" });
+    expect([...lifetimes.values()].every((signal) => !signal.aborted)).toBe(true);
+
+    runtime.beginShutdown();
+    expect([...lifetimes.values()].every((signal) => signal.aborted)).toBe(true);
+    expect(runtime.healthRecords().every(({ state }) => state === "active")).toBe(true);
+    expect(runtime.resolve(service)).toEqual({ label: "activation snapshot" });
+
+    await runtime.stop();
+    expect(events.slice(-2)).toEqual(["dispose:consumer", "dispose:provider"]);
+    expect(() => runtime.resolve(service)).toThrow("is not active");
+  });
+
+  it("keeps provision, requirement, and resolve parser boundaries distinct", async () => {
+    const provider = testCapability("fixture.host", "service", 1);
+    const requirement = { ...provider, parse: vi.fn((value: unknown) => ({ label: `requirement:${provider.parse(value).label}` })) };
+    const request = { ...provider, parse: (value: unknown) => ({ label: `request:${provider.parse(value).label}` }) };
+    const rejectingRequest = { ...provider, parse: () => { throw new Error("request rejected"); } };
+    let resolved: TestCapabilityValue | undefined;
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("consumer")])) },
+      hostCapabilities: [{ capability: provider, value: { label: "ready" } }],
+      importer: () => Promise.resolve({
+        default: plugin("Consumer", () => ({
+          start: ({ capabilities }) => {
+            expect(requirement.parse).toHaveBeenCalledWith({ label: "ready" });
+            resolved = capabilities.resolve(request);
+            expect(() => capabilities.resolve(rejectingRequest)).toThrow("request rejected");
+          },
+        }), [requirement]),
+      }),
+      logger: testLogger(),
+    });
+    expect(resolved).toEqual({ label: "request:ready" });
+    expect(runtime.healthRecords()).toEqual([expect.objectContaining({ pluginId: "consumer", state: "active" })]);
+    await runtime.stop();
+  });
+
+  it("pre-registers host capabilities and limits each start resolver to declared requirements", async () => {
+    const hostService = testCapability("pi-web.host.fixture", "clock", 1);
+    let resolved: TestCapabilityValue | undefined;
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("consumer")])) },
+      hostCapabilities: [{ capability: hostService, value: { label: "host clock" } }],
+      importer: () => Promise.resolve({
+        default: plugin("Consumer", () => ({
+          start: ({ capabilities }) => { resolved = capabilities.resolve(hostService); },
+        }), [hostService]),
+      }),
+      logger: testLogger(),
+    });
+
+    expect(resolved).toEqual({ label: "host clock" });
+    expect(runtime.healthRecords()).toEqual([expect.objectContaining({ pluginId: "consumer", state: "active" })]);
+    await runtime.stop();
+    expect(() => runtime.resolve(hostService)).toThrow("is not active");
+  });
+
+  it("materializes host capabilities per declaring plugin and revokes and cleans them with that lifecycle", async () => {
+    const contexts = new Map<string, ServerPluginActivationContext["lifetimeSignal"]>();
+    const stateValues = new Map<string, JsonValue>();
+    const resolvedStates = new Map<string, TestScopedService>();
+    const starts: string[] = [];
+    const cleanups: string[] = [];
+    const mutableCapability: PluginCapability<TestScopedService, 1> = {
+      ...testScopedService,
+      parse: testScopedService.parse,
+    };
+    const factory: ServerPluginHostCapabilityFactory<TestScopedService> = {
+      capability: mutableCapability,
+      create(context) {
+        expect(Object.isFrozen(context)).toBe(true);
+        expect(context.packageRoot).toBe(`/plugins/${context.pluginId}`);
+        contexts.set(context.pluginId, context.lifetimeSignal);
+        Reflect.set(mutableCapability, "parse", () => { throw new Error("mutated parser was used"); });
+        if (context.pluginId === "factory-failure") throw new Error("state factory failed");
+        const assertActive = (): void => {
+          if (context.lifetimeSignal.aborted) throw new Error(`state revoked for ${context.pluginId}`);
+        };
+        return {
+          value: {
+            version: 1,
+            read: () => {
+              assertActive();
+              return Promise.resolve(stateValues.get(context.pluginId));
+            },
+            write: (value: JsonValue) => {
+              assertActive();
+              stateValues.set(context.pluginId, value);
+              return Promise.resolve();
+            },
+            clear: () => {
+              assertActive();
+              stateValues.delete(context.pluginId);
+              return Promise.resolve();
+            },
+          },
+          dispose: () => { cleanups.push(context.pluginId); },
+        };
+      },
+    };
+    const stateV2: PluginCapability<TestScopedService, 2> = {
+      ...testScopedService,
+      version: 2,
+    };
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("state-beta"),
+        entry("wrong-version"),
+        entry("independent"),
+        entry("state-alpha"),
+        entry("start-failure"),
+        entry("factory-failure"),
+      ])) },
+      hostCapabilityFactories: [factory],
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "independent") {
+          return Promise.resolve(pluginModule("Independent", { start: () => { starts.push(pluginId); } }));
+        }
+        const requirement = pluginId === "wrong-version" ? stateV2 : testScopedService;
+        return Promise.resolve({
+          default: plugin(pluginId, () => ({
+            async start({ capabilities }) {
+              starts.push(pluginId);
+              const state = capabilities.resolve(requirement);
+              resolvedStates.set(pluginId, state);
+              await state.write({ pluginId });
+              if (pluginId === "start-failure") throw new Error("start failed after state resolution");
+            },
+          }), [requirement]),
+        });
+      },
+      logger: testLogger(),
+    });
+
+    expect(starts).toEqual(["independent", "start-failure", "state-alpha", "state-beta"]);
+    expect(stateValues.get("state-alpha")).toEqual({ pluginId: "state-alpha" });
+    expect(stateValues.get("state-beta")).toEqual({ pluginId: "state-beta" });
+    expect(stateValues.get("start-failure")).toEqual({ pluginId: "start-failure" });
+    expect(cleanups).toEqual(["start-failure"]);
+    expect(contexts.get("start-failure")?.aborted).toBe(true);
+    expect(runtime.healthRecords()).toEqual([
+      expect.objectContaining({ pluginId: "factory-failure", state: "failed", phase: "start", message: "state factory failed" }),
+      expect.objectContaining({ pluginId: "independent", state: "active" }),
+      expect.objectContaining({ pluginId: "start-failure", state: "failed", phase: "start", message: "start failed after state resolution" }),
+      expect.objectContaining({ pluginId: "state-alpha", state: "active" }),
+      expect.objectContaining({ pluginId: "state-beta", state: "active" }),
+      expect.objectContaining({ pluginId: "wrong-version", state: "failed", phase: "start" }),
+    ]);
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "wrong-version")?.message)
+      .toContain("requires unavailable capability fixture.host/scoped-service v2");
+    expect(contexts.has("wrong-version")).toBe(false);
+
+    const alphaState = resolvedStates.get("state-alpha");
+    if (alphaState === undefined) throw new Error("Expected state-alpha capability");
+    runtime.beginShutdown();
+    expect([...contexts.values()].every((signal) => signal.aborted)).toBe(true);
+    await expect(alphaState.read()).rejects.toThrow("state revoked for state-alpha");
+    await runtime.stop();
+    expect(cleanups).toEqual(["start-failure", "state-beta", "state-alpha"]);
+  });
+
+  it("starts early authority immediately and resumes exact late host capabilities once with failure isolation", async () => {
+    const service = testCapability("provider", "service", 1);
+    const workspacesV2: PluginCapability<PiWebHostWorkspacesV1, 2> = {
+      ...PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      version: 2,
+    };
+    const events: string[] = [];
+    const lateContexts = new Map<string, ServerPluginActivationContext["lifetimeSignal"]>();
+    const lateCleanups: string[] = [];
+    const resolvedWorkspaces = new Map<string, PiWebHostWorkspacesV1>();
+    const stateFactory: ServerPluginHostCapabilityFactory<TestScopedService> = {
+      capability: testScopedService,
+      create: () => ({
+        value: {
+          version: 1,
+          read: () => Promise.resolve(undefined),
+          write: () => Promise.resolve(),
+          clear: () => Promise.resolve(),
+        },
+      }),
+    };
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("late-omega"),
+        entry("late-pi"),
+        entry("wrong-version"),
+        entry("provider"),
+        entry("late-beta"),
+        entry("early-state"),
+        entry("late-gamma"),
+        entry("late-alpha"),
+      ])) },
+      hostCapabilityFactories: [stateFactory],
+      lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY],
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "provider") {
+          return Promise.resolve({ default: plugin("Provider", () => ({
+            provides: [{ capability: service, value: { label: "ready" } }],
+            start: () => { events.push("start:provider"); },
+            dispose: () => { events.push("dispose:provider"); },
+          })) });
+        }
+        if (pluginId === "early-state") {
+          return Promise.resolve({ default: plugin("Early state", () => ({
+            start: ({ capabilities }) => {
+              capabilities.resolve(testScopedService);
+              events.push("start:early-state");
+            },
+            dispose: () => { events.push("dispose:early-state"); },
+          }), [testScopedService]) });
+        }
+        const requirement = pluginId === "wrong-version"
+          ? workspacesV2
+          : pluginId === "late-pi"
+            ? PI_WEB_HOST_PI_SESSIONS_CAPABILITY
+            : PI_WEB_HOST_WORKSPACES_CAPABILITY;
+        const requirements = pluginId === "late-alpha" ? [service, requirement] : [requirement];
+        return Promise.resolve({ default: plugin(pluginId, (context) => {
+          lateContexts.set(pluginId, context.lifetimeSignal);
+          return {
+            start: ({ capabilities }) => {
+              events.push(`start:${pluginId}`);
+              if (pluginId === "late-pi") capabilities.resolve(PI_WEB_HOST_PI_SESSIONS_CAPABILITY);
+              else {
+                const workspaceRequirement = pluginId === "wrong-version"
+                  ? workspacesV2
+                  : PI_WEB_HOST_WORKSPACES_CAPABILITY;
+                const resolved = capabilities.resolve(workspaceRequirement);
+                if (pluginId !== "wrong-version") resolvedWorkspaces.set(pluginId, resolved);
+              }
+              if (pluginId === "late-alpha" && capabilities.resolve(service).label !== "ready") {
+                throw new Error("provider capability was not ready");
+              }
+              if (pluginId === "late-gamma") throw new Error("late start failed");
+            },
+            dispose: () => { events.push(`dispose:${pluginId}:${String(context.lifetimeSignal.aborted)}`); },
+          };
+        }, requirements) });
+      },
+      logger: testLogger(),
+    });
+
+    expect(events).toEqual([
+      "start:early-state",
+      "start:provider",
+      "dispose:wrong-version:true",
+    ]);
+    expect(runtime.healthRecords()).toEqual([
+      expect.objectContaining({ pluginId: "early-state", state: "active" }),
+      expect.objectContaining({ pluginId: "provider", state: "active" }),
+      expect.objectContaining({ pluginId: "wrong-version", state: "failed", phase: "start" }),
+    ]);
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "wrong-version")?.message)
+      .toContain("requires unavailable capability pi-web.host/workspaces v2");
+    expect([...lateContexts.entries()]
+      .filter(([pluginId]) => pluginId !== "wrong-version")
+      .every(([, signal]) => !signal.aborted)).toBe(true);
+
+    const lateFactory: ServerPluginHostCapabilityFactory<PiWebHostWorkspacesV1> = {
+      capability: PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      create(context) {
+        if (context.pluginId === "late-beta") throw new Error("late factory failed");
+        return {
+          value: {
+            version: 1,
+            resolve: () => Promise.reject(new Error("not exercised by this lifecycle fixture")),
+          },
+          dispose: () => { lateCleanups.push(context.pluginId); },
+        };
+      },
+    };
+    const piSessionsFactory: ServerPluginHostCapabilityFactory<PiWebHostPiSessionsV1> = {
+      capability: PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+      create: () => ({
+        value: {
+          version: 1,
+          create: () => Promise.resolve({ sessionId: "session-created" }),
+          run: () => Promise.resolve({
+            sessionId: "session-1",
+            completion: Promise.resolve({ status: "completed" as const }),
+          }),
+        },
+      }),
+    };
+    await expect(runtime.resumeWithHostCapabilityFactories([lateFactory]))
+      .rejects.toThrow("Late host capability pi-web.host/pi-sessions v1 was not registered");
+    await runtime.resumeWithHostCapabilityFactories([lateFactory, piSessionsFactory]);
+
+    expect(events).toEqual([
+      "start:early-state",
+      "start:provider",
+      "dispose:wrong-version:true",
+      "start:late-alpha",
+      "dispose:late-beta:true",
+      "start:late-gamma",
+      "dispose:late-gamma:true",
+      "start:late-omega",
+      "start:late-pi",
+    ]);
+    expect(lateCleanups).toEqual(["late-gamma"]);
+    expect(resolvedWorkspaces.has("late-alpha")).toBe(true);
+    expect(resolvedWorkspaces.has("late-omega")).toBe(true);
+    expect(runtime.healthRecords()).toEqual([
+      expect.objectContaining({ pluginId: "early-state", state: "active" }),
+      expect.objectContaining({ pluginId: "late-alpha", state: "active" }),
+      expect.objectContaining({ pluginId: "late-beta", state: "failed", message: "late factory failed" }),
+      expect.objectContaining({ pluginId: "late-gamma", state: "failed", message: "late start failed" }),
+      expect.objectContaining({ pluginId: "late-omega", state: "active" }),
+      expect.objectContaining({ pluginId: "late-pi", state: "active" }),
+      expect.objectContaining({ pluginId: "provider", state: "active" }),
+      expect.objectContaining({ pluginId: "wrong-version", state: "failed" }),
+    ]);
+    await expect(runtime.resumeWithHostCapabilityFactories([lateFactory, piSessionsFactory]))
+      .rejects.toThrow("already resumed");
+
+    runtime.beginShutdown();
+    expect([...lateContexts.values()].every((signal) => signal.aborted)).toBe(true);
+    await runtime.stop();
+    expect(lateCleanups).toEqual(["late-gamma", "late-omega", "late-alpha"]);
+    expect(events.slice(-5)).toEqual([
+      "dispose:late-pi:true",
+      "dispose:late-omega:true",
+      "dispose:late-alpha:true",
+      "dispose:provider",
+      "dispose:early-state",
+    ]);
+  });
+
+  it("rejects workspace providers blocked on late authority as topology cycles before publishing the registry", async () => {
+    const providerService = testCapability("cycle-provider", "service", 1);
+    const starts: string[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("ordinary-consumer"),
+        entry("downstream"),
+        entry("cycle-provider"),
+      ])) },
+      lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY],
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "cycle-provider") {
+          return Promise.resolve({ default: plugin("Cycle provider", () => ({
+            workspaceProvider: testProvider(),
+            provides: [{ capability: providerService, value: { label: "provider" } }],
+            start: () => { starts.push(pluginId); },
+          }), [PI_WEB_HOST_WORKSPACES_CAPABILITY]) });
+        }
+        if (pluginId === "downstream") {
+          return Promise.resolve({ default: plugin("Downstream", () => ({
+            start: () => { starts.push(pluginId); },
+          }), [providerService]) });
+        }
+        return Promise.resolve({ default: plugin("Ordinary", () => ({
+          start: () => { starts.push(pluginId); },
+        }), [PI_WEB_HOST_WORKSPACES_CAPABILITY]) });
+      },
+      logger: testLogger(),
+    });
+
+    expect(starts).toEqual([]);
+    expect(runtime.providerContributions()).toEqual([]);
+    expect(runtime.healthRecords()).toEqual([
+      expect.objectContaining({ pluginId: "cycle-provider", state: "failed", phase: "start" }),
+      expect.objectContaining({ pluginId: "downstream", state: "failed", phase: "start" }),
+    ]);
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "cycle-provider")?.message)
+      .toContain("workspace provider that depends on late host capability pi-web.host/workspaces v1 in a capability dependency cycle");
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "downstream")?.message)
+      .toContain("provider plugin cycle-provider did not start");
+
+    await runtime.resumeWithHostCapabilityFactories([{
+      capability: PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      create: () => ({
+        value: {
+          version: 1,
+          resolve: () => Promise.reject(new Error("not exercised by this topology fixture")),
+        },
+      }),
+    }]);
+    expect(starts).toEqual(["ordinary-consumer"]);
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "ordinary-consumer"))
+      .toEqual(expect.objectContaining({ state: "active" }));
+    await runtime.stop();
+  });
+
+  it("propagates failed and missing exact-version dependencies without blocking independent plugins", async () => {
+    const serviceV1 = testCapability("provider", "service", 1);
+    const serviceV2 = testCapability("provider", "service", 2);
+    const events: string[] = [];
+    const lifetimes = new Map<string, AbortSignal>();
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("versioned"),
+        entry("provider"),
+        entry("independent"),
+        entry("consumer"),
+      ])) },
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        const activate = (context: ServerPluginActivationContext): ServerPluginActivation => {
+          events.push(`activate:${pluginId}`);
+          lifetimes.set(pluginId, context.lifetimeSignal);
+          if (pluginId === "provider") {
+            return {
+              provides: [{ capability: serviceV1, value: { label: "provider" } }],
+              start: () => { events.push("start:provider"); throw new Error("provider exploded"); },
+              dispose: () => { events.push(`dispose:provider:${String(context.lifetimeSignal.aborted)}`); },
+            };
+          }
+          if (pluginId === "independent") {
+            return {
+              start: () => { events.push("start:independent"); },
+              dispose: () => { events.push("dispose:independent"); },
+            };
+          }
+          return {
+            start: () => { events.push(`unexpected-start:${pluginId}`); },
+            dispose: () => { events.push(`dispose:${pluginId}:${String(context.lifetimeSignal.aborted)}`); },
+          };
+        };
+        const requires = pluginId === "consumer" ? [serviceV1] : pluginId === "versioned" ? [serviceV2] : undefined;
+        return Promise.resolve({ default: plugin(pluginId, activate, requires) });
+      },
+      logger: testLogger(),
+    });
+
+    expect(events).not.toContain("unexpected-start:consumer");
+    expect(events).not.toContain("unexpected-start:versioned");
+    expect(events).toEqual(expect.arrayContaining([
+      "start:independent",
+      "start:provider",
+      "dispose:provider:true",
+      "dispose:consumer:true",
+      "dispose:versioned:true",
+    ]));
+    const records = runtime.healthRecords();
+    expect(records.map(({ pluginId, state, phase }) => [pluginId, state, phase])).toEqual([
+      ["consumer", "failed", "start"],
+      ["independent", "active", undefined],
+      ["provider", "failed", "start"],
+      ["versioned", "failed", "start"],
+    ]);
+    expect(records.find(({ pluginId }) => pluginId === "consumer")?.message)
+      .toContain("provider plugin provider did not start");
+    expect(records.find(({ pluginId }) => pluginId === "provider")?.message).toBe("provider exploded");
+    expect(records.find(({ pluginId }) => pluginId === "versioned")?.message).toContain("provider/service v2");
+    expect(() => runtime.resolve(serviceV1)).toThrow("is not active");
+    expect([...lifetimes.entries()].filter(([id]) => id !== "independent").every(([, signal]) => signal.aborted)).toBe(true);
+    expect(lifetimes.get("independent")?.aborted).toBe(false);
+
+    await runtime.stop();
+    expect(events.at(-1)).toBe("dispose:independent");
+  });
+
+  it("attributes capability cycles to their members and then fails downstream dependents", async () => {
+    const alphaService = testCapability("alpha", "service", 1);
+    const betaService = testCapability("beta", "service", 1);
+    const starts: string[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("downstream"),
+        entry("beta"),
+        entry("independent"),
+        entry("alpha"),
+      ])) },
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "alpha") {
+          return Promise.resolve({ default: plugin("Alpha", () => ({
+            provides: [{ capability: alphaService, value: { label: "alpha" } }],
+            start: () => { starts.push("alpha"); },
+          }), [betaService]) });
+        }
+        if (pluginId === "beta") {
+          return Promise.resolve({ default: plugin("Beta", () => ({
+            provides: [{ capability: betaService, value: { label: "beta" } }],
+            start: () => { starts.push("beta"); },
+          }), [alphaService]) });
+        }
+        if (pluginId === "downstream") {
+          return Promise.resolve({ default: plugin("Downstream", () => ({
+            start: () => { starts.push("downstream"); },
+          }), [alphaService]) });
+        }
+        return Promise.resolve(pluginModule("Independent", { start: () => { starts.push("independent"); } }));
+      },
+      logger: testLogger(),
+    });
+
+    expect(starts).toEqual(["independent"]);
+    const records = runtime.healthRecords();
+    expect(records.find(({ pluginId }) => pluginId === "alpha")).toMatchObject({ state: "failed", phase: "start" });
+    expect(records.find(({ pluginId }) => pluginId === "alpha")?.message).toContain("capability dependency cycle");
+    expect(records.find(({ pluginId }) => pluginId === "beta")).toMatchObject({ state: "failed", phase: "start" });
+    expect(records.find(({ pluginId }) => pluginId === "beta")?.message).toContain("capability dependency cycle");
+    expect(records.find(({ pluginId }) => pluginId === "downstream")).toMatchObject({ state: "failed", phase: "start" });
+    expect(records.find(({ pluginId }) => pluginId === "downstream")?.message).toContain("provider plugin alpha did not start");
+    expect(records.find(({ pluginId }) => pluginId === "independent")).toEqual(expect.objectContaining({ state: "active" }));
+    await runtime.stop();
+  });
+
+  it("rejects malformed contracts plus foreign and duplicate provisions during validation", async () => {
+    const foreign = testCapability("foreign", "service", 1);
+    const duplicate = testCapability("duplicate", "service", 1);
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("foreign"), entry("duplicate"), entry("bad-version")])) },
+      importer: (url) => {
+        const pluginId = pluginIdFromUrl(url);
+        if (pluginId === "bad-version") {
+          return Promise.resolve({
+            default: {
+              apiVersion: 3,
+              name: "Bad version",
+              requires: [{ pluginId: "provider", id: "service", version: 0, parse: (value: unknown) => value }],
+              activate: () => ({}),
+            },
+          });
+        }
+        const activation = pluginId === "foreign"
+          ? { provides: [{ capability: testCapability("other", "service", 1), value: { label: "wrong owner" } }] }
+          : { provides: [
+              { capability: duplicate, value: { label: "first" } },
+              { capability: duplicate, value: { label: "second" } },
+            ] };
+        return Promise.resolve(pluginModule(pluginId, activation));
+      },
+      logger: testLogger(),
+    });
+
+    const records = runtime.healthRecords();
+    expect(records.map(({ pluginId, state, phase }) => [pluginId, state, phase])).toEqual([
+      ["bad-version", "incompatible", "validate"],
+      ["duplicate", "incompatible", "validate"],
+      ["foreign", "incompatible", "validate"],
+    ]);
+    expect(records[0]?.message).toContain("version must be a positive integer");
+    expect(records[1]?.message).toContain("more than once");
+    expect(records[2]?.message).toContain("cannot provide capability owned by other");
+    expect(() => runtime.resolve(foreign)).toThrow("is not active");
+  });
+
+  it("freezes activation inputs, scopes invocation signals, and cancels lifetime before disposal", async () => {
     let activationContext: ServerPluginActivationContext | undefined;
     const lifecycleSignals: AbortSignal[] = [];
     const runtime = await createServerPluginRuntime({
@@ -113,12 +832,12 @@ describe("server plugin runtime", () => {
           activationContext = context;
           lifecycleSignals.push(context.signal);
           return {
-            start: (signal) => { lifecycleSignals.push(signal); },
+            start: ({ signal }) => { lifecycleSignals.push(signal); },
             health: (signal) => {
               lifecycleSignals.push(signal);
               return { status: "healthy" };
             },
-            stop: (signal) => { lifecycleSignals.push(signal); },
+            dispose: (signal) => { lifecycleSignals.push(signal); },
           };
         }),
       }),
@@ -132,7 +851,10 @@ describe("server plugin runtime", () => {
     expect(activationContext.notices).toBeUndefined();
     expect(lifecycleSignals).toHaveLength(2);
     expect(lifecycleSignals.every((signal) => signal.aborted)).toBe(true);
+    expect(activationContext.lifetimeSignal.aborted).toBe(false);
 
+    runtime.beginShutdown();
+    expect(activationContext.lifetimeSignal.aborted).toBe(true);
     await runtime.inspectHealth();
     await runtime.stop();
 
@@ -191,7 +913,7 @@ describe("server plugin runtime", () => {
     await runtime.stop();
   });
 
-  it("revokes a successful reporter before ordinary stop cleanup", async () => {
+  it("revokes a successful reporter before ordinary disposal", async () => {
     let reporter: ServerPluginNoticeReporterV1 | undefined;
     let stopError: unknown;
     const records: ServerPluginNoticeInput[] = [];
@@ -203,7 +925,7 @@ describe("server plugin runtime", () => {
           reporter?.record({ severity: "info", message: "activation" });
           return {
             start: () => { reporter?.record({ severity: "info", message: "start" }); },
-            stop: () => {
+            dispose: () => {
               try {
                 reporter?.record({ severity: "info", message: "stop" });
               } catch (error) {
@@ -239,7 +961,7 @@ describe("server plugin runtime", () => {
           reporter = context.notices;
           return {
             start: () => { throw new Error("start failed"); },
-            stop: () => {
+            dispose: () => {
               try {
                 reporter?.record({ severity: "error", message: "rollback" });
               } catch (error) {
@@ -553,12 +1275,32 @@ describe("server plugin runtime", () => {
       entry("configured-off", { scope: "bundled", enabled: false }),
     ]);
 
+    const createBundledLateHostCapability = vi.fn(() => ({
+      value: {
+        version: 1 as const,
+        resolve: () => Promise.reject(new Error("bundled safe start must not resolve workspaces")),
+      },
+    }));
+    const createBundledPiSessionsCapability = vi.fn(() => ({
+      value: {
+        version: 1 as const,
+        run: () => Promise.reject(new Error("bundled safe start must not run sessions")),
+      },
+    }));
     const bundledOnly = await createServerPluginRuntime({
       catalog: { snapshot: () => Promise.resolve(snapshot) },
       safeStart: "bundled-only",
       importer,
       logger: testLogger(),
+      lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY],
     });
+    await bundledOnly.resumeWithHostCapabilityFactories([{
+      capability: PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      create: createBundledLateHostCapability,
+    }, {
+      capability: PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+      create: createBundledPiSessionsCapability,
+    }]);
 
     expect(imported).toEqual(["bundled"]);
     expect(bundledOnly.healthRecords()).toEqual([
@@ -566,30 +1308,63 @@ describe("server plugin runtime", () => {
       expect.objectContaining({ pluginId: "configured-off", state: "disabled", message: "disabled in PI WEB config" }),
       expect.objectContaining({ pluginId: "local", state: "disabled", message: "disabled by bundled-only safe start" }),
     ]);
+    expect(createBundledLateHostCapability).not.toHaveBeenCalled();
+    expect(createBundledPiSessionsCapability).not.toHaveBeenCalled();
+    await bundledOnly.stop();
 
     imported.splice(0);
     const noneCatalog = { snapshot: vi.fn(() => Promise.resolve(snapshot)) };
+    const createHostCapability = vi.fn(() => ({
+      value: { version: 1 as const, read: () => Promise.resolve(undefined), write: () => Promise.resolve(), clear: () => Promise.resolve() },
+    }));
+    const createLateHostCapability = vi.fn(() => ({
+      value: {
+        version: 1 as const,
+        resolve: () => Promise.reject(new Error("safe start must not resolve workspaces")),
+      },
+    }));
+    const createPiSessionsCapability = vi.fn(() => ({
+      value: {
+        version: 1 as const,
+        run: () => Promise.reject(new Error("safe start must not run sessions")),
+      },
+    }));
     const none = await createServerPluginRuntime({
       catalog: noneCatalog,
       safeStart: "none",
       importer,
       logger: testLogger(),
+      hostCapabilityFactories: [{ capability: testScopedService, create: createHostCapability }],
+      lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY],
     });
+    await none.resumeWithHostCapabilityFactories([{
+      capability: PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      create: createLateHostCapability,
+    }, {
+      capability: PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+      create: createPiSessionsCapability,
+    }]);
 
     expect(imported).toEqual([]);
     expect(noneCatalog.snapshot).not.toHaveBeenCalled();
+    expect(createHostCapability).not.toHaveBeenCalled();
+    expect(createLateHostCapability).not.toHaveBeenCalled();
+    expect(createPiSessionsCapability).not.toHaveBeenCalled();
     expect(none.healthRecords()).toEqual([]);
   });
 
   it("aborts an uncooperative lifecycle phase at its deadline and continues activation", async () => {
     vi.useFakeTimers();
     const observedSignals: AbortSignal[] = [];
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
     const importer: ServerPluginModuleImporter = (url) => {
       const pluginId = pluginIdFromUrl(url);
       if (pluginId === "hang") {
         return Promise.resolve(pluginModule("Hang", {
-          start: (signal) => new Promise((_resolve, reject) => {
+          start: ({ signal }) => new Promise((_resolve, reject) => {
             observedSignals.push(signal);
+            markStarted?.();
             signal.addEventListener("abort", () => {
               const reason: unknown = signal.reason;
               reject(reason instanceof Error ? reason : new Error("fixture aborted", { cause: reason }));
@@ -606,6 +1381,7 @@ describe("server plugin runtime", () => {
       logger: testLogger(),
       lifecycleTimeoutMs: 50,
     });
+    await started;
     await vi.advanceTimersByTimeAsync(50);
     const runtime = await creating;
 
@@ -617,16 +1393,17 @@ describe("server plugin runtime", () => {
       ["later", "active", undefined],
     ]);
     expect(records[0]?.message).toContain("timed out");
+    await runtime.stop();
   });
 
-  it("contains health and stop callback failures without hiding other plugins", async () => {
+  it("contains health and disposal callback failures without hiding other plugins", async () => {
     const stops: string[] = [];
     const importer: ServerPluginModuleImporter = (url) => {
       const pluginId = pluginIdFromUrl(url);
       if (pluginId === "bad-health") {
         return Promise.resolve(pluginModule("Bad health", {
           health: () => { throw new Error("health exploded"); },
-          stop: () => {
+          dispose: () => {
             stops.push("bad-health");
             throw new Error("stop exploded");
           },
@@ -635,12 +1412,12 @@ describe("server plugin runtime", () => {
       if (pluginId === "bad-health-details") {
         return Promise.resolve(pluginModule("Bad health details", {
           health: () => ({ status: "healthy", details: { checkedAt: new Date() } }),
-          stop: () => { stops.push("bad-health-details"); },
+          dispose: () => { stops.push("bad-health-details"); },
         }));
       }
       return Promise.resolve(pluginModule("Degraded", {
         health: () => ({ status: "degraded", message: "tool unavailable", details: { retry: true } }),
-        stop: () => { stops.push("degraded"); },
+        dispose: () => { stops.push("degraded"); },
       }));
     };
     const runtime = await createServerPluginRuntime({
@@ -667,6 +1444,10 @@ describe("server plugin runtime", () => {
         health: { status: "degraded", message: "tool unavailable", details: { retry: true } },
       },
     ]);
+    await expect(runtime.inspectHealth(["degraded"])).resolves.toEqual([{
+      pluginId: "degraded",
+      health: { status: "degraded", message: "tool unavailable", details: { retry: true } },
+    }]);
 
     await runtime.stop();
 
@@ -674,7 +1455,7 @@ describe("server plugin runtime", () => {
     expect(runtime.healthRecords()).toContainEqual(expect.objectContaining({
       pluginId: "bad-health",
       state: "failed",
-      phase: "stop",
+      phase: "dispose",
       message: "stop exploded",
     }));
   });
@@ -721,12 +1502,12 @@ describe("server plugin runtime", () => {
       ])) },
       importer: (url) => {
         const pluginId = pluginIdFromUrl(url);
-        const pairedBackend = pluginId === "request-only"
-          ? { version: 1, request: () => null }
+        const peer = pluginId === "request-only"
+          ? { request: () => null }
           : pluginId === "channel-only"
-            ? { version: 1, openChannel: () => ({ receive: () => undefined }) }
-            : { version: 1 };
-        return Promise.resolve(pluginModule(pluginId, { pairedBackend }));
+            ? { openChannel: () => ({ receive: () => undefined }) }
+            : {};
+        return Promise.resolve(pluginModule(pluginId, { peer }));
       },
       logger: testLogger(),
     });
@@ -745,15 +1526,14 @@ describe("server plugin runtime", () => {
     const provider = testProvider();
     const mutableActivation: Record<string, unknown> = {
       workspaceProvider: provider,
-      pairedBackend: {
-        version: 1,
+      peer: {
         request: () => ({ captured: true }),
         openChannel: () => ({ receive: () => undefined }),
       },
     };
     mutableActivation["start"] = () => {
       mutableActivation["workspaceProvider"] = {};
-      mutableActivation["pairedBackend"] = {};
+      mutableActivation["peer"] = {};
     };
     const throwingActivation: Record<string, unknown> = {};
     Object.defineProperty(throwingActivation, "stop", {
@@ -809,7 +1589,7 @@ describe("server plugin runtime", () => {
     ]);
   });
 
-  it("rejects plural providers, malformed paired backends, and non-JSON settings before publication", async () => {
+  it("rejects plural providers, malformed peers, and non-JSON settings before publication", async () => {
     const pluralActivation = { workspaceProviders: [testProvider()] };
     const circular: Record<string, unknown> = {};
     circular["self"] = circular;
@@ -817,8 +1597,8 @@ describe("server plugin runtime", () => {
       const pluginId = pluginIdFromUrl(url);
       const activation = pluginId === "plural"
         ? pluralActivation
-        : pluginId === "invalid-backend" ? { pairedBackend: { version: 2, request: () => null } }
-          : pluginId === "invalid-channel" ? { pairedBackend: { version: 1, request: () => null, openChannel: true } }
+        : pluginId === "invalid-backend" ? { peer: {} }
+          : pluginId === "invalid-channel" ? { peer: { request: () => null, openChannel: true } }
             : {};
       return Promise.resolve(pluginModule("Plural", activation));
     };
@@ -843,8 +1623,8 @@ describe("server plugin runtime", () => {
       ["non-json-settings", "incompatible", "validate"],
       ["plural", "incompatible", "validate"],
     ]);
-    expect(records[0]?.message).toContain("pairedBackend must be version 1 with at least one request or channel handler");
-    expect(records[1]?.message).toContain("pairedBackend must be version 1 with at least one request or channel handler");
+    expect(records[0]?.message).toContain("peer must include a request or channel handler");
+    expect(records[1]?.message).toContain("peer must include a request or channel handler");
     expect(records[2]?.message).toContain("must not contain cycles");
     expect(records[3]?.message).toContain("must contain only JSON values");
     expect(records[4]?.message).toBe("Server plugins may contribute only one workspaceProvider");
@@ -864,8 +1644,8 @@ describe("server plugin runtime", () => {
       logger: testLogger(),
     });
     expect(recovery.healthRecords()).toEqual([]);
-    expect(() => { recovery.requiredTerminalService().closeForCwd("/repo"); })
-      .toThrow("Required Terminal plugin is unavailable in recovery safe start");
+    expect(() => recovery.resolve(REQUIRED_TERMINAL_SERVICE_CAPABILITY))
+      .toThrow("is not active");
     await recovery.stop();
   });
 
@@ -883,18 +1663,17 @@ describe("server plugin runtime", () => {
         imported.push(id);
         if (id === "pi-web.terminal") {
           return Promise.resolve(pluginModule("Terminal", {
-            pairedBackend: {
-              version: 1,
+            peer: {
               request: () => null,
               openChannel: () => ({ receive: () => undefined }),
             },
-            requiredTerminalService: requiredService,
+            provides: [{ capability: REQUIRED_TERMINAL_SERVICE_CAPABILITY, value: requiredService }],
             health: () => ({ status: "healthy" }),
-            stop: () => { events.push("stop:terminal"); },
+            dispose: () => { events.push("stop:terminal"); },
           }));
         }
         return Promise.resolve(pluginModule("Zeta", {
-          stop: () => { events.push("stop:zeta"); },
+          dispose: () => { events.push("stop:zeta"); },
         }));
       },
       logger: testLogger(),
@@ -905,8 +1684,8 @@ describe("server plugin runtime", () => {
       ["pi-web.terminal", "active"],
       ["zeta", "active"],
     ]);
-    expect(runtime.requiredTerminalService()).not.toBe(requiredService);
-    expect(typeof runtime.requiredTerminalService().runCommand).toBe("function");
+    expect(runtime.resolve(REQUIRED_TERMINAL_SERVICE_CAPABILITY)).not.toBe(requiredService);
+    expect(typeof runtime.resolve(REQUIRED_TERMINAL_SERVICE_CAPABILITY).runCommand).toBe("function");
 
     await runtime.stop();
     expect(events).toEqual(["stop:zeta", "stop:terminal"]);
@@ -919,20 +1698,19 @@ describe("server plugin runtime", () => {
         entry("pi-web.terminal", { scope: "bundled", browserRevision: "terminal-browser" }),
       ])) },
       importer: () => Promise.resolve(pluginModule("Terminal", {
-        pairedBackend: {
-          version: 1,
+        peer: {
           request: () => null,
           openChannel: () => ({ receive: () => undefined }),
         },
-        requiredTerminalService: {},
-        stop: stopped,
+        provides: [{ capability: REQUIRED_TERMINAL_SERVICE_CAPABILITY, value: {} }],
+        dispose: stopped,
       })),
       logger: testLogger(),
     })).rejects.toThrow("did not provide its composition service");
     expect(stopped).toHaveBeenCalledOnce();
   });
 
-  it("rolls back startup when required Terminal is unhealthy before importing ordinary plugins", async () => {
+  it("rolls back two-stage startup when required Terminal is unhealthy before publication", async () => {
     const imported: string[] = [];
     const stopped = vi.fn();
     await expect(createServerPluginRuntimeWithRequiredTerminal({
@@ -943,23 +1721,43 @@ describe("server plugin runtime", () => {
       importer: (url) => {
         const id = pluginIdFromUrl(url);
         imported.push(id);
+        if (id !== "pi-web.terminal") return Promise.resolve(pluginModule("Alpha", { dispose: stopped }));
         return Promise.resolve(pluginModule("Terminal", {
-          pairedBackend: {
-            version: 1,
+          peer: {
             request: () => null,
             openChannel: () => ({ receive: () => undefined }),
           },
-          requiredTerminalService: requiredTerminalServiceFixture(),
+          provides: [{ capability: REQUIRED_TERMINAL_SERVICE_CAPABILITY, value: requiredTerminalServiceFixture() }],
           health: () => ({ status: "unhealthy", message: "PTY unavailable" }),
-          stop: stopped,
+          dispose: stopped,
         }));
       },
       logger: testLogger(),
     })).rejects.toThrow("Required Terminal server entry is unhealthy: PTY unavailable");
-    expect(imported).toEqual(["pi-web.terminal"]);
-    expect(stopped).toHaveBeenCalledOnce();
+    expect(imported).toEqual(["pi-web.terminal", "alpha"]);
+    expect(stopped).toHaveBeenCalledTimes(2);
   });
 });
+
+interface TestCapabilityValue {
+  readonly label: string;
+}
+
+function testCapability(pluginId: string, id: string, version: number): PluginCapability<TestCapabilityValue> {
+  return Object.freeze({
+    pluginId,
+    id,
+    version,
+    parse(value: unknown): TestCapabilityValue {
+      if (!isRecord(value) || typeof value["label"] !== "string") throw new Error("test capability must include a label");
+      return Object.freeze({ label: value["label"] });
+    },
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function entry(
   id: string,
@@ -987,8 +1785,12 @@ function pluginModule(name: string, activation: ServerPluginActivation | Record<
   return { default: plugin(name, () => activation) };
 }
 
-function plugin(name: string, activate: PiWebServerPlugin["activate"]): PiWebServerPlugin {
-  return { apiVersion: 1, name, activate };
+function plugin(
+  name: string,
+  activate: PiWebServerPlugin["activate"],
+  requires?: readonly PluginCapability[],
+): PiWebServerPlugin {
+  return { apiVersion: 3, name, ...(requires === undefined ? {} : { requires }), activate };
 }
 
 function requiredTerminalServiceFixture() {

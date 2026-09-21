@@ -33,6 +33,7 @@ import type { ExtensionDialogAnswerCallback, ExtensionDialogCancelCallback, Exte
 import { registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
 import "./ConversationMeter";
 import "./FormattedText";
+import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import "./ToolExecutionView";
 
 const messageTimestampFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "medium" });
@@ -186,6 +187,11 @@ function chatMessageModelLabel(message: ChatLine): string | undefined {
 export class ChatView extends LitElement {
   @property({ attribute: false }) messages: ChatLine[] = [];
   @property() sessionId = "";
+  @property({ attribute: false }) workspaceContext: MarkdownWorkspaceContext | undefined;
+  @property({ attribute: false }) onMessageAction?: (entryId: string, action: "fork" | "back") => Promise<void>;
+  @property({ type: Boolean }) messageActionsDisabled = false;
+  @state() private messageActionPending = false;
+  @state() private messageActionError: { sessionId: string; entryId: string; message: string } | undefined;
   @property({ type: Number }) messageStart = 0;
   @property({ type: Number }) messageEnd = 0;
   @property({ type: Number }) messageTotal = 0;
@@ -699,7 +705,7 @@ export class ChatView extends LitElement {
         ${section.messages.map((message, index) => html`
           <div class="queued-message">
             <span class="queued-kind">${message.kind === "steer" ? "Steer" : "Follow-up"} ${String(index + 1)}</span>
-            <formatted-text .text=${message.text}></formatted-text>
+            <formatted-text .workspaceContext=${this.workspaceContext} .text=${message.text}></formatted-text>
           </div>
         `)}
       </aside>
@@ -906,15 +912,39 @@ export class ChatView extends LitElement {
   }
 
   private renderMessageActions(message: ChatLine, key: string) {
-    if (!this.isCopyableMessage(message)) return null;
+    if (message.role !== "user" && message.role !== "assistant") return null;
+    const canNavigate = message.entryId !== undefined && this.onMessageAction !== undefined;
+    const canCopy = this.isCopyableMessage(message);
+    if (!canNavigate && !canCopy) return null;
     const copied = this.copiedMessageKey === key;
     return html`
       <div class="msg-actions" aria-label="Message actions">
-        <button type="button" class="msg-action" title=${copied ? "Copied" : "Copy message"} aria-label=${`${copied ? "Copied" : "Copy"} ${message.role} message`} @click=${(event: MouseEvent) => { void this.copyMessage(message, key, event); }}>
+        ${canNavigate ? html`
+          <button type="button" class="msg-action" title="Clone session from this message" aria-label="Clone session from this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "fork", event); }}><span class="msg-fork-icon" aria-hidden="true">⑂</span></button>
+          <button type="button" class="msg-action" title="Go back to this message" aria-label="Go back to this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "back", event); }}><svg aria-hidden="true" width="16" height="16" viewBox="-3 -3 30 30" fill="none" stroke="currentColor" stroke-width="0.85" stroke-linecap="round" stroke-linejoin="round"><path vector-effect="non-scaling-stroke" d="M4 5h11a6 6 0 0 1 0 12H4m5-5-5 5 5 5" /></svg></button>
+        ` : null}
+        ${canCopy ? html`<button type="button" class="msg-action" title=${copied ? "Copied" : "Copy message"} aria-label=${`${copied ? "Copied" : "Copy"} ${message.role} message`} @click=${(event: MouseEvent) => { void this.copyMessage(message, key, event); }}>
           <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
-        </button>
+        </button>` : null}
+        ${this.messageActionError?.sessionId === this.sessionId && this.messageActionError.entryId === message.entryId ? html`<span role="alert">${this.messageActionError.message}</span>` : null}
       </div>
     `;
+  }
+
+  private async actOnMessage(message: ChatLine, action: "fork" | "back", event: MouseEvent): Promise<void> {
+    event.stopPropagation();
+    if (this.messageActionsDisabled || this.messageActionPending || message.entryId === undefined || this.onMessageAction === undefined) return;
+    if (!window.confirm(action === "fork" ? "Are you sure you want to fork this session?" : "Are you sure you want to go back to this message?")) return;
+    const sessionId = this.sessionId;
+    this.messageActionPending = true;
+    this.messageActionError = undefined;
+    try {
+      await this.onMessageAction(message.entryId, action);
+    } catch (error) {
+      if (this.sessionId === sessionId) this.messageActionError = { sessionId, entryId: message.entryId, message: error instanceof Error ? error.message : String(error) };
+    } finally {
+      this.messageActionPending = false;
+    }
   }
 
   private onMetaKeydown(event: KeyboardEvent, key: string, expanded: boolean) {
@@ -960,13 +990,13 @@ export class ChatView extends LitElement {
 
   private renderPart(part: ChatPart, message?: ChatLine) {
     if (part.type === "text" && message?.role === "bash") return html`<pre class="part shell-output">${part.text}</pre>`;
-    if (part.type === "text") return html`<formatted-text class="part" .text=${part.text}></formatted-text>`;
-    if (part.type === "thinking") return html`<details class="part"><summary>thinking</summary><formatted-text .text=${part.text}></formatted-text></details>`;
+    if (part.type === "text") return html`<formatted-text class="part" .workspaceContext=${this.workspaceContext} .text=${part.text}></formatted-text>`;
+    if (part.type === "thinking") return html`<details class="part"><summary>thinking</summary><formatted-text .workspaceContext=${this.workspaceContext} .text=${part.text}></formatted-text></details>`;
     if (part.type === "skillInvocation") return html`
       <details class="part skill-invocation">
         <summary><b>[skill]</b> ${part.name}</summary>
         <small>${part.location}</small>
-        <formatted-text .text=${part.content}></formatted-text>
+        <formatted-text .workspaceContext=${this.workspaceContext} .text=${part.content}></formatted-text>
       </details>
     `;
     if (part.type === "skillRead") return html`
@@ -991,7 +1021,7 @@ export class ChatView extends LitElement {
     if (part.type === "toolResult") return html`
       <details class="part" ?open=${part.isError}>
         <summary>${part.isError ? "✖" : "✓"} ${part.toolName} result</summary>
-        <formatted-text .text=${part.text}></formatted-text>
+        <formatted-text .workspaceContext=${this.workspaceContext} .text=${part.text}></formatted-text>
       </details>
     `;
     return null;

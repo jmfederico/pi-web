@@ -1,10 +1,12 @@
 import type {
   JsonObject,
   JsonValue,
-  PairedPluginBackendV1,
-  PairedPluginChannel,
-  PairedPluginChannelOpenContext,
-  PairedPluginRequestContext,
+  PluginCapability,
+  PluginCapabilityProvision,
+  ServerPluginPeer,
+  ServerPluginPeerChannel,
+  ServerPluginPeerChannelOpenContext,
+  ServerPluginPeerRequestContext,
   PiWebServerPlugin,
   ServerPluginActivation,
   ServerPluginActivationContext,
@@ -29,13 +31,19 @@ interface RequiredTerminalServiceContribution {
   bindActivitySink(sink: TerminalActivitySink): void;
 }
 
-/** Bundled Terminal's privileged host-only composition result; not part of server plugin API v1. */
+export const TERMINAL_SERVICE_CAPABILITY = Object.freeze({
+  pluginId: "pi-web.terminal",
+  id: "service",
+  version: 1,
+  parse: snapshotTerminalServiceCapability,
+}) satisfies PluginCapability<RequiredTerminalServiceContribution, 1>;
+
 interface TerminalActivation extends ServerPluginActivation {
-  requiredTerminalService: RequiredTerminalServiceContribution;
+  provides: readonly [PluginCapabilityProvision<RequiredTerminalServiceContribution, 1>];
 }
 
 const plugin: PiWebServerPlugin = {
-  apiVersion: 1,
+  apiVersion: 3,
   name: "Terminal",
   activate(context) {
     return activateTerminalPlugin(context);
@@ -58,14 +66,18 @@ export function activateTerminalPlugin(context: ServerPluginActivationContext): 
     runCommand: (options: RunTerminalCommandOptions) => service.runCommand(options),
     bindActivitySink: (sink: TerminalActivitySink) => { service.bindActivitySink(sink); },
   });
+  const serviceProvision = Object.freeze({
+    capability: TERMINAL_SERVICE_CAPABILITY,
+    value: requiredTerminalService,
+  }) satisfies PluginCapabilityProvision<RequiredTerminalServiceContribution, 1>;
   let stopped = false;
   return Object.freeze({
-    pairedBackend: createTerminalBackend(service, context),
-    requiredTerminalService,
+    peer: createTerminalPeer(service, context),
+    provides: Object.freeze([serviceProvision] as const),
     health: () => stopped
       ? Object.freeze({ status: "unhealthy" as const, message: "Terminal service is stopped" })
       : Object.freeze({ status: "healthy" as const }),
-    stop: () => {
+    dispose: () => {
       if (stopped) return;
       stopped = true;
       service.dispose();
@@ -73,18 +85,35 @@ export function activateTerminalPlugin(context: ServerPluginActivationContext): 
   });
 }
 
-export function createTerminalBackend(
-  service: TerminalService,
-  activationContext?: Pick<ServerPluginActivationContext, "logger">,
-): PairedPluginBackendV1 {
+function snapshotTerminalServiceCapability(value: unknown): RequiredTerminalServiceContribution {
+  if (!isRequiredTerminalServiceContribution(value)) {
+    throw new Error("Terminal service capability must expose closeForCwd, runCommand, and bindActivitySink");
+  }
   return Object.freeze({
-    version: 1,
-    request: (context: PairedPluginRequestContext) => terminalRequest(service, context),
-    openChannel: (context: PairedPluginChannelOpenContext) => openTerminalChannel(service, context, activationContext),
+    closeForCwd: (cwd: string) => { value.closeForCwd(cwd); },
+    runCommand: (options: RunTerminalCommandOptions) => value.runCommand(options),
+    bindActivitySink: (sink: TerminalActivitySink) => { value.bindActivitySink(sink); },
   });
 }
 
-function terminalRequest(service: TerminalService, context: PairedPluginRequestContext): JsonValue {
+function isRequiredTerminalServiceContribution(value: unknown): value is RequiredTerminalServiceContribution {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof Reflect.get(value, "closeForCwd") === "function"
+    && typeof Reflect.get(value, "runCommand") === "function"
+    && typeof Reflect.get(value, "bindActivitySink") === "function";
+}
+
+export function createTerminalPeer(
+  service: TerminalService,
+  activationContext?: Pick<ServerPluginActivationContext, "logger">,
+): ServerPluginPeer {
+  return Object.freeze({
+    request: (context: ServerPluginPeerRequestContext) => terminalRequest(service, context),
+    openChannel: (context: ServerPluginPeerChannelOpenContext) => openTerminalChannel(service, context, activationContext),
+  });
+}
+
+function terminalRequest(service: TerminalService, context: ServerPluginPeerRequestContext): JsonValue {
   throwIfAborted(context.signal);
   const scope = terminalScope(context);
   switch (context.operation) {
@@ -126,9 +155,9 @@ function terminalRequest(service: TerminalService, context: PairedPluginRequestC
 
 function openTerminalChannel(
   service: TerminalService,
-  context: PairedPluginChannelOpenContext,
+  context: ServerPluginPeerChannelOpenContext,
   activationContext?: Pick<ServerPluginActivationContext, "logger">,
-): PairedPluginChannel {
+): ServerPluginPeerChannel {
   if (context.operation !== "terminal.attach") {
     throw new Error(`Unsupported Terminal channel operation: ${context.operation}`);
   }
@@ -202,7 +231,7 @@ function openTerminalChannel(
   });
 }
 
-function terminalScope(context: Pick<PairedPluginRequestContext, "project" | "workspace">): TerminalWorkspaceScope {
+function terminalScope(context: Pick<ServerPluginPeerRequestContext, "project" | "workspace">): TerminalWorkspaceScope {
   if (context.workspace.projectId !== context.project.id) {
     throw new Error("Terminal workspace project scope does not match the host project");
   }

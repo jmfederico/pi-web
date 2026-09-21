@@ -2,10 +2,10 @@ import { isAbsolute, resolve } from "node:path";
 import type {
   JsonObject,
   JsonValue,
-  PairedPluginChannel,
-  PairedPluginChannelOpenContext,
-  PairedPluginRequestContext,
-  PairedPluginWorkspace,
+  ServerPluginPeerChannel,
+  ServerPluginPeerChannelOpenContext,
+  ServerPluginPeerRequestContext,
+  ServerPluginPeerWorkspace,
   ProjectInput,
   WorkspaceProviderMetadata,
 } from "../../server-plugin-api.js";
@@ -33,11 +33,45 @@ import type {
   ServerPluginHealthInspection,
   ServerPluginPairedBackendContribution,
 } from "./serverPluginRuntime.js";
-import {
-  PluginBackendRequestError,
-  type PluginBackendRequest,
-  type WorkspaceProviderRegistry,
-} from "../workspaces/workspaceProviderRegistry.js";
+import { PluginCallbackDrain } from "../pluginCallbackDrain.js";
+import type { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
+
+export interface PluginBackendRequest {
+  pluginId: string;
+  moduleRevision: string;
+  project: Project;
+  workspaceId: string;
+  operation: string;
+  input: unknown;
+}
+
+export type PluginBackendRequestErrorCode =
+  | "inactive-plugin"
+  | "stale-plugin-revision"
+  | "invalid-operation"
+  | "invalid-input"
+  | "workspace-not-found"
+  | "invalid-scope"
+  | "resolution-failed"
+  | "operation-unavailable"
+  | "request-failed"
+  | "request-timeout"
+  | "request-cancelled"
+  | "shutdown"
+  | "invalid-result";
+
+export class PluginBackendRequestError extends Error {
+  override name = "PluginBackendRequestError";
+
+  constructor(
+    readonly code: PluginBackendRequestErrorCode,
+    readonly statusCode: number,
+    message: string,
+    options: ErrorOptions = {},
+  ) {
+    super(message, options);
+  }
+}
 
 export interface PluginBackendRegistryOptions {
   /** Healthy direct contributions from one immutable server-plugin snapshot. */
@@ -145,8 +179,12 @@ export class PluginBackendRegistry {
   private readonly channelAdmissions = new Set<ManagedPluginBackendChannelAdmission>();
   private readonly openingChannelControllers = new Set<AbortController>();
   private readonly openingChannelTasks = new Set<Promise<void>>();
+  private readonly openingChannelCleanup = new PluginCallbackDrain();
+  private readonly requestTasks = new Set<Promise<JsonValue>>();
+  private readonly requestCallbacks = new PluginCallbackDrain();
+  private readonly shutdown = new AbortController();
+  private closePromise: Promise<void> | undefined;
   private channelAdmissionCount = 0;
-  private channelShutdown = false;
   private readonly channelsByPlugin = new Map<string, number>();
   private readonly channelsByPluginWorkspace = new Map<string, number>();
 
@@ -171,14 +209,20 @@ export class PluginBackendRegistry {
   }
 
   async request(request: PluginBackendRequest, signal?: AbortSignal): Promise<JsonValue> {
+    if (this.channelsAreShuttingDown()) throw requestShutdownError(request.pluginId);
+    const operationSignal = signal === undefined
+      ? this.shutdown.signal
+      : AbortSignal.any([signal, this.shutdown.signal]);
+    const task = runBoundedPluginBackendOperation(
+      request.pluginId,
+      "dispatch",
+      this.dispatchTimeoutMs,
+      (dispatchSignal) => this.dispatch(request, dispatchSignal),
+      operationSignal,
+    );
+    this.requestTasks.add(task);
     try {
-      return await runBoundedPluginBackendOperation(
-        request.pluginId,
-        "dispatch",
-        this.dispatchTimeoutMs,
-        (dispatchSignal) => this.dispatch(request, dispatchSignal),
-        signal,
-      );
+      return await task;
     } catch (error) {
       if (signal?.aborted === true) {
         throw backendError(
@@ -188,10 +232,13 @@ export class PluginBackendRegistry {
           error,
         );
       }
+      if (this.channelsAreShuttingDown()) throw requestShutdownError(request.pluginId, error);
       if (error instanceof PluginBackendTimeoutError) {
         throw backendError("request-timeout", 504, boundedErrorMessage(error), error);
       }
       throw error;
+    } finally {
+      this.requestTasks.delete(task);
     }
   }
 
@@ -269,7 +316,7 @@ export class PluginBackendRegistry {
     else signal?.addEventListener("abort", abortFromCaller, { once: true });
 
     let managed: ManagedPluginBackendChannel | undefined;
-    let openingChannel: Promise<PairedPluginChannel> | undefined;
+    let openingChannel: Promise<ServerPluginPeerChannel> | undefined;
     let sendFailure: Error | undefined;
     const send = (data: JsonValue): void => {
       if (lifetimeController.signal.aborted) throw channelError("channel-closed", 1008, `Server plugin ${pluginId} channel ${operation} is closed`);
@@ -297,7 +344,7 @@ export class PluginBackendRegistry {
         this.channelOpenTimeoutMs,
         async (openSignal) => {
           const { project, workspace } = await resolveDirectScope(this.options.workspaces, request, pluginId, operation, openSignal);
-          const context: PairedPluginChannelOpenContext = Object.freeze({
+          const context: ServerPluginPeerChannelOpenContext = Object.freeze({
             project,
             workspace,
             operation,
@@ -334,18 +381,27 @@ export class PluginBackendRegistry {
       return managed;
     } catch (error) {
       signal?.removeEventListener("abort", abortFromCaller);
-      finishOpeningTask();
       if (!lifetimeController.signal.aborted) lifetimeController.abort(error);
       // A route-provided reservation remains tied to its physical socket; the
       // route releases it only after attributed teardown completes.
       if (reservedAdmission === undefined) releaseAdmission();
       if (openingChannel !== undefined) {
-        void openingChannel.then(async (channel) => {
-          await closeUnpublishedChannel(channel, pluginId, operation, this.channelCallbackTimeoutMs);
+        const cleanup = openingChannel.then(async (channel) => {
+          await closeUnpublishedChannel(
+            channel,
+            pluginId,
+            operation,
+            this.channelCallbackTimeoutMs,
+            (callback) => { this.openingChannelCleanup.track(callback); },
+          );
         }).catch((cleanupError: unknown) => {
           this.options.logger?.error({ err: cleanupError, pluginId, operation }, "unpublished plugin backend channel cleanup failed");
         });
+        this.openingChannelCleanup.track(cleanup);
       }
+      // Let shutdown snapshot the cleanup task only after this failed opening
+      // has either registered its late-result cleanup or proved none can run.
+      finishOpeningTask();
       if (error instanceof PluginBackendChannelError) throw error;
       if (error instanceof PluginBackendTimeoutError) {
         throw channelError("open-timeout", 1011, boundedErrorMessage(error), error);
@@ -365,18 +421,35 @@ export class PluginBackendRegistry {
     }
   }
 
-  async closeAll(reason = "Session daemon shutdown"): Promise<void> {
-    this.channelShutdown = true;
+  closeAll(reason = "Session daemon shutdown"): Promise<void> {
+    this.closePromise ??= this.performCloseAll(reason);
+    return this.closePromise;
+  }
+
+  private async performCloseAll(reason: string): Promise<void> {
+    if (!this.shutdown.signal.aborted) this.shutdown.abort(new DOMException(reason, "AbortError"));
     const admissions = [...this.channelAdmissions];
     for (const admission of admissions) admission.abort(reason);
     for (const controller of this.openingChannelControllers) {
       if (!controller.signal.aborted) controller.abort(new DOMException(reason, "AbortError"));
     }
-    await Promise.allSettled([...this.openingChannelTasks]);
+    await Promise.allSettled([...this.requestTasks, ...this.openingChannelTasks]);
     const channels = [...this.channels];
-    const results = await Promise.allSettled(channels.map(async (channel) => {
-      await channel.fail("shutdown", reason, 1012);
-    }));
+    const results = await Promise.allSettled([
+      this.requestCallbacks.waitForSettled(
+        this.callbackTimeoutMs,
+        "Plugin backend request callbacks",
+      ),
+      // Allow a late open, its bounded close invocation, and one final
+      // cooperative settlement window after the close signal aborts.
+      this.openingChannelCleanup.waitForSettled(
+        this.channelOpenTimeoutMs + (2 * this.channelCallbackTimeoutMs),
+        "Plugin backend abandoned channel cleanup callbacks",
+      ),
+      ...channels.map(async (channel) => {
+        await channel.fail("shutdown", reason, 1012);
+      }),
+    ]);
     const failures: unknown[] = [];
     for (const result of results) {
       if (result.status === "rejected") {
@@ -405,7 +478,7 @@ export class PluginBackendRegistry {
   }
 
   private channelsAreShuttingDown(): boolean {
-    return this.channelShutdown;
+    return this.shutdown.signal.aborted;
   }
 
   private async dispatch(request: PluginBackendRequest, dispatchSignal: AbortSignal): Promise<JsonValue> {
@@ -467,7 +540,7 @@ export class PluginBackendRegistry {
       );
     }
 
-    let workspace: PairedPluginWorkspace;
+    let workspace: ServerPluginPeerWorkspace;
     try {
       workspace = snapshotWorkspace(target, project.id);
     } catch (error) {
@@ -478,7 +551,7 @@ export class PluginBackendRegistry {
         error,
       );
     }
-    const context: PairedPluginRequestContext = Object.freeze({
+    const context: ServerPluginPeerRequestContext = Object.freeze({
       project,
       workspace,
       operation,
@@ -493,6 +566,7 @@ export class PluginBackendRegistry {
         this.callbackTimeoutMs,
         (callbackSignal) => pairedRequest(Object.freeze({ ...context, signal: callbackSignal })),
         dispatchSignal,
+        (callback) => { this.requestCallbacks.track(callback); },
       );
     } catch (error) {
       if (dispatchSignal.aborted) throw abortError(dispatchSignal);
@@ -566,7 +640,7 @@ interface ManagedPluginBackendChannelOptions {
   pluginId: string;
   workspaceId: string;
   operation: string;
-  channel: PairedPluginChannel;
+  channel: ServerPluginPeerChannel;
   transport: PluginBackendChannelTransport;
   lifetimeController: AbortController;
   callbackTimeoutMs: number;
@@ -579,6 +653,8 @@ class ManagedPluginBackendChannel implements PluginBackendChannelSession {
   readonly pluginId: string;
   readonly workspaceId: string;
   private readonly lifetimeTimer: ReturnType<typeof setTimeout>;
+  private readonly receiveCallbacks = new PluginCallbackDrain();
+  private readonly closeCallbacks = new PluginCallbackDrain();
   private closePromise: Promise<void> | undefined;
   private failureSignalled = false;
 
@@ -617,6 +693,7 @@ class ManagedPluginBackendChannel implements PluginBackendChannelSession {
         this.options.callbackTimeoutMs,
         (signal) => this.options.channel.receive(cloned, signal),
         this.options.lifetimeController.signal,
+        (callback) => { this.receiveCallbacks.track(callback); },
       );
     } catch (error) {
       if (this.isClosed()) {
@@ -696,35 +773,66 @@ class ManagedPluginBackendChannel implements PluginBackendChannelSession {
     if (!this.options.lifetimeController.signal.aborted) {
       this.options.lifetimeController.abort(new DOMException(reason || "Plugin backend channel closed", "AbortError"));
     }
+
+    const failures: unknown[] = [];
     try {
+      try {
+        await this.receiveCallbacks.waitForSettled(
+          this.options.callbackTimeoutMs,
+          `Server plugin ${this.pluginId} channel ${this.options.operation} receive callbacks`,
+        );
+      } catch (error) {
+        failures.push(error);
+      }
+
       const close = this.options.channel.close?.bind(this.options.channel);
       if (close !== undefined) {
-        await runBoundedPluginBackendOperation(
-          this.pluginId,
-          `channel ${this.options.operation} close`,
-          this.options.callbackTimeoutMs,
-          (signal) => close(Object.freeze({ code, reason, signal })),
-        );
+        try {
+          await runBoundedPluginBackendOperation(
+            this.pluginId,
+            `channel ${this.options.operation} close`,
+            this.options.callbackTimeoutMs,
+            (signal) => close(Object.freeze({ code, reason, signal })),
+            undefined,
+            (callback) => { this.closeCallbacks.track(callback); },
+          );
+        } catch (error) {
+          failures.push(error);
+        }
+        try {
+          await this.closeCallbacks.waitForSettled(
+            this.options.callbackTimeoutMs,
+            `Server plugin ${this.pluginId} channel ${this.options.operation} close callbacks`,
+          );
+        } catch (error) {
+          failures.push(error);
+        }
       }
-    } catch (error) {
-      this.options.onCleanupFailure(error);
+    } finally {
+      this.options.onReleased(this);
+    }
+
+    if (failures.length !== 0) {
+      const failure = failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, `Server plugin ${this.pluginId} channel ${this.options.operation} cleanup failed`);
+      this.options.onCleanupFailure(failure);
       throw channelError(
         "close-failed",
         1011,
-        `Server plugin ${this.pluginId} channel ${this.options.operation} close failed: ${boundedErrorMessage(error)}`,
-        error,
+        `Server plugin ${this.pluginId} channel ${this.options.operation} close failed: ${boundedErrorMessage(failure)}`,
+        failure,
       );
-    } finally {
-      this.options.onReleased(this);
     }
   }
 }
 
 async function closeUnpublishedChannel(
-  channel: PairedPluginChannel,
+  channel: ServerPluginPeerChannel,
   pluginId: string,
   operation: string,
   callbackTimeoutMs: number,
+  onCallbackStarted: (callback: Promise<void>) => void,
 ): Promise<void> {
   const close = channel.close?.bind(channel);
   if (close === undefined) return;
@@ -737,6 +845,8 @@ async function closeUnpublishedChannel(
       reason: "Channel open did not complete",
       signal,
     })),
+    undefined,
+    onCallbackStarted,
   );
 }
 
@@ -746,7 +856,7 @@ async function resolveDirectScope(
   pluginId: string,
   operation: string,
   signal: AbortSignal,
-): Promise<{ project: ProjectInput; workspace: PairedPluginWorkspace }> {
+): Promise<{ project: ProjectInput; workspace: ServerPluginPeerWorkspace }> {
   if (request.workspaceId === "") {
     throw channelError("workspace-not-found", 1008, `Workspace not found for server plugin ${pluginId} channel ${operation}`);
   }
@@ -868,7 +978,7 @@ function snapshotProject(project: Project): ProjectInput {
   return Object.freeze({ id: project.id, name: project.name, path: resolve(project.path) });
 }
 
-function snapshotWorkspace(workspace: WorkspaceListing, projectId: string): PairedPluginWorkspace {
+function snapshotWorkspace(workspace: WorkspaceListing, projectId: string): ServerPluginPeerWorkspace {
   if (workspace.id === "") throw new Error("Workspace id must be non-empty");
   if (workspace.projectId !== projectId) throw new Error("Workspace project scope does not match the resolved project");
   if (!isAbsolute(workspace.path)) throw new Error("Workspace path must be absolute");
@@ -925,6 +1035,7 @@ async function runBoundedPluginBackendOperation<T>(
   timeoutMs: number,
   callback: (signal: AbortSignal) => T | Promise<T>,
   parentSignal?: AbortSignal,
+  onCallbackStarted?: (callback: Promise<T>) => void,
 ): Promise<T> {
   const controller = new AbortController();
   const abortFromParent = (): void => {
@@ -948,6 +1059,7 @@ async function runBoundedPluginBackendOperation<T>(
   const result = controller.signal.aborted
     ? new Promise<T>(() => { /* An existing cancellation already won. */ })
     : Promise.resolve().then(() => callback(controller.signal));
+  if (!controller.signal.aborted) onCallbackStarted?.(result);
   try {
     return await Promise.race([result, deadline]);
   } finally {
@@ -957,6 +1069,15 @@ async function runBoundedPluginBackendOperation<T>(
       controller.abort(new DOMException("Plugin backend operation completed", "AbortError"));
     }
   }
+}
+
+function requestShutdownError(pluginId: string, cause?: unknown): PluginBackendRequestError {
+  return backendError(
+    "shutdown",
+    503,
+    `Server plugin ${pluginId} backend requests are shutting down`,
+    cause,
+  );
 }
 
 function backendError(

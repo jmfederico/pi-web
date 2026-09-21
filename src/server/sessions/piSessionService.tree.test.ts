@@ -61,6 +61,54 @@ function treeHarness(
 }
 
 describe("PiSessionService session-tree behavior", () => {
+  it.each(["moved", "summarized", "unchanged", "cancelled", "failed"] as const)(
+    "handles pending questions when tree navigation is %s",
+    async (scenario) => {
+      let leafId = "leaf-1";
+      const navigateTree = vi.fn<NavigateTree>(() => {
+        if (scenario === "failed") return Promise.reject(new Error("navigation failed"));
+        if (scenario === "moved" || scenario === "summarized") leafId = "target-1";
+        return Promise.resolve({
+          cancelled: scenario === "cancelled",
+          ...(scenario === "summarized" ? { summaryEntry: { id: "target-1" } } : {}),
+        });
+      });
+      const { service, fake, hub } = treeHarness({ getLeafId: () => leafId }, { navigateTree });
+      try {
+        await service.status(sessionRef(SESSION_ID));
+        const { ask } = await service.openAsk({
+          sessionId: SESSION_ID,
+          questions: [{ id: "choice", question: "Which option?", options: [] }],
+        });
+        const navigation = service.navigateTree(sessionRef(SESSION_ID), navigationRequest(
+          { mode: scenario === "summarized" ? "default" : "none" },
+        ));
+        if (scenario === "failed") await expect(navigation).rejects.toThrow("navigation failed");
+        else await expect(navigation).resolves.toEqual({ cancelled: scenario === "cancelled" });
+
+        const moved = scenario === "moved" || scenario === "summarized";
+        const status = await service.status(sessionRef(SESSION_ID));
+        const closedEvents = hub.sessionEvents.filter(({ event }) => event.type === "ask.closed");
+        if (moved) {
+          expect(status).not.toHaveProperty("pendingAsk");
+          expect(closedEvents).toEqual([{
+            sessionId: SESSION_ID,
+            event: { type: "ask.closed", askId: ask.askId, reason: "cancelled" },
+          }]);
+          await expect(service.submitAsk(sessionRef(SESSION_ID), ask.askId, { answers: [] }))
+            .resolves.toMatchObject({ result: "stale" });
+        } else {
+          expect(status.pendingAsk).toEqual(ask);
+          expect(closedEvents).toEqual([]);
+        }
+        expect(fake.calls.sendCustomMessage).toEqual([]);
+        expect(fake.calls.prompt).toEqual([]);
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
   it("opens /tree from the live manager through the safe projection boundary", async () => {
     const navigateTree = vi.fn<NavigateTree>(() => Promise.resolve({ cancelled: false }));
     const roots = [treeNode({

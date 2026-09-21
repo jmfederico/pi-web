@@ -2,8 +2,8 @@ import type { JsonObject, PiWebPlugin, WorkspacePanelContext } from "@jmfederico
 
 const summaries = new Map<string, string>();
 
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Example Workspace Provider",
   activate: ({ pluginId, runtimePluginId, html }) => ({
     contributions: {
@@ -24,16 +24,16 @@ const plugin: PiWebPlugin = {
           visible: ({ workspace }) => workspace.provider?.pluginId === pluginId,
           render: (context) => {
             const marker = stringMetadata(context.workspace.provider?.metadata, "marker") ?? "unknown";
-            const summary = summaries.get(workspaceKey(context)) ?? "Request a summary from the owning server plugin.";
+            const summary = summaries.get(workspaceKey(context)) ?? "Request a summary from the package's server plugin.";
             return html`
               <section class="toolbar"><strong>Example workspace provider</strong></section>
               <section class="viewer">
                 <p>This workspace is owned by <code>${pluginId}</code>.</p>
                 <p class="muted">Claim marker: <code>${marker}</code></p>
                 <button
-                  ?disabled=${context.backend === undefined}
+                  ?disabled=${context.peer?.request === undefined}
                   @click=${() => { void refreshSummary(context); }}
-                >Request owner summary</button>
+                >Request package summary</button>
                 <p aria-live="polite">${summary}</p>
               </section>
             `;
@@ -42,16 +42,16 @@ const plugin: PiWebPlugin = {
       ],
     },
   }),
-};
+} satisfies PiWebPlugin;
 
 export default plugin;
 
 async function refreshSummary(context: WorkspacePanelContext): Promise<void> {
   const key = workspaceKey(context);
   try {
-    if (context.backend === undefined) throw new Error("The owner-backed workspace backend is unavailable");
-    const result = await context.backend.request("summary", null);
-    if (typeof result !== "string") throw new Error("The workspace backend returned an invalid summary");
+    if (context.peer?.request === undefined) throw new Error("The package peer is unavailable");
+    const result = await context.peer.request("summary", null);
+    if (typeof result !== "string") throw new Error("The package peer returned an invalid summary");
     summaries.set(key, result);
   } catch (error) {
     summaries.set(key, error instanceof Error ? error.message : String(error));

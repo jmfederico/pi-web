@@ -4,10 +4,9 @@ import { requireActiveAgentProfile, type ActiveAgentProfileProvider } from "./ac
 import {
   defaultPiWebPackageRoot,
   isKnownAutoInstallablePiPackageId,
-  KNOWN_AUTO_INSTALLABLE_PI_PACKAGES,
   resolveShippedPiPackagePath,
-  type KnownAutoInstallablePiPackage,
 } from "./knownAutoInstallPiPackages.js";
+import { KNOWN_PI_PACKAGES, type KnownPiPackage } from "./knownPiPackages.js";
 import { resolveDeclaredPiPackageName } from "./piPackageIdentity.js";
 import { PiPackageDismissalStore } from "./storage/piPackageDismissalStore.js";
 
@@ -54,7 +53,7 @@ export class ActiveProfilePiPackageService implements PiPackageService {
     private readonly serviceForAgentDir: PiPackageServiceForAgentDir,
     private readonly dismissalTracker: PiPackageDismissalTracker = noopDismissalTracker,
     private readonly identityResolver: PiPackageIdentityResolver = defaultIdentityResolver,
-    private readonly knownPackages: readonly KnownAutoInstallablePiPackage[] = KNOWN_AUTO_INSTALLABLE_PI_PACKAGES,
+    private readonly knownPackages: readonly KnownPiPackage[] = KNOWN_PI_PACKAGES,
     private readonly packageRoot: string = defaultPiWebPackageRoot(),
   ) {}
 
@@ -83,9 +82,8 @@ export class ActiveProfilePiPackageService implements PiPackageService {
 
   /**
    * Adds {@link PiPackagesResponse.installableKnownPackages} for every known
-   * auto-installable package not already configured for the active profile,
-   * so the Settings UI can offer a one-click (re)install with no path typing
-   * (see finish-line item 5/6 of the `relay-pi-package-autoinstall` relay).
+   * shipped package not already configured for the active profile, so Settings
+   * can offer an explicit one-click (re)install without granting auto-install permission.
    */
   private async withInstallableKnownPackages<T extends PiPackagesResponse>(response: T): Promise<T> {
     if (this.knownPackages.length === 0) return response;

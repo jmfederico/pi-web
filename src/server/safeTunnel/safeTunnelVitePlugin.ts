@@ -38,6 +38,8 @@ export function createSafeTunnelViteHostPlugin(
   let refreshPromise: Promise<void> | undefined;
   let startupHttpServer: NonNullable<ViteDevServer["httpServer"]> | undefined;
   let startupListener: (() => void) | undefined;
+  let watcher: ViteDevServer["watcher"] | undefined;
+  let stateListener: ((file: string) => void) | undefined;
   const isDisposed = () => disposed;
 
   const waitForAtomicPublication = (): Promise<void> => new Promise((resolveDelay) => {
@@ -99,6 +101,16 @@ export function createSafeTunnelViteHostPlugin(
       // rename. Watching both the target and directory catches first creation,
       // replacement, and removal across Chokidar platforms.
       server.watcher.add([statePath, dirname(statePath)]);
+      // hotUpdate hooks do not run with hmr:false. Host trust must still refresh
+      // when browser live reload and Vite's WebSocket listener are disabled.
+      watcher = server.watcher;
+      stateListener = (file) => {
+        if (resolve(file) !== statePath) return;
+        void requestRefresh(server).catch(() => { reportRefreshFailure(server); });
+      };
+      for (const event of ["add", "change", "unlink"] as const) {
+        watcher.on(event, stateListener);
+      }
 
       // Re-check once the newly built server starts. This closes the window in
       // which state can change after config evaluation but before the new
@@ -110,13 +122,13 @@ export function createSafeTunnelViteHostPlugin(
         else server.httpServer.once("listening", startupListener);
       }
     },
-    async hotUpdate({ file, server }) {
-      if (resolve(file) !== statePath) return;
-      await requestRefresh(server);
-      return [];
-    },
     closeBundle() {
       disposed = true;
+      if (watcher !== undefined && stateListener !== undefined) {
+        for (const event of ["add", "change", "unlink"] as const) {
+          watcher.off(event, stateListener);
+        }
+      }
       if (startupHttpServer !== undefined && startupListener !== undefined) {
         startupHttpServer.off("listening", startupListener);
       }

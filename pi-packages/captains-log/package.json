@@ -1,0 +1,35 @@
+{
+  "name": "@jmfederico/pi-captains-log",
+  "version": "0.1.0",
+  "description": "Opt-in Captain's Log: translate the selected session's last reply into pirate through a native Pi companion and PI WEB panel",
+  "private": true,
+  "type": "module",
+  "keywords": ["pi-package"],
+  "files": ["dist", "src", "docs", "test", "tsconfig.json", "vite.config.mjs"],
+  "scripts": { "build": "tsc -p tsconfig.json && vite build", "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "marked": "^18.0.6"
+  },
+  "devDependencies": {
+    "@jmfederico/pi-web": "^1.202609.0",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.4"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@jmfederico/pi-web": "^1.202609.0"
+  },
+  "pi": { "extensions": ["./dist/companion.js"] },
+  "piWeb": {
+    "plugins": [{
+      "id": "captains-log",
+      "defaultEnabled": false,
+      "browserRoot": "dist/browser",
+      "module": "dist/browser/index.js",
+      "serverModule": "dist/server.js",
+      "machineSpecific": true
+    }]
+  }
+}
