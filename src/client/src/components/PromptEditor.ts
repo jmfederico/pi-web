@@ -23,6 +23,15 @@ import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, ren
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
 
+const FILE_COMPLETION_DEBOUNCE_MS = 150;
+const FILE_COMPLETION_CACHE_TTL_MS = 5_000;
+const MAX_FILE_COMPLETION_CACHE_ENTRIES = 64;
+
+interface CachedFileCompletions {
+  expiresAt: number;
+  files: FileSuggestion[];
+}
+
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
@@ -65,6 +74,9 @@ export class PromptEditor extends LitElement {
   @state() private attachmentError: string | undefined = undefined;
   private attachmentSeq = 0;
   private requestVersion = 0;
+  private completionRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  private fileCompletionAbortController: AbortController | undefined;
+  private readonly fileCompletionCache = new Map<string, CachedFileCompletions>();
   private editor: EditorView | undefined;
   private readonly editableCompartment = new Compartment();
   private readonly readOnlyCompartment = new Compartment();
@@ -87,6 +99,8 @@ export class PromptEditor extends LitElement {
     this.currentInputMode = inputModeForDraft(this.draft);
     this.completions = [];
     this.selectedIndex = 0;
+    this.cancelCompletionRefresh();
+    this.requestVersion += 1;
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
@@ -110,6 +124,7 @@ export class PromptEditor extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.cancelCompletionRefresh();
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -161,6 +176,7 @@ export class PromptEditor extends LitElement {
 
     // Invalidate completion requests started for either the previous document or
     // the replacement dispatch, then return the editor to a clean completion state.
+    this.cancelCompletionRefresh();
     this.requestVersion += 1;
     this.currentInputMode = inputModeForDraft(text);
     this.completions = [];
@@ -346,13 +362,35 @@ export class PromptEditor extends LitElement {
     if (key !== undefined) saveDraft(key, this.draft);
     const nextInputMode = inputModeForDraft(this.draft);
     if (!inputModesEqual(nextInputMode, this.currentInputMode)) this.currentInputMode = nextInputMode;
-    void this.refreshCompletions();
+    this.scheduleCompletionsRefresh();
+  }
+
+  private scheduleCompletionsRefresh(): void {
+    if (this.completionRefreshTimer !== undefined) clearTimeout(this.completionRefreshTimer);
+    this.requestVersion += 1;
+    this.fileCompletionAbortController?.abort();
+    this.fileCompletionAbortController = undefined;
+    const trigger = this.currentTrigger();
+    if (trigger?.kind !== "file") {
+      void this.refreshCompletions();
+      return;
+    }
+    this.completionRefreshTimer = setTimeout(() => {
+      this.completionRefreshTimer = undefined;
+      void this.refreshCompletions();
+    }, FILE_COMPLETION_DEBOUNCE_MS);
   }
 
   private async refreshCompletions() {
+    if (this.completionRefreshTimer !== undefined) {
+      clearTimeout(this.completionRefreshTimer);
+      this.completionRefreshTimer = undefined;
+    }
     const trigger = this.currentTrigger();
     const version = ++this.requestVersion;
     this.selectedIndex = 0;
+    this.fileCompletionAbortController?.abort();
+    this.fileCompletionAbortController = trigger?.kind === "file" ? new AbortController() : undefined;
     if (trigger === undefined) {
       this.completions = [];
       return;
@@ -372,7 +410,32 @@ export class PromptEditor extends LitElement {
           ...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
         }));
     } else if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
-      const files = await api.files(trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId }).catch(emptyFileSuggestions);
+      const cacheKey = fileCompletionCacheKey(this.machineId, this.projectId, this.workspaceId, trigger.fileScope, trigger.query);
+      const cached = this.fileCompletionCache.get(cacheKey);
+      let files: FileSuggestion[];
+      if (cached !== undefined && cached.expiresAt > Date.now()) {
+        files = cached.files;
+      } else {
+        try {
+          files = await api.files(trigger.query, {
+            scope: trigger.fileScope,
+            machineId: this.machineId,
+            projectId: this.projectId,
+            workspaceId: this.workspaceId,
+            signal: this.fileCompletionAbortController?.signal,
+          });
+          this.fileCompletionCache.delete(cacheKey);
+          this.fileCompletionCache.set(cacheKey, { expiresAt: Date.now() + FILE_COMPLETION_CACHE_TTL_MS, files });
+          while (this.fileCompletionCache.size > MAX_FILE_COMPLETION_CACHE_ENTRIES) {
+            const oldestKey = this.fileCompletionCache.keys().next().value;
+            if (oldestKey === undefined) break;
+            this.fileCompletionCache.delete(oldestKey);
+          }
+        } catch (error) {
+          if (isAbortError(error)) return;
+          files = emptyFileSuggestions();
+        }
+      }
       if (version !== this.requestVersion) return;
       this.completions = files
         .slice(0, 12)
@@ -397,6 +460,15 @@ export class PromptEditor extends LitElement {
         ...choice,
       }));
     }
+  }
+
+  private cancelCompletionRefresh(): void {
+    if (this.completionRefreshTimer !== undefined) {
+      clearTimeout(this.completionRefreshTimer);
+      this.completionRefreshTimer = undefined;
+    }
+    this.fileCompletionAbortController?.abort();
+    this.fileCompletionAbortController = undefined;
   }
 
   private currentTrigger(): PromptCompletionTrigger | undefined {
@@ -560,6 +632,14 @@ function emptyFileSuggestions(): FileSuggestion[] {
   return [];
 }
 
+function fileCompletionCacheKey(machineId: string, projectId: string, workspaceId: string, scope: string | undefined, query: string): string {
+  return JSON.stringify([machineId, projectId, workspaceId, scope ?? "tracked", query]);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 function emptySessionModels(): SessionModel[] {
   return [];
 }
@@ -627,4 +707,3 @@ function inputAssistanceContentAttributes(draftBeforeCursor: string): Record<str
   // CodeMirror is optimized for code and disables these by default, but the chat prompt is usually prose.
   return inputModeForDraft(draftBeforeCursor).kind === "normal" ? proseInputAssistanceAttributes : codeLikeInputAssistanceAttributes;
 }
-

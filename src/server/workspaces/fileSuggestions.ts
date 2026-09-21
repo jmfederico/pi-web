@@ -12,6 +12,10 @@ const execFileAsync = promisify(execFile);
 const commandMaxBuffer = 1024 * 1024 * 8;
 const maxFilesystemFallbackPaths = 20_000;
 const maxFileSuggestions = 80;
+const trackedFileCacheTtlMs = 2_000;
+const maxTrackedFileCacheEntries = 64;
+
+const trackedFileCache = new Map<string, { expiresAt: number; files: ClientFileSuggestion[] }>();
 
 interface CommandRunnerOptions {
   cwd: string;
@@ -60,7 +64,7 @@ export async function listFileSuggestions(cwd: string, query = "", options: File
 
   const normalizedQuery = normalizeFileQuery(query);
   const command = deps.execFile ?? runCommand;
-  const files = await listFilesForScope(cwd, options.scope, command);
+  const files = await listFilesForScope(cwd, options.scope, command, deps.execFile === undefined);
   return (await rankFileSuggestionsWithOptionalFzf(
     cwd,
     files.filter((file) => options.kind === undefined || file.kind === options.kind),
@@ -242,33 +246,48 @@ function isPathSuggestionMiss(error: unknown): boolean {
     || error.message.startsWith("Path is not absolute:");
 }
 
-async function listFilesForScope(cwd: string, scope: FileSuggestionScope | undefined, exec: CommandRunner): Promise<ClientFileSuggestion[]> {
-  if (scope === "all") return listAllFiles(cwd, exec);
-  if (scope === "tracked") return listTrackedFiles(cwd, exec).catch(() => listPlainFiles(cwd, exec, true));
-  return listGitFiles(cwd, exec).catch(() => listPlainFiles(cwd, exec, false));
+async function listFilesForScope(cwd: string, scope: FileSuggestionScope | undefined, exec: CommandRunner, cacheable: boolean): Promise<ClientFileSuggestion[]> {
+  if (scope === "all") return listAllFiles(cwd, exec, cacheable);
+  if (scope === "tracked") return trackedFilesForSuggestions(cwd, exec, cacheable).catch(() => listPlainFiles(cwd, exec, true));
+  return listGitFiles(cwd, exec, cacheable).catch(() => listPlainFiles(cwd, exec, false));
+}
+
+async function trackedFilesForSuggestions(cwd: string, exec: CommandRunner, cacheable: boolean): Promise<ClientFileSuggestion[]> {
+  if (!cacheable) return listTrackedFiles(cwd, exec);
+  const cached = trackedFileCache.get(cwd);
+  if (cached !== undefined && cached.expiresAt > Date.now()) return cached.files;
+  const files = await listTrackedFiles(cwd, exec);
+  trackedFileCache.delete(cwd);
+  trackedFileCache.set(cwd, { expiresAt: Date.now() + trackedFileCacheTtlMs, files });
+  while (trackedFileCache.size > maxTrackedFileCacheEntries) {
+    const oldestCwd = trackedFileCache.keys().next().value;
+    if (oldestCwd === undefined) break;
+    trackedFileCache.delete(oldestCwd);
+  }
+  return files;
 }
 
 async function listTrackedFiles(cwd: string, exec: CommandRunner): Promise<ClientFileSuggestion[]> {
   return withDirectories(nulRecords(await git(cwd, ["ls-files", "-z"], exec)), "tracked");
 }
 
-async function listGitFiles(cwd: string, exec: CommandRunner): Promise<ClientFileSuggestion[]> {
+async function listGitFiles(cwd: string, exec: CommandRunner, cacheable: boolean): Promise<ClientFileSuggestion[]> {
   const [trackedResult, untrackedResult] = await Promise.allSettled([
-    git(cwd, ["ls-files", "-z"], exec),
+    trackedFilesForSuggestions(cwd, exec, cacheable),
     git(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], exec),
   ] as const);
   if (trackedResult.status === "rejected") throw trackedResult.reason;
   if (untrackedResult.status === "rejected") throw untrackedResult.reason;
 
   return [
-    ...withDirectories(nulRecords(trackedResult.value), "tracked"),
+    ...trackedResult.value,
     ...withDirectories(nulRecords(untrackedResult.value), "untracked"),
   ];
 }
 
-async function listAllFiles(cwd: string, exec: CommandRunner): Promise<ClientFileSuggestion[]> {
+async function listAllFiles(cwd: string, exec: CommandRunner, cacheable: boolean): Promise<ClientFileSuggestion[]> {
   const [gitFiles, plainFiles] = await Promise.all([
-    listGitFiles(cwd, exec).catch((): ClientFileSuggestion[] => []),
+    listGitFiles(cwd, exec, cacheable).catch((): ClientFileSuggestion[] => []),
     listPlainFiles(cwd, exec, true),
   ]);
   return mergeSuggestions(gitFiles, plainFiles);

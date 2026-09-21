@@ -522,7 +522,7 @@ export class PiWebApp extends LitElement {
     if (!this.routeLocationMatchesUrl(route)) {
       await this.projects.loadProjects();
       await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
-      await this.refreshWorkspaceDeletionRuns();
+      void this.refreshWorkspaceDeletionRuns();
       return;
     }
     const effectiveRoute = this.routeForSelectedMachine(route);
@@ -533,7 +533,7 @@ export class PiWebApp extends LitElement {
     // route to reconciliation while it is still the current destination.
     if (!this.routeLocationMatchesUrl(effectiveRoute)) {
       await this.withChatScrollTransition(async () => { await this.restoreRoute(false); });
-      await this.refreshWorkspaceDeletionRuns();
+      void this.refreshWorkspaceDeletionRuns();
       return;
     }
     await this.withChatScrollTransition(() => this.restoreRouteFor(effectiveRoute, false));
@@ -542,7 +542,7 @@ export class PiWebApp extends LitElement {
       this.clearPendingRemoteRouteRestore();
       this.rememberCurrentMachineNavigation();
     }
-    await this.refreshWorkspaceDeletionRuns();
+    void this.refreshWorkspaceDeletionRuns();
   }
 
   private handleBrowserResumeSignal(): void {
@@ -555,11 +555,15 @@ export class PiWebApp extends LitElement {
     await this.sessionUnread.refreshAll();
     await Promise.all([
       this.sessions.refreshSelectedSession(),
-      this.refreshMachineStatusSnapshots(),
-      this.refreshWorkspaceDeletionRuns(),
       this.refreshCurrentWorkspaceSurface(),
       this.workspaces.refreshSelectedProjectTopology(),
     ]);
+    void Promise.all([
+      this.refreshMachineStatusSnapshots(),
+      this.refreshWorkspaceDeletionRuns(),
+    ]).catch((error: unknown) => {
+      console.warn("Failed to refresh background browser-resume data", error);
+    });
   }
 
   /** Poll idle external sessions without overlapping work or waking hidden tabs. */
@@ -2739,8 +2743,12 @@ export class PiWebApp extends LitElement {
 
       const composition = this.requiredTerminalComposition(machineId);
       const filter = workspaceDeletionRunFilter();
+      const selectedWorkspace = this.state.selectedWorkspace?.projectId === project.id ? this.state.selectedWorkspace : undefined;
+      // Deletion polling is UI-scoped: the selected workspace is the only one
+      // that can affect the current route. Explicitly pending runs remain
+      // tracked even when their originating workspace is no longer selected.
       const queryWorkspaces: Pick<Workspace, "id" | "projectId">[] = pendingRuns.length === 0
-        ? this.state.workspaces.filter((workspace) => workspace.projectId === project.id)
+        ? selectedWorkspace === undefined ? [] : [{ id: selectedWorkspace.id, projectId: selectedWorkspace.projectId }]
         : [...new Map(pendingRuns.map((run) => [run.workspaceId, { id: run.workspaceId, projectId: run.projectId }])).values()];
       const results = await Promise.allSettled(queryWorkspaces.map(async (workspace) => {
         const peer = createPluginPeer(composition.binding, workspace, machineId);
