@@ -348,6 +348,7 @@ export interface FileSuggestionQueryOptions {
   machineId?: string | undefined;
   projectId: string;
   workspaceId: string;
+  signal?: AbortSignal | undefined;
 }
 
 export const filesApi = {
@@ -356,7 +357,11 @@ export const filesApi = {
     if (options.kind !== undefined) params.set("kind", options.kind);
     if (options.mode !== undefined) params.set("mode", options.mode);
     if (options.scope !== undefined) params.set("scope", options.scope);
-    return request(`${machinePrefix(options.machineId)}/projects/${encodeURIComponent(options.projectId)}/workspaces/${encodeURIComponent(options.workspaceId)}/files?${params.toString()}`, arrayOf(parseFileSuggestion));
+    return request(
+      `${machinePrefix(options.machineId)}/projects/${encodeURIComponent(options.projectId)}/workspaces/${encodeURIComponent(options.workspaceId)}/files?${params.toString()}`,
+      arrayOf(parseFileSuggestion),
+      options.signal === undefined ? undefined : { signal: options.signal },
+    );
   },
 };
 

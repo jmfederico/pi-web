@@ -70,13 +70,14 @@ describe("PiWebApp workspace topology refresh wiring", () => {
     expect(refreshSurface).toHaveBeenCalledOnce();
   });
 
-  it("still re-lists workspaces when a sibling refresh in the same resume batch fails", async () => {
+  it("keeps workspace refresh on the critical resume path when background status refresh fails", async () => {
     const app = createApp();
     stubBackgroundRefreshes(app);
     failBackgroundRefresh(app, "refreshMachineStatusSnapshots", new Error("machine status unavailable"));
     const refreshTopology = spyOnTopologyRefresh(app);
 
-    await expect(browserResumeRefresh(app)()).rejects.toThrow("machine status unavailable");
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await browserResumeRefresh(app)();
     expect(refreshTopology).toHaveBeenCalledOnce();
   });
 });
