@@ -170,11 +170,11 @@ describe("SessionController pending starts", () => {
     );
 
     const start = controller.startSession({ updateUrl: false });
-    route = { ...route, view: "core:workspace.terminal" };
+    route = { ...route, view: "workspace" };
     startRequest.resolve(started);
     await start;
 
-    expect(expectedView).toBe("core:workspace.terminal");
+    expect(expectedView).toBe("workspace");
     expect(state.sessions.map((session) => session.id)).toEqual([started.id, oldSession.id]);
     expect(state.selectedSession?.id).toBe(started.id);
   });

@@ -76,6 +76,7 @@ export interface PluginActivationResult {
 }
 
 export interface PluginContributions {
+  contentRenderers?: import("../../../plugin-api").ContentRendererContribution[];
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];

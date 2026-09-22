@@ -97,7 +97,7 @@ describe("ProjectController", () => {
     const failure = new Error("Trust write failed");
     const selectProject = vi.fn(() => {
       state = { ...state, selectedProject: addedProject, workspaces: [addedWorkspace] };
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
     const controller = new ProjectController(
       () => state,
@@ -197,11 +197,11 @@ describe("ProjectController", () => {
   it("closes the project dialog before selecting the project it added", async () => {
     const addedProject = project("added", "/added");
     let state: AppState = { ...initialAppState(), projectDialogOpen: true };
-    const selectProject = vi.fn((selected: Project): Promise<void> => {
+    const selectProject = vi.fn((selected: Project): Promise<undefined> => {
       expect(selected).toBe(addedProject);
       expect(state.projects).toEqual([addedProject]);
       expect(state.projectDialogOpen).toBe(false);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
     const controller = new ProjectController(
       () => state,
@@ -261,10 +261,10 @@ describe("ProjectController", () => {
     const addedWorkspace = workspace(addedProject.id, addedProject.path);
     let state: AppState = { ...initialAppState(), projectDialogOpen: true };
     const setWorkspaceTrust = vi.fn().mockResolvedValue({ path: "/added", decision: true, trusted: true });
-    const selectProject = vi.fn((): Promise<void> => {
+    const selectProject = vi.fn((): Promise<undefined> => {
       expect(setWorkspaceTrust).toHaveBeenCalledExactlyOnceWith(addedProject.id, addedWorkspace.id, true, "local");
       state = { ...state, selectedProject: addedProject, workspaces: [addedWorkspace] };
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
     const controller = new ProjectController(
       () => state,
@@ -350,9 +350,9 @@ describe("ProjectController", () => {
     const addedProject = project("added", "/added");
     let state: AppState = { ...initialAppState(), projectDialogOpen: true };
     const setWorkspaceTrust = vi.fn();
-    const selectProject = vi.fn((): Promise<void> => {
+    const selectProject = vi.fn((): Promise<undefined> => {
       state = { ...state, workspaces: [workspace(addedProject.id, addedProject.path)] };
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
     const controller = new ProjectController(
       () => state,

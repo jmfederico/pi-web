@@ -15,7 +15,9 @@ import { promptArgumentHintExtension, setPromptArgumentHint } from "../promptArg
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
-import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendPromptOnEnterShortcut, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
+import { createMobilePromptEnterMedia, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
+import { composerSendShortcut, matchesComposerSend } from "../composerShortcuts";
+import type { ShortcutPreferenceConfig } from "../keyboardShortcuts";
 import { promptEditorStyles, type CompletionItem } from "./shared";
 import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
@@ -24,6 +26,7 @@ import "./AutocompleteMenu";
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
+  @property({ attribute: false }) shortcuts: ShortcutPreferenceConfig = {};
   @property() sessionId?: string;
   @property() cwd?: string;
   @property() machineId = "local";
@@ -412,20 +415,45 @@ export class PromptEditor extends LitElement {
     return true;
   }
 
+  /** The capture-phase app dispatcher must leave composer-owned keys to CodeMirror. */
+  ownsKeyboardEvent(event: KeyboardEvent): boolean {
+    if (this.editor === undefined || !event.composedPath().includes(this.editor.contentDOM)) return false;
+    // Keep Enter/newline handling and IME composition inside the editor, too.
+    return event.isComposing || this.editor.composing
+      || (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey)
+      || this.matchesSendShortcut(event);
+  }
+
+  private matchesSendShortcut(event: KeyboardEvent): boolean {
+    const shiftKey = event.key === "Enter"
+      ? shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia)
+      : event.shiftKey;
+    return matchesComposerSend({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey, isComposing: event.isComposing, target: event.target }, composerSendShortcut(this.shortcuts, this.mobilePromptEnterMedia));
+  }
+
   private handleEditorKeyDown(event: KeyboardEvent, view: EditorView): boolean {
     if (event.key === "Shift") {
       this.explicitShiftKeyActive = true;
       return false;
     }
-    if (event.key !== "Enter") {
-      this.explicitShiftKeyActive = false;
-      return false;
-    }
     if (event.defaultPrevented || event.isComposing || view.composing) return false;
-
-    const shiftKey = shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia);
+    const send = this.matchesSendShortcut(event);
+    const plainEnter = event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia);
     this.explicitShiftKeyActive = false;
-    return this.handleEditorEnter(view, shiftKey);
+    if (plainEnter && this.completions.length) {
+      const completion = this.completions[this.selectedIndex];
+      if (completion !== undefined) this.pick(completion);
+      return true;
+    }
+    if (send) {
+      this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
+      return true;
+    }
+    if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+    }
+    return false;
   }
 
   private handleEditorKeyUp(event: KeyboardEvent): boolean {
@@ -436,19 +464,6 @@ export class PromptEditor extends LitElement {
   private resetEditorModifierState(): boolean {
     this.explicitShiftKeyActive = false;
     return false;
-  }
-
-  private handleEditorEnter(view: EditorView, shiftKey: boolean): boolean {
-    if (!shiftKey && this.completions.length) {
-      const completion = this.completions[this.selectedIndex];
-      if (completion !== undefined) this.pick(completion);
-      return true;
-    }
-    if (!shouldSendPromptOnEnterShortcut(shiftKey, this.mobilePromptEnterMedia, readPromptEnterPreference())) {
-      return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
-    }
-    this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
-    return true;
   }
 
   private handleEditorTab(view: EditorView): boolean {

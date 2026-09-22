@@ -25,7 +25,10 @@ describe("PI WEB plugin packages", () => {
       for (const file of await pluginSourceFiles(root)) {
         const content = await readFile(file, "utf8");
         for (const { pattern, message } of forbiddenPatterns) {
-          if (pattern.test(content)) violations.push(`${file}: ${message}`);
+          // A statically package-relative asset is not a PI WEB API call. Keep
+          // arbitrary fetches forbidden; browser API access uses capabilities.
+          const checked = message === "direct browser fetch" ? content.replace(/\bfetch\(new URL\((?:\/\* @vite-ignore \*\/ )?"\.\/[a-zA-Z0-9._/-]+", import\.meta\.url\)/gu, "packageAsset(") : content;
+          if (pattern.test(checked)) violations.push(`${file}: ${message}`);
         }
       }
     }

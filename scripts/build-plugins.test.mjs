@@ -17,6 +17,7 @@ import {
   buildDirectory,
   buildPiPackages,
   buildFilesBrowserPackage,
+  buildMermaidPackage,
   filesBrowserBuildConfig,
   findWatchDirs,
 } from "./build-plugins.mjs";
@@ -108,6 +109,26 @@ describe("buildDirectory", () => {
     await expect(buildDirectory(source, target)).resolves.toEqual({ copied: 1, transpiled: 0 });
 
     expect(await readdir(target)).toEqual(["marker.txt"]);
+  });
+});
+
+describe("Mermaid browser package build", () => {
+  it("ships a self-contained sandbox engine and browser entry within artifact limits", { timeout: 60_000 }, async () => {
+    const target = join(tempDir, "mermaid");
+    await buildMermaidPackage(resolve("pi-web-plugins/mermaid"), target);
+    const files = await recursiveFiles(target);
+    expect(files).toEqual(["browser/mermaid-engine.js", "browser/pi-web-plugin.js", "package.json"]);
+    let bytes = 0;
+    for (const file of files) bytes += (await stat(join(target, file))).size;
+    expect(bytes).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
+    const engine = await readFile(join(target, "browser/mermaid-engine.js"), "utf8");
+    expect(moduleSpecifiers(engine)).toEqual([]);
+    expect(engine).not.toMatch(/\bimport\s*\(/u);
+    const entry = await readFile(join(target, "browser/pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(entry)).toEqual([]);
+    expect(entry).toContain("./mermaid-engine.js");
+    expect(entry).toContain("allow-scripts");
+    expect(entry).not.toContain("allow-same-origin");
   });
 });
 

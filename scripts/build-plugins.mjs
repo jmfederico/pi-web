@@ -12,13 +12,15 @@ const filesPluginSourceDir = resolve(bundledPluginsSourceDir, "files");
 const filesPluginOutputDir = resolve(bundledPluginsOutputDir, "files");
 const terminalPluginSourceDir = resolve(bundledPluginsSourceDir, "terminal");
 const terminalPluginOutputDir = resolve(bundledPluginsOutputDir, "terminal");
+const mermaidPluginSourceDir = resolve(bundledPluginsSourceDir, "mermaid");
+const mermaidPluginOutputDir = resolve(bundledPluginsOutputDir, "mermaid");
 
 // Two independent source trees ship inside the npm package: bundled PI WEB
 // plugins (discovered by directory scan, see PiWebPluginCatalog) and Pi
 // packages that ship alongside them without being discovered that way (for
 // example a Pi package that is installed rather than scanned). They retain
 // separate output roots so neither becomes a discovery root for the other.
-// Files and Terminal are the concrete exceptions to plain transpilation: each
+// Files, Terminal, and Mermaid are exceptions to plain transpilation: each
 // browser entry is replaced below by a self-contained bundle. Terminal also
 // keeps a package-local transpiled server graph. Captain's Log likewise bundles
 // its browser entry after transpiling its standalone package graph.
@@ -47,6 +49,7 @@ async function buildAll() {
       ? new Set([
           await realpath(filesPluginSourceDir),
           await realpath(terminalPluginSourceDir),
+          await realpath(mermaidPluginSourceDir),
         ])
       : new Set();
     const result = target.label === "package"
@@ -55,6 +58,7 @@ async function buildAll() {
     if (target.rootDir === bundledPluginsSourceDir) {
       await buildFilesBrowserPackage(filesPluginSourceDir, filesPluginOutputDir);
       await buildTerminalPackage(terminalPluginSourceDir, terminalPluginOutputDir);
+      await buildMermaidPackage(mermaidPluginSourceDir, mermaidPluginOutputDir);
     } else {
       await viteBuild({
         configFile: resolve(target.rootDir, "captains-log/vite.config.mjs"),
@@ -63,7 +67,7 @@ async function buildAll() {
       });
     }
     const suffix = result.transpiled === 1 ? "file" : "files";
-    const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files/Terminal browser bundles" : "";
+    const bundleSuffix = target.rootDir === bundledPluginsSourceDir ? " and the Files/Terminal/Mermaid browser bundles" : "";
     console.log(`[plugins] built ${String(result.transpiled)} TypeScript ${target.label} ${suffix}${bundleSuffix} into ${relative(cwd, target.outDir)}`);
   }
   await writeFile(readyPath, "ready\n");
@@ -212,6 +216,24 @@ export async function buildFilesBrowserPackage(sourceDir, targetDir, buildBrowse
   await mkdir(targetDir, { recursive: true });
   await copyFile(resolve(sourceDir, "package.json"), resolve(targetDir, "package.json"));
   await buildBrowser(filesBrowserBuildConfig(sourceDir, targetDir));
+}
+
+export async function buildMermaidPackage(sourceDir, targetDir, buildBrowser = viteBuild) {
+  await buildFilesBrowserPackage(sourceDir, targetDir, buildBrowser);
+  await buildBrowser({
+    configFile: false,
+    root: sourceDir,
+    publicDir: false,
+    logLevel: "silent",
+    build: {
+      outDir: resolve(targetDir, "browser"),
+      emptyOutDir: false,
+      target: "es2022",
+      minify: true,
+      reportCompressedSize: false,
+      lib: { entry: resolve(sourceDir, "mermaid-engine.ts"), name: "MermaidEngine", formats: ["iife"], fileName: () => "mermaid-engine.js" },
+    },
+  });
 }
 
 export async function buildTerminalPackage(sourceDir, targetDir, buildBrowser = viteBuild) {

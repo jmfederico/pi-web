@@ -2,7 +2,7 @@
 
 PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
 
-Use this reference to configure and operate each PI WEB machine. The website page is <https://pi-web.dev/config>.
+Use this reference for detailed configuration and operational behavior. For scannable settings tables with defaults, scopes, and restart requirements, see <https://pi-web.dev/config>.
 
 ## Config files
 
@@ -15,7 +15,19 @@ Each PI WEB machine has its own config. When using Fleet/machine federation, Set
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
-If you installed services with a custom config path, `pi-web start`, `pi-web restart`, and `pi-web doctor` automatically use the `PI_WEB_CONFIG` saved in those service definitions for their readiness checks. A nonempty `PI_WEB_CONFIG` supplied when invoking one of those commands overrides the installed path for that command. On systemd, these commands fail rather than guess if `EnvironmentFile=` inputs, stale manager state, a different loaded fragment, or an effective environment mismatch make the loaded definition untrustworthy. Drop-ins that do not alter the inspected environment (such as distribution-provided global hardening drop-ins) are tolerated. On launchd, `start` and `doctor` likewise fail if an already-loaded label came from another plist or retains a different config path; `restart` reloads the installed plists and can repair that stale state. Rerun `pi-web install --config /path/to/config.json` after changing the managed path or after upgrading from a version that only applied it to the web service; this regenerates service files so the web/API and session daemon use the same config.
+### Custom config paths in installed services
+
+`start`, `restart`, and `doctor` use the config path saved in the installed services for readiness checks unless the caller supplies a nonempty `PI_WEB_CONFIG` override. `doctor` checks the managed setup, not every custom runtime environment.
+
+| Situation | Behavior / action |
+| --- | --- |
+| Use the installed config | Run `pi-web start`, `pi-web restart`, or `pi-web doctor` normally. |
+| Override the path for one command | Supply a nonempty `PI_WEB_CONFIG` when invoking that command. This does not rewrite service definitions. |
+| Change the managed service config path | Run `pi-web install --config /path/to/config.json` to regenerate both web/API and sessiond service definitions. |
+| Upgrade from an installation that set the path only for the web service | Rerun that same install command so both services use the same config. |
+| systemd cannot verify the loaded service environment | The command fails rather than guesses if manager state is stale, the loaded fragment differs, or a PI WEB-managed environment value cannot be verified. Managed `Environment=` values (currently `PI_WEB_CONFIG`) must match the installed definition; unrelated variables are ignored. Drop-ins that leave managed values unchanged are allowed. |
+| systemd uses `EnvironmentFile=` | Accepted with a nonfatal warning. File contents are not included in systemctl's `Environment` property and PI WEB does not inspect them, so config overrides in those files cannot be verified. |
+| launchd has an old config path or a label loaded from another plist | `start` and `doctor` fail. `restart` reloads installed plists and can repair stale loaded state. |
 
 ## Startup model and thinking defaults
 
@@ -459,18 +471,27 @@ Ordinary import/activation/start/health failures are quarantined when possible, 
 
 ### Shortcut config
 
-Shortcut values are keyed by action id. Values are shortcut strings such as `mod+k` or `mod+g p`; `null` disables that action's shortcut.
+Shortcut values are keyed by action id. Values are shortcut strings such as `mod+k`, `g p`, or `shift+enter`; `null` disables that action's shortcut.
 
 ```json
 {
   "shortcuts": {
     "core:view.chat": "mod+1",
-    "core:session.stop": null
+    "core:session.stop": null,
+    "app.navigation.focus-projects": "g p",
+    "composer.send.desktop": "mod+enter",
+    "composer.send.mobile": "shift+enter"
   }
 }
 ```
 
-Prefer Settings → Keyboard for editing shortcuts interactively.
+Prefer Settings → Keyboard for editing, recording, disabling, or resetting shortcuts. `mod` accepts Ctrl or ⌘. Browsers and operating systems may reserve some combinations.
+
+App shortcuts can be single keys or sequences. Unmodified and Shift-only shortcuts do not start inside inputs, textareas, selects, or contenteditable editors. Sequences expire after 1.2 seconds; Escape or a focus change cancels them. Custom bindings win over defaults; ties resolve by action id. A shorter binding shadows sequences with that prefix (for example, `g` shadows `g p`).
+
+The two **Chat composer** send bindings accept one key combination each, not sequences. **Send message — desktop** defaults to Enter; **Send message — touch or narrow screen** defaults to Shift+Enter. The latter applies when the browser reports a coarse primary pointer (typically touch) or a viewport at most 760px wide; otherwise, desktop applies. Its config key remains `composer.send.mobile`. Enter and Shift+Enter insert newlines when not assigned to send. Composer send bindings take priority over app shortcuts only inside the message editor, even when the draft is empty or sending is unavailable. Plain Enter accepts a selected completion first. `null` disables keyboard submission for that context; the send button remains available.
+
+Existing browser-local Enter preferences remain the fallback until the corresponding composer binding is configured. Reset removes the override and returns to that fallback. New bindings are saved in the gateway config, like other shortcuts; the old preference is not copied into shared configuration. Automatic touch-keyboard capitalization is ignored when interpreting Shift+Enter.
 
 ## Prompt completions
 

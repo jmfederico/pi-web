@@ -57,14 +57,14 @@ describe("SessionController reload and selection", () => {
     );
 
     const restoring = controller.restoreSession(archivedSession);
-    currentView = "core:workspace.terminal";
-    state = { ...state, mainView: "core:workspace.terminal" };
+    currentView = "workspace";
+    state = { ...state, mainView: "workspace" };
     restoreRequest.resolve({ restored: true });
     await restoring;
 
     expect(state.selectedSession?.archived).toBeUndefined();
     expect(state.sessions[0]?.archived).toBeUndefined();
-    expect(state.mainView).toBe("core:workspace.terminal");
+    expect(state.mainView).toBe("workspace");
     expect(state.error).toBe("");
     expect(navigationCalls).toBe(0);
   });

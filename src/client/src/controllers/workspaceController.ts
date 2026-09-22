@@ -69,7 +69,7 @@ export class WorkspaceController {
     this.setState({ workspacesByProjectId });
   }
 
-  async selectProject(project: Project, target?: WorkspaceSelectionTarget): Promise<void> {
+  async selectProject(project: Project, target?: WorkspaceSelectionTarget): Promise<string | undefined> {
     const navigation = target?.navigation ?? this.beginNavigationOperation?.(WORKSPACE_SELECTION_SCOPE);
     if (!this.navigationIsCurrent(navigation)) return;
     const machineId = selectedMachineId(this.getState());
@@ -84,8 +84,11 @@ export class WorkspaceController {
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
       if (workspace) {
-        await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl, navigation });
-        return;
+        return await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl, navigation });
+      }
+      if (target?.workspaceId !== undefined && target.workspaceId !== "") {
+        this.browserErrors.report(errorScope, `Workspace not found: ${target.workspaceId}`);
+        return `Workspace not found: ${target.workspaceId}`;
       }
       if (target?.updateUrl !== false && this.navigationIsCurrent(navigation)) this.updateUrl();
     } catch (error) {
@@ -94,10 +97,12 @@ export class WorkspaceController {
         && selectedMachineId(this.getState()) === machineId
         && this.getState().selectedProject?.id === project.id) this.setState({ isLoadingWorkspaces: false });
       if (target?.signal?.aborted !== true) this.browserErrors.report(errorScope, String(error));
+      return String(error);
     }
+    return undefined;
   }
 
-  async selectWorkspace(workspace: Workspace, target?: WorkspaceSelectionTarget): Promise<void> {
+  async selectWorkspace(workspace: Workspace, target?: WorkspaceSelectionTarget): Promise<string | undefined> {
     const navigation = target?.navigation ?? this.beginNavigationOperation?.(WORKSPACE_SELECTION_SCOPE);
     if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
     const machineId = selectedMachineId(this.getState());
@@ -119,10 +124,16 @@ export class WorkspaceController {
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
       if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
+      else if (target?.sessionId !== undefined && target.sessionId !== "") {
+        this.browserErrors.report(errorScope, `Session not found: ${target.sessionId}`);
+        return `Session not found: ${target.sessionId}`;
+      }
       else if (target?.updateUrl !== false) this.updateUrl();
     } catch (error) {
       if (target?.signal?.aborted !== true) this.browserErrors.report(errorScope, String(error));
+      return String(error);
     }
+    return undefined;
   }
 
 

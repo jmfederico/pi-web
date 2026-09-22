@@ -1460,9 +1460,9 @@ export class PiSessionService implements SessionRouteService {
     this.workspaceActivity?.reconcileSessionActivity(cwd, reconcilableSessionIds);
     await this.publishUnreadMutations(this.unreadStore.reconcileCwd(canonicalizeStoredCwd(cwd), reconcilableSessionIds));
     const archivedSessions = archivedForCwd
-      .sort(compareArchivedRecords)
       .map((record) => clientSessionFromArchivedRecord(record, sessionsById.get(record.sessionId)))
-      .filter(isDefined);
+      .filter(isDefined)
+      .sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
     return [...unarchivedSessions, ...archivedSessions];
   }
 
@@ -3279,9 +3279,11 @@ export class PiSessionService implements SessionRouteService {
 
   private async archiveStoreArchiveMany(inputs: readonly ArchiveSessionInput[]): Promise<ArchivedSessionRecord[]> {
     if (inputs.length === 0) return [];
-    if (this.archiveStore.archiveMany !== undefined) return this.archiveStore.archiveMany(inputs);
+    // Work from the bottom of the activity-ordered list, using metadata already loaded.
+    const oldestFirst = [...inputs].sort((a, b) => Date.parse(a.modified) - Date.parse(b.modified));
+    if (this.archiveStore.archiveMany !== undefined) return this.archiveStore.archiveMany(oldestFirst);
     const records: ArchivedSessionRecord[] = [];
-    for (const input of inputs) records.push(await this.archiveStore.archive(input));
+    for (const input of oldestFirst) records.push(await this.archiveStore.archive(input));
     return records;
   }
 
@@ -4702,15 +4704,6 @@ function clientSessionFromArchivedRecord(record: ArchivedSessionRecord, fallback
 function addSessionName(names: Set<string>, name: string | undefined): void {
   const trimmed = name?.replace(/\s+/g, " ").trim();
   if (trimmed !== undefined && trimmed !== "") names.add(trimmed);
-}
-
-function compareArchivedRecords(a: ArchivedSessionRecord, b: ArchivedSessionRecord): number {
-  return archivedTimestamp(b) - archivedTimestamp(a);
-}
-
-function archivedTimestamp(record: ArchivedSessionRecord): number {
-  const time = Date.parse(record.archivedAt);
-  return Number.isNaN(time) ? 0 : time;
 }
 
 function isDefined<T>(value: T | undefined): value is T {

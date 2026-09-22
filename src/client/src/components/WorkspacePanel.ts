@@ -16,6 +16,7 @@ export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) panelContext: WorkspacePanelContext | undefined;
   @property({ attribute: false }) emptyState: WorkspacePanelEmptyState | undefined;
+  @property() error = "";
   @property() tool: QualifiedContributionId | undefined;
   @property({ attribute: false }) panels: QualifiedWorkspacePanelContribution[] = [];
   @property({ type: Boolean }) hideToolTabs = false;
@@ -49,7 +50,7 @@ export class WorkspacePanel extends LitElement {
 
   override render() {
     const workspace = this.workspace;
-    if (workspace === undefined) return this.renderEmptyState(this.emptyState ?? {
+    if (workspace === undefined) return this.renderEmptyState(this.error !== "" ? { title: this.error } : this.emptyState ?? {
       title: "Select a workspace",
       body: "Choose a workspace to use its tools.",
     });
@@ -59,7 +60,9 @@ export class WorkspacePanel extends LitElement {
       body: "Try selecting the workspace again.",
     });
     const visiblePanels = this.panels;
-    const selectedPanel = visiblePanels.find((panel) => panel.id === this.tool) ?? visiblePanels[0];
+    // An unresolved route may leave a valid remembered tool, but its content is not displayed.
+    const selectedPanel = this.error !== "" ? undefined
+      : this.tool === undefined ? visiblePanels[0] : visiblePanels.find((panel) => panel.id === this.tool);
     return html`
       ${this.hideToolTabs ? null : html`
         <header>
@@ -81,9 +84,8 @@ export class WorkspacePanel extends LitElement {
           </div>
         </header>
       `}
-      ${selectedPanel === undefined ? this.renderEmptyState({
-        title: "No workspace tools available",
-        body: "No tools are available for this workspace.",
+      ${this.error !== "" ? this.renderEmptyState({ title: this.error }) : selectedPanel === undefined ? this.renderEmptyState({
+        title: this.tool === undefined ? "No workspace tools available" : `Workspace panel unavailable: ${this.tool}`,
       }) : html`
         <div class="panel-content">
           ${selectedPanel.render(context)}

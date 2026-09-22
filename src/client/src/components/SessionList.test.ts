@@ -200,6 +200,32 @@ describe("sessionRowsForCurrentTree", () => {
   });
 });
 
+it("orders archived rows by activity immediately after archiving while preserving parent-child nesting", async () => {
+  const old = session("old", { archived: true, modified: "2026-01-01T00:00:00.000Z", archivedAt: "2026-01-05T00:00:00.000Z" });
+  const newer = session("newer", { modified: "2026-01-03T00:00:00.000Z" });
+  const child = session("child", { archived: true, parentSessionPath: old.path, modified: "2026-01-04T00:00:00.000Z" });
+  const list = sessionList([newer, old, child], new Set());
+  document.body.append(list);
+  await list.updateComplete;
+  const root = list.shadowRoot;
+  if (root === null) throw new Error("Missing session list shadow root");
+  const toggle = [...root.querySelectorAll<HTMLButtonElement>(".section-toggle")].find((button) => button.textContent.includes("Archived"));
+  if (toggle === undefined) throw new Error("Missing archive toggle");
+  toggle.click();
+  await list.updateComplete;
+
+  // Optimistic archiving keeps the original array order until the next server refresh.
+  const archivedNewer = { ...newer, archived: true, archivedAt: "2026-01-05T00:00:00.000Z" };
+  list.sessions = [archivedNewer, old, child];
+  await list.updateComplete;
+  expect([...root.querySelectorAll<HTMLElement>(".action-row.archived")].map((row) => row.title)).toEqual([newer.path, old.path, child.path]);
+
+  // An old server/index order must not override activity ordering either.
+  list.sessions = [old, child, archivedNewer];
+  await list.updateComplete;
+  expect([...root.querySelectorAll<HTMLElement>(".action-row.archived")].map((row) => row.title)).toEqual([newer.path, old.path, child.path]);
+});
+
 function rowSummaries(rows: ReturnType<typeof sessionRowsForCurrentTree>) {
   return rows.map((row) => ({ id: row.session.id, depth: row.depth, hasMissingParent: row.hasMissingParent }));
 }

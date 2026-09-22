@@ -1,4 +1,5 @@
 import { LitElement, html } from "lit";
+import type { ChatContentRendering } from "../formatting/contentRendering";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { writeClipboardText } from "../clipboard";
@@ -9,10 +10,18 @@ import { formattedTextStyles } from "./shared";
 @customElement("formatted-text")
 export class FormattedText extends LitElement {
   @property() text = "";
+  @property() intentKey: string | undefined;
+  @property({ attribute: false }) contentRendering: ChatContentRendering | undefined;
+  @property() machineId = "local";
   @property({ attribute: false }) workspaceContext: MarkdownWorkspaceContext | undefined;
 
   override render() {
-    return html`<div class="formatted" dir="auto" @click=${this.onFormattedClick}>${unsafeHTML(toSafeMarkdownHtml(this.text, this.workspaceContext))}</div>`;
+    const content = this.contentRendering?.renderMarkdown({
+      text: this.text,
+      machineId: this.workspaceContext?.machineId ?? this.machineId,
+      toSafeHtml: (text) => toSafeMarkdownHtml(text, this.workspaceContext),
+    }, this.intentKey) ?? unsafeHTML(toSafeMarkdownHtml(this.text, this.workspaceContext));
+    return html`<div class="formatted" dir="auto" @click=${this.onFormattedClick}>${content}</div>`;
   }
 
   override updated(): void {

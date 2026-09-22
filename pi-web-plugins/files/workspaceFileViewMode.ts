@@ -15,7 +15,7 @@ export interface WorkspaceFileViewModeRoute {
 }
 
 export interface WorkspaceFileViewModeStore {
-  adopt(): WorkspaceFileViewMode;
+  adopt(): WorkspaceFileViewMode | undefined;
   publish(mode: WorkspaceFileViewMode): void;
 }
 
@@ -26,13 +26,13 @@ export function parseWorkspaceFileViewMode(value: string | null | undefined): Wo
 export function adoptWorkspaceFileViewMode(
   route: WorkspaceFileViewModeRoute,
   storage: WorkspaceFileViewModeStorage | undefined,
-): WorkspaceFileViewMode {
+): WorkspaceFileViewMode | undefined {
   const linked = parseWorkspaceFileViewMode(route.read());
   if (linked !== undefined) {
     writeStoredWorkspaceFileViewMode(linked, storage);
     return linked;
   }
-  return readStoredWorkspaceFileViewMode(storage) ?? DEFAULT_WORKSPACE_FILE_VIEW_MODE;
+  return readStoredWorkspaceFileViewMode(storage);
 }
 
 export function publishWorkspaceFileViewMode(

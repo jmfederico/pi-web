@@ -1,7 +1,7 @@
 import type { AppState } from "../appState";
 import { LOCAL_MACHINE_ID } from "../machineKeys";
 import { normalizeContributionQueryRecord, type ContributionQueryRecord } from "../namespacedQueryArgs";
-import type { AppRoute } from "../route";
+import { parseMainView, type AppRoute } from "../route";
 import { browserSessionStorage, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
 
 const LEGACY_FILES_QUERY_PARAMETER = "core.workspace.files--file";
@@ -17,7 +17,7 @@ export interface MachineNavigationSnapshot {
   workspaceId?: string | undefined;
   sessionId?: string | undefined;
   tool?: AppRoute["tool"];
-  view?: AppState["mainView"] | undefined;
+  view?: AppRoute["view"];
   surface: WorkspaceRouteSurface;
 }
 
@@ -98,7 +98,7 @@ export function routeFromMachineNavigationSnapshot(snapshot: MachineNavigationSn
     workspaceId: snapshot.workspaceId,
     sessionId: snapshot.sessionId,
     tool: snapshot.tool,
-    view: snapshot.view === "navigation" ? undefined : snapshot.view,
+    view: snapshot.view,
   };
 }
 
@@ -143,11 +143,6 @@ function parseWorkspaceRouteSurface(value: unknown): WorkspaceRouteSurface {
   return {
     ...(Object.keys(contributionQuery).length === 0 ? {} : { contributionQuery }),
   };
-}
-
-function parseMainView(value: string | undefined): AppState["mainView"] | undefined {
-  if (value === "navigation" || value === "chat") return value;
-  return parseQualifiedId(value);
 }
 
 type QualifiedRouteId = NonNullable<AppRoute["tool"]>;

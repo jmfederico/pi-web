@@ -4,6 +4,7 @@ import type { MachineStatusSnapshot } from "../../shared/machineStatus";
 import type { QualifiedContributionId } from "./plugins/ids";
 import type { SelectedSessionNotificationInbox } from "./sessionNotifications";
 import type { BrowserErrorMap } from "./browserErrors";
+import type { MainView } from "./route";
 
 export interface AppState {
   machines: Machine[];
@@ -72,7 +73,7 @@ export interface AppState {
   projectDialogOpen: boolean;
   machineDialogOpen: boolean;
   workspaceTool: QualifiedContributionId | undefined;
-  mainView: "navigation" | "chat" | QualifiedContributionId;
+  mainView: MainView;
   piWebStatus: PiWebStatusResponse | undefined;
   /** Browser-local failures retained by their machine/project/workspace/session owner. */
   browserErrors: BrowserErrorMap;

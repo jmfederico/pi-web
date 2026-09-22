@@ -37,8 +37,11 @@ export class ProjectController {
     this.browserErrors = new BrowserErrorReporter(getState, setState);
   }
 
+  readonly loadErrors = new Map<string, string>();
+
   async loadProjects() {
     const machineId = selectedMachineId(this.getState());
+    this.loadErrors.delete(machineId);
     this.setState({ isLoadingProjects: true });
     try {
       const projects = await this.api.projects(machineId);
@@ -47,6 +50,7 @@ export class ProjectController {
       const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([projectId]) => projectIds.has(projectId)));
       this.setState({ projects, workspacesByProjectId });
     } catch (error) {
+      this.loadErrors.set(machineId, String(error));
       this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     } finally {
       if (selectedMachineId(this.getState()) === machineId) this.setState({ isLoadingProjects: false });

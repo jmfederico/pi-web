@@ -13,9 +13,9 @@ import {
 } from "./workspaceFileViewMode";
 
 describe("workspace file view mode", () => {
-  it("defaults to raw source", () => {
+  it("distinguishes no preference from the built-in raw default", () => {
     expect(DEFAULT_WORKSPACE_FILE_VIEW_MODE).toBe("raw");
-    expect(adoptWorkspaceFileViewMode(fakeRoute(), fakeStorage())).toBe("raw");
+    expect(adoptWorkspaceFileViewMode(fakeRoute(), fakeStorage())).toBeUndefined();
   });
 
   it("accepts only the two known modes", () => {
@@ -45,7 +45,7 @@ describe("workspace file view mode", () => {
   it("ignores an unusable stored value rather than trusting it", () => {
     const storage = fakeStorage({ [WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY]: "rendered" });
     expect(readStoredWorkspaceFileViewMode(storage)).toBeUndefined();
-    expect(adoptWorkspaceFileViewMode(fakeRoute(), storage)).toBe("raw");
+    expect(adoptWorkspaceFileViewMode(fakeRoute(), storage)).toBeUndefined();
   });
 
   it("binds mode restoration and replacement to scoped host navigation", () => {
@@ -71,7 +71,7 @@ describe("workspace file view mode", () => {
   });
 
   it("keeps working when storage is unavailable or refuses writes", () => {
-    expect(adoptWorkspaceFileViewMode(fakeRoute(), undefined)).toBe("raw");
+    expect(adoptWorkspaceFileViewMode(fakeRoute(), undefined)).toBeUndefined();
     expect(adoptWorkspaceFileViewMode(fakeRoute("preview"), undefined)).toBe("preview");
     expect(readStoredWorkspaceFileViewMode(unavailableStorage())).toBeUndefined();
 

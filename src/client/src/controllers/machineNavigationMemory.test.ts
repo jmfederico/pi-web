@@ -85,12 +85,12 @@ describe("SessionStorageMachineNavigationMemory", () => {
     });
   });
 
-  it("retains qualified legacy panel ids for plugin route migration", () => {
+  it.each(["core:workspace.git", "git:workspace.git", "retryable:workspace.panel", "git", "settings", "", null, 42])("rejects stored view %j without migrating it to a tool", (view) => {
     const storage = memoryStorage({
       "pi-web:machine-navigation:v1": JSON.stringify({ version: 1, entries: [["local", {
         machineId: "local",
         tool: "core:workspace.git",
-        view: "core:workspace.git",
+        view,
         surface: {},
       }]] }),
     });
@@ -98,7 +98,9 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const snapshot = new SessionStorageMachineNavigationMemory(storage).latest("local");
 
     expect(snapshot?.tool).toBe("core:workspace.git");
-    expect(snapshot?.view).toBe("core:workspace.git");
+    expect(snapshot?.view).toBeUndefined();
+    if (snapshot === undefined) throw new Error("Expected stored snapshot");
+    expect(routeFromMachineNavigationSnapshot(snapshot).view).toBeUndefined();
   });
 });
 
@@ -111,7 +113,7 @@ describe("machineNavigationSnapshotFromState", () => {
       selectedWorkspace: workspace("workspace", "project"),
       selectedSession: session("session"),
       workspaceTool: "core:workspace.files",
-      mainView: "core:workspace.files",
+      mainView: "workspace",
     };
 
     expect(machineNavigationSnapshotFromState(state, {
@@ -124,7 +126,7 @@ describe("machineNavigationSnapshotFromState", () => {
       workspaceId: "workspace",
       sessionId: "session",
       tool: "core:workspace.files",
-      view: "core:workspace.files",
+      view: "workspace",
       surface: {
         contributionQuery: {
           "core.workspace.files--file": "src/main.ts",
@@ -133,6 +135,28 @@ describe("machineNavigationSnapshotFromState", () => {
         },
       },
     });
+  });
+
+  it.each(["navigation", "chat", "workspace"] as const)("round-trips %s independently of tool and session selection", (mainView) => {
+    for (const workspaceTool of [undefined, "files:workspace.files"] as const) {
+      const state: AppState = {
+        ...initialAppState(),
+        selectedSession: session("session"),
+        workspaceTool,
+        mainView,
+      };
+      const snapshot = machineNavigationSnapshotFromState(state);
+      const storage = memoryStorage();
+      new SessionStorageMachineNavigationMemory(storage).remember(snapshot);
+      const restored = new SessionStorageMachineNavigationMemory(storage).latest("local");
+      expect(restored).toEqual(snapshot);
+      if (restored === undefined) throw new Error("Expected restored snapshot");
+      expect(routeFromMachineNavigationSnapshot(restored)).toMatchObject({
+        view: mainView,
+        tool: workspaceTool,
+        sessionId: "session",
+      });
+    }
   });
 
   it("does not carry workspace surface without a selected workspace", () => {
@@ -170,7 +194,7 @@ describe("routeFromMachineNavigationSnapshot", () => {
       workspaceId: "workspace",
       sessionId: "session",
       tool: "git:workspace.git",
-      view: undefined,
+      view: "navigation",
     });
   });
 

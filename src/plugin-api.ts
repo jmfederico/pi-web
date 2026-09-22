@@ -88,7 +88,74 @@ export interface PluginActivationResult {
   dispose?(signal: AbortSignal): MaybePromise<void>;
 }
 
+export interface ContentRendererInput {
+  readonly text: string;
+  /** Aborted when source, renderer, mode, mounting, or plugin lifetime changes. */
+  readonly signal: AbortSignal;
+  /** Report asynchronous failure; calls from obsolete renders are ignored. */
+  readonly fail: (error: unknown) => void;
+}
+
+export interface ContentRendererContribution {
+  id: LocalContributionId;
+  languages?: readonly string[];
+  /** Extensions without a leading dot, matched case-insensitively. */
+  fileExtensions?: readonly string[];
+  /** Defaults to manual: render is not called until the user chooses Render. */
+  renderMode?: "manual" | "automatic";
+  /** Synchronous Lit template; own async work and activation efficiency in a component and honor signal. */
+  render(input: ContentRendererInput): TemplateResult;
+}
+
+export interface ContentRenderRequest {
+  machineId: string;
+  text: string;
+  language?: string;
+  filePath?: string;
+  truncated?: boolean;
+}
+
+export interface ContentRendererOption {
+  readonly id: string;
+  readonly label: string;
+  readonly renderMode: "manual" | "automatic";
+}
+
+export type ContentTextRenderRequest = ContentRenderRequest & {
+  /** Authorize manual previews; false/omitted retains automatic defaults. Never overrides user Raw. */
+  allowManualPreview?: boolean;
+} & ({ controls: "external"; rendererId?: string } | { controls?: never; rendererId?: never });
+
+export interface ContentMarkdownRenderRequest {
+  machineId: string;
+  text: string;
+  truncated?: boolean;
+  toSafeHtml: (text: string) => string;
+  /** Authorize manual fence previews; false/omitted retains automatic defaults. Never overrides user Raw. */
+  allowManualPreview?: boolean;
+}
+
+/** Host capability token: { pluginId: "pi-web", id: "content-rendering", version: 1, parse }. */
+export interface ContentRenderingCapability {
+  /** Eligible choices in source plugin ID order, then local contribution ID order. */
+  listRenderers(request: ContentRenderRequest): readonly ContentRendererOption[];
+  /**
+   * Undefined when no renderer claims the complete text file.
+   * External controls require the caller to provide raw-source access, mode switching and a renderer chooser.
+   * Only external controls accept rendererId; absent or unavailable IDs use the first match.
+   * Consumers authorize manual previews according to their own user-intent policy.
+   * Listing and creating templates never call render.
+   */
+  renderText(request: ContentTextRenderRequest): TemplateResult | undefined;
+  /**
+   * The caller supplies its existing trusted HTML sanitizer; policies are not shared.
+   * Each eligible fence owns its chooser and Raw control. No remembered intent is stored.
+   */
+  renderMarkdown(request: ContentMarkdownRenderRequest): TemplateResult;
+}
+
 export interface PluginContributions {
+  contentRenderers?: ContentRendererContribution[];
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
@@ -119,7 +186,7 @@ export interface PluginRuntimeState {
   selectedWorkspace?: Workspace;
   selectedSession?: PluginSelectedSession;
   workspaceTool?: string;
-  mainView?: string;
+  mainView?: "navigation" | "chat" | "workspace";
   piWebStatus?: PiWebStatusResponse;
 }
 
@@ -143,7 +210,7 @@ export interface PluginRuntimeContext {
   configureAuth: () => void | Promise<void>;
   logoutAuth: () => void | Promise<void>;
   openThemePicker: () => void;
-  selectMainView: (view: string) => void;
+  selectMainView: (view: "navigation" | "chat" | "workspace") => void;
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
   /** @deprecated Compatibility alias that publishes `workspace.files` invalidation for the selected workspace. */

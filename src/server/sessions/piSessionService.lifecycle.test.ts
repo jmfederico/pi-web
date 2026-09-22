@@ -1149,6 +1149,38 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.dispose();
   });
 
+  it("orders archives by activity using index metadata and legacy fallbacks without opening files", async () => {
+    const open = vi.fn(() => { throw new Error("listing must not open archived files"); });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      archiveStore: {
+        list: () => Promise.resolve([
+          { sessionId: "old", cwd: "/workspace", archivedAt: "2026-01-05T00:00:00.000Z", originalPath: "/sessions/old.jsonl", archivePath: "/archive/old.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:00:00.000Z", messageCount: 2, firstMessage: "old" },
+          { sessionId: "new", cwd: "/workspace", archivedAt: "2026-01-03T00:00:00.000Z", originalPath: "/sessions/new.jsonl", archivePath: "/archive/new.jsonl", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-03T00:00:00.000Z", messageCount: 2, firstMessage: "new" },
+          { sessionId: "legacy", cwd: "/workspace", archivedAt: "2026-01-04T00:00:00.000Z" },
+        ]),
+        get: () => Promise.resolve(undefined),
+        archive: () => { throw new Error("listing must not archive"); },
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(false),
+      },
+      sessionManager: {
+        ...sessionGateway([
+          sessionRecord("active"),
+          { ...sessionRecord("legacy"), modified: new Date("2026-01-02T00:00:00.000Z") },
+        ]),
+        open,
+      },
+      heartbeatIntervalMs: 60_000,
+    });
+
+    const sessions = await service.list("/workspace");
+    expect(sessions.map((session) => session.id)).toEqual(["active", "new", "legacy", "old"]);
+    expect(open).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
   it("lists archived records that have been moved out of the active session directory", async () => {
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,

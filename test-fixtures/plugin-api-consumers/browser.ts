@@ -1,4 +1,6 @@
 import type {
+  ContentRenderingCapability,
+  ContentRendererInput,
   JsonValue,
   PluginCapability,
   PluginPeer,
@@ -10,6 +12,25 @@ import type {
   WorkspacePanelContext,
   WorkspacePanelFiles,
 } from "@jmfederico/pi-web/plugin-api";
+
+export function checkContentRendering(capability: ContentRenderingCapability, input: ContentRendererInput): void {
+  const request = { machineId: "local", text: input.text };
+  capability.listRenderers({ ...request, language: "diagram", filePath: "graph.diag" });
+  capability.renderText({ ...request, allowManualPreview: true });
+  capability.renderText({ ...request, controls: "external", rendererId: "plugin:diagram", allowManualPreview: false });
+  // @ts-expect-error Embedded controls own selection.
+  capability.renderText({ ...request, rendererId: "plugin:diagram" });
+  const markdown = { ...request, toSafeHtml: (text: string) => text, allowManualPreview: true };
+  capability.renderMarkdown(markdown);
+  // @ts-expect-error Intent memory is private Chat policy.
+  capability.renderMarkdown({ ...markdown, intentKey: "session" });
+  // @ts-expect-error Markdown discovers language from fences.
+  capability.renderMarkdown({ ...markdown, language: "diagram" });
+  // @ts-expect-error Markdown has no file selector.
+  capability.renderMarkdown({ ...markdown, filePath: "graph.md" });
+  // @ts-expect-error Renderer input does not claim provenance.
+  input.source;
+}
 
 interface FixtureIdentityCapabilityV1 {
   readonly version: 1;

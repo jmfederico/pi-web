@@ -22,6 +22,9 @@ describe("production client build contents", () => {
       expect(references).toContain("./favicon.svg");
       expect(references).toContain("./apple-touch-icon.png");
       expect(references).toContain("./manifest.webmanifest");
+      const manifestLink = /<link\b[^>]*\brel="manifest"[^>]*>/.exec(html)?.[0];
+      expect(manifestLink).toBeDefined();
+      expect(manifestLink).toContain('crossorigin="use-credentials"');
       expect(references).toContainEqual(expect.stringMatching(/^\.\/assets\/index-[^/]+\.js$/));
       expect(references.filter((reference) => reference.startsWith("/"))).toEqual([]);
 

@@ -86,7 +86,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (this.treeCache?.sessions !== this.sessions) {
       const currentRows = sessionRowsForCurrentTree(this.sessions);
       const currentRowIds = new Set(currentRows.map((row) => row.session.id));
-      const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
+      const archivedRows = sessionRows(this.sessions
+        .filter((session) => session.archived === true && !currentRowIds.has(session.id))
+        .sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified)));
       this.treeCache = {
         sessions: this.sessions,
         currentRows,

@@ -27,7 +27,7 @@ export class MachineController {
     this.browserErrors = new BrowserErrorReporter(getState, setState);
   }
 
-  async loadMachines(routeMachineId?: string): Promise<void> {
+  async loadMachines(routeMachineId?: string): Promise<boolean> {
     this.setState({ error: "", isLoadingMachines: true });
     try {
       const machines = await api.machines();
@@ -44,8 +44,11 @@ export class MachineController {
       });
       void this.refreshMachineHealthFor(machines);
       void this.refreshMachineRuntimeFor(machines);
+      return true;
     } catch (error) {
       this.setState({ error: String(error) });
+      this.browserErrors.report(machineBrowserErrorScope(routeMachineId ?? "local"), String(error));
+      return false;
     } finally {
       this.setState({ isLoadingMachines: false });
     }

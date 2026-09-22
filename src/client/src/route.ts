@@ -1,5 +1,11 @@
 import type { QualifiedContributionId } from "./plugins/types";
 
+export type MainView = "navigation" | "chat" | "workspace";
+
+export function parseMainView(value: unknown): MainView | undefined {
+  return value === "navigation" || value === "chat" || value === "workspace" ? value : undefined;
+}
+
 interface AppRouteLocation {
   machineId: string | undefined;
   projectId: string | undefined;
@@ -16,10 +22,10 @@ export interface WorkspaceRouteIdentity {
 /** Route values after plugin-contributed workspace panel aliases are resolved. */
 export interface AppRoute extends AppRouteLocation {
   tool: QualifiedContributionId | undefined;
-  view: "chat" | QualifiedContributionId | undefined;
+  view: MainView | undefined;
 }
 
-/** Raw URL route. Tool and view values remain unresolved until machine plugins load. */
+/** Raw URL values are retained so invalid destinations can be explained without rewriting them. */
 export interface ParsedAppRoute extends AppRouteLocation {
   tool: string | undefined;
   view: string | undefined;
@@ -51,11 +57,7 @@ export function resolveAppRoute(route: ParsedAppRoute, resolveWorkspacePanel: Wo
     workspaceId: route.workspaceId,
     sessionId: route.sessionId,
     tool: route.tool === undefined ? undefined : resolveWorkspacePanelRouteValue(route.tool, resolveWorkspacePanel),
-    view: route.view === "chat"
-      ? "chat"
-      : route.view === undefined
-        ? undefined
-        : resolveWorkspacePanelRouteValue(route.view, resolveWorkspacePanel),
+    view: parseMainView(route.view),
   };
 }
 

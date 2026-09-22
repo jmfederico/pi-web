@@ -43,9 +43,9 @@ describe("bundled Git browser plugin", () => {
       provider: { pluginId: "jj", capabilities: { remove: false } },
     }))).toBe(false);
 
-    const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
+    const selectWorkspaceTool = vi.fn<PluginRuntimeContext["selectWorkspaceTool"]>();
     const refreshWorkspacePanels = vi.fn<PluginRuntimeContext["refreshWorkspacePanels"]>(() => panel.onInvalidate?.(context));
-    const runtime = runtimeContext({ selectMainView, refreshWorkspacePanels });
+    const runtime = runtimeContext({ selectWorkspaceTool, refreshWorkspacePanels });
     const goToGit = contributions.actions?.find((action) => action.id === "view.git");
     const refresh = contributions.actions?.find((action) => action.id === "workspace.refresh-git");
 
@@ -56,7 +56,7 @@ describe("bundled Git browser plugin", () => {
     expect(refresh?.shortcutAliases).toEqual(["core:workspace.refresh-git"]);
     expect(goToGit?.enabled?.(runtime)).toBe(true);
     await goToGit?.run(runtime);
-    expect(selectMainView).toHaveBeenCalledWith("git:workspace.git");
+    expect(selectWorkspaceTool).toHaveBeenCalledWith("git:workspace.git");
 
     await refresh?.run(runtime);
     expect(refreshWorkspacePanels).toHaveBeenCalledWith("git:workspace.git");
@@ -79,10 +79,10 @@ describe("bundled Git browser plugin", () => {
       provider: { pluginId: runtimePluginId, capabilities: { remove: false } },
     }))).toBe(false);
 
-    const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
+    const selectWorkspaceTool = vi.fn<PluginRuntimeContext["selectWorkspaceTool"]>();
     const action = contributions.actions?.find((candidate) => candidate.id === "view.git");
-    await action?.run(runtimeContext({ selectMainView }));
-    expect(selectMainView).toHaveBeenCalledWith(`${runtimePluginId}:workspace.git`);
+    await action?.run(runtimeContext({ selectWorkspaceTool }));
+    expect(selectWorkspaceTool).toHaveBeenCalledWith(`${runtimePluginId}:workspace.git`);
   });
 
   it("keeps visibility checks free of route side effects", () => {
@@ -503,7 +503,7 @@ function panelContext(request: NonNullable<PluginPeer["request"]> | undefined, w
   return {
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace,
-    state: { selectedWorkspace: workspace, workspaceTool: "git:workspace.git", mainView: "git:workspace.git" },
+    state: { selectedWorkspace: workspace, workspaceTool: "git:workspace.git", mainView: "workspace" },
     files: {
       readFile: () => Promise.reject(new Error("not implemented")),
       listFiles: () => Promise.reject(new Error("not implemented")),
@@ -521,7 +521,7 @@ function panelContext(request: NonNullable<PluginPeer["request"]> | undefined, w
 function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {
   const noop = () => undefined;
   return {
-    state: { selectedWorkspace: gitWorkspace, workspaceTool: "git:workspace.git", mainView: "git:workspace.git" },
+    state: { selectedWorkspace: gitWorkspace, workspaceTool: "git:workspace.git", mainView: "workspace" },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     openActionPalette: noop,
     focusPrompt: noop,

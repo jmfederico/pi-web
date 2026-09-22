@@ -170,7 +170,7 @@ describe("WorkspaceController route selection freshness", () => {
     const test = harness({ selectedMachine: machine("local"), projects: [repo] }, loadWorkspaces);
 
     const selection = test.controller.selectProject(repo, { navigation });
-    route = { ...route, view: "core:workspace.terminal" };
+    route = { ...route, view: "workspace" };
     resolveWorkspaces?.([main]);
     await selection;
 

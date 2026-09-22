@@ -372,7 +372,7 @@ function createGitActions(panelId: string, controller: GitUiController): PluginA
       shortcutAliases: ["core:view.git"],
       group: "Navigation",
       enabled: hasGitWorkspace,
-      run: (context) => { context.selectMainView(panelId); },
+      run: (context) => { context.selectWorkspaceTool(panelId); },
     },
     {
       id: "workspace.refresh-git",

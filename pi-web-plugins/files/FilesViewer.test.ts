@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { FileContentResponse } from "@jmfederico/pi-web/plugin-api";
-import type { WorkspaceFileViewMode, WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
+import { html } from "lit";
+import { createContentRenderingCapability } from "../../src/client/src/formatting/contentRendering";
+import { ContentRendererHost } from "../../src/client/src/components/ContentRendererHost";
+import type { ContentRenderingCapability, FileContentResponse } from "@jmfederico/pi-web/plugin-api";
+import { adoptWorkspaceFileViewMode, WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
 import { DEFAULT_MAX_INLINE_PREVIEW_BYTES as MAX_INLINE_PREVIEW_BYTES, WorkspaceFileViewer, workspaceFilePreviewKind, workspaceFileViewerIdentityKey, type WorkspaceFileViewerIdentity } from "./FilesViewer";
 
 if (customElements.get("pi-web-files-viewer") === undefined) customElements.define("pi-web-files-viewer", WorkspaceFileViewer);
@@ -16,6 +19,208 @@ afterEach(() => {
 });
 
 describe("workspace-file-viewer", () => {
+  it.each(["fresh", "saved", "url"] as const)("honors %s Markdown preview intent for manual fences while preserving block controls", async (preference) => {
+    const alpha = vi.fn(() => html`<b>Alpha</b>`);
+    const beta = vi.fn(() => html`<b>Beta</b>`);
+    const contentRendering = createContentRenderingCapability(() => [
+      { id: "alpha", label: "Alpha", renderer: { id: "alpha", render: alpha } },
+      { id: "beta", label: "Beta", renderer: { id: "beta", render: beta } },
+    ]);
+    if (preference !== "fresh") localStorage.setItem(WORKSPACE_FILE_VIEW_MODE_STORAGE_KEY, preference === "saved" ? "preview" : "raw");
+    const modeStore = {
+      adopt: () => adoptWorkspaceFileViewMode({ read: () => preference === "url" ? "preview" : undefined, write: () => undefined }, localStorage),
+      publish: vi.fn(),
+    };
+    const viewer = await mountViewer(textFile("notes.md", "```diagram\nsource\n```", { mediaType: "markdown" }), { contentRendering, modeStore });
+    if (preference === "fresh") {
+      expect(viewer.renderRoot.querySelector("pi-web-content-renderer")).toBeNull();
+      expect(alpha).not.toHaveBeenCalled();
+      expect(modeStore.publish).not.toHaveBeenCalled();
+      modeButton(viewer, "Preview").click();
+      await viewer.updateComplete;
+    }
+    const host = viewer.renderRoot.querySelector<ContentRendererHost>("pi-web-content-renderer");
+    if (host === null) throw new Error("Expected Markdown fence host");
+    await host.updateComplete;
+    expect(alpha).toHaveBeenCalledOnce();
+    expect(beta).not.toHaveBeenCalled();
+    const chooser = host.renderRoot.querySelector("select");
+    if (chooser === null) throw new Error("Expected block chooser");
+    chooser.value = "beta";
+    chooser.dispatchEvent(new Event("change"));
+    await host.updateComplete;
+    expect(beta).toHaveBeenCalledOnce();
+    const raw = [...host.renderRoot.querySelectorAll("button")].find((button) => button.textContent === "Raw");
+    if (raw === undefined) throw new Error("Expected block Raw control");
+    raw.click();
+    await host.updateComplete;
+    viewer.requestUpdate();
+    await viewer.updateComplete;
+    await host.updateComplete;
+    expect(host.renderRoot.querySelector("pre code")?.textContent).toBe("source");
+    expect(host.renderRoot.querySelector(".preview")).toBeNull();
+    expect(chooser.value).toBe("beta");
+    expect(beta).toHaveBeenCalledOnce();
+    modeButton(viewer, "Raw").click();
+    await viewer.updateComplete;
+    expect(viewer.renderRoot.querySelector("pi-web-content-renderer")).toBeNull();
+  });
+
+  it.each(["manual", "automatic"] as const)("uses %s only as a fresh-browser default without saving it", async (renderMode) => {
+    const draw = vi.fn(() => html`<b>Preview</b>`);
+    const contentRendering = createContentRenderingCapability(() => [{ id: "diagram", label: "Diagram", renderer: { id: "diagram", renderMode, render: draw } }]);
+    const publish = vi.fn();
+    const viewer = await mountViewer(textFile("graph.mmd", "source"), { contentRendering, modeStore: { adopt: () => undefined, publish } });
+    await viewer.renderRoot.querySelector<ContentRendererHost>("pi-web-content-renderer")?.updateComplete;
+    expect(draw).toHaveBeenCalledTimes(renderMode === "automatic" ? 1 : 0);
+    expect(publish).not.toHaveBeenCalled();
+    modeButton(viewer, "Raw").click();
+    await viewer.updateComplete;
+    expect(publish).toHaveBeenCalledWith("raw");
+    expect(viewer.renderRoot.querySelector("pi-web-files-code-viewer")).not.toBeNull();
+  });
+
+  it.each(["manual", "automatic"] as const)("lets saved Preview and Raw override %s defaults", async (renderMode) => {
+    const draw = vi.fn(() => html`<b>Preview</b>`);
+    const contentRendering = createContentRenderingCapability(() => [{ id: "diagram", label: "Diagram", renderer: { id: "diagram", renderMode, render: draw } }]);
+    const viewer = await mountViewer(textFile("graph.mmd", "source"), { contentRendering, modeStore: fakeModeStore("preview") });
+    await viewer.renderRoot.querySelector<ContentRendererHost>("pi-web-content-renderer")?.updateComplete;
+    expect(draw).toHaveBeenCalledOnce();
+    viewer.modeStore = fakeModeStore("raw");
+    await viewer.updateComplete;
+    expect(viewer.renderRoot.querySelector("pi-web-content-renderer")).toBeNull();
+    expect(draw).toHaveBeenCalledOnce();
+  });
+
+  it("owns standalone preview controls in the header and cancels the embedded renderer on Raw", async () => {
+    let signal: AbortSignal | undefined;
+    const contentRendering = createContentRenderingCapability(() => [{ id: "diagram", label: "Diagram", renderer: {
+      id: "diagram", languages: ["diagram"], render: (input) => {
+        signal = input.signal;
+        return html`<b>Diagram preview</b>`;
+      },
+    } }]);
+    const viewer = await mountViewer(textFile("graph.mmd", "A --> B"), { contentRendering });
+    expect(signal).toBeUndefined();
+    modeButton(viewer, "Render").click();
+    await viewer.updateComplete;
+    const host = viewer.shadowRoot?.querySelector("pi-web-content-renderer");
+    if (!(host instanceof ContentRendererHost)) throw new Error("Expected preview host");
+    await host.updateComplete;
+    expect(host.shadowRoot?.querySelector("button")).toBeNull();
+    expect(host.shadowRoot?.textContent).toContain("Diagram preview");
+    expect(viewer.shadowRoot?.querySelectorAll(".viewer-header button")).toHaveLength(2);
+    expect(viewer.shadowRoot?.querySelector(".viewer-header a[download]")).not.toBeNull();
+    modeButton(viewer, "Raw").click();
+    await viewer.updateComplete;
+    expect(signal?.aborted).toBe(true);
+    expect(viewer.shadowRoot?.querySelector("pi-web-content-renderer")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
+    modeButton(viewer, "Render").click();
+    await viewer.updateComplete;
+    const replacement = viewer.shadowRoot?.querySelector("pi-web-content-renderer");
+    if (!(replacement instanceof ContentRendererHost)) throw new Error("Expected resumed preview");
+    await replacement.updateComplete;
+    expect(signal?.aborted).toBe(false);
+    const previousSignal = signal;
+    viewer.file = textFile("graph.mmd", "changed source");
+    await viewer.updateComplete;
+    const changedHost = viewer.shadowRoot?.querySelector<ContentRendererHost>("pi-web-content-renderer");
+    await changedHost?.updateComplete;
+    expect(previousSignal?.aborted).toBe(true);
+    expect(signal).not.toBe(previousSignal);
+    expect(changedHost?.shadowRoot?.querySelector("b")?.textContent).toBe("Diagram preview");
+    expect(modeButton(viewer, "Render").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("chooses alternatives in the header, preserves choice across modes, and resets for a different file", async () => {
+    const inputs: import("../../src/plugin-api").ContentRendererInput[] = [];
+    const choices = ["Alpha", "Beta"].map((label) => ({ id: label, label, renderer: {
+      id: label, render: (input: import("../../src/plugin-api").ContentRendererInput) => {
+        inputs.push(input);
+        return html`<b>${label}</b>`;
+      },
+    } }));
+    const contentRendering = createContentRenderingCapability(() => choices);
+    const viewer = await mountViewer(textFile("first.mmd", "source"), { contentRendering });
+    const chooser = viewer.renderRoot.querySelector<HTMLSelectElement>('.viewer-header select[aria-label="File renderer"]');
+    if (chooser === null) throw new Error("Expected header chooser");
+    expect(chooser.value).toBe("Alpha");
+    expect(inputs).toHaveLength(0);
+    modeButton(viewer, "Render").click();
+    await viewer.updateComplete;
+    const host = viewer.renderRoot.querySelector<ContentRendererHost>("pi-web-content-renderer");
+    if (host === null) throw new Error("Expected preview host");
+    await host.updateComplete;
+    expect(host.shadowRoot?.querySelector("select,button")).toBeNull();
+    expect(inputs).toHaveLength(1);
+    chooser.value = "Beta";
+    chooser.dispatchEvent(new Event("change"));
+    await viewer.updateComplete;
+    await host.updateComplete;
+    expect(inputs[0]?.signal.aborted).toBe(true);
+    expect(inputs).toHaveLength(2);
+    expect(host.shadowRoot?.querySelector("b")?.textContent).toBe("Beta");
+    modeButton(viewer, "Render").click();
+    await viewer.updateComplete;
+    await host.updateComplete;
+    expect(host.shadowRoot?.querySelector("b")?.textContent).toBe("Beta");
+    expect(inputs).toHaveLength(2);
+    modeButton(viewer, "Raw").click();
+    await viewer.updateComplete;
+    expect(inputs[1]?.signal.aborted).toBe(true);
+    expect(chooser.value).toBe("Beta");
+    modeButton(viewer, "Render").click();
+    await viewer.updateComplete;
+    const resumed = viewer.renderRoot.querySelector<ContentRendererHost>("pi-web-content-renderer");
+    if (resumed === null) throw new Error("Expected resumed preview");
+    await resumed.updateComplete;
+    expect(resumed.shadowRoot?.querySelector("b")?.textContent).toBe("Beta");
+    viewer.selectedPath = "second.mmd";
+    viewer.file = textFile("second.mmd", "other");
+    await viewer.updateComplete;
+    expect(chooser.value).toBe("Alpha");
+  });
+
+  it("passes Markdown policy and complete text files to the public rendering capability with machine scope", async () => {
+    const renderText = vi.fn<ContentRenderingCapability["renderText"]>(() => html`<div class="plugin-preview">Diagram</div>`);
+    const renderMarkdown = vi.fn<ContentRenderingCapability["renderMarkdown"]>(() => html`<div class="plugin-markdown">Markdown</div>`);
+    const contentRendering = { listRenderers: () => [], renderText, renderMarkdown };
+    const file = textFile("graph.mmd", "graph TD; A-->B");
+    const viewer = await mountViewer(file, { machineId: "remote", contentRendering });
+    expect(viewer.shadowRoot?.querySelector(".plugin-preview")).toBeNull();
+    expect(renderText).toHaveBeenCalledWith({ machineId: "remote", filePath: "graph.mmd", text: file.content, controls: "external", allowManualPreview: false });
+    expect(viewer.shadowRoot?.querySelector(".viewer-header .viewer-mode")).not.toBeNull();
+    modeButton(viewer, "Preview").click();
+    await viewer.updateComplete;
+    expect(viewer.shadowRoot?.querySelector(".plugin-preview")).not.toBeNull();
+    modeButton(viewer, "Raw").click();
+    await viewer.updateComplete;
+    expect(viewer.shadowRoot?.querySelector(".plugin-preview")).toBeNull();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
+    renderText.mockClear();
+    viewer.file = { ...file, truncated: true };
+    await viewer.updateComplete;
+    expect(renderText).not.toHaveBeenCalled();
+    expect(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer")).not.toBeNull();
+    viewer.file = { ...file, size: MAX_INLINE_PREVIEW_BYTES + 1 };
+    await viewer.updateComplete;
+    expect(renderText).not.toHaveBeenCalled();
+
+    const markdown = textFile("README.md", "```mermaid\ngraph TD\n```", { mediaType: "markdown" });
+    viewer.selectedPath = markdown.path;
+    viewer.file = markdown;
+    await viewer.updateComplete;
+    expect(renderMarkdown).not.toHaveBeenCalled();
+    modeButton(viewer, "Preview").click();
+    await viewer.updateComplete;
+    const request = renderMarkdown.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ machineId: "remote", text: markdown.content, truncated: false });
+    expect(request?.toSafeHtml("![remote](https://evil.test/pixel)")).toContain("Image omitted");
+    expect(request?.toSafeHtml("![remote](https://evil.test/pixel)")).not.toContain("<img");
+    expect(viewer.shadowRoot?.querySelector(".plugin-markdown")).not.toBeNull();
+  });
+
   it("shows explicit selection, loading, unavailable, and content-mismatch states", async () => {
     const viewer = await mountViewer(undefined, { selectedPath: undefined });
     expect(statusMessage(viewer)).toBe("Select a file.");
@@ -359,6 +564,7 @@ describe("workspace file viewer seams", () => {
 });
 
 interface ViewerPatch {
+  contentRendering?: ContentRenderingCapability;
   machineId?: string;
   projectId?: string;
   workspaceId?: string;
@@ -432,7 +638,7 @@ function binaryFile(path: string, patch: Partial<FileContentResponse> = {}): Fil
   };
 }
 
-function modeButton(viewer: WorkspaceFileViewer, text: "Preview" | "Raw"): HTMLButtonElement {
+function modeButton(viewer: WorkspaceFileViewer, text: "Preview" | "Render" | "Raw"): HTMLButtonElement {
   return buttonWithText(viewer, text);
 }
 

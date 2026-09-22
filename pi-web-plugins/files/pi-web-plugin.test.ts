@@ -80,16 +80,16 @@ describe("Files plugin activation", () => {
     expect(rendered.values).toContain(workspaceContext);
     expect(rendered.values).toContain(runtime);
 
-    const selectMainView = vi.fn<PluginRuntimeContext["selectMainView"]>();
+    const selectWorkspaceTool = vi.fn<PluginRuntimeContext["selectWorkspaceTool"]>();
     const refreshWorkspacePanels = vi.fn<PluginRuntimeContext["refreshWorkspacePanels"]>();
-    const actionContext = createRuntimeContext({ selectMainView, refreshWorkspacePanels });
+    const actionContext = createRuntimeContext({ selectWorkspaceTool, refreshWorkspacePanels });
     const view = result.contributions.actions?.find((action) => action.id === "view.files");
     const refresh = result.contributions.actions?.find((action) => action.id === "workspace.refresh-files");
 
     await view?.run(actionContext);
     await refresh?.run(actionContext);
 
-    expect(selectMainView).toHaveBeenCalledWith("files:workspace.files");
+    expect(selectWorkspaceTool).toHaveBeenCalledWith("files:workspace.files");
     expect(refreshWorkspacePanels).toHaveBeenCalledWith("files:workspace.files");
   });
 });

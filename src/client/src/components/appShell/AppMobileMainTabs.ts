@@ -1,13 +1,15 @@
 import { LitElement, css, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { AppState } from "../../appState";
+import type { QualifiedContributionId } from "../../plugins/types";
 import { renderAppTabIcon, type AppTabBuiltinIcon } from "../tabIcons";
 
 export type AppMobileMainTabBuiltinIcon = AppTabBuiltinIcon;
 export type AppMobileMainTabIcon = AppMobileMainTabBuiltinIcon | TemplateResult;
 
+export type AppMobileMainTabId = "navigation" | "chat" | QualifiedContributionId;
+
 export interface AppMobileMainTab {
-  id: AppState["mainView"];
+  id: AppMobileMainTabId;
   label: string;
   icon?: AppMobileMainTabIcon;
   badge?: unknown;
@@ -19,8 +21,8 @@ export interface AppMobileMainTab {
 @customElement("app-mobile-main-tabs")
 export class AppMobileMainTabs extends LitElement {
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
-  @property({ attribute: false }) selectedView: AppState["mainView"] = "chat";
-  @property({ attribute: false }) onSelect?: (view: AppState["mainView"]) => void;
+  @property({ attribute: false }) selectedTab: AppMobileMainTabId | undefined = "chat";
+  @property({ attribute: false }) onSelect?: (tab: AppMobileMainTabId) => void;
   @query(".mobile-tabs") private mobileTabs?: HTMLElement | null;
   @state() private canScrollLeft = false;
   @state() private canScrollRight = false;
@@ -50,7 +52,7 @@ export class AppMobileMainTabs extends LitElement {
       <div class=${this.frameClass()}>
         <div class="mobile-tabs" @scroll=${this.onMobileTabsScroll}>
           ${this.tabs.map((tab) => {
-            const selected = this.selectedView === tab.id;
+            const selected = this.selectedTab === tab.id;
             return html`
               <button class=${this.tabClass(tab)} title=${tab.label} aria-label=${this.tabAriaLabel(tab)} aria-pressed=${String(selected)} @click=${() => { this.onSelect?.(tab.id); }}>
                 ${this.renderTabMark(tab, fallbackLabels)}
@@ -71,7 +73,7 @@ export class AppMobileMainTabs extends LitElement {
   private tabClass(tab: AppMobileMainTab): string {
     return [
       ...(tab.className === undefined ? [] : [tab.className]),
-      ...(this.selectedView === tab.id ? ["selected"] : []),
+      ...(this.selectedTab === tab.id ? ["selected"] : []),
     ].join(" ");
   }
 
@@ -85,13 +87,13 @@ export class AppMobileMainTabs extends LitElement {
     return html`<span class=${`tab-badge${tone === undefined ? "" : ` ${tone}`}`}>${badge}</span>`;
   }
 
-  private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppState["mainView"], string>) {
+  private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppMobileMainTabId, string>) {
     return tab.icon === undefined
       ? html`<span class="tab-fallback" aria-hidden="true">${fallbackLabels.get(tab.id) ?? this.initialsLabel(tab.label)}</span>`
       : renderAppTabIcon(tab.icon);
   }
 
-  private fallbackLabels(): Map<AppState["mainView"], string> {
+  private fallbackLabels(): Map<AppMobileMainTabId, string> {
     const fallbackTabs = this.tabs.filter((tab) => tab.icon === undefined);
     const counts = new Map<string, number>();
     for (const tab of fallbackTabs) {
@@ -99,7 +101,7 @@ export class AppMobileMainTabs extends LitElement {
       counts.set(initials, (counts.get(initials) ?? 0) + 1);
     }
 
-    const labels = new Map<AppState["mainView"], string>();
+    const labels = new Map<AppMobileMainTabId, string>();
     for (const tab of fallbackTabs) {
       const initials = this.initialsLabel(tab.label);
       labels.set(tab.id, (counts.get(initials) ?? 0) > 1 ? this.fullFallbackLabel(tab.label) : initials);

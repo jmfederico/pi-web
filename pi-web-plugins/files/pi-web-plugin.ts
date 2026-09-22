@@ -1,4 +1,4 @@
-import type { PiWebPlugin, PluginActivationContext, PluginActivationResult } from "@jmfederico/pi-web/plugin-api";
+import type { ContentRenderingCapability, PluginCapability, PiWebPlugin, PluginActivationContext, PluginActivationResult } from "@jmfederico/pi-web/plugin-api";
 import { FilesCodeViewer } from "./FilesCodeViewer";
 import { WorkspaceFilesPanel } from "./FilesPanel";
 import { FilesRuntime } from "./FilesRuntime";
@@ -16,7 +16,23 @@ export const FILES_CODE_VIEWER_ELEMENT = "pi-web-files-code-viewer";
 
 const filesCustomElementOwnersKey = Symbol.for("pi-web.files.custom-element-owners.v1");
 
+const contentRenderingCapability: PluginCapability<ContentRenderingCapability> = {
+  pluginId: "pi-web", id: "content-rendering", version: 1,
+  parse: (value) => {
+    if (!isContentRenderingCapability(value)) throw new Error("Files requires content rendering capability v1");
+    return value;
+  },
+};
+
+function isContentRenderingCapability(value: unknown): value is ContentRenderingCapability {
+  return typeof value === "object" && value !== null
+    && "listRenderers" in value && typeof value.listRenderers === "function"
+    && "renderText" in value && typeof value.renderText === "function"
+    && "renderMarkdown" in value && typeof value.renderMarkdown === "function";
+}
+
 const plugin = {
+  requires: [contentRenderingCapability],
   apiVersion: 4,
   name: "Files",
   activate: (context) => activateFilesPlugin(context, new FilesRuntime()),
@@ -26,6 +42,7 @@ export default plugin;
 
 export function activateFilesPlugin(context: PluginActivationContext, filesRuntime: FilesRuntime): PluginActivationResult {
   defineFilesCustomElements();
+  let contentRendering: ContentRenderingCapability | undefined;
   const panelId = `${context.runtimePluginId}:workspace.files`;
   const icon = context.svg`
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
@@ -33,6 +50,7 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
     </svg>
   `;
   return {
+    start: ({ capabilities }) => { contentRendering = capabilities.resolve(contentRenderingCapability); },
     contributions: {
       workspacePanels: [{
         id: "workspace.files",
@@ -44,7 +62,7 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
         invalidationResources: ["workspace.files"],
         fileOpenQuery: (_workspaceContext, path) => ({ file: path }),
         onInvalidate: (workspaceContext, invalidation) => filesRuntime.invalidate(workspaceContext, invalidation),
-        render: (workspaceContext) => context.html`<pi-web-files-panel .context=${workspaceContext} .runtime=${filesRuntime}></pi-web-files-panel>`,
+        render: (workspaceContext) => context.html`<pi-web-files-panel .context=${workspaceContext} .runtime=${filesRuntime} .contentRendering=${contentRendering}></pi-web-files-panel>`,
       }],
       actions: [
         {
@@ -54,7 +72,7 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
           shortcutAliases: ["core:view.files"],
           group: "Navigation",
           enabled: (runtimeContext) => runtimeContext.state.selectedWorkspace !== undefined,
-          run: (runtimeContext) => { runtimeContext.selectMainView(panelId); },
+          run: (runtimeContext) => { runtimeContext.selectWorkspaceTool(panelId); },
         },
         {
           id: "workspace.refresh-files",

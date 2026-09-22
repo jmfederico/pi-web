@@ -1,10 +1,11 @@
-import type { FileContentResponse } from "@jmfederico/pi-web/plugin-api";
+import type { ContentRendererOption, ContentRenderingCapability, FileContentResponse } from "@jmfederico/pi-web/plugin-api";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { property } from "lit/decorators.js";
+import { keyed } from "lit/directives/keyed.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { renderWorkspaceMarkdownHtml } from "./workspaceMarkdown";
-import { workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
+import { DEFAULT_WORKSPACE_FILE_VIEW_MODE, workspaceFileViewModeStore, type WorkspaceFileViewMode, type WorkspaceFileViewModeStore } from "./workspaceFileViewMode";
 
 export const DEFAULT_MAX_INLINE_PREVIEW_BYTES = 1024 * 1024;
 
@@ -33,6 +34,7 @@ export interface WorkspaceFileViewerIdentity {
 
 export class WorkspaceFileViewer extends LitElement {
   @property({ attribute: false }) machineId = "";
+  @property({ attribute: false }) contentRendering: ContentRenderingCapability | undefined;
   @property({ attribute: false }) projectId = "";
   @property({ attribute: false }) workspaceId = "";
   @property({ attribute: false }) selectedPath: string | undefined;
@@ -54,16 +56,22 @@ export class WorkspaceFileViewer extends LitElement {
    */
   private selectionToken = 0;
   private failedPreviewToken: number | undefined;
+  private customPreview: TemplateResult | undefined;
+  private rendererId: string | undefined;
+  private preference: WorkspaceFileViewMode | undefined;
+  private rendererOptions: readonly ContentRendererOption[] = [];
 
   protected override willUpdate(changedProperties: PropertyValues<this>): void {
     if (this.mode === undefined || changedProperties.has("modeStore")) {
-      this.mode = this.modeStore.adopt();
+      this.preference = this.modeStore.adopt();
+      this.mode = this.preference ?? DEFAULT_WORKSPACE_FILE_VIEW_MODE;
       this.publishedMode = undefined;
       this.failedPreviewToken = undefined;
     }
     const nextKey = this.currentFileKey();
     if (nextKey === this.activeFileKey) return;
     this.activeFileKey = nextKey;
+    this.rendererId = undefined;
     this.selectionToken += 1;
     // The mode deliberately survives a new selection; only failure state, which
     // belongs to the bytes that failed, is per selection.
@@ -71,13 +79,12 @@ export class WorkspaceFileViewer extends LitElement {
   }
 
   /**
-   * Keep the address bar reproducible: whenever a file that actually has both
-   * modes is on screen, the URL and the device preference name the mode being
-   * shown, so copying the link reproduces this view for anyone who opens it.
+   * Publish explicit preferences for reproducible links, but never promote a
+   * plugin's initial default into a saved user choice.
    */
   protected override updated(): void {
     const mode = this.mode;
-    if (mode === undefined || mode === this.publishedMode) return;
+    if (this.preference === undefined || mode === undefined || mode === this.publishedMode) return;
     if (!this.selectionHasRawAndPreviewModes()) return;
     this.publishedMode = mode;
     this.modeStore.publish(mode);
@@ -96,16 +103,25 @@ export class WorkspaceFileViewer extends LitElement {
 
     const token = this.selectionToken;
     const kind = workspaceFilePreviewKind(file);
+    const request = { machineId: this.machineId, text: file.content, filePath: file.path, ...(file.language === undefined ? {} : { language: file.language }) };
+    const eligible = kind === "code" && !file.truncated && file.size > 0 && file.size <= this.maxInlinePreviewBytes;
+    this.rendererOptions = eligible ? this.contentRendering?.listRenderers(request) ?? [] : [];
+    if (!this.rendererOptions.some(({ id }) => id === this.rendererId)) {
+      this.rendererId = this.rendererOptions[0]?.id;
+    }
+    this.mode = this.preference ?? (this.rendererOptions.find(({ id }) => id === this.rendererId)?.renderMode === "automatic" ? "preview" : DEFAULT_WORKSPACE_FILE_VIEW_MODE);
+    this.customPreview = eligible
+      ? this.contentRendering?.renderText({ ...request, controls: "external", allowManualPreview: this.preference === "preview", ...(this.rendererId === undefined ? {} : { rendererId: this.rendererId }) })
+      : undefined;
     const canOpen = isBrowserPreviewKind(kind) && file.size > 0 && file.size <= this.maxInlinePreviewBytes;
     return html`
       ${this.renderViewerHeader(file, metadataForFile(file, kind), canOpen)}
-      ${hasRawAndPreviewModes(file, kind) ? this.renderModeControls(file, token) : null}
-      ${this.renderLoadedFile(file, kind, token)}
+      ${keyed(this.activeFileKey, this.renderLoadedFile(file, kind, token))}
     `;
   }
 
   private renderLoadedFile(file: FileContentResponse, kind: WorkspaceFilePreviewKind, token: number): TemplateResult {
-    if (hasRawAndPreviewModes(file, kind) && this.mode === "raw") return this.renderRawSource(file);
+    if (this.selectionHasRawAndPreviewModes() && this.mode === "raw") return this.renderRawSource(file);
     if (file.size === 0) return this.renderStatus("This file is empty.");
 
     switch (kind) {
@@ -114,7 +130,7 @@ export class WorkspaceFileViewer extends LitElement {
       case "pdf": return this.renderFramePreview(file, "pdf", token);
       case "markdown": return this.renderMarkdownPreview(file);
       case "download": return this.renderUnsupportedFile(file);
-      case "code": return this.renderRawSource(file);
+      case "code": return this.customPreview ?? this.renderRawSource(file);
     }
   }
 
@@ -128,6 +144,8 @@ export class WorkspaceFileViewer extends LitElement {
         <strong title=${file.path}>${file.path}</strong>
         <div class="viewer-actions">
           <small>${metadata}</small>
+          ${this.renderRendererChooser(this.selectionToken)}
+          ${this.selectionHasRawAndPreviewModes() ? this.renderModeControls(file, this.selectionToken) : null}
           ${canOpen ? html`
             <a
               class="viewer-action"
@@ -144,17 +162,32 @@ export class WorkspaceFileViewer extends LitElement {
     `;
   }
 
+  private renderRendererChooser(token: number): TemplateResult | null {
+    if (this.rendererOptions.length < 2) return null;
+    return html`<select aria-label="File renderer" @change=${(event: Event) => {
+      if (token !== this.selectionToken) return;
+      if (!(event.target instanceof HTMLSelectElement)) return;
+      this.rendererId = event.target.value;
+      this.failedPreviewToken = undefined;
+      this.requestUpdate();
+    }}>
+      ${this.rendererOptions.map(({ id, label }) => html`<option value=${id} .selected=${id === this.rendererId}>${label}</option>`)}
+    </select>`;
+  }
+
   private renderModeControls(file: FileContentResponse, token: number): TemplateResult {
+    const manual = this.rendererOptions.find(({ id }) => id === this.rendererId)?.renderMode === "manual";
+    const showingPreview = this.mode === "preview";
     return html`
       <div class="viewer-mode" role="group" aria-label=${`View ${file.path}`}>
         <button
           type="button"
-          aria-pressed=${this.mode === "preview" ? "true" : "false"}
+          aria-pressed=${showingPreview ? "true" : "false"}
           @click=${() => { this.setMode("preview", token); }}
-        >Preview</button>
+        >${manual ? "Render" : "Preview"}</button>
         <button
           type="button"
-          aria-pressed=${this.mode === "raw" ? "true" : "false"}
+          aria-pressed=${showingPreview ? "false" : "true"}
           @click=${() => { this.setMode("raw", token); }}
         >Raw</button>
       </div>
@@ -172,10 +205,13 @@ export class WorkspaceFileViewer extends LitElement {
   private renderMarkdownPreview(file: FileContentResponse): TemplateResult {
     if (file.size > this.maxInlinePreviewBytes) return this.renderPreviewTooLarge(file);
     try {
-      const sanitized = renderWorkspaceMarkdownHtml(file.content);
+      const content = this.contentRendering?.renderMarkdown({
+        machineId: this.machineId, text: file.content, truncated: file.truncated,
+        toSafeHtml: renderWorkspaceMarkdownHtml, allowManualPreview: this.preference === "preview",
+      }) ?? unsafeHTML(renderWorkspaceMarkdownHtml(file.content));
       return html`
         ${file.truncated ? html`<p class="preview-note" role="status">Preview is rendered from truncated source. Use Download for the complete file.</p>` : null}
-        <div class="formatted markdown-preview" dir="auto">${unsafeHTML(sanitized)}</div>
+        <div class="formatted markdown-preview" dir="auto">${content}</div>
       `;
     } catch {
       return this.renderStatus("Markdown preview failed. Use Raw or Download instead.", true);
@@ -263,6 +299,7 @@ export class WorkspaceFileViewer extends LitElement {
   private setMode(mode: WorkspaceFileViewMode, token: number): void {
     if (token !== this.selectionToken) return;
     this.mode = mode;
+    this.preference = mode;
     this.failedPreviewToken = undefined;
     this.requestUpdate();
   }
@@ -294,23 +331,26 @@ export class WorkspaceFileViewer extends LitElement {
     const file = this.file;
     if (file === undefined || this.loadError !== undefined) return false;
     if (this.selectedPath === undefined || file.path !== this.selectedPath) return false;
-    return hasRawAndPreviewModes(file, workspaceFilePreviewKind(file));
+    return this.customPreview !== undefined || hasRawAndPreviewModes(file, workspaceFilePreviewKind(file));
   }
 
   static override styles = [
     formattedTextStyles(),
     css`
       :host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-      .viewer-header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+      .viewer-header { position: sticky; top: 0; z-index: 1; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
       .viewer-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .viewer-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      select { max-width: 100%; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-text); padding: 3px 8px; font: 12px system-ui, sans-serif; }
+      select:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
       small { color: var(--pi-muted); }
       .viewer-action, .download-link { flex: 0 0 auto; border: 1px solid var(--pi-border-muted); border-radius: 6px; background: var(--pi-surface); color: var(--pi-text); text-decoration: none; white-space: nowrap; }
       .viewer-action { padding: 3px 8px; font-size: 12px; }
       .viewer-action:hover, .download-link:hover { border-color: var(--pi-border); background: var(--pi-bg); }
-      .viewer-mode { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+      .viewer-mode { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: 4px; }
       .viewer-mode button, .preview-state button { border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-text); padding: 4px 9px; cursor: pointer; font: inherit; }
-      .viewer-mode button { font-size: 12px; }
+      .viewer-mode button { font-size: 12px; padding: 3px 8px; }
+      .viewer-mode button:hover { background: var(--pi-bg); }
       .viewer-mode button[aria-pressed="true"] { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
       .viewer-mode button:focus-visible, .preview-state button:focus-visible, a:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
       pi-web-files-code-viewer { flex: 1 1 auto; min-height: 0; }
