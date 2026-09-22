@@ -1,7 +1,9 @@
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
+import { keyed } from "lit/directives/keyed.js";
 import { ChatDisclosureController } from "../chatDisclosure";
+import { machineSessionKey } from "../machineKeys";
 import { groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
 import { writeClipboardText } from "../clipboard";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
@@ -421,6 +423,11 @@ export class ChatView extends LitElement {
 
   override render() {
     const groups = this.groupedMessages();
+    // Keep incremental updates within one transcript, but dispose the whole
+    // repeat part when the transcript changes. Besides preventing cross-session
+    // DOM reuse, clearing the part reclaims the end markers that the current Lit
+    // build retains when repeat items are removed.
+    const transcriptIdentity = machineSessionKey(this.machineId, this.sessionId);
     return html`
       ${this.renderTopNotices()}
       ${this.renderNotificationLiveRegions()}
@@ -428,7 +435,7 @@ export class ChatView extends LitElement {
         ${this.renderConversationRail()}
         <div class="chat" @scroll=${() => { this.onScroll(); }} @wheel=${(event: WheelEvent) => { this.onWheel(event); }} @touchstart=${(event: TouchEvent) => { this.onTouchStart(event); }} @touchmove=${(event: TouchEvent) => { this.onTouchMove(event); }}>
           ${this.renderHistoryBoundary()}
-          ${repeat(
+          ${keyed(transcriptIdentity, repeat(
             groups,
             (group) => group.kind === "group" ? this.groupRenderKey(group.startIndex) : this.messageAnchorKey(group.index),
             (group, index) => {
@@ -436,7 +443,7 @@ export class ChatView extends LitElement {
               if (group.kind === "tool-image") return this.renderToolImageOutput(group.message, group.index, group.toolName);
               return this.renderMessage(group.message, group.index);
             },
-          )}
+          ))}
           ${this.renderQueuedMessages()}
           ${this.renderSessionActivity()}
           ${this.renderOpenAsk()}
