@@ -16,6 +16,8 @@ export interface PluginManifestEntry {
   source?: string;
   scope?: string;
   machineSpecific: boolean;
+  /** Browser-only interface language pack; stays loadable when Terminal cannot start. */
+  languagePack?: boolean;
 }
 
 interface PluginManifest {
@@ -40,6 +42,8 @@ export interface ExternalPluginLoadResult {
   declarations: PiWebPluginRegistrationDeclaration[];
   registrations: PiWebPluginRegistration[];
   failures: ExternalPluginLoadFailure[];
+  /** Registration ids of server-marked language packs that finished loading. */
+  languagePackRegistrationIds: readonly string[];
 }
 
 export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest.json", options: LoadExternalPluginsOptions = {}): Promise<ExternalPluginLoadResult> {
@@ -49,29 +53,48 @@ export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest
   const declarations: PiWebPluginRegistrationDeclaration[] = [];
   const registrations: PiWebPluginRegistration[] = [];
   const failures: ExternalPluginLoadFailure[] = [];
-  for (const entry of manifest.plugins) {
-    if (options.shouldLoadPlugin?.(entry) === false) continue;
+  const languagePackRegistrationIds: string[] = [];
+  const loadEntry = async (entry: PluginManifestEntry, declaration: PiWebPluginRegistrationDeclaration): Promise<void> => {
+    const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
+    const module = await (options.moduleLoader ?? importPluginModule)(moduleUrl);
+    const plugin = parsePluginModule(module, moduleUrl);
+    registrations.push({
+      ...declaration,
+      plugin,
+      ...(entry.backendRevision === undefined ? {} : { backendRevision: entry.backendRevision }),
+      ...(entry.pairedRequestVersion === undefined ? {} : { pairedRequestVersion: entry.pairedRequestVersion }),
+      ...(entry.pairedChannelVersion === undefined ? {} : { pairedChannelVersion: entry.pairedChannelVersion }),
+    });
+    if (entry.languagePack === true) languagePackRegistrationIds.push(declaration.id);
+  };
+  const loadWithDeclaration = async (entry: PluginManifestEntry): Promise<void> => {
     const declaration = registrationDeclaration(entry, options.machineId);
     declarations.push(declaration);
+    await loadEntry(entry, declaration);
+  };
+  for (const entry of manifest.plugins) {
+    if (options.shouldLoadPlugin?.(entry) === false) continue;
     try {
-      const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
-      const module = await (options.moduleLoader ?? importPluginModule)(moduleUrl);
-      const plugin = parsePluginModule(module, moduleUrl);
-      registrations.push({
-        ...declaration,
-        plugin,
-        ...(entry.backendRevision === undefined ? {} : { backendRevision: entry.backendRevision }),
-        ...(entry.pairedRequestVersion === undefined ? {} : { pairedRequestVersion: entry.pairedRequestVersion }),
-        ...(entry.pairedChannelVersion === undefined ? {} : { pairedChannelVersion: entry.pairedChannelVersion }),
-      });
+      await loadWithDeclaration(entry);
     } catch (error) {
       failures.push({ entry, error });
       if (manifest.terminalMode === "required" && entry.id === REQUIRED_TERMINAL_PLUGIN_ID) {
-        return { terminalMode: manifest.terminalMode, declarations, registrations: [], failures };
+        // The required Terminal module failed. Language packs stay loadable so
+        // the interface can still be translated while recovery is guided.
+        for (const remaining of manifest.plugins.slice(manifest.plugins.indexOf(entry) + 1)) {
+          if (remaining.languagePack !== true) continue;
+          if (options.shouldLoadPlugin?.(remaining) === false) continue;
+          try {
+            await loadWithDeclaration(remaining);
+          } catch (languagePackError) {
+            failures.push({ entry: remaining, error: languagePackError });
+          }
+        }
+        return { terminalMode: manifest.terminalMode, declarations, registrations, failures, languagePackRegistrationIds };
       }
     }
   }
-  return { terminalMode: manifest.terminalMode, declarations, registrations, failures };
+  return { terminalMode: manifest.terminalMode, declarations, registrations, failures, languagePackRegistrationIds };
 }
 
 export function resolvePluginModuleUrl(moduleReference: string, manifestUrl: string, appUrlContext?: AppUrlContext): string {
@@ -107,6 +130,8 @@ function parseManifest(value: unknown): PluginManifest {
     const pairedRequestVersion = parsePairedCapabilityVersion(entry["pairedRequestVersion"]);
     const pairedChannelVersion = parsePairedCapabilityVersion(entry["pairedChannelVersion"]);
     if ((pairedRequestVersion !== undefined || pairedChannelVersion !== undefined) && backendRevision === undefined) throw new Error("Invalid plugin manifest entry");
+    const languagePack = parseLanguagePack(entry["languagePack"]);
+    if (languagePack && entry["machineSpecific"] === true) throw new Error("Language-pack plugin manifest entry must not be machine-specific");
     return {
       id,
       module: entry["module"],
@@ -116,6 +141,7 @@ function parseManifest(value: unknown): PluginManifest {
       ...(source === undefined ? {} : { source }),
       ...(scope === undefined ? {} : { scope }),
       machineSpecific: parseMachineSpecific(entry["machineSpecific"]),
+      ...(languagePack ? { languagePack: true } : {}),
     };
   });
   const ids = new Set<string>();
@@ -182,6 +208,12 @@ function parsePairedCapabilityVersion(value: unknown): 1 | undefined {
 }
 
 function parseMachineSpecific(value: unknown): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") throw new Error("Invalid plugin manifest entry");
+  return value;
+}
+
+function parseLanguagePack(value: unknown): boolean {
   if (value === undefined) return false;
   if (typeof value !== "boolean") throw new Error("Invalid plugin manifest entry");
   return value;

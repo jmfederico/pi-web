@@ -36,6 +36,7 @@ import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, applyPiWebTheme, findThemeP
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
+import { localeResources } from "../i18n/locale";
 import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../../../shared/requiredTerminalPlugin";
 import { PluginRegistry, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope, type BrowserPluginLifecyclePhase, type PluginRegistrationFailure } from "../plugins/registry";
 import { createPluginPeer } from "../plugins/pluginPeer";
@@ -312,6 +313,7 @@ export class PiWebApp extends LitElement {
   });
   private readonly loadedMachinePluginIds = new Set<string>();
   private readonly machinePluginLoadPromises = new Map<string, Promise<void>>();
+  private readonly languagePackPluginIds = new Set<string>();
   private gatewayPluginLoadPromise: Promise<void> | undefined;
   private gatewayPluginLoadAttemptComplete = false;
   private themePreference: ThemePreference = readStoredThemePreference() ?? DEFAULT_THEME_PREFERENCE;
@@ -2372,6 +2374,25 @@ export class PiWebApp extends LitElement {
         ? result.failures.find(({ entry }) => entry.id === REQUIRED_TERMINAL_PLUGIN_ID)
         : undefined;
       if (requiredTerminalLoadFailure !== undefined) {
+        // Ordinary plugins stay withheld when the required Terminal module fails,
+        // but server-marked language packs register independently so interface
+        // translation survives Terminal failures.
+        const languagePackIds = new Set(result.languagePackRegistrationIds);
+        if (languagePackIds.size > 0) {
+          const languagePackRegistrations = result.registrations.filter(({ id }) => languagePackIds.has(id));
+          const languagePackDeclarations = declarations.filter(({ id }) => languagePackIds.has(id));
+          const languagePackBatch = await this.plugins.registerBatch(languagePackRegistrations, {
+            declarations: languagePackDeclarations,
+            failures: registryImportFailures.filter(({ declaration }) => languagePackIds.has(declaration.id)),
+          });
+          for (const failure of languagePackBatch.failures) {
+            if (failure.phase === "import") continue;
+            complete = false;
+            console.warn(`Failed to register PI WEB language pack ${failure.declaration.id} during ${failure.phase}`, failure.error);
+          }
+          this.recordLanguagePackPlugins(result.languagePackRegistrationIds);
+        }
+        this.syncLocaleResources();
         this.verifiedPluginModeByMachine.delete(machineId);
         this.clearRequiredTerminal(machineId);
         this.reconcilePluginLoadSelection(urlAtLoad);
@@ -2442,6 +2463,7 @@ export class PiWebApp extends LitElement {
           complete = false;
           console.warn(`Failed to register PI WEB plugin ${failure.declaration.id} during ${failure.phase}`, failure.error);
         }
+        if (machineId === "local") this.recordLanguagePackPlugins(result.languagePackRegistrationIds);
       }
 
       if (result.terminalMode === "required" && (!this.plugins.hasPlugin(terminalRuntimeId) || !this.terminalAvailableForMachine(machineId))) {
@@ -2457,6 +2479,7 @@ export class PiWebApp extends LitElement {
       }
       this.reconcilePluginLoadSelection(urlAtLoad);
       this.applyPreferredTheme(false);
+      this.syncLocaleResources();
       this.invalidateWorkspaceSurface();
       return complete;
     } catch (error) {
@@ -2465,9 +2488,23 @@ export class PiWebApp extends LitElement {
       this.clearRequiredTerminal(machineId);
       this.reconcilePluginLoadSelection(urlAtLoad);
       this.applyPreferredTheme(false);
+      this.syncLocaleResources();
       this.setRequiredPluginFailure(machineId, `Failed to load ${label}: ${errorMessage(error)}`);
       this.requestUpdate();
       return false;
+    }
+  }
+
+  /** Publishes gateway-local language-pack contributions to the shared locale store. */
+  private syncLocaleResources(): void {
+    localeResources.update(this.plugins.getLocales());
+  }
+
+  /** Tracks successfully registered gateway language packs for the contribution gate. */
+  private recordLanguagePackPlugins(ids: readonly string[]): void {
+    this.languagePackPluginIds.clear();
+    for (const id of ids) {
+      if (this.plugins.hasPlugin(id)) this.languagePackPluginIds.add(id);
     }
   }
 
@@ -2527,6 +2564,9 @@ export class PiWebApp extends LitElement {
 
   private pluginContributionAvailable(pluginId: string, effectiveMachineId: string | undefined): boolean {
     if (pluginId === "core" || pluginId === "themes") return true;
+    // Language packs contribute app-global interface text and stay available
+    // even while Terminal-dependent plugins are withheld.
+    if (effectiveMachineId === undefined && this.languagePackPluginIds.has(pluginId)) return true;
     // Machine-using callbacks are rechecked against the live selection so a
     // closure captured on another healthy machine cannot act after a switch.
     if (effectiveMachineId !== undefined && effectiveMachineId !== selectedMachineId(this.state)) return false;

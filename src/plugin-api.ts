@@ -94,6 +94,23 @@ export interface PluginContributions {
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
+  /** Additional interface languages. First version: plain text messages only. */
+  locales?: readonly LocaleContribution[];
+}
+
+/** One language catalog for one message namespace, published by a browser plugin. */
+export interface LocaleContribution {
+  id: LocalContributionId;
+  /** Standard language tag, such as `zh-CN`. Compared case-insensitively. */
+  locale: string;
+  /** Language name in that language, shown in the language selector. */
+  label: string;
+  /** Additional browser language tags that should select this locale in Auto mode. */
+  aliases?: readonly string[];
+  /** Message namespace this catalog translates, such as `core` or `plugin.git`. */
+  namespace: string;
+  /** Namespace-local message keys to translation strings. Plain text only. */
+  messages: Readonly<Record<string, string>>;
 }
 
 export interface PluginMachine {

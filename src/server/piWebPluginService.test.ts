@@ -41,6 +41,49 @@ afterEach(async () => {
 });
 
 describe("PiWebPluginService", () => {
+  it("publishes the language-pack marker through the browser manifest", async () => {
+    const pluginDir = join(tempDir, "plugins", "locale-zh");
+    await writePlugin(pluginDir, {
+      packageJson: { piWeb: { plugins: [{ id: "locale-zh", browserRoot: ".", module: "pi-web-plugin.js", languagePack: true }] } },
+      files: { "pi-web-plugin.js": "export default { apiVersion: 4, name: 'Chinese', activate: () => ({ contributions: {} }) };" },
+    });
+
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+
+    await expect(service.manifest()).resolves.toMatchObject({
+      plugins: [{ id: "locale-zh", languagePack: true, machineSpecific: false }],
+    });
+  });
+
+  it("rejects inconsistent language-pack declarations during discovery", async () => {
+    const pluginsRoot = join(tempDir, "plugins");
+    await writePlugin(join(pluginsRoot, "bad-server"), {
+      packageJson: { piWeb: { plugins: [{ id: "bad-server", browserRoot: ".", module: "pi-web-plugin.js", serverModule: "server-plugin.js", languagePack: true }] } },
+      files: { "pi-web-plugin.js": "export default {};", "server-plugin.js": "export default {};" },
+    });
+    await writePlugin(join(pluginsRoot, "bad-machine"), {
+      packageJson: { piWeb: { plugins: [{ id: "bad-machine", browserRoot: ".", module: "pi-web-plugin.js", machineSpecific: true, languagePack: true }] } },
+      files: { "pi-web-plugin.js": "export default {};" },
+    });
+    await writePlugin(join(pluginsRoot, "bad-type"), {
+      packageJson: { piWeb: { plugins: [{ id: "bad-type", browserRoot: ".", module: "pi-web-plugin.js", languagePack: "yes" }] } },
+      files: { "pi-web-plugin.js": "export default {};" },
+    });
+    const warningSink = vi.fn();
+    const catalog = new PiWebPluginCatalog({ roots: [{ path: pluginsRoot, source: "test", scope: "local" }], packageProvider: false, warningSink });
+
+    const snapshot = await catalog.snapshot();
+
+    expect(snapshot.plugins).toEqual([]);
+    const sources = snapshot.diagnostics.map(({ source }) => source.replaceAll("\\", "/"));
+    expect(sources).toEqual([
+      expect.stringContaining("bad-machine"),
+      expect.stringContaining("bad-server"),
+      expect.stringContaining("bad-type"),
+    ]);
+    expect(warningSink).toHaveBeenCalledTimes(3);
+  });
+
   it("discovers local plugins and serves assets", async () => {
     const pluginDir = join(tempDir, "plugins", "info");
     await writePlugin(pluginDir, {

@@ -56,6 +56,8 @@ export interface PiWebPluginManifestEntry {
   source: string;
   scope: PiWebPluginScope;
   machineSpecific: boolean;
+  /** Browser-only interface language pack; stays loadable when Terminal cannot start. */
+  languagePack?: true;
 }
 
 interface CachedBrowserArtifact {
@@ -116,6 +118,7 @@ export class PiWebPluginService {
         source: plugin.source,
         scope: plugin.scope,
         machineSpecific: plugin.machineSpecific,
+        ...(plugin.languagePack === true ? { languagePack: true } : {}),
       });
     }
     const terminalMode = lifecycle.response.serverRuntime.terminalMode;

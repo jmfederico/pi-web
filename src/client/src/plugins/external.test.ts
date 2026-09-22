@@ -162,9 +162,72 @@ describe("external plugin manifests", () => {
       ],
       registrations: [],
       failures: [{ entry: { id: "pi-web.terminal" }, error: failure }],
+      languagePackRegistrationIds: [],
     });
     expect(moduleLoader).toHaveBeenCalledOnce();
     expect(moduleLoader.mock.calls[0]?.[0]).toContain("/pi-web.terminal/");
+  });
+
+  it("keeps loading server-marked language packs when the required Terminal module fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "required",
+      plugins: [
+        {
+          id: "pi-web.terminal",
+          module: "./pi-web.terminal/pi-web-plugin.js",
+          backendRevision: "terminal-r1",
+          pairedRequestVersion: 1,
+          pairedChannelVersion: 1,
+          source: "bundled",
+          scope: "bundled",
+          machineSpecific: true,
+        },
+        { id: "info", module: "./info/pi-web-plugin.js", machineSpecific: false },
+        { id: "locale-zh", module: "./locale-zh/pi-web-plugin.js", languagePack: true, machineSpecific: false },
+      ],
+    })))));
+    const languagePackModule = {
+      default: {
+        apiVersion: 4,
+        name: "Chinese language pack",
+        activate: () => ({
+          contributions: { locales: [{ id: "core", locale: "zh-CN", label: "简体中文", namespace: "core", messages: { "common.reload": "重新加载" } }] },
+        }),
+      },
+    };
+    const moduleLoader = vi.fn((moduleUrl: string) => {
+      if (moduleUrl.includes("/pi-web.terminal/")) return Promise.reject(new Error("Terminal module failed"));
+      if (moduleUrl.includes("/info/")) return Promise.reject(new Error("must not load ordinary plugins"));
+      return Promise.resolve(languagePackModule);
+    });
+
+    const result = await loadExternalPlugins(undefined, { moduleLoader });
+
+    expect(result.failures.map(({ entry }) => entry.id)).toEqual(["pi-web.terminal"]);
+    expect(result.languagePackRegistrationIds).toEqual(["locale-zh"]);
+    expect(result.registrations.map(({ id }) => id)).toEqual(["locale-zh"]);
+    expect(moduleLoader.mock.calls.map(([moduleUrl]) => moduleUrl).filter((url) => url.includes("/info/"))).toEqual([]);
+  });
+
+  it("rejects invalid languagePack manifest metadata before importing modules", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "locale-bad", module: "./locale-bad/plugin.js", languagePack: "yes", machineSpecific: false }],
+    })))));
+    const moduleLoader = vi.fn();
+
+    await expect(loadExternalPlugins(undefined, { moduleLoader })).rejects.toThrow("Invalid plugin manifest entry");
+    expect(moduleLoader).not.toHaveBeenCalled();
+
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "recovery-disabled",
+      plugins: [{ id: "locale-bad", module: "./locale-bad/plugin.js", languagePack: true, machineSpecific: true }],
+    })))));
+    await expect(loadExternalPlugins(undefined, { moduleLoader })).rejects.toThrow("Language-pack plugin manifest entry must not be machine-specific");
+    expect(moduleLoader).not.toHaveBeenCalled();
   });
 
   it("attributes unsupported browser API versions to the plugin module", async () => {

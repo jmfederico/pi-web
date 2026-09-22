@@ -1,0 +1,19 @@
+{
+  "name": "@jmfederico/pi-web-locale-zh-cn",
+  "version": "1.0.0",
+  "description": "Simplified Chinese interface language pack for PI WEB. Install as a browser-only PI WEB plugin.",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "locale-zh-cn",
+        "browserRoot": "browser",
+        "module": "browser/locale-zh-cn.js",
+        "machineSpecific": false,
+        "languagePack": true
+      }
+    ]
+  }
+}

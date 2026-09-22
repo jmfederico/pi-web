@@ -3,6 +3,7 @@ import type {
   DeleteWorkspaceFileResponse,
   FileContentResponse,
   FileTreeResponse,
+  LocaleContribution,
   MoveWorkspaceFileOptions,
   MoveWorkspaceFileResponse,
   PiWebPlugin,
@@ -99,6 +100,16 @@ describe("public browser plugin API", () => {
     expectTypeOf<keyof WorkspaceRemovalPresentation>().toEqualTypeOf<"actionLabel" | "confirmation">();
     expectTypeOf<WritableKeys<PluginActivationResult>>().toEqualTypeOf<keyof PluginActivationResult>();
     expectTypeOf<WritableKeys<PluginContributions>>().toEqualTypeOf<keyof PluginContributions>();
+  });
+
+  it("adds optional plain-text locale contributions for interface languages", () => {
+    type LocalesAreOptional = IsOptional<PluginContributions, "locales">;
+    type AliasesAreOptional = IsOptional<LocaleContribution, "aliases">;
+    expectTypeOf<LocalesAreOptional>().toEqualTypeOf<true>();
+    expectTypeOf<AliasesAreOptional>().toEqualTypeOf<true>();
+    expectTypeOf<keyof LocaleContribution>().toEqualTypeOf<"id" | "locale" | "label" | "aliases" | "namespace" | "messages">();
+    expectTypeOf<LocaleContribution["messages"]>().toEqualTypeOf<Readonly<Record<string, string>>>();
+    expectTypeOf<NonNullable<LocaleContribution["aliases"]>>().toEqualTypeOf<readonly string[]>();
   });
 
   it("exposes the v4 dependency-ready browser lifecycle and shared capability contracts", () => {

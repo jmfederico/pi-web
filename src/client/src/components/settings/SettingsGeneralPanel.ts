@@ -50,9 +50,9 @@ export class SettingsGeneralPanel extends LitElement {
   override render(): TemplateResult {
     return html`
       <settings-panel-frame
-        .heading=${this.locale.t("settings.generalConfiguration")}
-        .description=${this.locale.t("settings.generalDescription", { targetLabel: this.targetLabel })}
-        .actionLabel=${this.locale.t("common.reload")}
+        .heading=${this.locale.t("core.settings.generalConfiguration")}
+        .description=${this.locale.t("core.settings.generalDescription", { targetLabel: this.targetLabel })}
+        .actionLabel=${this.locale.t("core.common.reload")}
         .actionDisabled=${this.loading || this.machineLoading}
         .notices=${this.panelNotices()}
         .onAction=${() => { this.reloadAll(); }}
@@ -68,19 +68,17 @@ export class SettingsGeneralPanel extends LitElement {
 
   private renderLanguageSettings(): TemplateResult {
     return html`
-      <section class="settings-card language-card" aria-label=${this.locale.t("language.label")}>
+      <section class="settings-card language-card" aria-label=${this.locale.t("core.language.label")}>
         <div class="card-heading">
-          <h3>${this.locale.t("settings.languagePreference")}</h3>
-          <p>${this.locale.t("settings.languagePreferenceDescription")}</p>
+          <h3>${this.locale.t("core.settings.languagePreference")}</h3>
+          <p>${this.locale.t("core.settings.languagePreferenceDescription")}</p>
         </div>
         <label class="field">
-          <span class="field-heading"><span>${this.locale.t("language.label")}</span></span>
+          <span class="field-heading"><span>${this.locale.t("core.language.label")}</span></span>
           <select .value=${this.locale.preference} @change=${(event: Event) => { this.changeLanguage(event); }}>
-            <option value="auto">${this.locale.t("language.auto")}</option>
-            <option value="en">${this.locale.t("language.english")}</option>
-            <option value="zh-CN">${this.locale.t("language.simplifiedChinese")}</option>
+            ${this.locale.languageOptions.map((option) => html`<option value=${option.value} ?disabled=${option.unavailable}>${option.label}</option>`)}
           </select>
-          <small>${this.locale.t("language.description")}</small>
+          <small>${this.locale.t("core.language.description")}</small>
         </label>
       </section>
     `;
@@ -88,7 +86,7 @@ export class SettingsGeneralPanel extends LitElement {
 
   private changeLanguage(event: Event): void {
     const value = event.target instanceof HTMLSelectElement ? event.target.value : "auto";
-    if (value === "en" || value === "zh-CN" || value === "auto") this.locale.setPreference(value);
+    this.locale.setPreference(value);
   }
 
   private renderGatewayServerSettings(): TemplateResult {

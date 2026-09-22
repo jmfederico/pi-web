@@ -1,5 +1,6 @@
 import type {
   JsonValue,
+  LocaleContribution,
   PluginCapability,
   PluginPeer,
   PiWebPlugin,
@@ -61,9 +62,22 @@ const plugin: PiWebPlugin = {
           selectWorkspaceTool(`${context.runtimePluginId}:workspace.fixture`);
         },
       }],
+      locales: fixtureLocales,
     },
   }),
 };
+
+// A browser-only language pack: one plain-text catalog per (locale, namespace).
+const fixtureLocales: readonly LocaleContribution[] = [
+  {
+    id: "core",
+    locale: "zh-CN",
+    label: "简体中文",
+    aliases: ["zh-Hans", "zh-SG"],
+    namespace: "core",
+    messages: { "common.reload": "重新加载" },
+  },
+];
 
 // Keep common browser-v2 adapter and fake patterns compiling against the
 // installed declaration, not only against this repository's source graph.

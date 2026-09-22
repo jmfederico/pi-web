@@ -13,6 +13,7 @@ This guide explains what is possible and what to expect. For implementation, use
 | Make common actions easier to find | Action-palette commands and shortcuts |
 | Run builds, tests, or development servers | Workspace terminal commands |
 | Customize the appearance | Themes and light/dark theme pairs |
+| Translate the PI WEB interface into another language | Browser language packs |
 | Read or change workspace files | File listing, reading, writing, moving, deleting, and uploads |
 | Show live backend results | Requests or streaming channels between a plugin's browser and server entries |
 | Save plugin-owned results or preferences | A persistent server-side plugin directory |
@@ -45,6 +46,10 @@ A plugin package declares a browser entry, a server entry, or both:
 - **Capabilities** let a plugin declare the host or plugin functionality it requires. Dependencies must be available at the requested version before the plugin starts.
 
 Plugins declare contributions in `activate()`, initialize dependency-backed work in `start()`, and release resources in `dispose()`. Long-lived work follows the plugin's `lifetimeSignal`. Simple browser plugins only need to return their contributions.
+
+### Language packs
+
+A browser-only plugin can contribute interface dictionaries through `contributions.locales`. Declare the package entry with `"languagePack": true`; marked packs stay loadable even when the required Terminal plugin cannot start. Each entry covers one `(locale, namespace)` pair with plain-text `messages` (namespace-local keys, `{placeholder}` interpolation). Duplicate provision of the same `(locale, namespace, key)` fails validation instead of overriding another pack. English is always built in and every missing entry falls back to it. See [Interface localization](localization.md) for the full model and a reference pack.
 
 ### Conversations and companion extensions
 

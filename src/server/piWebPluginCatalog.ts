@@ -53,6 +53,8 @@ export interface PiWebPluginPackageEntry {
   source: string;
   scope: PiWebPluginScope;
   machineSpecific: boolean;
+  /** Browser-only interface language pack, loadable even when Terminal cannot start. */
+  languagePack?: boolean;
 }
 
 export interface PiWebPluginCatalogEntry extends PiWebPluginPackageEntry {
@@ -115,6 +117,7 @@ interface PiWebPluginMetadataEntry {
   module?: string;
   serverModule?: string;
   machineSpecific: boolean;
+  languagePack?: boolean;
 }
 
 type ReportDiagnostic = (
@@ -371,6 +374,7 @@ async function discoverPluginEntries(
       ...(serverModule === undefined ? {} : { serverModule }),
       machineSpecific: entry.machineSpecific,
       ...(entry.defaultEnabled === undefined ? {} : { defaultEnabled: entry.defaultEnabled }),
+      ...(entry.languagePack === true ? { languagePack: true } : {}),
     });
   }
   return plugins;
@@ -679,6 +683,7 @@ function parsePluginEntries(
       throw new Error(`PI WEB plugin ${id} has browser and server modules and must be machine-specific in ${packagePath}`);
     }
     const machineSpecific = configuredMachineSpecific ?? (module !== undefined && serverModule !== undefined);
+    const languagePack = parseLanguagePack(entry["languagePack"], packagePath, id, serverModule, machineSpecific);
     return {
       id,
       ...(browserRoot === undefined ? {} : { browserRoot }),
@@ -686,6 +691,7 @@ function parsePluginEntries(
       ...(serverModule === undefined ? {} : { serverModule }),
       machineSpecific,
       ...(defaultEnabled === undefined ? {} : { defaultEnabled }),
+      ...(languagePack ? { languagePack: true } : {}),
     };
   });
 }
@@ -719,6 +725,16 @@ function parseMachineSpecific(value: unknown, packagePath: string, pluginId: str
   if (value === undefined) return undefined;
   if (typeof value !== "boolean") throw new Error(`Invalid PI WEB plugin machineSpecific value for ${pluginId} in ${packagePath}: ${formatUnknownValue(value)}`);
   return value;
+}
+
+function parseLanguagePack(value: unknown, packagePath: string, pluginId: string, serverModule: string | undefined, machineSpecific: boolean): boolean {
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") throw new Error(`Invalid PI WEB plugin languagePack value for ${pluginId} in ${packagePath}: ${formatUnknownValue(value)}`);
+  if (!value) return false;
+  if (serverModule !== undefined) throw new Error(`PI WEB plugin ${pluginId} declares languagePack and must stay browser-only in ${packagePath}`);
+  if (machineSpecific) throw new Error(`PI WEB plugin ${pluginId} declares languagePack and must not be machine-specific in ${packagePath}`);
+  if (isReservedPiWebPluginId(pluginId)) throw new Error(`Reserved PI WEB plugin id cannot declare languagePack in ${packagePath}: ${pluginId}`);
+  return true;
 }
 
 function applyDesiredState(plugin: PiWebPluginPackageEntry, config: PiWebConfig): PiWebPluginCatalogEntry {

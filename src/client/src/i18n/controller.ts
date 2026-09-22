@@ -1,7 +1,9 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 import { localeStore } from "./locale";
-import type { MessageKey } from "./translate";
-import type { TranslationParams } from "./types";
+import type { LanguageOption } from "./locale";
+import type { LanguagePreference } from "./types";
+import type { CoreMessageKey, TranslationParams } from "./types";
+import type { en } from "./locales/en";
 
 export class LocaleController implements ReactiveController {
   private unsubscribe: (() => void) | undefined;
@@ -27,11 +29,17 @@ export class LocaleController implements ReactiveController {
     return localeStore.getPreference();
   }
 
-  setPreference(preference: "auto" | "en" | "zh-CN"): void {
+  get languageOptions(): readonly LanguageOption[] {
+    return localeStore.getLanguageOptions();
+  }
+
+  setPreference(preference: LanguagePreference): void {
     localeStore.setPreference(preference);
   }
 
-  t<Key extends MessageKey>(key: Key, params?: TranslationParams<Key, typeof import("./locales/en").en>): string {
+  t<Key extends CoreMessageKey>(key: Key, params?: TranslationParams<Key, typeof en>): string;
+  t(key: string, params?: Record<string, string | number>): string;
+  t(key: string, params?: Record<string, string | number>): string {
     return localeStore.translate(key, params);
   }
 }

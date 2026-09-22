@@ -1,11 +1,14 @@
 import { html, svg } from "lit";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
+import type { PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedLocaleContribution, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource, LocaleContribution } from "./types";
 
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
 const qualifiedContributionIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
 const routeAliasPattern = /^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/u;
+const localeTagPattern = /^[a-zA-Z]{2,8}(?:-[a-zA-Z0-9]{1,8})*$/u;
+const localeNamespacePattern = /^[a-z][a-z0-9.-]*$/u;
+const localeMessageKeyPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u;
 const pluginRuntimeScopes = new WeakMap<PluginRuntimeContext, (pluginId: string) => PluginRuntimeContext>();
 type WorkspacePanelScope = (
   binding: WorkspacePluginBinding,
@@ -74,6 +77,9 @@ interface PreparedPluginContributions {
   readonly workspaceLabels: readonly QualifiedWorkspaceLabelContribution[];
   readonly themes: readonly QualifiedThemeContribution[];
   readonly themePairs: readonly QualifiedThemePairContribution[];
+  readonly locales: readonly QualifiedLocaleContribution[];
+  /** Locale message keys claimed by this plugin, released on failed start or disposal. */
+  readonly localeMessageKeys: readonly string[];
 }
 
 interface InternalCapabilityProvision {
@@ -112,6 +118,8 @@ export class PluginRegistry {
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
   private readonly themePairs: QualifiedThemePairContribution[] = [];
+  private readonly locales: QualifiedLocaleContribution[] = [];
+  private readonly localeMessageKeys = new Set<string>();
   private readonly pluginIds = new Set<string>();
   private readonly gatewayPluginIds = new Set<string>();
   private readonly gatewayMachineSpecificPluginIds = new Set<string>();
@@ -195,6 +203,8 @@ export class PluginRegistry {
     this.workspaceLabels.splice(0);
     this.themes.splice(0);
     this.themePairs.splice(0);
+    this.locales.splice(0);
+    this.localeMessageKeys.clear();
     this.contributionIds.clear();
     for (const plugin of plugins) {
       const dispose = plugin.activation.dispose?.bind(plugin.activation);
@@ -381,7 +391,10 @@ export class PluginRegistry {
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, actions, workspacePanels, workspaceLabels, themes, themePairs });
+    const { locales, localeMessageKeys } = registration.machineId === undefined
+      ? this.qualifyLocales(runtimePluginId, contributions.locales)
+      : { locales: [], localeMessageKeys: [] };
+    return Object.freeze({ ids: contributionIds, actions, workspacePanels, workspaceLabels, themes, themePairs, locales, localeMessageKeys });
   }
 
   private dependencyFailure(
@@ -460,7 +473,21 @@ export class PluginRegistry {
     }
 
     if (this.shuttingDown) return await this.failBeforeStart(staged, browserPluginShutdownError(), "start");
+    const localeConflict = this.localePublishConflict(staged);
+    if (localeConflict !== undefined) return await this.failBeforeStart(staged, localeConflict, "start");
     this.publish(staged, hostSnapshots);
+    return undefined;
+  }
+
+  /** Cross-plugin duplicate locale messages fail at publish in registration-id order. */
+  private localePublishConflict(staged: StagedBrowserPlugin): Error | undefined {
+    for (const contribution of staged.contributions.locales) {
+      for (const key of Object.keys(contribution.messages)) {
+        if (this.localeMessageKeys.has(localeMessageKeyClaim(contribution.locale, contribution.namespace, key))) {
+          return new Error(`Duplicate locale message for ${normalizeLocaleTag(contribution.locale)} ${contribution.namespace}.${key} in browser plugin ${staged.registration.id}`);
+        }
+      }
+    }
     return undefined;
   }
 
@@ -490,6 +517,8 @@ export class PluginRegistry {
     this.workspaceLabels.push(...staged.contributions.workspaceLabels);
     this.themes.push(...staged.contributions.themes);
     this.themePairs.push(...staged.contributions.themePairs);
+    this.locales.push(...staged.contributions.locales);
+    for (const key of staged.contributions.localeMessageKeys) this.localeMessageKeys.add(key);
     this.activeCapabilitiesByRegistration.set(staged.registration.id, new Map(staged.provisions.map((provision) => [provision.key, provision])));
     if (hostSnapshots.length > 0) {
       this.hostCapabilitySnapshotsByRegistration.set(staged.registration.id, new Map(hostSnapshots.map((snapshot) => [snapshot.key, snapshot])));
@@ -507,6 +536,7 @@ export class PluginRegistry {
   ): Promise<PluginRegistrationFailure> {
     abortLifetime(staged.lifetimeController, new DOMException(`Browser plugin ${staged.registration.id} startup failed`, "AbortError"));
     this.removeStaged(staged.registration.id);
+    for (const key of staged.contributions.localeMessageKeys) this.localeMessageKeys.delete(key);
     const dispose = staged.activation.dispose?.bind(staged.activation);
     const rollbackError = dispose === undefined ? undefined : await this.runRollbackDispose(staged.registration.id, dispose);
     return failureFor(registrationDeclaration(staged.registration), phase, withRollbackError(error, rollbackError));
@@ -694,6 +724,13 @@ export class PluginRegistry {
       .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.name.localeCompare(right.name));
   }
 
+  /** Gateway-local language contributions. Remote machine locales never change the global interface language. */
+  getLocales(): QualifiedLocaleContribution[] {
+    return this.locales
+      .filter((locale) => this.isContributionEnabled(locale.pluginId, undefined))
+      .sort((left, right) => left.locale.localeCompare(right.locale) || left.id.localeCompare(right.id));
+  }
+
   getThemePairs(): QualifiedThemePairContribution[] {
     return this.themePairs
       .filter((pair) => this.isContributionEnabled(pair.pluginId, undefined))
@@ -813,6 +850,116 @@ export class PluginRegistry {
       light: this.qualifyReference(pluginId, pair.light),
       dark: this.qualifyReference(pluginId, pair.dark),
     };
+  }
+
+  /**
+   * Validates locale contributions and rejects duplicate (locale, namespace,
+   * key) triples within one plugin. Cross-plugin duplicates are settled at
+   * publish time in registration-id order, so a plugin whose startup failed
+   * never blocks another provider of the same messages.
+   */
+  private qualifyLocales(
+    pluginId: string,
+    locales: readonly LocaleContribution[] | undefined,
+  ): { locales: readonly QualifiedLocaleContribution[]; localeMessageKeys: readonly string[] } {
+    if (locales === undefined || locales.length === 0) return { locales: [], localeMessageKeys: [] };
+    const seenContributionIds = new Set<QualifiedContributionId>();
+    const seenMessageKeys = new Set<string>();
+    const qualified: QualifiedLocaleContribution[] = [];
+    const messageKeys: string[] = [];
+    for (const contribution of locales) {
+      const id = this.qualifyLocaleContributionId(pluginId, contribution.id, seenContributionIds);
+      const locale = this.validateLocaleTag(pluginId, contribution.locale);
+      const label = this.validateLocaleText(pluginId, id, "label", contribution.label);
+      const aliases = this.validatedAliases(pluginId, contribution.aliases, id, locale);
+      const namespace = this.validateLocaleNamespace(pluginId, id, contribution.namespace);
+      const messages = this.validateLocaleMessages(pluginId, id, namespace, contribution.messages);
+      for (const key of Object.keys(messages)) {
+        const claim = localeMessageKeyClaim(locale, namespace, key);
+        if (seenMessageKeys.has(claim)) {
+          throw new Error(`Duplicate locale message for ${normalizeLocaleTag(locale)} ${namespace}.${key} in browser plugin ${pluginId}`);
+        }
+        seenMessageKeys.add(claim);
+        messageKeys.push(claim);
+      }
+      qualified.push(Object.freeze({
+        ...contribution,
+        id,
+        pluginId,
+        localId: contribution.id,
+        locale,
+        label,
+        ...(aliases.length === 0 ? {} : { aliases: Object.freeze(aliases) }),
+        namespace,
+        messages,
+      }));
+    }
+    return { locales: Object.freeze(qualified), localeMessageKeys: Object.freeze(messageKeys) };
+  }
+
+  private qualifyLocaleContributionId(pluginId: string, localId: string, seen: Set<QualifiedContributionId>): QualifiedContributionId {
+    this.validateLocalId(localId);
+    const qualified: QualifiedContributionId = `${pluginId}:${localId}`;
+    if (seen.has(qualified) || this.contributionIds.has(qualified)) throw new Error(`Duplicate contribution id: ${qualified}`);
+    seen.add(qualified);
+    return qualified;
+  }
+
+  private validateLocaleTag(pluginId: string, value: unknown): string {
+    if (typeof value !== "string" || !localeTagPattern.test(value)) {
+      throw new Error(`Invalid locale language tag for browser plugin ${pluginId}: ${formatUnknownValue(value)}`);
+    }
+    return value;
+  }
+
+  private validatedAliases(pluginId: string, aliases: readonly string[] | undefined, id: QualifiedContributionId, locale: string): string[] {
+    if (aliases === undefined) return [];
+    if (!Array.isArray(aliases)) {
+      throw new Error(`Invalid locale aliases for ${id} in browser plugin ${pluginId}`);
+    }
+    const seen = new Set<string>([normalizeLocaleTag(locale)]);
+    const unique: string[] = [];
+    for (const alias of aliases) {
+      const validated = this.validateLocaleTag(pluginId, alias);
+      const key = normalizeLocaleTag(validated);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(validated);
+    }
+    return unique;
+  }
+
+  private validateLocaleText(pluginId: string, id: QualifiedContributionId, field: string, value: string): string {
+    if (value.trim() === "") {
+      throw new Error(`Invalid locale ${field} for ${id} in browser plugin ${pluginId}`);
+    }
+    return value;
+  }
+
+  private validateLocaleNamespace(pluginId: string, id: QualifiedContributionId, value: string): string {
+    if (!localeNamespacePattern.test(value)) {
+      throw new Error(`Invalid locale namespace for ${id} in browser plugin ${pluginId}: ${formatUnknownValue(value)}`);
+    }
+    return value;
+  }
+
+  private validateLocaleMessages(
+    pluginId: string,
+    id: QualifiedContributionId,
+    namespace: string,
+    value: Readonly<Record<string, string>>,
+  ): Readonly<Record<string, string>> {
+    const messages: Record<string, string> = {};
+    for (const [key, message] of Object.entries(value)) {
+      if (!localeMessageKeyPattern.test(key)) {
+        throw new Error(`Invalid locale message key ${formatUnknownValue(key)} for ${id} in browser plugin ${pluginId}`);
+      }
+      if (typeof message !== "string" || message === "") {
+        throw new Error(`Invalid locale message ${namespace}.${key} for ${id} in browser plugin ${pluginId}`);
+      }
+      messages[key] = message;
+    }
+    return Object.freeze(messages);
   }
 
   private qualify(pluginId: string, localId: string, contributionIds: Set<QualifiedContributionId>): QualifiedContributionId {
@@ -990,6 +1137,14 @@ function addMappedSetValue(map: Map<string, Set<string>>, key: string, value: st
   const existing = map.get(key);
   if (existing === undefined) map.set(key, new Set([value]));
   else existing.add(value);
+}
+
+function localeMessageKeyClaim(locale: string, namespace: string, key: string): string {
+  return `${normalizeLocaleTag(locale)}|${namespace}|${key}`;
+}
+
+function normalizeLocaleTag(tag: string): string {
+  return tag.trim().toLowerCase().replaceAll("_", "-");
 }
 
 function isUnknownArray(value: unknown): value is unknown[] {
@@ -1310,7 +1465,7 @@ function errorMessage(error: unknown): string {
 
 function isPluginContributions(value: unknown): value is PluginContributions {
   if (!isRecord(value)) return false;
-  return ["actions", "workspacePanels", "workspaceLabels", "themes", "themePairs"]
+  return ["actions", "workspacePanels", "workspaceLabels", "themes", "themePairs", "locales"]
     .every((key) => value[key] === undefined || Array.isArray(value[key]));
 }
 

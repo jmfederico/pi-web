@@ -20,6 +20,8 @@ import type { NavigationFreshness, NavigationScope } from "../controllers/types"
 import { SessionController, type SessionEventSocket } from "../controllers/sessionController";
 import type { SessionUiEvent } from "../sessionSocket";
 import { loadExternalPlugins, type PluginManifestEntry } from "../plugins/external";
+import { localeResources } from "../i18n/locale";
+import { localeStore } from "../i18n/locale";
 import { PluginRegistry } from "../plugins/registry";
 import type { PiWebPlugin, PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginCapability, PluginRuntimeContext, WorkspaceInvalidation, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
@@ -51,6 +53,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  localeResources.update([]);
+  localeStore.dispose();
 });
 
 describe("PiWebApp plugin host", () => {
@@ -2237,6 +2241,7 @@ describe("PiWebApp plugin host", () => {
     const failure = new Error("Files module unavailable");
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [
         { id: "pi-web.terminal", machineSpecific: true },
         { id: "files", machineSpecific: false },
@@ -2284,7 +2289,7 @@ describe("PiWebApp plugin host", () => {
     const load = new Promise<Awaited<ReturnType<typeof loadExternalPlugins>>>((resolve) => { resolveLoad = resolve; });
     const refresh = callAppMethod(app, "registerExternalPlugins", "stale plugin", () => load);
     browser.navigate("http://localhost/app?project=project-1&workspace=workspace-1&view=core%3Aworkspace.terminal");
-    resolveLoad({ terminalMode: "recovery-disabled", declarations: [{ id: "stale", machineSpecific: false }], registrations: [{ id: "stale", machineSpecific: false, plugin: emptyPlugin("Stale") }], failures: [] });
+    resolveLoad({ terminalMode: "recovery-disabled", declarations: [{ id: "stale", machineSpecific: false }], registrations: [{ id: "stale", machineSpecific: false, plugin: emptyPlugin("Stale") }], failures: [], languagePackRegistrationIds: [] });
     await refresh;
 
     expect(browser.url.searchParams.get("view")).toBe("core:workspace.terminal");
@@ -2326,6 +2331,7 @@ describe("PiWebApp plugin host", () => {
             if (failureKind === "rejection") reject(new Error("module unavailable"));
             else resolve({
               terminalMode: "required",
+                languagePackRegistrationIds: [],
               declarations: [{ id: "pi-web.terminal", machineSpecific: true }],
               registrations: [],
               failures: [{ entry: manifestEntry("pi-web.terminal"), error: new Error("module unavailable") }],
@@ -2375,6 +2381,7 @@ describe("PiWebApp plugin host", () => {
       if (attempt === 1) {
         return Promise.resolve({
           terminalMode: "recovery-disabled",
+            languagePackRegistrationIds: [],
           declarations: [{ id: "stable", machineSpecific: false }, { id: "retry", machineSpecific: false }],
           registrations: [{ id: "stable", machineSpecific: false, plugin: stablePlugin }],
           failures: [{ entry: retryEntry, error: transientFailure }],
@@ -2383,6 +2390,7 @@ describe("PiWebApp plugin host", () => {
       expect(options.shouldLoadPlugin?.(stableEntry)).toBe(false);
       return Promise.resolve({
         terminalMode: "recovery-disabled",
+          languagePackRegistrationIds: [],
         declarations: [{ id: "retry", machineSpecific: false }],
         registrations: [{ id: "retry", machineSpecific: false, plugin: retryPlugin }],
         failures: [],
@@ -2756,6 +2764,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Remote plugins", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [{ id: runtimePluginId, sourcePluginId: "pi-web.terminal", machineId: remoteMachine.id, machineSpecific: true }],
       registrations: [{
         id: runtimePluginId,
@@ -2854,6 +2863,54 @@ describe("PiWebApp plugin host", () => {
       .rejects.toThrow("Required Terminal plugin is unavailable");
   });
 
+  it("registers server-marked language packs independently when the required Terminal module fails to load", async () => {
+    const app = createApp();
+    stubPluginLoadRendering(app);
+    setAppState(app, {
+      ...initialAppState(),
+      selectedProject: project,
+      selectedWorkspace: workspace,
+      workspaces: [workspace],
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const languagePack: PiWebPlugin = {
+      apiVersion: 4,
+      name: "Chinese language pack",
+      activate: () => ({
+        contributions: {
+          locales: [{
+            id: "core",
+            locale: "zh-CN",
+            label: "简体中文",
+            aliases: ["zh-Hans"],
+            namespace: "core",
+            messages: { "settings.generalConfiguration": "常规配置" },
+          }],
+        },
+      }),
+    };
+    const failure = new Error("Terminal module unavailable");
+    vi.mocked(loadExternalPlugins).mockResolvedValue({
+      terminalMode: "required",
+      declarations: [
+        { id: "pi-web.terminal", machineSpecific: true },
+        { id: "locale-zh", machineSpecific: false },
+      ],
+      registrations: [{ id: "locale-zh", machineSpecific: false, plugin: languagePack }],
+      failures: [{ entry: { ...manifestEntry("pi-web.terminal"), module: "./pi-web.terminal/pi-web-plugin.js", machineSpecific: true }, error: failure }],
+      languagePackRegistrationIds: ["locale-zh"],
+    });
+
+    await ensureGatewayPluginsLoaded(app);
+
+    expect(displayedError(app)).toContain("Required Terminal plugin failed to load");
+    expect(localeResources.getAvailableLocales().map(({ locale }) => locale)).toEqual(["zh-CN"]);
+    window.localStorage.setItem("pi-web-app-language", "zh-CN");
+    localeStore.setPreference("zh-CN");
+    expect(localeStore.getLocale()).toBe("zh-CN");
+    expect(localeStore.translate("core.settings.generalConfiguration")).toBe("常规配置");
+  });
+
   it("keeps a missing manifest failed closed until a valid required manifest retry succeeds", async () => {
     const app = createApp();
     stubPluginLoadRendering(app);
@@ -2868,6 +2925,7 @@ describe("PiWebApp plugin host", () => {
       .mockRejectedValueOnce(new Error("Failed to load plugin manifest (404 Not Found)"))
       .mockResolvedValueOnce({
         terminalMode: "required",
+          languagePackRegistrationIds: [],
         declarations: [{ id: "pi-web.terminal", machineSpecific: true }],
         registrations: [{
           id: "pi-web.terminal",
@@ -2932,6 +2990,7 @@ describe("PiWebApp plugin host", () => {
     callAppMethod(app, "setState", { error: "unrelated workspace warning" });
     await callAsyncAppMethod(app, "registerExternalPlugins", "PI WEB plugins", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [{ id: "pi-web.terminal", machineSpecific: true }],
       registrations: [{
         id: "pi-web.terminal",
@@ -2962,6 +3021,7 @@ describe("PiWebApp plugin host", () => {
     });
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "recovery-disabled",
+        languagePackRegistrationIds: [],
       declarations: [],
       registrations: [],
       failures: [],
@@ -3013,6 +3073,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Initial", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [testPluginDeclaration(registration), testPluginDeclaration(ordinaryRegistration)],
       registrations: [registration, ordinaryRegistration],
       failures: [],
@@ -3024,6 +3085,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Failed retry", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [{ id: "pi-web.terminal", machineSpecific: true }],
       registrations: [],
       failures: [{ entry: manifestEntry("pi-web.terminal"), error: new Error("manifest unavailable") }],
@@ -3037,6 +3099,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Recovered", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [testPluginDeclaration(registration)],
       registrations: [registration],
       failures: [],
@@ -3069,6 +3132,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Initial", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [testPluginDeclaration(registration)],
       registrations: [registration],
       failures: [],
@@ -3078,6 +3142,7 @@ describe("PiWebApp plugin host", () => {
     const changed = { ...registration, backendRevision: "terminal-r2" };
     await callAsyncAppMethod(app, "registerExternalPlugins", "Changed", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [testPluginDeclaration(changed)],
       registrations: [changed],
       failures: [],
@@ -3087,6 +3152,7 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "registerExternalPlugins", "Restored", () => Promise.resolve({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [testPluginDeclaration(registration)],
       registrations: [registration],
       failures: [],
@@ -3101,6 +3167,7 @@ describe("PiWebApp plugin host", () => {
     const terminalFailure = new Error("Terminal activation failed");
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [
         { id: "pi-web.terminal", machineSpecific: true },
         { id: "info", machineSpecific: false },
@@ -3139,6 +3206,7 @@ describe("PiWebApp plugin host", () => {
     const ordinaryActivate = vi.fn(() => ({ contributions: {} }));
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [
         { id: "pi-web.terminal", machineSpecific: true },
         { id: "info", machineSpecific: false },
@@ -3183,6 +3251,7 @@ describe("PiWebApp plugin host", () => {
     }) satisfies PluginCapability<unknown, 1>;
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [{ id: "pi-web.terminal", machineSpecific: true }],
       registrations: [{
         id: "pi-web.terminal",
@@ -3218,6 +3287,7 @@ describe("PiWebApp plugin host", () => {
     const ordinaryActivate = vi.fn(() => ({ contributions: {} }));
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [
         { id: "pi-web.terminal", machineSpecific: true },
         { id: "info", machineSpecific: false },
@@ -3316,6 +3386,7 @@ describe("PiWebApp plugin host", () => {
     };
     vi.mocked(loadExternalPlugins).mockResolvedValue({
       terminalMode: "required",
+        languagePackRegistrationIds: [],
       declarations: [
         { id: "pi-web.terminal", machineSpecific: true },
         { id: "retryable", machineSpecific: false },
