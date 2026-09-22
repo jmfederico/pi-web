@@ -12,6 +12,7 @@ import {
   type PiWebPluginServiceOptions,
 } from "./piWebPluginService.js";
 import { createWorkspaceProviderRuntimeSnapshot, WorkspaceCatalogProtocolError, type WorkspaceProviderRuntimeReader } from "./workspaces/workspaceCatalog.js";
+import { requireFileSymlinkSupport } from "./filesystemSymlinks.testSupport.js";
 
 let tempDir: string;
 
@@ -125,7 +126,8 @@ describe("PiWebPluginService", () => {
     await expect(service.readAsset("extension-only", ".svg")).resolves.toMatchObject({ contentType: "image/svg+xml" });
   });
 
-  it("serves only browser-root assets and gives .mjs modules an executable content type", async () => {
+  it("serves only browser-root assets and gives .mjs modules an executable content type", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginDir = join(tempDir, "plugins", "icons");
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"></svg>';
     await writePlugin(pluginDir, {
@@ -215,7 +217,8 @@ describe("PiWebPluginService", () => {
     }
   });
 
-  it("omits broad-root asset aliases into canonical excluded directories", async () => {
+  it("omits broad-root asset aliases into canonical excluded directories", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginDir = join(tempDir, "plugins", "broad-aliases");
     await writePlugin(pluginDir, {
       packageJson: { piWeb: { plugins: [{ id: "broad-aliases", browserRoot: ".", module: "browser.js" }] } },
@@ -292,7 +295,8 @@ describe("PiWebPluginService", () => {
     await expect(service.readAsset("dual", "browser.js")).resolves.toBeDefined();
   });
 
-  it("rejects an excluded metadata alias before an equal-revision server entry change can be paired", async () => {
+  it("rejects an excluded metadata alias before an equal-revision server entry change can be paired", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginId = "excluded-metadata-pairing";
     const pluginDir = join(tempDir, "plugins", pluginId);
     const metadataPath = join(pluginDir, ".git", "package.json");

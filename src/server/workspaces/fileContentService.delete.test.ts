@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { deleteWorkspaceFile, readWorkspaceFile } from "./fileContentService.js";
 import { cleanupTempWorkspaces, createTempWorkspace } from "./fileContentService.testSupport.js";
+import { requireFileSymlinkSupport } from "../filesystemSymlinks.testSupport.js";
 
 afterEach(async () => {
   await cleanupTempWorkspaces();
@@ -48,7 +49,8 @@ describe("deleteWorkspaceFile", () => {
     await expect(deleteWorkspaceFile(root, "")).rejects.toThrow("path query parameter is required");
   });
 
-  it("deletes a symlink itself, not its target", async () => {
+  it("deletes a symlink itself, not its target", async (task) => {
+    await requireFileSymlinkSupport(task);
     const root = await createTempWorkspace();
     const outsideDir = await createTempWorkspace("pi-web-outside-delete-");
     await writeFile(join(outsideDir, "real.txt"), "real content");

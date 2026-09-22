@@ -10,6 +10,7 @@ import { ProjectStore } from "./storage/projectStore.js";
 import type { Project, WorkspaceListing } from "./types.js";
 import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
 import { registerProjectTrustRoutes } from "./projectTrustRoutes.js";
+import { requireFileSymlinkSupport } from "./filesystemSymlinks.testSupport.js";
 
 let app: FastifyInstance;
 let agentDir: string;
@@ -131,7 +132,8 @@ describe("path-driven trust lookup (add-project dialog)", () => {
     expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: projectDir, decision: false, trusted: false });
   });
 
-  it("resolves the entered path to its canonical form before reading the store", async () => {
+  it("resolves the entered path to its canonical form before reading the store", async (task) => {
+    await requireFileSymlinkSupport(task);
     const link = `${projectDir}-link`;
     cleanup.push(link);
     await symlink(projectDir, link);

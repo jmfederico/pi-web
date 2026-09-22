@@ -8,6 +8,7 @@ import { collectReview } from "../../../examples/session-bridge-plugin/src/revie
 import { REVIEW_REPLY, REVIEW_REQUEST, isReview, type Review } from "../../../examples/session-bridge-plugin/src/browser/protocol.js";
 import { ReviewStore, reviewScope } from "../../../examples/session-bridge-plugin/src/store.js";
 import type { ServerPluginPeerRequestContext } from "../../server-plugin-api.js";
+import { requireFileSymlinkSupport } from "../filesystemSymlinks.testSupport.js";
 
 const directories: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -167,7 +168,8 @@ describe("review backend", () => {
 });
 
 describe("plugin-owned review files", () => {
-  it("uses atomic private records and rejects traversal, symlinks, and corrupt records", async () => {
+  it("uses atomic private records and rejects traversal, symlinks, and corrupt records", async (task) => {
+    await requireFileSymlinkSupport(task);
     const root = await directory();
     const store = new ReviewStore(root);
     const scope = reviewScope("../project", "/workspace");

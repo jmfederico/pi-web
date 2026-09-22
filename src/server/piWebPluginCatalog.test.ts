@@ -4,6 +4,7 @@ import { join, win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { piWebDataDir } from "../config.js";
 import { defaultPluginRoots, isWithin, PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES, PiWebPluginCatalog, type PiPackageProvider } from "./piWebPluginCatalog.js";
+import { requireFileSymlinkSupport } from "./filesystemSymlinks.testSupport.js";
 
 let tempDir: string;
 
@@ -113,7 +114,8 @@ describe("PiWebPluginCatalog", () => {
     expect(snapshot.diagnostics[0]?.message).toContain("Invalid PI WEB plugin defaultEnabled value for invalid-default");
   });
 
-  it("requires a safe browser root and keeps browser modules inside its logical and canonical boundary", async () => {
+  it("requires a safe browser root and keeps browser modules inside its logical and canonical boundary", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginsRoot = join(tempDir, "plugins");
     await writePlugin(join(pluginsRoot, "valid-root"), {
       packageJson: { piWeb: { plugins: [{ id: "valid-root", browserRoot: "public", module: "public/plugin.js" }] } },
@@ -334,7 +336,8 @@ describe("PiWebPluginCatalog", () => {
     expect(excludedDiagnostic?.message).toContain("browser root path resolves inside excluded .git directory for excluded-root-prefix");
   });
 
-  it("rejects browser-module directory paths that revisit canonical ancestors for narrow and broad roots", async () => {
+  it("rejects browser-module directory paths that revisit canonical ancestors for narrow and broad roots", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginsRoot = join(tempDir, "plugins");
     const narrowRoot = join(pluginsRoot, "narrow-module-cycle");
     await writePlugin(narrowRoot, {
@@ -783,7 +786,8 @@ describe("PiWebPluginCatalog", () => {
     expect(listPackages).not.toHaveBeenCalled();
   });
 
-  it("preserves configured Pi-package source and scope for server entries", async () => {
+  it("preserves configured Pi-package source and scope for server entries", async (task) => {
+    await requireFileSymlinkSupport(task);
     const packageRoot = join(tempDir, "package");
     await writePlugin(packageRoot, {
       packageJson: { piWeb: { plugins: [{ id: "package-provider", serverModule: "dist/server.js" }] } },
@@ -825,7 +829,8 @@ describe("PiWebPluginCatalog", () => {
     expect(snapshot.diagnostics[0]?.message).toContain(`package metadata resolves inside excluded ${excludedDirectory} directory`);
   });
 
-  it("rejects package metadata symlinks that escape the canonical package root", async () => {
+  it("rejects package metadata symlinks that escape the canonical package root", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginRoot = join(tempDir, "plugins", "escaped-metadata");
     const externalMetadata = join(tempDir, "external-package.json");
     await mkdir(pluginRoot, { recursive: true });
@@ -848,7 +853,8 @@ describe("PiWebPluginCatalog", () => {
     expect(snapshot.diagnostics[0]?.message).toContain("package metadata escapes its package");
   });
 
-  it("rejects module symlinks that escape the plugin package", async () => {
+  it("rejects module symlinks that escape the plugin package", async (task) => {
+    await requireFileSymlinkSupport(task);
     const pluginRoot = join(tempDir, "plugins", "escaped");
     const externalModule = join(tempDir, "outside.js");
     await mkdir(pluginRoot, { recursive: true });
