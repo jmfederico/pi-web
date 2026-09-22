@@ -1,6 +1,6 @@
 # PI WEB 插件式多语言实施计划
 
-状态：实施中。基线为 `feat/i18n-foundation` 的 `ca51d35d`。阶段 0 规则与清单已冻结（`docs/localization-copy-inventory.md`）；阶段 1（插件式资源架构与设置页试点）已实现。本文件用于本地评审；实施时按阶段拆分 PR。
+状态：实施中。基线为 `feat/i18n-foundation` 的 `ca51d35d`。阶段 0 的冻结规则与逐条清单已建立（`docs/localization-copy-inventory.md`；浏览器 UI 巡检未执行，阶段 0 验收未完成）；阶段 1（插件式资源架构与设置页试点）已实现。本文件用于本地评审；实施时按阶段拆分 PR。
 
 ## 目标与边界
 
