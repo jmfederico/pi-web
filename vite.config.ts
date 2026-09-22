@@ -13,16 +13,13 @@ import {
   mergeViteAllowedHosts,
 } from "./src/server/safeTunnel/safeTunnelManagedHosts";
 import { defaultSafeTunnelStatePath } from "./src/server/safeTunnel/safeTunnelState";
-import {
-  createSafeTunnelViteHostPlugin,
-  createViteProxyHostBypass,
-} from "./src/server/safeTunnel/safeTunnelVitePlugin";
+import { createViteProxyHostBypass } from "./src/server/safeTunnel/safeTunnelViteProxy";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
-const safeTunnelStatePath = defaultSafeTunnelStatePath();
+// Host trust is a startup snapshot. Restart Vite after registering or changing a tunnel hostname.
 const managedAllowedHosts = config.safeTunnel
-  ? await loadSafeTunnelManagedAllowedHosts(safeTunnelStatePath)
+  ? await loadSafeTunnelManagedAllowedHosts(defaultSafeTunnelStatePath())
   : [];
 const viteAllowedHosts = mergeViteAllowedHosts(
   config.allowedHosts,
@@ -214,12 +211,6 @@ export default defineConfig({
     devDocsPlugin(),
     devDeploymentIdentityPlugin(),
     manualRefreshPlugin(),
-    ...(config.safeTunnel && config.allowedHosts !== true
-      ? [createSafeTunnelViteHostPlugin({
-          statePath: safeTunnelStatePath,
-          appliedHosts: managedAllowedHosts,
-        })]
-      : []),
   ],
   root: "src/client",
   base: "./",

@@ -69,7 +69,7 @@ PI WEB trusts localhost, literal IP addresses, the configured listener hostname,
 
 Registered-host browser origins must use HTTPS, except that HTTP is accepted for loopback development names and addresses. Configured-host and registered-host provenance rules remain separate.
 
-The split development stack automatically projects the exact saved public hostname into Vite's HTTP, HMR, and proxied application-WebSocket checks. It restarts Vite when that hostname changes. **Settings → General → Additional allowed hosts** displays the hostname as managed read-only state; PI WEB does not write it into the editable `allowedHosts` list.
+The split development stack loads the exact saved public hostname into Vite's HTTP and proxied application-WebSocket checks at startup. After first registration, or if the saved hostname changes or is removed, manually restart Vite (`npm run dev:client`) to update those checks; refreshing the browser alone is not enough. HMR remains disabled, and registration changes do not automatically restart Vite. No session-daemon restart is needed. **Settings → General → Additional allowed hosts** displays the saved hostname as managed read-only state; PI WEB does not write it into the editable `allowedHosts` list.
 
 ## Storage and restart behavior
 

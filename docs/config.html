@@ -696,10 +696,10 @@ worktree_path="$1"
                 reads or writes, timers, artifact work, child process, or background network activity.
               </p>
               <p>
-                A saved Safe Tunnel registration automatically contributes its exact public hostname to the development
-                server's HTTP and WebSocket host checks. Vite applies registration changes with an automatic restart, and
-                Settings lists that hostname under <strong>Managed hosts — read-only</strong> instead of copying it into
-                the editable <code>allowedHosts</code> config.
+                Vite loads the saved Safe Tunnel registration's exact public hostname into its HTTP and application-WebSocket
+                host checks at startup. After first registration or a hostname change/removal, manually restart Vite;
+                refreshing the browser alone is not enough. Settings lists the saved hostname under
+                <strong>Managed hosts — read-only</strong> instead of copying it into the editable <code>allowedHosts</code> config.
               </p>
               <p>
                 When Safe Tunnel is available and used, private state lives at

@@ -3,16 +3,14 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type ViteDevServer } from "vite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   createDefaultSafeTunnelState,
   FileSafeTunnelStateStorage,
 } from "./safeTunnelState.js";
-import {
-  createSafeTunnelViteHostPlugin,
-  createViteProxyHostBypass,
-} from "./safeTunnelVitePlugin.js";
+import { loadSafeTunnelManagedAllowedHosts, mergeViteAllowedHosts } from "./safeTunnelManagedHosts.js";
+import { createViteProxyHostBypass } from "./safeTunnelViteProxy.js";
 
 const managedHostname = "machine.namespace.tunnels.example.test";
 const tempDirectories: string[] = [];
@@ -25,44 +23,25 @@ afterEach(async () => {
   await Promise.all(webSocketServers.splice(0).map((server) => closeWebSocketServer(server)));
   await Promise.all(viteServers.splice(0).map((server) => server.close()));
   await Promise.all(tempDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
-  vi.restoreAllMocks();
 });
 
 describe("Vite managed Safe Tunnel host integration", () => {
-  it("serves HTTP and HMR only for Vite-trusted hosts", async () => {
+  it("serves HTTP only for Vite-trusted hosts", async () => {
     const server = await startViteServer();
     const port = vitePort(server);
 
     await expect(httpStatus(port, managedHostname)).resolves.toBe(200);
     await expect(httpStatus(port, "attacker.example.test")).resolves.toBe(403);
     await expect(httpStatus(port, "sibling.namespace.tunnels.example.test")).resolves.toBe(403);
-    await expect(webSocketUpgradeStatus(port, managedHostname, "/", "vite-hmr"))
-      .resolves.toBe(101);
-    await expect(webSocketUpgradeStatus(port, "attacker.example.test", "/", "vite-hmr"))
-      .resolves.toBe(400);
-    await expect(webSocketUpgradeStatus(port, "sibling.namespace.tunnels.example.test", "/", "vite-hmr"))
-      .resolves.toBe(400);
   });
 
-  it("observes atomic registration with HMR and Vite WebSockets disabled", async () => {
-    const root = await mkdtemp(join(tmpdir(), "pi-web-vite-host-watch-"));
-    tempDirectories.push(root);
-    await writeFile(join(root, "index.html"), "<html>PI WEB</html>");
-    const statePath = join(root, "private", "safe-tunnel", "config.json");
-    const server = await createServer({
-      configFile: false,
-      root,
-      logLevel: "silent",
-      plugins: [createSafeTunnelViteHostPlugin({ statePath, appliedHosts: [] })],
-      server: { host: "127.0.0.1", port: 0, strictPort: true, allowedHosts: [], hmr: false, ws: false },
-    });
-    viteServers.push(server);
-    await server.listen();
-    const restarted = deferred();
-    const restart = vi.spyOn(server, "restart").mockImplementation(() => {
-      restarted.resolve();
-      return Promise.resolve();
-    });
+  it("loads a new registration into host trust on the next Vite start", async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), "pi-web-vite-host-state-"));
+    tempDirectories.push(stateRoot);
+    const statePath = join(stateRoot, "config.json");
+    const loadHosts = async () => mergeViteAllowedHosts(undefined, await loadSafeTunnelManagedAllowedHosts(statePath));
+    const server = await startViteServer(undefined, await loadHosts());
+    await expect(httpStatus(vitePort(server), managedHostname)).resolves.toBe(403);
     const storage = new FileSafeTunnelStateStorage({ filePath: statePath, platform: "linux" });
 
     await storage.save({
@@ -74,9 +53,13 @@ describe("Vite managed Safe Tunnel host integration", () => {
         publicUrl: `https://${managedHostname}`,
       },
     });
-    await withTimeout(restarted.promise, 3_000, "Vite did not observe Safe Tunnel registration");
-
-    expect(restart).toHaveBeenCalledOnce();
+    // Reloading a page still uses the running server's startup snapshot.
+    await expect(httpStatus(vitePort(server), managedHostname)).resolves.toBe(403);
+    await server.close();
+    viteServers.splice(viteServers.indexOf(server), 1);
+    const restarted = await startViteServer(undefined, await loadHosts());
+    await expect(httpStatus(vitePort(restarted), managedHostname)).resolves.toBe(200);
+    await expect(httpStatus(vitePort(restarted), "attacker.example.test")).resolves.toBe(403);
   });
 
   it("blocks untrusted application WebSockets with Vite's own WebSocket listener disabled", async () => {
@@ -96,7 +79,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
         ws: true,
         bypass: createViteProxyHostBypass([managedHostname]),
       },
-    }, false);
+    });
     const port = vitePort(server);
 
     await expect(webSocketUpgradeStatus(port, "attacker.example.test", "/api/socket"))
@@ -111,7 +94,7 @@ describe("Vite managed Safe Tunnel host integration", () => {
   });
 });
 
-async function startViteServer(proxy?: Record<string, object>, liveReload = true): Promise<ViteDevServer> {
+async function startViteServer(proxy?: Record<string, object>, allowedHosts: string[] | true = [managedHostname]): Promise<ViteDevServer> {
   const root = await mkdtemp(join(tmpdir(), "pi-web-vite-host-"));
   tempDirectories.push(root);
   await writeFile(join(root, "index.html"), "<html>PI WEB</html>");
@@ -123,8 +106,9 @@ async function startViteServer(proxy?: Record<string, object>, liveReload = true
       host: "127.0.0.1",
       port: 0,
       strictPort: true,
-      allowedHosts: [managedHostname],
-      ...(liveReload ? {} : { hmr: false as const, ws: false }),
+      allowedHosts,
+      hmr: false,
+      ws: false,
       ...(proxy === undefined ? {} : { proxy }),
     },
   });
@@ -201,30 +185,4 @@ function closeWebSocketServer(server: WebSocketServer): Promise<void> {
   return new Promise((resolveClose) => {
     server.close(() => { resolveClose(); });
   });
-}
-
-function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
-  let resolvePromise!: () => void;
-  const promise = new Promise<void>((resolveValue) => {
-    resolvePromise = resolveValue;
-  });
-  return { promise, resolve: resolvePromise };
-}
-
-async function withTimeout(
-  promise: Promise<void>,
-  milliseconds: number,
-  message: string,
-): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      promise,
-      new Promise<void>((_resolve, reject) => {
-        timeout = setTimeout(() => { reject(new Error(message)); }, milliseconds);
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
 }

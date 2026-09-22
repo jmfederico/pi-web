@@ -223,6 +223,8 @@ Availability is resolved once when the gateway web/API process starts. Restart t
 
 Any non-empty `PI_WEB_OFFLINE` or `PI_OFFLINE` setting dominates both opt-in mechanisms, including values such as `0`. In that process Safe Tunnel has no routes, UI, state reads or writes, timers, artifact work, child process, or background network activity. See the [experimental Safe Tunnel guide](safe-tunnel.md) for operation, ingress-security requirements, restart behavior, and managed-platform limits.
 
+In development, Vite loads the saved tunnel hostname into its HTTP and application-WebSocket host checks at startup. After first registration or a hostname change/removal, manually restart Vite; a browser refresh alone does not update host trust. Settings shows the saved hostname as managed read-only state rather than copying it into `allowedHosts`.
+
 ### Agent process environment
 
 Agent shells, terminals, and spawned sessions inherit the session daemon's environment almost as-is. When the daemon starts, it removes only `NODE_ENV` and `PORT` from the environment agent processes see, so development commands behave normally inside sessions — for example, `npm install` is not affected by a production `NODE_ENV` meant for the daemon. Ordinary variables (`PATH`, `HOME`, proxy settings, and the like) stay visible, and so do the daemon's `PI_WEB_*` configuration keys and the resolved `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` values, so a `pi` CLI started from inside a session uses the same agent state — auth, models, and session storage — as the daemon. The daemon itself keeps using the values it captured at startup.

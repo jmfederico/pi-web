@@ -82,12 +82,6 @@ export function isViteHostHeaderAllowed(
   ));
 }
 
-export function managedAllowedHostnames(
-  hosts: readonly PiWebManagedAllowedHost[],
-): readonly string[] {
-  return hosts.map(({ hostname }) => hostname).sort();
-}
-
 function extractViteHostname(
   hostHeader: string,
 ): { readonly type: "ip" } | { readonly type: "hostname"; readonly hostname: string } | undefined {
