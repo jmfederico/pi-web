@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TranscriptContentKind, TranscriptEntry, TranscriptRole, TranscriptView } from "./subsessionTranscript.js";
 
@@ -35,7 +36,7 @@ export interface SpawnSubsessionInvocation {
   model?: SpawnSubsessionModel;
   /** Strict `provider/model-id` requested by the parent; overrides {@link model} when set. */
   modelSpec?: string;
-  /** Parent's current thinking level, inherited by the child session (pi clamps it to the child model's capabilities). */
+  /** Explicit override or parent's inherited thinking level (pi clamps it to the child model's capabilities). */
   thinkingLevel?: SpawnSubsessionThinkingLevel;
 }
 
@@ -80,6 +81,9 @@ export interface SubsessionToolDeps {
 }
 
 const SpawnSubsessionParams = Type.Object({
+  thinkingLevel: Type.Optional(Type.Enum(KNOWN_THINKING_LEVELS, {
+    description: "Thinking level override for the child session. Set this field only when instructed to use a specific thinking level or to choose an appropriate one. Otherwise omit it to inherit this session's thinking level. An unknown value is rejected; valid levels are clamped to the selected model's capabilities.",
+  })),
   prompt: Type.String({
     description: "Initial instruction for the tracked child.",
   }),
@@ -204,6 +208,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
+      const thinkingLevel = params.thinkingLevel ?? ctx.thinkingLevel;
       const result = await deps.spawn({
         spawningCwd,
         parentSessionId,
@@ -211,7 +216,7 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
         prompt: params.prompt,
         ...(ctx.model === undefined ? {} : { model: ctx.model }),
         ...(params.model === undefined ? {} : { modelSpec: params.model }),
-        ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: ctx.thinkingLevel }),
+        ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
       });
       const modelNote = result.model === undefined ? "" : ` using model ${result.model}`;
       return {
