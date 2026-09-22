@@ -362,6 +362,10 @@ export const chatStyles = css`
     .notification-list { padding-inline: 8px; }
   }
   .chat { --pi-chat-sticky-top: -26px; height: 100%; min-height: 0; overflow: auto; overflow-anchor: none; padding: 26px 16px 64px; box-sizing: border-box; }
+  .go-to-bottom { position: absolute; bottom: 64px; right: 16px; z-index: 21; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--pi-border); border-radius: 50%; background: var(--pi-bg-overlay); color: var(--pi-text); cursor: pointer; box-shadow: 0 4px 16px var(--pi-shadow); }
+  .go-to-bottom svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .go-to-bottom:hover { border-color: var(--pi-accent); }
+  .go-to-bottom:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
   .scroll-marker { display: block; height: 0; overflow: hidden; pointer-events: none; }
   .activity-dock { position: absolute; left: 16px; right: 16px; bottom: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; min-width: 0; box-sizing: border-box; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-bg-overlay); color: var(--pi-muted); padding: 8px 12px; font-size: 13px; pointer-events: none; box-shadow: 0 8px 28px var(--pi-shadow); backdrop-filter: blur(6px); }
   .activity-dock.active { border-color: var(--pi-success-border); color: var(--pi-success); background: var(--pi-success-bg-overlay); }
