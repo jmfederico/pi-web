@@ -29,7 +29,7 @@ import {
   type ResourceDiagnostic,
 } from "@earendil-works/pi-coding-agent";
 import type { ClientArchiveSessionsResponse, ClientCommand, ClientCommandResult, ClientMessagePage, ClientSession, ClientSessionCleanupExecuteResponse, ClientSessionCleanupPreviewResponse, ClientSessionModel, ClientSessionModelCatalogEntry, ClientSessionStatus, ClientSessionTreeForkRequest, ClientSessionTreeForkResult, ClientSessionTreeNavigateRequest, ClientSessionTreeNavigateResult, ClientThinkingLevel, SessionStreamSnapshot, SessionUiEvent } from "../types.js";
-import { projectBrowserMessage } from "../browserMessageProjection.js";
+import { mediaIdForData, projectBrowserMessage } from "../browserMessageProjection.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
 import { clientSessionFirstMessagePreview } from "./clientSessionPreview.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
@@ -2359,6 +2359,27 @@ export class PiSessionService implements SessionRouteService {
   async messages(ref: PiSessionRef, page?: { before?: number; limit?: number }): Promise<ClientMessagePage> {
     const session = await this.getOrOpen(ref);
     return pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
+  }
+
+  async media(ref: PiSessionRef, mediaId: string): Promise<{ mimeType: string; data: Buffer } | undefined> {
+    const session = await this.getOrOpen(ref);
+    const entries = await this.readableSessionBranch(ref, session);
+    for (const message of historyMessagesFromEntries(entries)) {
+      const content = isRecord(message) ? message["content"] : undefined;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (!isRecord(part) || part["type"] !== "image") continue;
+        const data = part["data"];
+        if (typeof data !== "string") continue;
+        if (mediaIdForData(data) !== mediaId) continue;
+        const mimeType = part["mimeType"];
+        return {
+          mimeType: typeof mimeType === "string" && mimeType !== "" ? mimeType : "application/octet-stream",
+          data: Buffer.from(data, "base64"),
+        };
+      }
+    }
+    return undefined;
   }
 
   async status(ref: PiSessionRef): Promise<ClientSessionStatus> {
