@@ -1021,6 +1021,46 @@ describe("PiWebApp plugin host", () => {
     expect(browser.url.searchParams.get("browser-only.workspace.panel--file")).toBe("new.ts");
   });
 
+  it("restores the selection while plugins load and waits for them only to resolve a tool", async () => {
+    installBrowserWindow("http://localhost/app?project=missing-project&view=chat");
+    const app = new PiWebApp();
+    setAppState(app, { ...initialAppState(), projects: [project] });
+    let pluginLoads = 0;
+    let finishPlugins: (() => void) | undefined;
+    if (!Reflect.set(app, "loadPluginsForSelectedMachine", () => {
+      pluginLoads += 1;
+      return new Promise<void>((resolve) => { finishPlugins = resolve; });
+    })) {
+      throw new Error("Could not stub plugin loading");
+    }
+
+    await callAsyncAppMethod(app, "restoreRoute", false);
+    expect(pluginLoads).toBe(1);
+    expect(callAppMethod(app, "visibleBrowserErrorsForCurrentRoute", appState(app))).toEqual([
+      expect.objectContaining({ message: "Project not found: missing-project" }),
+    ]);
+
+    // A tool in the URL no longer delays resolving the selection itself.
+    installBrowserWindow("http://localhost/app?project=missing-project&view=workspace&tool=files");
+    await callAsyncAppMethod(app, "restoreRoute", false);
+    expect(pluginLoads).toBe(2);
+    expect(callAppMethod(app, "visibleBrowserErrorsForCurrentRoute", appState(app))).toEqual([
+      expect.objectContaining({ message: "Project not found: missing-project" }),
+    ]);
+
+    // Finalizing a restored tool route still waits for plugins before resolving the tool.
+    installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&view=workspace&tool=files");
+    setAppState(app, { ...appState(app), selectedProject: project, selectedWorkspace: workspace, workspaces: [workspace] });
+    let settled = false;
+    const restoring = callAsyncAppMethod(app, "restoreRoute", false).then(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(pluginLoads).toBe(3);
+    expect(settled).toBe(false);
+    finishPlugins?.();
+    await restoring;
+    expect(settled).toBe(true);
+  });
+
   it("preserves a missing project route while clearing its workspace surface", async () => {
     const browser = installBrowserWindow("http://localhost/app?project=missing-project&workspace=missing-workspace&view=chat&browser-only.workspace.panel--file=missing.ts");
     const app = new PiWebApp();

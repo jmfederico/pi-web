@@ -761,28 +761,40 @@ export class PiWebApp extends LitElement {
         }
         return;
       }
-      await this.loadPluginsForSelectedMachine();
-      if (!selectionNavigation.isCurrent()) return;
-      const route = resolveAppRoute(parsedRoute, (value) => this.plugins.resolveWorkspacePanelRouteId(value, selectedMachineId(this.state)));
-      const unavailableToolRoute = parsedRoute.tool !== undefined && route.tool === undefined;
+      // Only resolving a `tool` route value needs plugin contributions. The
+      // project/workspace/session selection never does, so it restores while
+      // plugins load; a tool route waits for them only before finalization, so
+      // opening a session never waits on every plugin module over slow links.
+      const pluginsReady = this.loadPluginsForSelectedMachine();
+      // Awaited only for tool routes; the load reports its own failures.
+      pluginsReady.catch(() => undefined);
+      const route = resolveAppRoute({ ...parsedRoute, tool: undefined }, () => undefined);
       const unavailablePanelViewRoute = parsedRoute.view !== undefined && route.view === undefined;
       const restoredWorkspaceIdentity = workspaceRouteIdentity(route);
-      const finishOptions: WorkspaceRouteFinishOptions = {
+      const baseFinishOptions: WorkspaceRouteFinishOptions = {
         updateUrl,
         urlPublication,
-        unavailableToolRoute,
+        unavailableToolRoute: false,
         unavailablePanelViewRoute,
-        requestedTool: route.tool,
+        requestedTool: undefined,
         requestedRoute: parsedRoute,
         restoreSeq,
         navigation,
         ...(restoredWorkspaceIdentity === undefined ? {} : { restoredWorkspaceIdentity }),
       };
+      const resolveToolRoute = async (): Promise<WorkspaceRouteFinishOptions | undefined> => {
+        if (parsedRoute.tool === undefined) return baseFinishOptions;
+        await pluginsReady;
+        if (!this.isCurrentRouteRestore(restoreSeq, navigation)) return undefined;
+        const tool = resolveAppRoute(parsedRoute, (value) => this.plugins.resolveWorkspacePanelRouteId(value, selectedMachineId(this.state))).tool;
+        this.setState({ workspaceTool: tool });
+        return { ...baseFinishOptions, unavailableToolRoute: tool === undefined, requestedTool: tool };
+      };
       // A newer surface may retire route finalization without retiring the
       // hierarchy load needed by that same workspace/session destination.
       if (this.isCurrentRouteRestore(restoreSeq, navigation)) {
         this.setState({
-          workspaceTool: route.tool,
+          ...(parsedRoute.tool === undefined ? { workspaceTool: undefined } : {}),
           mainView: restoredMainView ?? route.view ?? this.defaultRouteView(),
         });
       }
@@ -790,11 +802,13 @@ export class PiWebApp extends LitElement {
         const error = this.state.error;
         this.workspaces.clearSelection({ updateUrl: false });
         if (error !== "") this.setState({ error });
-        await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
+        const finishOptions = await resolveToolRoute();
+        if (finishOptions !== undefined) await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
         return;
       }
       if (this.routeMatchesCurrentSelection(route)) {
-        await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
+        const finishOptions = await resolveToolRoute();
+        if (finishOptions !== undefined) await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
         return;
       }
       const project = this.state.projects.find((p) => p.id === route.projectId);
@@ -838,7 +852,8 @@ export class PiWebApp extends LitElement {
       }
       if (selectionNavigation.isCurrent()) this.setContentError(parsedRoute, loadError ?? "");
       if (!this.isCurrentRouteRestore(restoreSeq, navigation)) return;
-      await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
+      const finishOptions = await resolveToolRoute();
+      if (finishOptions !== undefined) await this.finishWorkspaceRouteRestore(routeSurface, finishOptions);
     } finally {
       this.routeRestoreDepth = Math.max(0, this.routeRestoreDepth - 1);
       if (selectedMachineId(this.state) !== machineBeforeRestore) this.schedulePiWebStatusRefresh();
