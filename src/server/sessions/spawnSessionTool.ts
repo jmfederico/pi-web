@@ -1,4 +1,5 @@
 import { Type } from "typebox";
+import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface SpawnSessionResult {
@@ -21,7 +22,7 @@ export interface SpawnSessionInvocation {
   model?: SpawnSessionModel;
   /** Strict `provider/model-id` requested by the dispatcher; overrides {@link model} when set. */
   modelSpec?: string;
-  /** Dispatching session's current thinking level, inherited by the spawned session (pi clamps it to the spawned model's capabilities). */
+  /** Explicit override or dispatching session's inherited thinking level (pi clamps it to the spawned model's capabilities). */
   thinkingLevel?: SpawnSessionThinkingLevel;
 }
 
@@ -32,6 +33,9 @@ export interface SpawnSessionToolDeps {
 type SpawnSessionToolDetails = SpawnSessionResult;
 
 const SpawnSessionParams = Type.Object({
+  thinkingLevel: Type.Optional(Type.Enum(KNOWN_THINKING_LEVELS, {
+    description: "Thinking level override for the new session. Set this field only when instructed to use a specific thinking level or to choose an appropriate one. Otherwise omit it to inherit this session's thinking level. An unknown value is rejected; valid levels are clamped to the selected model's capabilities.",
+  })),
   prompt: Type.String({
     description: "The first instruction to send to the newly created session. The new session runs independently; you do not receive its output.",
   }),
@@ -60,6 +64,7 @@ export function createSpawnSessionToolDefinition(spawningCwd: string, deps: Spaw
       // Failures throw: the agent loop turns the thrown message into an error
       // tool result the model sees, so the spawning agent can adapt (e.g. pick a
       // valid workspace) rather than crash.
+      const thinkingLevel = params.thinkingLevel ?? ctx.thinkingLevel;
       const result = await deps.spawn({
         spawningCwd,
         spawningSessionId: ctx.sessionManager.getSessionId(),
@@ -67,7 +72,7 @@ export function createSpawnSessionToolDefinition(spawningCwd: string, deps: Spaw
         cwd: params.cwd,
         ...(ctx.model === undefined ? {} : { model: ctx.model }),
         ...(params.model === undefined ? {} : { modelSpec: params.model }),
-        ...(ctx.thinkingLevel === undefined ? {} : { thinkingLevel: ctx.thinkingLevel }),
+        ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
       });
       const modelNote = result.model === undefined ? "" : ` using model ${result.model}`;
       return {
