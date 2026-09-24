@@ -6,7 +6,7 @@ import { startDevelopmentProcess, superviseDevelopmentProcesses } from "./dev-pr
 const require = createRequire(import.meta.url);
 
 export function runDevelopmentWeb({ env = process.env, launch = startDevelopmentProcess, signals = process, stop } = {}) {
-  const childEnv = { ...env };
+  const childEnv = { ...env, PI_WEB_BROWSER_URL: env.PI_WEB_BROWSER_URL || "http://127.0.0.1:8505" };
   return superviseDevelopmentProcesses((add, stopped) => {
     const builder = add(launch(resolve("scripts/build-plugins.mjs"), ["--watch"], childEnv, true));
     let apiStarted = false;

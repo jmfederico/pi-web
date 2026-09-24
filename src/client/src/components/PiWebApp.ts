@@ -49,7 +49,7 @@ import { NavigationSectionsController, type NavigationSection } from "../appShel
 import { PanelCollapseController, mainViewClass } from "../appShell/panelCollapseController";
 import { PanelResizeController, type PanelResizeConstraints, type ResizablePanelSide } from "../appShell/panelResizeController";
 import { isCreatingSessionId, parseMainView, readRoute, resolveAppRoute, routeMatchesWorkspaceIdentity, writeRoute, type AppRoute, type ParsedAppRoute, type WorkspaceRouteIdentity } from "../route";
-import { readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
+import { normalizeSettingsSection, readSettingsSection, writeSettingsSection, type SettingsSection } from "../settingsRoute";
 import { applyActiveShortcutPreferences } from "../shortcutPreferences";
 import { loadNavigationPreferences, saveNavigationPreferences, pinnedNavigationTabs, type NavigationPreferences } from "../navigationPreferences";
 import "./appShell/NavigationDialog";
@@ -496,6 +496,7 @@ export class PiWebApp extends LitElement {
     if (!patchChangesState(this.state, patch)) return;
     const previous = this.state;
     this.state = { ...this.state, ...patch };
+    if (previous.machineRuntimes !== this.state.machineRuntimes) this.reconcileSafeTunnelSettingsRoute();
     if (workspaceDeletionScopeKey(previous) !== workspaceDeletionScopeKey(this.state)) {
       this.cancelWorkspaceDeletionRefresh();
       if (Object.keys(this.state.workspaceDeletionRuns).length > 0) this.state = { ...this.state, workspaceDeletionRuns: {} };
@@ -1458,8 +1459,9 @@ export class PiWebApp extends LitElement {
   }
 
   private openSettings(section: SettingsSection = "general"): void {
-    writeSettingsSection(section);
-    this.settingsSection = section;
+    const activeSection = normalizeSettingsSection(section, this.safeTunnelAvailable()) ?? "general";
+    writeSettingsSection(activeSection);
+    this.settingsSection = activeSection;
   }
 
   private closeSettings(): void {
@@ -1468,12 +1470,32 @@ export class PiWebApp extends LitElement {
   }
 
   private navigateSettings(section: SettingsSection): void {
-    writeSettingsSection(section);
-    this.settingsSection = section;
+    this.openSettings(section);
   }
 
   private restoreSettingsRoute(): void {
     this.settingsSection = readSettingsSection();
+    this.reconcileSafeTunnelSettingsRoute();
+  }
+
+  private visibleSettingsSection(): SettingsSection | undefined {
+    return normalizeSettingsSection(this.settingsSection, this.safeTunnelAvailable());
+  }
+
+  private safeTunnelAvailable(): boolean {
+    const localRuntime = this.state.machineRuntimes["local"];
+    return localRuntime?.ok === true
+      && supportsPiWebCapability(localRuntime, PI_WEB_CAPABILITIES.safeTunnel);
+  }
+
+  private reconcileSafeTunnelSettingsRoute(): void {
+    if (this.settingsSection !== "safe-tunnel") return;
+    // An absent local snapshot is unresolved, not disabled. Render General in
+    // the meantime but preserve the deep-link request in case the active
+    // capability arrives moments later.
+    if (this.state.machineRuntimes["local"] === undefined || this.safeTunnelAvailable()) return;
+    this.settingsSection = "general";
+    writeSettingsSection("general", { replace: true });
   }
 
   private handleWorkspaceChange(previous: AppState, next: AppState) {
@@ -1512,6 +1534,8 @@ export class PiWebApp extends LitElement {
         void this.sessions.refreshCurrentWorkspaceSessions(machineId);
         void this.sessionUnread.refresh(machineId);
         void this.serverNotices.refresh(machineId);
+        this.machines.invalidateMachineRuntime("local");
+        void this.machines.refreshMachineRuntime("local");
       },
       machineId,
     );
@@ -2306,7 +2330,18 @@ export class PiWebApp extends LitElement {
 
   private getDefaultActions(): AppAction[] {
     const pluginActions = this.plugins.getActions(this.createPluginRuntimeContext());
-    return [...pluginActions, ...this.workspaceSurfaceActions(), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
+    return [...pluginActions, ...this.safeTunnelActions(), ...this.workspaceSurfaceActions(), ...this.sessionActions(), ...this.navigationFocusActions(), ...this.panelLayoutActions()];
+  }
+
+  private safeTunnelActions(): AppAction[] {
+    if (!this.safeTunnelAvailable()) return [];
+    return [{
+      id: "app.safe-tunnel.manage",
+      title: "Manage Safe Tunnel",
+      description: "Enable or disable this gateway's experimental Safe Tunnel and inspect its public URL",
+      group: "Safe Tunnel",
+      run: () => { this.openSettings("safe-tunnel"); },
+    }];
   }
 
   private workspaceSurfaceActions(): AppAction[] {
@@ -3539,7 +3574,7 @@ export class PiWebApp extends LitElement {
         ${state.machineDialogOpen ? html`<machine-dialog .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${this.sessionCleanupDialog.error ?? ""} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
         ${state.themeDialog !== undefined ? html`<command-picker title=${state.themeDialog.title} .options=${state.themeDialog.options} .selectedValue=${state.themeDialog.selectedValue} .onPick=${(value: string) => { this.pickTheme(value); }} .onCancel=${() => { this.setState({ themeDialog: undefined }); }}></command-picker>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.visibleSettingsSection() ?? "general"} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .safeTunnelAvailable=${this.safeTunnelAvailable()} .actions=${this.getDefaultActions()} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }

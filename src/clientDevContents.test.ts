@@ -21,6 +21,10 @@ describe("manual-refresh development client", () => {
       // WebSocket handshakes, leaving status badges stale despite working HTTP.
       expect(server.config.server.hmr).toBe(false);
       expect(server.config.server.ws).toBe(false);
+      const apiProxy = server.config.server.proxy?.["/api"];
+      if (apiProxy === undefined || typeof apiProxy === "string") throw new Error("Expected API proxy options");
+      expect(apiProxy.ws).toBe(true);
+      expect(typeof apiProxy.bypass).toBe("function");
       expect(html).toContain('src="/src/main.ts"');
       // The plugin loader's variable import needs Vite's injectQuery helper,
       // so removing only the HTML script still imports and starts the client.

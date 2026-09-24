@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOptions } from "fastify";
 import fastifyCompress from "@fastify/compress";
 import fastifyStatic from "@fastify/static";
@@ -24,9 +21,9 @@ import { createActiveProfilePiPackageService, type PiPackageService } from "./pi
 import { registerPiPackageRoutes } from "./piPackageRoutes.js";
 import { createPiWebStatusCache, type PiWebStatusCache } from "./piWebStatusCache.js";
 import { detectPiWebInstallation, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus } from "./piWebStatus.js";
-import { createDeploymentFlavorResolver } from "./deploymentIdentity.js";
+import { PI_WEB_CAPABILITIES, WEB_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
+import { createDeploymentFlavorResolver, type PiWebDeploymentFlavor } from "./deploymentIdentity.js";
 import { registerDeploymentIdentityAssetRoutes } from "./deploymentIdentityRoutes.js";
-import type { PiWebDeploymentFlavor } from "./deploymentIdentity.js";
 import {
   ActiveAgentProfileAccessError,
   requireActiveAgentProfile,
@@ -41,6 +38,13 @@ import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBri
 import { registerPairedPluginBackendProxyRoutes } from "./plugins/pluginBackendProxyRoutes.js";
 import { proxyMachinePluginAsset, registerMachinePluginProxyRoutes } from "./machines/machinePluginProxyRoutes.js";
 import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } from "./types.js";
+import type { SafeTunnelBridgeService } from "./safeTunnel/safeTunnelBridgeService.js";
+import { devModeClientPointer, requirePackagedClientDist, type ClientServing } from "./clientServing.js";
+
+export interface SafeTunnelMutationHostConfig {
+  listenerHost?: string;
+  allowedHosts?: readonly string[] | true;
+}
 
 export interface AppDependencies {
   projects?: ProjectService;
@@ -52,7 +56,15 @@ export interface AppDependencies {
   piPackages?: PiPackageService;
   piWebStatusCache?: PiWebStatusCache;
   config?: PiWebConfigService;
-  clientDist?: string | false;
+  /** Present only when startup opted in and composed the web-owned Safe Tunnel graph. */
+  safeTunnel?: SafeTunnelBridgeService;
+  /** Startup-snapshot host trust inputs used by Safe Tunnel reads and mutations. */
+  safeTunnelMutationHosts?: SafeTunnelMutationHostConfig;
+  /**
+   * Explicit startup serving-mode decision for non-API browser requests.
+   * `false` builds a minimal API-only app for tests.
+   */
+  clientServing: ClientServing | false;
   /** Overrides deployment-flavor detection (dev/stable asset identity) in tests. */
   deploymentFlavor?: () => Promise<PiWebDeploymentFlavor>;
   logger?: FastifyServerOptions["logger"];
@@ -153,7 +165,22 @@ async function withProfileDependency<T>(reply: FastifyReply, operation: () => Pr
   }
 }
 
-export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInstance> {
+async function registerSafeTunnelFeature(
+  app: FastifyInstance,
+  bridge: SafeTunnelBridgeService,
+  mutationHosts: SafeTunnelMutationHostConfig,
+): Promise<void> {
+  const { registerSafeTunnelRoutes } = await import("./safeTunnel/safeTunnelRoutes.js");
+  registerSafeTunnelRoutes(app, bridge, mutationHosts);
+  app.addHook("onReady", async () => {
+    await bridge.startup();
+  });
+  app.addHook("onClose", async () => {
+    await bridge.shutdown();
+  });
+}
+
+export async function buildApp(deps: AppDependencies): Promise<FastifyInstance> {
   const app = Fastify({ logger: deps.logger ?? true, ...(deps.bodyLimit === undefined ? {} : { bodyLimit: deps.bodyLimit }) });
   // Vite proxies development API requests here, while production and machine-scoped
   // API requests already terminate here, so this is the shared browser HTTP edge.
@@ -179,6 +206,11 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     recoveryProvider: () => loadServerPluginRecoveryConfig(),
   });
   const piPackages = deps.piPackages ?? createActiveProfilePiPackageService(agentProfileProvider);
+  const safeTunnel = deps.safeTunnel;
+  const webRuntimeCapabilities = safeTunnel === undefined
+    ? WEB_RUNTIME_CAPABILITIES
+    : [...WEB_RUNTIME_CAPABILITIES, PI_WEB_CAPABILITIES.safeTunnel];
+  const localRuntime = () => getPiWebRuntime(sessionDaemon, { webCapabilities: webRuntimeCapabilities });
   const piWebStatusCache = deps.piWebStatusCache ?? createPiWebStatusCache(
     async ({ force }) => {
       const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
@@ -189,9 +221,15 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     },
     { onError: (error) => { app.log.warn({ err: error }, "failed to refresh PI WEB status cache"); } },
   );
-  const machines = deps.machines ?? new MachineService(undefined, {
-    localRuntime: () => getPiWebRuntime(sessionDaemon),
-  });
+  const machines = deps.machines ?? new MachineService(undefined, { localRuntime });
+
+  if (safeTunnel !== undefined) {
+    await registerSafeTunnelFeature(
+      app,
+      safeTunnel,
+      deps.safeTunnelMutationHosts ?? {},
+    );
+  }
 
   app.get("/pi-web-plugins/manifest.json", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.manifest()));
 
@@ -219,13 +257,20 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   // Web readiness must not wait for sessiond: dev Compose starts the daemon
   // only after the web-owned initial build and API startup have completed.
   app.get("/api/pi-web/health", () => Promise.resolve({ ok: true }));
-  app.get("/api/pi-web/runtime", async () => getPiWebRuntime(sessionDaemon));
+  app.get("/api/pi-web/runtime", localRuntime);
   app.get("/api/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
   app.get("/api/machines/local/plugins", async (_request, reply) => withProfileDependency(reply, () => piWebPlugins.plugins()));
   registerPiPackageRoutes(app, piPackages);
   registerPiPackageRoutes(app, piPackages, "/api/machines/local");
   const invalidatingConfigService = invalidatePiWebStatusOnWrite(configService, piWebStatusCache);
-  registerConfigRoutes(app, invalidatingConfigService);
+  registerConfigRoutes(app, invalidatingConfigService, safeTunnel === undefined
+    ? {}
+    : {
+        managedAllowedHosts: async () => {
+          const { safeTunnelManagedAllowedHosts } = await import("./safeTunnel/safeTunnelManagedHosts.js");
+          return safeTunnelManagedAllowedHosts(await safeTunnel.registeredPublicOrigin());
+        },
+      });
   registerLocalMachineConfigRoutes(app, invalidatingConfigService);
 
   registerMachineRoutes(app, machines);
@@ -250,10 +295,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
 
   registerMachineProxyRoutes(app, machines);
 
-  const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");
-  const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));
-  if (clientDist !== false && existsSync(clientDist)) {
-    await app.register(fastifyStatic, { root: clientDist });
+  if (deps.clientServing !== false) {
     const deploymentFlavor = deps.deploymentFlavor ?? createDeploymentFlavorResolver(
       async () => {
         const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
@@ -261,9 +303,48 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
       },
       (error) => { app.log.warn({ err: error }, "failed to detect PI WEB deployment flavor"); },
     );
-    registerDeploymentIdentityAssetRoutes(app, { clientDist, flavor: deploymentFlavor });
-    app.setNotFoundHandler((_request, reply) => reply.sendFile("index.html"));
+    await registerClientServing(app, deps.clientServing, deploymentFlavor);
   }
 
   return app;
+}
+
+/**
+ * Wires the explicit serving-mode decision. Packaged mode requires the built
+ * client (startup fails loudly otherwise) and falls back to `index.html` for
+ * non-API routes; development mode serves nothing and points browsers at the
+ * dev-server entrypoint instead.
+ */
+async function registerClientServing(
+  app: FastifyInstance,
+  clientServing: ClientServing,
+  deploymentFlavor: () => Promise<PiWebDeploymentFlavor>,
+): Promise<void> {
+  if (clientServing.mode === "packaged") {
+    requirePackagedClientDist(clientServing.clientDist);
+    await app.register(fastifyStatic, { root: clientServing.clientDist });
+    registerDeploymentIdentityAssetRoutes(app, { clientDist: clientServing.clientDist, flavor: deploymentFlavor });
+    app.setNotFoundHandler((request, reply) => {
+      if (isApiRouteUrl(request.url)) return sendApiNotFound(request.method, request.url, reply);
+      return reply.sendFile("index.html");
+    });
+    return;
+  }
+
+  app.setNotFoundHandler((request, reply) => {
+    if (isApiRouteUrl(request.url)) return sendApiNotFound(request.method, request.url, reply);
+    return reply.code(404).type("text/plain; charset=utf-8").send(devModeClientPointer(clientServing.browserEntrypointUrl));
+  });
+}
+
+function isApiRouteUrl(url: string): boolean {
+  return url === "/api" || url.startsWith("/api/");
+}
+
+function sendApiNotFound(method: string, url: string, reply: FastifyReply): FastifyReply {
+  return reply.code(404).send({
+    message: `Route ${method}:${url} not found`,
+    error: "Not Found",
+    statusCode: 404,
+  });
 }

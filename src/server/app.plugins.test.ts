@@ -58,7 +58,7 @@ describe("buildApp PI WEB plugin routes", () => {
       packageProvider: false,
       runtimeProvider: { providerRuntime: () => Promise.reject(error) },
     });
-    const routeApp = await buildApp({ piWebPlugins: service, clientDist: false, logger: false });
+    const routeApp = await buildApp({ piWebPlugins: service, clientServing: false, logger: false });
     try {
       const response = await routeApp.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });
       expect(response.statusCode).toBe(statusCode);
@@ -95,7 +95,7 @@ describe("buildApp PI WEB plugin routes", () => {
         }),
       },
     });
-    const routeApp = await buildApp({ piWebPlugins: service, clientDist: false, logger: false });
+    const routeApp = await buildApp({ piWebPlugins: service, clientServing: false, logger: false });
 
     try {
       const firstManifest = await routeApp.inject({ method: "GET", url: "/pi-web-plugins/manifest.json" });

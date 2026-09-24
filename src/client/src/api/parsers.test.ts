@@ -48,20 +48,38 @@ describe("API parsers", () => {
     expect(() => parseOAuthFlowState({ ...flow, prompt: { requestId: "text", message: "Value", promptType: "kind" } })).toThrow("Invalid OAuth prompt type");
   });
 
-  it("parses PI WEB config responses", () => {
+  it("parses PI WEB config responses including attachments and Safe Tunnel availability", () => {
     expect(parsePiWebConfigResponse({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
-      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      envOverrides: { host: true, port: false, allowedHosts: false, safeTunnel: true, spawnSessions: false, subsessions: false, askUser: false },
+      managedAllowedHosts: [{ source: "safe-tunnel", hostname: "machine.namespace.tunnels.example.test" }],
     })).toEqual({
       path: "/tmp/config.json",
       exists: true,
-      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
-      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
-      envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      config: { host: "0.0.0.0", port: 8504, allowedHosts: ["example.local"], shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null }, plugins: { info: { enabled: false, settings: { compact: true } } }, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "saved/attachments" }, maxUploadBytes: 1234, safeTunnel: true, agent: { command: "agent-lab", dir: "~/agent-profiles/lab" } },
+      effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, safeTunnel: false, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
+      envOverrides: { host: true, port: false, allowedHosts: false, safeTunnel: true, spawnSessions: false, subsessions: false, askUser: false },
+      managedAllowedHosts: [{ source: "safe-tunnel", hostname: "machine.namespace.tunnels.example.test" }],
     });
+  });
+
+  it("accepts missing managed host metadata and rejects malformed entries", () => {
+    const response = {
+      path: "/tmp/config.json",
+      exists: true,
+      config: {},
+      effectiveConfig: {},
+      envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
+    };
+
+    expect(parsePiWebConfigResponse(response).managedAllowedHosts).toBeUndefined();
+    expect(() => parsePiWebConfigResponse({
+      ...response,
+      managedAllowedHosts: [{ source: "request", hostname: "attacker.test" }],
+    })).toThrow("Invalid PI WEB managedAllowedHosts source");
   });
 
   it("rejects malformed PI WEB attachments config fields", () => {
@@ -70,11 +88,21 @@ describe("API parsers", () => {
       exists: true,
       config: {},
       effectiveConfig: {},
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
     };
 
     expect(() => parsePiWebConfigResponse({ ...response, config: { attachments: "saved/attachments" } })).toThrow("Invalid PI WEB attachments field");
     expect(() => parsePiWebConfigResponse({ ...response, effectiveConfig: { attachments: [] } })).toThrow("Invalid PI WEB attachments field");
+  });
+
+  it("rejects malformed Safe Tunnel config response fields", () => {
+    expect(() => parsePiWebConfigResponse({
+      path: "/tmp/config.json",
+      exists: true,
+      config: { safeTunnel: "yes" },
+      effectiveConfig: { safeTunnel: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
+    })).toThrow("Invalid PI WEB safeTunnel field");
   });
 
   it("parses PI WEB runtime responses and ignores the daemon-reported active agent profile", () => {
@@ -168,8 +196,8 @@ describe("API parsers", () => {
   });
 
   it("rejects config responses missing a required override flag", () => {
-    const envOverrides = { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false };
-    for (const flag of ["host", "port", "allowedHosts", "spawnSessions", "subsessions", "askUser"] as const) {
+    const envOverrides = { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false };
+    for (const flag of ["host", "port", "allowedHosts", "safeTunnel", "spawnSessions", "subsessions", "askUser"] as const) {
       const incomplete = Object.fromEntries(Object.entries(envOverrides).filter(([key]) => key !== flag));
       expect(() => parsePiWebConfigResponse({
         path: "/tmp/config.json",

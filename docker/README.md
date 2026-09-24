@@ -358,6 +358,8 @@ You can run the dev stack in the background with:
 
 Open the Vite UI at <http://127.0.0.1:8505>. The dev API is published on <http://127.0.0.1:8504>.
 
+The dev stack declares the Vite listener as PI WEB's local browser entrypoint (`PI_WEB_BROWSER_URL` in `docker/compose.dev.yml`): the API process serves no client itself — hitting it for a non-API path returns a short pointer to the Vite server — and Safe Tunnel's default local target is the Vite UI rather than the API process. Packaged/runtime mode has no such variable; there the API listener is the browser entrypoint and serves the built client from `dist/client`, failing startup with a clear error if the build output is missing.
+
 Useful development commands:
 
 ```bash

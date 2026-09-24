@@ -60,24 +60,24 @@ describe("settings-shortcuts-panel layout", () => {
 describe("settings-shortcuts-panel shortcut row actions", () => {
   it("saves edited shortcuts, disables them with None, and resets overrides", async () => {
     const onSave = vi.fn<SaveHandler>();
-    const panel = await panelWithShortcuts({ shortcuts: { "core:other": "mod+o" } }, onSave);
+    const panel = await panelWithShortcuts({ safeTunnel: true, shortcuts: { "core:other": "mod+o" } }, onSave);
     await editShortcut(panel, "core:open-palette", " control + shift + p ");
 
     expect(row(panel, "core:open-palette").querySelector(".shortcut-status")?.textContent).toContain("Ctrl+Shift+P");
     expect(row(panel, "core:open-palette").textContent).toContain("Custom · Unsaved");
     await clickRow(panel, "core:open-palette", "Save");
-    expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:other": "mod+o", "core:open-palette": "mod+shift+p" } });
+    expect(onSave).toHaveBeenLastCalledWith({ safeTunnel: true, shortcuts: { "core:other": "mod+o", "core:open-palette": "mod+shift+p" } });
 
-    panel.configResponse = configResponse({ shortcuts: { "core:open-palette": "mod+shift+p", "core:other": "mod+o" } });
+    panel.configResponse = configResponse({ safeTunnel: true, shortcuts: { "core:open-palette": "mod+shift+p", "core:other": "mod+o" } });
     await settle(panel);
     await clickRow(panel, "core:open-palette", "None");
-    expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
+    expect(onSave).toHaveBeenLastCalledWith({ safeTunnel: true, shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
 
-    panel.configResponse = configResponse({ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
+    panel.configResponse = configResponse({ safeTunnel: true, shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
     await settle(panel);
     expect(row(panel, "core:open-palette").textContent).toContain("Disabled");
     await clickRow(panel, "core:open-palette", "Reset");
-    expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:other": "mod+o" } });
+    expect(onSave).toHaveBeenLastCalledWith({ safeTunnel: true, shortcuts: { "core:other": "mod+o" } });
     expect(onSave).toHaveBeenCalledTimes(3);
   });
 
@@ -265,6 +265,6 @@ function configResponse(config: PiWebConfigValues): PiWebConfigResponse {
     exists: true,
     config,
     effectiveConfig: config,
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
   };
 }

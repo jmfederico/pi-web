@@ -110,6 +110,10 @@ services:
       <<: *pi-web-dev-environment
       PI_WEB_HOST: 0.0.0.0
       PI_WEB_PORT: "8504"
+      # The dev browser entrypoint is the Vite listener, not the API process:
+      # the API's dev-mode pointer and Safe Tunnel's default local target use it.
+      # Keep in sync with the Vite dev port (vite.config.ts).
+      PI_WEB_BROWSER_URL: "http://127.0.0.1:8505"
     ports:
       - "${PI_WEB_DEV_API_BIND_ADDR:-127.0.0.1}:${PI_WEB_DEV_API_PORT:-8504}:8504"
       - "${PI_WEB_DEV_BIND_ADDR:-127.0.0.1}:${PI_WEB_DEV_PORT:-8505}:8505"

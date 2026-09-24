@@ -89,6 +89,7 @@
 <a href="#session-tools">Session daemon</a>
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
+<a href="#safe-tunnel-availability">Safe Tunnel</a>
 <a href="#storage">Storage</a>
 <a href="#providers">Providers &amp; trust</a>
 <a href="#environment">Environment overrides</a>
@@ -495,14 +496,48 @@
 <td>Web/API restart</td>
 </tr>
 <tr>
-<th scope="row">Development hosts<br><code>allowedHosts</code></th>
-<td>Gateway dev server</td>
+<th scope="row">Additional dev-server and Safe Tunnel API hosts<br><code>allowedHosts</code></th>
+<td>Gateway</td>
 <td><code>[]</code> (Vite built-ins)</td>
-<td>Additional trusted hostnames accepted by the development UI server.</td>
-<td>Dev web/UI restart</td>
+<td>Additional trusted hostnames. The saved Safe Tunnel hostname is managed automatically in dev, not copied into this list.</td>
+<td>Dev web/UI + gateway web/API restart after configured entries change</td>
 </tr>
 </tbody></table></div>
 <p id="deployment-paths"><strong>Serving at a URL prefix?</strong> No config key is needed. The proxy must redirect to a trailing slash and strip the prefix before forwarding HTTP and WebSocket traffic. <a href="install#reverse-proxy-prefix">Reverse-proxy example →</a></p>
+<h3 id="safe-tunnel-availability">Experimental Safe Tunnel availability</h3>
+<div class="table-scroll" role="region" aria-label="Safe Tunnel settings" tabindex="0">
+<table class="reference-table settings-table">
+<caption>Safe Tunnel settings</caption>
+<thead><tr>
+<th scope="col">Setting</th>
+<th scope="col">Applies to</th>
+<th scope="col">Default</th>
+<th scope="col">What it changes</th>
+<th scope="col">Apply / restart</th>
+</tr></thead>
+<tbody>
+<tr>
+<th scope="row">Experimental availability<br><code>safeTunnel</code></th>
+<td>Global gateway only; not project-local or selected-machine config</td>
+<td><code>false</code> (completely unavailable)</td>
+<td>JSON boolean <code>true</code> makes Safe Tunnel available; distinct from its durable Enable / Disable desired state.</td>
+<td>Gateway web/API restart; no session-daemon restart</td>
+</tr>
+<tr>
+<th scope="row">Local browser entrypoint<br><code>PI_WEB_BROWSER_URL</code></th>
+<td>Development web/API environment only; never packaged/server mode</td>
+<td>Unset</td>
+<td>Declares the Vite dev listener, selects the Safe Tunnel local target, and disables client serving in the API process.</td>
+<td>Web/API restart</td>
+</tr>
+</tbody></table></div>
+<div class="callout warning"><strong>Development host changes require a manual Vite restart.</strong> Vite loads the saved tunnel hostname into its HTTP and application-WebSocket host checks at startup. After first registration or a hostname change/removal, manually restart Vite; a browser refresh alone does not update host trust. Settings shows the saved hostname as managed read-only state.</div>
+<details class="config-details"><summary>Availability, environment overrides, and offline mode</summary><ul>
+<li><strong>Opt in:</strong> set <code>"safeTunnel": true</code> in global gateway config. Strings, numbers, and <code>null</code> are invalid; the value must be a JSON boolean.</li>
+<li><strong>Environment override:</strong> a nonempty <code>PI_WEB_SAFE_TUNNEL</code> takes precedence in both directions. <code>1</code> and case-insensitive <code>true</code> enable availability; every other nonempty value, including <code>0</code> and <code>false</code>, disables it. Empty means unset and falls back to config.</li>
+<li><strong>Startup snapshot:</strong> availability stays unchanged until the gateway web/API process restarts. Making it available leaves durable desired state disabled until you choose <strong>Enable Safe Tunnel</strong>. Turning availability off and restarting makes it dormant without rewriting that desired state.</li>
+<li><strong>Offline wins:</strong> any nonempty <code>PI_WEB_OFFLINE</code> or <code>PI_OFFLINE</code>, including <code>0</code>, overrides both opt-in mechanisms. Safe Tunnel then has no routes, UI, state reads or writes, timers, artifact work, child process, or background network activity.</li>
+</ul><p><a href="safe-tunnel.md">Experimental Safe Tunnel guide →</a> Operation, ingress security, local targets, restart behavior, and managed-platform limits.</p></details>
 <h3>Daemon transport (environment only)</h3>
 <div class="table-scroll" role="region" aria-label="Web/API ↔ session daemon connection" tabindex="0">
 <table class="reference-table settings-table">
@@ -594,6 +629,7 @@
 <td>Sessiond restart</td>
 </tr>
 </tbody></table></div>
+<p>When experimental Safe Tunnel is available and used, its private state lives at <code>$PI_WEB_DATA_DIR/safe-tunnel/config.json</code>. The one pinned managed <code>frpc</code> executable, when downloaded, lives beneath <code>$PI_WEB_DATA_DIR/safe-tunnel/frpc/versions/0.69.1/</code>.</p>
 <details class="config-details"><summary>Changing directories or running a second instance</summary><ul><li><strong>State migration:</strong> a new PI WEB data directory starts with empty registries and no archives. Stop PI WEB before copying state. For archives, copy both <code>archived-sessions.json</code> and <code>archived-sessions/</code>.</li><li><strong>Second instance:</strong> use a distinct data directory, daemon endpoint, and web port. One live session daemon owns each data directory.</li><li><strong>Agent state:</strong> uses the bundled Pi SDK’s data layout. PI WEB does not convert profiles or move PI WEB-managed archives when the agent directory changes.</li><li><strong>Active path:</strong> sessiond keeps the agent directory resolved at startup. Web/API-only restarts do not change it.</li></ul></details>
 <details class="config-details"><summary>Environment inherited by agent processes</summary><ul><li>Agent shells, terminals, and child sessions inherit the daemon environment, including its resolved Pi state paths.</li><li><code>NODE_ENV</code> and <code>PORT</code> are removed from the environment given to agent processes.</li><li><code>PI_WEB_SESSION=1</code> marks nested processes. Inherited <code>PI_WEB_*</code> values still point to the live hosting instance.</li><li>Do not restart the hosting session daemon from inside an active session you need to preserve.</li></ul></details>
 </section>
@@ -629,7 +665,7 @@
 <tr>
 <th scope="row">Offline mode<br><code>PI_WEB_OFFLINE / PI_OFFLINE</code></th>
 <td>Web/API + sessiond environment</td>
-<td>Unset (off). Any nonempty value disables release checks and provider catalog network refresh.</td>
+<td>Unset (off). Any nonempty value disables release checks, provider catalog network refresh, and Safe Tunnel availability.</td>
 <td>Web/API + sessiond restart</td>
 </tr>
 <tr>
@@ -705,6 +741,11 @@
 <th scope="row"><code>allowedHosts</code></th>
 <td><code>PI_WEB_ALLOWED_HOSTS</code></td>
 <td>Comma-separated hosts, or <code>true</code></td>
+</tr>
+<tr>
+<th scope="row"><code>safeTunnel</code></th>
+<td><code>PI_WEB_SAFE_TUNNEL</code></td>
+<td><code>1</code> / case-insensitive <code>true</code> enable; other nonempty values disable; empty falls back to config</td>
 </tr>
 <tr>
 <th scope="row"><code>maxUploadBytes</code></th>

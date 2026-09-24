@@ -1,11 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { loadPiWebConfig, parseAgentConfig, parseAttachmentsConfig, parseUploadsConfig, resolveEffectivePiWebConfig, savePiWebConfig, type AgentPathHost, type LoadOptions, type PiWebConfig } from "../config.js";
-import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues } from "../shared/apiTypes.js";
+import type { PiWebConfigEnvOverrides, PiWebConfigResponse, PiWebConfigValues, PiWebManagedAllowedHost } from "../shared/apiTypes.js";
 import { isPiWebPluginId } from "../shared/pluginIds.js";
 
 export interface PiWebConfigService {
   read: () => PiWebConfigResponse | Promise<PiWebConfigResponse>;
   write: (config: PiWebConfigValues) => PiWebConfigResponse | Promise<PiWebConfigResponse>;
+}
+
+export interface PiWebConfigRouteOptions {
+  readonly managedAllowedHosts?: () => readonly PiWebManagedAllowedHost[] | Promise<readonly PiWebManagedAllowedHost[]>;
 }
 
 export const SELECTED_MACHINE_CONFIG_KEYS = [
@@ -45,10 +49,18 @@ export function currentPiWebConfigResponse(options: LoadOptions = {}): PiWebConf
   };
 }
 
-export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService()): void {
+export function registerConfigRoutes(
+  app: FastifyInstance,
+  service: PiWebConfigService = createFilePiWebConfigService(),
+  options: PiWebConfigRouteOptions = {},
+): void {
+  const gatewayResponse = (response: PiWebConfigResponse) => (
+    withManagedAllowedHosts(app, response, options.managedAllowedHosts)
+  );
+
   app.get("/api/config", async (_request, reply) => {
     try {
-      return await service.read();
+      return await gatewayResponse(await service.read());
     } catch (error) {
       return reply.code(500).send({ error: errorMessage(error) });
     }
@@ -56,12 +68,32 @@ export function registerConfigRoutes(app: FastifyInstance, service: PiWebConfigS
 
   app.put<{ Body: { config?: unknown } | undefined }>("/api/config", async (request, reply) => {
     try {
-      return await service.write(parseConfigRequest(request.body?.config));
+      const response = await service.write(parseConfigRequest(request.body?.config));
+      return await gatewayResponse(response);
     } catch (error) {
       const status = isConfigValidationError(error) ? 400 : 500;
       return reply.code(status).send({ error: errorMessage(error) });
     }
   });
+}
+
+async function withManagedAllowedHosts(
+  app: FastifyInstance,
+  response: PiWebConfigResponse,
+  provider: PiWebConfigRouteOptions["managedAllowedHosts"],
+): Promise<PiWebConfigResponse> {
+  if (provider === undefined) return response;
+  try {
+    return {
+      ...response,
+      managedAllowedHosts: [...await provider()],
+    };
+  } catch {
+    // Config remains usable if private Safe Tunnel state is unreadable. The
+    // derived trust list fails closed without logging state parser details.
+    app.log.warn("failed to derive managed Safe Tunnel allowed hosts");
+    return { ...response, managedAllowedHosts: [] };
+  }
 }
 
 export function registerLocalMachineConfigRoutes(app: FastifyInstance, service: PiWebConfigService = createFilePiWebConfigService()): void {
@@ -102,21 +134,28 @@ export function mergeSelectedMachineConfig(current: PiWebConfigValues, patch: Pi
 }
 
 export function selectedMachineConfigResponse(response: PiWebConfigResponse): PiWebConfigResponse {
-  return {
+  const selectedResponse: PiWebConfigResponse = {
     ...response,
     config: pickSelectedMachineConfig(response.config),
     effectiveConfig: pickSelectedMachineConfig(response.effectiveConfig),
   };
+  delete selectedResponse.managedAllowedHosts;
+  return selectedResponse;
 }
 
 export function parsePiWebConfigResponseBody(value: unknown, source = "PI WEB config response"): PiWebConfigResponse {
   const record = requireResponseRecord(value, source);
+  const managedAllowedHosts = parseManagedAllowedHostsResponse(
+    record["managedAllowedHosts"],
+    source,
+  );
   return {
     path: requireResponseString(record, "path", source),
     exists: requireResponseBoolean(record, "exists", source),
     config: parseConfigRequest(record["config"], "portable"),
     effectiveConfig: parseConfigRequest(record["effectiveConfig"], "portable"),
     envOverrides: parsePiWebConfigEnvOverridesResponse(record["envOverrides"], source),
+    ...(managedAllowedHosts === undefined ? {} : { managedAllowedHosts }),
   };
 }
 
@@ -132,6 +171,7 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   const uploads = value["uploads"];
   const attachments = value["attachments"];
   const maxUploadBytes = value["maxUploadBytes"];
+  const safeTunnel = value["safeTunnel"];
   const spawnSessions = value["spawnSessions"];
   const subsessions = value["subsessions"];
   const askUser = value["askUser"];
@@ -151,6 +191,10 @@ function parseConfigRequest(value: unknown, agentPathHost: AgentPathHost = "curr
   if (uploads !== undefined) config.uploads = parseUploadsConfig(uploads, "request");
   if (attachments !== undefined) config.attachments = parseAttachmentsConfig(attachments, "request");
   if (maxUploadBytes !== undefined) config.maxUploadBytes = parseMaxUploadBytesRequest(maxUploadBytes);
+  if (safeTunnel !== undefined) {
+    if (typeof safeTunnel !== "boolean") throw new Error("PI WEB config safeTunnel must be a boolean");
+    config.safeTunnel = safeTunnel;
+  }
   if (spawnSessions !== undefined) {
     if (typeof spawnSessions !== "boolean") throw new Error("PI WEB config spawnSessions must be a boolean");
     config.spawnSessions = spawnSessions;
@@ -244,12 +288,38 @@ function parsePluginsRequest(value: unknown): NonNullable<PiWebConfig["plugins"]
   }));
 }
 
+function parseManagedAllowedHostsResponse(
+  value: unknown,
+  source: string,
+): readonly PiWebManagedAllowedHost[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`${source} managedAllowedHosts must be an array`);
+  }
+  return value.map((entry) => {
+    const record = requireResponseRecord(entry, `${source} managedAllowedHosts entry`);
+    if (record["source"] !== "safe-tunnel") {
+      throw new Error(`${source} managedAllowedHosts source is invalid`);
+    }
+    const hostname = requireResponseString(
+      record,
+      "hostname",
+      `${source} managedAllowedHosts entry`,
+    );
+    if (hostname === "") {
+      throw new Error(`${source} managedAllowedHosts hostname must be non-empty`);
+    }
+    return { source: "safe-tunnel" as const, hostname };
+  });
+}
+
 function parsePiWebConfigEnvOverridesResponse(value: unknown, source: string): PiWebConfigEnvOverrides {
   const record = requireResponseRecord(value, `${source} envOverrides`);
   return {
     host: requireResponseBoolean(record, "host", source),
     port: requireResponseBoolean(record, "port", source),
     allowedHosts: requireResponseBoolean(record, "allowedHosts", source),
+    safeTunnel: requireResponseBoolean(record, "safeTunnel", source),
     spawnSessions: requireResponseBoolean(record, "spawnSessions", source),
     subsessions: requireResponseBoolean(record, "subsessions", source),
     askUser: requireResponseBoolean(record, "askUser", source),
@@ -278,6 +348,7 @@ function piWebConfigEnvOverrides(env: NodeJS.ProcessEnv): PiWebConfigEnvOverride
     host: isEnvSet(env["PI_WEB_HOST"]),
     port: isEnvSet(env["PI_WEB_PORT"]) || isEnvSet(env["PORT"]),
     allowedHosts: isEnvSet(env["PI_WEB_ALLOWED_HOSTS"]),
+    safeTunnel: isEnvSet(env["PI_WEB_SAFE_TUNNEL"]),
     spawnSessions: isEnvSet(env["PI_WEB_SPAWN_SESSIONS"]),
     subsessions: isEnvSet(env["PI_WEB_SUBSESSIONS"]),
     askUser: isEnvSet(env["PI_WEB_ASK_USER"]),
