@@ -167,10 +167,11 @@
               </p>
               <p>
                 It also checks terminal support (<code>node-pty</code>), reports installed and running PI WEB versions,
-                and checks Linux user-service lingering when relevant. Read skipped or prospective checks carefully:
-                manual-only platforms skip service-manager checks, and a prospective check is not confirmation that
-                your installed services work. If the service-manager check itself fails, resolve that error before
-                treating the result as a PATH problem.
+                and checks Linux user-service lingering when relevant. Doctor reports which JavaScript runtime each PI WEB
+                process runs on and the terminal backend that implies — Bun's native PTY, or <code>node-pty</code> when the
+                process needs it. Read skipped or prospective checks carefully: manual-only platforms skip service-manager
+                checks, and a prospective check is not confirmation that your installed services work. If the service-manager
+                check itself fails, resolve that error before treating the result as a PATH problem.
               </p>
             </article>
 
@@ -195,6 +196,12 @@
                 npm 12 blocks dependency installation scripts unless they are explicitly approved. If PI WEB was installed
                 without approving <code>node-pty</code>, its required native module can be missing even though npm reported a
                 successful installation.
+              </p>
+              <p>
+                This only concerns processes running on Node.js. A session daemon on Bun serves terminals from Bun's native
+                PTY and never loads <code>node-pty</code>; <code>pi-web doctor</code> names the runtime it is judging, so it
+                does not ask you to approve a native module the running process does not use. See
+                <a href="install#bun-install">Install with Bun</a>.
               </p>
               <p>Reinstall PI WEB with approval limited to <code>node-pty</code>:</p>
               <div class="code-card">

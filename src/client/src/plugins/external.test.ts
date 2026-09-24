@@ -318,6 +318,18 @@ describe("external plugin manifests", () => {
     );
   });
 
+  it("does not repeat an error the gateway already included at the start of the detail", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      error: "Required Terminal plugin runtime is unavailable",
+      code: "required-plugin-runtime-unavailable",
+      detail: "Required Terminal plugin runtime is unavailable: Session daemon workspace authority unavailable: connect ECONNREFUSED /tmp/sessiond.sock",
+    }), { status: 503, statusText: "Service Unavailable" }))));
+
+    await expect(loadExternalPlugins()).rejects.toThrow(
+      "Failed to load plugin manifest (503 Service Unavailable): Required Terminal plugin runtime is unavailable: Session daemon workspace authority unavailable: connect ECONNREFUSED /tmp/sessiond.sock",
+    );
+  });
+
   it("preserves Fastify messages for required Terminal recovery guidance", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
       statusCode: 503,

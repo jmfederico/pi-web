@@ -47,6 +47,47 @@ describe("PI WEB status", () => {
     expect(status).not.toHaveProperty("release");
   });
 
+  // ACCEPTANCE A6: the version report says which runtime each component process runs on, so a
+  // bun-vs-node problem is diagnosable without guessing. A daemon that predates the field stays
+  // silent rather than inheriting the web process's answer, which would be a lie.
+  it("reports the runtime of each component process", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.web.runtime).toBe("node");
+    expect(status.components.sessiond.runtime).toBe("bun");
+    expect(runtime.components.web.runtime).toBe("node");
+    expect(runtime.components.sessiond.runtime).toBe("bun");
+  });
+
+  // The daemon answers for itself, so the report has to name itself: a payload that claims to be
+  // the web component must never fill the sessiond slot with a runtime this process never saw.
+  it("rejects a session daemon runtime report that describes another component", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), component: "web", runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.sessiond.available).toBe(false);
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
+    expect(runtime.components.sessiond.available).toBe(false);
+    expect(runtime.components.sessiond).not.toHaveProperty("runtime");
+    expect(status.components.web.runtime).toBe("node");
+  });
+
+  it("omits the session daemon runtime when the daemon does not report one", async () => {
+    const status = await getPiWebVersionStatus(daemonWithRuntime(runningSessiondRuntime()));
+
+    expect(status.components.web.runtime).toBe("node");
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
+  });
+
   it("reports the loaded Pi version for each component, preferring the daemon report", async () => {
     const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), piVersion: "0.83.0" });
 

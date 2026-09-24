@@ -155,7 +155,7 @@ async function pluginManifestResponseError(response: Response): Promise<string> 
       const responseDetail = value["detail"];
       const message = value["message"];
       detail = typeof responseDetail === "string"
-        ? `${typeof error === "string" ? `${error}: ` : ""}${responseDetail}`
+        ? withLeadingError(responseDetail, error)
         : typeof message === "string" ? message
           : typeof error === "string" ? error : undefined;
     }
@@ -164,6 +164,16 @@ async function pluginManifestResponseError(response: Response): Promise<string> 
   }
   const status = `${String(response.status)}${response.statusText === "" ? "" : ` ${response.statusText}`}`;
   return `Failed to load plugin manifest (${status})${detail === undefined ? "" : `: ${detail}`}`;
+}
+
+/**
+ * Joins the gateway's short `error` with its `detail`. Bodies that already spell the error out at the
+ * start of the detail — the required-plugin runtime 503 does, because the server composes detail from
+ * the full sentence — must not have that sentence repeated by this formatter.
+ */
+function withLeadingError(detail: string, error: unknown): string {
+  if (typeof error !== "string" || error === "") return detail;
+  return detail === error || detail.startsWith(`${error}: `) ? detail : `${error}: ${detail}`;
 }
 
 function parseBackendRevision(value: unknown): string | undefined {

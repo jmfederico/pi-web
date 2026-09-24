@@ -90,6 +90,7 @@
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
+<a href="#runtime">JavaScript runtime</a>
 <a href="#providers">Providers &amp; trust</a>
 <a href="#environment">Environment overrides</a>
 <a href="#worktree-pre-remove-hook">Cleanup hook</a>
@@ -597,6 +598,36 @@
 <details class="config-details"><summary>Changing directories or running a second instance</summary><ul><li><strong>State migration:</strong> a new PI WEB data directory starts with empty registries and no archives. Stop PI WEB before copying state. For archives, copy both <code>archived-sessions.json</code> and <code>archived-sessions/</code>.</li><li><strong>Second instance:</strong> use a distinct data directory, daemon endpoint, and web port. One live session daemon owns each data directory.</li><li><strong>Agent state:</strong> uses the bundled Pi SDK’s data layout. PI WEB does not convert profiles or move PI WEB-managed archives when the agent directory changes.</li><li><strong>Active path:</strong> sessiond keeps the agent directory resolved at startup. Web/API-only restarts do not change it.</li></ul></details>
 <details class="config-details"><summary>Environment inherited by agent processes</summary><ul><li>Agent shells, terminals, and child sessions inherit the daemon environment, including its resolved Pi state paths.</li><li><code>NODE_ENV</code> and <code>PORT</code> are removed from the environment given to agent processes.</li><li><code>PI_WEB_SESSION=1</code> marks nested processes. Inherited <code>PI_WEB_*</code> values still point to the live hosting instance.</li><li>Do not restart the hosting session daemon from inside an active session you need to preserve.</li></ul></details>
 </section>
+<section id="runtime"><h2>JavaScript runtime</h2>
+<p>PI WEB runs on Node.js or Bun. Every PI WEB command starts through a launcher that chooses the interpreter at start time, so <code>PI_WEB_RUNTIME</code> is read from the environment of the process being started — there is no config key and nothing to rebuild.</p>
+<div class="table-scroll" role="region" aria-label="Runtime selector" tabindex="0">
+<table class="reference-table ">
+<caption>PI_WEB_RUNTIME values</caption>
+<thead><tr>
+<th scope="col">Value</th>
+<th scope="col">Behavior</th>
+</tr></thead>
+<tbody>
+<tr>
+<th scope="row">unset or <code>auto</code></th>
+<td>Follows the package manager that installed PI WEB: <code>bun add -g</code> uses Bun; npm or any other layout uses Node.js. The other runtime is tried only when the preferred one is not usable. Capability wins over availability — the launcher refuses to start on a Bun without the native terminal API.</td>
+</tr>
+<tr>
+<th scope="row"><code>bun</code></th>
+<td>Hard requirement. Fails loudly when Bun is missing or cannot boot PI WEB.</td>
+</tr>
+<tr>
+<th scope="row"><code>node</code></th>
+<td>Never select Bun, even when it is installed.</td>
+</tr>
+<tr>
+<th scope="row">any other value</th>
+<td>Exits with an error naming the variable and the accepted values.</td>
+</tr>
+</tbody></table></div>
+<details class="config-details"><summary>PATH discovery and launchd / systemd setup</summary><ul><li><strong>Service PATH gaps:</strong> user services start with the service manager's environment, not your shell. The launcher supplements <code>PATH</code> by probing <code>~/.bun/bin/bun</code>, <code>/usr/local/bin/bun</code>, <code>/opt/homebrew/bin/bun</code>, <code>/usr/bin/bun</code>, and Node.js at <code>/usr/bin/node</code>, <code>/usr/local/bin/node</code>, <code>/opt/homebrew/bin/node</code>. Version-manager directories (nvm, fnm, asdf, mise) are <strong>not</strong> among those locations — they must reach the service through <code>PATH</code>.</li><li><strong>Auto-detection:</strong> the launcher reads the installing package manager from the tree layout: <code>install/global/node_modules</code> means bun; every other layout (npm, pnpm, <code>bun add -g --linker npm</code>, a dev checkout) prefers Node.js.</li><li><strong>Pinning:</strong> set <code>PI_WEB_RUNTIME</code> wherever the process gets its environment — an <code>Environment=</code> drop-in for systemd, or an <code>Environment=</code> / <code>EnvironmentFile=</code> key in the launchd plist, then restart.</li><li><strong>Verification:</strong> <code>pi-web doctor</code> and <code>pi-web version</code> report the runtime each process actually selected, and <code>pi-web doctor</code> says which terminal backend that implies.</li></ul></details>
+</section>
+
 <section id="providers"><h2>Providers, catalogs & project trust</h2>
 <div class="table-scroll" role="region" aria-label="Provider and trust configuration" tabindex="0">
 <table class="reference-table ">

@@ -25,9 +25,9 @@
     }
   },
   "bin": {
-    "pi-web": "dist/cli.js",
-    "pi-web-server": "dist/server/index.js",
-    "pi-web-sessiond": "dist/server/sessiond.js"
+    "pi-web": "dist/bin/pi-web.sh",
+    "pi-web-server": "dist/bin/pi-web-server.sh",
+    "pi-web-sessiond": "dist/bin/pi-web-sessiond.sh"
   },
   "files": [
     "dist",
@@ -53,7 +53,8 @@
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
     "dev:plugins": "node scripts/build-plugins.mjs --watch",
-    "build": "npm run clean && tsc -p tsconfig.build.json && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build": "npm run clean && npm run build:launchers && tsc -p tsconfig.build.json && npm run build:plugin-api && npm run build:plugins && vite build",
+    "build:launchers": "node scripts/build-launchers.mjs",
     "build:plugin-api": "tsc -p tsconfig.plugin-api.json",
     "build:plugins": "tsc -p tsconfig.plugins.json && node scripts/build-plugins.mjs",
     "capture:screenshots": "node scripts/capture-screenshots.mjs",
@@ -71,6 +72,7 @@
     "prepack": "npm run build",
     "pack:dry": "npm pack --dry-run",
     "smoke:package-install": "node scripts/smoke-package-install.mjs",
+    "smoke:bun-install": "node scripts/smoke-package-install.mjs bun",
     "prepublishOnly": "npm run verify",
     "publish:npm": "npm publish --access public",
     "prepare": "node scripts/install-git-hooks.mjs",
@@ -101,10 +103,12 @@
     "fastify": "^5.10.0",
     "lit": "^3.3.3",
     "marked": "^18.0.6",
-    "node-pty": "^1.1.0",
     "typebox": "1.3.7",
     "undici": "^8.5.0",
     "ws": "^8.21.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
@@ -120,6 +124,8 @@
     "happy-dom": "^20.11.1",
     "knip": "^6.25.0",
     "mermaid": "^11.17.2",
+    "pi-effort": "^0.0.8",
+    "pi-subagents": "^0.60.0",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.63.0",

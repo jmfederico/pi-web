@@ -424,3 +424,124 @@ function terminalExit(service: TerminalService, terminalId: string): Promise<str
 function scope(cwd = process.cwd()): TerminalWorkspaceScope {
   return { projectId: "p1", workspaceId: "w1", cwd };
 }
+
+describe("TerminalService backend seam", () => {
+  // The service must route every PTY interaction through the injected backend, so a missing
+  // node-pty under Bun (or any future engine) can never reach the service as a hard dependency.
+  interface FakeProcess {
+    write: (data: string) => void;
+    resize: (cols: number, rows: number) => void;
+    kill: (signal?: string) => void;
+    handlers: { output(data: string): void; exit(code: number | undefined): void } | undefined;
+  }
+
+  function fakeBackend() {
+    const created: { id: string; options: { cwd: string; shell: string; shellArgs: string[]; cols?: number; rows?: number } }[] = [];
+    const killed: string[] = [];
+    const disposed: string[] = [];
+    const processes = new Map<string, FakeProcess>();
+    let nextId = 0;
+    return {
+      created,
+      killed,
+      backend: {
+        available: () => true,
+        create(options: { cwd: string; shell: string; shellArgs: string[]; cols?: number; rows?: number; env: Record<string, string> }) {
+          const id = `fake-${String(nextId)}`;
+          nextId += 1;
+          created.push({ id, options });
+          processes.set(id, {
+            write: () => undefined,
+            resize: () => undefined,
+            kill: () => undefined,
+            handlers: undefined,
+          });
+          return { id };
+        },
+        write: (id: string, data: string) => { processes.get(id)?.write(data); },
+        resize: (id: string, cols: number, rows: number) => { processes.get(id)?.resize(cols, rows); },
+        kill: (id: string) => { killed.push(id); },
+        attach: (id: string, handlers: { output(data: string): void; exit(code: number | undefined): void }) => {
+          const process = processes.get(id);
+          if (process === undefined) return () => undefined;
+          process.handlers = handlers;
+          return () => { if (process.handlers === handlers) process.handlers = undefined; };
+        },
+        dispose: () => { disposed.push("dispose"); },
+      },
+      emit(id: string, data: string): void {
+        processes.get(id)?.handlers?.output(data);
+      },
+      exit(id: string, code: number | undefined): void {
+        processes.get(id)?.handlers?.exit(code);
+      },
+      disposed,
+    };
+  }
+
+  it("creates, routes writes and resizes, and kills through the injected backend", () => {
+    const fake = fakeBackend();
+    const service = new TerminalService(undefined, fake.backend);
+    try {
+      const terminal = service.create({ ...scope(), cols: 120, rows: 40 });
+      const backendId = fake.created[0]?.id;
+      expect(backendId).toBeTypeOf("string");
+
+      service.write(scope(), terminal.id, "ls\n");
+      service.resize(scope(), terminal.id, 80, 24);
+      service.close(scope(), terminal.id);
+
+      expect(fake.created).toHaveLength(1);
+      expect(fake.created[0]?.options).toMatchObject({ cwd: scope().cwd, cols: 120, rows: 40 });
+      // The service tracks its own terminal id and routes PTY interactions by backend id.
+      expect(fake.killed).toEqual([backendId]);
+    } finally {
+      service.dispose();
+    }
+    expect(fake.disposed).toEqual(["dispose"]);
+  });
+
+  it("marks the terminal exited and completes the command run from backend exit", () => {
+    const fake = fakeBackend();
+    const service = new TerminalService(undefined, fake.backend);
+    try {
+      const run = service.runCommand({
+        origin: "test",
+        ...scope(),
+        title: "Backend exit test",
+        command: "true",
+      });
+
+      expect(service.getCommandRun(run.id)?.status).toBe("running");
+      const backendId = fake.created[0]?.id ?? "";
+      expect(backendId).toBeTypeOf("string");
+      fake.exit(backendId, 3);
+
+      const completed = service.getCommandRun(run.id);
+      expect(completed?.status).toBe("failed");
+      expect(completed?.exitCode).toBe(3);
+      expect(completed?.completedAt).toBeTypeOf("string");
+    } finally {
+      service.dispose();
+    }
+  });
+
+  it("buffers backend output for replay to later attachers", () => {
+    const fake = fakeBackend();
+    const service = new TerminalService(undefined, fake.backend);
+    try {
+      const terminal = service.create(scope());
+      fake.emit(fake.created[0]?.id ?? "", "first\n");
+
+      const seen: string[] = [];
+      service.attach(scope(), terminal.id, {
+        output: (data, replay) => { if (replay) seen.push(data); },
+        exit: () => undefined,
+      });
+
+      expect(seen).toEqual(["first\n"]);
+    } finally {
+      service.dispose();
+    }
+  });
+});

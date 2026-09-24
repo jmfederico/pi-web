@@ -25,5 +25,9 @@
     "pi-packages/**/*.ts"
   ],
   "ignoreBinaries": ["mkfifo"],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "pi-effort",
+    "pi-subagents"
+  ]
 }

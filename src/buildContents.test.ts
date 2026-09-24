@@ -1,0 +1,468 @@
+import { execFile } from "node:child_process";
+import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
+import { describe, expect, it } from "vitest";
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const publicApiDeclarationPaths = [
+  "plugin-api.d.ts",
+  "server-plugin-api.d.ts",
+  "shared/pluginApiTypes.d.ts",
+] as const;
+
+describe("production build contents", () => {
+  it("keeps development sessiond startup build-free and gives web a single builder", async () => {
+    const metadata: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+    if (!isRecord(metadata) || !isRecord(metadata["scripts"])) throw new Error("package.json scripts are missing");
+
+    const scripts = metadata["scripts"];
+    expect(scripts["dev"]).toContain("npm run dev:sessiond");
+    for (const scriptName of ["dev:sessiond", "start:sessiond"] as const) {
+      const command = scripts[scriptName];
+      if (typeof command !== "string") throw new Error(`package.json script is missing: ${scriptName}`);
+      expect(command).toMatch(/^node scripts\/dev-sessiond\.mjs(?: --watch)?$/u);
+      expect(command).not.toContain("build:plugins");
+    }
+    expect(scripts["dev:web"]).toBe("tsc -p tsconfig.plugins.json && node scripts/dev-web.mjs");
+    expect(scripts["dev:plugins"]).toBe("node scripts/build-plugins.mjs --watch");
+  });
+
+  // Constructing the full compiler graph can exceed Vitest's default timeout under parallel-suite CPU contention.
+  it("keeps test-support modules out of the TypeScript build graph", { timeout: 15_000 }, () => {
+    const buildConfig = readBuildConfig();
+    const program = ts.createProgram({ rootNames: buildConfig.fileNames, options: buildConfig.options });
+    const projectSources = program.getSourceFiles()
+      .map((sourceFile) => normalizePath(relative(repoRoot, sourceFile.fileName)))
+      .filter((path) => path.startsWith("src/"));
+
+    expect(projectSources).toContain("src/server/app.ts");
+    expect(projectSources.filter(isTestSupportPath)).toEqual([]);
+  });
+
+  it("keeps test-support artifacts out of the npm tarball", async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-package-contents-"));
+    try {
+      const fixtureDist = join(fixtureRoot, "dist", "server");
+      await mkdir(fixtureDist, { recursive: true });
+      await Promise.all([
+        // Lifecycle hooks do not affect which files are packed, and npm 10 runs
+        // `prepare` during `npm pack` even with `--ignore-scripts`, so strip
+        // them: the fixture has no scripts/ tree for a hook to resolve.
+        writeFixtureManifest(fixtureRoot),
+        copyFile(join(repoRoot, "plugin-api.d.ts"), join(fixtureRoot, "plugin-api.d.ts")),
+        copyFile(join(repoRoot, "server-plugin-api.d.ts"), join(fixtureRoot, "server-plugin-api.d.ts")),
+        writeFile(join(fixtureRoot, "dist", "plugin-api.d.ts"), "export {};\n", "utf8"),
+        writeFile(join(fixtureRoot, "dist", "server-plugin-api.d.ts"), "export {};\n", "utf8"),
+        writeFile(join(fixtureRoot, "dist", "server-plugin-api.js"), "export {};\n", "utf8"),
+        writeFile(join(fixtureDist, "app.js"), "export {};\n", "utf8"),
+        writeFile(join(fixtureDist, "app.testSupport.js"), "export {};\n", "utf8"),
+        writeFile(join(fixtureDist, "app.testSupport.js.map"), "{}\n", "utf8"),
+      ]);
+
+      const example = join(fixtureRoot, "examples", "session-bridge-plugin");
+      await mkdir(join(example, "node_modules", "dependency"), { recursive: true });
+      await mkdir(join(example, "dist"), { recursive: true });
+      await writeFile(join(example, "package.json"), '{"name":"example","version":"1.0.0"}\n');
+      await writeFile(join(example, "node_modules", "dependency", "index.d.ts"), "export {};\n");
+      await writeFile(join(example, "dist", "stale.js"), "export {};\n");
+      const stdout = await runNpm(["pack", "--dry-run", "--json", "--ignore-scripts"], fixtureRoot);
+      const packagedFiles = packageFilePaths(stdout);
+
+      expect(packagedFiles).toContain("examples/session-bridge-plugin/package.json");
+      expect(packagedFiles.some((path) => path.includes("/node_modules/") || path.includes("/session-bridge-plugin/dist/"))).toBe(false);
+      expect(packagedFiles).toEqual(expect.arrayContaining([
+        "dist/plugin-api.d.ts",
+        "dist/server-plugin-api.d.ts",
+        "dist/server-plugin-api.js",
+        "dist/server/app.js",
+        "plugin-api.d.ts",
+        "server-plugin-api.d.ts",
+      ]));
+      expect(packagedFiles).not.toContain("dist/plugin-api/unstable.d.ts");
+      expect(packagedFiles).not.toContain("plugin-api/unstable.d.ts");
+      expect(packagedFiles.filter(isTestSupportPath)).toEqual([]);
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the browser API type-only and exports the supported server runtime contract", async () => {
+    const metadata: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+    if (!isRecord(metadata)) throw new Error("package.json was not an object");
+
+    expect(metadata["exports"]).toEqual({
+      "./plugin-api": { types: "./dist/plugin-api.d.ts" },
+      "./server-plugin-api": {
+        types: "./dist/server-plugin-api.d.ts",
+        import: "./dist/server-plugin-api.js",
+      },
+    });
+    expect(metadata["typesVersions"]).toEqual({
+      "*": {
+        "plugin-api": ["dist/plugin-api.d.ts"],
+        "server-plugin-api": ["dist/server-plugin-api.d.ts"],
+      },
+    });
+  });
+
+  // ACCEPTANCE A2: the published bins are the generated runtime launchers, and they reach the
+  // user still executable. Both halves matter: a launcher that loses its mode in the tarball is
+  // an unusable bin, and a tarball that omits dist/bin/ breaks `pi-web --help` at best.
+  it("ships the runtime launchers as executable package bins", async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-launcher-package-"));
+    try {
+      await createLauncherFixture(fixtureRoot);
+      await execUtf8(process.execPath, [join(fixtureRoot, "scripts", "build-launchers.mjs")], fixtureRoot, 30_000);
+
+      const stdout = await runNpm(["pack", "--dry-run", "--json", "--ignore-scripts"], fixtureRoot);
+      const [entry] = packageEntries(stdout);
+      if (entry === undefined) throw new Error("npm pack reported no package");
+      const launcherPaths = [
+        "dist/bin/pi-web-server.sh",
+        "dist/bin/pi-web-sessiond.sh",
+        "dist/bin/pi-web.sh",
+      ];
+      expect(entry.paths.filter((path) => path.startsWith("dist/bin/"))).toEqual(launcherPaths);
+      const manifest: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+      if (!isRecord(manifest) || !isRecord(manifest["bin"])) throw new Error("package.json bin map is missing");
+      expect(Object.values(manifest["bin"]).sort()).toEqual(launcherPaths);
+
+      if (process.platform !== "win32") {
+        // Modes come from the packing host's filesystem, so the exec-bit promise is only
+        // checkable where those bits exist; the listing/bin checks above run everywhere.
+        for (const path of launcherPaths) {
+          const mode = entry.modes.get(path) ?? 0;
+          expect(mode & 0o111, `${path} is packed without an exec bit`).not.toBe(0);
+        }
+        const tarballName = await packTarball(fixtureRoot);
+        const extracted = join(fixtureRoot, "extracted");
+        await mkdir(extracted, { recursive: true });
+        await execUtf8("tar", ["-xzf", join(fixtureRoot, tarballName), "-C", extracted], fixtureRoot, 30_000);
+        for (const path of launcherPaths) {
+          const stats = await lstat(join(extracted, "package", path));
+          expect(stats.mode & 0o111, `${path} lost its exec bit in the tarball`).not.toBe(0);
+        }
+      }
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("matches the committed browser and server plugin API declaration baseline", async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-plugin-api-baseline-"));
+    try {
+      emitPluginApiDeclarations(fixtureRoot);
+      for (const declarationPath of publicApiDeclarationPaths) {
+        const [actual, baseline] = await Promise.all([
+          readFile(join(fixtureRoot, declarationPath), "utf8"),
+          readFile(join(repoRoot, "test-fixtures", "plugin-api-baseline", declarationPath), "utf8"),
+        ]);
+        expect(
+          normalizeLineEndings(actual),
+          `${declarationPath} changed; update the baseline only for an intentional public API change`,
+        ).toBe(normalizeLineEndings(baseline));
+        expect(
+          actual,
+          `${declarationPath} must not expose the host-internal terminal command-run filter`,
+        ).not.toContain("TerminalCommandRunFilter");
+      }
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
+  // This exercises the same command a clean development startup runs, including
+  // typechecking, copying package metadata, and transpiling the complete import graph.
+  it("builds package-complete importable bundled server plugins without prior output", { timeout: 60_000 }, async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), "pi-web-clean-plugin-build-"));
+    try {
+      await createCleanPluginBuildFixture(fixtureRoot);
+      await runNpm(["run", "build:plugins"], fixtureRoot, 60_000);
+      const readyPath = join(fixtureRoot, "dist", ".plugins-ready");
+      expect(await readFile(readyPath, "utf8")).toBe("ready\n");
+
+      const sourcePlugins = await bundledServerPlugins(join(fixtureRoot, "pi-web-plugins"));
+      const builtPluginsRoot = join(fixtureRoot, "dist", "pi-web-plugins");
+      const builtPlugins = await bundledServerPlugins(builtPluginsRoot);
+      expect(sourcePlugins.length).toBeGreaterThan(0);
+      expect(sourcePlugins.every((plugin) => plugin.moduleType === "module")).toBe(true);
+      expect(builtPlugins).toEqual(sourcePlugins);
+
+      for (const plugin of builtPlugins) {
+        const moduleUrl = pathToFileURL(join(builtPluginsRoot, plugin.packageDirectory, plugin.serverModule));
+        moduleUrl.searchParams.set("cleanBuild", plugin.id);
+        const imported: unknown = await import(moduleUrl.href);
+        if (!isRecord(imported)) throw new Error(`Built server plugin did not import as a module: ${plugin.id}`);
+        const pluginExport = imported["default"];
+        if (!isRecord(pluginExport)) throw new Error(`Built server plugin has no default object export: ${plugin.id}`);
+        expect(pluginExport["apiVersion"]).toBe(3);
+        expect(typeof pluginExport["activate"]).toBe("function");
+      }
+
+      const stdout = await runNpm(["pack", "--dry-run", "--json", "--ignore-scripts"], fixtureRoot);
+      const packagedFiles = packageFilePaths(stdout);
+      const builtPluginFiles = (await recursiveFiles(builtPluginsRoot))
+        .map((path) => normalizePath(relative(fixtureRoot, path)))
+        .sort();
+      expect(packagedFiles.filter((path) => path.startsWith("dist/pi-web-plugins/")).sort()).toEqual(builtPluginFiles);
+      expect(builtPluginFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
+      expect(builtPluginFiles.some((path) => path.includes("/relays/"))).toBe(false);
+
+      const filesPluginFiles = builtPluginFiles.filter((path) => path.startsWith("dist/pi-web-plugins/files/"));
+      expect(filesPluginFiles).toEqual(expect.arrayContaining([
+        "dist/pi-web-plugins/files/package.json",
+        "dist/pi-web-plugins/files/browser/pi-web-plugin.js",
+      ]));
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/viewerDependencies-[^/]+\.js$/u.test(path))).toBe(false);
+      expect(filesPluginFiles.some((path) => /\/browser\/assets\/files-icon-[^/]+\.svg$/u.test(path))).toBe(true);
+      expect(filesPluginFiles.every((path) => path.endsWith("/package.json") || path.includes("/browser/"))).toBe(true);
+      expect(packagedFiles).toEqual(expect.arrayContaining(filesPluginFiles));
+
+      // pi-packages/ ships Pi packages (like relays) alongside bundled plugins
+      // without becoming a bundled/local discovery root for them (see
+      // PiWebPluginCatalog). The same clean build:plugins command still emits
+      // them into their own dist directory and packs them into the tarball.
+      const builtPackagesRoot = join(fixtureRoot, "dist", "pi-packages");
+      const builtPackageFiles = (await recursiveFiles(builtPackagesRoot))
+        .map((path) => normalizePath(relative(fixtureRoot, path)))
+        .sort();
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
+      expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
+      expect(builtPackageFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
+      expect(packagedFiles.filter((path) => path.startsWith("dist/pi-packages/")).sort()).toEqual(builtPackageFiles);
+
+      const builtRelaysPackage: unknown = JSON.parse(
+        await readFile(join(builtPackagesRoot, "relays", "package.json"), "utf8"),
+      );
+      if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
+      expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
+
+      // An intentionally broken rebuild must not leave a successful cold-start marker behind.
+      await rm(join(fixtureRoot, "pi-web-plugins", "files", "package.json"));
+      await expect(execUtf8(process.execPath, ["scripts/build-plugins.mjs"], fixtureRoot, 30_000)).rejects.toThrow();
+      await expect(readFile(readyPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+interface BundledServerPlugin {
+  packageDirectory: string;
+  id: string;
+  serverModule: string;
+  moduleType: unknown;
+}
+
+async function createCleanPluginBuildFixture(fixtureRoot: string): Promise<void> {
+  await mkdir(join(fixtureRoot, "scripts"), { recursive: true });
+  await Promise.all([
+    cp(join(repoRoot, "src"), join(fixtureRoot, "src"), { recursive: true }),
+    cp(join(repoRoot, "pi-web-plugins"), join(fixtureRoot, "pi-web-plugins"), { recursive: true }),
+    cp(join(repoRoot, "pi-packages"), join(fixtureRoot, "pi-packages"), { recursive: true }),
+    copyFile(join(repoRoot, "package.json"), join(fixtureRoot, "package.json")),
+    copyFile(join(repoRoot, "tsconfig.json"), join(fixtureRoot, "tsconfig.json")),
+    copyFile(join(repoRoot, "tsconfig.plugins.json"), join(fixtureRoot, "tsconfig.plugins.json")),
+    copyFile(join(repoRoot, "scripts", "build-plugins.mjs"), join(fixtureRoot, "scripts", "build-plugins.mjs")),
+    copyFile(join(repoRoot, "scripts", "build-plugins.d.mts"), join(fixtureRoot, "scripts", "build-plugins.d.mts")),
+    // npm 10 runs `prepare` even under `pack --ignore-scripts`; the hook installer exits 0 without a .git directory.
+    copyFile(join(repoRoot, "scripts", "install-git-hooks.mjs"), join(fixtureRoot, "scripts", "install-git-hooks.mjs")),
+    symlink(
+      join(repoRoot, "node_modules"),
+      join(fixtureRoot, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    ),
+  ]);
+}
+
+/**
+ * A package tree that can generate its own launchers and be packed: the manifest (without
+ * lifecycle hooks), the launcher builder plus its template, and the entrypoints the launchers
+ * reference. `files` ships `dist/`, so whatever the builder writes must reach the tarball.
+ */
+async function createLauncherFixture(fixtureRoot: string): Promise<void> {
+  await Promise.all([
+    writeFixtureManifest(fixtureRoot),
+    mkdir(join(fixtureRoot, "scripts"), { recursive: true }),
+  ]);
+  await Promise.all([
+    copyFile(join(repoRoot, "scripts", "build-launchers.mjs"), join(fixtureRoot, "scripts", "build-launchers.mjs")),
+    copyFile(join(repoRoot, "scripts", "pi-web-launcher.sh"), join(fixtureRoot, "scripts", "pi-web-launcher.sh")),
+    mkdir(join(fixtureRoot, "dist", "server"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(join(fixtureRoot, "dist", "cli.js"), "export {};\n", "utf8"),
+    writeFile(join(fixtureRoot, "dist", "server", "index.js"), "export {};\n", "utf8"),
+    writeFile(join(fixtureRoot, "dist", "server", "sessiond.js"), "export {};\n", "utf8"),
+  ]);
+}
+
+/** Runs a real `npm pack` and returns the tarball filename it wrote into `cwd`. */
+async function packTarball(cwd: string): Promise<string> {
+  const stdout = await runNpm(["pack", "--ignore-scripts", "--pack-destination", "."], cwd);
+  const line = stdout.trim().split("\n").at(-1)?.trim() ?? "";
+  if (!line.endsWith(".tgz")) throw new Error(`npm pack did not report a tarball name (got ${JSON.stringify(stdout)})`);
+  return line;
+}
+
+async function bundledServerPlugins(pluginsRoot: string): Promise<BundledServerPlugin[]> {
+  const plugins: BundledServerPlugin[] = [];
+  for (const entry of await readdir(pluginsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const metadata: unknown = JSON.parse(await readFile(join(pluginsRoot, entry.name, "package.json"), "utf8"));
+    if (!isRecord(metadata)) throw new Error(`Bundled plugin package metadata is invalid: ${entry.name}`);
+    const piWeb = metadata["piWeb"];
+    if (!isRecord(piWeb)) continue;
+    const declarations = piWeb["plugins"];
+    if (!Array.isArray(declarations)) throw new Error(`Bundled plugin declarations are invalid: ${entry.name}`);
+
+    for (const declaration of declarations) {
+      if (!isRecord(declaration)) throw new Error(`Bundled plugin declaration is invalid: ${entry.name}`);
+      const serverModule = declaration["serverModule"];
+      if (serverModule === undefined) continue;
+      const id = declaration["id"];
+      if (typeof id !== "string" || typeof serverModule !== "string") {
+        throw new Error(`Bundled server plugin declaration is invalid: ${entry.name}`);
+      }
+      plugins.push({ packageDirectory: entry.name, id, serverModule, moduleType: metadata["type"] });
+    }
+  }
+  return plugins.sort((left, right) =>
+    left.packageDirectory.localeCompare(right.packageDirectory)
+    || left.id.localeCompare(right.id)
+    || left.serverModule.localeCompare(right.serverModule));
+}
+
+async function recursiveFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) files.push(...await recursiveFiles(path));
+    else if (entry.isFile()) files.push(path);
+  }
+  return files;
+}
+
+function emitPluginApiDeclarations(outDir: string): void {
+  const configPath = join(repoRoot, "tsconfig.plugin-api.json");
+  const config = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(formatDiagnostics([diagnostic]));
+    },
+  });
+  if (config === undefined) throw new Error(`Unable to parse ${configPath}`);
+  if (config.errors.length > 0) throw new Error(formatDiagnostics(config.errors));
+
+  const program = ts.createProgram({
+    rootNames: config.fileNames,
+    options: { ...config.options, outDir },
+  });
+  const emitResult = program.emit();
+  const diagnostics = [...ts.getPreEmitDiagnostics(program), ...emitResult.diagnostics];
+  if (diagnostics.length > 0) throw new Error(formatDiagnostics(diagnostics));
+  if (emitResult.emitSkipped) throw new Error("Plugin API declaration emit was skipped");
+}
+
+function readBuildConfig(): ts.ParsedCommandLine {
+  const configPath = join(repoRoot, "tsconfig.build.json");
+  const config = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
+    ...ts.sys,
+    onUnRecoverableConfigFileDiagnostic(diagnostic) {
+      throw new Error(formatDiagnostics([diagnostic]));
+    },
+  });
+  if (config === undefined) throw new Error(`Unable to parse ${configPath}`);
+  if (config.errors.length > 0) throw new Error(formatDiagnostics(config.errors));
+  return config;
+}
+
+function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
+  return ts.formatDiagnostics(diagnostics, {
+    getCanonicalFileName: (fileName) => fileName,
+    getCurrentDirectory: () => repoRoot,
+    getNewLine: () => "\n",
+  });
+}
+
+async function writeFixtureManifest(fixtureRoot: string): Promise<void> {
+  const manifest: unknown = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8"));
+  if (!isRecord(manifest)) throw new Error("package.json was not an object");
+  delete manifest["scripts"];
+  await writeFile(join(fixtureRoot, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function normalizePath(path: string): string {
+  return path.split(sep).join("/");
+}
+
+function normalizeLineEndings(contents: string): string {
+  return contents.replaceAll("\r\n", "\n");
+}
+
+function isTestSupportPath(path: string): boolean {
+  return path.includes(".testSupport.");
+}
+
+function runNpm(args: string[], cwd: string, timeoutMs = 30_000): Promise<string> {
+  const npmExecPath = process.env["npm_execpath"];
+  if (npmExecPath === undefined || npmExecPath.length === 0) {
+    throw new Error("npm_execpath is required to verify npm package contents");
+  }
+  return execUtf8(process.execPath, [npmExecPath, ...args], cwd, timeoutMs);
+}
+
+function execUtf8(file: string, args: string[], cwd: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(file, args, { cwd, encoding: "utf8", maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs }, (error, stdout) => {
+      if (error !== null) {
+        reject(error instanceof Error ? error : new Error("Command failed"));
+        return;
+      }
+      resolvePromise(stdout);
+    });
+  });
+}
+
+function packageFilePaths(output: string): string[] {
+  return packageEntries(output).flatMap((entry) => entry.paths);
+}
+
+/**
+ * npm 11 answers `pack --json` with an array; npm 12 keys the same payload by package name.
+ * Both shapes describe one package here, and the assertions below must not depend on which
+ * npm the runner happens to ship.
+ */
+function packageEntries(output: string): { filename: string; paths: string[]; modes: Map<string, number> }[] {
+  const parsed: unknown = JSON.parse(output);
+  const results = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+  if (results.length !== 1) throw new Error("npm pack returned an unexpected result");
+
+  const packResult: unknown = results[0];
+  if (!isRecord(packResult)) throw new Error("npm pack result was not an object");
+  const filesValue = packResult["files"];
+  if (!Array.isArray(filesValue)) throw new Error("npm pack result did not include files");
+  const files: unknown[] = filesValue;
+
+  const modes = new Map<string, number>();
+  const paths = files.map((file) => {
+    if (!isRecord(file) || typeof file["path"] !== "string") {
+      throw new Error("npm pack returned an invalid file entry");
+    }
+    if (typeof file["mode"] === "number") modes.set(file["path"], file["mode"]);
+    return file["path"];
+  });
+  const filename = typeof packResult["filename"] === "string" ? packResult["filename"] : "";
+  return [{ filename, paths, modes }];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
