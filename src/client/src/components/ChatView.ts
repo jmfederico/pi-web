@@ -443,6 +443,11 @@ export class ChatView extends LitElement {
           ${this.renderExtensionDialogs()}
         </div>
         ${this.renderActivityDock()}
+        ${this.pinnedToBottom ? null : html`
+          <button type="button" class="go-to-bottom" aria-label="Go to bottom" title="Go to bottom" @click=${() => { this.goToBottom(); }}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14m-7-7 7 7 7-7"></path></svg>
+          </button>
+        `}
       </div>
       ${this.renderImageZoom()}
     `;
@@ -1124,6 +1129,21 @@ export class ChatView extends LitElement {
   private canScrollUp(): boolean {
     const chat = this.chat;
     return chat !== undefined && chat.scrollTop > 0;
+  }
+
+  private goToBottom(): void {
+    this.cancelPrependRestore();
+    this.pendingScrollRestoreSessionId = undefined;
+    this.pendingScrollRestorePosition = undefined;
+    if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
+    this.restoreScrollFrame = undefined;
+    if (this.scrollToOpenAskFrame !== undefined) cancelAnimationFrame(this.scrollToOpenAskFrame);
+    this.scrollToOpenAskFrame = undefined;
+    if (this.scrollToOpenDialogFrame !== undefined) cancelAnimationFrame(this.scrollToOpenDialogFrame);
+    this.scrollToOpenDialogFrame = undefined;
+    this.pinnedToBottom = true;
+    this.scrollToBottom();
+    this.scheduleScrollPositionSave();
   }
 
   private scrollToBottom() {
