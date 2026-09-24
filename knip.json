@@ -26,6 +26,8 @@
     "pi-packages/**/*.ts"
   ],
   "ignoreBinaries": ["mkfifo"],
+  "ignoreBinaries": ["mkfifo"],
+  "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@hicaru/pi-rlm",
     "pi-effort",
