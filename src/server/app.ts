@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyServerOptions } from "fastify";
 import fastifyCompress from "@fastify/compress";
@@ -253,7 +253,16 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const packagedClientDist = join(dirname(fileURLToPath(import.meta.url)), "..", "client");
   const clientDist = deps.clientDist ?? (existsSync(packagedClientDist) ? packagedClientDist : join(process.cwd(), "dist", "client"));
   if (clientDist !== false && existsSync(clientDist)) {
-    await app.register(fastifyStatic, { root: clientDist });
+    const hashedAssetsDir = join(clientDist, "assets") + sep;
+    await app.register(fastifyStatic, {
+      root: clientDist,
+      // Vite content-hashes every file under assets/, so a URL never changes
+      // meaning; let browsers skip revalidation on reload. Everything else,
+      // notably index.html, keeps the default revalidating policy.
+      setHeaders: (res, filePath) => {
+        if (filePath.startsWith(hashedAssetsDir)) res.header("cache-control", "public, max-age=31536000, immutable");
+      },
+    });
     const deploymentFlavor = deps.deploymentFlavor ?? createDeploymentFlavorResolver(
       async () => {
         const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();
