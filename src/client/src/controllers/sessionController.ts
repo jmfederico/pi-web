@@ -1319,14 +1319,23 @@ export class SessionController {
     return this.selectedSessionRefreshes.request(key, async () => {
       if (!this.isCurrentRefreshTarget(target)) return;
       this.flushPendingUpdates();
+      // Notifications refresh alongside the transcript but must not gate it:
+      // the notification refresh can be extended by coalesced follow-ups (for
+      // example the session socket's initial open), which on slow links held
+      // an already-loaded transcript off screen. It is still awaited below so
+      // the refresh settles, and reports failures, exactly as before.
+      const notificationsRefresh = this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve();
+      notificationsRefresh.catch(() => undefined);
       const [page, status, streamSnapshot] = await Promise.all([
         this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId),
         this.api.status(target.session, target.machineId),
         this.api.streamSnapshot(target.session, target.machineId),
-        this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
       ]);
       if (!this.isCurrentRefreshTarget(target)) return;
-      if (this.isUnchangedSelectedRefresh(target, key, page, status, streamSnapshot)) return;
+      if (this.isUnchangedSelectedRefresh(target, key, page, status, streamSnapshot)) {
+        await notificationsRefresh;
+        return;
+      }
       // Seed the in-flight partial assistant message on top of committed history
       // and record the snapshot's sequence as the watermark. Buffered/live events
       // with `seq <= watermark` are already reflected here and are dropped by
@@ -1344,6 +1353,7 @@ export class SessionController {
       });
       this.applyStatus(status);
       this.lastAppliedSelectedRefresh = { selectionSeq: target.selectionSeq, partialJson: selectedRefreshPartialJson(streamSnapshot) };
+      await notificationsRefresh;
     });
   }
 
