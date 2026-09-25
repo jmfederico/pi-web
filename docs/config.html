@@ -593,6 +593,13 @@
 <td>Override active session storage separately from other Pi state.</td>
 <td>Sessiond restart</td>
 </tr>
+<tr>
+<th scope="row"><span id="web-push-notifications" class="reference-anchor"></span>Web push notifications<br><code>PI_WEB_PUSH_VAPID_PUBLIC_KEY</code> · <code>PI_WEB_PUSH_VAPID_PRIVATE_KEY</code> · <code>PI_WEB_PUSH_VAPID_SUBJECT_EMAIL</code></th>
+<td>Sessiond + browser</td>
+<td><code>push.*</code> / disabled</td>
+<td>VAPID credentials for notifying assistant completions and session errors from the browser, even while the app is closed; the browser toggle lives in Settings → General. See the <a href="config.md#web-push-notifications">Markdown reference</a>.</td>
+<td>Sessiond restart</td>
+</tr>
 </tbody></table></div>
 <details class="config-details"><summary>Changing directories or running a second instance</summary><ul><li><strong>State migration:</strong> a new PI WEB data directory starts with empty registries and no archives. Stop PI WEB before copying state. For archives, copy both <code>archived-sessions.json</code> and <code>archived-sessions/</code>.</li><li><strong>Second instance:</strong> use a distinct data directory, daemon endpoint, and web port. One live session daemon owns each data directory.</li><li><strong>Agent state:</strong> uses the bundled Pi SDK’s data layout. PI WEB does not convert profiles or move PI WEB-managed archives when the agent directory changes.</li><li><strong>Active path:</strong> sessiond keeps the agent directory resolved at startup. Web/API-only restarts do not change it.</li></ul></details>
 <details class="config-details"><summary>Environment inherited by agent processes</summary><ul><li>Agent shells, terminals, and child sessions inherit the daemon environment, including its resolved Pi state paths.</li><li><code>NODE_ENV</code> and <code>PORT</code> are removed from the environment given to agent processes.</li><li><code>PI_WEB_SESSION=1</code> marks nested processes. Inherited <code>PI_WEB_*</code> values still point to the live hosting instance.</li><li>Do not restart the hosting session daemon from inside an active session you need to preserve.</li></ul></details>
