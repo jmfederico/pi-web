@@ -167,6 +167,45 @@ describe("external plugin manifests", () => {
     expect(moduleLoader.mock.calls[0]?.[0]).toContain("/pi-web.terminal/");
   });
 
+  it("starts ordinary plugin imports together after required Terminal and registers them in manifest order", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      lifecycleVersion: 2,
+      terminalMode: "required",
+      plugins: [
+        {
+          id: "pi-web.terminal",
+          module: "./pi-web.terminal/pi-web-plugin.js",
+          backendRevision: "terminal-r1",
+          pairedRequestVersion: 1,
+          pairedChannelVersion: 1,
+          source: "bundled",
+          scope: "bundled",
+          machineSpecific: true,
+        },
+        { id: "first", module: "./first/pi-web-plugin.js", machineSpecific: false },
+        { id: "second", module: "./second/pi-web-plugin.js", machineSpecific: false },
+      ],
+    })))));
+    const resolvers = new Map<string, () => void>();
+    const moduleLoader = vi.fn((moduleUrl: string) => {
+      const id = ["pi-web.terminal", "first", "second"].find((candidate) => moduleUrl.includes(`/${candidate}/`)) ?? "unknown";
+      return new Promise((resolve) => {
+        resolvers.set(id, () => { resolve({ default: { apiVersion: 4, name: id, activate: () => ({ contributions: {} }) } }); });
+      });
+    });
+
+    const loading = loadExternalPlugins(undefined, { moduleLoader });
+    await vi.waitFor(() => { expect(moduleLoader).toHaveBeenCalledOnce(); });
+    resolvers.get("pi-web.terminal")?.();
+    await vi.waitFor(() => { expect(moduleLoader).toHaveBeenCalledTimes(3); });
+    resolvers.get("second")?.();
+    resolvers.get("first")?.();
+    const result = await loading;
+
+    expect(result.registrations.map(({ id }) => id)).toEqual(["pi-web.terminal", "first", "second"]);
+    expect(result.failures).toEqual([]);
+  });
+
   it("attributes unsupported browser API versions to the plugin module", async () => {
     const manifestUrl = "https://pi.example.test/pi-web-plugins/manifest.json";
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({

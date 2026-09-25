@@ -49,14 +49,32 @@ export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest
   const declarations: PiWebPluginRegistrationDeclaration[] = [];
   const registrations: PiWebPluginRegistration[] = [];
   const failures: ExternalPluginLoadFailure[] = [];
-  for (const entry of manifest.plugins) {
-    if (options.shouldLoadPlugin?.(entry) === false) continue;
+  const selected = manifest.plugins.filter((entry) => options.shouldLoadPlugin?.(entry) !== false);
+  const loadModule = options.moduleLoader ?? importPluginModule;
+  const imports = new Map<PluginManifestEntry, Promise<PiWebPlugin>>();
+  const startImport = (entry: PluginManifestEntry): Promise<PiWebPlugin> => {
+    const existing = imports.get(entry);
+    if (existing !== undefined) return existing;
+    const moduleImport = (async () => {
+      const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
+      return parsePluginModule(await loadModule(moduleUrl), moduleUrl);
+    })();
+    // Settled in manifest order below; this only prevents an early rejection being reported as unhandled.
+    moduleImport.catch(() => undefined);
+    imports.set(entry, moduleImport);
+    return moduleImport;
+  };
+  // Download modules in parallel so startup costs one round trip per module depth rather than per
+  // plugin, while still registering in manifest order. A required Terminal loads alone first so its
+  // failure stops before any ordinary plugin module is imported.
+  const terminalFirst = manifest.terminalMode === "required" && selected[0]?.id === REQUIRED_TERMINAL_PLUGIN_ID;
+  if (!terminalFirst) selected.forEach((entry) => { void startImport(entry); });
+  for (const [index, entry] of selected.entries()) {
     const declaration = registrationDeclaration(entry, options.machineId);
     declarations.push(declaration);
     try {
-      const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
-      const module = await (options.moduleLoader ?? importPluginModule)(moduleUrl);
-      const plugin = parsePluginModule(module, moduleUrl);
+      const plugin = await startImport(entry);
+      if (terminalFirst && index === 0) selected.slice(1).forEach((next) => { void startImport(next); });
       registrations.push({
         ...declaration,
         plugin,
