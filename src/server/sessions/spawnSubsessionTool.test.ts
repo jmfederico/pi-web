@@ -1,6 +1,8 @@
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
+import { Check } from "typebox/value";
+import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { createSubsessionToolDefinitions, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 
 const dispatchModel = { provider: "anthropic", id: "claude-sonnet" };
@@ -137,15 +139,41 @@ describe("createSubsessionToolDefinitions", () => {
     expect(firstText(result.content)).toBe("Started tracked subsession child-3 in /repos/a using model openai/gpt-5. Continue other work, then join with yield_to_subsessions; do not poll.");
   });
 
-  it("spawn_subsession teaches the model parameter format and the #provider/model-id reference convention", () => {
+  it("spawn_subsession restricts model overrides to instructions without priming a concrete model", () => {
     const { spawn: spawnTool } = tools({});
 
     expect(spawnTool.parameters).toMatchObject({
       properties: {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
-        model: { description: expect.stringMatching(/provider\/model-id.*#provider\/model-id.*Omit to inherit/s) },
+        model: { description: expect.stringMatching(/provider\/model-id.*only when instructed.*specific model.*choose an appropriate one.*omit it to inherit.*unknown value is rejected/si) },
       },
     });
+    expect(JSON.stringify(spawnTool.parameters)).not.toContain("anthropic/claude-sonnet-4-5");
+  });
+
+  it.each(KNOWN_THINKING_LEVELS)("spawn_subsession overrides inherited thinking with %s without changing the parent", async (thinkingLevel) => {
+    const spawn = vi.fn(() => Promise.resolve({ sessionId: "child", cwd: "/repos/a" }));
+    const { spawn: tool } = tools({ spawn });
+    const ctx = ctxFor("parent", undefined, dispatchModel, "high");
+    const params = { prompt: "work", model: "openai/gpt-5", thinkingLevel };
+
+    expect(Check(tool.parameters, params)).toBe(true);
+    await tool.execute("call", params, undefined, undefined, ctx);
+
+    expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ thinkingLevel, modelSpec: "openai/gpt-5" }));
+    expect(ctx.thinkingLevel).toBe("high");
+  });
+
+  it("spawn_subsession makes thinking overrides instruction-only and rejects invalid levels in the tool schema", () => {
+    const { spawn: tool } = tools({});
+    expect(tool.parameters).toMatchObject({ properties: { thinkingLevel: {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- asymmetric matcher against the tool schema.
+      description: expect.stringMatching(/only when instructed.*specific thinking level.*choose an appropriate one.*omit it to inherit.*clamped/),
+    } } });
+    expect(Check(tool.parameters, { prompt: "work" })).toBe(true);
+    for (const thinkingLevel of ["unknown", "", null, 1]) {
+      expect(Check(tool.parameters, { prompt: "work", thinkingLevel })).toBe(false);
+    }
   });
 
   it("list_subsessions reports the caller's subsessions and their status", async () => {

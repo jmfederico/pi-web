@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { machineScopedPluginId, parseMachineScopedPluginId, type MachineScopedPluginIdParts } from "../../shared/machinePluginIds.js";
+import { machineScopedManifestPluginId, parseMachineScopedPluginId, type MachineScopedPluginIdParts } from "../../shared/machinePluginIds.js";
 import { PI_WEB_PLUGIN_LIFECYCLE_VERSION } from "../../shared/apiTypes.js";
-import { isPiWebPluginId } from "../../shared/pluginIds.js";
+import { isPiWebBundledPluginId, isPiWebPluginId, isReservedPiWebPluginId } from "../../shared/pluginIds.js";
 import { requirePluginBackendRevision } from "../../shared/pluginBackendProtocol.js";
+import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../../shared/requiredTerminalPlugin.js";
 import { RemoteMachineRequestError, type MachineClient } from "./machineClient.js";
 import { MachineService } from "./machineService.js";
 
@@ -10,6 +11,8 @@ interface RemotePluginManifestEntry {
   id: string;
   module: string;
   backendRevision?: string;
+  pairedRequestVersion?: 1;
+  pairedChannelVersion?: 1;
   source?: string;
   scope?: string;
   machineSpecific?: boolean;
@@ -17,6 +20,7 @@ interface RemotePluginManifestEntry {
 
 interface RemotePluginManifest {
   lifecycleVersion: typeof PI_WEB_PLUGIN_LIFECYCLE_VERSION;
+  terminalMode: TerminalPluginMode;
   plugins: RemotePluginManifestEntry[];
 }
 
@@ -38,7 +42,9 @@ const SAFE_RESPONSE_HEADERS = new Set([
 
 export function registerMachinePluginProxyRoutes(app: FastifyInstance, machines: MachinePluginProxyMachines = new MachineService()): void {
   app.get<{ Params: { machineId: string } }>("/api/machines/:machineId/pi-web-plugins/manifest.json", async (request, reply) => {
-    if (request.params.machineId === "local") return { lifecycleVersion: PI_WEB_PLUGIN_LIFECYCLE_VERSION, plugins: [] };
+    if (request.params.machineId === "local") {
+      return reply.code(400).send({ error: "Local plugin manifests must use the local manifest endpoint" });
+    }
 
     const client = await machines.remoteClient(request.params.machineId);
     if (client === undefined) return reply.code(404).send({ error: "Machine not found" });
@@ -91,12 +97,13 @@ export async function proxyMachinePluginAsset(machines: MachinePluginProxyMachin
 function rewriteRemotePluginManifest(machineId: string, manifest: RemotePluginManifest): RemotePluginManifest {
   return {
     lifecycleVersion: manifest.lifecycleVersion,
+    terminalMode: manifest.terminalMode,
     plugins: manifest.plugins.flatMap((plugin) => {
       const modulePath = remotePluginModulePath(plugin.id, plugin.module);
       if (modulePath === undefined) return [];
       return [{
         ...plugin,
-        module: `../../../../pi-web-plugins/${encodeURIComponent(machineScopedPluginId(machineId, plugin.id))}/${modulePath.path}${modulePath.query}`,
+        module: `../../../../pi-web-plugins/${encodeURIComponent(machineScopedManifestPluginId(machineId, plugin.id))}/${modulePath.path}${modulePath.query}`,
       }];
     }),
   };
@@ -163,16 +170,31 @@ function hasControlCharacter(value: string): boolean {
 function parseRemoteManifest(value: unknown): RemotePluginManifest {
   if (!isRecord(value) || !Array.isArray(value["plugins"])) throw new Error("Invalid remote PI WEB plugin manifest");
   const lifecycleVersion = parseRemoteLifecycleVersion(value["lifecycleVersion"]);
+  const terminalMode = parseRemoteTerminalMode(value["terminalMode"]);
   const plugins = value["plugins"].map((entry) => {
     if (!isRecord(entry) || typeof entry["id"] !== "string" || !isPiWebPluginId(entry["id"]) || typeof entry["module"] !== "string" || entry["module"] === "") {
+      throw new Error("Invalid remote PI WEB plugin manifest entry");
+    }
+    const source = typeof entry["source"] === "string" ? entry["source"] : undefined;
+    const scope = typeof entry["scope"] === "string" ? entry["scope"] : undefined;
+    if (isReservedPiWebPluginId(entry["id"])
+      && !(isPiWebBundledPluginId(entry["id"]) && source === "bundled" && scope === "bundled")) {
+      throw new Error(`Reserved remote PI WEB plugin id: ${entry["id"]}`);
+    }
+    const backendRevision = parseRemoteBackendRevision(entry["backendRevision"]);
+    const pairedRequestVersion = parseRemotePairedCapabilityVersion(entry["pairedRequestVersion"]);
+    const pairedChannelVersion = parseRemotePairedCapabilityVersion(entry["pairedChannelVersion"]);
+    if ((pairedRequestVersion !== undefined || pairedChannelVersion !== undefined) && backendRevision === undefined) {
       throw new Error("Invalid remote PI WEB plugin manifest entry");
     }
     return {
       id: entry["id"],
       module: entry["module"],
-      ...(parseRemoteBackendRevision(entry["backendRevision"])),
-      ...(typeof entry["source"] === "string" ? { source: entry["source"] } : {}),
-      ...(typeof entry["scope"] === "string" ? { scope: entry["scope"] } : {}),
+      ...(backendRevision === undefined ? {} : { backendRevision }),
+      ...(pairedRequestVersion === undefined ? {} : { pairedRequestVersion }),
+      ...(pairedChannelVersion === undefined ? {} : { pairedChannelVersion }),
+      ...(source === undefined ? {} : { source }),
+      ...(scope === undefined ? {} : { scope }),
       ...(parseRemoteMachineSpecific(entry["machineSpecific"])),
     };
   });
@@ -181,7 +203,23 @@ function parseRemoteManifest(value: unknown): RemotePluginManifest {
     if (ids.has(plugin.id)) throw new Error(`Duplicate remote PI WEB plugin id: ${plugin.id}`);
     ids.add(plugin.id);
   }
-  return { lifecycleVersion, plugins };
+  const terminal = plugins.find(({ id }) => id === REQUIRED_TERMINAL_PLUGIN_ID);
+  if (terminalMode === "required") {
+    if (terminal === undefined || plugins[0] !== terminal || terminal.machineSpecific !== true) {
+      throw new RemotePluginLifecycleCompatibilityError("The remote required Terminal plugin is missing or out of order. Update and restart PI WEB on the remote machine.");
+    }
+    if (terminal.backendRevision === undefined || terminal.pairedRequestVersion !== 1 || terminal.pairedChannelVersion !== 1) {
+      throw new RemotePluginLifecycleCompatibilityError("The remote required Terminal plugin is incompatible. Update and restart PI WEB on the remote machine.");
+    }
+  } else if (terminal !== undefined) {
+    throw new RemotePluginLifecycleCompatibilityError("The remote recovery manifest must not publish Terminal. Update and restart PI WEB on the remote machine.");
+  }
+  return { lifecycleVersion, terminalMode, plugins };
+}
+
+function parseRemoteTerminalMode(value: unknown): TerminalPluginMode {
+  if (value === "required" || value === "recovery-disabled") return value;
+  throw new RemotePluginLifecycleCompatibilityError("The remote plugin manifest has no compatible Terminal mode. Update and restart PI WEB on the remote machine.");
 }
 
 function parseRemoteLifecycleVersion(value: unknown): typeof PI_WEB_PLUGIN_LIFECYCLE_VERSION {
@@ -198,13 +236,19 @@ class RemotePluginLifecycleCompatibilityError extends Error {
   override name = "RemotePluginLifecycleCompatibilityError";
 }
 
-function parseRemoteBackendRevision(value: unknown): { backendRevision?: string } {
-  if (value === undefined) return {};
+function parseRemoteBackendRevision(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
   try {
-    return { backendRevision: requirePluginBackendRevision(value) };
+    return requirePluginBackendRevision(value);
   } catch {
     throw new Error("Invalid remote PI WEB plugin manifest entry");
   }
+}
+
+function parseRemotePairedCapabilityVersion(value: unknown): 1 | undefined {
+  if (value === undefined) return undefined;
+  if (value !== 1) throw new Error("Invalid remote PI WEB plugin manifest entry");
+  return value;
 }
 
 function parseRemoteMachineSpecific(value: unknown): { machineSpecific?: boolean } {

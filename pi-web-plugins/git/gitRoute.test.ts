@@ -35,6 +35,7 @@ describe("Git selected-diff route", () => {
 function panelContext(machineId: string, projectId: string, workspaceId: string): WorkspacePanelContext {
   const noop = () => undefined;
   return {
+    navigate: () => Promise.resolve(),
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace: { id: workspaceId, projectId, path: "/repo", label: "main", isMain: true },
     files: {
@@ -44,7 +45,7 @@ function panelContext(machineId: string, projectId: string, workspaceId: string)
       deleteFile: () => Promise.reject(new Error("not implemented")),
       moveFile: () => Promise.reject(new Error("not implemented")),
     },
-    backend: { request: () => Promise.reject(new Error("not implemented")) },
+    peer: { request: () => Promise.reject(new Error("not implemented")) },
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     terminal: { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },

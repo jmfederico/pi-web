@@ -8,7 +8,7 @@ describe("InMemoryMachineNavigationMemory", () => {
   it("remembers independent navigation snapshots per machine", () => {
     const memory = new InMemoryMachineNavigationMemory();
 
-    memory.remember({ machineId: "local", projectId: "local-project", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", projectId: "local-project", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     memory.remember({ machineId: "remote", projectId: "remote-project", workspaceId: "remote-workspace", sessionId: "remote-session", surface: {} });
 
     expect(memory.latest("local")?.projectId).toBe("local-project");
@@ -23,11 +23,11 @@ describe("InMemoryMachineNavigationMemory", () => {
   it("returns cloned snapshots so callers cannot mutate memory", () => {
     const memory = new InMemoryMachineNavigationMemory();
 
-    memory.remember({ machineId: "local", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     const snapshot = memory.latest("local");
-    if (snapshot !== undefined) snapshot.surface.selectedFilePath = "changed.ts";
+    if (snapshot?.surface.contributionQuery !== undefined) snapshot.surface.contributionQuery["core.workspace.files--file"] = "changed.ts";
 
-    expect(memory.latest("local")?.surface.selectedFilePath).toBe("README.md");
+    expect(memory.latest("local")?.surface.contributionQuery?.["core.workspace.files--file"]).toBe("README.md");
   });
 });
 
@@ -36,7 +36,7 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const storage = memoryStorage();
     const memory = new SessionStorageMachineNavigationMemory(storage);
 
-    memory.remember({ machineId: "local", projectId: "local-project", surface: { selectedFilePath: "README.md" } });
+    memory.remember({ machineId: "local", projectId: "local-project", surface: { contributionQuery: { "core.workspace.files--file": "README.md" } } });
     memory.remember({ machineId: "remote", projectId: "remote-project", workspaceId: "remote-workspace", sessionId: "remote-session", surface: {} });
 
     const restored = new SessionStorageMachineNavigationMemory(storage);
@@ -58,16 +58,39 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const memory = new SessionStorageMachineNavigationMemory(storage);
 
     expect(memory.latest("local")?.tool).toBeUndefined();
-    expect(memory.latest("local")?.surface.selectedFilePath).toBe("README.md");
+    expect(memory.latest("local")?.surface.contributionQuery).toEqual({ "core.workspace.files--file": "README.md" });
     expect(memory.latest("remote")).toBeUndefined();
   });
 
-  it("retains qualified legacy panel ids for plugin route migration", () => {
+  it("migrates the v1 Files field without overriding an already captured canonical query", () => {
+    const storage = memoryStorage({
+      "pi-web:machine-navigation:v1": JSON.stringify({ version: 1, entries: [["local", {
+        machineId: "local",
+        surface: {
+          selectedFilePath: "legacy.ts",
+          selectedTerminalId: "terminal-1",
+          contributionQuery: {
+            "core.workspace.files--file": "canonical.ts",
+            "git.workspace.git--diff": ["a", "b"],
+            malformed: "ignored",
+          },
+        },
+      }]] }),
+    });
+
+    expect(new SessionStorageMachineNavigationMemory(storage).latest("local")?.surface.contributionQuery).toEqual({
+      "core.workspace.files--file": "canonical.ts",
+      "core.workspace.terminal--terminal": "terminal-1",
+      "git.workspace.git--diff": ["a", "b"],
+    });
+  });
+
+  it.each(["core:workspace.git", "git:workspace.git", "retryable:workspace.panel", "git", "settings", "", null, 42])("rejects stored view %j without migrating it to a tool", (view) => {
     const storage = memoryStorage({
       "pi-web:machine-navigation:v1": JSON.stringify({ version: 1, entries: [["local", {
         machineId: "local",
         tool: "core:workspace.git",
-        view: "core:workspace.git",
+        view,
         surface: {},
       }]] }),
     });
@@ -75,7 +98,9 @@ describe("SessionStorageMachineNavigationMemory", () => {
     const snapshot = new SessionStorageMachineNavigationMemory(storage).latest("local");
 
     expect(snapshot?.tool).toBe("core:workspace.git");
-    expect(snapshot?.view).toBe("core:workspace.git");
+    expect(snapshot?.view).toBeUndefined();
+    if (snapshot === undefined) throw new Error("Expected stored snapshot");
+    expect(routeFromMachineNavigationSnapshot(snapshot).view).toBeUndefined();
   });
 });
 
@@ -88,36 +113,68 @@ describe("machineNavigationSnapshotFromState", () => {
       selectedWorkspace: workspace("workspace", "project"),
       selectedSession: session("session"),
       workspaceTool: "core:workspace.files",
-      mainView: "core:workspace.files",
-      selectedFilePath: "src/main.ts",
-      selectedTerminalId: "terminal-1",
+      mainView: "workspace",
     };
 
-    expect(machineNavigationSnapshotFromState(state)).toEqual({
+    expect(machineNavigationSnapshotFromState(state, {
+      "core.workspace.files--file": "src/main.ts",
+      "core.workspace.terminal--terminal": "terminal-1",
+      "git.workspace.git--diff": ["README.md", "package.json"],
+    })).toEqual({
       machineId: "remote",
       projectId: "project",
       workspaceId: "workspace",
       sessionId: "session",
       tool: "core:workspace.files",
-      view: "core:workspace.files",
+      view: "workspace",
       surface: {
-        selectedFilePath: "src/main.ts",
-        selectedTerminalId: "terminal-1",
+        contributionQuery: {
+          "core.workspace.files--file": "src/main.ts",
+          "core.workspace.terminal--terminal": "terminal-1",
+          "git.workspace.git--diff": ["README.md", "package.json"],
+        },
       },
     });
   });
 
+  it.each(["navigation", "chat", "workspace"] as const)("round-trips %s independently of tool and session selection", (mainView) => {
+    for (const workspaceTool of [undefined, "files:workspace.files"] as const) {
+      const state: AppState = {
+        ...initialAppState(),
+        selectedSession: session("session"),
+        workspaceTool,
+        mainView,
+      };
+      const snapshot = machineNavigationSnapshotFromState(state);
+      const storage = memoryStorage();
+      new SessionStorageMachineNavigationMemory(storage).remember(snapshot);
+      const restored = new SessionStorageMachineNavigationMemory(storage).latest("local");
+      expect(restored).toEqual(snapshot);
+      if (restored === undefined) throw new Error("Expected restored snapshot");
+      expect(routeFromMachineNavigationSnapshot(restored)).toMatchObject({
+        view: mainView,
+        tool: workspaceTool,
+        sessionId: "session",
+      });
+    }
+  });
+
   it("does not carry workspace surface without a selected workspace", () => {
+    const state: AppState = initialAppState();
+
+    expect(machineNavigationSnapshotFromState(state, { "core.workspace.files--file": "src/main.ts" }).surface).toEqual({});
+  });
+
+  it("publishes the explicit tokenized creation selection", () => {
+    const pending = Object.assign(session("creating:unique-token"), { clientPendingStart: true });
     const state: AppState = {
       ...initialAppState(),
-      selectedFilePath: "src/main.ts",
-      selectedTerminalId: "terminal-1",
+      selectedWorkspace: workspace("workspace", "project"),
+      selectedSession: pending,
     };
 
-    expect(machineNavigationSnapshotFromState(state).surface).toEqual({
-      selectedFilePath: undefined,
-      selectedTerminalId: undefined,
-    });
+    const snapshot = machineNavigationSnapshotFromState(state);
+    expect(routeFromMachineNavigationSnapshot(snapshot).sessionId).toBe("creating:unique-token");
   });
 });
 
@@ -137,7 +194,7 @@ describe("routeFromMachineNavigationSnapshot", () => {
       workspaceId: "workspace",
       sessionId: "session",
       tool: "git:workspace.git",
-      view: undefined,
+      view: "navigation",
     });
   });
 

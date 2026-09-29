@@ -1,5 +1,5 @@
 import { isSessionActive } from "../../shared/activity.js";
-import type { SessionActivity, SessionStatus, TerminalInfo } from "../../shared/apiTypes.js";
+import type { SessionActivity, SessionStatus } from "../../shared/apiTypes.js";
 
 /** One working directory that currently has session or terminal activity. */
 export interface ActiveWorkspaceActivity {
@@ -69,7 +69,7 @@ export class WorkspaceActivityService {
     if (changed) this.notifyCwd(cwd);
   }
 
-  updateTerminal(terminal: Pick<TerminalInfo, "id" | "cwd" | "exited">): void {
+  updateTerminal(terminal: { id: string; cwd: string; exited: boolean }): void {
     const previousCwd = this.terminals.get(terminal.id)?.cwd;
     if (terminal.exited) this.terminals.delete(terminal.id);
     else this.terminals.set(terminal.id, { cwd: terminal.cwd });

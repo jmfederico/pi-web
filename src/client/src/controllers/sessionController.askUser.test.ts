@@ -49,9 +49,8 @@ function selectedSessionState(patch: Partial<AppState> = {}): AppState {
 function selectableApi(sessionStatus: SessionStatus): typeof defaultApi {
   return {
     ...defaultApi,
-    messages: () => Promise.resolve(emptyPage),
+    transcriptSnapshot: () => Promise.resolve({ page: emptyPage, status: sessionStatus, seq: 0, partial: null }),
     status: () => Promise.resolve(sessionStatus),
-    streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
     thinkingLevels: () => Promise.resolve({ levels: [] }),
   };
 }
@@ -226,7 +225,7 @@ describe("SessionController ask submission", () => {
 
     await controller.submitAsk("ask-1", { answers: [{ id: "q1", values: ["pg"] }] });
 
-    expect(state.error).toBe("Error: submit failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: submit failed");
     expect(loadAskDraft(sessionKey(oldSession.id), "ask-1")).toEqual({ q1: { values: ["pg"] } });
     expect(state.pendingAsk?.askId).toBe("ask-1");
   });

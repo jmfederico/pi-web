@@ -3,15 +3,19 @@ import type { AppState } from "../appState";
 import { createPwaDisplayModeMedia, detectPwaDisplayMode } from "../pwaDisplayMode";
 import { ViewportPositionRepairer } from "./viewportPositionRepair";
 
+export const DESKTOP_SIDE_BY_SIDE_MEDIA_QUERY = "(min-width: 1181px)";
 export const MOBILE_NAVIGATION_MEDIA_QUERY = "(max-width: 760px)";
 
 export interface AppShellControllerOptions {
+  desktopSideBySideMedia?: MediaQueryList | undefined;
   mobileNavigationMedia?: MediaQueryList | undefined;
   pwaDisplayModeMedia?: MediaQueryList[] | undefined;
   viewportPositionRepairer?: ViewportPositionRepairer | undefined;
 }
 
 export class AppShellController implements ReactiveController {
+  private readonly desktopSideBySideMedia: MediaQueryList | undefined;
+  isDesktopSideBySideLayout: boolean;
   private readonly mobileNavigationMedia: MediaQueryList | undefined;
   private readonly pwaDisplayModeMedia: MediaQueryList[];
   private readonly viewportPositionRepairer: ViewportPositionRepairer;
@@ -20,7 +24,9 @@ export class AppShellController implements ReactiveController {
 
   constructor(private readonly host: ReactiveControllerHost, options: AppShellControllerOptions = {}) {
     host.addController(this);
-    this.mobileNavigationMedia = options.mobileNavigationMedia ?? createMobileNavigationMedia();
+    this.desktopSideBySideMedia = options.desktopSideBySideMedia ?? createLayoutMedia(DESKTOP_SIDE_BY_SIDE_MEDIA_QUERY);
+    this.isDesktopSideBySideLayout = this.desktopSideBySideMedia?.matches ?? true;
+    this.mobileNavigationMedia = options.mobileNavigationMedia ?? createLayoutMedia(MOBILE_NAVIGATION_MEDIA_QUERY);
     this.pwaDisplayModeMedia = options.pwaDisplayModeMedia ?? createPwaDisplayModeMedia();
     this.viewportPositionRepairer = options.viewportPositionRepairer ?? new ViewportPositionRepairer();
     this.isMobileNavigationLayout = this.mobileNavigationMedia?.matches ?? false;
@@ -28,11 +34,13 @@ export class AppShellController implements ReactiveController {
   }
 
   hostConnected(): void {
+    this.desktopSideBySideMedia?.addEventListener("change", this.onDesktopSideBySideMediaChange);
     this.mobileNavigationMedia?.addEventListener("change", this.onMobileNavigationMediaChange);
     for (const media of this.pwaDisplayModeMedia) media.addEventListener("change", this.onPwaDisplayModeChange);
   }
 
   hostDisconnected(): void {
+    this.desktopSideBySideMedia?.removeEventListener("change", this.onDesktopSideBySideMediaChange);
     this.mobileNavigationMedia?.removeEventListener("change", this.onMobileNavigationMediaChange);
     for (const media of this.pwaDisplayModeMedia) media.removeEventListener("change", this.onPwaDisplayModeChange);
     this.viewportPositionRepairer.clear();
@@ -62,6 +70,12 @@ export class AppShellController implements ReactiveController {
     return this.isMobileNavigationLayout || this.isPwaDisplayMode;
   }
 
+  private readonly onDesktopSideBySideMediaChange = (event: MediaQueryListEvent) => {
+    if (this.isDesktopSideBySideLayout === event.matches) return;
+    this.isDesktopSideBySideLayout = event.matches;
+    this.host.requestUpdate();
+  };
+
   private readonly onMobileNavigationMediaChange = (event: MediaQueryListEvent) => {
     if (this.isMobileNavigationLayout === event.matches) return;
     this.isMobileNavigationLayout = event.matches;
@@ -76,7 +90,7 @@ export class AppShellController implements ReactiveController {
   };
 }
 
-function createMobileNavigationMedia(): MediaQueryList | undefined {
+function createLayoutMedia(query: string): MediaQueryList | undefined {
   if (typeof window === "undefined" || !("matchMedia" in window)) return undefined;
-  return window.matchMedia(MOBILE_NAVIGATION_MEDIA_QUERY);
+  return window.matchMedia(query);
 }

@@ -669,6 +669,40 @@ describe("session routes", () => {
     }
   });
 
+  it("reads and pins global defaults with cwd context and rejects invalid selector payloads", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const service = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, service, new SessionEventHub());
+    const cwd = resolve("/repo");
+    const url = "/sessions/session-1/defaults";
+    try {
+      const read = await routeApp.inject({ method: "GET", url: `${url}?cwd=${encodeURIComponent(cwd)}` });
+      expect(read.statusCode).toBe(200);
+      expect(read.json()).toEqual({ defaultThinkingLevel: "high" });
+      for (const defaults of [{ provider: "anthropic", modelId: "opus" }, { thinkingLevel: "max" }]) {
+        const response = await routeApp.inject({ method: "POST", url, payload: { cwd, ...defaults } });
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ defaultThinkingLevel: "high" });
+      }
+      expect(service.defaultsCalls).toEqual([
+        { ref: { id: "session-1", cwd } },
+        { ref: { id: "session-1", cwd }, defaults: { provider: "anthropic", modelId: "opus" } },
+        { ref: { id: "session-1", cwd }, defaults: { thinkingLevel: "max" } },
+      ]);
+      for (const defaults of [{}, { provider: "anthropic" }, { modelId: "opus" }, { provider: " ", modelId: "opus" }, { thinkingLevel: "invalid" }, { thinkingLevel: null }, { thinkingLevel: "high", provider: "a", modelId: "b" }]) {
+        const response = await routeApp.inject({ method: "POST", url, payload: { cwd, ...defaults } });
+        expect(response.statusCode).toBe(400);
+      }
+      expect((await routeApp.inject({ method: "GET", url })).statusCode).toBe(400);
+      expect((await routeApp.inject({ method: "POST", url, payload: { thinkingLevel: "high" } })).statusCode).toBe(400);
+      expect(service.defaultsCalls).toHaveLength(3);
+    } finally {
+      await service.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("serves the full model catalog with per-model enabled state, forwarding workspace context", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -982,6 +1016,24 @@ describe("session routes", () => {
     }
   });
 
+  it("returns a transcript snapshot with workspace and limit forwarding", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, new SessionEventHub());
+    try {
+      const response = await routeApp.inject({ method: "GET", url: `/sessions/session-1/transcript-snapshot?cwd=${encodeURIComponent(resolve("/repo"))}&limit=25` });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ page: routeService.messagesResponse, status: { sessionId: "session-1" }, seq: 0, partial: null });
+      expect(routeService.transcriptSnapshotCalls).toEqual([{ lookup: { id: "session-1", cwd: resolve("/repo") }, page: { limit: 25 } }]);
+      routeService.transcriptSnapshot = () => Promise.reject(new Error("Session not found"));
+      expect((await routeApp.inject({ method: "GET", url: "/sessions/missing/transcript-snapshot?cwd=/repo" })).statusCode).toBe(404);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("maps stream-snapshot lookup failures to 404", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1203,6 +1255,15 @@ describe("session routes", () => {
 });
 
 class CapturingRouteSessionService implements SessionRouteService {
+  defaultsCalls: { ref: SessionRouteRef; defaults?: import("../../shared/apiTypes.js").SessionDefaultsUpdate }[] = [];
+  getSessionDefaults(ref: SessionRouteRef): Promise<import("../../shared/apiTypes.js").SessionDefaults> {
+    this.defaultsCalls.push({ ref });
+    return Promise.resolve({ defaultThinkingLevel: "high" });
+  }
+  setSessionDefaults(ref: SessionRouteRef, defaults: import("../../shared/apiTypes.js").SessionDefaultsUpdate): Promise<import("../../shared/apiTypes.js").SessionDefaults> {
+    this.defaultsCalls.push({ ref, defaults });
+    return Promise.resolve({ defaultThinkingLevel: "high" });
+  }
   readonly calls: unknown[] = [];
   readonly reloadCalls: SessionRouteRef[] = [];
   readonly clearQueueCalls: SessionRouteRef[] = [];
@@ -1373,6 +1434,12 @@ class CapturingRouteSessionService implements SessionRouteService {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       cost: 0,
     });
+  }
+
+  readonly transcriptSnapshotCalls: { lookup: SessionRouteRef; page?: { limit?: number } }[] = [];
+  async transcriptSnapshot(lookup: SessionRouteRef, page?: { limit?: number }) {
+    this.transcriptSnapshotCalls.push({ lookup, ...(page === undefined ? {} : { page }) });
+    return { page: this.messagesResponse, status: await this.status(lookup), ...this.streamSnapshotResponse };
   }
 
   streamSnapshot(lookup: SessionRouteRef): Promise<SessionStreamSnapshot> {

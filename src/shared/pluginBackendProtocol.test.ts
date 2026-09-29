@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  boundedPluginBackendChannelCloseReason,
   cloneBoundedPluginBackendJson,
   parseBoundedPluginBackendJson,
+  parsePluginBackendChannelClientEnvelope,
+  parsePluginBackendChannelServerEnvelope,
+  PLUGIN_BACKEND_CHANNEL_CLOSE_REASON_MAX_BYTES,
+  PLUGIN_BACKEND_CHANNEL_DATA_JSON_MAX_BYTES,
   PLUGIN_BACKEND_JSON_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
   serializeBoundedPluginBackendJson,
+  serializePluginBackendChannelDataEnvelope,
+  serializePluginBackendChannelErrorEnvelope,
+  serializePluginBackendChannelOpenEnvelope,
+  serializePluginBackendChannelReadyEnvelope,
 } from "./pluginBackendProtocol.js";
 
 describe("plugin backend JSON contract", () => {
@@ -34,6 +43,38 @@ describe("plugin backend JSON contract", () => {
     expect(() => cloneBoundedPluginBackendJson(result, "request")).toThrow("byte limit");
     expect(cloneBoundedPluginBackendJson(result, "result", PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES)).toBe(result);
     expect(parseBoundedPluginBackendJson(JSON.stringify(result), "result", PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES)).toBe(result);
+  });
+
+  it("round-trips versioned channel host envelopes without interpreting plugin data", () => {
+    const open = serializePluginBackendChannelOpenEnvelope("server-r1", { type: "terminal.private", nested: [1, true] });
+    const data = serializePluginBackendChannelDataEnvelope({ frame: "opaque" });
+
+    expect(parsePluginBackendChannelClientEnvelope(open)).toEqual({
+      version: 1,
+      kind: "open",
+      revision: "server-r1",
+      input: { type: "terminal.private", nested: [1, true] },
+    });
+    expect(parsePluginBackendChannelClientEnvelope(data)).toEqual({ version: 1, kind: "data", data: { frame: "opaque" } });
+    expect(parsePluginBackendChannelServerEnvelope(serializePluginBackendChannelReadyEnvelope())).toEqual({ version: 1, kind: "ready" });
+    expect(parsePluginBackendChannelServerEnvelope(serializePluginBackendChannelErrorEnvelope("open-failed", "No channel"))).toEqual({
+      version: 1,
+      kind: "error",
+      code: "open-failed",
+      message: "No channel",
+    });
+  });
+
+  it("bounds channel payloads, envelope direction, and UTF-8 close reasons", () => {
+    const exactData = "x".repeat(PLUGIN_BACKEND_CHANNEL_DATA_JSON_MAX_BYTES - 2);
+    expect(() => serializePluginBackendChannelDataEnvelope(exactData)).not.toThrow();
+    expect(() => serializePluginBackendChannelDataEnvelope(`${exactData}x`)).toThrow("byte limit");
+    expect(() => parsePluginBackendChannelClientEnvelope('{"version":1,"kind":"ready"}')).toThrow("kind is invalid");
+    expect(() => parsePluginBackendChannelServerEnvelope('{"version":2,"kind":"ready"}')).toThrow("version is unsupported");
+
+    const bounded = boundedPluginBackendChannelCloseReason("🙂".repeat(100));
+    expect(new TextEncoder().encode(bounded).byteLength).toBeLessThanOrEqual(PLUGIN_BACKEND_CHANNEL_CLOSE_REASON_MAX_BYTES);
+    expect(bounded.endsWith("🙂")).toBe(true);
   });
 
   it("rejects inherited and non-JSON runtime objects rather than serializing them ambiguously", () => {

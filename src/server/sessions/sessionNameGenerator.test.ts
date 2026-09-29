@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import { cleanSessionName, deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
@@ -47,6 +47,11 @@ describe("sessionNameGenerator", () => {
     const calls: unknown[] = [];
     const stream = streamThatCompletes('Title: "Fix the bug"');
     const streamFn: StreamFn = (model, context, options) => {
+      expect(getCurrentSystemPrompt(context.messages)).toBe("Generate a concise title for a coding-agent chat session. Return only the title, with no quotes or punctuation wrapper.");
+      expect(context.messages.at(-1)).toMatchObject({
+        role: "user",
+        content: "Create a 2-6 word title for this request:\n\nPlease fix the login bug",
+      });
       calls.push({ model, context, options });
       return stream(model, context, options);
     };

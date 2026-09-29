@@ -45,12 +45,14 @@ describe("config routes", () => {
       plugins: { info: { enabled: false, settings: { note: "hidden" } } },
       pathAccess: { allowedPaths: ["/tmp"] },
       uploads: { defaultFolder: "uploads\\manual" },
+      attachments: { defaultFolder: "attachments\\saved" },
       maxUploadBytes: 1234,
       agent: { command: "agent-lab", dir: "~/agent-profiles/lab" },
     };
     const expectedConfig: PiWebConfigValues = {
       ...requestedConfig,
       uploads: { defaultFolder: "uploads/manual" },
+      attachments: { defaultFolder: "attachments/saved" },
     };
 
     const response = await app.inject({
@@ -112,6 +114,18 @@ describe("config routes", () => {
     expect(service.write).not.toHaveBeenCalled();
   });
 
+  it("rejects invalid attachment defaults before writing", async () => {
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: { config: { attachments: { defaultFolder: "../outside" } } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("attachments.defaultFolder");
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
   it.each([
     { agent: { command: "agent", dir: "relative/agent" }, error: "agent.dir must be a host-absolute path" },
     { agent: { command: "agent", dir: "/srv/agent", futureSetting: true }, error: 'agent accepts only the deprecated keys "command" and "dir"; unknown key "futureSetting"' },
@@ -145,6 +159,7 @@ describe("config routes", () => {
     const selectedMachinePatch: PiWebConfigValues = {
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads\\manual" },
+      attachments: { defaultFolder: "attachments\\saved" },
       spawnSessions: true,
       agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
     };
@@ -159,6 +174,7 @@ describe("config routes", () => {
       ...fullConfig(),
       plugins: { info: { enabled: false } },
       uploads: { defaultFolder: "uploads/manual" },
+      attachments: { defaultFolder: "attachments/saved" },
       spawnSessions: true,
       agent: { command: "alternate-agent", dir: "/srv/alternate-agent" },
     };
@@ -169,6 +185,7 @@ describe("config routes", () => {
       plugins: { info: { enabled: false } },
       pathAccess: { allowedPaths: ["/srv/repos"] },
       uploads: { defaultFolder: "uploads/manual" },
+      attachments: { defaultFolder: "attachments/saved" },
       maxUploadBytes: 1024,
       spawnSessions: true,
       subsessions: false,
@@ -234,6 +251,7 @@ function fullConfig(): PiWebConfigValues {
     plugins: { info: { enabled: true, settings: { note: "visible" } } },
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
+    attachments: { defaultFolder: "attachments" },
     maxUploadBytes: 1024,
     spawnSessions: false,
     subsessions: false,
@@ -246,6 +264,7 @@ function selectedMachineConfig(): PiWebConfigValues {
     plugins: { info: { enabled: true, settings: { note: "visible" } } },
     pathAccess: { allowedPaths: ["/srv/repos"] },
     uploads: { defaultFolder: "uploads" },
+    attachments: { defaultFolder: "attachments" },
     maxUploadBytes: 1024,
     spawnSessions: false,
     subsessions: false,

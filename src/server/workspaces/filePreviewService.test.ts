@@ -1,6 +1,8 @@
-import { appendFile, symlink, truncate, unlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
+import { appendFile, mkdir, realpath, symlink, truncate, unlink, writeFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
-import { basename, join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MAX_INLINE_PREVIEW_BYTES } from "../../shared/workspaceFiles.js";
 import { cleanupTempWorkspaces, createTempWorkspace } from "./fileContentService.testSupport.js";
@@ -68,6 +70,53 @@ describe("readWorkspaceFilePreview", () => {
     const allowed = await readWorkspaceFilePreview(root, join(external, "outside.html"), { allowedPaths: [external] });
     expect(allowed).toMatchObject({ path: join(external, "outside.html"), mediaType: "html" });
     expect(await previewText(allowed.body)).toBe("<h1>outside</h1>");
+  });
+
+  it("explicitly previews canonical outside images via relative, absolute, home and symlink paths without granting access", async () => {
+    const root = await createTempWorkspace();
+    const external = await createTempWorkspace();
+    const target = join(external, "outside.svg");
+    await writeFile(target, "<svg></svg>");
+    const canonicalTarget = await realpath(target);
+    await symlink(target, join(root, "linked.svg"));
+    for (const path of [relative(root, target), target, `~/${relative(homedir(), target)}`, "linked.svg"]) {
+      const preview = await readWorkspaceFilePreview(root, path, undefined, { explicitlyRequestedImage: true });
+      expect(preview).toMatchObject({ path: canonicalTarget, mediaType: "image", size: 11 });
+      expect(await previewText(preview.body)).toBe("<svg></svg>");
+      await expect(readWorkspaceFilePreview(root, path)).rejects.toThrow();
+      await expect(readWorkspaceFilePreview(root, path, undefined, { download: true })).rejects.toThrow();
+      await expect(readWorkspaceFilePreview(root, path, undefined, { explicitlyRequestedImage: true, download: true })).rejects.toThrow("cannot be downloaded");
+    }
+  });
+
+  it("rejects non-images, disguised symlinks, oversized images, directories and missing files for explicit previews", async () => {
+    const root = await createTempWorkspace();
+    const external = await createTempWorkspace();
+    const options = { explicitlyRequestedImage: true };
+    for (const name of ["note.txt", "page.html", "report.pdf"]) {
+      const target = join(external, name);
+      await writeFile(target, "not an image");
+      await expect(readWorkspaceFilePreview(root, target, undefined, options)).rejects.toThrow("requires an image");
+    }
+    await symlink(join(external, "page.html"), join(root, "disguised.png"));
+    await expect(readWorkspaceFilePreview(root, "disguised.png", undefined, options)).rejects.toThrow("requires an image");
+    const huge = join(external, "huge.png");
+    await writeFile(huge, "");
+    await truncate(huge, MAX_INLINE_PREVIEW_BYTES + 1);
+    await expect(readWorkspaceFilePreview(root, huge, undefined, options)).rejects.toThrow("too large");
+    const directory = join(external, "directory.png");
+    await mkdir(directory);
+    await expect(readWorkspaceFilePreview(root, directory, undefined, options)).rejects.toThrow("not a file");
+    await expect(readWorkspaceFilePreview(root, join(external, "missing.png"), undefined, options)).rejects.toThrow();
+  });
+
+  // Windows does not support POSIX filesystem FIFOs, even when Git Bash supplies mkfifo.
+  it.skipIf(process.platform === "win32")("rejects FIFOs for explicit previews", async () => {
+    const root = await createTempWorkspace();
+    const external = await createTempWorkspace();
+    const fifo = join(external, "pipe.png");
+    execFileSync("mkfifo", [fifo]);
+    await expect(readWorkspaceFilePreview(root, fifo, undefined, { explicitlyRequestedImage: true })).rejects.toThrow("not a file");
   });
 
   it("returns inline previews as a snapshot of the validated file", async () => {

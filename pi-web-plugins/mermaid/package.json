@@ -1,0 +1,13 @@
+{
+  "name": "@pi-web/mermaid-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [{
+      "id": "mermaid",
+      "browserRoot": "browser",
+      "module": "browser/pi-web-plugin.js",
+      "machineSpecific": false
+    }]
+  }
+}

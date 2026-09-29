@@ -25,7 +25,7 @@ export function groupChatMessages(messages: ChatLine[], indexOffset = 0): ChatGr
     const technicalParts = message.parts.filter((part) => !isReadablePart(message, part));
 
     const absoluteIndex = indexOffset + index;
-    const metadata = { ...(message.source === undefined ? {} : { source: message.source }), ...(message.meta === undefined ? {} : { meta: message.meta }) };
+    const metadata = { ...(message.entryId === undefined ? {} : { entryId: message.entryId }), ...(message.source === undefined ? {} : { source: message.source }), ...(message.meta === undefined ? {} : { meta: message.meta }) };
     if (technicalParts.length) pushEvent({ role: message.role, parts: technicalParts, ...metadata }, absoluteIndex);
     if (readableParts.length) {
       flushEvents();

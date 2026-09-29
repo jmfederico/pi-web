@@ -1,0 +1,8 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Content renderer scroll regression</title>
+<style>
+body { margin: 0; --pi-bg: white; --pi-text: #222; --pi-border: #aaa; --pi-accent: blue; }
+main { display: flex; gap: 20px; padding: 20px; }
+section { width: 600px; height: 500px; display: flex; flex-direction: column; border: 1px solid; }
+#chat { overflow: auto; display: block; }
+</style></head><body><main><section id="files"></section><section id="chat"></section></main><script type="module" src="./main.ts"></script></body></html>

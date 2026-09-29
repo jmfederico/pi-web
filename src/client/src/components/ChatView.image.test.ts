@@ -1,13 +1,8 @@
-import type { TemplateResult } from "lit";
-import { describe, expect, it } from "vitest";
-import type { ChatLine } from "./shared";
-import {
-  ChatView,
-  chatImagePartSource,
-  chatMessageAnchorKey,
-  chatToolOutputLabel,
-} from "./ChatView";
-import { templateEventHandlerAfterMarker } from "../templateInspection.testSupport";
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ChatView, chatImagePartSource, chatMessageAnchorKey, chatToolOutputLabel } from "./ChatView";
+
+afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.restoreAllMocks(); });
 
 describe("ChatView image content derivation", () => {
   // Content/attribute derivation (image src/alt, the tool-output header label,
@@ -33,55 +28,34 @@ describe("ChatView image content derivation", () => {
 });
 
 describe("ChatView image event wiring", () => {
-  // Escape hatch: these two cases verify Lit event wiring (`@load` re-pin and
-  // `@click` zoom) whose only observable effect is a private state/scroll side
-  // effect. Vitest runs with no DOM environment here, so a shadow-DOM click
-  // harness would add disproportionate setup; direct handler extraction anchored
-  // to the stable `@load=`/`@click=` attribute markup is proportionate.
-  it("re-pins late image loads only while already pinned to the bottom", () => {
+  async function mountImage() {
     const view = new ChatView();
-    let scrollCalls = 0;
-    if (!Reflect.set(view, "scrollToBottom", () => { scrollCalls += 1; })) throw new Error("Could not observe ChatView.scrollToBottom");
-    const rendered = renderPart(view, { type: "image", mimeType: "image/png", data: "QUJD" });
-    const onLoad = templateEventHandlerAfterMarker(rendered, "@load=");
+    view.messages = [{ role: "user", parts: [{ type: "image", mimeType: "image/png", data: "QUJD" }] }];
+    document.body.append(view);
+    await view.updateComplete;
+    const image = view.renderRoot.querySelector<HTMLImageElement>(".chat-image");
+    if (image === null) throw new Error("Expected image");
+    return { view, image };
+  }
 
-    if (!Reflect.set(view, "pinnedToBottom", true)) throw new Error("Could not set ChatView.pinnedToBottom");
-    onLoad(new Event("load"));
-    if (!Reflect.set(view, "pinnedToBottom", false)) throw new Error("Could not set ChatView.pinnedToBottom");
-    onLoad(new Event("load"));
-
-    expect(scrollCalls).toBe(1);
+  it("re-pins late image loads only while already pinned to the bottom", async () => {
+    const { view, image } = await mountImage();
+    const scroll = vi.fn();
+    Reflect.set(view, "scrollToBottom", scroll);
+    Reflect.set(view, "pinnedToBottom", true);
+    image.dispatchEvent(new Event("load"));
+    Reflect.set(view, "pinnedToBottom", false);
+    image.dispatchEvent(new Event("load"));
+    expect(scroll).toHaveBeenCalledOnce();
   });
 
-  it("opens and closes the image zoom target on click and close", () => {
-    const view = new ChatView();
-    const part = { type: "image", mimeType: "image/png", data: "QUJD" } as const;
-    const rendered = renderPart(view, part);
-    const onClick = templateEventHandlerAfterMarker(rendered, "@click=");
-
-    expect(zoomedImage(view)).toBeUndefined();
-    onClick(new Event("click"));
-    expect(zoomedImage(view)).toEqual(chatImagePartSource(part));
-
-    const close: unknown = Reflect.get(view, "closeImageZoom");
-    if (typeof close !== "function") throw new Error("ChatView.closeImageZoom is not callable");
-    close.call(view);
-    expect(zoomedImage(view)).toBeUndefined();
+  it("opens and closes the image zoom target on click and close", async () => {
+    const { view, image } = await mountImage();
+    image.click();
+    await view.updateComplete;
+    expect(view.renderRoot.querySelector(".image-zoom-full")).not.toBeNull();
+    view.renderRoot.querySelector<HTMLButtonElement>(".image-zoom-close")?.click();
+    await view.updateComplete;
+    expect(view.renderRoot.querySelector(".image-zoom-full")).toBeNull();
   });
 });
-
-function zoomedImage(view: ChatView): unknown {
-  return Reflect.get(view, "zoomedImage");
-}
-
-type RenderPart = (this: ChatView, part: ChatLine["parts"][number], message?: ChatLine) => TemplateResult;
-
-function renderPart(view: ChatView, part: ChatLine["parts"][number], message?: ChatLine): TemplateResult {
-  const method: unknown = Reflect.get(view, "renderPart");
-  if (!isRenderPart(method)) throw new Error("ChatView.renderPart is not callable");
-  return method.call(view, part, message);
-}
-
-function isRenderPart(value: unknown): value is RenderPart {
-  return typeof value === "function";
-}

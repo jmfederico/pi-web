@@ -1,17 +1,20 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it } from "vitest";
-import type { Machine, Project, Workspace } from "../../api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Machine, Project, SessionInfo, Workspace } from "../../api";
 import type { MachineStatusSnapshot } from "../../../../shared/machineStatus";
 import { machineStatusSnapshot } from "../../machineStatus.testSupport";
 import { MachineList } from "../MachineList";
 import { MachineSwitcher } from "../MachineSwitcher";
 import { ProjectList } from "../ProjectList";
 import { WorkspaceList } from "../WorkspaceList";
+import { SessionList } from "../SessionList";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
 
 afterEach(() => {
   document.body.replaceChildren();
+  localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("shouldShowMachinesSection", () => {
@@ -22,6 +25,28 @@ describe("shouldShowMachinesSection", () => {
 
   it("shows machine navigation when there are multiple machines", () => {
     expect(shouldShowMachinesSection([machine("local"), machine("remote-a")])).toBe(true);
+  });
+});
+
+describe("header identity", () => {
+  it("shows the plain brand without an icon or address", async () => {
+    const panel = await mountHeaderPanel([machine("local")]);
+
+    expect(panel.shadowRoot?.querySelector("header strong")?.textContent).toBe("PI WEB");
+    expect(panel.shadowRoot?.querySelector(".brand-icon")).toBeNull();
+    expect(panel.shadowRoot?.querySelector(".brand-domain")).toBeNull();
+  });
+
+  it("keeps the machine switcher visible with a single machine", async () => {
+    const panel = await mountHeaderPanel([machine("local")]);
+
+    expect(panel.shadowRoot?.querySelector("machine-switcher")).toBeInstanceOf(MachineSwitcher);
+  });
+
+  it("forwards the location-indicator flag to the machine switcher", async () => {
+    const panel = await mountHeaderPanel([machine("local")], true);
+
+    expect(section(panel, "machine-switcher", MachineSwitcher).locationIndicator).toBe(true);
   });
 });
 
@@ -57,6 +82,93 @@ describe("machine status wiring", () => {
   });
 });
 
+describe("stable list inputs", () => {
+  it("skips unchanged lists on panel updates while invoking the latest callbacks", async () => {
+    const panel = await mountPanel({}, machine("local"));
+    const currentSession = session("session-1");
+    panel.sessions = [currentSession];
+    const oldSelect = vi.fn();
+    panel.onSelectProject = oldSelect;
+    panel.onSelectWorkspace = oldSelect;
+    panel.onSelectSession = oldSelect;
+    const projects = section(panel, "project-list", ProjectList);
+    const workspaces = section(panel, "workspace-list", WorkspaceList);
+    const sessions = section(panel, "session-list", SessionList);
+    const lists = [projects, workspaces, sessions];
+    const settle = async () => {
+      await panel.updateComplete;
+      await Promise.all(lists.map((list) => list.updateComplete));
+    };
+    await settle();
+    // Render counts are the regression contract, not a proxy for visible output.
+    const renders = lists.map((list) => vi.spyOn(list, "render"));
+    const panelRender = vi.spyOn(panel, "render");
+    panel.locationIndicator = true;
+    await settle();
+    expect(panelRender).toHaveBeenCalledOnce();
+    for (const render of renders) expect(render).not.toHaveBeenCalled();
+
+    const selectProject = vi.fn();
+    const selectWorkspace = vi.fn();
+    const selectSession = vi.fn();
+    const focus = vi.fn();
+    panel.onSelectProject = selectProject;
+    panel.onSelectWorkspace = selectWorkspace;
+    panel.onSelectSession = selectSession;
+    panel.onFocusNavigationTarget = focus;
+    panel.machines = [machine("local")];
+    await settle();
+    for (const render of renders) expect(render).not.toHaveBeenCalled();
+    for (const list of lists) control(list, ".action-row").click();
+    expect(selectProject).toHaveBeenCalledWith(panel.projects[0]);
+    expect(selectWorkspace).toHaveBeenCalledWith(panel.workspaces[0]);
+    expect(selectSession).toHaveBeenCalledWith(currentSession);
+    expect(oldSelect).not.toHaveBeenCalled();
+
+    control(projects, ".action-row").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(focus).not.toHaveBeenCalled();
+    panel.machines = [machine("local"), machine("remote-a")];
+    await settle();
+    control(projects, ".action-row").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    expect(focus).toHaveBeenCalledWith("machines");
+  });
+
+  it("still renders changed list data and workspace label providers", async () => {
+    const panel = await mountPanel({}, machine("local"));
+    const projects = section(panel, "project-list", ProjectList);
+    const workspaces = section(panel, "workspace-list", WorkspaceList);
+    const sessions = section(panel, "session-list", SessionList);
+    await Promise.all([projects.updateComplete, workspaces.updateComplete, sessions.updateComplete]);
+    panel.projects = [project("latest-project")];
+    panel.workspaces = [workspace("latest-workspace", "latest-project")];
+    panel.sessions = [session("latest-session")];
+    await panel.updateComplete;
+    await Promise.all([projects.updateComplete, workspaces.updateComplete, sessions.updateComplete]);
+    expect(projects.shadowRoot?.textContent).toContain("latest-project");
+    expect(workspaces.shadowRoot?.textContent).toContain("latest-workspace");
+    expect(sessions.shadowRoot?.textContent).toContain("latest-session");
+
+    panel.workspaceLabelItems = (workspace) => [{ type: "text", text: `Label for ${workspace.id}` }];
+    await panel.updateComplete;
+    await workspaces.updateComplete;
+    expect(workspaces.shadowRoot?.textContent).toContain("Label for latest-workspace");
+  });
+});
+
+function control(list: ProjectList | WorkspaceList | SessionList, selector: string): HTMLElement {
+  const element = list.shadowRoot?.querySelector(selector);
+  if (!(element instanceof HTMLElement)) throw new Error(`Missing ${selector}`);
+  return element;
+}
+
+function session(id: string): SessionInfo {
+  return {
+    id, path: `/sessions/${id}.jsonl`, cwd: "/workspace",
+    created: "2026-06-09T00:00:00.000Z", modified: "2026-06-09T00:00:00.000Z",
+    messageCount: 1, firstMessage: id,
+  };
+}
+
 async function mountPanel(machineStatusSnapshots: Record<string, MachineStatusSnapshot>, selectedMachine: Machine | undefined): Promise<AppNavigationPanel> {
   const panel = new AppNavigationPanel();
   panel.compact = true;
@@ -74,6 +186,15 @@ function section<T>(panel: AppNavigationPanel, selector: string, type: abstract 
   const element = panel.shadowRoot?.querySelector(selector);
   if (!(element instanceof type)) throw new Error(`Expected a ${selector} section`);
   return element;
+}
+
+async function mountHeaderPanel(machines: Machine[], locationIndicator = false): Promise<AppNavigationPanel> {
+  const panel = new AppNavigationPanel();
+  panel.machines = machines;
+  panel.locationIndicator = locationIndicator;
+  document.body.append(panel);
+  await panel.updateComplete;
+  return panel;
 }
 
 function machine(id: string): Machine {

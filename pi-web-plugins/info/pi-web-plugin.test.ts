@@ -23,7 +23,7 @@ describe("Info plugin copy-diagnostics action", () => {
           isMain: true,
           provider: {
             pluginId: "git",
-            capabilities: { request: true, remove: true },
+            capabilities: { remove: true },
             metadata: { branch: "main" },
           },
         },
@@ -42,7 +42,15 @@ describe("Info plugin copy-diagnostics action", () => {
 });
 
 function findCopyDiagnosticsAction() {
-  const action = plugin.activate({ apiVersion: 2, pluginId: "info", runtimePluginId: "info", html, svg }).contributions.actions?.find((candidate) => candidate.id === "copy-diagnostics");
+  const action = plugin.activate({
+    apiVersion: 4,
+    pluginId: "info",
+    runtimePluginId: "info",
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  }).contributions.actions.find((candidate) => candidate.id === "copy-diagnostics");
   if (action === undefined) throw new Error("Expected copy-diagnostics action");
   return action;
 }
@@ -50,6 +58,7 @@ function findCopyDiagnosticsAction() {
 function runtimeContext(patch: Partial<PluginRuntimeContext> = {}): PluginRuntimeContext {
   const noop = () => undefined;
   return {
+    navigate: () => Promise.resolve(),
     state: {},
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
     openActionPalette: noop,

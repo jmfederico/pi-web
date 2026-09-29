@@ -72,11 +72,11 @@ export function registerWorkspaceExplorerRoutes(app: FastifyInstance, projects: 
     }
   });
 
-  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string; download?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file/preview`, async (request, reply) => {
+  app.get<{ Params: { projectId: string; workspaceId: string }; Querystring: { path?: string; download?: string; showImage?: string } }>(`${prefix}/projects/:projectId/workspaces/:workspaceId/file/preview`, async (request, reply) => {
     try {
       const context = await resolveWorkspaceContext(projects, workspaces, request.params.projectId, request.params.workspaceId);
       const download = request.query.download === "1" || request.query.download === "true";
-      const preview = await readWorkspaceFilePreview(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config), { download });
+      const preview = await readWorkspaceFilePreview(context.root, request.query.path, await pathAccessForWorkspaceContext(context, options.config), { download, explicitlyRequestedImage: request.query.showImage === "1" });
       const policy = workspaceFilePreviewResponsePolicy(preview.path, { download });
       return await reply
         .header("Content-Type", policy.contentType)

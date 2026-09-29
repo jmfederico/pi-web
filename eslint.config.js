@@ -8,7 +8,7 @@ export default defineConfig([
     ignores: ["dist/**", "node_modules/**", "plugins/*/dist/**"],
   },
   {
-    files: ["src/**/*.ts", "extensions/**/*.ts", "pi-web-plugins/**/*.ts", "pi-packages/**/*.ts", "plugins/**/*.ts", "vite.config.ts", "vitest.config.ts"],
+    files: ["src/**/*.ts", "extensions/**/*.ts", "pi-web-plugins/**/*.ts", "pi-packages/**/*.ts", "plugins/**/*.ts", "vite.config.ts", "vitest.config.ts", "vitest.artifacts.config.ts"],
     extends: [
       js.configs.recommended,
       tseslint.configs.strictTypeChecked,
@@ -42,6 +42,10 @@ export default defineConfig([
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/restrict-template-expressions": "error",
       "@typescript-eslint/restrict-plus-operands": "error",
+      // `void param;` is the project's deliberate marker for parameters an
+      // override or fake intentionally ignores; this rule only tolerates void
+      // on call operands, so it conflicts with the convention.
+      "@typescript-eslint/no-meaningless-void-operator": "off",
     },
   },
 ]);

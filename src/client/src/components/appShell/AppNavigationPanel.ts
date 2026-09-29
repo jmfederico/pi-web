@@ -19,6 +19,8 @@ export type NavigationFocusTarget = NavigationSection | "chat";
 export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selectedMachine?: Machine;
+  /** PWA display mode: surfaces the single-machine identity bubble in the header. */
+  @property({ type: Boolean }) locationIndicator = false;
   @property({ attribute: false }) machineStatuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) machineStatusSnapshots: Record<string, MachineStatusSnapshot> = {};
   @property({ attribute: false }) projects: Project[] = [];
@@ -32,6 +34,8 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) sendingPrompts: Record<string, true> = {};
   @property({ attribute: false }) unreadSessionIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
+  // Unlike event callbacks, this provider affects rendered content; replacements
+  // must remain reactive inputs to WorkspaceList.
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) refreshControl: unknown;
   @property({ type: Boolean, reflect: true }) collapsible = false;
@@ -87,22 +91,54 @@ export class AppNavigationPanel extends LitElement {
     }
   }
 
+  // Stable child inputs delegate at invocation time, never capturing old props.
+  private readonly childCallbacks = {
+    toggleProjects: () => { this.onToggleProjects?.(); },
+    selectProject: (project: Project) => this.onSelectProject?.(project),
+    closeProject: (project: Project) => this.onCloseProject?.(project),
+    toggleWorkspaces: () => { this.onToggleWorkspaces?.(); },
+    selectWorkspace: (workspace: Workspace) => this.onSelectWorkspace?.(workspace),
+    deleteWorkspace: (workspace: Workspace) => this.onDeleteWorkspace?.(workspace),
+    toggleSessions: () => { this.onToggleSessions?.(); },
+    archivedCollapsed: () => this.onArchivedCollapsed?.(),
+    startSession: () => this.onStartSession?.(),
+    selectSession: (session: SessionInfo) => this.onSelectSession?.(session),
+    archiveSession: (session: SessionInfo) => this.onArchiveSession?.(session),
+    archiveSessionWithDescendants: (session: SessionInfo) => this.onArchiveSessionWithDescendants?.(session),
+    archiveSessions: (sessions: SessionInfo[]) => this.onArchiveSessions?.(sessions),
+    restoreSession: (session: SessionInfo) => this.onRestoreSession?.(session),
+    deleteCachedNewSession: (session: SessionInfo) => this.onDeleteCachedNewSession?.(session),
+    deleteArchivedSession: (session: SessionInfo) => this.onDeleteArchivedSession?.(session),
+    deleteArchivedSessions: (sessions: SessionInfo[]) => this.onDeleteArchivedSessions?.(sessions),
+    detachParentSession: (session: SessionInfo) => this.onDetachParentSession?.(session),
+    markSessionRead: (session: SessionInfo) => this.onMarkSessionRead?.(session),
+    markSessionsRead: (sessions: SessionInfo[]) => this.onMarkSessionsRead?.(sessions),
+    reloadSession: (session: SessionInfo) => this.onReloadSession?.(session),
+    cleanupSessions: () => this.onCleanupSessions?.(),
+    previousFromProjects: () => { this.focusPreviousFrom("projects"); },
+    nextFromProjects: () => { this.focusNextFrom("projects"); },
+    previousFromWorkspaces: () => { this.focusPreviousFrom("workspaces"); },
+    nextFromWorkspaces: () => { this.focusNextFrom("workspaces"); },
+    previousFromSessions: () => { this.focusPreviousFrom("sessions"); },
+    nextFromSessions: () => { this.focusNextFrom("sessions"); },
+    cancelKeyboardNavigation: () => { this.cancelKeyboardNavigation(); },
+  };
+
   override render() {
     return html`
       <header>
         <strong>PI WEB</strong>
-        ${shouldShowMachinesSection(this.machines) ? html`
-          <machine-switcher
-            .machines=${this.machines}
-            .selected=${this.selectedMachine}
-            .statuses=${this.machineStatuses}
-            .statusSnapshots=${this.machineStatusSnapshots}
-            .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
-            .onRemove=${(machine: Machine) => this.onRemoveMachine?.(machine)}
-            .onFocusNextSection=${() => { this.focusNextFrom("machines"); }}
-            .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
-          ></machine-switcher>
-        ` : null}
+        <machine-switcher
+          .machines=${this.machines}
+          .selected=${this.selectedMachine}
+          .locationIndicator=${this.locationIndicator}
+          .statuses=${this.machineStatuses}
+          .statusSnapshots=${this.machineStatusSnapshots}
+          .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
+          .onRemove=${(machine: Machine) => this.onRemoveMachine?.(machine)}
+          .onFocusNextSection=${() => { this.focusNextFrom("machines"); }}
+          .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+        ></machine-switcher>
         <div class="header-actions">
           ${this.refreshControl}
           <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
@@ -129,12 +165,12 @@ export class AppNavigationPanel extends LitElement {
         .statusSnapshot=${this.selectedMachineStatusSnapshot()}
         .collapsible=${this.collapsible}
         .collapsed=${this.projectsCollapsed}
-        .onToggleCollapsed=${() => { this.onToggleProjects?.(); }}
-        .onSelect=${(project: Project) => this.onSelectProject?.(project)}
-        .onClose=${(project: Project) => this.onCloseProject?.(project)}
-        .onFocusPreviousSection=${() => { this.focusPreviousFrom("projects"); }}
-        .onFocusNextSection=${() => { this.focusNextFrom("projects"); }}
-        .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+        .onToggleCollapsed=${this.childCallbacks.toggleProjects}
+        .onSelect=${this.childCallbacks.selectProject}
+        .onClose=${this.childCallbacks.closeProject}
+        .onFocusPreviousSection=${this.childCallbacks.previousFromProjects}
+        .onFocusNextSection=${this.childCallbacks.nextFromProjects}
+        .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
       ></project-list>
       <workspace-list
         .workspaces=${this.workspaces}
@@ -145,12 +181,12 @@ export class AppNavigationPanel extends LitElement {
         .collapsible=${this.collapsible}
         .collapsed=${this.workspacesCollapsed}
         .workspaceLabelItems=${this.workspaceLabelItems}
-        .onToggleCollapsed=${() => { this.onToggleWorkspaces?.(); }}
-        .onSelect=${(workspace: Workspace) => this.onSelectWorkspace?.(workspace)}
-        .onDelete=${(workspace: Workspace) => this.onDeleteWorkspace?.(workspace)}
-        .onFocusPreviousSection=${() => { this.focusPreviousFrom("workspaces"); }}
-        .onFocusNextSection=${() => { this.focusNextFrom("workspaces"); }}
-        .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+        .onToggleCollapsed=${this.childCallbacks.toggleWorkspaces}
+        .onSelect=${this.childCallbacks.selectWorkspace}
+        .onDelete=${this.childCallbacks.deleteWorkspace}
+        .onFocusPreviousSection=${this.childCallbacks.previousFromWorkspaces}
+        .onFocusNextSection=${this.childCallbacks.nextFromWorkspaces}
+        .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
       ></workspace-list>
       <session-list
         .sessions=${this.sessions}
@@ -163,25 +199,25 @@ export class AppNavigationPanel extends LitElement {
         .canStart=${this.canStartSession}
         .collapsible=${this.collapsible}
         .collapsed=${this.sessionsCollapsed}
-        .onToggleCollapsed=${() => { this.onToggleSessions?.(); }}
-        .onArchivedCollapsed=${() => this.onArchivedCollapsed?.()}
-        .onStart=${() => this.onStartSession?.()}
-        .onSelect=${(session: SessionInfo) => this.onSelectSession?.(session)}
-        .onArchive=${(session: SessionInfo) => this.onArchiveSession?.(session)}
-        .onArchiveWithDescendants=${(session: SessionInfo) => this.onArchiveSessionWithDescendants?.(session)}
-        .onArchiveMany=${(sessions: SessionInfo[]) => this.onArchiveSessions?.(sessions)}
-        .onRestore=${(session: SessionInfo) => this.onRestoreSession?.(session)}
-        .onDelete=${(session: SessionInfo) => this.onDeleteCachedNewSession?.(session)}
-        .onDeleteArchived=${(session: SessionInfo) => this.onDeleteArchivedSession?.(session)}
-        .onDeleteArchivedMany=${(sessions: SessionInfo[]) => this.onDeleteArchivedSessions?.(sessions)}
-        .onDetachParent=${(session: SessionInfo) => this.onDetachParentSession?.(session)}
-        .onMarkRead=${(session: SessionInfo) => this.onMarkSessionRead?.(session)}
-        .onMarkReadMany=${(sessions: SessionInfo[]) => this.onMarkSessionsRead?.(sessions)}
-        .onReload=${(session: SessionInfo) => this.onReloadSession?.(session)}
-        .onCleanup=${() => this.onCleanupSessions?.()}
-        .onFocusPreviousSection=${() => { this.focusPreviousFrom("sessions"); }}
-        .onFocusNextSection=${() => { this.focusNextFrom("sessions"); }}
-        .onCancelKeyboardNavigation=${() => { this.cancelKeyboardNavigation(); }}
+        .onToggleCollapsed=${this.childCallbacks.toggleSessions}
+        .onArchivedCollapsed=${this.childCallbacks.archivedCollapsed}
+        .onStart=${this.childCallbacks.startSession}
+        .onSelect=${this.childCallbacks.selectSession}
+        .onArchive=${this.childCallbacks.archiveSession}
+        .onArchiveWithDescendants=${this.childCallbacks.archiveSessionWithDescendants}
+        .onArchiveMany=${this.childCallbacks.archiveSessions}
+        .onRestore=${this.childCallbacks.restoreSession}
+        .onDelete=${this.childCallbacks.deleteCachedNewSession}
+        .onDeleteArchived=${this.childCallbacks.deleteArchivedSession}
+        .onDeleteArchivedMany=${this.childCallbacks.deleteArchivedSessions}
+        .onDetachParent=${this.childCallbacks.detachParentSession}
+        .onMarkRead=${this.childCallbacks.markSessionRead}
+        .onMarkReadMany=${this.childCallbacks.markSessionsRead}
+        .onReload=${this.childCallbacks.reloadSession}
+        .onCleanup=${this.childCallbacks.cleanupSessions}
+        .onFocusPreviousSection=${this.childCallbacks.previousFromSessions}
+        .onFocusNextSection=${this.childCallbacks.nextFromSessions}
+        .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
       ></session-list>
     `;
   }
@@ -249,6 +285,8 @@ function nextVisibleNavigationTarget(section: NavigationSection, machines: reado
   return sections[sections.indexOf(section) + 1] ?? "chat";
 }
 
+// Only a machine choice makes the machines section navigable: with a single
+// machine the switcher is a static bubble, and compact mode has no list.
 function visibleNavigationSections(machines: readonly Machine[]): NavigationSection[] {
   return NAVIGATION_SECTION_ORDER.filter((section) => section !== "machines" || shouldShowMachinesSection(machines));
 }

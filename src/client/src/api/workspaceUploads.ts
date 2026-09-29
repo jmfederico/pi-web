@@ -17,30 +17,6 @@ export interface WorkspaceFileUploadProgress {
   lengthComputable: boolean;
 }
 
-export interface WorkspaceUploadBatchFileProgress extends WorkspaceFileUploadProgress {
-  index: number;
-  name: string;
-  path: string;
-  done: boolean;
-  error?: string;
-}
-
-export interface WorkspaceUploadFileFailure {
-  index: number;
-  name: string;
-  path: string;
-  error: string;
-}
-
-export interface WorkspaceUploadBatchProgress {
-  currentFileIndex: number;
-  files: WorkspaceUploadBatchFileProgress[];
-  loaded: number;
-  total: number;
-  percent: number;
-  done: boolean;
-}
-
 export interface WorkspaceUploadTask<T> {
   promise: Promise<T>;
   cancel(): void;
@@ -70,29 +46,10 @@ export interface UploadWorkspaceFileOptions extends WriteWorkspaceFileOptions {
   onProgress?: (progress: WorkspaceFileUploadProgress) => void;
 }
 
-export interface UploadWorkspaceFilesOptions extends WriteWorkspaceFileOptions {
-  destinationFolder?: string;
-  machineId?: string;
-  xhrFactory?: WorkspaceUploadXhrFactory;
-  onProgress?: (progress: WorkspaceUploadBatchProgress) => void;
-}
-
 export class WorkspaceUploadCancelledError extends Error {
   constructor(message = "Workspace upload cancelled") {
     super(message);
     this.name = "WorkspaceUploadCancelledError";
-  }
-}
-
-export class WorkspaceUploadBatchError extends Error {
-  readonly failures: WorkspaceUploadFileFailure[];
-  readonly responses: WriteWorkspaceFileResponse[];
-
-  constructor(failures: readonly WorkspaceUploadFileFailure[], responses: readonly WriteWorkspaceFileResponse[]) {
-    super(uploadBatchErrorMessage(failures));
-    this.name = "WorkspaceUploadBatchError";
-    this.failures = failures.map((failure) => ({ ...failure }));
-    this.responses = responses.map((response) => ({ ...response }));
   }
 }
 
@@ -171,94 +128,6 @@ export function uploadWorkspaceFile(
   };
 }
 
-export function uploadWorkspaceFiles(
-  projectId: string,
-  workspaceId: string,
-  files: readonly File[],
-  options: UploadWorkspaceFilesOptions = {},
-): WorkspaceUploadTask<WriteWorkspaceFileResponse[]> {
-  const destinationFolder = options.destinationFolder ?? DEFAULT_WORKSPACE_UPLOADS_FOLDER;
-  const progressFiles = files.map((file, index): WorkspaceUploadBatchFileProgress => ({
-    index,
-    name: file.name,
-    path: workspaceUploadPath(destinationFolder, file.name),
-    loaded: 0,
-    total: file.size,
-    percent: percentFor(0, file.size),
-    lengthComputable: true,
-    done: false,
-  }));
-  let currentTask: WorkspaceUploadTask<WriteWorkspaceFileResponse> | undefined;
-  let currentFileIndex = 0;
-  const cancellation = { requested: false };
-
-  const emit = () => {
-    options.onProgress?.(batchProgressSnapshot(progressFiles, currentFileIndex, progressFiles.every((file) => file.done)));
-  };
-
-  const promise = (async (): Promise<WriteWorkspaceFileResponse[]> => {
-    const responses: WriteWorkspaceFileResponse[] = [];
-    const failures: WorkspaceUploadFileFailure[] = [];
-    for (let index = 0; index < files.length; index += 1) {
-      if (cancellation.requested) throw new WorkspaceUploadCancelledError();
-      currentFileIndex = index;
-      const file = files[index];
-      const progressFile = progressFiles[index];
-      if (file === undefined || progressFile === undefined) continue;
-      currentTask = uploadWorkspaceFile(projectId, workspaceId, { path: progressFile.path, file }, {
-        ...uploadWriteOptions(options),
-        onProgress: (progress) => {
-          progressFile.total = progress.total;
-          progressFile.loaded = Math.min(progress.loaded, progressFile.total);
-          progressFile.percent = progress.percent;
-          progressFile.lengthComputable = progress.lengthComputable;
-          emit();
-        },
-      });
-      try {
-        const response = await currentTask.promise;
-        progressFile.loaded = progressFile.total;
-        progressFile.percent = 1;
-        progressFile.lengthComputable = true;
-        progressFile.done = true;
-        responses.push(response);
-        emit();
-      } catch (error) {
-        if (isUploadCancellation(error, cancellation)) throw error;
-        const message = errorMessage(error);
-        progressFile.loaded = progressFile.total;
-        progressFile.percent = 1;
-        progressFile.lengthComputable = true;
-        progressFile.done = true;
-        progressFile.error = message;
-        failures.push({ index, name: file.name, path: progressFile.path, error: message });
-        emit();
-      } finally {
-        currentTask = undefined;
-      }
-    }
-    if (failures.length > 0) throw new WorkspaceUploadBatchError(failures, responses);
-    return responses;
-  })();
-
-  return {
-    promise,
-    cancel: () => {
-      cancellation.requested = true;
-      currentTask?.cancel();
-    },
-  };
-}
-
-function uploadWriteOptions(options: UploadWorkspaceFilesOptions): UploadWorkspaceFileOptions {
-  return {
-    ...(options.createDirs === undefined ? {} : { createDirs: options.createDirs }),
-    ...(options.overwrite === undefined ? {} : { overwrite: options.overwrite }),
-    ...(options.machineId === undefined ? {} : { machineId: options.machineId }),
-    ...(options.xhrFactory === undefined ? {} : { xhrFactory: options.xhrFactory }),
-  };
-}
-
 function uploadWriteUrlOptions(options: UploadWorkspaceFileOptions): { createDirs?: boolean; overwrite?: boolean; machineId?: string } {
   return {
     ...(options.createDirs === undefined ? {} : { createDirs: options.createDirs }),
@@ -277,35 +146,9 @@ function progressFromEvent(event: ProgressEvent, fallbackTotal: number): Workspa
   };
 }
 
-function batchProgressSnapshot(files: WorkspaceUploadBatchFileProgress[], currentFileIndex: number, done: boolean): WorkspaceUploadBatchProgress {
-  const total = files.reduce((sum, file) => sum + file.total, 0);
-  const loaded = files.reduce((sum, file) => sum + file.loaded, 0);
-  return {
-    currentFileIndex,
-    files: files.map((file) => ({ ...file })),
-    loaded,
-    total,
-    percent: percentFor(loaded, total),
-    done,
-  };
-}
-
 function percentFor(loaded: number, total: number): number {
   if (total <= 0) return loaded <= 0 ? 0 : 1;
   return Math.max(0, Math.min(1, loaded / total));
-}
-
-function uploadBatchErrorMessage(failures: readonly WorkspaceUploadFileFailure[]): string {
-  if (failures.length === 1) return failures[0]?.error ?? "Workspace upload failed";
-  return `${String(failures.length)} files failed to upload`;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isUploadCancellation(error: unknown, cancellation: { requested: boolean }): boolean {
-  return cancellation.requested || error instanceof WorkspaceUploadCancelledError;
 }
 
 function normalizeWorkspaceUploadPath(value: string, label: string, options: { allowEmpty: boolean }): string {

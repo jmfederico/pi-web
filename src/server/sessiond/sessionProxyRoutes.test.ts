@@ -12,11 +12,43 @@ beforeEach(async () => {
   await app.register(fastifyWebsocket);
   daemon = await FakeSessionDaemon.create();
   registerSessionProxyRoutes(app, daemon, "/api/machines/local");
+  registerSessionProxyRoutes(app, daemon, "/api");
 });
 
 afterEach(async () => {
   await app.close();
   await daemon.close();
+});
+
+describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (prefix) => {
+  it("forwards add body and close path, preserving daemon responses", async () => {
+    const project = { id: "project-1", path: "/repo" };
+    daemon.respondWith({ statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify(project) });
+    daemon.respondWith({ statusCode: 404, headers: { "content-type": "application/json" }, body: JSON.stringify({ error: "Project not found" }) });
+    const input = { name: "Repo", path: "/repo", create: true };
+    const added = await app.inject({ method: "POST", url: `${prefix}/projects`, payload: input });
+    const closed = await app.inject({ method: "DELETE", url: `${prefix}/projects/project%201` });
+    expect(added.statusCode).toBe(200);
+    expect(added.json()).toEqual(project);
+    expect(closed.statusCode).toBe(404);
+    expect(closed.json()).toEqual({ error: "Project not found" });
+    expect(daemon.requests).toEqual([
+      { method: "POST", path: "/projects", body: input },
+      { method: "DELETE", path: "/projects/project%201", body: undefined },
+    ]);
+  });
+
+  it("does not claim project reads", async () => {
+    const response = await app.inject({ method: "GET", url: `${prefix}/projects` });
+    expect(response.statusCode).toBe(404);
+    expect(daemon.requests).toEqual([]);
+  });
+
+  it("reports daemon unavailability for mutations", async () => {
+    daemon.failWith(new Error("connection refused"));
+    const response = await app.inject({ method: "POST", url: `${prefix}/projects`, payload: { path: "/repo" } });
+    expect(response.statusCode).toBe(502);
+  });
 });
 
 describe("machine-scoped session proxy routes", () => {
@@ -26,6 +58,15 @@ describe("machine-scoped session proxy routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ok: true });
     expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions?cwd=/repo", body: undefined }]);
+  });
+
+  it("forwards transcript snapshot queries and the atomic response unchanged", async () => {
+    const snapshot = { page: { start: 0, total: 0, messages: [] }, status: { sessionId: "session-1" }, seq: 12, partial: null };
+    daemon.respondWith({ statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify(snapshot) });
+    const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions/session-1/transcript-snapshot?cwd=%2Frepo&limit=25" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(snapshot);
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions/session-1/transcript-snapshot?cwd=%2Frepo&limit=25", body: undefined }]);
   });
 
   it("forwards the machine status snapshot request to the daemon", async () => {
@@ -58,6 +99,21 @@ describe("machine-scoped session proxy routes", () => {
     expect(daemon.requests).toEqual([
       { method: "GET", path: "/sessions/unread", body: undefined },
       { method: "POST", path: "/sessions/session-1/unread/acknowledge", body: { cwd: "/repo", catalogId: "catalog-test", throughCompletionOrder: 9 } },
+    ]);
+  });
+
+  it("forwards server notice snapshots and exact dismissal bodies unchanged", async () => {
+    const snapshot = await app.inject({ method: "GET", url: "/api/machines/local/notices" });
+    const dismiss = await app.inject({
+      method: "POST",
+      url: "/api/machines/local/notices/dismiss",
+      payload: { daemonInstanceId: "daemon-test", noticeId: "notice-1" },
+    });
+
+    expect([snapshot.statusCode, dismiss.statusCode]).toEqual([200, 200]);
+    expect(daemon.requests).toEqual([
+      { method: "GET", path: "/notices", body: undefined },
+      { method: "POST", path: "/notices/dismiss", body: { daemonInstanceId: "daemon-test", noticeId: "notice-1" } },
     ]);
   });
 

@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
-import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
+import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_FILE_FEDERATION_TIMEOUT_MS, WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
-import { PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
-import { configApi, filesApi, machineStatusApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, terminalsApi, trustApi, workspacesApi } from "./clients";
-import { globalSessionEvents, realtimeEvents, sessionEvents, terminalSocket } from "./sockets";
-import { requestPluginBackend } from "./pluginBackends";
+import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { configApi, filesApi, machineStatusApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, trustApi, workspacesApi } from "./clients";
+import { globalSessionEvents, realtimeEvents, sessionEvents } from "./sockets";
+import { requestPairedPluginBackend } from "./pluginBackends";
 import { workspaceFilePreviewUrl } from "./urls";
 
 const machineId = "remote-a";
@@ -54,6 +54,14 @@ describe("federated route contract", () => {
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("dialogs"))).toBe(false);
   });
 
+  it("allowlists server notice reads and dismissals on the existing global socket", () => {
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.startsWith("/notices"))).toEqual([
+      { method: "GET", path: "/notices" },
+      { method: "POST", path: "/notices/dismiss" },
+    ]);
+    expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("notices"))).toBe(false);
+  });
+
   it("allowlists daemon-authoritative unread HTTP routes on the existing global socket", () => {
     expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("unread"))).toEqual([
       { method: "GET", path: "/sessions/unread" },
@@ -97,15 +105,37 @@ describe("federated route contract", () => {
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("preview"))).toBe(false);
   });
 
-  it("allowlists exactly one bounded workspace provider backend route", () => {
-    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([{
-      method: "POST",
-      path: "/plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation",
+  it("bounds and cancels every federated workspace-file JSON route", () => {
+    const paths = [
+      "/projects/:projectId/workspaces/:workspaceId/tree",
+      "/projects/:projectId/workspaces/:workspaceId/file",
+      "/projects/:projectId/workspaces/:workspaceId/file/move",
+    ];
+    const routes = FEDERATED_HTTP_ROUTES.filter((route) => paths.includes(route.path));
+    expect(routes).toHaveLength(5);
+    for (const route of routes) {
+      expect(route).toMatchObject({
+        timeoutMs: WORKSPACE_FILE_FEDERATION_TIMEOUT_MS,
+        responseBodyLimit: WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES,
+        propagateCancellation: true,
+      });
+    }
+  });
+
+  it("allowlists only the bounded package-paired request and channel routes", () => {
+    const boundedRequest = {
+      method: "POST" as const,
       timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
       bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
       responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
-    }]);
-    expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("plugin-backends"))).toBe(false);
+      propagateCancellation: true,
+    };
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([
+      { ...boundedRequest, path: PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH },
+    ]);
+    expect(FEDERATED_WEBSOCKET_ROUTES.filter((path) => path.includes("plugin-backends"))).toEqual([
+      PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
+    ]);
   });
 
   it("allowlists only workspace trust reads and writes without adding a trust WebSocket", () => {
@@ -142,6 +172,8 @@ describe("federated route contract", () => {
       ignoreParseFailure(piPackagesApi.remove("npm:@acme/tools", "user", machineId)),
       ignoreParseFailure(piPackagesApi.update("npm:@acme/tools", machineId)),
       ignoreParseFailure(machineStatusApi.machineStatus(machineId)),
+      ignoreParseFailure(noticesApi.snapshot(machineId)),
+      ignoreParseFailure(noticesApi.dismiss(machineId, "daemon-a", "notice-1")),
       ignoreParseFailure(projectsApi.projects(machineId)),
       ignoreParseFailure(projectsApi.addProject("/repo", "Repo", false, machineId)),
       ignoreParseFailure(projectsApi.closeProject("p 1", machineId)),
@@ -156,7 +188,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(trustApi.workspaceTrust("p 1", "w 1", machineId)),
       ignoreParseFailure(trustApi.setWorkspaceTrust("p 1", "w 1", true, machineId)),
       ignoreParseFailure(trustApi.projectTrust("/repo", machineId)),
-      ignoreParseFailure(requestPluginBackend({ pluginId: "board-tools", backendRevision: "server-r1", machineId, projectId: "p 1", workspaceId: "w 1" }, "cards.summary", { includeClosed: false })),
+      ignoreParseFailure(requestPairedPluginBackend({ pluginId: "board-tools", backendRevision: "server-r1", machineId, projectId: "p 1", workspaceId: "w 1" }, "cards.summary", { includeClosed: false })),
       ignoreParseFailure(filesApi.files("README", { kind: "tracked", mode: "file", projectId: "p 1", workspaceId: "w 1", machineId })),
       ignoreParseFailure(sessionsApi.sessions("/repo", machineId)),
       ignoreParseFailure(sessionsApi.unreadCatalog(machineId)),
@@ -169,6 +201,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.messages(session, { limit: 20, before: 10 }, machineId)),
       ignoreParseFailure(sessionsApi.status(session, machineId)),
       ignoreParseFailure(sessionsApi.streamSnapshot(session, machineId)),
+      ignoreParseFailure(sessionsApi.transcriptSnapshot(session, { limit: 20 }, machineId)),
       ignoreParseFailure(sessionsApi.clearQueue(session, machineId)),
       ignoreParseFailure(sessionsApi.dismissWarning(session, "anthropicExtraUsage", machineId)),
       ignoreParseFailure(sessionsApi.submitAsk(session, "ask 1", { answers: [{ id: "q1", values: ["pg"] }] }, machineId)),
@@ -206,15 +239,6 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.oauthFlow("flow 1", machineId)),
       ignoreParseFailure(sessionsApi.respondOAuthFlow("flow 1", "req 1", "code", machineId)),
       ignoreParseFailure(sessionsApi.cancelOAuthFlow("flow 1", machineId)),
-      ignoreParseFailure(terminalsApi.terminals("p 1", "w 1", machineId)),
-      ignoreParseFailure(terminalsApi.startTerminal("p 1", "w 1", { cols: 120, rows: 40 }, machineId)),
-      ignoreParseFailure(terminalsApi.closeWorkspaceTerminals("p 1", "w 1", machineId)),
-      ignoreParseFailure(terminalsApi.closeTerminal("p 1", "w 1", "t 1", machineId)),
-      ignoreParseFailure(terminalsApi.continueTerminal("p 1", "w 1", "t 1", machineId)),
-      ignoreParseFailure(terminalsApi.runTerminalCommand("core", { workspace, title: "Build", command: "npm test" }, machineId)),
-      ignoreParseFailure(terminalsApi.listCommandRuns({ projectId: "p 1", workspaceId: "w 1", statuses: ["running"], metadata: { "pi.operation": "test" } }, machineId)),
-      ignoreParseFailure(terminalsApi.getCommandRun("run 1", machineId)),
-      ignoreParseFailure(terminalsApi.cancelCommandRun("run 1", machineId)),
     ]);
 
     const observedRoutes = uniqueHttpRoutes([
@@ -236,7 +260,6 @@ describe("federated route contract", () => {
     sessionEvents(session, machineId);
     globalSessionEvents(machineId);
     realtimeEvents(machineId);
-    terminalSocket("p 1", "w 1", "t 1", { cols: 120, rows: 40 }, machineId);
 
     const observedPaths = uniqueStrings(webSocketUrls.map((url) => routeFromMachineUrl("GET", url, machineId).path));
     const unmatched = observedPaths.filter((path) => !FEDERATED_WEBSOCKET_ROUTES.some((route) => pathMatchesPattern(path, route)));

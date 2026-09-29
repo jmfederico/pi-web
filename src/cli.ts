@@ -943,6 +943,7 @@ function installedServiceDefinitions(
   backend: ServiceBackend,
   ids: readonly ServiceId[],
   purpose: InstalledNativeServiceDefinitionPurpose,
+  warn: (message: string) => void = (message) => { console.warn(`! ${message}`); },
 ): InstalledNativeServiceInspection<readonly InstalledNativeServiceDefinition[]> {
   const sources: InstalledNativeServiceDefinitionSource[] = ids.map((id) => ({
     id,
@@ -954,6 +955,7 @@ function installedServiceDefinitions(
     readFile: (path) => readFileSync(path),
     realpath: realpathSync,
     capture: captureInstalledServiceDefinitionCommand,
+    warn,
   }, purpose);
 }
 
@@ -1110,7 +1112,11 @@ function readinessCliCommandDependencies(): ReadinessCliCommandDependencies {
     currentBackend: currentServiceBackend,
     requireBackend: requireServiceBackend,
     installedServiceIds,
-    inspectDefinitions: installedServiceDefinitions,
+    // Doctor inspects again when building its native-service checks. Report
+    // warnings there, including when an explicit config bypasses selection here.
+    inspectDefinitions: (backend, ids, purpose) => installedServiceDefinitions(
+      backend, ids, purpose, purpose === "doctor" ? () => { /* Reported with native-service checks. */ } : undefined,
+    ),
     runLifecycle: performLifecycleServiceAction,
     runDoctor: doctor,
     printVersion: async () => { await printPiWebVersionReport(); },

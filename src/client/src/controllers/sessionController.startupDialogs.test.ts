@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
 import type { ExtensionDialogCloseResponse, ExtensionDialogKind, PendingExtensionDialog } from "../api";
 import { SessionController } from "./sessionController";
-import { defaultApi, deferred, EmitSocket, emptyPage, oldSession, runPendingAnimationFrames, sessionLookupId, status, workspace, type AppState, type SessionActivity, type SessionInfo, type SessionStatus } from "./sessionController.testSupport";
+import { transcriptSnapshotFixture, defaultApi, deferred, EmitSocket, emptyPage, oldSession, runPendingAnimationFrames, sessionLookupId, status, workspace, type AppState, type SessionActivity, type SessionInfo, type SessionStatus } from "./sessionController.testSupport";
 
 const BACKEND_SESSION_ID = "backend-session";
 
@@ -73,7 +73,7 @@ function pendingStartController(state: { current: AppState }, api: Partial<typeo
         startSession: () => startRequest.promise,
         messages: () => Promise.resolve(emptyPage),
         status: (session) => Promise.resolve(status(sessionLookupId(session))),
-        streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+        transcriptSnapshot: (session, _options, machineId) => transcriptSnapshotFixture(emptyPage, api.status?.(session, machineId) ?? status(sessionLookupId(session))),
         thinkingLevels: () => Promise.resolve({ levels: [] }),
         ...api,
       },
@@ -87,7 +87,7 @@ function beginPendingStart(harness: PendingStartHarness): { start: Promise<void>
   const start = harness.controller.startSession();
   const tempId = harness.state.current.selectedSession?.id;
   if (tempId === undefined) throw new Error("Expected a pending-start row to be selected");
-  if (!tempId.startsWith("pending-session-")) throw new Error("Expected a pending-start row to be selected");
+  if (!tempId.startsWith("creating:")) throw new Error("Expected a pending-start row to be selected");
   return { start, tempId };
 }
 
@@ -352,7 +352,7 @@ describe("SessionController session_start dialog startup reachability", () => {
     harness.startRequest.reject(new Error("create exploded"));
     await start;
 
-    expect(harness.state.current.error).toBe("Failed to start session: create exploded");
+    expect(Object.values(harness.state.current.browserErrors).map((error) => error.message)).toContain("Failed to start session: create exploded");
     expect(harness.state.current.pendingDialogs).toEqual([]);
     expect(closeSpy).toHaveBeenCalled();
 

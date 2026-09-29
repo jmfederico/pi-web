@@ -121,7 +121,7 @@ describe("PromptEditor attachment wiring", () => {
       expect(onSend).toHaveBeenCalledTimes(1);
       expect(onSend).toHaveBeenCalledWith("inspect attachments", undefined, [
         { kind: "image", mimeType: "image/png", data: "UE5H", name: "shot.png" },
-      ], "inline");
+      ], "inline", undefined);
     } finally {
       restoreFileReader();
     }
@@ -148,7 +148,7 @@ describe("PromptEditor attachment wiring", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenCalledWith("please review", undefined, [
       { kind: "image", mimeType: "image/png", data: "UE5H", name: "shot.png" },
-    ], "inline");
+    ], "inline", undefined);
   });
 });
 

@@ -42,7 +42,7 @@ function pendingStartController(state: { current: AppState }, api: Partial<typeo
           startCalls.push({ cwd, machineId, startupToken });
           return startRequest.promise;
         },
-        messages: () => Promise.resolve(emptyPage),
+        transcriptSnapshot: (session) => Promise.resolve({ page: emptyPage, status: status(sessionLookupId(session)), seq: 0, partial: null }),
         status: (session) => Promise.resolve(status(sessionLookupId(session))),
         ...api,
       },

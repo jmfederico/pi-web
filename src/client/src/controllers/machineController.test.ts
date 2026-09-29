@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, type Machine, type MachineHealth } from "../api";
 import { initialAppState, type AppState } from "../appState";
+import { browserErrorScopeKey, machineBrowserErrorScope, reportBrowserError } from "../browserErrors";
 import { machineStatusSnapshot } from "../machineStatus.testSupport";
 import { MachineController } from "./machineController";
 
@@ -57,9 +58,6 @@ describe("MachineController", () => {
       selectedProject: project,
       selectedWorkspace: workspace,
       selectedSession: session,
-      fileTree: [{ name: "index.ts", path: "src/index.ts", type: "file" }],
-      selectedFilePath: "src/index.ts",
-      activeTerminalCount: 2,
       error: "stale error",
     };
     const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
@@ -85,9 +83,6 @@ describe("MachineController", () => {
     expect(state.selectedProject).toBeUndefined();
     expect(state.selectedWorkspace).toBeUndefined();
     expect(state.selectedSession).toBeUndefined();
-    expect(state.fileTree).toEqual([]);
-    expect(state.selectedFilePath).toBeUndefined();
-    expect(state.activeTerminalCount).toBe(0);
     expect(state.error).toBe("");
     expect(projects.loadProjects).toHaveBeenCalledOnce();
     expect(updateUrl).toHaveBeenCalledOnce();
@@ -115,6 +110,94 @@ describe("MachineController", () => {
 
     expect(state.selectedMachine).toEqual(remoteMachine);
     expect(state.machineStatusSnapshots).toEqual({ local: snapshot });
+  });
+
+  it("publishes a newly added machine through the injected navigation boundary", async () => {
+    let state: AppState = { ...initialAppState(), machines: [localMachine], selectedMachine: localMachine };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const selectedAtNavigation: string[] = [];
+    const projects = { loadProjects: vi.fn() };
+    const controller = new MachineController(
+      () => state,
+      setState,
+      vi.fn(),
+      projects,
+      {
+        navigateToMachine: (machine, options) => {
+          selectedAtNavigation.push(state.selectedMachine?.id ?? "missing");
+          expect(options?.expected).toEqual({ machineId: "local", projectId: undefined, workspaceId: undefined, sessionId: undefined });
+          state = { ...state, selectedMachine: machine };
+          return Promise.resolve(true);
+        },
+      },
+    );
+    vi.spyOn(api, "addMachine").mockResolvedValue(addedMachine);
+
+    await controller.addMachine({ name: addedMachine.name, baseUrl: addedMachine.baseUrl ?? "" });
+
+    expect(selectedAtNavigation).toEqual([localMachine.id]);
+    expect(state.selectedMachine).toEqual(addedMachine);
+    expect(projects.loadProjects).not.toHaveBeenCalled();
+  });
+
+  it("publishes a fallback machine through the injected navigation boundary after removal", async () => {
+    let state: AppState = { ...initialAppState(), machines: [localMachine, remoteMachine], selectedMachine: remoteMachine };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const selectedAtNavigation: string[] = [];
+    const projects = { loadProjects: vi.fn() };
+    const controller = new MachineController(
+      () => state,
+      setState,
+      vi.fn(),
+      projects,
+      {
+        navigateToMachine: (machine, options) => {
+          selectedAtNavigation.push(state.selectedMachine?.id ?? "missing");
+          expect(options?.expected?.machineId).toBe(remoteMachine.id);
+          state = { ...state, selectedMachine: machine };
+          return Promise.resolve(true);
+        },
+      },
+    );
+    vi.spyOn(api, "deleteMachine").mockResolvedValue({ deleted: true });
+
+    await controller.deleteMachine(remoteMachine);
+
+    expect(selectedAtNavigation).toEqual([remoteMachine.id]);
+    expect(state.selectedMachine).toEqual(localMachine);
+    expect(state.machines).toEqual([localMachine]);
+    expect(projects.loadProjects).not.toHaveBeenCalled();
+  });
+
+  it("follows a deletion when the user selects the removed machine while the request is pending", async () => {
+    let state: AppState = { ...initialAppState(), machines: [localMachine, remoteMachine], selectedMachine: localMachine };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    let resolveDelete: (() => void) | undefined;
+    const deleteRequest = new Promise<{ deleted: true }>((resolve) => { resolveDelete = () => { resolve({ deleted: true }); }; });
+    const navigationExpected: { machineId: string | undefined; selectedMachineId: string | undefined }[] = [];
+    const controller = new MachineController(
+      () => state,
+      setState,
+      vi.fn(),
+      { loadProjects: vi.fn() },
+      {
+        navigateToMachine: (machine, options) => {
+          navigationExpected.push({ machineId: options?.expected?.machineId, selectedMachineId: state.selectedMachine?.id });
+          state = { ...state, selectedMachine: machine };
+          return Promise.resolve(true);
+        },
+      },
+    );
+    vi.spyOn(api, "deleteMachine").mockReturnValue(deleteRequest);
+
+    const deletion = controller.deleteMachine(remoteMachine);
+    state = { ...state, selectedMachine: remoteMachine };
+    resolveDelete?.();
+    await deletion;
+
+    expect(navigationExpected).toEqual([{ machineId: remoteMachine.id, selectedMachineId: remoteMachine.id }]);
+    expect(state.selectedMachine).toEqual(localMachine);
+    expect(state.machines).toEqual([localMachine]);
   });
 
   it("preserves the current machine state when adding a machine fails", async () => {
@@ -161,7 +244,8 @@ describe("MachineController", () => {
 
     expect(state.selectedMachine).toEqual(remoteMachine);
     expect(state.machineStatuses[remoteMachine.id]).toEqual(offlineHealth);
-    expect(state.error).toContain("Remote is unavailable");
+    expect(state.error).toBe("");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(remoteMachine.id))]?.message).toBe("Remote is unavailable; reconnecting…");
   });
 
   it("records offline health without falling back when the routed remote health request rejects", async () => {
@@ -179,7 +263,31 @@ describe("MachineController", () => {
 
     expect(state.selectedMachine).toEqual(remoteMachine);
     expect(state.machineStatuses[remoteMachine.id]).toMatchObject({ machineId: remoteMachine.id, ok: false, status: "offline", error: "Internal Server Error" });
-    expect(state.error).toContain("Remote is unavailable");
+    expect(state.error).toBe("");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(remoteMachine.id))]?.message).toBe("Remote is unavailable; reconnecting…");
+  });
+
+  it("reports the local-machine removal restriction under the local machine", async () => {
+    let state: AppState = { ...initialAppState(), selectedMachine: localMachine, error: "A global failure" };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const controller = new MachineController(() => state, setState, vi.fn(), { loadProjects: vi.fn() });
+
+    await controller.deleteMachine(localMachine);
+
+    expect(state.error).toBe("A global failure");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(localMachine.id))]?.message).toBe("The local machine cannot be removed.");
+  });
+
+  it("reports refresh failures under the affected machine without overwriting a global error", async () => {
+    let state: AppState = { ...initialAppState(), selectedMachine: remoteMachine, error: "A global failure" };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    vi.spyOn(api, "health").mockRejectedValue(new Error("Remote health failed"));
+    const controller = new MachineController(() => state, setState, vi.fn(), { loadProjects: vi.fn() });
+
+    await controller.refreshMachineHealth(remoteMachine.id);
+
+    expect(state.error).toBe("A global failure");
+    expect(state.browserErrors[browserErrorScopeKey(machineBrowserErrorScope(remoteMachine.id))]?.message).toBe("Error: Remote health failed");
   });
 
   it("drops the status snapshot of a machine that is no longer configured", async () => {
@@ -203,6 +311,26 @@ describe("MachineController", () => {
     await controller.loadMachines();
 
     expect(state.machineStatusSnapshots).toEqual({ local: localSnapshot });
+  });
+
+  it("discards scoped errors for machines no longer configured", async () => {
+    let state: AppState = {
+      ...initialAppState(),
+      machines: [localMachine, remoteMachine],
+      selectedMachine: localMachine,
+      browserErrors: reportBrowserError({}, machineBrowserErrorScope(remoteMachine.id), "Remote failure"),
+    };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+
+    vi.spyOn(api, "machines").mockResolvedValue([localMachine]);
+    vi.spyOn(api, "health").mockResolvedValue({ machineId: localMachine.id, ok: true, checkedAt: "2026-05-26T00:00:01.000Z", status: "online" });
+    vi.spyOn(api, "runtime").mockResolvedValue({ machineId: localMachine.id, ok: true, checkedAt: "2026-05-26T00:00:02.000Z" });
+
+    const controller = new MachineController(() => state, setState, vi.fn(), { loadProjects: vi.fn() });
+
+    await controller.loadMachines();
+
+    expect(state.browserErrors).toEqual({});
   });
 
   it("falls back to local when the routed machine is no longer configured", async () => {

@@ -15,8 +15,8 @@ export class AutocompleteMenu extends LitElement {
       <div class="menu">
         ${this.items.map((item, index) => html`
           <button class=${index === this.selectedIndex ? "selected" : ""} ${scrollWhenSelected(index === this.selectedIndex, item)} @mousedown=${(event: MouseEvent) => { event.preventDefault(); this.onPick?.(item); }}>
-            <strong>${item.insertText}</strong>
-            <span>${item.detail}</span>
+            <span class="label"><strong>${item.insertText}</strong>${item.argumentHint === undefined || item.argumentHint === "" ? null : html` <span class="argument-hint">${item.argumentHint}</span>`}</span>
+            <span class="detail">${item.detail}</span>
             ${item.description !== undefined && item.description !== "" ? html`<small>${item.description}</small>` : null}
           </button>
         `)}

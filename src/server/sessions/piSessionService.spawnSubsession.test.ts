@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
 import type { SpawnTargetDecision } from "./spawnTargetResolver.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, resolveSessionFileFromList, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModel, testModelRuntime, type RuntimeCreator } from "./piSessionService.testSupport.js";
@@ -10,6 +10,8 @@ const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 
 describe("PiSessionService", () => {
   describe("spawnSubsession", () => {
+    afterEach(() => { vi.useRealTimers(); });
+
     function subsessionService(decision: SpawnTargetDecision, heartbeatIntervalMs = 60_000, childIds = ["child-1"]) {
       const parent = fakeRuntime("parent-1", { sessionFile: "/tmp/parent-1.jsonl" });
       const children = childIds.map((childId) => fakeRuntime(childId, {
@@ -928,6 +930,59 @@ describe("PiSessionService", () => {
       await service.dispose();
     });
 
+    it("does not arm a completion notice while an idle child's extension command is busy", async () => {
+      vi.useFakeTimers();
+      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" }, 10);
+      let finishCommand!: () => void;
+      const commandFinished = new Promise<void>((resolve) => { finishCommand = resolve; });
+      try {
+        await service.start("/workspace");
+        await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go" });
+        await vi.advanceTimersByTimeAsync(0);
+
+        // A command can stay busy without emitting any agent events. Only the
+        // heartbeat observes this work, so it must not arm a completion notice.
+        const commandPrompt = vi.fn(() => commandFinished);
+        child.session.prompt = commandPrompt;
+        await service.prompt(sessionRef("child-1", "/workspace"), "/pi-vcc");
+        await vi.advanceTimersByTimeAsync(20);
+        expect(commandPrompt).toHaveBeenCalledOnce();
+        await expect(service.listSubsessions("parent-1")).resolves.toMatchObject([{ status: "working" }]);
+        expect(parent.calls.sendCustomMessage).toHaveLength(0);
+
+        finishCommand();
+        await vi.advanceTimersByTimeAsync(20);
+        await expect(service.listSubsessions("parent-1")).resolves.toMatchObject([{ status: "idle" }]);
+        expect(parent.calls.sendCustomMessage).toHaveLength(0);
+      } finally {
+        finishCommand();
+        await service.dispose();
+      }
+    });
+
+    it("does not arm a completion notice for standalone compaction events or heartbeats", async () => {
+      vi.useFakeTimers();
+      const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" }, 10);
+      try {
+        await service.start("/workspace");
+        await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go" });
+        await vi.advanceTimersByTimeAsync(0);
+
+        child.session.isCompacting = true;
+        child.emit({ type: "compaction_start" });
+        await vi.advanceTimersByTimeAsync(20);
+        expect(parent.calls.sendCustomMessage).toHaveLength(0);
+
+        child.session.isCompacting = false;
+        child.emit({ type: "compaction_end" });
+        await vi.advanceTimersByTimeAsync(20);
+        expect(parent.calls.sendCustomMessage).toHaveLength(0);
+      } finally {
+        child.session.isCompacting = false;
+        await service.dispose();
+      }
+    });
+
     it("notifies the parent once when the tracked child stops working", async () => {
       const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
       child.session.sessionManager.getBranch = () => [
@@ -1022,29 +1077,36 @@ describe("PiSessionService", () => {
       await service.dispose();
     });
 
-    it("notifies via the heartbeat when the child settles without a further event", async () => {
+    it("notifies once per agent run via the heartbeat when the child settles without a further event", async () => {
+      vi.useFakeTimers();
       const { parent, child, service } = subsessionService({ allowed: true, cwd: "/workspace" }, 10);
-      await service.start("/workspace");
-      await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go" });
-      parent.calls.prompt.length = 0;
+      try {
+        await service.start("/workspace");
+        await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "go" });
+        await vi.advanceTimersByTimeAsync(0);
 
-      // The child works, then settles silently: agent_end arrives while it still
-      // reports active work, so the event-driven latch does not fire here.
-      child.session.isStreaming = true;
-      child.emit({ type: "agent_start" });
-      child.emit({ type: "agent_end" });
-      expect(parent.calls.sendCustomMessage).toHaveLength(0);
+        for (let run = 1; run <= 2; run += 1) {
+          // agent_end arrives while work is still active; neither it nor the
+          // heartbeat may notify until the session actually settles.
+          child.session.isStreaming = true;
+          child.emit({ type: "agent_start" });
+          child.emit({ type: "agent_end" });
+          await vi.advanceTimersByTimeAsync(20);
+          expect(parent.calls.sendCustomMessage).toHaveLength(run - 1);
 
-      // Once the session settles, the periodic heartbeat re-check notifies.
-      child.session.isStreaming = false;
-      // The periodic heartbeat (heartbeatIntervalMs: 10) re-checks and notifies
-      // once the child settles; wait for that delivery rather than sleeping.
-      await vi.waitFor(() => {
-        expect(parent.calls.sendCustomMessage).toHaveLength(1);
-      });
+          child.session.isStreaming = false;
+          await vi.advanceTimersByTimeAsync(10);
+          expect(parent.calls.sendCustomMessage).toHaveLength(run);
+          expect(parent.calls.sendCustomMessage[run - 1]?.message.content).toContain("Subsession child-1 stopped working");
 
-      expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-1 stopped working");
-      await service.dispose();
+          // Further idle heartbeats must not duplicate the completed run.
+          await vi.advanceTimersByTimeAsync(20);
+          expect(parent.calls.sendCustomMessage).toHaveLength(run);
+        }
+      } finally {
+        child.session.isStreaming = false;
+        await service.dispose();
+      }
     });
 
     it("does not notify the parent when a tracked child is archived", async () => {

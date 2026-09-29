@@ -48,9 +48,8 @@ function selectedState(patch: Partial<AppState> = {}): AppState {
 function selectableApi(sessionStatus: SessionStatus): typeof defaultApi {
   return {
     ...defaultApi,
-    messages: () => Promise.resolve(emptyPage),
+    transcriptSnapshot: () => Promise.resolve({ page: emptyPage, status: sessionStatus, seq: 0, partial: null }),
     status: () => Promise.resolve(sessionStatus),
-    streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
     thinkingLevels: () => Promise.resolve({ levels: [] }),
   };
 }
@@ -262,7 +261,7 @@ describe("SessionController extension dialog answers", () => {
 
     await controller.answerDialog("dialog-1", true);
 
-    expect(state.error).toBe("Error: answer failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: answer failed");
     expect(state.pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-1"]);
     expect(state.closedDialogs).toEqual([]);
   });

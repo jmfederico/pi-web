@@ -1,4 +1,4 @@
-import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 
 const SESSION_NAME_TIMEOUT_MS = 10_000;
@@ -16,14 +16,14 @@ export function deterministicSessionName(firstMessage: unknown): string | undefi
 export async function generateShortSessionName<TApi extends Api>(streamFn: StreamFn, model: Model<TApi>, firstMessage: string): Promise<string | undefined> {
   const stream = await streamFn(
     model,
-    {
+    normalizeContext({
       systemPrompt: "Generate a concise title for a coding-agent chat session. Return only the title, with no quotes or punctuation wrapper.",
       messages: [{
         role: "user",
         content: `Create a 2-6 word title for this request:\n\n${truncateInput(firstMessage)}`,
         timestamp: Date.now(),
       }],
-    },
+    }),
     {
       maxTokens: 24,
       reasoning: "minimal",

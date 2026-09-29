@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { api as defaultApi, type AuthProviderOption, type OAuthFlowState, type SessionInfo, type SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
+import { browserErrorScopeKey, machineBrowserErrorScope } from "../browserErrors";
 import { AuthController, parseAuthSlashCommand } from "./authController";
 
 describe("parseAuthSlashCommand", () => {
@@ -76,6 +77,54 @@ describe("AuthController", () => {
       controller.dispose();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("reports provider discovery failures under the machine that owns the auth dialog", async () => {
+    const machine = remoteMachine("remote-1");
+    const failure = new Error("Auth providers unavailable");
+    const { controller, getState } = createController(
+      { selectedMachine: machine, error: "A global failure" },
+      { authProviders: () => Promise.reject(failure) },
+    );
+
+    await controller.openLogin();
+    await controller.chooseLoginMethod("oauth");
+
+    expect(getState().error).toBe("A global failure");
+    expect(getState().browserErrors[browserErrorScopeKey(machineBrowserErrorScope(machine.id))]?.message).toBe(String(failure));
+  });
+
+  it("reports direct login failures under the machine that owns the request", async () => {
+    const machine = remoteMachine("remote-1");
+    const provider = authProvider("anthropic", "oauth");
+    const failure = new Error("Login flow unavailable");
+    const { controller, getState } = createController(
+      { selectedMachine: machine, error: "A global failure" },
+      {
+        authProviders: () => Promise.resolve({ providers: [provider] }),
+        startOAuthLogin: () => Promise.reject(failure),
+      },
+    );
+
+    await controller.openLogin(provider.id);
+
+    expect(getState().error).toBe("A global failure");
+    expect(getState().browserErrors[browserErrorScopeKey(machineBrowserErrorScope(machine.id))]?.message).toBe(String(failure));
+  });
+
+  it("reports logout failures under the machine that owns the request", async () => {
+    const machine = remoteMachine("remote-1");
+    const provider = authProvider("anthropic", "oauth");
+    const failure = new Error("Logout unavailable");
+    const { controller, getState } = createController(
+      { selectedMachine: machine, error: "A global failure", authDialog: { step: "logout", machineId: machine.id, providers: [provider] } },
+      { logoutProvider: () => Promise.reject(failure) },
+    );
+
+    await controller.logoutProvider(provider.id);
+
+    expect(getState().error).toBe("A global failure");
+    expect(getState().browserErrors[browserErrorScopeKey(machineBrowserErrorScope(machine.id))]?.message).toBe(String(failure));
   });
 
   it("starts, polls, and cancels a federated OAuth login on the selected remote machine", async () => {

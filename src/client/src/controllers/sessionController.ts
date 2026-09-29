@@ -1,8 +1,10 @@
-import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
+import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSnapshot, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState, ClosedExtensionDialog } from "../appState";
+import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope, type SessionBrowserErrorOwner } from "../browserErrors";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
 import { machineSessionKey } from "../machineKeys";
+import { isCreatingSessionId } from "../route";
 import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, moveStagedAttachments } from "../promptAttachmentStaging";
 import { clearAskDraft } from "../askDrafts";
@@ -15,10 +17,12 @@ import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPe
 import { isSessionActive } from "../../../shared/activity";
 import type { PromptAttachmentDelivery, SessionNotificationInboxEvent, SessionStartupProgressEvent } from "../../../shared/apiTypes";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
-import { selectedMachineId, type GetState, type SetState, type UpdateUrl } from "./types";
+import { selectedMachineId, type GetState, type NavigationDestinationOptions, type NavigationFreshness, type NavigationScope, type NavigationSelection, type SetState, type UpdateUrl } from "./types";
 import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
 
 const MESSAGE_PAGE_SIZE = 100;
+const PENDING_SESSION_START_SCOPE = ["machine", "project", "workspace", "session"] as const;
+const SESSION_RESTORE_SCOPE = ["machine", "project", "workspace", "session"] as const;
 
 export interface SessionEventSocket {
   connect(
@@ -52,9 +56,12 @@ export interface SelectedSessionReady {
 
 export interface SessionControllerDependencies {
   api?: typeof defaultApi;
+  captureNavigation?: () => NavigationSelection;
+  beginNavigationOperation?: (scope: readonly NavigationScope[]) => NavigationFreshness;
   socket?: SessionEventSocket;
   transcripts?: ChatTranscriptStore;
   notifications?: SessionNotificationSessionBridge;
+  navigateToSession?: (session: SessionInfo | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
   onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
   onModelScopeChanged?: (revision: number) => void;
@@ -69,7 +76,7 @@ interface BulkSessionMutationResult {
 type ClientPendingStartSessionInfo = SessionInfo & { clientPendingStart: true; machineId: string };
 
 type QueuedPendingSessionSendInput =
-  | { type: "prompt"; text: string; streamingBehavior?: "steer" | "followUp" | undefined; attachments?: PromptAttachment[] | undefined; delivery: PromptAttachmentDelivery }
+  | { type: "prompt"; text: string; streamingBehavior?: "steer" | "followUp" | undefined; attachments?: PromptAttachment[] | undefined; delivery: PromptAttachmentDelivery; folder?: string | undefined }
   | { type: "shell"; text: string }
   | { type: "command"; text: string };
 
@@ -77,9 +84,13 @@ type QueuedPendingSessionSend = QueuedPendingSessionSendInput & { id: string };
 
 interface PendingSessionStart {
   tempId: string;
+  originWorkspace: Workspace;
   workspaceId: string;
   cwd: string;
   machineId: string;
+  expectedNavigation: NavigationSelection;
+  navigation?: NavigationFreshness | undefined;
+  pendingUrlPublished: boolean;
   session: ClientPendingStartSessionInfo;
   queuedSends: QueuedPendingSessionSend[];
   discarded: boolean;
@@ -97,10 +108,25 @@ interface SuppressedCreatedSession {
   machineId: string;
 }
 
+interface SelectedSessionRefreshBuffer {
+  target: SelectedSessionRefreshTarget;
+  events: SessionUiEvent[];
+  pendingDialogs: PendingExtensionDialog[];
+}
+
 interface SelectedSessionRefreshTarget {
   session: SessionInfo;
   machineId: string;
   selectionSeq: number;
+  errorOwner: SessionBrowserErrorOwner;
+  navigation?: NavigationFreshness | undefined;
+}
+
+export interface SessionSelectionOptions {
+  updateUrl?: boolean | undefined;
+  preserveTreeDialog?: boolean | undefined;
+  propagateRefreshError?: boolean | undefined;
+  navigation?: NavigationFreshness | undefined;
 }
 
 export class SessionController {
@@ -108,9 +134,13 @@ export class SessionController {
   private readonly api: typeof defaultApi;
   private readonly transcripts: ChatTranscriptStore;
   private readonly notifications: SessionNotificationSessionBridge | undefined;
+  private readonly navigateToSession: SessionControllerDependencies["navigateToSession"];
   private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
   private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
   private readonly onModelScopeChanged: SessionControllerDependencies["onModelScopeChanged"];
+  private readonly captureNavigation: SessionControllerDependencies["captureNavigation"];
+  private readonly beginNavigationOperation: SessionControllerDependencies["beginNavigationOperation"];
+  private readonly browserErrors: BrowserErrorReporter;
   private selectionSeq = 0;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -127,10 +157,10 @@ export class SessionController {
   // the fresh state baseline.
   private lastAppliedSelectedRefresh: { selectionSeq: number; partialJson: string } | undefined;
   private pendingTranscriptEvents: SessionUiEvent[] = [];
+  private refreshEventBuffer: SelectedSessionRefreshBuffer | undefined;
   private pendingStatusBySession = new Map<string, SessionStatus>();
   private pendingActivityBySession = new Map<string, SessionActivity>();
   private pendingFrame: number | undefined;
-  private pendingSessionStartSeq = 0;
   private pendingQueuedSendSeq = 0;
   private readonly pendingSessionStarts = new Map<string, PendingSessionStart>();
   private readonly suppressedCreatedSessions = new Map<string, SuppressedCreatedSession>();
@@ -147,9 +177,13 @@ export class SessionController {
     this.api = deps.api ?? defaultApi;
     this.transcripts = deps.transcripts ?? new ChatTranscriptStore();
     this.notifications = deps.notifications;
+    this.navigateToSession = deps.navigateToSession;
     this.replacePromptEditorText = deps.replacePromptEditorText;
     this.onSelectedSessionReady = deps.onSelectedSessionReady;
     this.onModelScopeChanged = deps.onModelScopeChanged;
+    this.captureNavigation = deps.captureNavigation;
+    this.beginNavigationOperation = deps.beginNavigationOperation;
+    this.browserErrors = new BrowserErrorReporter(getState, setState);
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -189,19 +223,48 @@ export class SessionController {
     if (options?.updateUrl !== false) this.updateUrl();
   }
 
-  clearSelectionAfterArchivedCollapse(): void {
-    const state = this.getState();
-    if (!shouldDeselectAfterArchivedCollapse(state.sessions, state.selectedSession)) return;
+  private async selectSessionAfterNavigation(session: SessionInfo, expected: NavigationSelection, options?: { updateUrl?: boolean | undefined }): Promise<void> {
+    if (this.navigateToSession !== undefined) {
+      await this.navigateToSession(session, {
+        ...(options?.updateUrl === false ? { replace: true } : {}),
+        expected,
+      });
+      return;
+    }
+    await this.selectSession(session, { updateUrl: options?.updateUrl });
+  }
+
+  private async clearSessionAfterNavigation(expected: NavigationSelection): Promise<void> {
+    if (!this.navigationSelectionMatchesState(expected)) return;
+    const cwd = this.getState().selectedSession?.cwd ?? this.getState().selectedWorkspace?.path;
+    if (this.navigateToSession !== undefined) {
+      if (cwd !== undefined) this.sessionSelection.forgetWorkspace(this.workspaceSelectionKey(cwd));
+      await this.navigateToSession(undefined, { expected });
+      return;
+    }
     this.deselectSession({ forgetRememberedSelection: true });
   }
 
-  async startSession() {
+  async clearSelectionAfterArchivedCollapse(): Promise<void> {
+    const state = this.getState();
+    if (!shouldDeselectAfterArchivedCollapse(state.sessions, state.selectedSession)) return;
+    await this.clearSessionAfterNavigation(this.navigationSelection());
+  }
+
+  async startSession(options?: { updateUrl?: boolean | undefined }) {
     const workspace = this.getState().selectedWorkspace;
     if (!workspace) return;
     const machineId = selectedMachineId(this.getState());
-    const pending = this.createPendingSessionStart(workspace, machineId);
+    const pendingUrlPublished = options?.updateUrl !== false;
+    const pending = this.createPendingSessionStart(workspace, machineId, this.navigationSelection(), pendingUrlPublished);
     this.pendingSessionStarts.set(pending.tempId, pending);
-    this.insertAndSelectPendingSession(pending.session);
+    this.insertAndSelectPendingSession(pending.session, { updateUrl: options?.updateUrl });
+    // The creation route is the handoff identity, not the previously selected session.
+    if (pendingUrlPublished) pending.expectedNavigation = this.navigationSelection();
+    // Start the freshness window after the pending-row URL publication. The
+    // publication is part of this operation's setup. The URL guard authorizes
+    // published-token handoffs; freshness also protects unpublished starts.
+    pending.navigation = this.beginNavigationOperation?.(PENDING_SESSION_START_SCOPE);
     try {
       const session = await this.api.startSession(workspace.path, machineId, pending.tempId);
       await this.resolvePendingSessionStart(pending.tempId, session);
@@ -211,21 +274,30 @@ export class SessionController {
   }
 
   preferredSession(cwd: string, sessions: SessionInfo[], targetSessionId: string | undefined): SessionInfo | undefined {
+    if (isCreatingSessionId(targetSessionId)) {
+      const pending = this.pendingSessionStarts.get(targetSessionId);
+      // Reloaded/expired creation links are inert: never join a backend with
+      // this token, fall back to another session, or issue another create.
+      return pending !== undefined && !pending.discarded && pending.cwd === cwd && this.isCurrentPendingStart(pending)
+        ? pending.session
+        : undefined;
+    }
     return selectPreferredSession(sessions, { targetSessionId, latestSessionId: this.sessionSelection.latestSessionId(this.workspaceSelectionKey(cwd)) });
   }
 
-  async selectSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined; preserveTreeDialog?: boolean | undefined; propagateRefreshError?: boolean | undefined }) {
-    if (this.disposed) return;
+  async selectSession(session: SessionInfo, options?: SessionSelectionOptions) {
+    if (this.disposed || !navigationIsCurrent(options?.navigation)) return;
     if (isClientPendingStartSessionInfo(session)) {
       this.selectClientPendingStartSession(session, options);
       return;
     }
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     const seq = ++this.selectionSeq;
     this.socket.close();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
-    const machineId = selectedMachineId(this.getState());
     this.notifications?.prepareSelectedSession(session, machineId);
     const transcriptKey = this.sessionCacheKey(session.id);
     const cached = this.transcripts.cachedView(transcriptKey);
@@ -241,53 +313,64 @@ export class SessionController {
       closedDialogs: [],
       availableThinkingLevels: [],
     });
-    let buffered: SessionUiEvent[] | undefined;
+    let socketConnected = false;
     try {
       if (session.archived === true) {
-        const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
-        if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
+        const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, machineId);
+        if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id || !navigationIsCurrent(options?.navigation)) return;
         const history = this.transcripts.mergeHistory(transcriptKey, page);
         this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] });
         this.onSelectedSessionReady?.({ machineId, session });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
       }
-      const socketBuffer: SessionUiEvent[] = [];
-      buffered = socketBuffer;
       this.socket.connect(
         session,
-        (event) => socketBuffer.push(event),
+        (event) => { this.applyEvent(event); },
         () => { void this.refreshSelectedSession(session.id); },
         machineId,
         () => { void this.notifications?.refreshSelectedSession(session, machineId); },
       );
-      await this.requestSelectedSessionRefresh({ session, machineId, selectionSeq: seq });
-      if (!this.isCurrentRefreshTarget({ session, machineId, selectionSeq: seq })) return;
+      socketConnected = true;
+      const refreshTarget: SelectedSessionRefreshTarget = {
+        session,
+        machineId,
+        selectionSeq: seq,
+        errorOwner,
+        ...(options?.navigation === undefined ? {} : { navigation: options.navigation }),
+      };
+      await this.requestSelectedSessionRefresh(refreshTarget);
+      if (!this.isCurrentRefreshTarget(refreshTarget) || !navigationIsCurrent(options?.navigation)) return;
       void this.refreshAvailableThinkingLevels();
-      for (const event of socketBuffer) this.applyEvent(event);
-      this.socket.setHandler((event) => { this.applyEvent(event); });
       this.onSelectedSessionReady?.({ machineId, session });
       if (options?.updateUrl !== false) this.updateUrl();
     } catch (error) {
-      if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) {
+      const navigationCurrent = navigationIsCurrent(options?.navigation);
+      if (!navigationCurrent
+        || seq !== this.selectionSeq
+        || this.getState().selectedSession?.id !== session.id) {
+        // Scoped browser errors remain owned by the request's captured session
+        // and are naturally hidden after navigation to another context.
+        this.reportSessionError(session, machineId, error, errorOwner);
         // Tree navigation still needs to know when a same-session reselection's
         // shared trailing refresh failed, even though this selection is stale.
-        if (options?.propagateRefreshError === true && this.isSelectedSessionIdentity(session.id, machineId)) throw error;
+        if (options?.propagateRefreshError === true && navigationCurrent && this.isSelectedSessionIdentity(session.id, machineId)) throw error;
         return;
       }
       if (isCachedNewSessionInfo(session) && isSessionNotFoundError(error)) {
-        await this.recreateCachedNewSession(session, options);
+        await this.recreateCachedNewSession(session, options, seq, errorOwner);
         return;
       }
-      // A failed join refresh must not strand the socket on its temporary
-      // buffering callback. Apply what arrived and keep live events flowing so
-      // reconnect/trailing refresh can recover authoritatively.
-      if (buffered !== undefined) {
-        for (const event of buffered) this.applyEvent(event);
-        this.socket.setHandler((event) => { this.applyEvent(event); });
-      }
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       if (options?.propagateRefreshError === true) throw error;
+    } finally {
+      // A newer URL selection can retire this join before its replacement has
+      // reached the controller. Release our socket in that gap, but
+      // never close a socket already owned by a newer controller selection.
+      if (socketConnected && !navigationIsCurrent(options?.navigation)
+        && this.isCurrentSessionSelection(session.id, machineId, seq)) {
+        this.socket.close();
+      }
     }
   }
 
@@ -295,20 +378,22 @@ export class SessionController {
     const state = this.getState();
     const session = state.selectedSession;
     if (!session || state.isLoadingEarlierMessages || state.messagePageStart <= 0) return;
+    const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     this.setState({ isLoadingEarlierMessages: true });
     try {
-      const page = await this.api.messages(session, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
+      const page = await this.api.messages(session, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, machineId);
       if (this.getState().selectedSession?.id !== session.id) return;
       const history = this.transcripts.mergeHistory(this.sessionCacheKey(session.id), page);
       this.setState(history);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     } finally {
       if (this.getState().selectedSession?.id === session.id) this.setState({ isLoadingEarlierMessages: false });
     }
   }
 
-  async send(text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery: PromptAttachmentDelivery = "inline") {
+  async send(text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery: PromptAttachmentDelivery = "inline", folder?: string) {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return;
 
@@ -317,16 +402,18 @@ export class SessionController {
     if (isClientPendingStartSessionInfo(session)) {
       if (!hasAttachments && trimmed.startsWith("/")) this.enqueuePendingSessionSend(session, { type: "command", text });
       else if (!hasAttachments && isShellInput(text)) this.enqueuePendingSessionSend(session, { type: "shell", text });
-      else this.enqueuePendingSessionSend(session, { type: "prompt", text, streamingBehavior, attachments, delivery });
+      else this.enqueuePendingSessionSend(session, { type: "prompt", text, streamingBehavior, attachments, delivery, folder });
       return;
     }
     if (!hasAttachments && trimmed.startsWith("/")) return this.runCommand(text);
     if (!hasAttachments && isShellInput(text)) return this.runShell(text);
 
-    // Capture the originating session/machine before any await so the request
-    // and its sending indicator stay bound to the right session even if the
-    // user navigates elsewhere mid-upload.
-    await this.deliverPromptToSession(session, text, streamingBehavior, attachments, delivery, selectedMachineId(this.getState()), { markSending: hasAttachments });
+    // Capture the originating session/machine/context before any await so the
+    // request, its sending indicator, and any failure stay bound to the right
+    // session even if the user navigates elsewhere mid-upload.
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    await this.deliverPromptToSession(session, text, streamingBehavior, attachments, delivery, folder, machineId, { markSending: hasAttachments }, errorOwner);
   }
 
   private markSendingPrompt(sessionId: string, sending: boolean): void {
@@ -345,7 +432,9 @@ export class SessionController {
       this.enqueuePendingSessionSend(session, { type: "shell", text });
       return;
     }
-    await this.deliverShellToSession(session, text, selectedMachineId(this.getState()), { optimisticLine: true });
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    await this.deliverShellToSession(session, text, machineId, { optimisticLine: true }, errorOwner);
   }
 
   async runCommand(text: string) {
@@ -355,13 +444,16 @@ export class SessionController {
       this.enqueuePendingSessionSend(session, { type: "command", text });
       return;
     }
-    await this.deliverCommandToSession(session, text, selectedMachineId(this.getState()), { applyResult: true });
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    await this.deliverCommandToSession(session, text, machineId, { applyResult: true }, errorOwner);
   }
 
   private enqueuePendingSessionSend(session: ClientPendingStartSessionInfo, input: QueuedPendingSessionSendInput): void {
     const pending = this.pendingSessionStarts.get(session.id);
     if (pending === undefined || pending.discarded) {
-      this.setState({ error: "The backend session is not ready for queued sends. Copy your message before discarding this failed start." });
+      const errorOwner = pending === undefined ? this.captureSessionErrorOwner(session) : this.captureSessionErrorOwner(session, pending.originWorkspace);
+      this.reportSessionError(session, session.machineId, "The backend session is not ready for queued sends. Copy your message before discarding this failed start.", errorOwner);
       return;
     }
     const queued: QueuedPendingSessionSend = { ...input, id: `pending-send-${String(++this.pendingQueuedSendSeq)}` };
@@ -377,26 +469,29 @@ export class SessionController {
     });
   }
 
-  private async flushQueuedPendingSends(session: SessionInfo, machineId: string, queuedSends: readonly QueuedPendingSessionSend[]): Promise<void> {
+  private async flushQueuedPendingSends(session: SessionInfo, machineId: string, queuedSends: readonly QueuedPendingSessionSend[], errorOwner: SessionBrowserErrorOwner): Promise<void> {
     for (const queued of queuedSends) {
-      const delivered = await this.deliverQueuedPendingSend(session, machineId, queued);
+      const delivered = await this.deliverQueuedPendingSend(session, machineId, queued, errorOwner);
       if (!delivered) return;
       this.dropNextQueuedSessionMessage(session.id);
     }
   }
 
-  private async deliverQueuedPendingSend(session: SessionInfo, machineId: string, queued: QueuedPendingSessionSend): Promise<boolean> {
-    if (queued.type === "prompt") return this.deliverPromptToSession(session, queued.text, queued.streamingBehavior, queued.attachments, queued.delivery, machineId, { markSending: true });
-    if (queued.type === "shell") return this.deliverShellToSession(session, queued.text, machineId, { optimisticLine: true });
-    return this.deliverCommandToSession(session, queued.text, machineId, { applyResult: true });
+  private async deliverQueuedPendingSend(session: SessionInfo, machineId: string, queued: QueuedPendingSessionSend, errorOwner: SessionBrowserErrorOwner): Promise<boolean> {
+    if (queued.type === "prompt") return this.deliverPromptToSession(session, queued.text, queued.streamingBehavior, queued.attachments, queued.delivery, queued.folder, machineId, { markSending: true }, errorOwner);
+    if (queued.type === "shell") return this.deliverShellToSession(session, queued.text, machineId, { optimisticLine: true }, errorOwner);
+    return this.deliverCommandToSession(session, queued.text, machineId, { applyResult: true }, errorOwner);
   }
 
-  private async deliverPromptToSession(session: SessionInfo, text: string, streamingBehavior: "steer" | "followUp" | undefined, attachments: PromptAttachment[] | undefined, delivery: PromptAttachmentDelivery, machineId: string, options: { markSending: boolean }): Promise<boolean> {
+  private async deliverPromptToSession(session: SessionInfo, text: string, streamingBehavior: "steer" | "followUp" | undefined, attachments: PromptAttachment[] | undefined, delivery: PromptAttachmentDelivery, folder: string | undefined, machineId: string, options: { markSending: boolean }, errorOwner: SessionBrowserErrorOwner): Promise<boolean> {
     const hasAttachments = attachments !== undefined && attachments.length > 0;
     if (options.markSending) this.markSendingPrompt(session.id, true);
     try {
       if (hasAttachments && delivery === "folder") {
-        const saved = await this.api.saveAttachments(session, attachments, machineId);
+        // The composer passes the workspace-effective folder it displayed, so
+        // the save destination matches the label for every workspace of the
+        // project; the server only re-resolves config when folder is omitted.
+        const saved = await this.api.saveAttachments(session, attachments, machineId, folder);
         const references = saved.map((file) => fileCompletionInsertText(file.path, false)).join(" ");
         const body = text === "" ? references : `${text}\n\n${references}`;
         await this.api.prompt(session, body, streamingBehavior, machineId);
@@ -406,14 +501,14 @@ export class SessionController {
       this.markCachedNewSessionPersisted(session);
       return true;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return false;
     } finally {
       if (options.markSending) this.markSendingPrompt(session.id, false);
     }
   }
 
-  private async deliverShellToSession(session: SessionInfo, text: string, machineId: string, options: { optimisticLine: boolean }): Promise<boolean> {
+  private async deliverShellToSession(session: SessionInfo, text: string, machineId: string, options: { optimisticLine: boolean }, errorOwner: SessionBrowserErrorOwner): Promise<boolean> {
     if (options.optimisticLine && this.getState().selectedSession?.id === session.id) {
       this.setState({ messages: [...this.getState().messages, textMessage("user", text)] });
     }
@@ -423,28 +518,29 @@ export class SessionController {
       return true;
     } catch (error) {
       if (this.getState().selectedSession?.id === session.id) this.setState({ messages: [...this.getState().messages, textMessage("system", String(error))] });
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return false;
     }
   }
 
-  private async deliverCommandToSession(session: SessionInfo, text: string, machineId: string, options: { applyResult: boolean }): Promise<boolean> {
+  private async deliverCommandToSession(session: SessionInfo, text: string, machineId: string, options: { applyResult: boolean }, errorOwner: SessionBrowserErrorOwner): Promise<boolean> {
     // Commands are not inserted into the transcript optimistically: a builtin
     // command produces its own result line, and a runtime/skill command is
     // forwarded to the agent, which streams back the canonical (expanded)
     // message. Inserting the raw text here would leave a line that doesn't
     // converge with server history and disappears on reload. Surface the same
     // per-session sending indicator that send() uses for the pre-receipt window.
+    const expected = this.navigationSelection();
     this.markSendingPrompt(session.id, true);
     try {
       const result = await this.api.runCommand(session, text, machineId);
-      if (options.applyResult && this.isSelectedSessionIdentity(session.id, machineId)) this.applyCommandResult(result);
-      else if (result.type === "select" || result.type === "tree") this.setState({ error: `Queued command “${text}” needs input; open the session and run it again.` });
+      if (options.applyResult && this.isSelectedSessionIdentity(session.id, machineId)) await this.applyCommandResult(result, expected);
+      else if (result.type === "select" || result.type === "tree") this.reportSessionError(session, machineId, `Queued command “${text}” needs input; open the session and run it again.`, errorOwner);
       this.markCachedNewSessionPersisted(session);
       return true;
     } catch (error) {
       if (this.getState().selectedSession?.id === session.id) this.setState({ messages: [...this.getState().messages, textMessage("system", String(error))] });
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return false;
     } finally {
       this.markSendingPrompt(session.id, false);
@@ -460,13 +556,19 @@ export class SessionController {
   }
 
   async respondToCommand(requestId: string, value: string) {
-    const session = this.getState().selectedSession;
+    const state = this.getState();
+    const session = state.selectedSession;
     if (!session) return;
+    const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
+    const expected = this.navigationSelection();
     this.setState({ commandDialog: undefined });
     try {
-      this.applyCommandResult(await this.api.respondToCommand(session, requestId, value, selectedMachineId(this.getState())));
+      const result = await this.api.respondToCommand(session, requestId, value, machineId);
+      if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
+      await this.applyCommandResult(result, expected);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -474,22 +576,45 @@ export class SessionController {
     this.setState({ commandDialog: undefined });
   }
 
-  async navigateTree(targetId: string, summary: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+  async actOnMessage(entryId: string, action: "fork" | "back"): Promise<void> {
     const state = this.getState();
     const session = state.selectedSession;
-    const tree = state.treeDialog;
+    if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
+    const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
+    let result: CommandResult;
+    try {
+      result = await this.api.runCommand(session, "/tree", machineId);
+      if (result.type !== "tree") throw new Error("message" in result ? result.message : "Session history is unavailable.");
+      if (!result.tree.nodes.some((node) => node.id === entryId)) throw new Error("This message is no longer available in session history.");
+    } catch (error) {
+      this.reportSessionError(session, machineId, error, errorOwner);
+      throw error;
+    }
+    if (!this.isSelectedSessionIdentity(session.id, machineId)) return;
+    if (action === "fork") await this.forkSessionTree(entryId, result.tree);
+    else await this.navigateSessionTree(entryId, { mode: "none" }, result.tree);
+  }
+
+  async navigateTree(targetId: string, summary: SessionTreeSummaryChoice): Promise<SessionTreeNavigateResult> {
+    return this.navigateSessionTree(targetId, summary, this.getState().treeDialog);
+  }
+
+  private async navigateSessionTree(targetId: string, summary: SessionTreeSummaryChoice, tree: SessionTreeSnapshot | undefined): Promise<SessionTreeNavigateResult> {
+    const state = this.getState();
+    const session = state.selectedSession;
     if (session === undefined || tree === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
       throw new Error("The session tree navigator is no longer available");
     }
 
     const machineId = selectedMachineId(state);
-    const selectionSeq = this.selectionSeq;
+    const errorOwner = this.captureSessionErrorOwner(session);
     const cacheKey = machineSessionKey(machineId, session.id);
     let result: SessionTreeNavigateResult;
     try {
       result = await this.api.navigateTree(session, { targetId, expectedLeafId: tree.activeLeafId, summary }, machineId);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       throw error;
     }
 
@@ -515,11 +640,11 @@ export class SessionController {
     try {
       await this.replacePromptEditorText?.({ machineId, sessionId: session.id, text: editorText });
     } catch (error) {
-      if (this.isSelectedSessionIdentity(session.id, machineId)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       throw error;
     }
     if (authoritativeRefreshFailure !== undefined) {
-      if (this.isSelectedSessionIdentity(session.id, machineId)) this.setState({ error: String(authoritativeRefreshFailure.error) });
+      this.reportSessionError(session, machineId, authoritativeRefreshFailure.error, errorOwner);
       throw authoritativeRefreshFailure.error;
     }
     if (this.isSelectedSessionIdentity(session.id, machineId) && this.getState().treeDialog === tree) this.setState({ treeDialog: undefined });
@@ -527,21 +652,25 @@ export class SessionController {
   }
 
   async forkFromTree(entryId: string): Promise<SessionTreeForkResult> {
+    return this.forkSessionTree(entryId, this.getState().treeDialog);
+  }
+
+  private async forkSessionTree(entryId: string, tree: SessionTreeSnapshot | undefined): Promise<SessionTreeForkResult> {
     const state = this.getState();
     const session = state.selectedSession;
-    const tree = state.treeDialog;
     if (session === undefined || tree === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) {
       throw new Error("The session tree navigator is no longer available");
     }
 
     const machineId = selectedMachineId(state);
-    const selectionSeq = this.selectionSeq;
+    const errorOwner = this.captureSessionErrorOwner(session);
+    const expected = this.navigationSelection();
     const originalCacheKey = machineSessionKey(machineId, session.id);
     let result: SessionTreeForkResult;
     try {
       result = await this.api.forkTree(session, { entryId, expectedLeafId: tree.activeLeafId }, machineId);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       throw error;
     }
 
@@ -560,8 +689,14 @@ export class SessionController {
     // whoever owns the selection now; a changed selection may already reflect it.
     if (!this.isSelectedSessionIdentity(session.id, machineId)) return result;
     const sessions = [forked, ...this.getState().sessions.filter((candidate) => candidate.id !== forked.id)];
-    this.setState({ sessions, treeDialog: undefined });
-    void this.selectSession(forked);
+    this.setState({ sessions });
+    if (this.navigateToSession !== undefined) {
+      const navigated = await this.navigateToSession(forked, { expected });
+      if (navigated && this.isSelectedSessionIdentity(forked.id, machineId) && this.getState().treeDialog === tree) this.setState({ treeDialog: undefined });
+    } else {
+      this.setState({ treeDialog: undefined });
+      await this.selectSession(forked);
+    }
     return result;
   }
 
@@ -570,11 +705,11 @@ export class SessionController {
     const session = state.selectedSession;
     if (session === undefined || state.treeDialog === undefined || isClientPendingStartSessionInfo(session)) return;
     const machineId = selectedMachineId(state);
-    const selectionSeq = this.selectionSeq;
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
       await this.api.abort(session, machineId);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       throw error;
     }
   }
@@ -595,64 +730,79 @@ export class SessionController {
       return;
     }
     if (!isArchivableSessionInfo(session, status)) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      await this.api.archive(session, selectedMachineId(this.getState()));
+      await this.api.archive(session, machineId);
       const state = this.getState();
       const sessions = markSessionArchived(state.sessions, session.id, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSession(sessions, state.selectedSession?.id, session.id);
       this.setState({ sessions });
+      const expected = this.navigationSelection();
 
-      if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
-      else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
+      if (selectionChange.type === "select") await this.selectSessionAfterNavigation(selectionChange.session, expected);
+      else if (selectionChange.type === "clear") await this.clearSessionAfterNavigation(expected);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async archiveSessionWithDescendants(session = this.getState().selectedSession) {
     if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session))) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      const response = await this.api.archiveWithDescendants(session, selectedMachineId(this.getState()));
+      const response = await this.api.archiveWithDescendants(session, machineId);
       const archivedIds = response.sessionIds !== undefined && response.sessionIds.length > 0 ? response.sessionIds : [session.id];
       const state = this.getState();
       const sessions = markSessionsArchived(state.sessions, archivedIds, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSessions(sessions, state.selectedSession?.id, archivedIds);
       this.setState({ sessions });
+      const expected = this.navigationSelection();
 
-      if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
-      else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
+      if (selectionChange.type === "select") await this.selectSessionAfterNavigation(selectionChange.session, expected);
+      else if (selectionChange.type === "clear") await this.clearSessionAfterNavigation(expected);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async archiveSessions(sessions: readonly SessionInfo[]): Promise<void> {
     const candidates = uniqueSessionsById(sessions).filter((session) => isArchivableSessionInfo(session, this.statusForSession(session)));
     if (candidates.length === 0) return;
+    const fallbackSession = candidates[0];
+    if (fallbackSession === undefined) return;
+    const machineId = selectedMachineId(this.getState());
+    const originWorkspace = this.getState().selectedWorkspace;
+    const errorOwner = this.captureSessionErrorOwner(fallbackSession, originWorkspace);
 
     try {
-      const machineId = selectedMachineId(this.getState());
       const { succeededIds: archivedIds, failures, generatedAt } = await this.archiveSessionBatch(candidates, machineId);
       if (archivedIds.length > 0) {
         const state = this.getState();
         const nextSessions = markSessionsArchived(state.sessions, archivedIds, generatedAt ?? new Date().toISOString());
         const selectionChange = selectionAfterArchivingSessions(nextSessions, state.selectedSession?.id, archivedIds);
         this.setState({ sessions: nextSessions });
+        const expected = this.navigationSelection();
 
-        if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
-        else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
+        if (selectionChange.type === "select") await this.selectSessionAfterNavigation(selectionChange.session, expected);
+        else if (selectionChange.type === "clear") await this.clearSessionAfterNavigation(expected);
       }
-      this.applyBulkSessionFailures("Archive", failures);
+      this.applyBulkSessionFailures("Archive", failures, machineId, originWorkspace, fallbackSession, errorOwner);
     } catch (error) {
-      this.setState({ error: `Archive failed: ${errorMessage(error)}` });
+      this.reportWorkspaceOrSessionError(originWorkspace, fallbackSession, machineId, `Archive failed: ${errorMessage(error)}`, errorOwner);
     }
   }
 
   async deleteArchivedSessions(sessions: readonly SessionInfo[]): Promise<void> {
     const candidates = uniqueSessionsById(sessions).filter((session) => session.archived === true);
     if (candidates.length === 0) return;
+    const fallbackSession = candidates[0];
+    if (fallbackSession === undefined) return;
 
     const machineId = selectedMachineId(this.getState());
+    const originWorkspace = this.getState().selectedWorkspace;
+    const errorOwner = this.captureSessionErrorOwner(fallbackSession, originWorkspace);
     try {
       const { succeededIds: deletedIds, failures } = await this.deleteArchivedSessionBatch(candidates, machineId);
       if (deletedIds.length > 0) {
@@ -661,14 +811,15 @@ export class SessionController {
         const nextSessions = state.sessions.filter((session) => !deletedIdSet.has(session.id));
         this.setState({ sessions: nextSessions });
         if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
+          const expected = this.navigationSelection();
           const next = nextSessions.find((session) => session.archived !== true) ?? nextSessions[0];
-          if (next !== undefined) await this.selectSession(next);
-          else this.deselectSession({ forgetRememberedSelection: true });
+          if (next !== undefined) await this.selectSessionAfterNavigation(next, expected);
+          else await this.clearSessionAfterNavigation(expected);
         }
       }
-      this.applyBulkSessionFailures("Delete", failures);
+      this.applyBulkSessionFailures("Delete", failures, machineId, originWorkspace, fallbackSession, errorOwner);
     } catch (error) {
-      this.setState({ error: `Delete failed: ${errorMessage(error)}` });
+      this.reportWorkspaceOrSessionError(originWorkspace, fallbackSession, machineId, `Delete failed: ${errorMessage(error)}`, errorOwner);
     }
   }
 
@@ -698,15 +849,16 @@ export class SessionController {
         sessionActivities: omitKeys(state.sessionActivities, affectedIds),
         ...(selectedAffected ? { status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] } : {}),
       });
+      const expected = this.navigationSelection();
 
       if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
         const next = nextSessions.find((session) => session.archived !== true) ?? nextSessions[0];
-        if (next !== undefined) await this.selectSession(next);
-        else this.deselectSession({ forgetRememberedSelection: true });
+        if (next !== undefined) await this.selectSessionAfterNavigation(next, expected);
+        else await this.clearSessionAfterNavigation(expected);
       } else {
         const selectionChange = selectionAfterArchivingSessions(nextSessions, state.selectedSession?.id, archivedIds);
-        if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
-        else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
+        if (selectionChange.type === "select") await this.selectSessionAfterNavigation(selectionChange.session, expected);
+        else if (selectionChange.type === "clear") await this.clearSessionAfterNavigation(expected);
       }
     }
     await this.refreshCurrentWorkspaceSessions(machineId);
@@ -722,6 +874,7 @@ export class SessionController {
       const sessions = this.mergePendingStartSessions(workspace.path, listedSessions, machineId);
       const selectedSession = this.getState().selectedSession;
       this.setState({ sessions });
+      const expected = this.navigationSelection();
       if (selectedSession === undefined) return;
       const refreshedSelected = sessions.find((session) => session.id === selectedSession.id);
       if (refreshedSelected !== undefined) {
@@ -729,10 +882,10 @@ export class SessionController {
         return;
       }
       const next = sessions.find((session) => session.archived !== true) ?? sessions[0];
-      if (next !== undefined) await this.selectSession(next);
-      else this.deselectSession({ forgetRememberedSelection: true });
+      if (next !== undefined) await this.selectSessionAfterNavigation(next, expected);
+      else await this.clearSessionAfterNavigation(expected);
     } catch (error) {
-      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
+      this.reportWorkspaceError(workspace, machineId, error);
     }
   }
 
@@ -760,32 +913,49 @@ export class SessionController {
       sendingPrompts: omitKey(state.sendingPrompts, session.id),
       clientQueuedSessionMessages: omitKey(state.clientQueuedSessionMessages, session.id),
     });
+    const expected = this.navigationSelection();
     if (this.getState().selectedSession?.id !== session.id) return;
     const next = sessions.find((candidate) => candidate.archived !== true) ?? sessions[0];
-    if (next !== undefined) await this.selectSession(next);
-    else {
-      this.clearActiveSession();
-      this.updateUrl();
-    }
+    if (next !== undefined) await this.selectSessionAfterNavigation(next, expected);
+    else await this.clearSessionAfterNavigation(expected);
   }
 
   async restoreSession(session = this.getState().selectedSession) {
     if (!session) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    const selectionSeq = this.selectionSeq;
+    const navigation = this.beginNavigationOperation?.(SESSION_RESTORE_SCOPE);
     try {
-      await this.api.restore(session, selectedMachineId(this.getState()));
-      const restored = { ...session };
-      delete restored.archived;
-      delete restored.archivedAt;
-      this.replaceSession(restored);
-      if (this.getState().selectedSession?.id === restored.id) await this.selectSession(restored);
+      await this.api.restore(session, machineId);
     } catch (error) {
-      this.setState({ error: String(error) });
+      // The restore result must not mutate stale selection state, but its
+      // scoped failure remains attributable to the originating session.
+      this.reportSessionError(session, machineId, error, errorOwner);
+      return;
+    }
+
+    // Restore changes session metadata, not the route surface. A view/tool
+    // change must therefore not strand the selected session merely because a
+    // route-navigation callback would reject its older surface expectation.
+    if (!this.isCurrentRestoreOperation(machineId, selectionSeq, navigation)) return;
+    const restored = { ...session };
+    delete restored.archived;
+    delete restored.archivedAt;
+    const wasSelected = this.getState().selectedSession?.id === restored.id;
+    this.replaceSession(restored);
+    if (wasSelected) {
+      await this.selectSession(restored, {
+        updateUrl: false,
+        ...(navigation === undefined ? {} : { navigation }),
+      });
     }
   }
 
   async reloadSession(session = this.getState().selectedSession) {
     if (session === undefined || !isArchivableSessionInfo(session, this.statusForSession(session))) return;
     const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
       await this.api.reloadSession(session, machineId);
       this.transcripts.discard(this.sessionCacheKey(session.id));
@@ -793,29 +963,33 @@ export class SessionController {
         await this.selectSession(session, { updateUrl: false });
       }
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async detachParent(session = this.getState().selectedSession) {
     if (session?.parentSessionPath === undefined) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      await this.api.detachParent(session, selectedMachineId(this.getState()));
+      await this.api.detachParent(session, machineId);
       const detached = { ...session };
       delete detached.parentSessionPath;
       this.replaceSession(detached);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async listModels() {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return [];
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.models(session, selectedMachineId(this.getState()))).models;
+      return (await this.api.models(session, machineId)).models;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return [];
     }
   }
@@ -823,10 +997,12 @@ export class SessionController {
   async listModelCatalog() {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return [];
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.modelCatalog(session, selectedMachineId(this.getState()))).models;
+      return (await this.api.modelCatalog(session, machineId)).models;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return [];
     }
   }
@@ -839,10 +1015,12 @@ export class SessionController {
   async setModelEnabled(provider: string, modelId: string, enabled: boolean): Promise<SessionModelCatalogEntry[] | undefined> {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return undefined;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.setModelEnabled(session, provider, modelId, enabled, selectedMachineId(this.getState()))).models;
+      return (await this.api.setModelEnabled(session, provider, modelId, enabled, machineId)).models;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return undefined;
     }
   }
@@ -852,10 +1030,38 @@ export class SessionController {
     const state = this.getState();
     const session = state.selectedSession;
     if (!session || session.archived === true) return undefined;
+    const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.setModelScope(session, mode, selectedMachineId(state))).models;
+      return (await this.api.setModelScope(session, mode, machineId)).models;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
+      return undefined;
+    }
+  }
+
+  async getSessionDefaults() {
+    const session = this.getState().selectedSession;
+    if (!session || session.archived === true) return undefined;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    try {
+      return await this.api.getSessionDefaults(session, machineId);
+    } catch (error) {
+      this.reportSessionError(session, machineId, error, errorOwner);
+      return undefined;
+    }
+  }
+
+  async setSessionDefaults(defaults: Parameters<typeof defaultApi.setSessionDefaults>[1]) {
+    const session = this.getState().selectedSession;
+    if (!session || session.archived === true) return undefined;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
+    try {
+      return await this.api.setSessionDefaults(session, defaults, machineId);
+    } catch (error) {
+      this.reportSessionError(session, machineId, error, errorOwner);
       return undefined;
     }
   }
@@ -863,32 +1069,38 @@ export class SessionController {
   async setModel(provider: string, modelId: string) {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setModel(session, provider, modelId, selectedMachineId(this.getState())));
+      this.applyStatus(await this.api.setModel(session, provider, modelId, machineId));
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async cycleModel(direction: "forward" | "backward") {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleModel(session, direction, selectedMachineId(this.getState())));
+      this.applyStatus(await this.api.cycleModel(session, direction, machineId));
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async listThinkingLevels() {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return [];
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      return (await this.api.thinkingLevels(session, selectedMachineId(this.getState()))).levels;
+      return (await this.api.thinkingLevels(session, machineId)).levels;
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
       return [];
     }
   }
@@ -908,20 +1120,24 @@ export class SessionController {
   async setThinkingLevel(level: string) {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setThinkingLevel(session, level, selectedMachineId(this.getState())));
+      this.applyStatus(await this.api.setThinkingLevel(session, level, machineId));
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async cycleThinkingLevel() {
     const session = this.getState().selectedSession;
     if (!session || session.archived === true) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleThinkingLevel(session, selectedMachineId(this.getState())));
+      this.applyStatus(await this.api.cycleThinkingLevel(session, machineId));
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -930,12 +1146,13 @@ export class SessionController {
     const session = state.selectedSession;
     if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
     const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     const selectionSeq = this.selectionSeq;
     try {
       const status = await this.api.clearQueue(session, machineId);
       if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(status);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -944,12 +1161,13 @@ export class SessionController {
     const session = state.selectedSession;
     if (session === undefined || isClientPendingStartSessionInfo(session)) return;
     const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     const selectionSeq = this.selectionSeq;
     try {
       const status = await this.api.dismissWarning(session, dismissId, machineId);
       if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(status);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -982,6 +1200,7 @@ export class SessionController {
       return;
     }
     const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     const selectionSeq = this.selectionSeq;
     try {
       const response = await close(session, machineId);
@@ -998,7 +1217,7 @@ export class SessionController {
       // request is needed to learn what the session's open dialogs are now.
       this.applyStatus(response.sessionStatus);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -1014,6 +1233,7 @@ export class SessionController {
     // Without the real id there is no route to answer through — and no way a
     // dialog card could be on screen yet either.
     if (pending === undefined || backendSessionId === undefined) return;
+    const errorOwner = this.captureSessionErrorOwner(session, pending.originWorkspace);
     const selectionSeq = this.selectionSeq;
     try {
       const response = await close({ ...session, id: backendSessionId }, pending.machineId);
@@ -1028,7 +1248,7 @@ export class SessionController {
       }
       this.applyPendingStartStatus(pending, response.sessionStatus);
     } catch (error) {
-      if (selectionSeq === this.selectionSeq && this.getState().selectedSession?.id === session.id) this.setState({ error: String(error) });
+      this.reportSessionError(session, pending.machineId, error, errorOwner);
     }
   }
 
@@ -1037,6 +1257,7 @@ export class SessionController {
     const session = state.selectedSession;
     if (session === undefined || session.archived === true || isClientPendingStartSessionInfo(session)) return;
     const machineId = selectedMachineId(state);
+    const errorOwner = this.captureSessionErrorOwner(session);
     const selectionSeq = this.selectionSeq;
     try {
       const response = await close(session, machineId);
@@ -1048,17 +1269,19 @@ export class SessionController {
       // request is needed to learn what the session's open ask is now.
       if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(response.sessionStatus);
     } catch (error) {
-      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
   async stopActiveWork() {
     const session = this.getState().selectedSession;
     if (!session) return;
+    const machineId = selectedMachineId(this.getState());
+    const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      await this.api.abort(session, selectedMachineId(this.getState()));
+      await this.api.abort(session, machineId);
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -1071,51 +1294,92 @@ export class SessionController {
   refreshSelectedSession(sessionId = this.getState().selectedSession?.id, options?: { silent?: boolean }): Promise<void> {
     const session = this.getState().selectedSession;
     if (sessionId === undefined || session?.id !== sessionId || session.archived === true || isClientPendingStartSessionInfo(session)) return Promise.resolve();
+    const machineId = selectedMachineId(this.getState());
     const target: SelectedSessionRefreshTarget = {
       session,
-      machineId: selectedMachineId(this.getState()),
+      machineId,
       selectionSeq: this.selectionSeq,
+      errorOwner: this.captureSessionErrorOwner(session),
     };
     return this.requestSelectedSessionRefresh(target).catch((error: unknown) => {
       if (options?.silent === true) {
         console.warn("Selected session background refresh failed", error);
         return;
       }
-      if (this.isCurrentRefreshTarget(target)) this.setState({ error: String(error) });
+      this.reportSessionError(target.session, target.machineId, error, target.errorOwner);
     });
   }
 
+  private bufferRefreshEvents(target: SelectedSessionRefreshTarget): SelectedSessionRefreshBuffer {
+    if (this.refreshEventBuffer !== undefined && this.isCurrentRefreshTarget(this.refreshEventBuffer.target)) return this.refreshEventBuffer;
+    this.flushPendingUpdates();
+    const buffer: SelectedSessionRefreshBuffer = { target, events: [], pendingDialogs: this.getState().pendingDialogs };
+    this.refreshEventBuffer = buffer;
+    return buffer;
+  }
+
   private requestSelectedSessionRefresh(target: SelectedSessionRefreshTarget): Promise<void> {
+    if (!this.isCurrentRefreshTarget(target)) return Promise.resolve();
     const key = machineSessionKey(target.machineId, target.session.id);
+    // Start buffering synchronously, including the coordinator's queued phase.
+    this.bufferRefreshEvents(target);
     return this.selectedSessionRefreshes.request(key, async () => {
       if (!this.isCurrentRefreshTarget(target)) return;
-      this.flushPendingUpdates();
-      const [page, status, streamSnapshot] = await Promise.all([
-        this.api.messages(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId),
-        this.api.status(target.session, target.machineId),
-        this.api.streamSnapshot(target.session, target.machineId),
-        this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve(),
-      ]);
-      if (!this.isCurrentRefreshTarget(target)) return;
-      if (this.isUnchangedSelectedRefresh(target, key, page, status, streamSnapshot)) return;
-      // Seed the in-flight partial assistant message on top of committed history
-      // and record the snapshot's sequence as the watermark. Buffered/live events
-      // with `seq <= watermark` are already reflected here and are dropped by
-      // `applyEvent`; later events (`seq > watermark`) stream in on top. The
-      // partial is seeded into the in-memory transcript only, never the raw
-      // history cache, so it never persists.
-      const history = this.transcripts.mergeHistory(key, page);
-      const messages = this.transcripts.seedStreamingPartial(history.messages, streamSnapshot.partial);
-      this.streamWatermark = { sessionId: target.session.id, seq: streamSnapshot.seq };
-      this.setState({
-        ...history,
-        messages,
-        status,
-        activity: this.getState().sessionActivities[target.session.id],
-      });
-      this.applyStatus(status);
-      this.lastAppliedSelectedRefresh = { selectionSeq: target.selectionSeq, partialJson: selectedRefreshPartialJson(streamSnapshot) };
+      const buffer = this.bufferRefreshEvents(target);
+      let notificationsRefresh: Promise<void>;
+      try {
+        // Notifications run alongside the snapshot but must not delay either
+        // transcript display or buffered-event replay. Await them afterwards
+        // so refresh completion and error reporting still include their result.
+        notificationsRefresh = this.notifications?.refreshSelectedSession(target.session, target.machineId) ?? Promise.resolve();
+        notificationsRefresh.catch(() => undefined);
+        const snapshot = await this.api.transcriptSnapshot(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId);
+        if (!this.isCurrentRefreshTarget(target)) return;
+        const { page, status } = snapshot;
+        this.preserveBufferedDialogOutcomes(buffer, snapshot.seq);
+        if (!this.isUnchangedSelectedRefresh(target, key, page, status, snapshot)) {
+          // History, partial, and watermark describe the same daemon boundary.
+          // Replay only events newer than it; never overwrite an already-applied
+          // live event with a response that was captured before that event.
+          const history = this.transcripts.mergeHistory(key, page);
+          const messages = this.transcripts.seedStreamingPartial(history.messages, snapshot.partial);
+          this.streamWatermark = { sessionId: target.session.id, seq: snapshot.seq };
+          this.setState({
+            ...history,
+            messages,
+            status,
+            activity: this.getState().sessionActivities[target.session.id],
+          });
+          this.applyStatus(status);
+          this.lastAppliedSelectedRefresh = { selectionSeq: target.selectionSeq, partialJson: selectedRefreshPartialJson(snapshot) };
+        }
+      } finally {
+        if (this.refreshEventBuffer === buffer) this.refreshEventBuffer = undefined;
+        // A failed fetch leaves the previous baseline/watermark intact. Replay
+        // its events there too, so failure never strands or loses live output.
+        // A retired selection must not replay into the newly selected session.
+        if (this.isCurrentRefreshTarget(target)) {
+          for (const event of buffer.events) this.applyEvent(event);
+        }
+      }
+      await notificationsRefresh;
     });
+  }
+
+  private preserveBufferedDialogOutcomes(buffer: SelectedSessionRefreshBuffer, seq: number): void {
+    // Status snapshots contain open dialogs, not their transient outcome cards.
+    // Retain closes that replay will drop, using the pre-refresh dialog payloads
+    // even if a global status has already removed them from the open list.
+    const dialogs = new Map(buffer.pendingDialogs.map((dialog) => [dialog.dialogId, dialog]));
+    for (const event of buffer.events) {
+      if (event.seq === undefined || event.seq > seq || this.isStreamEventBelowWatermark(event)) continue;
+      if (event.type === "dialog.opened") dialogs.set(event.dialog.dialogId, event.dialog);
+      if (event.type === "dialog.closed") {
+        const dialog = dialogs.get(event.dialogId);
+        if (dialog !== undefined) this.recordClosedDialog({ dialog, reason: event.reason, ...(event.answer === undefined ? {} : { answer: event.answer }) });
+        dialogs.delete(event.dialogId);
+      }
+    }
   }
 
   /**
@@ -1130,6 +1394,8 @@ export class SessionController {
   private isUnchangedSelectedRefresh(target: SelectedSessionRefreshTarget, key: string, page: MessagePage, status: SessionStatus, streamSnapshot: SessionStreamSnapshot): boolean {
     const last = this.lastAppliedSelectedRefresh;
     if (last?.selectionSeq !== target.selectionSeq) return false;
+    // A restarted daemon starts a new sequence even if its history is identical.
+    if (streamSnapshot.seq < (this.streamWatermark?.seq ?? 0)) return false;
     if (selectedRefreshPartialJson(streamSnapshot) !== last.partialJson) return false;
     if (!isHistoryTailSlice(this.transcripts.rawHistoryPage(key), page)) return false;
     if (JSON.stringify(status) !== JSON.stringify(this.getState().status)) return false;
@@ -1139,11 +1405,18 @@ export class SessionController {
   }
 
   private isCurrentRefreshTarget(target: SelectedSessionRefreshTarget): boolean {
-    return this.isCurrentSessionSelection(target.session.id, target.machineId, target.selectionSeq);
+    return this.isCurrentSessionSelection(target.session.id, target.machineId, target.selectionSeq)
+      && navigationIsCurrent(target.navigation);
   }
 
   private isCurrentSessionSelection(sessionId: string, machineId: string, selectionSeq: number): boolean {
     return selectionSeq === this.selectionSeq && this.isSelectedSessionIdentity(sessionId, machineId);
+  }
+
+  private isCurrentRestoreOperation(machineId: string, selectionSeq: number, navigation?: NavigationFreshness): boolean {
+    return selectionSeq === this.selectionSeq
+      && selectedMachineId(this.getState()) === machineId
+      && navigationIsCurrent(navigation);
   }
 
   private isSelectedSessionIdentity(sessionId: string, machineId: string): boolean {
@@ -1156,9 +1429,48 @@ export class SessionController {
       && !isClientPendingStartSessionInfo(selected);
   }
 
-  private applyBulkSessionFailures(action: string, failures: readonly string[]): void {
+  private reportSessionError(session: SessionInfo, machineId: string, error: unknown, errorOwner: SessionBrowserErrorOwner = { cwd: session.cwd }): void {
+    // The owner is captured before the operation awaits. Falling back to the
+    // session's immutable cwd is safe; deriving workspace metadata here would
+    // let a later selection misattribute the failure.
+    this.browserErrors.report(sessionBrowserErrorScope(machineId, session.id, errorOwner), String(error));
+  }
+
+  private captureSessionErrorOwner(session: SessionInfo, workspace = this.workspaceForSessionError(session)): SessionBrowserErrorOwner {
+    return {
+      cwd: session.cwd,
+      ...(workspace === undefined ? {} : { projectId: workspace.projectId, workspaceId: workspace.id }),
+    };
+  }
+
+  private workspaceForSessionError(session: SessionInfo): Workspace | undefined {
+    const state = this.getState();
+    const candidates = [
+      state.selectedWorkspace,
+      ...state.workspaces,
+      ...Object.values(state.workspacesByProjectId).flat(),
+    ];
+    return candidates.find((workspace): workspace is Workspace => workspace?.path === session.cwd);
+  }
+
+  private reportWorkspaceError(workspace: Workspace, machineId: string, error: unknown): void {
+    this.browserErrors.report(workspaceBrowserErrorScope(machineId, workspace.projectId, workspace.id), String(error));
+  }
+
+  private applyBulkSessionFailures(action: string, failures: readonly string[], machineId: string, workspace: Workspace | undefined, fallbackSession: SessionInfo | undefined, errorOwner: SessionBrowserErrorOwner): void {
     if (failures.length === 0) return;
-    this.setState({ error: `${action} failed for ${String(failures.length)} session${failures.length === 1 ? "" : "s"}: ${failures.join("; ")}` });
+    this.reportWorkspaceOrSessionError(
+      workspace,
+      fallbackSession,
+      machineId,
+      `${action} failed for ${String(failures.length)} session${failures.length === 1 ? "" : "s"}: ${failures.join("; ")}`,
+      errorOwner,
+    );
+  }
+
+  private reportWorkspaceOrSessionError(workspace: Workspace | undefined, session: SessionInfo | undefined, machineId: string, error: unknown, errorOwner?: SessionBrowserErrorOwner): void {
+    if (workspace !== undefined) this.reportWorkspaceError(workspace, machineId, error);
+    else if (session !== undefined) this.reportSessionError(session, machineId, error, errorOwner);
   }
 
   private sessionCacheKey(sessionId: string): string {
@@ -1184,8 +1496,37 @@ export class SessionController {
     });
   }
 
-  private createPendingSessionStart(workspace: Workspace, machineId: string): PendingSessionStart {
-    const tempId = `pending-session-${String(++this.pendingSessionStartSeq)}-${Date.now().toString(36)}`;
+  private replaceSessionInList(session: SessionInfo): void {
+    this.setState({ sessions: this.getState().sessions.map((candidate) => candidate.id === session.id ? session : candidate) });
+  }
+
+  private navigationSelection(): NavigationSelection {
+    const captured = this.captureNavigation?.();
+    if (captured !== undefined) return captured;
+    const state = this.getState();
+    const selectedSession = state.selectedSession;
+    return {
+      machineId: selectedMachineId(state),
+      projectId: state.selectedProject?.id,
+      workspaceId: state.selectedWorkspace?.id,
+      sessionId: selectedSession?.id,
+    };
+  }
+
+  private navigationSelectionMatchesState(expected: NavigationSelection): boolean {
+    const current = this.navigationSelection();
+    return current.machineId === expected.machineId
+      && current.projectId === expected.projectId
+      && current.workspaceId === expected.workspaceId
+      && current.sessionId === expected.sessionId
+      && current.tool === expected.tool
+      && current.view === expected.view;
+  }
+
+  private createPendingSessionStart(workspace: Workspace, machineId: string, expectedNavigation: NavigationSelection, pendingUrlPublished: boolean): PendingSessionStart {
+    // getRandomValues also works for LAN HTTP deployments (randomUUID requires HTTPS).
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const tempId = `creating:${token}`;
     const now = new Date().toISOString();
     const session: ClientPendingStartSessionInfo = {
       id: tempId,
@@ -1200,14 +1541,15 @@ export class SessionController {
       clientPendingStart: true,
       machineId,
     };
-    return { tempId, workspaceId: workspace.id, cwd: workspace.path, machineId, session, queuedSends: [], discarded: false };
+    return { tempId, originWorkspace: workspace, workspaceId: workspace.id, cwd: workspace.path, machineId, expectedNavigation, pendingUrlPublished, session, queuedSends: [], discarded: false };
   }
 
-  private insertAndSelectPendingSession(session: ClientPendingStartSessionInfo): void {
+  private insertAndSelectPendingSession(session: ClientPendingStartSessionInfo, options?: { updateUrl?: boolean | undefined }): void {
     const state = this.getState();
     this.selectClientPendingStartSession(session, {
       activity: creatingPendingSessionActivity(session.id),
       sessions: [session, ...state.sessions.filter((candidate) => candidate.id !== session.id)],
+      updateUrl: options?.updateUrl,
     });
   }
 
@@ -1222,7 +1564,7 @@ export class SessionController {
     const pendingStart = this.pendingSessionStarts.get(session.id);
     const activity = options?.activity ?? state.sessionActivities[session.id] ?? (pendingStart !== undefined ? creatingPendingSessionActivity(session.id, pendingStart.queuedSends.length) : undefined);
     this.setState({
-      ...(options?.sessions === undefined ? {} : { sessions: options.sessions }),
+      sessions: options?.sessions ?? (state.sessions.some((candidate) => candidate.id === session.id) ? state.sessions : [session, ...state.sessions]),
       selectedSession: session,
       messages: [],
       messagePageStart: 0,
@@ -1266,28 +1608,108 @@ export class SessionController {
     moveDraft(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     moveStagedAttachments(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     const cachedSession = markCachedNewSessionInfo(session, pending.machineId);
+    const errorOwner = this.captureSessionErrorOwner(session, pending.originWorkspace);
     if (!this.isCurrentPendingStart(pending)) {
       this.setState({ clientQueuedSessionMessages: omitKey(this.getState().clientQueuedSessionMessages, tempId) });
-      await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends);
+      await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends, errorOwner);
       return;
     }
 
     const state = this.getState();
     const wasSelected = state.selectedSession?.id === tempId;
+    const useNavigation = wasSelected && this.navigateToSession !== undefined;
     this.setState({
       sessions: replacePendingSessionInList(state.sessions, tempId, cachedSession),
       sessionActivities: omitSessionActivity(state.sessionActivities, tempId),
       sendingPrompts: moveRecordKey(state.sendingPrompts, tempId, cachedSession.id),
       clientQueuedSessionMessages: moveRecordKey(state.clientQueuedSessionMessages, tempId, cachedSession.id),
-      ...(wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: state.sessionStatuses[cachedSession.id]?.pendingAsk, pendingDialogs: state.sessionStatuses[cachedSession.id]?.pendingDialogs ?? [], closedDialogs: [] } : {}),
+      ...(!useNavigation && wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: state.sessionStatuses[cachedSession.id]?.pendingAsk, pendingDialogs: state.sessionStatuses[cachedSession.id]?.pendingDialogs ?? [], closedDialogs: [] } : {}),
       error: "",
     });
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
-    if (wasSelected) {
-      this.updateUrl({ replace: true });
-      await this.selectSession(cachedSession, { updateUrl: false });
+    if (wasSelected) await this.reconcileCompletedPendingSelection(pending, cachedSession);
+    await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends, errorOwner);
+  }
+
+  /**
+   * Complete the UI half of a create only while its selection route is still
+   * current. The backend result, list replacement, cache moves, and queued
+   * sends have already been settled above and must not depend on this guard.
+   * A stale completion must not leave the removed temporary row selected.
+   */
+  private async reconcileCompletedPendingSelection(pending: PendingSessionStart, session: SessionInfo): Promise<void> {
+    const navigation = pending.navigation;
+    if (!pending.pendingUrlPublished && !navigationIsCurrent(navigation)) {
+      this.clearUnreconciledPendingSelection(pending, session);
+      return;
     }
-    await this.flushQueuedPendingSends(cachedSession, pending.machineId, queuedSends);
+
+    pending.expectedNavigation = this.pendingStartExpectedNavigation(pending);
+    if (this.navigateToSession !== undefined) {
+      try {
+        const accepted = await this.navigateToSession(session, {
+          ...(pending.pendingUrlPublished ? { replace: true, creationHandoff: true } : {}),
+          expected: pending.expectedNavigation,
+        });
+        // A successful navigator intentionally changes the session URL, so its
+        // selection-scope token becomes stale as a consequence of the write it
+        // just authorized. Trust the navigator's guarded boolean and only
+        // recover if it left this pending row selected.
+        if (accepted && this.getState().selectedSession?.id !== pending.tempId) return;
+        this.clearUnreconciledPendingSelection(
+          pending,
+          session,
+          accepted || pending.pendingUrlPublished || !navigationIsCurrent(navigation)
+            ? undefined
+            : "Session started, but its navigation changed before selection completed. Select it from the session list.",
+        );
+      } catch (error) {
+        this.clearUnreconciledPendingSelection(pending, session, `Session started, but it could not be selected: ${errorMessage(error)}`);
+      }
+      return;
+    }
+
+    try {
+      await this.selectSession(session, { updateUrl: false, navigation });
+      if (!navigationIsCurrent(navigation)) {
+        this.clearUnreconciledPendingSelection(pending, session);
+        return;
+      }
+      if (this.getState().selectedSession?.id !== session.id) {
+        this.clearUnreconciledPendingSelection(pending, session, "Session started, but its selection changed before navigation completed. Select it from the session list.");
+        return;
+      }
+      if (pending.pendingUrlPublished) this.updateUrl({ replace: true });
+      else this.updateUrl();
+    } catch (error) {
+      this.clearUnreconciledPendingSelection(pending, session, `Session started, but it could not be selected: ${errorMessage(error)}`);
+    }
+  }
+
+  private pendingStartExpectedNavigation(pending: PendingSessionStart): NavigationSelection {
+    const current = this.navigationSelection();
+    if (pending.pendingUrlPublished) return {
+      machineId: pending.machineId,
+      projectId: pending.originWorkspace.projectId,
+      workspaceId: pending.workspaceId,
+      sessionId: pending.tempId,
+    };
+    // An updateUrl:false start leaves an already selected session in the
+    // address bar while its temporary row is rendered. Retain the route
+    // session id captured before the start and refresh only the live surface.
+    return { ...current, sessionId: pending.expectedNavigation.sessionId };
+  }
+
+  private clearUnreconciledPendingSelection(pending: PendingSessionStart, session: SessionInfo, message?: string): void {
+    const selectedId = this.getState().selectedSession?.id;
+    if (selectedId !== pending.tempId && selectedId !== session.id) return;
+    this.clearActiveSession();
+    if (message !== undefined) {
+      this.browserErrors.report(
+        workspaceBrowserErrorScope(pending.machineId, pending.originWorkspace.projectId, pending.workspaceId),
+        message,
+      );
+    }
   }
 
   private failPendingSessionStart(tempId: string, error: unknown): void {
@@ -1302,12 +1724,21 @@ export class SessionController {
     if (this.getState().selectedSession?.id === tempId) this.socket.close();
     const releasedCreatedSessions = this.takeSuppressedCreatedSessionsFor(pending.cwd, pending.machineId);
     const isCurrentPendingStart = this.isCurrentPendingStart(pending);
-    if (wasDiscarded || !isCurrentPendingStart) {
+    if (wasDiscarded) {
       if (isCurrentPendingStart) this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
       return;
     }
-    const state = this.getState();
     const message = errorMessage(error);
+    const failureMessage = `Failed to start session: ${message}`;
+    if (!isCurrentPendingStart) {
+      // The temporary row belongs to the workspace that started it, even after
+      // navigation reset the workspace-scoped session list. Report the late
+      // failure at that retained workspace scope so it is visible on return
+      // without attributing it to the newer selection.
+      this.browserErrors.report(workspaceBrowserErrorScope(pending.machineId, pending.originWorkspace.projectId, pending.originWorkspace.id), failureMessage);
+      return;
+    }
+    const state = this.getState();
     const activity = failedPendingSessionActivity(tempId, message, pending.queuedSends.length);
     const hasPendingRow = state.sessions.some((session) => session.id === tempId);
     this.setState({
@@ -1317,14 +1748,16 @@ export class SessionController {
       // Open cards on the failed row are dead: the create is gone, so no
       // answer could ever reach the daemon. Settled outcomes stay as history.
       ...(state.selectedSession?.id === tempId ? { pendingDialogs: [] } : {}),
-      error: `Failed to start session: ${message}`,
     });
+    this.reportSessionError(pending.session, pending.machineId, failureMessage, this.captureSessionErrorOwner(pending.session, pending.originWorkspace));
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
   }
 
   private isCurrentPendingStart(pending: PendingSessionStart): boolean {
     const state = this.getState();
-    return selectedMachineId(state) === pending.machineId && state.selectedWorkspace?.id === pending.workspaceId;
+    return selectedMachineId(state) === pending.machineId
+      && state.selectedWorkspace?.id === pending.workspaceId
+      && state.selectedWorkspace.projectId === pending.originWorkspace.projectId;
   }
 
   private hasPendingStartFor(cwd: string, machineId: string): boolean {
@@ -1365,20 +1798,45 @@ export class SessionController {
     return [...pending, ...sessions.filter((session) => !pendingIds.has(session.id))];
   }
 
-  private async recreateCachedNewSession(session: SessionInfo, options?: { updateUrl?: boolean | undefined }): Promise<void> {
+  private async recreateCachedNewSession(
+    session: SessionInfo,
+    options: SessionSelectionOptions | undefined,
+    selectionSeq: number,
+    errorOwner = this.captureSessionErrorOwner(session),
+  ): Promise<void> {
+    const machineId = selectedMachineId(this.getState());
+    const expected = this.navigationSelection();
     try {
-      const machineId = selectedMachineId(this.getState());
       const replacement = await this.api.startSession(session.cwd, machineId);
+      if (!this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) return;
       rememberCachedNewSession(replacement, machineId);
       moveDraft(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
       moveStagedAttachments(this.sessionCacheKey(session.id), this.sessionCacheKey(replacement.id));
       forgetCachedNewSession(session.id, machineId);
       const cachedReplacement = markCachedNewSessionInfo(replacement, machineId);
+      const wasSelected = this.getState().selectedSession?.id === session.id;
       this.setState({ sessions: [cachedReplacement, ...this.getState().sessions.filter((candidate) => candidate.id !== session.id)], error: "" });
-      await this.selectSession(cachedReplacement, { updateUrl: false });
-      this.updateUrl(options?.updateUrl === false ? { replace: true } : undefined);
+      if (wasSelected && this.navigateToSession !== undefined) {
+        // Surface-only navigation retains this selection load. Carry its latest
+        // surface, but keep the initiating hierarchy/session expectation so the
+        // host still rejects a genuinely newer selection destination.
+        const latest = this.navigationSelection();
+        const accepted = await this.navigateToSession(cachedReplacement, {
+          ...(options?.updateUrl === false ? { replace: true } : {}),
+          expected: { ...expected, tool: latest.tool, view: latest.view },
+        });
+        // The replacement is durable, but rejected navigation does not grant
+        // permission to select it or rewrite the newer URL. Retire only our
+        // removed cached selection while the route owner finishes restoring.
+        if (!accepted && this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) {
+          this.clearActiveSession();
+        }
+      } else {
+        await this.selectSession(cachedReplacement, { updateUrl: false });
+        this.updateUrl(options?.updateUrl === false ? { replace: true } : undefined);
+      }
     } catch (error) {
-      this.setState({ error: String(error) });
+      this.reportSessionError(session, machineId, error, errorOwner);
     }
   }
 
@@ -1388,7 +1846,7 @@ export class SessionController {
     this.replaceSession(stripCachedNewSessionMarker(latest));
   }
 
-  private applyCommandResult(result: CommandResult) {
+  private async applyCommandResult(result: CommandResult, expected: NavigationSelection): Promise<void> {
     if (result.type === "select") {
       this.setState({ commandDialog: result });
       return;
@@ -1399,13 +1857,19 @@ export class SessionController {
     }
     const message = result.type === "unsupported" ? result.message : result.message;
     if (message !== undefined && message !== "") this.setState({ messages: [...this.getState().messages, textMessage(result.type === "unsupported" ? "system" : "tool", message)] });
-    if (result.type === "done" && result.session) {
-      if (result.promptDraft !== undefined) saveDraft(this.sessionCacheKey(result.session.id), result.promptDraft);
-      const current = this.getState().selectedSession;
-      const sessions = [result.session, ...this.getState().sessions.filter((session) => session.id !== result.session?.id)];
-      this.setState({ sessions, selectedSession: current?.id === result.session.id ? result.session : current });
-      if (current?.id !== result.session.id) void this.selectSession(result.session);
+    if (result.type !== "done" || result.session === undefined) return;
+
+    if (result.promptDraft !== undefined) saveDraft(this.sessionCacheKey(result.session.id), result.promptDraft);
+    const current = this.getState().selectedSession;
+    const sessions = [result.session, ...this.getState().sessions.filter((session) => session.id !== result.session?.id)];
+    this.setState({ sessions, ...(current?.id === result.session.id ? { selectedSession: result.session } : {}) });
+    if (current?.id === result.session.id) return;
+    if (!this.navigationSelectionMatchesState(expected)) return;
+    if (this.navigateToSession !== undefined) {
+      await this.navigateToSession(result.session, { expected });
+      return;
     }
+    await this.selectSession(result.session);
   }
 
   private applyCreatedSession(session: SessionInfo) {
@@ -1520,6 +1984,11 @@ export class SessionController {
     // transcript sequence cannot be lost.
     if (event.type === "notifications.inbox") {
       this.notifications?.applyInboxEvent(selectedMachineId(this.getState()), event);
+      return;
+    }
+    const buffer = this.refreshEventBuffer;
+    if (buffer !== undefined && this.isCurrentRefreshTarget(buffer.target)) {
+      buffer.events.push(event);
       return;
     }
     // Drop events already reflected in the seeded join snapshot (committed
@@ -1739,6 +2208,7 @@ export class SessionController {
   }
 
   private clearPendingUpdates(): void {
+    this.refreshEventBuffer = undefined;
     this.pendingTranscriptEvents = [];
     this.pendingStatusBySession.clear();
     this.pendingActivityBySession.clear();
@@ -1753,6 +2223,8 @@ export class SessionController {
   // history + seeded partial and must be dropped. Events with no `seq` (which
   // should not occur on the per-session socket) are never dropped.
   private isStreamEventBelowWatermark(event: SessionUiEvent): boolean {
+    // These effects are not part of the history/status/partial snapshot.
+    if (event.type === "session.name" || event.type === "session.error" || event.type === "command.output") return false;
     const watermark = this.streamWatermark;
     if (watermark === undefined || watermark.sessionId !== this.getState().selectedSession?.id) return false;
     return event.seq !== undefined && event.seq <= watermark.seq;
@@ -1800,6 +2272,10 @@ function replacePendingSessionInList(sessions: readonly SessionInfo[], pendingSe
   }
   if (!inserted) return [resolvedSession, ...next];
   return next;
+}
+
+function navigationIsCurrent(navigation: NavigationFreshness | undefined): boolean {
+  return navigation === undefined || navigation.isCurrent();
 }
 
 function isClientPendingStartSessionInfo(session: SessionInfo | undefined): session is ClientPendingStartSessionInfo {

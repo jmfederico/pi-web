@@ -10,6 +10,7 @@ export interface GatewayServerConfigDraft {
 export interface MachineAccessConfigDraft {
   allowedPathsText: string;
   uploadDefaultFolder: string;
+  attachmentDefaultFolder: string;
 }
 
 export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
@@ -17,7 +18,7 @@ export function emptyGatewayServerConfigDraft(): GatewayServerConfigDraft {
 }
 
 export function emptyMachineAccessConfigDraft(): MachineAccessConfigDraft {
-  return { allowedPathsText: "", uploadDefaultFolder: "" };
+  return { allowedPathsText: "", uploadDefaultFolder: "", attachmentDefaultFolder: "" };
 }
 
 export function gatewayServerDraftFromConfig(config: PiWebConfigValues): GatewayServerConfigDraft {
@@ -33,6 +34,7 @@ export function machineAccessDraftFromConfig(config: PiWebConfigValues): Machine
   return {
     allowedPathsText: config.pathAccess?.allowedPaths?.join("\n") ?? "",
     uploadDefaultFolder: config.uploads?.defaultFolder ?? "",
+    attachmentDefaultFolder: config.attachments?.defaultFolder ?? "",
   };
 }
 
@@ -52,10 +54,12 @@ export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, ba
 
 export function machineAccessConfigPatchFromDraft(draft: MachineAccessConfigDraft): PiWebConfigValues {
   const allowedPaths = parseAllowedPathsText(draft.allowedPathsText);
-  const uploadDefaultFolder = normalizeWorkspaceRelativeFolder(draft.uploadDefaultFolder);
+  const uploadDefaultFolder = normalizeWorkspaceRelativeFolder(draft.uploadDefaultFolder, "Upload default folder");
+  const attachmentDefaultFolder = normalizeWorkspaceRelativeFolder(draft.attachmentDefaultFolder, "Attachment default folder");
   return {
     pathAccess: { allowedPaths },
     uploads: uploadDefaultFolder === "" ? {} : { defaultFolder: uploadDefaultFolder },
+    attachments: attachmentDefaultFolder === "" ? {} : { defaultFolder: attachmentDefaultFolder },
   };
 }
 
@@ -65,6 +69,7 @@ function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebCo
     ...(baseConfig.plugins === undefined ? {} : { plugins: baseConfig.plugins }),
     ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),
+    ...(baseConfig.attachments === undefined ? {} : { attachments: baseConfig.attachments }),
     ...(baseConfig.maxUploadBytes === undefined ? {} : { maxUploadBytes: baseConfig.maxUploadBytes }),
     ...(baseConfig.spawnSessions === undefined ? {} : { spawnSessions: baseConfig.spawnSessions }),
     ...(baseConfig.subsessions === undefined ? {} : { subsessions: baseConfig.subsessions }),
@@ -84,13 +89,13 @@ function parseAllowedPathsText(value: string): string[] {
   return paths;
 }
 
-function normalizeWorkspaceRelativeFolder(value: string): string {
+function normalizeWorkspaceRelativeFolder(value: string, label: string): string {
   const trimmed = value.trim();
   if (trimmed === "") return "";
-  if (isAbsoluteLike(trimmed)) throw new Error("Upload default folder must be workspace-relative.");
+  if (isAbsoluteLike(trimmed)) throw new Error(`${label} must be workspace-relative.`);
   const parts = trimmed.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
   if (parts.length === 0) return "";
-  if (parts.some((part) => part === "..")) throw new Error("Upload default folder must not contain path traversal.");
+  if (parts.some((part) => part === "..")) throw new Error(`${label} must not contain path traversal.`);
   return parts.join("/");
 }
 

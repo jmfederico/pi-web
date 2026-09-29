@@ -51,6 +51,7 @@ function commandRunHandle(input: { title: string; command: string }): TerminalCo
 function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTerminal): WorkspacePanelContext {
   const noop = () => undefined;
   return {
+    navigate: () => Promise.resolve(),
     machine: { id: "local", name: "local", kind: "local" },
     workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
     state,
@@ -68,8 +69,16 @@ function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTermin
 }
 
 function renderPanel(value: PiWebStatusResponse, terminal?: WorkspacePanelTerminal): HTMLElement {
-  const contributions = plugin.activate({ apiVersion: 2, pluginId: "updates", runtimePluginId: "updates", html, svg }).contributions;
-  const panel = contributions.workspacePanels?.[0];
+  const contributions = plugin.activate({
+    apiVersion: 4,
+    pluginId: "updates",
+    runtimePluginId: "updates",
+    html,
+    svg,
+    signal: new AbortController().signal,
+    lifetimeSignal: new AbortController().signal,
+  }).contributions;
+  const panel = contributions.workspacePanels[0];
   if (panel === undefined) throw new Error("Expected Updates workspace panel");
   const container = document.createElement("div");
   document.body.append(container);

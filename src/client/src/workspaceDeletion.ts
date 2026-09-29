@@ -2,7 +2,7 @@ import { workspaceDeleteOperation, workspaceDeleteOperationMetadataKey, targetWo
 import type { AppState } from "./appState";
 import type { TerminalCommandRun, Workspace } from "./api";
 
-export { targetWorkspaceIdMetadataKey, workspaceDeleteOperation, workspaceDeleteOperationMetadataKey, workspaceDeletionMetadata } from "../../shared/workspaceDeletion";
+export { workspaceDeleteOperation, workspaceDeletionMetadata } from "../../shared/workspaceDeletion";
 
 /** Removal availability and wording come from the current owner, never Git fields. */
 export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
@@ -13,11 +13,8 @@ export function workspaceRemovalConfirmation(workspace: Workspace): string | und
   return workspace.removal?.confirmation;
 }
 
-export function workspaceDeletionRunFilter(projectId?: string): { projectId?: string; metadata: Record<string, string> } {
-  return {
-    ...(projectId === undefined ? {} : { projectId }),
-    metadata: { [workspaceDeleteOperationMetadataKey]: workspaceDeleteOperation },
-  };
+export function workspaceDeletionRunFilter(): { metadata: Record<string, string> } {
+  return { metadata: { [workspaceDeleteOperationMetadataKey]: workspaceDeleteOperation } };
 }
 
 export function latestWorkspaceDeletionRuns(runs: TerminalCommandRun[]): Record<string, TerminalCommandRun> {

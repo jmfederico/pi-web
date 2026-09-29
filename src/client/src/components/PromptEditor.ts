@@ -5,16 +5,19 @@ import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import { api, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
+import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery } from "../promptAttachmentCapture";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
 import { detectPromptCompletionTrigger, fileCompletionInsertText, modelCompletionChoices, type PromptCompletionTrigger } from "../promptCompletions";
+import { promptArgumentHintExtension, setPromptArgumentHint } from "../promptArgumentHint";
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
-import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendPromptOnEnterShortcut, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
+import { createMobilePromptEnterMedia, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
+import { composerSendShortcut, matchesComposerSend } from "../composerShortcuts";
+import type { ShortcutPreferenceConfig } from "../keyboardShortcuts";
 import { promptEditorStyles, type CompletionItem } from "./shared";
 import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
@@ -23,17 +26,24 @@ import "./AutocompleteMenu";
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
   @property({ type: Boolean }) disabled = false;
+  @property({ attribute: false }) shortcuts: ShortcutPreferenceConfig = {};
   @property() sessionId?: string;
   @property() cwd?: string;
   @property() machineId = "local";
   @property() projectId?: string;
   @property() workspaceId?: string;
+  /**
+   * Workspace-effective folder for the "save to folder" attachment delivery.
+   * Shown in the delivery label and sent explicitly with the save request, so
+   * the save destination is always the folder the label advertised.
+   */
+  @property() attachmentsFolder = DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER;
   @property({ type: Boolean }) canSteer = false;
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
   @property({ attribute: false }) status?: SessionStatus;
   @property({ type: Boolean }) sending = false;
-  @property({ attribute: false }) onSend?: (text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery) => void | Promise<void>;
+  @property({ attribute: false }) onSend?: (text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string) => void | Promise<void>;
   @property({ attribute: false }) onStop?: () => void;
   @property({ attribute: false }) onSelectModel?: () => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
@@ -191,7 +201,7 @@ export class PromptEditor extends LitElement {
           <label class="attachment-delivery" title=${canUseInlineDelivery ? "How attachments are delivered to the agent" : "General files are saved and mentioned from the workspace"}>
             <select .value=${delivery} @change=${(event: Event) => { this.changeDelivery(event); }}>
               <option value="inline" ?disabled=${!canUseInlineDelivery}>Attach to message${canUseInlineDelivery ? "" : " (images only)"}</option>
-              <option value="folder">Save to .pi-web/attachments</option>
+              <option value="folder">${attachmentFolderDeliveryLabel(this.attachmentsFolder)}</option>
             </select>
           </label>
         ` : null}
@@ -288,6 +298,7 @@ export class PromptEditor extends LitElement {
             blur: () => this.resetEditorModifierState(),
           }),
           placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
+          promptArgumentHintExtension,
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
           EditorView.updateListener.of((update) => {
@@ -351,7 +362,6 @@ export class PromptEditor extends LitElement {
       if (version !== this.requestVersion) return;
       this.completions = commands
         .filter((command) => command.name.toLowerCase().includes(trigger.query.toLowerCase()))
-        .slice(0, 12)
         .map((command) => ({
           kind: "command",
           replaceFrom: trigger.from,
@@ -359,6 +369,7 @@ export class PromptEditor extends LitElement {
           insertText: `/${command.name}`,
           detail: command.source,
           ...(command.description === undefined ? {} : { description: command.description }),
+          ...(command.argumentHint === undefined ? {} : { argumentHint: command.argumentHint }),
         }));
     } else if (trigger.kind === "file" && this.projectId !== undefined && this.workspaceId !== undefined) {
       const files = await api.files(trigger.query, { scope: trigger.fileScope, machineId: this.machineId, projectId: this.projectId, workspaceId: this.workspaceId }).catch(emptyFileSuggestions);
@@ -404,20 +415,45 @@ export class PromptEditor extends LitElement {
     return true;
   }
 
+  /** The capture-phase app dispatcher must leave composer-owned keys to CodeMirror. */
+  ownsKeyboardEvent(event: KeyboardEvent): boolean {
+    if (this.editor === undefined || !event.composedPath().includes(this.editor.contentDOM)) return false;
+    // Keep Enter/newline handling and IME composition inside the editor, too.
+    return event.isComposing || this.editor.composing
+      || (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey)
+      || this.matchesSendShortcut(event);
+  }
+
+  private matchesSendShortcut(event: KeyboardEvent): boolean {
+    const shiftKey = event.key === "Enter"
+      ? shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia)
+      : event.shiftKey;
+    return matchesComposerSend({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, shiftKey, isComposing: event.isComposing, target: event.target }, composerSendShortcut(this.shortcuts, this.mobilePromptEnterMedia));
+  }
+
   private handleEditorKeyDown(event: KeyboardEvent, view: EditorView): boolean {
     if (event.key === "Shift") {
       this.explicitShiftKeyActive = true;
       return false;
     }
-    if (event.key !== "Enter") {
-      this.explicitShiftKeyActive = false;
-      return false;
-    }
     if (event.defaultPrevented || event.isComposing || view.composing) return false;
-
-    const shiftKey = shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia);
+    const send = this.matchesSendShortcut(event);
+    const plainEnter = event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !shouldUsePromptEnterShiftShortcut(event.shiftKey, this.explicitShiftKeyActive, this.mobilePromptEnterMedia);
     this.explicitShiftKeyActive = false;
-    return this.handleEditorEnter(view, shiftKey);
+    if (plainEnter && this.completions.length) {
+      const completion = this.completions[this.selectedIndex];
+      if (completion !== undefined) this.pick(completion);
+      return true;
+    }
+    if (send) {
+      this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
+      return true;
+    }
+    if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
+    }
+    return false;
   }
 
   private handleEditorKeyUp(event: KeyboardEvent): boolean {
@@ -428,19 +464,6 @@ export class PromptEditor extends LitElement {
   private resetEditorModifierState(): boolean {
     this.explicitShiftKeyActive = false;
     return false;
-  }
-
-  private handleEditorEnter(view: EditorView, shiftKey: boolean): boolean {
-    if (!shiftKey && this.completions.length) {
-      const completion = this.completions[this.selectedIndex];
-      if (completion !== undefined) this.pick(completion);
-      return true;
-    }
-    if (!shouldSendPromptOnEnterShortcut(shiftKey, this.mobilePromptEnterMedia, readPromptEnterPreference())) {
-      return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
-    }
-    this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
-    return true;
   }
 
   private handleEditorTab(view: EditorView): boolean {
@@ -467,6 +490,7 @@ export class PromptEditor extends LitElement {
       changes: { from: item.replaceFrom, to: replaceTo, insert: `${item.insertText}${suffix}` },
       selection: EditorSelection.cursor(cursor),
       scrollIntoView: true,
+      ...(item.argumentHint === undefined || item.argumentHint === "" ? {} : { effects: setPromptArgumentHint.of({ pos: cursor, text: item.argumentHint }) }),
     });
     this.completions = [];
   }
@@ -479,11 +503,15 @@ export class PromptEditor extends LitElement {
     const behavior = this.canSteer || this.isCompacting ? streamingBehavior : undefined;
     const attachments = pending.length > 0 ? this.currentAttachments() : undefined;
     const delivery = this.effectiveAttachmentDelivery();
+    // Folder delivery sends the displayed workspace-effective folder explicitly
+    // (the uploads pattern): the save lands exactly where the label pointed,
+    // independent of how the session cwd would resolve its own project config.
+    const folder = attachments !== undefined && delivery === "folder" ? this.attachmentsFolder : undefined;
     this.resetComposer();
     // Sending is owned by the controller (it drives the chat activity dock and,
     // for folder mode, orchestrates the upload + reference rewrite), so this is
     // fire-and-forget here.
-    void this.onSend?.(text, behavior, attachments, attachments === undefined ? undefined : delivery);
+    void this.onSend?.(text, behavior, attachments, attachments === undefined ? undefined : delivery, folder);
   }
 
   private resetComposer() {
@@ -552,6 +580,10 @@ function pendingToPromptAttachment(attachment: PendingAttachment): PromptAttachm
     return { kind: "image", mimeType: attachment.mimeType, data: attachment.data, name: attachment.name };
   }
   return { kind: "file", mimeType: attachment.mimeType, data: attachment.data, name: attachment.name };
+}
+
+export function attachmentFolderDeliveryLabel(folder: string): string {
+  return `Save to ${folder}`;
 }
 
 function fileExtensionLabel(name: string): string {

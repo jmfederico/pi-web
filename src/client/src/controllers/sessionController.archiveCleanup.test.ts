@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { SessionInfo } from "../api";
 import { initialAppState } from "../appState";
 import { SessionController } from "./sessionController";
 import { InMemorySessionSelectionMemory } from "./sessionSelection";
-import { defaultApi, emptyPage, FakeSocket, oldSession, sessionLookupId, status, workspace, type AppState } from "./sessionController.testSupport";
+import { emptyTranscriptApi as defaultApi, deferred, emptyPage, FakeSocket, oldSession, sessionLookupId, status, workspace, type AppState } from "./sessionController.testSupport";
 
 describe("SessionController archive and cleanup", () => {
   it("forgets the selected active session when archiving leaves only archived sessions", async () => {
@@ -32,6 +33,39 @@ describe("SessionController archive and cleanup", () => {
     expect(typeof state.sessions[0]?.archivedAt).toBe("string");
     expect(controller.preferredSession(workspace.path, state.sessions, undefined)).toBeUndefined();
     expect(urlUpdates).toEqual([undefined]);
+  });
+
+  it("publishes an archive fallback before route reconciliation selects it", async () => {
+    const persistedSession = { ...oldSession, persisted: true };
+    const nextSession = { ...oldSession, id: "next-session", path: "/tmp/next-session.jsonl", persisted: true };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: persistedSession, sessions: [persistedSession, nextSession] };
+    let selectedAtNavigation: string | undefined;
+    let navigatedSession: string | undefined;
+    const navigateToSession = (session: SessionInfo | undefined): Promise<boolean> => {
+      selectedAtNavigation = state.selectedSession?.id;
+      navigatedSession = session?.id;
+      state = { ...state, selectedSession: session };
+      return Promise.resolve(true);
+    };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      archive: () => Promise.resolve({ archived: true }),
+      messages: () => Promise.resolve(emptyPage),
+      status: (session) => Promise.resolve(status(sessionLookupId(session))),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      new InMemorySessionSelectionMemory(),
+      { api, socket: new FakeSocket(), navigateToSession },
+    );
+
+    await controller.archiveSession();
+
+    expect(selectedAtNavigation).toBe(persistedSession.id);
+    expect(navigatedSession).toBe(nextSession.id);
+    expect(state.selectedSession?.id).toBe(nextSession.id);
   });
 
   it("archives selected session descendants and selects the next active session", async () => {
@@ -128,7 +162,7 @@ describe("SessionController archive and cleanup", () => {
     expect(state.sessions.find((session) => session.id === oldSession.id)).toMatchObject({ archived: true });
     expect(state.sessions.find((session) => session.id === failedSession.id)?.archived).toBeUndefined();
     expect(state.selectedSession?.id).toBe(failedSession.id);
-    expect(state.error).toBe("Archive failed for 1 session: failed-session: busy");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Archive failed for 1 session: failed-session: busy");
   });
 
   it("deletes selected archived sessions in bulk and selects the next current session", async () => {
@@ -158,6 +192,46 @@ describe("SessionController archive and cleanup", () => {
     expect(deleteCalls).toEqual([{ ids: [archivedSession.id], machineId: "local" }]);
     expect(state.sessions.map((session) => session.id)).toEqual([nextSession.id]);
     expect(state.selectedSession?.id).toBe(nextSession.id);
+  });
+
+  it("follows archived-session deletion when the user selects it before the request settles", async () => {
+    const deletedSession = { ...oldSession, id: "deleted-archived", path: "/tmp/deleted-archived.jsonl", archived: true, archivedAt: "later" };
+    const nextSession = { ...oldSession, id: "next-session", path: "/tmp/next-session.jsonl" };
+    const deleteRequest = deferred<{ deleted: true; deletedSessionIds: string[]; failures: []; generatedAt: string }>();
+    let state: AppState = {
+      ...initialAppState(),
+      selectedWorkspace: workspace,
+      selectedSession: oldSession,
+      sessions: [oldSession, deletedSession, nextSession],
+    };
+    const navigationExpected: string[] = [];
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      {
+        api: {
+          ...defaultApi,
+          deleteArchivedMany: () => deleteRequest.promise,
+        },
+        socket: new FakeSocket(),
+        navigateToSession: (session, options) => {
+          navigationExpected.push(`${state.selectedSession?.id ?? "none"}:${options?.expected?.sessionId ?? "none"}`);
+          state = { ...state, selectedSession: session };
+          return Promise.resolve(true);
+        },
+      },
+    );
+
+    const deletion = controller.deleteArchivedSessions([deletedSession]);
+    state = { ...state, selectedSession: deletedSession };
+    deleteRequest.resolve({ deleted: true, deletedSessionIds: [deletedSession.id], failures: [], generatedAt: "now" });
+    await deletion;
+
+    expect(navigationExpected).toEqual([`${deletedSession.id}:${deletedSession.id}`]);
+    expect(state.sessions.map((session) => session.id)).toEqual([oldSession.id, nextSession.id]);
+    expect(state.selectedSession?.id).toBe(oldSession.id);
   });
 
   it("keeps partial failures visible from bulk delete", async () => {
@@ -191,7 +265,7 @@ describe("SessionController archive and cleanup", () => {
     expect(deleteCalls).toEqual([{ ids: [deletedSession.id, failedSession.id], machineId: "local" }]);
     expect(state.sessions.map((session) => session.id)).toEqual([failedSession.id]);
     expect(state.selectedSession?.id).toBe(failedSession.id);
-    expect(state.error).toBe("Delete failed for 1 session: failed-archived: busy");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Delete failed for 1 session: failed-archived: busy");
   });
 
   it("applies cleanup execution results and refreshes the current workspace sessions", async () => {

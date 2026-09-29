@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadEffectiveProjectPathAccess, loadEffectiveProjectUploadsConfig, loadProjectPiWebConfig, mergePathAccessConfigs, PROJECT_PI_WEB_CONFIG_PATH } from "./projectPiWebConfig.js";
+import { DEFAULT_ATTACHMENT_FOLDER } from "../../config.js";
+import { loadEffectiveProjectAttachmentsConfig, loadEffectiveProjectPathAccess, loadEffectiveProjectUploadsConfig, loadProjectPiWebConfig, mergePathAccessConfigs, PROJECT_PI_WEB_CONFIG_PATH } from "./projectPiWebConfig.js";
 
 let tempDir: string;
 let projectPath: string;
@@ -36,6 +37,16 @@ describe("project PI WEB config", () => {
     });
   });
 
+  it("loads project-local attachment config", async () => {
+    await writeProjectConfig({ version: 1, attachments: { defaultFolder: "agent\\dropped" } });
+
+    await expect(loadProjectPiWebConfig(projectPath)).resolves.toEqual({
+      path: join(projectPath, PROJECT_PI_WEB_CONFIG_PATH),
+      exists: true,
+      config: { version: 1, attachments: { defaultFolder: "agent/dropped" } },
+    });
+  });
+
   it("rejects unsupported project config versions", async () => {
     await writeProjectConfig({ version: 2 });
 
@@ -54,6 +65,12 @@ describe("project PI WEB config", () => {
     await expect(loadProjectPiWebConfig(projectPath)).rejects.toThrow("PI WEB config uploads.defaultFolder must not contain path traversal");
   });
 
+  it("reuses PI WEB attachment schema validation", async () => {
+    await writeProjectConfig({ version: 1, attachments: { defaultFolder: "../outside" } });
+
+    await expect(loadProjectPiWebConfig(projectPath)).rejects.toThrow("PI WEB config attachments.defaultFolder must not contain path traversal");
+  });
+
   it("merges global and project path access in order", async () => {
     await writeProjectConfig({ version: 1, pathAccess: { allowedPaths: ["/project-sdk", "/shared"] } });
 
@@ -67,6 +84,20 @@ describe("project PI WEB config", () => {
 
     await expect(loadEffectiveProjectUploadsConfig(projectPath, { uploads: { defaultFolder: "global-uploads" } })).resolves.toEqual({
       defaultFolder: "project-uploads",
+    });
+  });
+
+  it("lets project attachment defaults override global attachment defaults", async () => {
+    await writeProjectConfig({ version: 1, attachments: { defaultFolder: "project-attachments" } });
+
+    await expect(loadEffectiveProjectAttachmentsConfig(projectPath, { attachments: { defaultFolder: "global-attachments" } })).resolves.toEqual({
+      defaultFolder: "project-attachments",
+    });
+  });
+
+  it("falls back to the built-in attachment default when nothing is configured", async () => {
+    await expect(loadEffectiveProjectAttachmentsConfig(projectPath, {})).resolves.toEqual({
+      defaultFolder: DEFAULT_ATTACHMENT_FOLDER,
     });
   });
 });

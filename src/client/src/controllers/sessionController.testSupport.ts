@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, vi } from "vitest";
-import type { MessagePage, SessionInfo, SessionRef, SessionStatus, Workspace } from "../api";
+import { api, type MessagePage, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type Workspace } from "../api";
 import { machineSessionKey } from "../machineKeys";
 import type { SessionUiEvent } from "../sessionSocket";
 import type { SessionEventSocket } from "./sessionController";
 
 export { api as defaultApi } from "../api";
-export type { MessagePage, PromptAttachment, SessionActivity, SessionInfo, SessionRef, SessionStatus, SessionStreamSnapshot, Workspace } from "../api";
+export type { MessagePage, PromptAttachment, SessionActivity, SessionInfo, SessionRef, SessionStatus, SessionStreamSnapshot, SessionTranscriptSnapshot, Workspace } from "../api";
 export type { AppState } from "../appState";
 
 export class MemoryStorage implements Storage {
@@ -56,17 +56,19 @@ export class EmitSocket implements SessionEventSocket {
   readonly connectedSessionIds: string[] = [];
   private handler: ((event: SessionUiEvent) => void) | undefined;
   private onInitialOpen: (() => void) | undefined;
+  private onReconnect: (() => void) | undefined;
 
   connect(
     session: SessionRef,
     onEvent: (event: SessionUiEvent) => void,
-    _onReconnect?: () => void,
+    onReconnect?: () => void,
     _machineId?: string,
     onInitialOpen?: () => void,
   ): void {
     this.connectedSessionIds.push(session.id);
     this.handler = onEvent;
     this.onInitialOpen = onInitialOpen;
+    this.onReconnect = onReconnect;
   }
 
   setHandler(onEvent: (event: SessionUiEvent) => void): void {
@@ -81,9 +83,14 @@ export class EmitSocket implements SessionEventSocket {
     this.onInitialOpen?.();
   }
 
+  reconnect(): void {
+    this.onReconnect?.();
+  }
+
   close(): void {
     this.handler = undefined;
     this.onInitialOpen = undefined;
+    this.onReconnect = undefined;
   }
 }
 
@@ -113,6 +120,27 @@ export const replacementSession: SessionInfo = {
 };
 
 export const emptyPage: MessagePage = { messages: [], start: 0, total: 0 };
+
+/** API fixture for scenarios whose selected sessions have empty, idle transcripts. */
+export const emptyTranscriptApi: typeof api = {
+  ...api,
+  transcriptSnapshot: (session) => Promise.resolve({
+    page: emptyPage,
+    status: status(sessionLookupId(session)),
+    seq: 0,
+    partial: null,
+  }),
+};
+
+/** Assemble explicit fixture responses; never fall back to the real API. */
+export async function transcriptSnapshotFixture(
+  page: MessagePage | Promise<MessagePage>,
+  sessionStatus: SessionStatus | Promise<SessionStatus>,
+  stream: SessionStreamSnapshot | Promise<SessionStreamSnapshot> = { seq: 0, partial: null },
+): Promise<SessionTranscriptSnapshot> {
+  const [resolvedPage, resolvedStatus, resolvedStream] = await Promise.all([page, sessionStatus, stream]);
+  return { page: resolvedPage, status: resolvedStatus, ...resolvedStream };
+}
 
 export interface Deferred<T> {
   promise: Promise<T>;

@@ -267,6 +267,25 @@ if ! pi_web_docker_write_container_env_template "$container_env_file"; then
   die "could not create container environment file: $container_env_file"
 fi
 
+dev_container_env_file=$repo_root/.pi-web/docker-compose-dev.container.env
+if [ ! -e "$dev_container_env_file" ]; then
+  (
+    umask 077
+    cat >"$dev_container_env_file" <<'EOF'
+# PI WEB development-only container environment. Safe to edit.
+# Loaded after shared container.env for dev web and sessiond only.
+# This file is gitignored and never rewritten. Docker Compose dotenv rules apply.
+# Explicit Compose environment values still take precedence.
+#
+# Apply with pi-web-docker --dev start (recreates changed containers).
+# Recreating sessiond interrupts active dev sessions; restart does not reload env files.
+#
+# Example: keep dev remote machines separate from production.
+# PI_WEB_MACHINES_FILE=/data/pi-web/machines-dev.json
+EOF
+  ) || die "could not create dev container environment file: $dev_container_env_file"
+fi
+
 env_file=$generated_env_file
 override_file=$repo_root/.pi-web/docker-compose-dev.host.generated.yml
 
@@ -321,6 +340,7 @@ case "$PI_WEB_DETECTED_DOCKER_HOST_PROFILE" in
 esac
 log "User-editable dev config: $dev_config_file"
 log "Container environment (shared with runtime mode): $container_env_file"
+log "Dev container environment (safe to edit): $dev_container_env_file"
 log "Generated dev env: $env_file"
 log "Generated dev Compose override: $override_file"
 

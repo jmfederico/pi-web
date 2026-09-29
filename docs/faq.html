@@ -161,18 +161,16 @@
             <article id="doctor-fails" class="faq-item">
               <h2>What does <code>pi-web doctor</code> check?</h2>
               <p>
-                It keeps two kinds of checks separate. General login-shell readiness covers Node 22.19.0 or newer, npm, Pi, and optional
-                ripgrep. Native-service diagnostics validate only the exact prerequisites of the selected service plan in
-                the real systemd user-manager or launchd <code>gui/&lt;uid&gt;</code> context. Development installs follow their
-                installed checkout plan; production checks are clearly labelled prospective when the installed executable
-                strategy cannot be reconstructed safely.
+                Doctor checks whether your login shell can find Node 22.19.0 or newer, npm, Pi, and optional ripgrep.
+                It also checks the tools needed by your services in their service-manager environment, which can differ
+                from your terminal. Follow its login-file guidance when tools are missing.
               </p>
               <p>
-                Missing plan requirements fail doctor and include login-file guidance. Manager, timeout, malformed-output,
-                and cleanup failures are reported as probe infrastructure problems rather than being mislabeled as PATH
-                drift. On unsupported/manual-only platforms, native-service drift checks are skipped. Doctor also checks
-                that the <code>node-pty</code> native module can load, prints installed and running PI WEB versions, and reports
-                systemd lingering when relevant.
+                It also checks terminal support (<code>node-pty</code>), reports installed and running PI WEB versions,
+                and checks Linux user-service lingering when relevant. Read skipped or prospective checks carefully:
+                manual-only platforms skip service-manager checks, and a prospective check is not confirmation that
+                your installed services work. If the service-manager check itself fails, resolve that error before
+                treating the result as a PATH problem.
               </p>
             </article>
 
@@ -264,9 +262,9 @@
               </p>
               <ul>
                 <li>Use NetBird, Tailscale, WireGuard, private LAN, SSH tunnel, or an authenticated reverse proxy.</li>
-                <li>Remote Pi auth, OAuth state, sessions, terminals, repositories, plugin settings, and server providers stay on the target machine.</li>
+                <li>Credentials, sessions, terminals, repositories, and plugin settings stay on the target machine.</li>
                 <li>API-key model-provider configuration and subscription (OAuth) login both work from the gateway; a subscription flow that asks for a code or redirect URL needs the full URL pasted back, because its redirect page belongs to the target machine.</li>
-                <li>Remote browser plugins are trusted page code; server entries are trusted in-process target code. Compatible contributions follow the selected machine.</li>
+                <li>Plugins follow the selected machine. Only enable plugins you trust: they can run code in your browser or on the target machine. See <a href="plugins#remote-machines">remote-machine plugins</a>.</li>
                 <li>If the remote reports offline, check that the gateway server can reach the remote URL and try <strong>Actions → Refresh Selected Machine</strong>.</li>
               </ul>
               <p><a href="machines">Read the fleet guide →</a></p>
@@ -307,10 +305,13 @@
                 Yes. Put trusted plugin packages in <code>~/.pi-web/plugins/&lt;plugin-id&gt;/</code>, or symlink a
                 development folder there. If <code>PI_WEB_DATA_DIR</code> is set, use
                 <code>$PI_WEB_DATA_DIR/plugins</code> instead. Browser-only edits need a tab reload. A server-backed edit
-                requires a manual restart of <code>pi-web-sessiond.service</code> followed by the reload; restarting
-                sessiond may interrupt active sessions/runtime ownership.
+                requires a session-daemon restart followed by the reload, which can interrupt active sessions.
               </p>
-              <p><a href="plugins">Read the plugin guide →</a></p>
+              <p>
+                See <a href="plugins#install-and-manage">installing and managing plugins</a> for setup and restart steps.
+                If a plugin prevents PI WEB from starting, use the
+                <a href="plugins#trust-and-recovery">offline disable and safe-start commands</a>.
+              </p>
             </article>
 
             <article id="worktree-list-out-of-date" class="faq-item">
@@ -335,8 +336,9 @@
             <article id="sessions-stop" class="faq-item">
               <h2>Sessions stop unexpectedly</h2>
               <p>
-                Active agent runtimes are owned by the session daemon. Browser disconnects and web/API restarts should
-                not stop them. If they stop anyway, check whether the session daemon service restarted or crashed.
+                Sessions should keep running after browser disconnects and web/API restarts, as long as the host stays
+                awake and the session daemon keeps running. If work stops, check whether the host slept or rebooted,
+                or the session daemon restarted or crashed.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -361,7 +363,7 @@
                 (<code>~/.pi/agent/settings.json</code> by default); the
                 <a href="https://pi.dev/docs/latest/settings">Pi settings reference</a> documents the accepted
                 values. The session daemon applies the value once at daemon start, so restart the session daemon
-                afterwards.
+                afterwards. This can interrupt active sessions; wait for important work to finish first.
               </p>
               <div class="code-card">
                 <div class="copy-row">
@@ -374,7 +376,7 @@
               </div>
               <div class="code-card">
                 <div class="copy-row">
-                  <strong>Restart the session daemon</strong>
+                  <strong>Restart the session daemon (Linux systemd)</strong>
                   <button class="copy-button" data-copy="#http-idle-timeout-restart">Copy</button>
                 </div>
                 <pre id="http-idle-timeout-restart"><code><span class="prompt">$</span> systemctl --user restart pi-web-sessiond</code></pre>

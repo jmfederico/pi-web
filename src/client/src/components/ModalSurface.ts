@@ -120,6 +120,11 @@ export class ModalSurface extends LitElement {
       return;
     }
     if (event.key !== "Escape") return;
+    // Escape may cancel an IME candidate without dismissing its containing dialog.
+    if (event.isComposing) {
+      event.stopPropagation();
+      return;
+    }
     // A modal owns Escape completely: it either closes or exercises the busy
     // contract, but it never leaks the key to global shortcut handlers.
     event.preventDefault();

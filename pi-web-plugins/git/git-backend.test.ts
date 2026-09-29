@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { ServerPluginActivationContext, ServerPluginExecFileResult } from "@jmfederico/pi-web/server-plugin-api";
 import { createServerPluginExecFile } from "../../src/server/plugins/serverPluginExec.js";
 import { gitDiff as requestGitDiff, gitStatus as requestGitStatus } from "./git-backend.js";
@@ -21,9 +22,10 @@ const GIT_ENV = Object.fromEntries([
 ]);
 
 const backendContext: ServerPluginActivationContext = {
-  apiVersion: 1,
+  apiVersion: 3,
   pluginId: "git",
   packageRoot: "pi-web-plugins/git",
+  dataDirectory: "/data/plugin-data/git",
   logger: {
     debug() { /* no-op */ },
     info() { /* no-op */ },
@@ -33,7 +35,13 @@ const backendContext: ServerPluginActivationContext = {
   settings: {},
   execFile: createServerPluginExecFile({ env: GIT_ENV }),
   signal: new AbortController().signal,
+  lifetimeSignal: new AbortController().signal,
 };
+
+// The fixture suites below drive real Git commands (init, submodule add,
+// commit, status with inner recursion); on loaded Windows CI runners a
+// single test can exceed the 5 s default timeout, so give them headroom.
+const FIXTURE_TEST_TIMEOUT_MS = 30_000;
 
 const created: string[] = [];
 afterAll(() => { for (const dir of created) rmSync(dir, { recursive: true, force: true }); });
@@ -97,7 +105,7 @@ function createSpacedPathFixture(): { dir: string } {
   return { dir: sup };
 }
 
-describe("Git changes backend", () => {
+describe("Git changes backend", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("preserves staged, unstaged, and untracked file behavior", async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "root.txt"), "root\nstaged\n");
@@ -123,10 +131,15 @@ describe("Git changes backend", () => {
   });
 
   it("rejects absolute and traversing diff paths before invoking Git", async () => {
-    const { dir } = createFixture();
+    const execFile = vi.fn<ServerPluginActivationContext["execFile"]>();
+    const context = { ...backendContext, execFile };
+    const signal = new AbortController().signal;
 
-    await expect(gitDiff(dir, { path: "/outside" })).rejects.toThrow("Absolute paths are not allowed");
-    await expect(gitDiff(dir, { path: "../outside" })).rejects.toThrow("Path traversal is not allowed");
+    await expect(requestGitDiff(context, tmpdir(), { path: join(tmpdir(), "outside") }, signal))
+      .rejects.toThrow("Absolute paths are not allowed");
+    await expect(requestGitDiff(context, tmpdir(), { path: "../outside" }, signal))
+      .rejects.toThrow("Path traversal is not allowed");
+    expect(execFile).not.toHaveBeenCalled();
   });
 });
 
@@ -152,7 +165,7 @@ describe("Git command failures", () => {
   });
 });
 
-describe("gitStatus with submodules", () => {
+describe("gitStatus with submodules", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("surfaces a moved commit pointer with short SHAs and no inner files", async () => {
     const { dir, c1, c2 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]); // move the pointer, leave the tree clean
@@ -179,40 +192,37 @@ describe("gitStatus with submodules", () => {
   });
 
   it("surfaces a staged pointer move with the recorded OID as from and the staged OID as to", async () => {
-    const { dir, c1, c2 } = createFixture();
-    git(join(dir, "HARL"), ["checkout", c1]); // move the pointer
-    git(dir, ["add", "HARL"]); // stage the move: porcelain `1 M. S... <c2> <c1> HARL`
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 M. S... 160000 160000 160000 ${RECORDED_OID} ${STAGED_OID} HARL\0`,
+      gitlink: `160000 ${STAGED_OID} 0\tHARL\0`,
+    });
     expect(status.submodules).toContain("HARL");
     const pointer = status.files.find((file) => file.path === "HARL");
     expect(pointer?.index).toBe("modified");
     expect(pointer?.workingTree).toBe("unmodified");
-    expect(pointer?.submoduleFromCommit).toBe(c2.slice(0, 7));
-    expect(pointer?.submoduleToCommit).toBe(c1.slice(0, 7));
+    expect(pointer?.submoduleFromCommit).toBe(RECORDED_OID.slice(0, 7));
+    expect(pointer?.submoduleToCommit).toBe(STAGED_OID.slice(0, 7));
   });
 
   it("reports both the pointer entry and inner files for a staged move with dirty content", async () => {
-    const { dir, c1, c2 } = createFixture();
-    git(join(dir, "HARL"), ["checkout", c1]);
-    git(dir, ["add", "HARL"]);
-    writeFileSync(join(dir, "HARL", "a.txt"), "v1\ndirty\n"); // combined `1 MM S.M.`
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 MM S.M. 160000 160000 160000 ${RECORDED_OID} ${STAGED_OID} HARL\0`,
+      gitlink: `160000 ${STAGED_OID} 0\tHARL\0`,
+      inner: `1 .M N... 100644 100644 100644 ${BLOB_OID} ${BLOB_OID} a.txt\0`,
+    });
     const pointer = status.files.find((file) => file.path === "HARL");
     expect(pointer?.index).toBe("modified");
     expect(pointer?.workingTree).toBe("modified");
-    expect(pointer?.submoduleFromCommit).toBe(c2.slice(0, 7));
-    expect(pointer?.submoduleToCommit).toBe(c1.slice(0, 7));
+    expect(pointer?.submoduleFromCommit).toBe(RECORDED_OID.slice(0, 7));
+    expect(pointer?.submoduleToCommit).toBe(STAGED_OID.slice(0, 7));
     const inner = status.files.find((file) => file.path === "HARL/a.txt");
     expect(inner?.workingTree).toBe("modified");
   });
 
   it("reports a deleted submodule as a plain deleted row", async () => {
-    const { dir } = createFixture();
-    rmSync(join(dir, "HARL"), { recursive: true, force: true }); // unstaged deletion: `1 .D S...`
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 .D S... 160000 160000 000000 ${RECORDED_OID} ${RECORDED_OID} HARL\0`,
+    });
     const row = status.files.find((file) => file.path === "HARL");
     expect(row?.workingTree).toBe("deleted");
     expect(row?.submoduleFromCommit).toBeUndefined();
@@ -221,10 +231,9 @@ describe("gitStatus with submodules", () => {
   });
 
   it("reports a staged submodule deletion as a plain deleted row, not a pointer move", async () => {
-    const { dir } = createFixture();
-    git(dir, ["rm", "-q", "HARL"]); // staged deletion: `1 D. S...` with a zero index OID
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 D. S... 160000 000000 000000 ${RECORDED_OID} ${ZERO_OID} HARL\0`,
+    });
     const row = status.files.find((file) => file.path === "HARL");
     expect(row?.index).toBe("deleted");
     expect(row?.submoduleFromCommit).toBeUndefined();
@@ -232,38 +241,35 @@ describe("gitStatus with submodules", () => {
   });
 
   it("renders a newly staged submodule pointer as new → <sha> (zero head OID)", async () => {
-    const { dir, c2 } = createFixture();
-    git(dir, ["submodule", "add", join(dir, "..", "origin"), "NEWSUB"]); // staged add: `1 A. S...` with a zero head OID
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      path: "NEWSUB",
+      top: `1 A. S... 000000 160000 160000 ${ZERO_OID} ${STAGED_OID} NEWSUB\0`,
+      gitlink: `160000 ${STAGED_OID} 0\tNEWSUB\0`,
+    });
     const pointer = status.files.find((file) => file.path === "NEWSUB");
     expect(pointer?.index).toBe("added");
     expect(pointer?.submoduleFromCommit).toBe("new");
-    expect(pointer?.submoduleToCommit).toBe(c2.slice(0, 7));
+    expect(pointer?.submoduleToCommit).toBe(STAGED_OID.slice(0, 7));
     expect(status.submodules).toContain("NEWSUB");
   });
 
   it("prefixes oldPath with the submodule path for renames inside a submodule", async () => {
-    const { dir } = createFixture();
-    git(join(dir, "HARL"), ["mv", "a.txt", "renamed.txt"]);
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 .M S.M. 160000 160000 160000 ${RECORDED_OID} ${RECORDED_OID} HARL\0`,
+      gitlink: `160000 ${RECORDED_OID} 0\tHARL\0`,
+      inner: `2 R. N... 100644 100644 100644 ${BLOB_OID} ${BLOB_OID} R100 renamed.txt\0a.txt\0`,
+    });
     const renamed = status.files.find((file) => file.path === "HARL/renamed.txt");
     expect(renamed?.index).toBe("renamed");
     expect(renamed?.oldPath).toBe("HARL/a.txt");
   });
 
   it("keeps inner filenames with spaces intact through expansion", async () => {
-    const { dir } = createFixture();
-    writeFileSync(join(dir, "HARL", "my file.txt"), "tracked\n");
-    git(join(dir, "HARL"), ["add", "my file.txt"]);
-    git(join(dir, "HARL"), ["commit", "-m", "track spaced file"]);
-    git(dir, ["add", "HARL"]);
-    git(dir, ["commit", "-m", "record new pointer"]); // HARL clean at the new recorded commit
-    writeFileSync(join(dir, "HARL", "my file.txt"), "tracked\nchanged\n");
-    writeFileSync(join(dir, "HARL", "untracked file.txt"), "new\n");
-
-    const status = await gitStatus(dir);
+    const status = await mappedSubmoduleStatus({
+      top: `1 .M S.MU 160000 160000 160000 ${RECORDED_OID} ${RECORDED_OID} HARL\0`,
+      gitlink: `160000 ${RECORDED_OID} 0\tHARL\0`,
+      inner: `1 .M N... 100644 100644 100644 ${BLOB_OID} ${BLOB_OID} my file.txt\0? untracked file.txt\0`,
+    });
     expect(status.files.find((file) => file.path === "HARL/my file.txt")?.workingTree).toBe("modified");
     expect(status.files.some((file) => file.path === "HARL/untracked file.txt")).toBe(true);
     expect(status.files.find((file) => file.path === "HARL")).toBeUndefined(); // pointer unchanged
@@ -280,7 +286,7 @@ describe("gitStatus with submodules", () => {
   });
 });
 
-describe("submodule paths containing spaces", () => {
+describe("submodule paths containing spaces", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("expands status and routes diffs into the space-named submodule", async () => {
     const { dir } = createSpacedPathFixture();
     writeFileSync(join(dir, "my sub", "a.txt"), "v1\nchanged\n");
@@ -296,7 +302,7 @@ describe("submodule paths containing spaces", () => {
   });
 });
 
-describe("gitDiff routing into submodules", () => {
+describe("gitDiff routing into submodules", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
   it("returns real content for a tracked file inside the submodule", async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "a.txt"), "v2\nchanged\n");
@@ -355,6 +361,53 @@ describe("gitDiff routing into submodules", () => {
     expect(diff.diff).not.toContain("nested secret");
   });
 });
+
+const RECORDED_OID = "a".repeat(40);
+const STAGED_OID = "b".repeat(40);
+const BLOB_OID = "c".repeat(40);
+const ZERO_OID = "0".repeat(40);
+
+// Fixed wire responses exercise status mapping, not Git workflows. Only the
+// directories are real: expansion still validates the checkout with realpath.
+// Real-Git tests above retain porcelain compatibility and discovery coverage.
+async function mappedSubmoduleStatus(fixture: { top: string; gitlink?: string; inner?: string; path?: string }) {
+  const dir = mkdtempSync(join(tmpdir(), "pi-web-status-map-"));
+  created.push(dir);
+  const path = fixture.path ?? "HARL";
+  const responses = [{
+    cwd: dir,
+    args: ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
+    stdout: fixture.top,
+  }];
+  if (fixture.gitlink !== undefined) {
+    mkdirSync(join(dir, path));
+    responses.push({
+      cwd: dir,
+      args: ["ls-files", "--stage", "-z", "--", path],
+      stdout: fixture.gitlink,
+    });
+  }
+  if (fixture.inner !== undefined) {
+    responses.push({
+      // Match the native canonicalization used by the backend, including Windows 8.3 paths.
+      cwd: await realpath(join(dir, path)),
+      args: ["status", "--porcelain=v2", "--untracked-files=all", "-z"],
+      stdout: fixture.inner,
+    });
+  }
+  const execFile = vi.fn<ServerPluginActivationContext["execFile"]>(() => {
+    throw new Error("Unexpected Git command in status mapping fixture");
+  });
+  for (const response of responses) {
+    execFile.mockImplementationOnce((request) => {
+      expect(request).toMatchObject({ file: "git", cwd: response.cwd, args: response.args });
+      return Promise.resolve(commandResult({ stdout: response.stdout }));
+    });
+  }
+  const status = await requestGitStatus({ ...backendContext, execFile }, dir, new AbortController().signal);
+  expect(execFile).toHaveBeenCalledTimes(responses.length);
+  return status;
+}
 
 function commandResult(overrides: Partial<ServerPluginExecFileResult> = {}): ServerPluginExecFileResult {
   return {

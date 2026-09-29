@@ -23,6 +23,33 @@ function controllerWithApi(state: AppState, setState: (patch: Partial<AppState>)
   );
 }
 
+describe("SessionController startup defaults", () => {
+  it("reads and saves on the session machine without changing current status", async () => {
+    const calls: unknown[] = [];
+    const defaults = { defaultProvider: "openai", defaultModel: "gpt-5", defaultThinkingLevel: "high" as const };
+    let state: AppState = { ...initialAppState(), selectedMachine: machine("remote-a"), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const status = state.status;
+    const controller = controllerWithApi(state, (patch) => { state = { ...state, ...patch }; }, {
+      ...defaultApi,
+      getSessionDefaults: (session, machineId) => { calls.push([session.id, machineId]); return Promise.resolve(defaults); },
+      setSessionDefaults: (session, input, machineId) => { calls.push([session.id, input, machineId]); return Promise.resolve(defaults); },
+    });
+    expect(await controller.getSessionDefaults()).toEqual(defaults);
+    expect(await controller.setSessionDefaults({ thinkingLevel: "high" })).toEqual(defaults);
+    expect(calls).toEqual([[oldSession.id, "remote-a"], [oldSession.id, { thinkingLevel: "high" }, "remote-a"]]);
+    expect(state.status).toBe(status);
+  });
+
+  it("reports failed saves and does not claim success", async () => {
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
+    const controller = controllerWithApi(state, (patch) => { state = { ...state, ...patch }; }, {
+      ...defaultApi, setSessionDefaults: () => Promise.reject(new Error("defaults failed")),
+    });
+    expect(await controller.setSessionDefaults({ thinkingLevel: "high" })).toBeUndefined();
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: defaults failed");
+  });
+});
+
 describe("SessionController model catalog", () => {
   it("lists the machine's catalog with per-model enabled state", async () => {
     const calls: { sessionId: string; machineId: string }[] = [];
@@ -50,7 +77,7 @@ describe("SessionController model catalog", () => {
     const models = await controller.listModelCatalog();
 
     expect(models).toEqual([]);
-    expect(state.error).toBe("Error: catalog failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: catalog failed");
   });
 
   it("toggles one model's membership and returns the fresh catalog", async () => {
@@ -97,7 +124,7 @@ describe("SessionController model catalog", () => {
     const models = await controller.setModelEnabled("openai", "gpt-4o", true);
 
     expect(models).toBeUndefined();
-    expect(state.error).toBe("Error: toggle failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: toggle failed");
   });
 
   it("reports scope preset failures through the application error state", async () => {
@@ -106,7 +133,7 @@ describe("SessionController model catalog", () => {
     const controller = controllerWithApi(state, (patch) => { state = { ...state, ...patch }; }, api);
 
     await expect(controller.setModelScope("all")).resolves.toBeUndefined();
-    expect(state.error).toBe("Error: scope failed");
+    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: scope failed");
   });
 
   it("lists and toggles nothing without a selected session", async () => {

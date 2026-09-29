@@ -3,7 +3,8 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatDimensionNote, resizeImage, type ResizedImage } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_ATTACHMENT_FOLDER, attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
+import { DEFAULT_ATTACHMENT_FOLDER } from "../../config.js";
+import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   formatDimensionNote: vi.fn(),

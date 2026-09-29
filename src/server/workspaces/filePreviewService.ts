@@ -1,4 +1,7 @@
-import { open, type FileHandle } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, realpath, stat, type FileHandle } from "node:fs/promises";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { pipeline, Readable, Transform } from "node:stream";
 import type { FileContentMediaType, PiWebPathAccessConfig } from "../../shared/apiTypes.js";
 import { classifyWorkspaceFile, MAX_INLINE_PREVIEW_BYTES, MAX_INLINE_PREVIEW_LABEL, workspaceFileName } from "../../shared/workspaceFiles.js";
@@ -20,6 +23,8 @@ export interface WorkspaceFilePreview {
 
 export interface ReadWorkspaceFilePreviewOptions {
   download?: boolean;
+  /** One-request image preview, including paths outside configured roots. Never grants download access. */
+  explicitlyRequestedImage?: boolean;
 }
 
 export async function readWorkspaceFilePreview(
@@ -29,13 +34,23 @@ export async function readWorkspaceFilePreview(
   options: ReadWorkspaceFilePreviewOptions = {},
 ): Promise<WorkspaceFilePreview> {
   if (path === undefined || path === "") throw new Error("path query parameter is required");
-  const { target, displayPath } = await resolveWorkspacePathAccessTarget(rootPath, path, pathAccess);
+  const explicitImage = options.explicitlyRequestedImage === true;
+  if (explicitImage && options.download === true) throw new Error("Explicit image previews cannot be downloaded");
+  const { target, displayPath } = explicitImage
+    ? await resolveExplicitImageTarget(rootPath, path)
+    : await resolveWorkspacePathAccessTarget(rootPath, path, pathAccess);
+  if (explicitImage && classifyWorkspaceFile(displayPath)?.mediaType !== "image") {
+    throw new Error("Explicit image preview requires an image file");
+  }
+  // Reject devices/directories before opening, and use nonblocking mode so a
+  // regular file replaced by a FIFO cannot hang before descriptor validation.
+  if (!(await stat(target)).isFile()) throw new Error("Path is not a file");
 
   // Serve only from this descriptor. Path resolution is a snapshot: a rename,
   // symlink swap, or resize after validation must not be able to change which
   // bytes this response carries, how many of them it carries, or whether they
   // are still inside the workspace or an allowed root.
-  const handle = await open(target, "r");
+  const handle = await open(target, constants.O_RDONLY | constants.O_NONBLOCK);
   let streamOwnsHandle = false;
   try {
     const stats = await handle.stat();
@@ -59,6 +74,15 @@ export async function readWorkspaceFilePreview(
   } finally {
     if (!streamOwnsHandle) await handle.close();
   }
+}
+
+async function resolveExplicitImageTarget(rootPath: string, path: string): Promise<{ target: string; displayPath: string }> {
+  const workspaceRoot = await realpath(rootPath);
+  if (!(await stat(workspaceRoot)).isDirectory()) throw new Error("Workspace path must be a directory");
+  const expanded = path === "~" ? homedir() : path.startsWith("~/") ? resolve(homedir(), path.slice(2)) : path;
+  const target = await realpath(resolve(workspaceRoot, expanded));
+  // Classify and serve using the canonical filename, not a symlink's extension.
+  return { target, displayPath: target };
 }
 
 /**

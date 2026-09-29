@@ -8,8 +8,8 @@
 import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
 import { copyDiagnostics, renderInfoPanel } from "./infoInternals.js";
 
-const plugin: PiWebPlugin = {
-  apiVersion: 2,
+const plugin = {
+  apiVersion: 4,
   name: "Info Plugin",
   activate: ({ html, svg }) => ({
     contributions: {
@@ -46,6 +46,6 @@ const plugin: PiWebPlugin = {
       ],
     },
   }),
-};
+} satisfies PiWebPlugin;
 
 export default plugin;

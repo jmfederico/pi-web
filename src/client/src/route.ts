@@ -1,5 +1,11 @@
 import type { QualifiedContributionId } from "./plugins/types";
 
+export type MainView = "navigation" | "chat" | "workspace";
+
+export function parseMainView(value: unknown): MainView | undefined {
+  return value === "navigation" || value === "chat" || value === "workspace" ? value : undefined;
+}
+
 interface AppRouteLocation {
   machineId: string | undefined;
   projectId: string | undefined;
@@ -7,19 +13,30 @@ interface AppRouteLocation {
   sessionId: string | undefined;
 }
 
+export interface WorkspaceRouteIdentity {
+  machineId: string;
+  projectId: string;
+  workspaceId: string;
+}
+
 /** Route values after plugin-contributed workspace panel aliases are resolved. */
 export interface AppRoute extends AppRouteLocation {
   tool: QualifiedContributionId | undefined;
-  view: "chat" | QualifiedContributionId | undefined;
+  view: MainView | undefined;
 }
 
-/** Raw URL route. Tool and view values remain unresolved until machine plugins load. */
+/** Raw URL values are retained so invalid destinations can be explained without rewriting them. */
 export interface ParsedAppRoute extends AppRouteLocation {
   tool: string | undefined;
   view: string | undefined;
 }
 
 export type WorkspacePanelRouteResolver = (value: string) => QualifiedContributionId | undefined;
+
+/** Browser-owned creation identity, never a backend session ID or a create command. */
+export function isCreatingSessionId(sessionId: string | undefined): sessionId is `creating:${string}` {
+  return sessionId?.startsWith("creating:") === true;
+}
 
 export function readRoute(): ParsedAppRoute {
   const params = new URLSearchParams(window.location.search);
@@ -40,16 +57,21 @@ export function resolveAppRoute(route: ParsedAppRoute, resolveWorkspacePanel: Wo
     workspaceId: route.workspaceId,
     sessionId: route.sessionId,
     tool: route.tool === undefined ? undefined : resolveWorkspacePanelRouteValue(route.tool, resolveWorkspacePanel),
-    view: route.view === "chat"
-      ? "chat"
-      : route.view === undefined
-        ? undefined
-        : resolveWorkspacePanelRouteValue(route.view, resolveWorkspacePanel),
+    view: parseMainView(route.view),
   };
 }
 
 export function resolveWorkspacePanelRouteValue(value: string, resolveWorkspacePanel: WorkspacePanelRouteResolver): QualifiedContributionId | undefined {
   return resolveWorkspacePanel(value) ?? (isQualifiedContributionId(value) ? value : undefined);
+}
+
+export function routeMatchesWorkspaceIdentity(
+  route: Pick<ParsedAppRoute, "machineId" | "projectId" | "workspaceId">,
+  identity: WorkspaceRouteIdentity,
+): boolean {
+  return (route.machineId ?? "local") === identity.machineId
+    && route.projectId === identity.projectId
+    && route.workspaceId === identity.workspaceId;
 }
 
 export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean | undefined }): void {

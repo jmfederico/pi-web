@@ -34,11 +34,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check delivery artifacts
+        run: npm run check:artifacts
+
       - name: Smoke test npm 12 global package install
         run: npm run smoke:package-install
 
       - name: Publish
-        run: npm publish --access public --provenance
+        # Verify/build already ran above; publish the exact artifacts checked here.
+        run: npm publish --access public --provenance --ignore-scripts
 
   deploy-docs:
     name: Deploy stable docs to pi-web.dev

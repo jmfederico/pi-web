@@ -33,6 +33,8 @@ export interface WorkspaceFilePreviewUrlOptions {
   modifiedAt?: string;
   machineId?: string;
   download?: boolean;
+  /** Explicit user request to display a local image outside the workspace. */
+  showImage?: boolean;
 }
 
 export function workspaceFilePreviewPath(projectId: string, workspaceId: string, path: string, options?: WorkspaceFilePreviewUrlOptions): string {
@@ -40,6 +42,7 @@ export function workspaceFilePreviewPath(projectId: string, workspaceId: string,
   params.set("path", path);
   if (options?.modifiedAt !== undefined) params.set("v", options.modifiedAt);
   if (options?.download === true) params.set("download", "1");
+  if (options?.showImage === true) params.set("showImage", "1");
   const prefix = `api/machines/${encodeURIComponent(options?.machineId ?? "local")}`;
   return `${prefix}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/file/preview?${params.toString()}`;
 }

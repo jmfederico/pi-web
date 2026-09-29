@@ -16,6 +16,7 @@ const FULL_TEST_TRIGGERS = new Set([
 const LINTABLE_ROOT_FILES = new Set([
   "vite.config.ts",
   "vitest.config.ts",
+  "vitest.artifacts.config.ts",
 ]);
 
 const PUBLIC_DECLARATION_FILES = new Set([

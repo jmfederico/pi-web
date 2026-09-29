@@ -107,17 +107,16 @@
               <h2>Requirements</h2>
               <ul>
                 <li><strong>Node.js 22.19.0 or newer</strong> and npm.</li>
-                <li><strong>Pi Coding Agent <code>&gt;=0.83.0</code></strong> installed/configured so the <code>pi</code> command works for your user.</li>
+                <li><strong>Pi Coding Agent <code>&gt;=0.87.0</code></strong> installed/configured so the <code>pi</code> command works for your user.</li>
                 <li>A shell login environment that exposes Node, npm, Pi, git, and any tools your agents need.</li>
                 <li>For the automatic installer: a supported per-user service manager.</li>
               </ul>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>
                 PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
-                interactive shell files or prompt hooks may not be visible to the systemd or launchd manager. The installer
-                probes the safely verifiable requirements of the exact candidate plan in that manager context before changing
-                config or replacing services. Arbitrary configured command overrides are preserved but not executed by
-                preflight; run <code>pi-web doctor</code> later to repeat plan-specific diagnostics.
+                interactive shell files or prompt hooks may not be visible to services. The installer checks the service
+                environment before changing config or replacing services. Run <code>pi-web doctor</code> to diagnose
+                missing tools; custom command overrides still need to be verified by you.
               </div>
             </section>
 
@@ -161,7 +160,7 @@
             <section id="pi-package">
               <h2>Install through Pi</h2>
               <p>PI WEB is also published as a Pi package. This exposes a <code>/pi-web</code> command inside Pi.</p>
-              <p>When installed this way, <code>/pi-web install</code> can use PI WEB's package-local service entrypoints, so <code>pi-web-server</code> and <code>pi-web-sessiond</code> do not need to be on your shell <code>PATH</code>.</p>
+              <p>You do not need a separate global npm install; manage the services with <code>/pi-web</code> inside Pi.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Pi package path</strong>
@@ -204,6 +203,12 @@
               <p>
                 From a PI WEB checkout, <code>pi-web install --dev</code> installs the split development services on supported user-service platforms.
                 <code>pi-web uninstall</code> removes both production and development service files; no uninstall flags are needed.
+              </p>
+              <h3 id="development-restarts">Development restarts</h3>
+              <p>
+                Run <code>pi-web restart</code> to restart the installed development services. It handles
+                build readiness and restart order for you. Restarting interrupts active sessions, so wait for
+                important work to finish first.
               </p>
             </section>
 
@@ -296,9 +301,8 @@ server {
                 <code>/pi-web-plugins/</code>.
               </p>
               <p>
-                Once the proxy follows this contract, relative client assets, images, PWA assets, API calls, local and
-                federated plugins, and WebSocket URLs stay inside the prefix. Installed PWA <code>start_url</code> and
-                scope stay inside it as well.
+                Open the trailing-slash URL, such as <code>https://pi.example.com/ai/</code>. The UI, plugins, and
+                installed PWA all use that prefix.
               </p>
             </section>
 
@@ -364,9 +368,11 @@ server {
               <p>
                 Use <strong>Settings → General</strong> for host, port, and external filesystem roots; <strong>Settings → Session daemon</strong>
                 for agent-spawn tools; <strong>Settings → Pi packages</strong> for Pi package install/remove/update;
-                <strong>Settings → PI WEB plugins</strong> for desired plugin state; and <strong>Settings → Keyboard</strong>
-                for shortcut overrides. Browser-only plugin changes need a tab reload; server-backed changes follow the
-                <a href="plugins#lifecycle-recovery">documented sessiond restart and recovery flow</a>.
+                <strong>Settings → PI WEB plugins</strong> to enable or disable plugins; and <strong>Settings → Keyboard</strong>
+                for shortcut overrides. Browser-only plugin changes need a tab reload; server-backed changes need a
+                session-daemon restart, which can interrupt active sessions. See
+                <a href="plugins#install-and-manage">installing and managing plugins</a> and
+                <a href="plugins#trust-and-recovery">plugin recovery</a>.
               </p>
               <div class="callout">
                 Need the full schema, restart rules, project-local <code>.pi-web/config.json</code>, path access details, and

@@ -2,12 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   effectiveWorkspaceUploadFolder,
   uploadWorkspaceFile,
-  uploadWorkspaceFiles,
   workspaceEffectiveUploadFolder,
   workspaceUploadPath,
-  WorkspaceUploadBatchError,
   WorkspaceUploadCancelledError,
-  type WorkspaceUploadBatchProgress,
   type WorkspaceFileUploadProgress,
   type WorkspaceUploadXhr,
 } from "./workspaceUploads";
@@ -73,47 +70,11 @@ describe("workspace upload helpers", () => {
     expect(xhrs.only().aborted).toBe(true);
   });
 
-  it("uploads a batch sequentially and reports aggregate progress", async () => {
-    const xhrs = new FakeXhrQueue();
-    const progress: WorkspaceUploadBatchProgress[] = [];
-    const files = [new File(["ab"], "a.txt", { type: "text/plain" }), new File(["cde"], "b.txt")];
-
-    const task = uploadWorkspaceFiles("p 1", "w/1", files, {
-      destinationFolder: "uploads//manual",
-      machineId: "remote a",
-      xhrFactory: xhrs.factory,
-      onProgress: (event) => { progress.push(event); },
-    });
-
-    const first = xhrs.at(0);
-    expect(first.url).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1/file?path=uploads%2Fmanual%2Fa.txt");
-    first.emitUploadProgress(1, 2);
-    first.respondJson(200, { path: "uploads/manual/a.txt", size: 2, modifiedAt: "2026-06-25T00:00:00.000Z", created: true });
-    await Promise.resolve();
-
-    const second = xhrs.at(1);
-    expect(second.url).toBe("https://pi.example.test/api/machines/remote%20a/projects/p%201/workspaces/w%2F1/file?path=uploads%2Fmanual%2Fb.txt");
-    second.emitUploadProgress(3, 3);
-    second.respondJson(200, { path: "uploads/manual/b.txt", size: 3, modifiedAt: "2026-06-25T00:00:01.000Z", created: true });
-
-    await expect(task.promise).resolves.toEqual([
-      { path: "uploads/manual/a.txt", size: 2, modifiedAt: "2026-06-25T00:00:00.000Z", created: true },
-      { path: "uploads/manual/b.txt", size: 3, modifiedAt: "2026-06-25T00:00:01.000Z", created: true },
-    ]);
-    expect(progress[0]).toMatchObject({ currentFileIndex: 0, loaded: 1, total: 5, percent: 0.2, done: false });
-    expect(progress.at(-1)).toMatchObject({ currentFileIndex: 1, loaded: 5, total: 5, percent: 1, done: true });
-    expect(progress.at(-1)?.files.map((file) => ({ path: file.path, loaded: file.loaded, total: file.total, done: file.done }))).toEqual([
-      { path: "uploads/manual/a.txt", loaded: 2, total: 2, done: true },
-      { path: "uploads/manual/b.txt", loaded: 3, total: 3, done: true },
-    ]);
-  });
-
-  it("forwards createDirs through batch upload requests", async () => {
+  it("forwards createDirs through the host's single-file upload transport", async () => {
     const xhrs = new FakeXhrQueue();
     const file = new File(["hello"], "nested.txt", { type: "text/plain" });
 
-    const task = uploadWorkspaceFiles("p1", "w1", [file], {
-      destinationFolder: "uploads",
+    const task = uploadWorkspaceFile("p1", "w1", { path: "uploads/nested.txt", file }, {
       createDirs: false,
       xhrFactory: xhrs.factory,
     });
@@ -122,55 +83,12 @@ describe("workspace upload helpers", () => {
     expect(xhr.url).toBe("https://pi.example.test/api/machines/local/projects/p1/workspaces/w1/file?path=uploads%2Fnested.txt&createDirs=false");
     xhr.respondJson(200, { path: "uploads/nested.txt", size: 5, modifiedAt: "2026-06-25T00:00:00.000Z", created: true });
 
-    await expect(task.promise).resolves.toEqual([
-      { path: "uploads/nested.txt", size: 5, modifiedAt: "2026-06-25T00:00:00.000Z", created: true },
-    ]);
-  });
-
-  it("cancels an in-flight batch upload without starting remaining files", async () => {
-    const xhrs = new FakeXhrQueue();
-    const files = [new File(["ab"], "a.txt"), new File(["cde"], "b.txt")];
-
-    const task = uploadWorkspaceFiles("p1", "w1", files, {
-      destinationFolder: "uploads",
-      xhrFactory: xhrs.factory,
+    await expect(task.promise).resolves.toEqual({
+      path: "uploads/nested.txt",
+      size: 5,
+      modifiedAt: "2026-06-25T00:00:00.000Z",
+      created: true,
     });
-    const first = xhrs.only();
-    const cancellation = expect(task.promise).rejects.toBeInstanceOf(WorkspaceUploadCancelledError);
-
-    task.cancel();
-
-    await cancellation;
-    expect(first.aborted).toBe(true);
-    expect(xhrs.count()).toBe(1);
-  });
-
-  it("continues batch uploads after per-file failures and reports the failed file only", async () => {
-    const xhrs = new FakeXhrQueue();
-    const progress: WorkspaceUploadBatchProgress[] = [];
-    const files = [new File(["ab"], "duplicate.txt"), new File(["cde"], "new.txt")];
-
-    const task = uploadWorkspaceFiles("p1", "w1", files, {
-      destinationFolder: "uploads",
-      overwrite: false,
-      xhrFactory: xhrs.factory,
-      onProgress: (event) => { progress.push(event); },
-    });
-
-    xhrs.at(0).respondJson(409, { error: "File already exists: uploads/duplicate.txt" }, "Conflict");
-    await Promise.resolve();
-    xhrs.at(1).respondJson(200, { path: "uploads/new.txt", size: 3, modifiedAt: "2026-06-25T00:00:01.000Z", created: true });
-
-    await expect(task.promise).rejects.toBeInstanceOf(WorkspaceUploadBatchError);
-    await task.promise.catch((error: unknown) => {
-      if (!(error instanceof WorkspaceUploadBatchError)) throw error;
-      expect(error.failures).toEqual([{ index: 0, name: "duplicate.txt", path: "uploads/duplicate.txt", error: "File already exists: uploads/duplicate.txt" }]);
-      expect(error.responses).toEqual([{ path: "uploads/new.txt", size: 3, modifiedAt: "2026-06-25T00:00:01.000Z", created: true }]);
-    });
-    expect(progress.at(-1)?.files.map((file) => ({ path: file.path, done: file.done, error: file.error }))).toEqual([
-      { path: "uploads/duplicate.txt", done: true, error: "File already exists: uploads/duplicate.txt" },
-      { path: "uploads/new.txt", done: true, error: undefined },
-    ]);
   });
 });
 
@@ -188,13 +106,6 @@ class FakeXhrQueue {
     return this.instances[0] ?? failTest("missing XHR instance");
   }
 
-  at(index: number): FakeXMLHttpRequest {
-    return this.instances[index] ?? failTest(`missing XHR instance ${String(index)}`);
-  }
-
-  count(): number {
-    return this.instances.length;
-  }
 }
 
 class FakeXMLHttpRequest implements WorkspaceUploadXhr {

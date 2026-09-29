@@ -87,6 +87,51 @@ async function expectPersistedEnabledModels(agentDir: string, expected: string[]
 
 const catalogIds = (catalog: readonly { provider: string; id: string }[]): string[] => catalog.map((entry) => `${entry.provider}/${entry.id}`);
 
+describe("PiSessionService global startup defaults", () => {
+  it("persists each pin globally, preserves external edits, and leaves current session state unchanged", async () => {
+    const { service, ref, agentDir } = await startSessionWithSettings({ defaultProvider: PROVIDER, defaultModel: DEFAULT_MODEL, defaultThinkingLevel: "low" });
+    try {
+      const before = await service.status(ref);
+      const messages = await service.messages(ref);
+      await mkdir(join(ref.cwd, ".pi"), { recursive: true });
+      await writeFile(join(ref.cwd, ".pi", "settings.json"), JSON.stringify({ defaultModel: "project-model", defaultThinkingLevel: "off" }));
+      expect(await service.getSessionDefaults(ref)).toEqual({ defaultProvider: PROVIDER, defaultModel: DEFAULT_MODEL, defaultThinkingLevel: "low" });
+      expect(await service.setSessionDefaults(ref, { provider: PROVIDER, modelId: FIRST_MODEL })).toEqual({ defaultProvider: PROVIDER, defaultModel: FIRST_MODEL, defaultThinkingLevel: "low" });
+      const path = join(agentDir, "settings.json");
+      const persisted: unknown = JSON.parse(await readFile(path, "utf8"));
+      if (!isRecord(persisted)) throw new Error("Expected persisted settings object");
+      await writeFile(path, JSON.stringify({ ...persisted, defaultModel: DEFAULT_MODEL, customSetting: "external edit" }));
+      expect(await service.setSessionDefaults(ref, { thinkingLevel: "max" })).toEqual({ defaultProvider: PROVIDER, defaultModel: DEFAULT_MODEL, defaultThinkingLevel: "max" });
+      expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({ defaultThinkingLevel: "max", customSetting: "external edit" });
+      expect(JSON.parse(await readFile(join(ref.cwd, ".pi", "settings.json"), "utf8"))).toEqual({ defaultModel: "project-model", defaultThinkingLevel: "off" });
+      const after = await service.status(ref);
+      expect(after.model).toEqual(before.model);
+      expect(after.thinkingLevel).toEqual(before.thinkingLevel);
+      expect(await service.messages(ref)).toEqual(messages);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("rejects disabled/unavailable models and malformed settings without overwriting them", async () => {
+    const { service, ref, agentDir } = await startSessionWithSettings({ enabledModels: [`${PROVIDER}/${DEFAULT_MODEL}`] });
+    try {
+      const path = join(agentDir, "settings.json");
+      const before = await readFile(path, "utf8");
+      await expect(service.setSessionDefaults(ref, { provider: PROVIDER, modelId: FIRST_MODEL })).rejects.toThrow("not enabled");
+      await expect(service.setSessionDefaults(ref, { provider: PROVIDER, modelId: "missing" })).rejects.toThrow("Model not found");
+      await expect(service.setSessionDefaults(ref, { provider: PROVIDER })).rejects.toThrow("both");
+      expect(await readFile(path, "utf8")).toBe(before);
+      await writeFile(path, "{malformed");
+      await expect(service.getSessionDefaults(ref)).rejects.toThrow("settings failed");
+      await expect(service.setSessionDefaults(ref, { thinkingLevel: "high" })).rejects.toThrow("settings failed");
+      expect(await readFile(path, "utf8")).toBe("{malformed");
+    } finally {
+      await service.dispose();
+    }
+  });
+});
+
 describe("PiSessionService model catalog", () => {
   it("marks every available model enabled in catalog order when no scope is configured", async () => {
     const { service, ref } = await startSessionWithSettings(undefined);

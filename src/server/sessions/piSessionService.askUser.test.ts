@@ -254,6 +254,33 @@ describe("PiSessionService.prompt with an open ask", () => {
     await service.dispose();
   });
 
+  it.each(["followUp", "steer"])("dismisses an ask opened after a %s message was queued when the message reaches the model", async (behavior) => {
+    const { service, store, events, fake } = askService({ withActiveSession: true });
+    await service.status(sessionRef(ACTIVE_SESSION_ID));
+    fake.session.isStreaming = true;
+    await service.prompt(sessionRef(ACTIVE_SESSION_ID), "Use DuckDB", behavior);
+    await service.openAsk({ sessionId: ACTIVE_SESSION_ID, questions });
+
+    // An active run alone must not dismiss the questions it just posted.
+    fake.emit({ type: "agent_start" });
+    fake.emit({ type: "message_start", message: { role: "assistant", content: [] } });
+    expect(store.pendingAsk(ACTIVE_SESSION_ID)?.askId).toBe("ask-1");
+
+    const message = { role: "user", content: [{ type: "text", text: "Use DuckDB" }] };
+    fake.emit({ type: "message_start", message });
+    fake.emit({ type: "message_end", message });
+
+    expect(store.pendingAsk(ACTIVE_SESSION_ID)).toBeUndefined();
+    expect(askEvents(events).map(({ event }) => event.type)).toEqual(["ask.opened", "ask.closed"]);
+    expect(fake.calls.sendCustomMessage).toHaveLength(1);
+    expect(fake.calls.sendCustomMessage[0]).toMatchObject({
+      message: { customType: ASK_USER_ANSWERS_CUSTOM_TYPE, details: { askId: "ask-1", reason: "cancelled" } },
+      options: { triggerTurn: false, deliverAs: "followUp" },
+    });
+    expect(await service.status(sessionRef(ACTIVE_SESSION_ID))).not.toHaveProperty("pendingAsk");
+    await service.dispose();
+  });
+
   it("sends a plain message untouched when no ask is open", async () => {
     const { service, events, fake } = askService({ withActiveSession: true });
 

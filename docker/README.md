@@ -216,7 +216,7 @@ curl -fsSL "https://raw.githubusercontent.com/jmfederico/pi-web/$ref/docker/inst
 
 ## Container environment
 
-Extra environment variables for the `sessiond` and `web` containers belong in one file inside the persistent data directory:
+Shared extra environment variables for the `sessiond` and `web` containers belong in the persistent data directory:
 
 ```text
 $PI_WEB_DOCKER_DATA_DIR/container.env
@@ -232,7 +232,15 @@ NO_PROXY=localhost,127.0.0.1
 PI_WEB_OFFLINE=1
 ```
 
-Apply changes by recreating the containers:
+For **development-only** values, edit `<repo>/.pi-web/docker-compose-dev.container.env`. The dev launcher creates this gitignored file once with owner-only permissions and never rewrites it. Both dev services load it after the shared file, so matching keys override shared values; production never loads it. `pi-web-docker --dev doctor` reports its path. For example, keep dev's saved remote machines separate without changing other shared state:
+
+```dotenv
+PI_WEB_MACHINES_FILE=/data/pi-web/machines-dev.json
+```
+
+Omitted keys inherit the shared file (or the application's default when neither file sets them). Explicit Compose `environment:` values still win over either env file. These files use Docker Compose dotenv syntax, not shell scripts.
+
+Apply changes by recreating the affected containers. Recreating `sessiond` interrupts active sessions; schedule this when those sessions can be stopped:
 
 ```bash
 ~/.local/share/pi-web-docker/pi-web-docker start
@@ -244,6 +252,8 @@ The `restart`, `restart-web`, and `restart-sessiond` commands reuse the existing
 The values PI WEB sets for a container stay authoritative: `HOME`, `XDG_CONFIG_HOME`, `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET`, `PI_CODING_AGENT_DIR`, `PI_WEB_MAX_UPLOAD_BYTES`, `HOSTEXEC_MODE`, `HOSTEXEC_IMAGE`, the `PI_WEB_DOCKER_*` keys, and the web server's `PI_WEB_HOST` and `PI_WEB_PORT` keep their generated values even when `container.env` lists them. Change those through installer flags, `.env`, or `.pi-web/docker-compose-dev.local.env`.
 
 The generated `.env` and `.pi-web/docker-compose-dev.generated.env` files serve a different purpose: Docker Compose reads them to fill in placeholders in the Compose files, so keys added there configure Compose itself and do not reach the container process environment.
+
+Interactive terminals and agent tools resolve the same commands. Web terminals start login shells, and openSUSE's `/etc/profile` resets `PATH` to a minimal value, so the image ships `/etc/profile.d/pi-web-path-parity.sh`, which merges back the inherited entries the reset dropped. Terminals therefore settle on the same `PATH` that agent sessions inherit from the session daemon, including image-level entries such as development mode's `/workspace/node_modules/.bin` and any `PATH` override from `container.env`.
 
 ## Localhost binding and remote access
 
@@ -297,13 +307,15 @@ Use this mode when developing PI WEB from this checkout. It bind-mounts the sour
 - `sessiond` runs `npm run start:sessiond` as the long-lived owner of Pi agent runtimes;
 - `web` runs `npm run dev:web` and `npm run dev:client` so API, plugin, and Vite changes can autoreload without restarting `sessiond`.
 
+Use `./docker/pi-web-docker --dev restart` to restart both services. It handles plugin-build readiness and restart order for you. Restarting interrupts active sessions, so wait for important work to finish first.
+
 From the repository root, use the canonical Docker command so the same fail-closed host profile detection is applied as runtime mode:
 
 ```bash
 ./docker/pi-web-docker --dev start
 ```
 
-The command creates `.pi-web/docker-compose-dev.local.env` on first run, writes `.pi-web/docker-compose-dev.generated.env` and `.pi-web/docker-compose-dev.host.generated.yml`, then runs Docker Compose with `docker/compose.dev.yml` plus that generated host override. The generated environment includes the host repository root as `PI_WEB_DOCKER_DEV_REPO_ROOT`, and the generated override mounts that path back into the containers so Docker helper commands can run Compose from the same absolute path. Edit only the `.local.env` file for persistent dev settings; the `.generated.env` and `.host.generated.yml` files are refreshed by the command. Extra environment variables for the dev containers go in the shared [`container.env`](#container-environment).
+The command creates `.pi-web/docker-compose-dev.local.env` on first run, writes `.pi-web/docker-compose-dev.generated.env` and `.pi-web/docker-compose-dev.host.generated.yml`, then runs Docker Compose with `docker/compose.dev.yml` plus that generated host override. The generated environment includes the host repository root as `PI_WEB_DOCKER_DEV_REPO_ROOT`, and the generated override mounts that path back into the containers so Docker helper commands can run Compose from the same absolute path. Edit only the `.local.env` file for persistent dev settings; the `.generated.env` and `.host.generated.yml` files are refreshed by the command. Extra environment variables for the dev containers go in the shared `container.env` or the dev-only `.pi-web/docker-compose-dev.container.env`; see [Container environment](#container-environment).
 
 Values used by the command are resolved in this order:
 
@@ -358,7 +370,7 @@ Useful development commands:
 ./docker/pi-web-docker --dev stop
 ```
 
-Restart `sessiond` manually after changes that affect `src/server/sessiond.ts`, daemon ownership, or session-daemon-only code paths. Restarting only `web` is enough for ordinary API/client/plugin development reloads. Commands launched from the Updates panel use the same detached `pi-web-docker` helper as runtime mode, stream the helper's logs inline after it starts, and keep update/restart work running after the current PI WEB terminal or container exits. In both modes detached helpers load the generated Docker env and run as the generated `PI_WEB_UID:PI_WEB_GID` with the generated Docker group; development helpers still refuse UID 0 unless `--allow-root` is explicit.
+Restart `sessiond` manually after changes that affect `src/server/sessiond.ts`, daemon ownership, or session-daemon-only code paths. Restarting only `web` is enough for ordinary API/client/browser-plugin development reloads. For server-plugin changes, wait for the web-owned build to finish, then restart sessiond. Commands launched from the Updates panel use the same detached `pi-web-docker` helper as runtime mode, stream the helper's logs inline after it starts, and keep update/restart work running after the current PI WEB terminal or container exits. In both modes detached helpers load the generated Docker env and run as the generated `PI_WEB_UID:PI_WEB_GID` with the generated Docker group; development helpers still refuse UID 0 unless `--allow-root` is explicit.
 
 The dev setup intentionally has the same Docker socket and profile-specific host mounts as the runtime setup. The same trust warnings apply. The command refuses to run development mode as UID 0, or to generate a dev env with `PI_WEB_UID=0`, unless you pass `--allow-root`; use that override only when root-owned checkout writes are intentional.
 

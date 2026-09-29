@@ -225,10 +225,13 @@ describe("PiSessionService archive and cleanup", () => {
     await service.dispose();
   });
 
-  it("bulk archives inactive sessions by cwd without opening runtimes", async () => {
+  it("bulk archives inactive sessions oldest activity first without opening runtimes", async () => {
     const recordsByCwd = new Map([
-      ["/one", [sessionRecord("a", "/one"), sessionRecord("b", "/one")]],
-      ["/two", [sessionRecord("c", "/two")]],
+      ["/one", [
+        { ...sessionRecord("a", "/one"), modified: new Date("2026-01-03T00:00:00.000Z") },
+        { ...sessionRecord("b", "/one"), modified: new Date("2026-01-01T00:00:00.000Z") },
+      ]],
+      ["/two", [{ ...sessionRecord("c", "/two"), modified: new Date("2026-01-02T00:00:00.000Z") }]],
     ]);
     const listCalls: string[] = [];
     const open = vi.fn(() => { throw new Error("bulk archive should not open inactive runtimes"); });
@@ -266,11 +269,11 @@ describe("PiSessionService archive and cleanup", () => {
 
     const result = await service.archiveMany([{ id: "a", cwd: "/one" }, { id: "b", cwd: "/one" }, { id: "c", cwd: "/two" }]);
 
-    expect(result).toMatchObject({ archived: true, archivedSessionIds: ["a", "b", "c"], failures: [] });
+    expect(result).toMatchObject({ archived: true, archivedSessionIds: ["b", "c", "a"], failures: [] });
     expect(listCalls).toEqual(["/one", "/two"]);
     expect(open).not.toHaveBeenCalled();
     expect(archiveMany).toHaveBeenCalledTimes(1);
-    expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["a", "b", "c"]);
+    expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["b", "c", "a"]);
     expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
     await service.dispose();
   });

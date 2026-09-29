@@ -55,6 +55,8 @@ export function fakeSessionManager(cwd = "/workspace", patch: Partial<PiSessionM
     getSessionFile: () => undefined,
     getBranch: () => [],
     getLeafId: () => "leaf-1",
+    branch: () => undefined,
+    resetLeaf: () => undefined,
     ...patch,
   };
 }

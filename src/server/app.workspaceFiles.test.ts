@@ -54,6 +54,31 @@ describe("buildApp workspace file routes", () => {
     expect(tooLargeResponse.json()).toEqual({ error: "File is too large to preview (limit 10 MB)" });
   });
 
+  it("wires showImage=1 to outside-image previews with safe headers, not downloads or ordinary previews", async () => {
+    const added = await appTestContext.app.inject({ method: "POST", url: "/api/projects", payload: { name: "Images", path: appTestContext.projectDir, create: true } });
+    const project = added.json<Project>();
+    const listed = await appTestContext.app.inject({ method: "GET", url: `/api/projects/${project.id}/workspaces` });
+    const workspace = listed.json<WorkspaceProviderResolution>().workspaces[0];
+    if (workspace === undefined) throw new Error("Expected workspace");
+    const target = join(appTestContext.tempDir, "outside.svg");
+    await writeFile(target, "<svg></svg>");
+    const policy = workspaceFilePreviewResponsePolicy(target);
+    for (const prefix of ["/api", "/api/machines/local"]) {
+      const url = `${prefix}/projects/${project.id}/workspaces/${workspace.id}/file/preview?path=${encodeURIComponent(target)}`;
+      const response = await appTestContext.app.inject({ method: "GET", url: `${url}&showImage=1` });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toBe("<svg></svg>");
+      expect(response.headers["content-type"]).toBe(policy.contentType);
+      expect(response.headers["content-security-policy"]).toBe(policy.contentSecurityPolicy);
+      expect(response.headers["content-disposition"]).toBe(policy.contentDisposition);
+      expect(response.headers["x-content-type-options"]).toBe("nosniff");
+      for (const suffix of ["", "&showImage=true", "&download=1", "&showImage=1&download=1"]) {
+        const denied = await appTestContext.app.inject({ method: "GET", url: url + suffix });
+        expect(denied.statusCode).toBe(400);
+      }
+    }
+  });
+
   it("hardens failed local previews with the same error policy the remote proxy enforces", async () => {
     const addResponse = await appTestContext.app.inject({
       method: "POST",

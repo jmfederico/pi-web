@@ -186,10 +186,6 @@ function sessionInfoWire() {
   };
 }
 
-function terminalInfoWire() {
-  return { id: "terminal-1", cwd: "/repo", name: "bash", createdAt: "2026-07-20T00:00:00.000Z", exited: false };
-}
-
 function machineStatusWire() {
   return {
     epochId: "epoch-1",
@@ -252,7 +248,7 @@ describe("socket stream validation", () => {
     expect(parseSessionSocketEvent({ type: "status.update", status: { sessionId: "session-1" } })).toBeUndefined();
     expect(parseSessionSocketEvent({ type: "activity.update", activity: { ...activityWire(), phase: "waiting" } })).toBeUndefined();
     expect(parseSessionSocketEvent({ type: "session.startup", activity: activityWire() })).toBeUndefined();
-    expect(parseSessionSocketEvent({ type: "terminal.created", terminal: terminalInfoWire() })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "terminal.created", terminal: { id: "terminal-1" } })).toBeUndefined();
     expect(parseSessionSocketEvent({ type: "totally.unknown" })).toBeUndefined();
   });
 
@@ -273,9 +269,6 @@ describe("socket stream validation", () => {
       { type: "activity.update", activity: activityWire() },
       { type: "session.name", sessionId: "session-1", name: "rename" },
       { type: "session.created", session: sessionInfoWire() },
-      { type: "terminal.created", terminal: terminalInfoWire() },
-      { type: "terminal.exited", terminal: { ...terminalInfoWire(), exited: true, exitCode: 0 } },
-      { type: "terminal.closed", terminalId: "terminal-1", cwd: "/repo" },
       { type: "machine.status", status: machineStatusWire() },
     ];
     for (const frame of validFrames) expect(parseRealtimeSocketEvent(frame)).toEqual(frame);

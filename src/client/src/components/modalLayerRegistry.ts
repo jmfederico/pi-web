@@ -65,9 +65,24 @@ export function registerRenderedModal(layer: RenderedModalLayer): RenderedModalR
   };
 }
 
-/** True only while a visibly rendered modal is registered in this document. */
+/**
+ * True while a registered app layer or an open native dialog in any composed
+ * subtree owns interaction. Browser plugins cannot import the private modal
+ * registry, so native `<dialog>.showModal()` is the public, framework-neutral
+ * modality boundary. Treating every open native dialog conservatively avoids
+ * missing that boundary in DOM implementations without `:modal` support.
+ */
 export function hasRenderedModal(ownerDocument: Document | undefined): boolean {
-  return ownerDocument !== undefined && topModalLayer(ownerDocument) !== undefined;
+  return ownerDocument !== undefined
+    && (topModalLayer(ownerDocument) !== undefined || hasComposedOpenDialog(ownerDocument));
+}
+
+function hasComposedOpenDialog(root: Document | ShadowRoot): boolean {
+  if (root.querySelector("dialog[open]") !== null) return true;
+  for (const element of root.querySelectorAll("*")) {
+    if (element.shadowRoot !== null && hasComposedOpenDialog(element.shadowRoot)) return true;
+  }
+  return false;
 }
 
 function restoreAfterModalClose(registered: RegisteredModalLayer): void {

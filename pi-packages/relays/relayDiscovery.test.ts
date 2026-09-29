@@ -102,6 +102,7 @@ describe("listRelayDocumentTree", () => {
         directory("assets"),
         file("status.md"),
         file("data.json"),
+        file("operations.md"),
         file("charter.md"),
         symlink("linked"),
       ])],
@@ -115,11 +116,12 @@ describe("listRelayDocumentTree", () => {
     expect(fake.listFiles).toHaveBeenCalledWith(RELAY_PATH);
     expect(result).toEqual({
       kind: "loaded",
-      documentCount: 9,
+      documentCount: 10,
       partial: false,
       tree: [
         fileNode("status.md", 0),
         fileNode("charter.md", 0),
+        fileNode("operations.md", 0),
         fileNode("log.md", 0),
         fileNode("data.json", 0),
         fileNode("notes.md", 0),

@@ -25,6 +25,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     unreadStore: new SessionUnreadStore(),
     onUnreadChanged: () => { /* no-op */ },
     catalogRefreshStatus: { isRefreshInFlight: () => false },
+    config: { read: () => Promise.reject(new Error("config read not expected in this test")) },
     subsessionsEnabled: false,
     askUserEnabled: true,
     appendSystemPromptSections: [],
@@ -95,6 +96,12 @@ describe("sessiond session service dependency assembly", () => {
   it("passes the ask-user preference through to the session service", () => {
     expect(sessionServiceDependencies(daemonCollaborators({ askUserEnabled: true })).askUserEnabled).toBe(true);
     expect(sessionServiceDependencies(daemonCollaborators({ askUserEnabled: false })).askUserEnabled).toBe(false);
+  });
+
+  it("passes the live config reader through to the session service", () => {
+    const config = { read: () => Promise.reject(new Error("not used")) };
+
+    expect(sessionServiceDependencies(daemonCollaborators({ config })).config).toBe(config);
   });
 
   it("passes the extension-dialog timeout through to the session service", () => {

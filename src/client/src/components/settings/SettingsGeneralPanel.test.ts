@@ -9,7 +9,7 @@ describe("settings-general-panel copy", () => {
     const panel = new SettingsGeneralPanel();
     panel.targetLabel = "Lab Mac (remote machine)";
     panel.configResponse = configResponse({ host: "127.0.0.1" });
-    panel.machineConfigResponse = configResponse({ pathAccess: { allowedPaths: ["/mnt/share"] }, uploads: { defaultFolder: "manual/uploads" } });
+    panel.machineConfigResponse = configResponse({ pathAccess: { allowedPaths: ["/mnt/share"] }, uploads: { defaultFolder: "manual/uploads" }, attachments: { defaultFolder: "manual/attachments" } });
 
     const template = panel.render();
     const strings = collectTemplateStrings(template).join("");
@@ -19,7 +19,7 @@ describe("settings-general-panel copy", () => {
     expect(strings).toContain("Gateway server fields edit this local gateway. File access and upload defaults edit ");
     expect(strings).toContain("Host, port, and allowed hosts are saved in the gateway config.");
     expect(strings).toContain("External filesystem roots and upload defaults are saved on ");
-    expect(values.filter((value) => value === "Lab Mac (remote machine)")).toHaveLength(4);
+    expect(values.filter((value) => value === "Lab Mac (remote machine)")).toHaveLength(5);
   });
 
   it("shows reload copy when selected-machine access config is unavailable", () => {
@@ -108,6 +108,7 @@ describe("settings-general-panel save payloads", () => {
     setPanelProperty(panel, "machineDraft", {
       allowedPathsText: "/tmp\n~/SDKs\n",
       uploadDefaultFolder: " manual\\uploads/. ",
+      attachmentDefaultFolder: " saved\\attachments/. ",
     } satisfies MachineAccessConfigDraft);
 
     await callPanelPromise(panel, "saveMachineAccessConfig", event);
@@ -117,6 +118,7 @@ describe("settings-general-panel save payloads", () => {
       {
         pathAccess: { allowedPaths: ["/tmp", "~/SDKs"] },
         uploads: { defaultFolder: "manual/uploads" },
+        attachments: { defaultFolder: "saved/attachments" },
       },
     ]]);
     expect(onSave).not.toHaveBeenCalled();
@@ -130,12 +132,29 @@ describe("settings-general-panel save payloads", () => {
     setPanelProperty(panel, "machineDraft", {
       allowedPathsText: "",
       uploadDefaultFolder: "/tmp/uploads",
+      attachmentDefaultFolder: "",
     } satisfies MachineAccessConfigDraft);
 
     await callPanelPromise(panel, "saveMachineAccessConfig", new Event("submit", { cancelable: true }));
 
     expect(onSaveMachineConfig).not.toHaveBeenCalled();
     expect(getPanelProperty(panel, "machineLocalError")).toBe("Upload default folder must be workspace-relative.");
+  });
+
+  it("keeps invalid attachment folders local and does not save selected-machine config", async () => {
+    const panel = new SettingsGeneralPanel();
+    const onSaveMachineConfig = vi.fn();
+    panel.onSaveMachineConfig = onSaveMachineConfig;
+    setPanelProperty(panel, "machineDraft", {
+      allowedPathsText: "",
+      uploadDefaultFolder: "",
+      attachmentDefaultFolder: "../attachments",
+    } satisfies MachineAccessConfigDraft);
+
+    await callPanelPromise(panel, "saveMachineAccessConfig", new Event("submit", { cancelable: true }));
+
+    expect(onSaveMachineConfig).not.toHaveBeenCalled();
+    expect(getPanelProperty(panel, "machineLocalError")).toBe("Attachment default folder must not contain path traversal.");
   });
 });
 

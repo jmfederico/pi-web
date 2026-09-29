@@ -16,6 +16,7 @@ export interface ShortcutKeyEvent {
   shiftKey: boolean;
   isComposing: boolean;
   target: EventTarget | null;
+  composedPath?(): EventTarget[];
 }
 
 export type ShortcutParseResult =
@@ -45,28 +46,39 @@ interface ShortcutBinding extends ShortcutBindingSummary {
 
 export class KeyboardShortcutDispatcher {
   private pendingTokens: string[] = [];
+  private lastTarget: EventTarget | null = null;
   private pendingTimer: ReturnType<typeof setTimeout> | undefined;
 
   handle(event: ShortcutKeyEvent, actions: AppAction[], options: { shortcuts?: ShortcutPreferenceConfig } = {}): boolean {
+    const target = event.composedPath?.()[0] ?? event.target;
+    if (target !== this.lastTarget) this.clearPending();
+    this.lastTarget = target;
+
     const token = shortcutTokenFromEvent(event);
     if (token === undefined) return false;
+    if (token === "escape" && this.pendingTokens.length > 0) {
+      this.clearPending();
+      return true;
+    }
 
+    const editable = isEditableShortcutEvent(event);
+    // Filter by the first chord so modified sequences can still finish with plain keys.
     const shortcuts = resolveShortcutBindings(actions, options.shortcuts, { enabledOnly: true })
-      .filter((binding) => binding.active)
+      .filter((binding) => binding.active && (!editable || isShortcutSequenceStarter(binding.tokens[0] ?? "")))
       .map((binding) => ({ action: binding.action, tokens: binding.tokens }));
 
     if (this.pendingTokens.length > 0) {
       const handledPending = this.handleSequence([...this.pendingTokens, token], shortcuts);
       if (handledPending) return true;
       this.clearPending();
-      if (!isShortcutSequenceStarter(token)) return false;
-    } else if (!isShortcutSequenceStarter(token)) return false;
+    }
 
     return this.handleSequence([token], shortcuts);
   }
 
   reset(): void {
     this.clearPending();
+    this.lastTarget = null;
   }
 
   private handleSequence(sequence: string[], shortcuts: { action: AppAction; tokens: string[] }[]): boolean {
@@ -147,11 +159,11 @@ export function resolveShortcutBindings(actions: AppAction[], shortcuts?: Shortc
 }
 
 export function parseShortcutInput(shortcut: string): ShortcutParseResult {
-  return parseShortcut(shortcut, { requireFirstChordActivator: true });
+  return parseShortcut(shortcut);
 }
 
 export function normalizeShortcut(shortcut: string): string[] {
-  const parsed = parseShortcut(shortcut, { requireFirstChordActivator: false });
+  const parsed = parseShortcut(shortcut);
   return parsed.ok ? parsed.tokens : [];
 }
 
@@ -176,6 +188,13 @@ export function shortcutTokenFromEvent(event: ShortcutKeyEvent): string | undefi
   return modifiers.join("+");
 }
 
+export function isEditableShortcutEvent(event: ShortcutKeyEvent): boolean {
+  return (event.composedPath?.() ?? [event.target]).some((target) => {
+    if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) return false;
+    return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable;
+  });
+}
+
 export function isShortcutSequenceStarter(token: string): boolean {
   return token.split("+").includes("mod") || token.split("+").includes("alt");
 }
@@ -186,8 +205,7 @@ function shortcutBindingForAction(action: AppAction, shortcuts: ShortcutPreferen
   const shortcut = configured ?? action.shortcut;
   if (shortcut === undefined || shortcut === "") return undefined;
   const tokens = normalizeShortcut(shortcut);
-  const firstToken = tokens[0];
-  if (firstToken === undefined || !isShortcutSequenceStarter(firstToken)) return undefined;
+  if (tokens.length === 0) return undefined;
   return {
     action,
     shortcut: tokens.join(" "),
@@ -242,18 +260,15 @@ function compareStrings(left: string, right: string): number {
   return 0;
 }
 
-function parseShortcut(shortcut: string, options: { requireFirstChordActivator: boolean }): ShortcutParseResult {
+function parseShortcut(shortcut: string): ShortcutParseResult {
   const cleaned = shortcut.trim().toLowerCase().replace(/\s*\+\s*/gu, "+");
   if (cleaned === "") return { ok: false, message: "Enter a shortcut, choose None, or reset to the default." };
 
   const tokens: string[] = [];
   const chordInputs = cleaned.split(/\s+/u).filter((token) => token !== "");
-  for (const [index, chordInput] of chordInputs.entries()) {
+  for (const chordInput of chordInputs) {
     const parsed = parseShortcutChord(chordInput);
     if (!parsed.ok) return parsed;
-    if (index === 0 && options.requireFirstChordActivator && !isShortcutSequenceStarter(parsed.token)) {
-      return { ok: false, message: "Shortcuts must start with Ctrl/⌘ or Alt so normal typing is not captured." };
-    }
     tokens.push(parsed.token);
   }
 

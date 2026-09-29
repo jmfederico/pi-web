@@ -91,6 +91,10 @@ describe("staged validation planning", () => {
     expect(vitestPlan.lint).toEqual({ mode: "scoped", files: ["vitest.config.ts"] });
     expect(vitestPlan.tests).toEqual({ mode: "full", files: [] });
 
+    const artifactPlan = createValidationPlan(["vitest.artifacts.config.ts"], { pathExists: () => true });
+    expect(artifactPlan.lint).toEqual({ mode: "scoped", files: ["vitest.artifacts.config.ts"] });
+    expect(artifactPlan.tests).toEqual({ mode: "skip", files: [] });
+
     const typescriptPlan = createValidationPlan(["tsconfig.json"], { pathExists: () => true });
     expect(typescriptPlan.lint).toEqual({ mode: "full", files: [] });
     expect(typescriptPlan.tests).toEqual({ mode: "full", files: [] });

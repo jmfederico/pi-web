@@ -36,7 +36,7 @@ Requirements:
 
 - Node.js 22.19.0 or newer
 - npm
-- Pi Coding Agent `>=0.84.0`, configured for your user
+- Pi Coding Agent `>=0.87.0`, configured for your user
 - git and the development tools your agents need
 
 Install and start PI WEB as per-user services:
@@ -110,11 +110,11 @@ Read more: [Fleet and machines guide](https://pi-web.dev/machines)
 
 ## PI WEB plugins
 
-PI WEB supports trusted browser plugins plus optional sessiond-backed workspace providers. Bundled Git uses the same public provider and backend contracts available to installed plugins. Use **Settings → PI WEB plugins** to manage desired state on the selected machine.
+Extend PI WEB with trusted plugins for panels, tools, and workspace workflows. Use **Settings → PI WEB plugins** to enable or disable them on the selected machine.
 
 Pi packages are a separate Pi package-manager concept. A Pi package may include a PI WEB plugin, but installing a package and enabling it are different operations. Server-backed changes require a session-daemon restart; see the plugin guide for lifecycle and recovery details.
 
-Read more: [PI WEB plugin guide and API](https://pi-web.dev/plugins)
+Read more: [PI WEB plugin guide](https://pi-web.dev/plugins)
 
 ## Configuration
 

@@ -45,8 +45,19 @@ describe("sessionEnvironmentFacts", () => {
 
     expect(facts).toContain("a distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT`");
     expect(facts).toContain("fails loudly at startup because the live instance owns the state");
-    expect(facts).toContain("Never restart or stop the session daemon hosting this session");
+    expect(facts).toContain("Do not restart or stop the session daemon hosting this session unless the user explicitly requests or authorizes that daemon restart or stop");
     expect(facts).toContain("restart the web/API process before the session daemon");
+  });
+
+  it("allows explicit overrides with interruption warnings and detached scheduling", () => {
+    const facts = sessionEnvironmentFacts({ env: ENV });
+
+    expect(facts).toContain("An explicit user request overrides this default restriction, including a request to schedule the operation");
+    expect(facts).toContain("warn the user that the operation interrupts active sessions");
+    expect(facts).toContain("A general request to fix the app is not authorization to restart the daemon");
+    expect(facts).toContain("use a detached service-manager timer");
+    expect(facts).toContain("not a sleep process owned by this session");
+    expect(facts).toContain("do not claim completion without checking");
   });
 
   it("wraps the facts in one tagged block of plain statements", () => {

@@ -1,50 +1,82 @@
 import type { TemplateResult } from "lit";
 import type { AppAction } from "../actions";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, RunTerminalCommandInput, TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
 import type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 
+export type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
 export type { LocalContributionId, PluginId, QualifiedContributionId } from "./ids";
 export type HtmlTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[]) => TemplateResult;
 
-export interface PiWebPluginRegistration {
+export interface PiWebPluginRegistrationDeclaration {
   id: PluginId;
-  plugin: PiWebPlugin;
   machineId?: string;
   sourcePluginId?: PluginId;
-  backendRevision?: string;
+  /** Host-attributed package discovery metadata. */
+  manifestSource?: string;
+  manifestScope?: string;
   machineSpecific?: boolean;
+}
+
+export interface PiWebPluginRegistration extends PiWebPluginRegistrationDeclaration {
+  plugin: PiWebPlugin;
+  backendRevision?: string;
+  pairedRequestVersion?: 1;
+  pairedChannelVersion?: 1;
 }
 
 export interface WorkspacePluginBinding {
   registrationPluginId: PluginId;
   sourcePluginId: PluginId;
   backendRevision?: string;
+  pairedRequestVersion?: 1;
+  pairedChannelVersion?: 1;
 }
 
+type MaybePromise<T> = T | Promise<T>;
+
 export interface PiWebPlugin {
-  apiVersion: 2;
+  apiVersion: 4;
   name: string;
-  activate: (context: PluginActivationContext) => PluginActivationResult;
+  requires?: readonly PluginCapability[];
+  activate: (context: PluginActivationContext) => MaybePromise<PluginActivationResult>;
 }
 
 export interface PluginActivationContext {
-  readonly apiVersion: 2;
+  readonly apiVersion: 4;
   /** Stable package/source identity, including on federated machines. */
   readonly pluginId: PluginId;
   /** Host-unique identity for qualified contribution references in this runtime. */
   readonly runtimePluginId: PluginId;
   readonly html: HtmlTemplateTag;
   readonly svg: SvgTemplateTag;
+  /** Signal for this bounded activation invocation, not the plugin lifetime. */
+  readonly signal: AbortSignal;
+  /** Aborted before failed-start rollback or browser-host shutdown disposal. */
+  readonly lifetimeSignal: AbortSignal;
+}
+
+export interface PluginCapabilityResolver {
+  readonly resolve: <Value>(capability: PluginCapability<Value>) => Value;
+}
+
+export interface PluginStartContext {
+  readonly capabilities: PluginCapabilityResolver;
+  readonly signal: AbortSignal;
 }
 
 export interface PluginActivationResult {
   contributions: PluginContributions;
+  provides?: readonly PluginCapabilityProvision[];
+  start?(context: PluginStartContext): MaybePromise<void>;
+  dispose?(signal: AbortSignal): MaybePromise<void>;
 }
 
 export interface PluginContributions {
+  contentRenderers?: import("../../../plugin-api").ContentRendererContribution[];
   actions?: PluginAction[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
@@ -58,6 +90,34 @@ export interface PluginMachine {
   kind: Machine["kind"];
 }
 
+export interface WorkspaceFileRequestOptions {
+  readonly signal?: AbortSignal;
+}
+
+export interface WorkspaceFileReferenceOptions {
+  readonly version?: string;
+}
+
+export interface WorkspaceFileUploadProgress {
+  readonly loaded: number;
+  readonly total: number;
+  readonly percent: number;
+  readonly lengthComputable: boolean;
+}
+
+export interface WorkspaceFileUploadOptions {
+  readonly destinationFolder?: string;
+  readonly createDirs?: boolean;
+  readonly overwrite?: boolean;
+  readonly onProgress?: (progress: WorkspaceFileUploadProgress) => void;
+}
+
+export interface WorkspaceFileUploadTask {
+  readonly path: string;
+  readonly completed: Promise<WriteWorkspaceFileResponse>;
+  cancel(): void;
+}
+
 export interface WorkspaceFiles {
   readFile(path: string): Promise<FileContentResponse>;
   listFiles(path: string): Promise<FileTreeResponse>;
@@ -66,9 +126,54 @@ export interface WorkspaceFiles {
   moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
 }
 
-export interface WorkspaceBackend {
-  request(operation: string, input: JsonValue): Promise<JsonValue>;
+export interface LegacyWorkspaceFiles extends WorkspaceFiles {
+  readonly capabilityVersion?: undefined;
 }
+
+export interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
+  readonly capabilityVersion: 1;
+  readonly defaultUploadFolder: string;
+  readonly maxInlinePreviewBytes: number;
+  readFile(path: string, options?: WorkspaceFileRequestOptions): Promise<FileContentResponse>;
+  listFiles(path: string, options?: WorkspaceFileRequestOptions): Promise<FileTreeResponse>;
+  previewUrl(path: string, options?: WorkspaceFileReferenceOptions): string;
+  downloadUrl(path: string, options?: WorkspaceFileReferenceOptions): string;
+  uploadFile(file: File, options?: WorkspaceFileUploadOptions): WorkspaceFileUploadTask;
+}
+
+export type WorkspaceFilesContextValue = LegacyWorkspaceFiles | WorkspaceFilesCapabilityV1;
+
+export interface PluginPeerRequestOptions {
+  readonly signal?: AbortSignal;
+}
+
+export interface PluginPeerChannelOptions {
+  readonly signal?: AbortSignal;
+  readonly onData: (data: JsonValue) => void;
+}
+
+export interface PluginPeerChannelClose {
+  readonly code: number;
+  readonly reason: string;
+  readonly wasClean: boolean;
+  readonly error?: Readonly<{ code: string; message: string }>;
+}
+
+export interface PluginPeerChannel {
+  readonly closed: Promise<PluginPeerChannelClose>;
+  send(data: JsonValue): void;
+  close(reason?: string): void;
+}
+
+export type PluginPeer =
+  | {
+      request(operation: string, input: JsonValue, options?: PluginPeerRequestOptions): Promise<JsonValue>;
+      openChannel?(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    }
+  | {
+      request?: undefined;
+      openChannel(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    };
 
 export interface WorkspaceHost {
   requestRender(): void;
@@ -78,12 +183,17 @@ export interface WorkspaceContext {
   machine: PluginMachine;
   workspace: Workspace;
   state: AppState;
-  files: WorkspaceFiles;
-  backend?: WorkspaceBackend;
+  files: WorkspaceFilesContextValue;
+  peer?: PluginPeer;
   host: WorkspaceHost;
 }
 
-export type WorkspaceTerminalCommandInput = Omit<RunTerminalCommandInput, "workspace">;
+export interface WorkspaceTerminalCommandInput {
+  title: string;
+  command: string;
+  metadata?: Record<string, string>;
+  open?: boolean;
+}
 
 export interface WorkspacePanelTerminal {
   open(options?: { terminalId?: string | undefined }): void;
@@ -91,15 +201,7 @@ export interface WorkspacePanelTerminal {
 }
 
 export interface PiWebUnstableRuntimeContext {
-  terminalCommandRuns: TerminalCommandRunsInternalRuntime;
   openSettings?: (section?: SettingsSection) => void;
-}
-
-export interface TerminalCommandRunsInternalRuntime {
-  runCommand(input: RunTerminalCommandInput): Promise<TerminalCommandRunHandle>;
-  listCommandRuns(filter?: TerminalCommandRunFilter): Promise<TerminalCommandRun[]>;
-  getCommandRun(runId: string): Promise<TerminalCommandRun | undefined>;
-  open(options?: { terminalId?: string | undefined }): void;
 }
 
 export interface PluginPromptEditor {
@@ -108,7 +210,10 @@ export interface PluginPromptEditor {
   getSelection(): { start: number; end: number; text: string } | null;
 }
 
+export type { PluginNavigationDestination } from "../../../plugin-api";
+
 export interface PluginRuntimeContext {
+  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
   state: AppState;
   prompt: PluginPromptEditor;
   piWebUnstable?: PiWebUnstableRuntimeContext;
@@ -127,6 +232,7 @@ export interface PluginRuntimeContext {
   selectMainView: (view: AppState["mainView"]) => void;
   selectWorkspaceTool: (tool: QualifiedContributionId) => void;
   openTerminal: (options?: { terminalId?: string | undefined }) => void;
+  /** @deprecated Compatibility alias that publishes `workspace.files` invalidation for the selected workspace. */
   refreshFiles: () => void | Promise<void>;
   /** Invalidate plugin workspace-panel data for the selected workspace. */
   refreshWorkspacePanels: (panelId?: QualifiedContributionId) => void | Promise<void>;
@@ -161,35 +267,31 @@ export interface QualifiedPluginAction extends AppAction {
   machineId?: string;
 }
 
+export type ContributionQueryValue = string | number | boolean | readonly (string | number | boolean)[];
+
+export interface WorkspacePanelNavigationV1 {
+  readonly version: 1;
+  readonly contributionId: QualifiedContributionId;
+  readonly query: Readonly<Record<string, string | readonly string[]>>;
+  set(key: string, value: ContributionQueryValue | undefined | null, options?: { replace?: boolean | undefined }): void;
+}
+
 export interface WorkspacePanelContext extends WorkspaceContext {
+  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
-  /**
-   * @deprecated Runtime-only compatibility alias for pre-v2 plugins. Use `terminal.open()` instead.
-   * This is intentionally not part of the public `@jmfederico/pi-web/plugin-api` declarations.
-   */
-  openTerminal?: (options?: { terminalId?: string | undefined }) => void;
-  piWebUnstable?: Pick<PiWebUnstableRuntimeContext, "terminalCommandRuns">;
-  fileTree: FileTreeEntry[];
-  expandedDirs: Record<string, FileTreeEntry[]>;
-  selectedFilePath: string | undefined;
-  selectedFileContent: FileContentResponse | undefined;
-  selectedFileLoadError: string | undefined;
-  fileTreeStale: boolean;
-  activeTerminalCount: number;
-  selectedTerminalId: string | undefined;
-  terminalAutoStart: boolean;
-  workspaceUploadDefaultFolder: string;
-  onRefreshFiles: () => void;
-  onExpandDir: (path: string) => void;
-  onSelectFile: (path: string) => void;
-  onStartWorkspaceUpload: (files: readonly File[], options: { destinationFolder: string; createDirs?: boolean; overwrite?: boolean; selectUploadedFile?: boolean }) => { batchId: string; done: Promise<void> } | undefined;
-  onCancelWorkspaceUpload: (batchId: string) => void;
-  onClearWorkspaceUpload: (batchId: string) => void;
-  onSelectTerminal: (terminalId: string | undefined, options?: { replace?: boolean | undefined }) => void;
+  /** Contribution-scoped address-bar state for deep links and browser history. */
+  navigation?: WorkspacePanelNavigationV1;
 }
 
 export type WorkspacePanelIcon = TemplateResult;
+export type WorkspaceResource = "workspace.files";
+export type WorkspaceInvalidationReason = "manual" | "mutation" | "agent-activity";
+
+export interface WorkspaceInvalidation {
+  readonly reason: WorkspaceInvalidationReason;
+  readonly resources: readonly WorkspaceResource[];
+}
 
 export interface WorkspacePanelContribution {
   id: LocalContributionId;
@@ -198,9 +300,14 @@ export interface WorkspacePanelContribution {
   order?: number;
   /** Former URL tool/view values that should resolve to this panel. */
   routeAliases?: string[];
+  /** Former qualified contribution ids whose namespaced query keys remain readable. */
+  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
+  /** Return a deep-link query to open a workspace-relative file, or undefined if unsupported. */
+  fileOpenQuery?: (context: WorkspacePanelContext, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
   badge?: (context: WorkspacePanelContext) => string | number | TemplateResult | undefined;
-  onInvalidate?: (context: WorkspacePanelContext) => void | Promise<void>;
+  invalidationResources?: readonly WorkspaceResource[];
+  onInvalidate?: (context: WorkspacePanelContext, invalidation?: WorkspaceInvalidation) => void | Promise<void>;
   render: (context: WorkspacePanelContext) => TemplateResult;
 }
 
@@ -216,7 +323,7 @@ export interface WorkspaceLabelContext extends WorkspaceContext {
   machine: PluginMachine;
   workspace: Workspace;
   state: AppState;
-  files: WorkspaceFiles;
+  files: WorkspaceFilesContextValue;
   host: WorkspaceHost;
 }
 

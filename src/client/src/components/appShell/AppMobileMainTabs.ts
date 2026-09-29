@@ -1,13 +1,15 @@
 import { LitElement, css, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import type { AppState } from "../../appState";
-import { renderAppTabIcon, type AppTabBuiltinIcon } from "../tabIcons";
+import type { QualifiedContributionId } from "../../plugins/types";
+import { renderNavigationMenuIcon, renderAppTabIcon, type AppTabBuiltinIcon } from "../tabIcons";
 
 export type AppMobileMainTabBuiltinIcon = AppTabBuiltinIcon;
 export type AppMobileMainTabIcon = AppMobileMainTabBuiltinIcon | TemplateResult;
 
+export type AppMobileMainTabId = "navigation" | "chat" | QualifiedContributionId;
+
 export interface AppMobileMainTab {
-  id: AppState["mainView"];
+  id: AppMobileMainTabId;
   label: string;
   icon?: AppMobileMainTabIcon;
   badge?: unknown;
@@ -19,8 +21,10 @@ export interface AppMobileMainTab {
 @customElement("app-mobile-main-tabs")
 export class AppMobileMainTabs extends LitElement {
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
-  @property({ attribute: false }) selectedView: AppState["mainView"] = "chat";
-  @property({ attribute: false }) onSelect?: (view: AppState["mainView"]) => void;
+  @property({ attribute: false }) onShowNavigation?: () => void;
+  @property({ type: Boolean }) hiddenActiveDestination = false;
+  @property({ attribute: false }) selectedTab: AppMobileMainTabId | undefined = "chat";
+  @property({ attribute: false }) onSelect?: (tab: AppMobileMainTabId) => void;
   @query(".mobile-tabs") private mobileTabs?: HTMLElement | null;
   @state() private canScrollLeft = false;
   @state() private canScrollRight = false;
@@ -50,7 +54,7 @@ export class AppMobileMainTabs extends LitElement {
       <div class=${this.frameClass()}>
         <div class="mobile-tabs" @scroll=${this.onMobileTabsScroll}>
           ${this.tabs.map((tab) => {
-            const selected = this.selectedView === tab.id;
+            const selected = this.selectedTab === tab.id;
             return html`
               <button class=${this.tabClass(tab)} title=${tab.label} aria-label=${this.tabAriaLabel(tab)} aria-pressed=${String(selected)} @click=${() => { this.onSelect?.(tab.id); }}>
                 ${this.renderTabMark(tab, fallbackLabels)}
@@ -59,6 +63,7 @@ export class AppMobileMainTabs extends LitElement {
               </button>
             `;
           })}
+          ${this.onShowNavigation === undefined ? null : html`<button type="button" class=${`navigation-menu-button${this.hiddenActiveDestination ? " selected" : ""}`} title="Navigation" aria-label="Navigation" aria-haspopup="dialog" @click=${this.onShowNavigation}>${renderNavigationMenuIcon()}</button>`}
         </div>
       </div>
     `;
@@ -71,7 +76,7 @@ export class AppMobileMainTabs extends LitElement {
   private tabClass(tab: AppMobileMainTab): string {
     return [
       ...(tab.className === undefined ? [] : [tab.className]),
-      ...(this.selectedView === tab.id ? ["selected"] : []),
+      ...(this.selectedTab === tab.id ? ["selected"] : []),
     ].join(" ");
   }
 
@@ -85,13 +90,13 @@ export class AppMobileMainTabs extends LitElement {
     return html`<span class=${`tab-badge${tone === undefined ? "" : ` ${tone}`}`}>${badge}</span>`;
   }
 
-  private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppState["mainView"], string>) {
+  private renderTabMark(tab: AppMobileMainTab, fallbackLabels: Map<AppMobileMainTabId, string>) {
     return tab.icon === undefined
       ? html`<span class="tab-fallback" aria-hidden="true">${fallbackLabels.get(tab.id) ?? this.initialsLabel(tab.label)}</span>`
       : renderAppTabIcon(tab.icon);
   }
 
-  private fallbackLabels(): Map<AppState["mainView"], string> {
+  private fallbackLabels(): Map<AppMobileMainTabId, string> {
     const fallbackTabs = this.tabs.filter((tab) => tab.icon === undefined);
     const counts = new Map<string, number>();
     for (const tab of fallbackTabs) {
@@ -99,7 +104,7 @@ export class AppMobileMainTabs extends LitElement {
       counts.set(initials, (counts.get(initials) ?? 0) + 1);
     }
 
-    const labels = new Map<AppState["mainView"], string>();
+    const labels = new Map<AppMobileMainTabId, string>();
     for (const tab of fallbackTabs) {
       const initials = this.initialsLabel(tab.label);
       labels.set(tab.id, (counts.get(initials) ?? 0) > 1 ? this.fullFallbackLabel(tab.label) : initials);
@@ -157,9 +162,9 @@ export class AppMobileMainTabs extends LitElement {
     .mobile-tabs-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
     .mobile-tabs-frame.can-scroll-left::before, .mobile-tabs-frame.can-scroll-right::after { opacity: 1; }
     .mobile-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
-    .mobile-tabs button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .mobile-tabs-frame button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .mobile-tabs .navigation-tab { display: none; }
-    .mobile-tabs button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
+    .mobile-tabs-frame button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
     .tab-icon { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
     .tab-custom-icon { flex: 0 0 auto; width: 18px; height: 18px; display: inline-grid; place-items: center; color: currentColor; pointer-events: none; }
     .tab-custom-icon svg { width: 18px; height: 18px; pointer-events: none; }
@@ -170,10 +175,9 @@ export class AppMobileMainTabs extends LitElement {
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
     @media (max-width: 760px) {
       .mobile-tabs { gap: 4px; padding: 6px 8px; }
-      .mobile-tabs button { min-width: 44px; height: 44px; justify-content: center; gap: 4px; padding: 0 8px; }
+      .mobile-tabs-frame button { min-width: 44px; height: 44px; justify-content: center; gap: 4px; padding: 0 8px; }
       .mobile-tabs .navigation-tab { display: inline-flex; }
       .tab-fallback { display: inline-block; }
-      .tab-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
       .tab-badge { min-width: 13px; padding: 0 4px; font-size: 10px; line-height: 13px; }
     }
   `;

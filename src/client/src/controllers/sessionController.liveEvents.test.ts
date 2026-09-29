@@ -72,9 +72,7 @@ describe("SessionController live events", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve(emptyPage),
-      status: () => Promise.resolve(status(oldSession.id)),
-      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+      transcriptSnapshot: () => Promise.resolve({ page: emptyPage, status: status(oldSession.id), seq: 0, partial: null }),
     };
     const controller = new SessionController(
       () => state,

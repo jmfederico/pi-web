@@ -2,14 +2,13 @@
 
 import { render } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionInfo, Workspace } from "../api";
+import type { SessionInfo } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { AuthDialog } from "./AuthDialog";
 import { ChatView } from "./ChatView";
 import { ModalSurface } from "./ModalSurface";
 import { PiWebApp } from "./PiWebApp";
-import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
-import { WorkspacePanel } from "./WorkspacePanel";
+import { PromptEditor } from "./PromptEditor";
 
 const IMAGE_DATA = "iVBORw0KGgo=";
 
@@ -22,8 +21,9 @@ afterEach(() => {
 });
 
 describe("PiWebApp global shortcut modality boundary", () => {
-  it("runs a global shortcut when the application has no rendered modal", () => {
+  it("runs a global shortcut when the application has no rendered modal", async () => {
     const app = new PiWebApp();
+    await waitForBuiltInPlugins(app);
     const target = appendKeyTarget();
     const targetKeyDown = vi.fn();
     target.addEventListener("keydown", targetKeyDown);
@@ -33,6 +33,28 @@ describe("PiWebApp global shortcut modality boundary", () => {
     expect(actionPaletteIsOpen(app)).toBe(true);
     expect(event.defaultPrevented).toBe(true);
     expect(targetKeyDown).not.toHaveBeenCalled();
+  });
+
+  it("lets a composer send binding override an app shortcut only inside the editor", async () => {
+    const app = new PiWebApp();
+    await waitForBuiltInPlugins(app);
+    const editor = new PromptEditor();
+    editor.shortcuts = { "composer.send.desktop": "mod+k", "composer.send.mobile": "mod+k" };
+    editor.onSend = vi.fn();
+    document.body.append(editor);
+    await editor.updateComplete;
+    Object.defineProperty(app, "promptEditor", { configurable: true, value: editor });
+    editor.replaceText("Hello");
+    const target = requiredElement(editor.view?.contentDOM, "composer input");
+
+    dispatchShortcutThroughApp(app, target);
+    expect(editor.onSend).toHaveBeenCalledOnce();
+    expect(actionPaletteIsOpen(app)).toBe(false);
+    dispatchShortcutThroughApp(app, target); // Empty composer still owns the combination.
+    expect(actionPaletteIsOpen(app)).toBe(false);
+
+    dispatchShortcutThroughApp(app, appendKeyTarget());
+    expect(actionPaletteIsOpen(app)).toBe(true);
   });
 
   it("leaves capture-phase keyboard handling with a rendered shared modal", async () => {
@@ -50,7 +72,7 @@ describe("PiWebApp global shortcut modality boundary", () => {
 
   it.each([
     { name: "native image zoom", open: openImageZoom },
-    { name: "internal upload review", open: openUploadReview },
+    { name: "composed native dialog", open: openComposedNativeDialog },
   ])("leaves capture-phase keyboard handling with the $name", async ({ open }) => {
     const app = new PiWebApp();
     const target = await open(app);
@@ -64,8 +86,9 @@ describe("PiWebApp global shortcut modality boundary", () => {
     expect(targetKeyDown).toHaveBeenCalledOnce();
   });
 
-  it("does not suppress shortcuts for session-scoped state that cannot render", () => {
+  it("does not suppress shortcuts for session-scoped state that cannot render", async () => {
     const app = new PiWebApp();
+    await waitForBuiltInPlugins(app);
     setAppState(app, { modelDialog: { instanceId: 1, origin: { machineId: "local", sessionId: "session-1", cwd: "/repo" }, title: "Select model", options: [], catalog: [] } });
     const target = appendKeyTarget();
 
@@ -125,6 +148,12 @@ interface AutoFocusAppShell {
   shouldAutoFocusPrompt: () => boolean;
 }
 
+async function waitForBuiltInPlugins(app: PiWebApp): Promise<void> {
+  const ready: unknown = Reflect.get(app, "builtInPluginsReady");
+  if (!(ready instanceof Promise)) throw new Error("PiWebApp built-in plugin readiness was unavailable");
+  await ready;
+}
+
 function dispatchShortcutThroughApp(app: PiWebApp, target: HTMLElement): KeyboardEvent {
   const handler: unknown = Reflect.get(app, "onKeyDown");
   if (!isAppKeyDownHandler(handler)) throw new Error("PiWebApp shortcut handler was unavailable");
@@ -174,28 +203,18 @@ async function openImageZoom(app: PiWebApp): Promise<HTMLElement> {
   return requiredElement(dialog.querySelector<HTMLElement>(".image-zoom-close"), "image zoom close button");
 }
 
-async function openUploadReview(app: PiWebApp): Promise<HTMLElement> {
-  const selectedWorkspace = workspace();
-  setAppState(app, {
-    selectedWorkspace,
-    workspaces: [selectedWorkspace],
-    workspaceTool: "core:workspace.files",
-  });
-  const container = renderApp(app);
-  const panelHost = requiredElement(container.querySelector<WorkspacePanel>("workspace-panel"), "workspace panel");
-  await panelHost.updateComplete;
-  const panel = requiredElement(panelHost.shadowRoot?.querySelector<WorkspaceFilesPanel>("workspace-files-panel"), "workspace files panel");
-  await panel.updateComplete;
-  const uploadButton = buttonWithText(panel.shadowRoot, "Upload");
-  uploadButton.focus();
-  const input = requiredElement(panel.shadowRoot?.querySelector<HTMLInputElement>("#workspace-upload-input"), "workspace upload input");
-  Object.defineProperty(input, "files", { configurable: true, value: [new File(["hello"], "hello.txt")] });
-  input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  await panel.updateComplete;
-  await panel.updateComplete;
-  const destination = requiredElement(panel.shadowRoot?.querySelector<HTMLElement>("#workspace-upload-destination"), "upload destination");
-  expect(panel.shadowRoot?.activeElement).toBe(destination);
-  return destination;
+function openComposedNativeDialog(): Promise<HTMLElement> {
+  const host = document.createElement("div");
+  const root = host.attachShadow({ mode: "open" });
+  const dialog = document.createElement("dialog");
+  const button = document.createElement("button");
+  button.textContent = "Plugin modal action";
+  dialog.append(button);
+  root.append(dialog);
+  document.body.append(host);
+  dialog.showModal();
+  button.focus();
+  return Promise.resolve(button);
 }
 
 function renderApp(app: PiWebApp): HTMLDivElement {
@@ -251,11 +270,6 @@ function appendKeyTarget(): HTMLButtonElement {
   return button;
 }
 
-function buttonWithText(root: ParentNode | null | undefined, text: string): HTMLButtonElement {
-  const button = [...(root?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((candidate) => candidate.textContent.trim() === text);
-  return requiredElement(button, `${text} button`);
-}
-
 function requiredElement<T>(value: T | null | undefined, label: string): T {
   if (value === null || value === undefined) throw new Error(`Expected ${label}`);
   return value;
@@ -270,16 +284,5 @@ function session(id: string): SessionInfo {
     modified: "2026-07-20T00:00:00.000Z",
     messageCount: 1,
     firstMessage: id,
-  };
-}
-
-function workspace(): Workspace {
-  return {
-    id: "workspace-1",
-    projectId: "project-1",
-    path: "/repo",
-    label: "main",
-    isMain: true,
-    effectiveConfig: {},
   };
 }

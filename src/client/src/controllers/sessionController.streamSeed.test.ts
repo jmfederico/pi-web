@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import { SessionController } from "./sessionController";
-import { defaultApi, deferred, EmitSocket, oldSession, runPendingAnimationFrames, status, workspace, type AppState, type MessagePage, type SessionInfo, type SessionStatus, type SessionStreamSnapshot } from "./sessionController.testSupport";
+import { transcriptSnapshotFixture, defaultApi, deferred, EmitSocket, oldSession, runPendingAnimationFrames, status, workspace, type AppState, type MessagePage, type SessionInfo, type SessionStatus, type SessionStreamSnapshot } from "./sessionController.testSupport";
 
 function assistantPartial(text: string): SessionStreamSnapshot["partial"] {
   return { role: "assistant", content: [{ type: "text", text }] };
@@ -13,9 +13,11 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve({ messages: [{ role: "user", content: "question" }], start: 0, total: 1 }),
-      status: () => Promise.resolve({ ...status(oldSession.id), isStreaming: true }),
-      streamSnapshot: () => Promise.resolve({ seq: 4, partial: assistantPartial("streaming answer") }),
+      transcriptSnapshot: () => transcriptSnapshotFixture(
+        { messages: [{ role: "user", content: "question" }], start: 0, total: 1 },
+        { ...status(oldSession.id), isStreaming: true },
+        { seq: 4, partial: assistantPartial("streaming answer") },
+      ),
     };
     const controller = new SessionController(
       () => state,
@@ -40,9 +42,11 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve({ messages: [{ role: "user", content: "question" }], start: 0, total: 1 }),
-      status: () => Promise.resolve({ ...status(oldSession.id), isStreaming: true }),
-      streamSnapshot: () => Promise.resolve({ seq: 4, partial: assistantPartial("seed") }),
+      transcriptSnapshot: () => transcriptSnapshotFixture(
+        { messages: [{ role: "user", content: "question" }], start: 0, total: 1 },
+        { ...status(oldSession.id), isStreaming: true },
+        { seq: 4, partial: assistantPartial("seed") },
+      ),
     };
     const controller = new SessionController(
       () => state,
@@ -75,9 +79,7 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => page.promise,
-      status: () => statusResult.promise,
-      streamSnapshot: () => snapshot.promise,
+      transcriptSnapshot: () => transcriptSnapshotFixture(page.promise, statusResult.promise, snapshot.promise),
       thinkingLevels: () => Promise.resolve({ levels: [] }),
     };
     const controller = new SessionController(
@@ -110,18 +112,17 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve({
+      transcriptSnapshot: () => transcriptSnapshotFixture({
         messages: [
           { role: "user", content: "run it" },
           { role: "assistant", content: [{ type: "toolCall", id: "tool-1", name: "bash", arguments: { command: "ls" } }] },
         ],
         start: 0,
         total: 2,
-      }),
-      status: () => Promise.resolve({ ...status(oldSession.id), isStreaming: true, isBashRunning: true }),
+      }, { ...status(oldSession.id), isStreaming: true, isBashRunning: true },
       // Mid tool execution the assistant-message stream has ended, so the
       // snapshot carries no partial; the tool call is already in history.
-      streamSnapshot: () => Promise.resolve({ seq: 7, partial: null }),
+      { seq: 7, partial: null }),
     };
     const controller = new SessionController(
       () => state,
@@ -154,11 +155,8 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [session] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve({ messages: [{ role: "user", content: "question" }], start: 0, total: 1 }),
-      status: () => Promise.resolve({ ...status(session.id), isStreaming: true }),
-      // No route-level fallback: a failing stream-snapshot fetch rejects the
-      // join refresh like any other join request failure.
-      streamSnapshot: () => Promise.reject(new Error("Not Found")),
+      // No route-level fallback: a failing transcript-snapshot fetch rejects the join.
+      transcriptSnapshot: () => Promise.reject(new Error("Not Found")),
       thinkingLevels: () => Promise.resolve({ levels: [] }),
     };
     const controller = new SessionController(
@@ -173,7 +171,7 @@ describe("SessionController stream seed + watermark reconciliation", () => {
 
     // The failure surfaces instead of being swallowed as "no partial to seed":
     // no history is applied and no watermark is recorded.
-    expect(state.error).toContain("Not Found");
+    expect(Object.values(state.browserErrors).map((error) => error.message).join("\n")).toContain("Not Found");
     expect(state.messages).toEqual([]);
 
     // The failed join still leaves the socket live (selectSession's recovery
@@ -191,9 +189,9 @@ describe("SessionController stream seed + watermark reconciliation", () => {
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     const api: typeof defaultApi = {
       ...defaultApi,
-      messages: () => Promise.resolve({ messages: [{ role: "user", content: "question" }], start: 0, total: 1 }),
-      status: () => Promise.resolve(status(oldSession.id)),
-      streamSnapshot: () => Promise.resolve({ seq: 0, partial: null }),
+      transcriptSnapshot: () => transcriptSnapshotFixture(
+        { messages: [{ role: "user", content: "question" }], start: 0, total: 1 }, status(oldSession.id),
+      ),
     };
     const controller = new SessionController(
       () => state,

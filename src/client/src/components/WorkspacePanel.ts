@@ -2,7 +2,9 @@ import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Workspace } from "../api";
 import type { QualifiedContributionId, QualifiedWorkspacePanelContribution, WorkspacePanelContext } from "../plugins/types";
+import { renderNavigationMenuIcon } from "./tabIcons";
 import { workspacePanelStyles } from "./shared";
+import { pinnedNavigationTabs } from "../navigationPreferences";
 
 export interface WorkspacePanelEmptyState {
   title: string;
@@ -16,9 +18,12 @@ export class WorkspacePanel extends LitElement {
   @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) panelContext: WorkspacePanelContext | undefined;
   @property({ attribute: false }) emptyState: WorkspacePanelEmptyState | undefined;
-  @property() tool: QualifiedContributionId = "core:workspace.files";
+  @property() error = "";
+  @property() tool: QualifiedContributionId | undefined;
   @property({ attribute: false }) panels: QualifiedWorkspacePanelContribution[] = [];
   @property({ type: Boolean }) hideToolTabs = false;
+  @property({ attribute: false }) pinnedIds: string[] = [];
+  @property({ attribute: false }) onShowNavigation?: () => void;
   @property({ attribute: false }) onSelectTool: (tool: QualifiedContributionId) => void = () => undefined;
   @query(".workspace-header-strip") private workspaceHeaderStrip?: HTMLElement | null;
   @state() private workspaceHeaderCanScrollLeft = false;
@@ -49,24 +54,27 @@ export class WorkspacePanel extends LitElement {
 
   override render() {
     const workspace = this.workspace;
-    if (workspace === undefined) return this.renderEmptyState(this.emptyState ?? {
+    if (workspace === undefined) return this.renderEmptyState(this.error !== "" ? { title: this.error } : this.emptyState ?? {
       title: "Select a workspace",
       body: "Choose a workspace to use its tools.",
-    });
+    }, true);
     const context = this.panelContext;
     if (context === undefined) return this.renderEmptyState({
       title: "Workspace tools unavailable",
       body: "Try selecting the workspace again.",
-    });
+    }, true);
     const visiblePanels = this.panels;
-    const selectedPanel = visiblePanels.find((panel) => panel.id === this.tool) ?? visiblePanels[0];
+    // An unresolved route may leave a valid remembered tool, but its content is not displayed.
+    const selectedPanel = this.error !== "" ? undefined
+      : this.tool === undefined ? visiblePanels[0] : visiblePanels.find((panel) => panel.id === this.tool);
+    const pinnedPanels = pinnedNavigationTabs(visiblePanels, this.pinnedIds);
     return html`
       ${this.hideToolTabs ? null : html`
         <header>
           <div class=${this.workspaceHeaderFrameClass()}>
             <div class="workspace-header-strip" @scroll=${this.onWorkspaceHeaderScroll}>
               <div class="tabs">
-                ${visiblePanels.map((panel) => {
+                ${pinnedPanels.map((panel) => {
                   const selected = selectedPanel?.id === panel.id;
                   const badge = panel.badge?.(context);
                   const ariaLabel = this.panelTabAriaLabel(panel, badge);
@@ -79,11 +87,11 @@ export class WorkspacePanel extends LitElement {
               </div>
             </div>
           </div>
+          ${this.renderNavigationButton(selectedPanel !== undefined && !pinnedPanels.some((panel) => panel.id === selectedPanel.id))}
         </header>
       `}
-      ${selectedPanel === undefined ? this.renderEmptyState({
-        title: "No workspace tools available",
-        body: "No tools are available for this workspace.",
+      ${this.error !== "" ? this.renderEmptyState({ title: this.error }) : selectedPanel === undefined ? this.renderEmptyState({
+        title: this.tool === undefined ? "No workspace tools available" : `Workspace panel unavailable: ${this.tool}`,
       }) : html`
         <div class="panel-content">
           ${selectedPanel.render(context)}
@@ -117,8 +125,13 @@ export class WorkspacePanel extends LitElement {
     return badge === undefined || badge === "";
   }
 
-  private renderEmptyState(state: WorkspacePanelEmptyState): TemplateResult {
+  private renderNavigationButton(hiddenActiveDestination = false) {
+    return this.onShowNavigation === undefined ? null : html`<button type="button" class=${`navigation-menu-button${hiddenActiveDestination ? " selected" : ""}`} title="Navigation" aria-label="Navigation" aria-haspopup="dialog" @click=${this.onShowNavigation}>${renderNavigationMenuIcon()}</button>`;
+  }
+
+  private renderEmptyState(state: WorkspacePanelEmptyState, showNavigation = false): TemplateResult {
     return html`
+      ${showNavigation && !this.hideToolTabs ? html`<header>${this.renderNavigationButton()}</header>` : null}
       <section class="empty-state" role="status">
         <h2>${state.title}</h2>
         ${state.body === undefined ? null : html`<p>${state.body}</p>`}

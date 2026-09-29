@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">PI WEB dev mark</title>
+  <desc id="desc">A horizontal brand bar in the dev-deployment purple.</desc>
+  <style>
+    .bar { fill: #a371f7; }
+  </style>
+  <rect class="bar" x="128" y="448" width="768" height="128"/>
+</svg>

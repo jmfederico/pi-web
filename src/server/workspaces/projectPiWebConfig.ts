@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { effectiveUploadsConfig, parsePathAccessConfig, parseUploadsConfig, type PiWebConfig } from "../../config.js";
-import type { PiWebPathAccessConfig, PiWebUploadsConfig } from "../../shared/apiTypes.js";
+import { effectiveAttachmentsConfig, effectiveUploadsConfig, parseAttachmentsConfig, parsePathAccessConfig, parseUploadsConfig, type PiWebConfig } from "../../config.js";
+import type { PiWebAttachmentsConfig, PiWebPathAccessConfig, PiWebUploadsConfig } from "../../shared/apiTypes.js";
 
 export const PROJECT_PI_WEB_CONFIG_PATH = ".pi-web/config.json";
 
@@ -9,6 +9,7 @@ export interface ProjectPiWebConfig {
   version?: 1;
   pathAccess?: PiWebPathAccessConfig;
   uploads?: PiWebUploadsConfig;
+  attachments?: PiWebAttachmentsConfig;
 }
 
 export interface LoadedProjectPiWebConfig {
@@ -39,6 +40,11 @@ export async function loadEffectiveProjectUploadsConfig(projectPath: string, glo
   return effectiveUploadsConfig({ uploads: { ...(globalConfig.uploads ?? {}), ...(projectConfig.config.uploads ?? {}) } });
 }
 
+export async function loadEffectiveProjectAttachmentsConfig(projectPath: string, globalConfig: PiWebConfig): Promise<PiWebAttachmentsConfig> {
+  const projectConfig = await loadProjectPiWebConfig(projectPath);
+  return effectiveAttachmentsConfig({ attachments: { ...(globalConfig.attachments ?? {}), ...(projectConfig.config.attachments ?? {}) } });
+}
+
 export function mergePathAccessConfigs(...configs: (PiWebPathAccessConfig | undefined)[]): PiWebPathAccessConfig | undefined {
   const allowedPaths = dedupe(configs.flatMap((config) => config?.allowedPaths ?? []));
   return allowedPaths.length === 0 ? undefined : { allowedPaths };
@@ -50,6 +56,7 @@ function parseProjectPiWebConfig(value: Record<string, unknown>, path: string): 
     ...(version !== undefined ? { version: parseProjectConfigVersion(version, path) } : {}),
     ...(value["pathAccess"] !== undefined ? { pathAccess: parsePathAccessConfig(value["pathAccess"], path) } : {}),
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
+    ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
   };
 }
 

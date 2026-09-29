@@ -3,6 +3,23 @@ import type { PiWebStatusResponse } from "../shared/apiTypes.js";
 import { buildApp } from "./app.js";
 
 describe("PI WEB status routes", () => {
+  it("reports web readiness without contacting the session daemon", async () => {
+    const request = vi.fn(() => Promise.reject(new Error("sessiond is offline")));
+    const app = await buildApp({
+      sessionDaemon: { request, connectWebSocket: () => { throw new Error("sessiond is offline"); } },
+      clientDist: false,
+      logger: false,
+    });
+    try {
+      const response = await app.inject({ method: "GET", url: "/api/pi-web/health" });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ok: true });
+      expect(request).not.toHaveBeenCalled();
+    } finally {
+      await app.close();
+    }
+  });
+
   it("forces a fresh status load when refresh is requested", async () => {
     const get = vi.fn(() => Promise.resolve(status("cached")));
     const refresh = vi.fn(() => Promise.resolve(status("forced")));
