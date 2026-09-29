@@ -294,3 +294,43 @@ describe("SessionEventHub", () => {
     expect(globalSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: "session.name", sessionId: "s1", name: "Renamed" }));
   });
 });
+
+import type { SessionUiEvent } from "../../shared/apiTypes.js";
+
+describe("SessionEventHub.subscribe", () => {
+  it("delivers browser-projected per-session events to listeners and honors unsubscribe", () => {
+    const hub = new SessionEventHub();
+    const seen: { sessionId: string; event: SessionUiEvent }[] = [];
+    let afterUnsubscribe = false;
+    const stop = hub.subscribe((sessionId, event) => {
+      if (afterUnsubscribe) throw new Error("listener ran after unsubscribe");
+      seen.push({ sessionId, event });
+    });
+
+    hub.publish("s1", { type: "assistant.delta", text: "hello" });
+    expect(seen).toEqual([{ sessionId: "s1", event: { type: "assistant.delta", text: "hello" } }]);
+
+    stop();
+    afterUnsubscribe = true;
+    hub.publish("s2", { type: "assistant.delta", text: "later" });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("keeps socket delivery and remaining listeners intact when one listener unsubscribes mid-publish", () => {
+    const hub = new SessionEventHub();
+    const sessionSocket = new FakeSocket();
+    hub.add("s1", sessionSocket);
+    let secondListenerCalls = 0;
+    const stopFirst = hub.subscribe(() => {
+      stopFirst(); // self-removal while the publish loop is running
+    });
+    hub.subscribe(() => { secondListenerCalls += 1; });
+
+    hub.publish("s1", { type: "assistant.delta", text: "one" });
+    expect(secondListenerCalls).toBe(1);
+
+    hub.publish("s1", { type: "assistant.delta", text: "two" }); // first listener already gone
+    expect(secondListenerCalls).toBe(2);
+    expect(sessionSocket.send).toHaveBeenCalledTimes(2);
+  });
+});
