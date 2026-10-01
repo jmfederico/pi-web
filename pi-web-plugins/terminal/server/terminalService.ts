@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import * as pty from "node-pty";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
+import { isBunRuntime } from "@pi-web/src/server/diagnostics/bunRuntime.js";
 
 const MAX_REPLAY_BUFFER = 200_000;
 
