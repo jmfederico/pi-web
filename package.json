@@ -116,7 +116,6 @@
     "@earendil-works/pi-ai": "^1.0.0",
     "@earendil-works/pi-coding-agent": "^1.0.0",
     "@eslint/js": "^10.0.1",
-    "@hicaru/pi-rlm": "^0.3.15",
     "@types/node": "^24.13.3",
     "@types/ws": "^8.18.1",
     "dompurify": "^3.4.15",

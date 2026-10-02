@@ -1,4 +1,4 @@
-import type { TerminalInfo } from "../../shared/apiTypes.js";
+import type { TerminalInfo } from "./terminalService.js";
 import type { TerminalBackend } from "./backend.js";
 
 export function createMockBackend(): TerminalBackend {

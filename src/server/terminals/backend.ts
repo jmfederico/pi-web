@@ -1,4 +1,4 @@
-import type { TerminalInfo } from "../../shared/apiTypes.js";
+import type { TerminalInfo } from "./terminalService.js";
 import { loadNodePtyModule, type NodePtyModule, type NodePtyProcess } from "./nodePtyModule.js";
 import { bunTerminalCapability, piWebRuntimeKind } from "../../shared/piWebRuntime.js";
 

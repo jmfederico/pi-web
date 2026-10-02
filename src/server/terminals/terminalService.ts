@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import type { TerminalCommandRun, TerminalCommandRunFilter, TerminalCommandRunStatus, TerminalUiEvent } from "../../shared/apiTypes.js";
+import type { TerminalCommandRun, TerminalCommandRunStatus } from "../../shared/apiTypes.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createDefaultBackend, type TerminalBackend } from "./backend.js";
@@ -28,6 +28,19 @@ export interface RunTerminalCommandOptions {
   cols?: number;
   rows?: number;
 }
+
+export interface TerminalCommandRunFilter {
+  projectId?: string;
+  workspaceId?: string;
+  terminalId?: string;
+  statuses?: TerminalCommandRunStatus[];
+  metadata?: Record<string, string>;
+}
+
+export type TerminalUiEvent =
+  | { type: "terminal.created"; terminal: TerminalInfo }
+  | { type: "terminal.exited"; terminal: TerminalInfo }
+  | { type: "terminal.closed"; terminalId: string; cwd: string };
 
 interface TerminalRecord extends TerminalInfo {
   backendId: string;
@@ -272,8 +285,9 @@ export class TerminalService {
     return terminal;
   }
 
-  private publish(event: TerminalUiEvent): void {
-    this.events?.publishRealtime(event);
+  private publish(_event: TerminalUiEvent): void {
+    // Terminal UI events are now handled by the Terminal plugin layer;
+    // the session event hub no longer accepts RealtimeEvent terminal events.
   }
 }
 
