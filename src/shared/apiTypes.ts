@@ -1363,6 +1363,8 @@ type SessionUiEventBody =
   | { type: "dialog.closed"; dialogId: string; reason: ExtensionDialogCloseReason; answer?: ExtensionDialogAnswer }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
+  | { type: "session.tree.navigated"; result: SessionTreeNavigateResult }
+  | { type: "session.tree.forked"; result: SessionTreeForkResult; error?: string }
   | { type: "pi.event"; eventType: string };
 
 /** Global invalidation for the daemon-owned enabled-model scope. */

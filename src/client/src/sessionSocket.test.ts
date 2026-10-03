@@ -226,6 +226,32 @@ describe("socket stream validation", () => {
     for (const frame of validFrames) expect(parseSessionSocketEvent(frame)).toEqual(frame);
   });
 
+  it("validates tree operation results on the original session stream and retains their sequence", () => {
+    const navigated = { type: "session.tree.navigated", result: { cancelled: false, editorText: "rewound prompt" }, seq: 41 };
+    const forked = { type: "session.tree.forked", result: { cancelled: false, session: sessionInfoWire(), promptDraft: "fork draft" }, seq: 42 };
+    expect(parseSessionSocketEvent({ ...navigated, result: { ...navigated.result, stray: true }, stray: true })).toEqual(navigated);
+    expect(parseSessionSocketEvent(forked)).toEqual(forked);
+    expect(parseSessionSocketEvent({ ...forked, error: "Post-fork workflow failed" }))
+      .toEqual({ ...forked, error: "Post-fork workflow failed" });
+    expect(parseSessionSocketEvent({ ...forked, error: 42 })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "session.tree.navigated", result: { cancelled: false } }))
+      .toEqual({ type: "session.tree.navigated", result: { cancelled: false } });
+    expect(parseSessionSocketEvent({ type: "session.tree.navigated", result: { cancelled: true, aborted: true } }))
+      .toEqual({ type: "session.tree.navigated", result: { cancelled: true, aborted: true } });
+    expect(parseSessionSocketEvent({ type: "session.tree.forked", result: { cancelled: true } }))
+      .toEqual({ type: "session.tree.forked", result: { cancelled: true } });
+
+    for (const result of [undefined, {}, { cancelled: "false" }, { cancelled: false, editorText: 42 }, { cancelled: true, editorText: "invalid" }, { cancelled: false, aborted: true }]) {
+      expect(parseSessionSocketEvent({ type: "session.tree.navigated", result })).toBeUndefined();
+    }
+    for (const result of [undefined, {}, { cancelled: false }, { cancelled: false, session: { id: "incomplete" } }, { cancelled: false, session: sessionInfoWire(), promptDraft: 42 }, { cancelled: true, session: sessionInfoWire() }]) {
+      expect(parseSessionSocketEvent({ type: "session.tree.forked", result })).toBeUndefined();
+    }
+    // These results belong to the original session socket, never realtime.
+    expect(parseRealtimeSocketEvent(navigated)).toBeUndefined();
+    expect(parseRealtimeSocketEvent(forked)).toBeUndefined();
+  });
+
   it("drops malformed session stream frames instead of accepting them on type alone", () => {
     expect(parseSessionSocketEvent({ type: "message.append" })).toBeUndefined();
     expect(parseSessionSocketEvent({ type: "assistant.delta" })).toBeUndefined();

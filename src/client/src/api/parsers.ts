@@ -763,6 +763,10 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
       return parseSessionNameEvent(record);
     case "session.created":
       return { type: "session.created", session: parseSessionInfo(record["session"]) };
+    case "session.tree.navigated":
+      return { type: "session.tree.navigated", result: parseSessionTreeNavigateResult(record["result"]) };
+    case "session.tree.forked":
+      return { type: "session.tree.forked", result: parseSessionTreeForkResult(record["result"]), ...optionalField("error", optionalString(record, "error")) };
     case "pi.event":
       return { type: "pi.event", eventType: requireString(record, "eventType") };
     default:

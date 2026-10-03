@@ -4,7 +4,7 @@ import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { machineSessionKey } from "../machineKeys";
 import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { SessionTreeForkUnavailableError, type CommandResult, type SessionTreeSnapshot } from "../api";
-import { SessionController } from "./sessionController";
+import { SessionController, type SessionControllerDependencies } from "./sessionController";
 import { InMemorySessionSelectionMemory } from "./sessionSelection";
 import {
   defaultApi,
@@ -175,7 +175,7 @@ describe("SessionController session tree navigation", () => {
     expect(state.treeDialog).toBeUndefined();
     expect(loadDraft(cacheKey)).toBe("edit original prompt");
     expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
-    expect(socket.connectedSessionIds).toEqual([oldSession.id, oldSession.id]);
+    expect(socket.connectedSessionIds).toEqual([oldSession.id]);
   });
 
   it("keeps the busy tree mounted until authoritative history and editor replacement finish", async () => {
@@ -718,6 +718,268 @@ describe("SessionController session tree fork", () => {
     state = { ...state, selectedSession: undefined };
     await expect(controller.forkFromTree("root")).rejects.toThrow("The session tree navigator is no longer available");
     expect(forkTree).not.toHaveBeenCalled();
+  });
+});
+
+describe("SessionController extension-driven tree operations", () => {
+  it.each(["rewound prompt", undefined])("applies a buffered rewind below the join watermark and restores editor text %s", async (editorText) => {
+    const socket = new EmitSocket();
+    const initialPage = deferred<MessagePage>();
+    const authoritativePage = deferred<MessagePage>();
+    const cacheKey = machineSessionKey("local", oldSession.id);
+    const cachedPages = new Map<string, MessagePage>([[cacheKey, page("cached old branch", 1)]]);
+    const removedKeys: string[] = [];
+    const transcripts = new ChatTranscriptStore({
+      read: (key) => cachedPages.get(key),
+      write: (key, value) => { cachedPages.set(key, value); },
+      remove: (key) => { removedKeys.push(key); cachedPages.delete(key); },
+    });
+    saveDraft(cacheKey, "stale editor draft");
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const replacePromptEditorText = vi.fn();
+    const navigateTree = vi.fn<typeof defaultApi.navigateTree>();
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(initialPage.promise, status(oldSession.id), { seq: 10, partial: null }))
+      .mockImplementationOnce(() => transcriptSnapshotFixture(authoritativePage.promise, status(oldSession.id), { seq: 10, partial: null }));
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, navigateTree, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, transcripts, replacePromptEditorText },
+    );
+
+    const join = controller.selectSession(oldSession, { updateUrl: false });
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+    // The snapshot includes branch history, but not this editor restoration.
+    socket.emit({ type: "session.tree.navigated", result: { cancelled: false, ...(editorText === undefined ? {} : { editorText }) }, seq: 7 });
+    initialPage.resolve(page("stale join branch", 1));
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledTimes(2); });
+    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(removedKeys).toEqual([cacheKey]);
+
+    authoritativePage.resolve(page("authoritative rewind", 1));
+    await join;
+    await vi.waitFor(() => {
+      expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: editorText ?? "" });
+    });
+    expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "authoritative rewind" }] }]);
+    expect(cachedPages.get(cacheKey)).toEqual(page("authoritative rewind", 1));
+    expect(loadDraft(cacheKey)).toBe(editorText ?? "");
+    expect(navigateTree).not.toHaveBeenCalled();
+    expect(socket.connectedSessionIds).toEqual([oldSession.id]);
+    controller.dispose();
+  });
+
+  it.each(["navigate", "fork"] as const)("preserves a buffered navigation followed by %s", async (next) => {
+    const socket = new EmitSocket();
+    const initialPage = deferred<MessagePage>();
+    const replacePromptEditorText = vi.fn();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(initialPage.promise, status(oldSession.id), { seq: 10, partial: null }))
+      .mockImplementation((session) => transcriptSnapshotFixture(page("final branch", 1), status(sessionLookupId(session))));
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, replacePromptEditorText },
+    );
+    const joining = controller.selectSession(oldSession, { updateUrl: false });
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+    socket.emit({ type: "session.tree.navigated", result: { cancelled: false, editorText: "earlier draft" }, seq: 4 });
+    socket.emit(next === "navigate"
+      ? { type: "session.tree.navigated", result: { cancelled: false, editorText: "final draft" }, seq: 5 }
+      : { type: "session.tree.forked", result: { cancelled: false, session: replacementSession, promptDraft: "final draft" }, seq: 5 });
+    initialPage.resolve(page("initial", 1));
+    await joining;
+    await vi.waitFor(() => {
+      const destination = next === "fork" ? replacementSession : oldSession;
+      expect(state.selectedSession?.id).toBe(destination.id);
+      expect(loadDraft(machineSessionKey("local", destination.id))).toBe("final draft");
+      if (next === "navigate") expect(replacePromptEditorText).toHaveBeenLastCalledWith({ machineId: "local", sessionId: oldSession.id, text: "final draft" });
+    });
+    expect(socket.connectedSessionIds).toEqual(next === "fork" ? [oldSession.id, replacementSession.id] : [oldSession.id]);
+    controller.dispose();
+  });
+
+  it("refreshes a same-identity fork follow-up without reconnecting or losing its live editor draft", async () => {
+    const socket = new EmitSocket();
+    const replacePromptEditorText = vi.fn();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot: () => transcriptSnapshotFixture(page("callback branch", 1), status(oldSession.id)), thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, replacePromptEditorText },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    socket.emit({ type: "session.tree.forked", result: { cancelled: false, session: oldSession, promptDraft: "callback draft" } });
+    await vi.waitFor(() => {
+      expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "callback draft" });
+    });
+    expect(socket.connectedSessionIds).toEqual([oldSession.id]);
+    controller.dispose();
+  });
+
+  it.each([undefined, "Post-fork workflow failed"])("applies a buffered fork without touching the original draft and reports callback error %s", async (callbackError) => {
+    const socket = new EmitSocket();
+    const initialPage = deferred<MessagePage>();
+    const sourceKey = machineSessionKey("local", oldSession.id);
+    const forkKey = machineSessionKey("local", replacementSession.id);
+    saveDraft(sourceKey, "original unsent draft");
+    const removedKeys: string[] = [];
+    const transcripts = new ChatTranscriptStore({ read: () => undefined, write: () => undefined, remove: (key) => { removedKeys.push(key); } });
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const forkTree = vi.fn<typeof defaultApi.forkTree>();
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(initialPage.promise, status(oldSession.id), { seq: 10, partial: null }))
+      .mockImplementationOnce(() => transcriptSnapshotFixture(page("fork history", 1), status(replacementSession.id)));
+    const navigateToSession = vi.fn<NonNullable<SessionControllerDependencies["navigateToSession"]>>(async (session) => {
+      if (session === undefined) throw new Error("Expected fork destination");
+      await controller.selectSession(session);
+      return true;
+    });
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, forkTree, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, transcripts, navigateToSession },
+    );
+
+    const join = controller.selectSession(oldSession, { updateUrl: false });
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+    socket.emit({ type: "session.tree.forked", result: { cancelled: false, session: replacementSession, promptDraft: "fork-only draft" },
+      ...(callbackError === undefined ? {} : { error: callbackError }), seq: 7 });
+    // Replay must stop when the fork changes selection: these source-session
+    // frames must not be applied to the fork's new baseline.
+    socket.emit({ type: "message.append", message: { role: "assistant", content: "original late frame" }, seq: 11 });
+    initialPage.resolve(page("original history", 1));
+    await join;
+    await vi.waitFor(() => {
+      expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "fork history" }] }]);
+    });
+
+    expect(navigateToSession).toHaveBeenCalledWith(replacementSession, { expected: { machineId: "local", projectId: undefined, workspaceId: workspace.id, sessionId: oldSession.id } });
+    expect(state.selectedSession).toEqual(replacementSession);
+    expect(state.sessions).toEqual([replacementSession, oldSession]);
+    expect(loadDraft(sourceKey)).toBe("original unsent draft");
+    expect(loadDraft(forkKey)).toBe("fork-only draft");
+    expect(removedKeys).toEqual([sourceKey]);
+    expect(forkTree).not.toHaveBeenCalled();
+    if (callbackError !== undefined) await vi.waitFor(() => {
+      expect(Object.values(state.browserErrors).map((entry) => entry.message).join("\n")).toContain(callbackError);
+    });
+    controller.dispose();
+  });
+
+  it.each(["history", "editor"] as const)("reports asynchronous rewind %s errors visibly while keeping the recovered draft", async (failure) => {
+    const socket = new EmitSocket();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const error = new Error(`${failure} restoration failed`);
+    const replacePromptEditorText = vi.fn(() => failure === "editor" ? Promise.reject(error) : Promise.resolve());
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(page("original", 1), status(oldSession.id)))
+      .mockImplementationOnce(() => failure === "history" ? Promise.reject(error) : transcriptSnapshotFixture(page("rewound", 1), status(oldSession.id)));
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, replacePromptEditorText },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    state = { ...state, treeDialog: tree };
+
+    socket.emit({ type: "session.tree.navigated", result: { cancelled: false, editorText: "recovered extension draft" }, seq: 1 });
+    await vi.waitFor(() => {
+      expect(Object.values(state.browserErrors).map((entry) => entry.message).join("\n")).toContain(error.message);
+    });
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("recovered extension draft");
+    expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "recovered extension draft" });
+    expect(state.treeDialog).toBe(tree);
+    controller.dispose();
+  });
+
+  it("reports asynchronous fork navigation failure on the source session", async () => {
+    const socket = new EmitSocket();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    saveDraft(machineSessionKey("local", oldSession.id), "original draft");
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      {
+        api: { ...defaultApi, transcriptSnapshot: () => transcriptSnapshotFixture(page("original", 1), status(oldSession.id)), thinkingLevels: () => Promise.resolve({ levels: [] }) },
+        socket,
+        navigateToSession: () => Promise.reject(new Error("fork navigation failed")),
+      },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    state = { ...state, treeDialog: tree };
+
+    socket.emit({ type: "session.tree.forked", result: { cancelled: false, session: replacementSession, promptDraft: "fork draft" }, seq: 1 });
+    await vi.waitFor(() => {
+      expect(Object.values(state.browserErrors).map((entry) => entry.message).join("\n")).toContain("fork navigation failed");
+    });
+    expect(state.selectedSession).toEqual(oldSession);
+    expect(state.treeDialog).toBe(tree);
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("original draft");
+    expect(loadDraft(machineSessionKey("local", replacementSession.id))).toBe("fork draft");
+    controller.dispose();
+  });
+
+  it.each(["session", "machine"] as const)("does not replace another %s's history or editor when a rewind refresh settles late", async (destination) => {
+    const socket = new EmitSocket();
+    const rewindPage = deferred<MessagePage>();
+    const remote = { id: "remote", name: "Remote", kind: "remote" as const, createdAt: "now", updatedAt: "now" };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession, replacementSession] };
+    const replacePromptEditorText = vi.fn();
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(page("original", 1), status(oldSession.id)))
+      .mockImplementationOnce(() => transcriptSnapshotFixture(rewindPage.promise, status(oldSession.id)))
+      .mockImplementation((session) => transcriptSnapshotFixture(page("destination history", 1), status(sessionLookupId(session))));
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, replacePromptEditorText },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    socket.emit({ type: "session.tree.navigated", result: { cancelled: false, editorText: "source draft" }, seq: 1 });
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledTimes(2); });
+    if (destination === "machine") state = { ...state, machines: [remote], selectedMachine: remote };
+    const selected = destination === "machine" ? oldSession : replacementSession;
+    await controller.selectSession(selected, { updateUrl: false });
+    rewindPage.resolve(page("must not overwrite destination", 1));
+    // Drain both the retired refresh and its result application's continuation.
+    await controller.refreshSelectedSession();
+
+    expect(state.selectedSession?.id).toBe(selected.id);
+    expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "destination history" }] }]);
+    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("source draft");
+    expect(loadDraft(machineSessionKey(destination === "machine" ? remote.id : "local", selected.id))).toBe("");
+    expect(state.browserErrors).toEqual({});
+    controller.dispose();
+  });
+
+  it.each(["session.tree.navigated", "session.tree.forked"] as const)("ignores stale %s socket frames after a machine switch", async (type) => {
+    const socket = new EmitSocket();
+    const remote = { id: "remote", name: "Remote", kind: "remote" as const, createdAt: "now", updatedAt: "now" };
+    const sourceKey = machineSessionKey("local", oldSession.id);
+    saveDraft(sourceKey, "original draft");
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const removedKeys: string[] = [];
+    const transcripts = new ChatTranscriptStore({ read: () => undefined, write: () => undefined, remove: (key) => { removedKeys.push(key); } });
+    const replacePromptEditorText = vi.fn();
+    const navigateToSession = vi.fn<NonNullable<SessionControllerDependencies["navigateToSession"]>>();
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>(() => transcriptSnapshotFixture(page("original", 1), status(oldSession.id)));
+    const controller = new SessionController(
+      () => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined,
+      { api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, transcripts, replacePromptEditorText, navigateToSession },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    // URL navigation can change machine state before its replacement session
+    // join reaches this controller; the old socket is still connected then.
+    state = { ...state, machines: [remote], selectedMachine: remote };
+    if (type === "session.tree.navigated") socket.emit({ type, result: { cancelled: false, editorText: "wrong-machine text" }, seq: 1 });
+    else socket.emit({ type, result: { cancelled: false, session: replacementSession, promptDraft: "wrong-machine text" }, seq: 1 });
+    await Promise.resolve();
+
+    expect(transcriptSnapshot).toHaveBeenCalledOnce();
+    expect(removedKeys).toEqual([]);
+    expect(replacePromptEditorText).not.toHaveBeenCalled();
+    expect(navigateToSession).not.toHaveBeenCalled();
+    expect(loadDraft(sourceKey)).toBe("original draft");
+    expect(loadDraft(machineSessionKey(remote.id, oldSession.id))).toBe("");
+    expect(loadDraft(machineSessionKey(remote.id, replacementSession.id))).toBe("");
+    expect(state.sessions).toEqual([oldSession]);
+    controller.dispose();
   });
 });
 
