@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { printPiWebVersionReport, probeRunningComponentReady, runningComponentsReady, type RunningVersionInfo } from "./piWebVersionReport.js";
 import type { PiWebComponentStatus } from "./shared/apiTypes.js";
 
