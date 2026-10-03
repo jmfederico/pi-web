@@ -32,7 +32,7 @@ export class NearViewportImageController implements ReactiveController {
     this.host.requestUpdate();
   }
 
-  hostUpdated(): void {
+  hostUpdate(): void {
     if (this.watching || this.ready || !this.automatic || this.source === "" || !this.host.isConnected) return;
     this.watching = true;
     const ancestors = composedAncestors(this.host);

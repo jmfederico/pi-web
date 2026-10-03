@@ -123,8 +123,8 @@ async function renderSessionList(options: { sessions: SessionInfo[]; selected?: 
 }
 
 async function settled(list: SessionList): Promise<void> {
-  // Selecting an archived session schedules a follow-up render (archived
-  // auto-expansion) and chains its scroll on updateComplete; await both cycles.
+  // These tests check settled reveal behavior; first-commit guarantees are
+  // covered separately in SessionList.lifecycle.test.ts.
   await list.updateComplete;
   await list.updateComplete;
 }

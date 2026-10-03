@@ -72,6 +72,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @state() private selectionScopes: ReadonlySet<SessionSelectionScope> = new Set();
   @state() private selectedSessionIds: ReadonlySet<string> = new Set();
 
+  private autoExpandedForSelection = false;
+
   // Sessions are replaced on refresh; transient UI state must not rebuild the tree.
   private treeCache?: {
     sessions: SessionInfo[];
@@ -115,20 +117,23 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     super.disconnectedCallback();
   }
 
-  protected override updated(changed: PropertyValues<this>): void {
-    if (changed.has("sessions")) {
-      if (this.openMenuSessionId !== undefined && !this.sessions.some((session) => session.id === this.openMenuSessionId)) this.openMenuSessionId = undefined;
-      if (!this.sessions.some((session) => session.archived === true)) this.archivedExpanded = false;
-      this.pruneSelectedSessionIds();
-    }
+  protected override willUpdate(changed: PropertyValues<this>): void {
+    this.autoExpandedForSelection = false;
+    if (changed.has("sessions") && !this.sessions.some((session) => session.archived === true)) this.archivedExpanded = false;
     if (changed.has("collapsed") && this.collapsed) this.openMenuSessionId = undefined;
     const previousSelected = changed.get("selected");
     if (changed.has("selected") && this.selected?.archived === true && (previousSelected?.id !== this.selected.id || previousSelected.archived !== true) && !this.archivedExpanded) {
       this.archivedExpanded = true;
-      void this.updateComplete.then(() => { this.scrollSelectedIntoView(); });
-      return;
+      this.autoExpandedForSelection = true;
     }
-    if (this.shouldRevealSelectedRow(changed)) this.scrollSelectedIntoView();
+  }
+
+  protected override updated(changed: PropertyValues<this>): void {
+    if (changed.has("sessions")) {
+      if (this.openMenuSessionId !== undefined && !this.sessions.some((session) => session.id === this.openMenuSessionId)) this.openMenuSessionId = undefined;
+      this.pruneSelectedSessionIds();
+    }
+    if (this.autoExpandedForSelection || this.shouldRevealSelectedRow(changed)) this.scrollSelectedIntoView();
   }
 
   /**

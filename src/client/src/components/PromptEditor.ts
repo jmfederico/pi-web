@@ -381,7 +381,7 @@ export class PromptEditor extends LitElement {
     const version = ++this.requestVersion;
     this.selectedIndex = 0;
     if (trigger === undefined) {
-      this.completions = [];
+      if (this.completions.length > 0) this.completions = [];
       return;
     }
     if (trigger.kind === "command" && this.sessionId !== undefined && this.sessionId !== "" && this.cwd !== undefined && this.cwd !== "") {

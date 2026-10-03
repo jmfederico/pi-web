@@ -496,6 +496,7 @@ describe("PiWebPluginCatalog", () => {
   });
 
   it("ignores excluded package metadata while bounding the serveable artifact", async () => {
+    const warnings: string[] = [];
     const pluginRoot = join(tempDir, "plugins", "bounded");
     await writePlugin(pluginRoot, {
       packageJson: { piWeb: { plugins: [{ id: "bounded", browserRoot: ".", module: "browser.js" }] } },
@@ -504,6 +505,7 @@ describe("PiWebPluginCatalog", () => {
     const catalog = new PiWebPluginCatalog({
       roots: [{ path: join(tempDir, "plugins"), source: "fixture", scope: "local" }],
       packageProvider: false,
+      warningSink: (message) => { warnings.push(message); },
     });
     const firstRevision = (await catalog.snapshot()).plugins[0]?.browserModule?.revision;
 
@@ -518,6 +520,9 @@ describe("PiWebPluginCatalog", () => {
     expect(oversized.diagnostics).toHaveLength(1);
     expect(oversized.diagnostics[0]?.code).toBe("invalid-package");
     expect(oversized.diagnostics[0]?.message).toContain("byte artifact limit");
+    expect(warnings).toEqual([
+      `Skipping PI WEB plugin from ${pluginRoot}: PI WEB plugin package exceeds the 16777216 byte artifact limit`,
+    ]);
   });
 
   it("fingerprints server settings canonically without exposing their values", async () => {

@@ -184,11 +184,8 @@ export class ModelPicker extends LitElement {
     `;
   }
 
-  override firstUpdated() {
-    this.anchorSelectionToSelectedValue();
-  }
-
   protected override willUpdate(changed: PropertyValues<this>): void {
+    if (!this.hasUpdated) this.anchorSelectionToSelectedValue();
     if (!changed.has("catalog")) return;
     if (this.mode === "all") {
       this.catalogScrollTopBeforeUpdate = this.shadowRoot?.querySelector<HTMLElement>(".options")?.scrollTop;

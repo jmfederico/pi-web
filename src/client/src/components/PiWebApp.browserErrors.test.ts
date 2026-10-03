@@ -103,7 +103,19 @@ describe("PiWebApp browser error boundaries", () => {
   it("keeps unexpected action failures on the global browser surface", async () => {
     const app = createApp();
     const runAction = privateRunAction(app);
-    const action: AppAction = { id: "test.action", title: "Test action", run: () => Promise.reject(new Error("action failed")) };
+    const failure = new Error("action failed");
+    const originalWarn = console.warn;
+    const capturedWarnings: unknown[][] = [];
+    const unexpectedWarnings: unknown[][] = [];
+    vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      if (args.length === 2 && args[0] === "Action failed: test.action" && args[1] === failure) {
+        capturedWarnings.push(args);
+      } else {
+        unexpectedWarnings.push(args);
+        originalWarn(...args);
+      }
+    });
+    const action: AppAction = { id: "test.action", title: "Test action", run: () => Promise.reject(failure) };
 
     runAction(action);
     await vi.waitFor(() => {
@@ -111,6 +123,8 @@ describe("PiWebApp browser error boundaries", () => {
     });
 
     expect(appState(app).error).toBe("");
+    expect(unexpectedWarnings).toEqual([]);
+    expect(capturedWarnings).toEqual([["Action failed: test.action", failure]]);
   });
 });
 

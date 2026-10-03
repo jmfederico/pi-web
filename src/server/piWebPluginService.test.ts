@@ -650,6 +650,7 @@ describe("PiWebPluginService", () => {
   });
 
   it("skips duplicate plugin ids", async () => {
+    const warnings: string[] = [];
     const firstRoot = join(tempDir, "first-root");
     const secondRoot = join(tempDir, "second-root");
     await writePlugin(join(firstRoot, "duplicate"), {
@@ -667,6 +668,7 @@ describe("PiWebPluginService", () => {
         { path: secondRoot, source: "second", scope: "local" },
       ],
       packageProvider: false,
+      warningSink: (message) => { warnings.push(message); },
     });
 
     const manifest = await service.manifest();
@@ -674,9 +676,11 @@ describe("PiWebPluginService", () => {
       expect.objectContaining({ id: "duplicate", source: "first", machineSpecific: false }),
     ]);
     expect(manifest.plugins[0]?.module).toMatch(/^\/pi-web-plugins\/duplicate\/first\.js\?v=sha256%3A[a-f\d]{64}$/u);
+    expect(warnings).toEqual(["Skipping PI WEB plugin from second: Duplicate PI WEB plugin id: duplicate"]);
   });
 
   it("skips legacy metadata shortcuts and unsafe module paths", async () => {
+    const warnings: string[] = [];
     const legacyRoot = join(tempDir, "legacy-root");
     await writePlugin(join(legacyRoot, "legacy"), {
       packageJson: { piWeb: { id: "legacy", plugin: "pi-web-plugin.js" } },
@@ -688,11 +692,16 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default {};" },
     });
 
-    await expect(new PiWebPluginService({ roots: [{ path: legacyRoot, source: "test", scope: "local" }], packageProvider: false }).manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
-    await expect(new PiWebPluginService({ roots: [{ path: unsafeRoot, source: "test", scope: "local" }], packageProvider: false }).manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
+    await expect(new PiWebPluginService({ roots: [{ path: legacyRoot, source: "test", scope: "local" }], packageProvider: false, warningSink: (message) => { warnings.push(message); } }).manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
+    await expect(new PiWebPluginService({ roots: [{ path: unsafeRoot, source: "test", scope: "local" }], packageProvider: false, warningSink: (message) => { warnings.push(message); } }).manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
+    expect(warnings).toEqual([
+      `Skipping PI WEB plugin from ${join(legacyRoot, "legacy")}: Unsupported PI WEB plugin metadata in ${join(legacyRoot, "legacy", "package.json")}: use piWeb.plugins with { id, module?, browserRoot?, serverModule?, machineSpecific?, defaultEnabled? } entries`,
+      `Skipping PI WEB plugin from ${join(unsafeRoot, "unsafe")}: Unsafe PI WEB plugin browser module path for unsafe: ../escape.js`,
+    ]);
   });
 
   it("continues discovering valid plugins when another local plugin is invalid", async () => {
+    const warnings: string[] = [];
     await writePlugin(join(tempDir, "plugins", "valid"), {
       packageJson: { piWeb: { plugins: [{ id: "valid", browserRoot: ".", module: "pi-web-plugin.js" }] } },
       files: { "pi-web-plugin.js": "export default {};" },
@@ -702,10 +711,13 @@ describe("PiWebPluginService", () => {
       files: { "pi-web-plugin.js": "export default {};" },
     });
 
-    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false, warningSink: (message) => { warnings.push(message); } });
 
     const manifest = await service.manifest();
     expect(manifest.plugins.map((plugin) => plugin.id)).toEqual(["valid"]);
+    expect(warnings).toEqual([
+      `Skipping PI WEB plugin from ${join(tempDir, "plugins", "legacy")}: Unsupported PI WEB plugin metadata in ${join(tempDir, "plugins", "legacy", "package.json")}: use piWeb.plugins with { id, module?, browserRoot?, serverModule?, machineSpecific?, defaultEnabled? } entries`,
+    ]);
   });
 
   it("rejects unsafe asset traversal", async () => {
