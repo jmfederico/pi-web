@@ -34,9 +34,8 @@ Your browser is the control surface. The work stays where it can keep running.
 
 Requirements:
 
-- Node.js 22.19.0 or newer
-- npm
-- Pi Coding Agent 1.x, configured for your user
+- Node.js 22.19.0 or newer, with npm (default runtime) — or Bun (opt-in, experimental, community best-effort)
+- Pi Coding Agent `>=0.84.0`, configured for your user
 - git and the development tools your agents need
 
 Install and start PI WEB as per-user services:

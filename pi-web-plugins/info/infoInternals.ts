@@ -137,9 +137,17 @@ function renderStatusSection(html: HtmlTemplateTag, status: PiWebStatusResponse 
   const web = status.components.web;
   const driftNote = piVersionDriftNote(web, status.components.sessiond);
   const messageCount = status.messages.length;
+  const runtimeLabel = web.runtime === "bun" ? "Bun" : web.runtime === "node" ? "Node.js" : "unknown";
+  const runtimeValue = web.runtime !== undefined ? (web.runtimeEngine !== undefined ? `${runtimeLabel} ${web.runtimeEngine}` : runtimeLabel) : undefined;
   return html`
     <section>
       <strong>PI WEB</strong>
+      ${runtimeValue === undefined ? null : html`
+      <div class="info-row">
+        <span>Runtime</span>
+        <span>${runtimeValue}</span>
+      </div>
+      `}
       <div class="info-row">
         <span>Version</span>
         <span>${formatVersion(web.runtimeVersion)}</span>

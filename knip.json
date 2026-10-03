@@ -24,6 +24,12 @@
     "pi-web-plugins/**/*.ts",
     "pi-packages/**/*.ts"
   ],
-  "ignoreBinaries": ["mkfifo"],
+  "ignoreBinaries": ["mkfifo", "ps"],
+  "ignoreDependencies": [
+    "pi-mcp-adapter",
+    "pi-subagents",
+    "version",
+    "view"
+  ],
   "ignoreExportsUsedInFile": true
 }

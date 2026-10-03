@@ -15,6 +15,7 @@ export type {
   PiWebInstallationInfo,
   PiWebInstallationKind,
   PiWebReleaseStatus,
+  PiWebRuntime,
   PiWebServiceComponent,
   PiWebStatusMessage,
   PiWebStatusResponse,

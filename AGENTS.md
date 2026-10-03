@@ -11,6 +11,14 @@ If you make changes that affect `src/server/sessiond.ts`, session runtime owners
 
 Changes to the web/API/UI side generally only require the `pi-web-ui-dev.service` autoreload/restart path.
 
+## Package management
+
+Use npm for dependency work in this repository (`package-lock.json` is the committed lockfile). Running `bun install` or `bun add` here rewrites `package.json` from `node_modules` state and leaves `package-lock.json` out of sync, so installs and CI resolve different trees.
+
+Running PI WEB on Bun is a supported *runtime*, which is separate from dependency management: build the package with npm, then start it with Bun.
+
+Pi extension packages used while developing in this workspace (`pi-subagents`, `pi-effort`, `@hicaru/pi-rlm`) are `devDependencies`, not `dependencies`, so they never reach the published package, and `knip.json` lists them under `ignoreDependencies` because Pi loads them at runtime rather than the source importing them.
+
 ## Documentation boundaries
 
 `README.md` is a concise landing page and quick start. Keep it focused on what PI WEB is, basic requirements, the shortest supported install path, essential commands, the core model, and links to detailed documentation.
