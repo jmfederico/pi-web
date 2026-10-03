@@ -51,10 +51,14 @@ async function smokeNpmGlobalInstall(tarballPath) {
     // Only bun and the fixed system directories: Node must not be reachable anywhere, so the
     // launchers cannot silently fall back and the run proves the bun path.
     const pathValue = await nodelessPath(binDir, bunExecutable);
+    // Node.js is the default runtime now, so the bun path is exercised explicitly via
+    // PI_WEB_RUNTIME=bun. The nodeless PATH proves the launcher cannot silently fall back
+    // to something else and that Bun alone can serve the whole stack.
     const environment = {
       HOME: home,
       PATH: pathValue,
       BUN_INSTALL: installRoot,
+      PI_WEB_RUNTIME: "bun",
       SHELL: "/bin/sh",
       TMPDIR: root,
     };
@@ -72,7 +76,7 @@ async function smokeNpmGlobalInstall(tarballPath) {
     if (reportedRuntime.stdout.trim() !== "bun") {
       throw new Error(`Installed launcher reported runtime ${JSON.stringify(reportedRuntime.stdout)}; expected "bun"`);
     }
-    console.log(`✓ bun-installed pi-web ${version} runs on bun with node absent from PATH`);
+    console.log(`✓ bun-installed pi-web ${version} runs on bun via PI_WEB_RUNTIME=bun with node absent from PATH`);
 
     await smokeBunTerminalService(root, installRoot, environment);
     await smokeBunWebServer(root, installRoot, environment);
