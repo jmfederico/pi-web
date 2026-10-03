@@ -1,6 +1,10 @@
 import type { MachineStatusUiEvent } from "./machineStatus.js";
 import type { TerminalPluginMode } from "./requiredTerminalPlugin.js";
 import type {
+  SafeTunnelAccountAccessNotice,
+  SafeTunnelDesiredState,
+} from "./safeTunnelTypes.js";
+import type {
   DeleteWorkspaceFileResponse,
   FileContentMediaType,
   FileContentResponse,
@@ -73,6 +77,7 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
  */
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
+  safeTunnel: "safeTunnel",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -170,6 +175,8 @@ export interface PiWebConfigValues {
   attachments?: PiWebAttachmentsConfig;
   /** Maximum accepted HTTP request body size in bytes (uploads/attachments). */
   maxUploadBytes?: number;
+  /** Experimental, web/API-owned Safe Tunnel availability. Off by default and requires a web/API restart. */
+  safeTunnel?: boolean;
   /** When true, LLMs can start new sessions via the spawn_session tool. */
   spawnSessions?: boolean;
   /**
@@ -335,13 +342,107 @@ export interface PiPackageMutationResponse extends PiPackagesResponse {
   removed?: boolean;
 }
 
+export type SafeTunnelConfigState =
+  | "missing"
+  | "unregistered"
+  | "registered"
+  | "rejected"
+  | "invalid";
+export type SafeTunnelRuntimeState = "stopped" | "running" | "unknown";
+export type SafeTunnelRuntimeDiagnosticCode =
+  | "credentials_rejected"
+  | "heartbeat_failed"
+  | "registration_required"
+  | "runtime_failed"
+  | "state_invalid";
+export type SafeTunnelOperationKind = "enable";
+export type SafeTunnelOperationPhase =
+  | "preparing"
+  | "awaiting_approval"
+  | "registering"
+  | "starting"
+  | "enabled";
+export type SafeTunnelOperationStatus =
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface SafeTunnelConfigStatus {
+  exists: boolean;
+  state: SafeTunnelConfigState;
+  localPiWebUrl?: string;
+  /** Saved selected service, including before registration. Omission means production. */
+  controlApiUrl?: string;
+  machine?: {
+    controlApiBaseUrl: string;
+    machineId: string;
+    machineSlug?: string;
+    publicHostname?: string;
+    publicUrl?: string;
+  };
+  error?: string;
+}
+
+export interface SafeTunnelRuntimeStatus {
+  state: SafeTunnelRuntimeState;
+  /** Stable machine-readable category for browser UI; raw external failures never cross this boundary. */
+  diagnosticCode?: SafeTunnelRuntimeDiagnosticCode;
+  /** PI WEB-authored summary only; provider and child diagnostics stay server-side. */
+  error?: string;
+  /** Bounded provider-neutral guidance for a preserved registration whose account cannot operate tunnels. */
+  accountAccess?: SafeTunnelAccountAccessNotice;
+}
+
+export interface SafeTunnelOperationResponse {
+  id: string;
+  kind: SafeTunnelOperationKind;
+  phase: SafeTunnelOperationPhase;
+  status: SafeTunnelOperationStatus;
+  error?: string;
+  publicUrl?: string;
+  userCode?: string;
+  verificationUriComplete?: string;
+  /** Present when enablement stopped at a provider-neutral account-access boundary. */
+  accountAccess?: SafeTunnelAccountAccessNotice;
+}
+
+export interface SafeTunnelStatusResponse {
+  config: SafeTunnelConfigStatus;
+  /** Persisted user intent; deliberately independent from observed runtime state. */
+  desiredState: SafeTunnelDesiredState;
+  runtime: SafeTunnelRuntimeStatus;
+  activeOperation?: SafeTunnelOperationResponse;
+}
+
+export interface SafeTunnelEnableRequest {
+  /** Development service selection; omission selects production, clearing a saved override. */
+  controlApiUrl?: string;
+}
+
+export interface SafeTunnelEnableResponse {
+  accepted: true;
+  operation: SafeTunnelOperationResponse;
+  status: SafeTunnelStatusResponse;
+}
+
+export interface SafeTunnelDisableResponse {
+  status: SafeTunnelStatusResponse;
+}
+
 export interface PiWebConfigEnvOverrides {
   host: boolean;
   port: boolean;
   allowedHosts: boolean;
+  safeTunnel: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
   askUser: boolean;
+}
+
+export interface PiWebManagedAllowedHost {
+  readonly source: "safe-tunnel";
+  readonly hostname: string;
 }
 
 export interface PiWebConfigResponse {
@@ -350,6 +451,8 @@ export interface PiWebConfigResponse {
   config: PiWebConfigValues;
   effectiveConfig: PiWebConfigValues;
   envOverrides: PiWebConfigEnvOverrides;
+  /** Runtime-derived gateway hosts. They are display-only and never persisted as config. */
+  managedAllowedHosts?: readonly PiWebManagedAllowedHost[];
 }
 
 export interface Project {

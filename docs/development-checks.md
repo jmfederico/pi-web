@@ -28,4 +28,3 @@ npm run check:artifacts
 `check:artifacts` consumes the current `dist` output; it does not build or refresh it. Always run the build first after changing source or packaging inputs. Artifact checks cover emitted public declarations, package contents, deployment-relative client URLs, and plugin bundle contracts such as self-containment and size limits. They are separate from `npm test` and `npm run verify`.
 
 CI and the publish workflow run artifact checks after their build. On Linux they also run `npm run smoke:package-install`, which checks an actual global installation, public API consumer resolution, and native PTY execution. That installed-package boundary is distinct from inspecting build output.
-

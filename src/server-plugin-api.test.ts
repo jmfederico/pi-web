@@ -363,7 +363,7 @@ describe("public server plugin API", () => {
       "fallback" | "probe" | "list" | "prepareRemove"
     >();
     expectTypeOf<keyof ServerPluginPeer>().toEqualTypeOf<"request" | "openChannel">();
-    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty scope object satisfies the notice-scope contract.
+    // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty scope object does not satisfy the notice-scope contract.
     type EmptyNoticeScopeIsValid = Record<never, never> extends ServerPluginNoticeScope ? true : false;
     type ProjectNoticeScopeIsValid = { readonly projectId: string } extends ServerPluginNoticeScope ? true : false;
     // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty object does not satisfy the peer contract.

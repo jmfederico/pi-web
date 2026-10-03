@@ -29,7 +29,7 @@ function fakeConfigRead(effectiveConfig: PiWebConfigValues): Pick<PiWebConfigSer
       exists: true,
       config: effectiveConfig,
       effectiveConfig,
-      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+      envOverrides: { host: false, port: false, allowedHosts: false, safeTunnel: false, spawnSessions: false, subsessions: false, askUser: false },
     }),
   };
 }

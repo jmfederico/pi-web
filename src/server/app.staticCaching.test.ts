@@ -20,7 +20,7 @@ afterEach(async () => {
 
 describe("client static caching", () => {
   it("marks content-hashed assets immutable", async () => {
-    const app = await buildApp({ clientDist, logger: false });
+    const app = await buildApp({ clientServing: { mode: "packaged", clientDist }, logger: false });
     try {
       const asset = await app.inject({ method: "GET", url: "/assets/index-Abc123_x.js" });
 
@@ -33,7 +33,7 @@ describe("client static caching", () => {
   });
 
   it.each(["/", "/sessions/example", "/assets/missing-old-hash.js"])("keeps the app shell revalidating at %s", async (url) => {
-    const app = await buildApp({ clientDist, logger: false });
+    const app = await buildApp({ clientServing: { mode: "packaged", clientDist }, logger: false });
     try {
       const shell = await app.inject({ method: "GET", url });
 
@@ -47,7 +47,7 @@ describe("client static caching", () => {
   });
 
   it("keeps unhashed static files revalidating", async () => {
-    const app = await buildApp({ clientDist, logger: false });
+    const app = await buildApp({ clientServing: { mode: "packaged", clientDist }, logger: false });
     try {
       const file = await app.inject({ method: "GET", url: "/robots.txt" });
 
