@@ -176,28 +176,53 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
     }
     if (runtime.available !== true) throw new Error(`Session daemon runtime component unavailable: ${JSON.stringify(runtime)}`);
 
-    const terminalsUrl = `${base}/terminals?cwd=${encodeURIComponent(dataDir)}`;
-    const initial = await requestJson("GET", terminalsUrl, service);
-    if (!Array.isArray(initial.body) || initial.body.length !== 0) {
-      throw new Error(`GET /terminals returned ${JSON.stringify(initial.body)}; expected an empty list`);
+    // After the rebase, terminals live inside the bundled Terminal plugin (pi-web.terminal),
+    // so the old REST endpoints (/terminals/*) no longer exist. The plugin backend protocol
+    // requires a project and workspace; create them here so the plugin routes resolve.
+    const project = await requestJson("POST", `${base}/projects`, service, {
+      path: dataDir,
+      name: "smoke",
+      create: true,
+    });
+    if (project.status !== 200) throw new Error(`POST /projects returned ${project.status}: ${JSON.stringify(project.body)}`);
+    const projectId = project.body.id;
+
+    const catalog = await waitForJson(`${base}/workspace-catalog/projects/${encodeURIComponent(projectId)}/workspaces`, service, 30_000);
+    const mainWorkspace = catalog.workspaces?.find((w) => w.isMain) ?? catalog.workspaces?.[0];
+    if (!mainWorkspace) throw new Error(`No workspace found for project ${projectId}: ${JSON.stringify(catalog)}`);
+    const workspaceId = mainWorkspace.id;
+
+    // List terminals (should be empty initially)
+    const listResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null);
+    if (!Array.isArray(listResult) || listResult.length !== 0) {
+      throw new Error(`terminal.list returned ${JSON.stringify(listResult)}; expected an empty list`);
     }
 
-    const created = await requestJson("POST", `${base}/terminals`, service, { cwd: dataDir, cols: 40, rows: 10 });
-    const terminal = created.body;
-    if (created.status < 200 || created.status >= 300 || typeof terminal?.id !== "string") {
-      throw new Error(`POST /terminals failed: ${String(created.status)} ${JSON.stringify(created.body)}`);
+    // Create a terminal
+    const created = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.create", {
+      cols: 40,
+      rows: 10,
+    });
+    if (created.status < 200 || created.status >= 300 || typeof created.body?.id !== "string") {
+      throw new Error(`terminal.create failed: ${String(created.status)} ${JSON.stringify(created.body)}`);
     }
+    const terminal = created.body;
     if (terminal.exited === true) throw new Error(`Created terminal already exited: ${JSON.stringify(terminal)}`);
 
-    const listed = await requestJson("GET", terminalsUrl, service);
-    if (!Array.isArray(listed.body) || listed.body.length !== 1) {
-      throw new Error(`GET /terminals after create returned ${JSON.stringify(listed.body)}`);
+    // List again — should show one terminal
+    const listed = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null);
+    if (!Array.isArray(listed) || listed.length !== 1) {
+      throw new Error(`terminal.list after create returned ${JSON.stringify(listed)}`);
     }
 
     // The attach stream is the observable proof that a real PTY is running under Bun: bytes that
     // only ever travelled through a pipe would look identical here. The quoted-split markers keep
     // the assertion unambiguous, because the PTY also echoes the typed command back.
-    const echoed = await readTerminalEcho(`ws://127.0.0.1:${String(port)}/terminals/${terminal.id}/socket`, `printf 'b:${MARKER}\\n'`);
+    const echoed = await readTerminalEcho(
+      `${base}/paired-plugin-backends/pi-web.terminal/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/channels/terminal.attach`,
+      terminal.id,
+      `printf 'b:${MARKER}\\n'`,
+    );
     if (!echoed.includes(`b:${MARKER}`)) {
       throw new Error(`Terminal attach stream did not carry the marker; saw ${JSON.stringify(echoed.slice(-400))}`);
     }
@@ -205,17 +230,23 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
     // are. `t""tyyes` prints `ttyyes` while the command the PTY echoes back keeps the quotes, which
     // is what makes the two branches distinguishable in this stream.
     const ttyState = await readTerminalEcho(
-      `ws://127.0.0.1:${String(port)}/terminals/${terminal.id}/socket`,
+      `${base}/paired-plugin-backends/pi-web.terminal/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/channels/terminal.attach`,
+      terminal.id,
       `if [ -t 0 ] && [ -t 1 ]; then echo t""tyyes; else echo t""tyno; fi`,
       "ttyyes",
     );
     if (!ttyState.includes("ttyyes")) {
       throw new Error(`Created terminal is not an interactive terminal device; saw ${JSON.stringify(ttyState.slice(-400))}`);
     }
-    await requestJson("DELETE", `${base}/terminals/${terminal.id}`, service);
+
+    // Close the terminal (plugin backend protocol uses POST, not DELETE)
+    const closeResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.close", { terminalId: terminal.id });
+    if (closeResult.status !== 200 || !closeResult.body?.closed) {
+      throw new Error(`terminal.close failed: ${JSON.stringify(closeResult.body)}`);
+    }
     // Deleting the terminal must take its shell with it, otherwise the smoke leaks PTY children.
     await waitFor(async () => (await countDescendants(service.pid)) === 0, 10_000,
-      async () => new Error(`Terminal shell survived DELETE /terminals/:id — ${String(await countDescendants(service.pid))} descendants of pid ${String(service.pid)} remain`));
+      async () => new Error(`Terminal shell survived terminal.close — ${String(await countDescendants(service.pid))} descendants of pid ${String(service.pid)} remain`));
     console.log(`✓ bun session daemon (pid ${String(service.pid)}) served a terminal through Bun.Terminal`);
   } finally {
     await stopService(service);
@@ -404,6 +435,11 @@ async function waitForJson(url, service, timeoutMs) {
   throw new Error(`Timed out waiting for ${url} (${lastError})\n${logTail(service)}`);
 }
 
+async function pluginBackendRequest(base, pluginId, projectId, workspaceId, operation, input) {
+  const url = `${base}/paired-plugin-backends/${encodeURIComponent(pluginId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/${operation}`;
+  return requestJson("POST", url, undefined, { revision: "local", input });
+}
+
 async function requestJson(method, url, service, body) {
   const init = body === undefined ? { method } : { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
   const response = await fetch(url, init).catch((error) => {
@@ -431,37 +467,57 @@ async function requestText(method, url, service) {
  * Uses bun when it is available (this file may run under either runtime) and falls back to the
  * Node global WebSocket, so the smoke itself is runtime-agnostic while the service is bun.
  */
-async function readTerminalEcho(socketUrl, input, expectation = MARKER) {
+async function readTerminalEcho(socketUrl, terminalId, input, expectation = MARKER) {
   if (typeof globalThis.WebSocket !== "function") {
     throw new Error("The smoke needs a global WebSocket (Node 22+ and bun both provide one)");
   }
   return await new Promise((resolvePromise, reject) => {
     const socket = new globalThis.WebSocket(socketUrl);
     let seen = "";
+    let inputSent = false;
     const timer = setTimeout(() => {
-      try {
-        socket.close();
-      } catch {
-        /* already closing */
-      }
+      try { socket.close(); } catch { /* already closing */ }
       reject(new Error(`Timed out waiting for terminal output; saw ${JSON.stringify(seen.slice(-400))}`));
     }, 20_000);
     socket.addEventListener?.("open", () => {
-      socket.send(JSON.stringify({ type: "input", data: `${input}\n` }));
+      // Open the plugin backend channel first
+      socket.send(JSON.stringify({ version: 1, kind: "open", revision: "local", input: { terminalId } }));
     });
     socket.addEventListener?.("message", (event) => {
       const raw = typeof event.data === "string" ? event.data : String(event.data);
       try {
         const frame = JSON.parse(raw);
-        if (frame.type === "output") seen += frame.data;
-        if (frame.type === "error") {
+        if (frame.kind === "ready") {
+          // Channel is ready — send the input command
+          socket.send(JSON.stringify({ version: 1, kind: "data", data: { type: "input", data: `${input}\n` } }));
+          return;
+        }
+        if (frame.kind === "data" && frame.data?.type === "output") {
+          seen += frame.data.data;
+        }
+        if (frame.kind === "data" && frame.data?.type === "error") {
           clearTimeout(timer);
           socket.close();
-          reject(new Error(`Terminal socket error: ${frame.message}`));
+          reject(new Error(`Terminal channel error: ${frame.data.message}`));
+          return;
+        }
+        if (frame.kind === "error") {
+          clearTimeout(timer);
+          socket.close();
+          reject(new Error(`Terminal channel error: ${frame.message}`));
+          return;
+        }
+        if (frame.kind === "data" && frame.data?.type === "exit") {
+          // Terminal exited — check if we already saw the expectation
+          if (seen.includes(expectation)) {
+            clearTimeout(timer);
+            socket.close();
+            resolvePromise(seen);
+          }
           return;
         }
       } catch {
-        seen += raw;
+        // Non-JSON frames are ignored
       }
       if (seen.includes(expectation)) {
         clearTimeout(timer);
