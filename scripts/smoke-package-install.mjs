@@ -63,7 +63,10 @@ async function smokeNpmGlobalInstall(tarballPath) {
       TMPDIR: root,
     };
 
-    await runProcess(bunExecutable, ["add", "--global", tarballPath], root, environment);
+    // Trust dependency postinstall scripts (node-pty needs them to build its native binding);
+    // otherwise the daemon tries to rebuild node-pty via `bunx node-gyp` at startup, which
+    // blocks the unix-socket listen path the web/API depends on.
+    await runProcess(bunExecutable, ["add", "--global", "--trust", tarballPath], root, environment);
     const packageRoot = await installedBunPackage(installRoot);
     const launcherBin = join(installRoot, "bin", "pi-web");
 
@@ -82,7 +85,8 @@ async function smokeNpmGlobalInstall(tarballPath) {
     await smokeBunWebServer(root, installRoot, environment);
     console.log("Installed-package bun smoke tests passed (runtime, terminals over Bun.Terminal, web/API).");
   } finally {
-    await rm(root, { recursive: true, force: true });
+    if (process.env["PI_WEB_SMOKE_KEEP"] === undefined) await rm(root, { recursive: true, force: true });
+    else console.log(`KEEP root: ${root}`);
   }
 }
 
@@ -192,9 +196,17 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
     if (!mainWorkspace) throw new Error(`No workspace found for project ${projectId}: ${JSON.stringify(catalog)}`);
     const workspaceId = mainWorkspace.id;
 
+    // Fetch the current plugin backend revisions so the smoke test can use them
+    // in all plugin backend requests and WebSocket frames.
+    const providerRuntime = await waitForJson(`${base}/workspace-catalog/provider-runtime`, service, 30_000);
+    const terminalRecord = providerRuntime.records?.find((r) => r.pluginId === "pi-web.terminal");
+    if (terminalRecord === undefined) throw new Error(`No plugin backend record for pi-web.terminal in provider-runtime`);
+    const terminalRevision = terminalRecord.moduleRevision;
+    if (typeof terminalRevision !== "string" || terminalRevision === "") throw new Error(`pi-web.terminal moduleRevision is not a non-empty string`);
+
     // List terminals (should be empty initially)
-    const listResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null);
-    if (!Array.isArray(listResult) || listResult.length !== 0) {
+    const listResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null, terminalRevision);
+    if (listResult.status < 200 || listResult.status >= 300 || !Array.isArray(listResult.body) || listResult.body.length !== 0) {
       throw new Error(`terminal.list returned ${JSON.stringify(listResult)}; expected an empty list`);
     }
 
@@ -202,7 +214,7 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
     const created = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.create", {
       cols: 40,
       rows: 10,
-    });
+    }, terminalRevision);
     if (created.status < 200 || created.status >= 300 || typeof created.body?.id !== "string") {
       throw new Error(`terminal.create failed: ${String(created.status)} ${JSON.stringify(created.body)}`);
     }
@@ -210,8 +222,8 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
     if (terminal.exited === true) throw new Error(`Created terminal already exited: ${JSON.stringify(terminal)}`);
 
     // List again — should show one terminal
-    const listed = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null);
-    if (!Array.isArray(listed) || listed.length !== 1) {
+    const listed = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.list", null, terminalRevision);
+    if (listed.status < 200 || listed.status >= 300 || !Array.isArray(listed.body) || listed.body.length !== 1) {
       throw new Error(`terminal.list after create returned ${JSON.stringify(listed)}`);
     }
 
@@ -222,6 +234,8 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
       `${base}/paired-plugin-backends/pi-web.terminal/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/channels/terminal.attach`,
       terminal.id,
       `printf 'b:${MARKER}\\n'`,
+      MARKER,
+      terminalRevision,
     );
     if (!echoed.includes(`b:${MARKER}`)) {
       throw new Error(`Terminal attach stream did not carry the marker; saw ${JSON.stringify(echoed.slice(-400))}`);
@@ -234,13 +248,14 @@ async function smokeBunTerminalService(dataRoot, installRoot, environment) {
       terminal.id,
       `if [ -t 0 ] && [ -t 1 ]; then echo t""tyyes; else echo t""tyno; fi`,
       "ttyyes",
+      terminalRevision,
     );
     if (!ttyState.includes("ttyyes")) {
       throw new Error(`Created terminal is not an interactive terminal device; saw ${JSON.stringify(ttyState.slice(-400))}`);
     }
 
     // Close the terminal (plugin backend protocol uses POST, not DELETE)
-    const closeResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.close", { terminalId: terminal.id });
+    const closeResult = await pluginBackendRequest(base, "pi-web.terminal", projectId, workspaceId, "terminal.close", { terminalId: terminal.id }, terminalRevision);
     if (closeResult.status !== 200 || !closeResult.body?.closed) {
       throw new Error(`terminal.close failed: ${JSON.stringify(closeResult.body)}`);
     }
@@ -267,14 +282,23 @@ async function smokeBunWebServer(dataRoot, installRoot, environment) {
   });
   const base = `http://127.0.0.1:${String(port)}`;
   try {
-    // Readiness first: the version endpoint is also where each component's reported runtime lives.
-    const version = await waitForJson(`${base}/api/pi-web/version`, web, 45_000);
-    for (const component of ["web", "sessiond"]) {
-      const reported = version.components?.[component]?.runtime;
-      if (reported !== "bun") {
-        throw new Error(`Installed ${component} component reported runtime ${JSON.stringify(reported)}; expected "bun"`);
-      }
-    }
+    // Readiness first, then the status endpoint, which is where each component's
+    // reported runtime lives (the version endpoint omits the session daemon's
+    // runtime when it predates runtime reporting).
+    await waitForJson(`${base}/api/pi-web/version`, web, 45_000);
+    // The web/API may come up before the session daemon has created its unix
+    // socket, so poll the status endpoint until the daemon is reachable and
+    // both components report the runtime.
+    await waitFor(
+      async () => {
+        const response = await fetch(`${base}/api/pi-web/status`);
+        if (!response.ok) return false;
+        const status = await response.json();
+        return ["web", "sessiond"].every((component) => status.components?.[component]?.runtime === "bun");
+      },
+      45_000,
+      () => new Error(`Timed out waiting for both components to report runtime bun:\nWEB:\n${logTail(web)}\nSESSIOND:\n${logTail(sessiond)}`),
+    );
     const index = await requestText("GET", `${base}/`, web);
     if (index.status !== 200 || !index.body.includes("<html")) {
       throw new Error(`GET / returned ${String(index.status)} with ${index.body.slice(0, 120)} body`);
@@ -435,9 +459,9 @@ async function waitForJson(url, service, timeoutMs) {
   throw new Error(`Timed out waiting for ${url} (${lastError})\n${logTail(service)}`);
 }
 
-async function pluginBackendRequest(base, pluginId, projectId, workspaceId, operation, input) {
+async function pluginBackendRequest(base, pluginId, projectId, workspaceId, operation, input, revision) {
   const url = `${base}/paired-plugin-backends/${encodeURIComponent(pluginId)}/projects/${encodeURIComponent(projectId)}/workspaces/${encodeURIComponent(workspaceId)}/${operation}`;
-  return requestJson("POST", url, undefined, { revision: "local", input });
+  return requestJson("POST", url, undefined, { revision, input });
 }
 
 async function requestJson(method, url, service, body) {
@@ -467,7 +491,7 @@ async function requestText(method, url, service) {
  * Uses bun when it is available (this file may run under either runtime) and falls back to the
  * Node global WebSocket, so the smoke itself is runtime-agnostic while the service is bun.
  */
-async function readTerminalEcho(socketUrl, terminalId, input, expectation = MARKER) {
+async function readTerminalEcho(socketUrl, terminalId, input, expectation = MARKER, revision) {
   if (typeof globalThis.WebSocket !== "function") {
     throw new Error("The smoke needs a global WebSocket (Node 22+ and bun both provide one)");
   }
@@ -481,7 +505,7 @@ async function readTerminalEcho(socketUrl, terminalId, input, expectation = MARK
     }, 20_000);
     socket.addEventListener?.("open", () => {
       // Open the plugin backend channel first
-      socket.send(JSON.stringify({ version: 1, kind: "open", revision: "local", input: { terminalId } }));
+      socket.send(JSON.stringify({ version: 1, kind: "open", revision: revision ?? "local", input: { terminalId } }));
     });
     socket.addEventListener?.("message", (event) => {
       const raw = typeof event.data === "string" ? event.data : String(event.data);
