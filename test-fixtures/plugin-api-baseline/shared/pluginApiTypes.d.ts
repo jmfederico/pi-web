@@ -138,6 +138,8 @@ export interface PiWebComponentStatus {
      * predates runtime reporting and never filled in from another component's answer.
      */
     runtime?: PiWebRuntime;
+    /** Engine version of the runtime (e.g. "v24.19.0" for Node, "1.4.2" for Bun). */
+    runtimeEngine?: string;
     installedVersion?: string;
     /** Version of the Pi coding agent library loaded by this component's process; omitted when the component does not report it. */
     piVersion?: string;
