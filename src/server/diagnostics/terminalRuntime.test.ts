@@ -1,20 +1,26 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { checkTerminalRuntime, formatTerminalRuntimeCheck } from "./terminalRuntime.js";
 
-// The detector reads the `Bun` global, so these tests move it with Reflect instead of asserting
-// an index signature onto globalThis.
-const originalBun: unknown = Reflect.get(globalThis, "Bun");
+// piWebRuntimeKind() reads PI_WEB_RUNTIME, so tests that need a "bun" runtime must set it.
+// bunTerminalCapability() still checks globalThis.Bun.Terminal for the native capability.
+const savedEnv = process.env["PI_WEB_RUNTIME"];
 
 afterEach(() => {
-  if (originalBun === undefined) Reflect.deleteProperty(globalThis, "Bun");
-  else Reflect.set(globalThis, "Bun", originalBun);
+  if (savedEnv === undefined) delete process.env["PI_WEB_RUNTIME"];
+  else process.env["PI_WEB_RUNTIME"] = savedEnv;
 });
 
 function asBun(terminals: boolean): void {
-  Reflect.set(globalThis, "Bun", {
-    spawn: () => undefined,
-    ...(terminals ? { Terminal: () => undefined } : {}),
-  });
+  process.env["PI_WEB_RUNTIME"] = "bun";
+  // Also stub the Bun global so bunTerminalCapability() can see it.
+  const bunStub: Record<string, unknown> = { spawn: () => undefined };
+  if (terminals) bunStub["Terminal"] = () => undefined;
+  Reflect.set(globalThis, "Bun", bunStub);
+}
+
+function asNode(): void {
+  delete process.env["PI_WEB_RUNTIME"];
+  Reflect.deleteProperty(globalThis, "Bun");
 }
 
 const nodePtyLoads = (): unknown => ({ spawn: () => undefined });
@@ -72,7 +78,7 @@ describe("terminal runtime diagnostics under bun", () => {
 
 describe("terminal runtime diagnostics under node", () => {
   it("keeps failing the section with npm advice when node-pty cannot load", () => {
-    Reflect.deleteProperty(globalThis, "Bun");
+    asNode();
 
     const inspection = checkTerminalRuntime({ loadNodePty: nodePtyFails });
     const report = formatTerminalRuntimeCheck(inspection);
@@ -86,7 +92,7 @@ describe("terminal runtime diagnostics under node", () => {
   });
 
   it("reports the node runtime and the node-pty verdict when it loads", () => {
-    Reflect.deleteProperty(globalThis, "Bun");
+    asNode();
 
     const report = formatTerminalRuntimeCheck(checkTerminalRuntime({ loadNodePty: nodePtyLoads }));
 

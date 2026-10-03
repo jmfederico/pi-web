@@ -124,7 +124,6 @@
     "happy-dom": "^20.11.1",
     "knip": "^6.25.0",
     "mermaid": "^11.17.2",
-    "pi-effort": "^0.0.8",
     "pi-subagents": "^0.60.0",
     "tsx": "^4.23.0",
     "typescript": "^6.0.3",

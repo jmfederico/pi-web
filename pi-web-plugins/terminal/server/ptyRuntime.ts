@@ -16,7 +16,11 @@
 export type PiWebRuntime = "bun" | "node";
 
 export function piWebRuntimeKind(): PiWebRuntime {
-  return typeof bunValue("spawn") === "function" ? "bun" : "node";
+  const env = process.env["PI_WEB_RUNTIME"];
+  if (env === "bun") return "bun";
+  // PI_WEB_RUNTIME=node or unset (auto/undefined) → Node is the default.
+  // Mirrors the host-side `piWebRuntimeKind()` so the parity test stays green.
+  return "node";
 }
 
 export function bunTerminalCapability(): boolean {

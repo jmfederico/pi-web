@@ -215,21 +215,20 @@ resolve_runtime() {
       ;;
     *)
       if [ "$INSTALLER" = "bun" ]; then
+        # Bun installation: prefer Node.js (the new default); fall back to Bun only
+        # when Node is unavailable. Bun is still opt-in via PI_WEB_RUNTIME=bun above.
+        if _exec="$(capable_node)"; then
+          printf 'node %s\n' "$_exec"
+          return 0
+        fi
         if _exec="$(capable_bun)"; then
           printf 'bun %s\n' "$_exec"
           return 0
         fi
-        if _exec="$(capable_node)"; then
-          if _any="$(any_bun)"; then
-            bun_install_node_fallback_warning "$_any"
-          fi
-          printf 'node %s\n' "$_exec"
-          return 0
-        fi
-        _any="$(any_bun)" || _any=""
-        bun_install_no_runtime_error "$_any"
-        return 1
+        no_runtime_error
+        return 127
       fi
+      # npm/pnpm/yarn installation: Node.js is the default.
       if _exec="$(capable_node)"; then
         printf 'node %s\n' "$_exec"
         return 0

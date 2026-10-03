@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { loadNodePtyModule, type NodePtyModule, type NodePtyProcess } from "./nodePtyModule.js";
-import { bunTerminalCapability, isBunRuntime } from "./ptyRuntime.js";
+
 
 /**
  * PTY backend abstraction for the bundled Terminal plugin (Strategy pattern).
@@ -105,7 +105,12 @@ export class BunPTYBackend implements TerminalBackend {
 
   available(): boolean {
     // Capability, not version: Bun.spawn alone cannot drive a PTY.
-    return isBunRuntime() && bunTerminalCapability();
+    try {
+      bunGlobal();
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   create(options: TerminalBackendSpawnOptions): { id: string } {

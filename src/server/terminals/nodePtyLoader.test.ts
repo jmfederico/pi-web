@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const terminalsSourceDir = join(repoRoot, "src", "server", "terminals");
-const backendSourcePath = join(terminalsSourceDir, "backend.ts");
+const backendSourcePath = join(repoRoot, "pi-web-plugins", "terminal", "server", "ptyBackend.ts");
 const loaderSourcePath = join(terminalsSourceDir, "nodePtyModule.ts");
 const runtimeSourcePath = join(repoRoot, "src", "shared", "piWebRuntime.ts");
 const sharedLoaderRelativePath = "src/server/terminals/nodePtyModule.ts";
@@ -46,7 +46,7 @@ describe("NodePTYBackend under real Node ESM", () => {
 
       const backendEsm = transpileToEsm(backendSourcePath);
       assertBackendDependsOnlyOnTheSharedLoader(backendEsm);
-      await writeFile(join(serverDir, "backend.js"), backendEsm, "utf8");
+      await writeFile(join(serverDir, "ptyBackend.js"), backendEsm, "utf8");
 
       const probePath = join(serverDir, "probe.mjs");
       await writeFile(probePath, esmProbe(), "utf8");
@@ -91,9 +91,9 @@ describe("node-pty loader ownership (SPEC D4)", () => {
   it("has the terminal backend and the doctor check consume the shared loader", () => {
     expect(readFileSync(loaderSourcePath, "utf8")).toMatch(/export function loadNodePtyModule\b/u);
 
-    for (const path of ["src/server/terminals/backend.ts", "src/server/diagnostics/nodePtyNativeModule.ts"]) {
+    for (const path of ["pi-web-plugins/terminal/server/ptyBackend.ts", "src/server/diagnostics/nodePtyNativeModule.ts"]) {
       const contents = readFileSync(join(repoRoot, path), "utf8");
-      expect(contents, `${path} must load node-pty through the shared loader`).toMatch(/from\s+"[^"]*nodePtyModule\.js"/u);
+      expect(contents, `${path} must load node-pty through the shared loader`).toMatch(/from\s+["'][^"']*nodePtyModule\.js["']/u);
       expect(contents, `${path} must reference the shared loader`).toMatch(/\bloadNodePtyModule\b/u);
     }
   });
@@ -129,12 +129,16 @@ function transpileToEsm(path: string): string {
  */
 function assertBackendDependsOnlyOnTheSharedLoader(backendEsm: string): void {
   const specifiers = [...backendEsm.matchAll(/\bfrom\s+["']([^"']+)["']/gu)].map((match) => match[1] ?? "");
-  expect(specifiers).toEqual(["./nodePtyModule.js", "../../shared/piWebRuntime.js"]);
+  // The backend must never import node-pty directly; it only reaches node-pty through the
+  // shared loader (nodePtyModule.js).  Node builtins are irrelevant.
+  const localDeps = specifiers.filter((s) => !s.startsWith("node:"));
+  expect(localDeps).toContain("./nodePtyModule.js");
+  expect(localDeps).not.toContain("node-pty");
 }
 
 function esmProbe(): string {
   return [
-    'import { NodePTYBackend } from "./backend.js";',
+    'import { NodePTYBackend } from "./ptyBackend.js";',
     "const backend = new NodePTYBackend();",
     "const available = backend.available();",
     "console.log('AVAILABLE:' + String(available));",

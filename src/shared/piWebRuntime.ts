@@ -11,7 +11,10 @@ import type { PiWebRuntime } from "./pluginApiTypes.js";
 export type { PiWebRuntime };
 
 export function piWebRuntimeKind(): PiWebRuntime {
-  return typeof bunValue("spawn") === "function" ? "bun" : "node";
+  const env = process.env["PI_WEB_RUNTIME"];
+  if (env === "bun") return "bun";
+  // PI_WEB_RUNTIME=node or unset (auto/undefined) → Node is the default.
+  return "node";
 }
 
 /**

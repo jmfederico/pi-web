@@ -89,29 +89,28 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     });
   });
 
-  posixIt("runs on bun when the package was installed with bun, even with node present", async () => {
-    // The bun-shaped fixture installs under `<root>/store/install/global/node_modules` with HOME
-    // pointed elsewhere, so detection is proven to come from the tree layout, not from $HOME. The
-    // package manager the user installed with wins over whatever else is on PATH.
+  posixIt("runs on node by default even when installed with bun and both runtimes exist", async () => {
+    // Node.js is the default runtime. A bun-installed package still prefers Node.js when both
+    // are usable. `PI_WEB_RUNTIME=bun` is required to force Bun.
     const install = await createInstall({ shape: "bun", bun: "capable", node: "ok", onPath: ["bun", "node"] });
 
-    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toEqual({ code: 0, stdout: "bun\n", stderr: "" });
+    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toEqual({ code: 0, stdout: "node\n", stderr: "" });
     expect(await runLauncher(install, "pi-web", [])).toEqual({
       code: 0,
-      stdout: `ran:bun:${install.entryRef("../cli.js")}\nargv:\n`,
+      stdout: `ran:node:${install.entryRef("../cli.js")}\nargv:\n`,
       stderr: "",
     });
   });
 
-  posixIt("falls back to node with a warning when the bun installation's bun lacks Bun.Terminal", async () => {
+  posixIt("uses node by default when the bun installation lacks a capable bun", async () => {
+    // Node.js is the default runtime. A bun-installed package with only an incapable bun
+    // and a usable node just starts on node — no fallback warning is emitted.
     const install = await createInstall({ shape: "bun", bun: "incapable", node: "ok", onPath: ["bun", "node"] });
 
     const launched = await runLauncher(install, "pi-web", []);
     expect(launched.code).toBe(0);
     expect(launched.stdout).toContain(`ran:node:${install.entryRef("../cli.js")}`);
-    expect(launched.stderr).toContain("Bun.Terminal");
-    expect(launched.stderr).toContain("bun upgrade");
-    expect(launched.stderr).toContain("bun pm trust node-pty");
+    expect(launched.stderr).toBe("");
   });
 
   posixIt("does not execute bun when an npm install already has a usable node", async () => {
@@ -124,30 +123,28 @@ describe.skipIf(process.platform === "win32")("launcher runtime resolution", () 
     await readFile(`${install.stub("node")}.ran`, "utf8");
   });
 
-  posixIt("does not execute node when the bun installation already has a capable bun", async () => {
-    // The mirror case: a bun-shaped tree resolves on its first probe and leaves node untouched.
+  posixIt("uses node by default even when bun is the capable runtime on a bun installation", async () => {
+    // Node.js is the default runtime. Even on a bun-installed tree, Node.js wins when both are
+    // usable. To select Bun, set `PI_WEB_RUNTIME=bun`.
     const install = await createInstall({ shape: "bun", bun: "capable", node: "ok", onPath: ["bun", "node"] });
 
-    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toMatchObject({ code: 0, stdout: "bun\n" });
-    await readFile(`${install.stub("bun")}.ran`, "utf8");
-    await expect(readFile(`${install.stub("node")}.ran`, "utf8")).rejects.toThrow();
+    expect(await runLauncher(install, "pi-web", ["--print-runtime"])).toMatchObject({ code: 0, stdout: "node\n" });
+    await readFile(`${install.stub("node")}.ran`, "utf8");
+    await expect(readFile(`${install.stub("bun")}.ran`, "utf8")).rejects.toThrow();
   });
 
-  posixIt("fails with actionable advice when a bun installation has no usable runtime at all", async () => {
-    // A bun without Bun.Terminal cannot host terminals, and a bun install that never trusted
-    // node-pty has no usable binding either, so there is nothing to fall back to: name the bun,
-    // name the fix, and stop before a partial start.
+  posixIt("fails with actionable advice when no runtime is found on a bun installation", async () => {
+    // No usable Node and no capable Bun: the generic no-runtime path is used.
     const install = await createInstall({ shape: "bun", bun: "incapable", onPath: ["bun"] });
 
     const result = await runLauncher(install, "pi-web", []);
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(127);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("Bun.Terminal");
-    expect(result.stderr).toContain("bun upgrade");
-    expect(result.stderr).toContain("install PI WEB with npm");
+    expect(result.stderr).toContain("no usable JavaScript runtime found");
+    expect(result.stderr).toContain("PI_WEB_RUNTIME");
 
     const probe = await runLauncher(install, "pi-web", ["--print-runtime"]);
-    expect(probe.code).toBe(1);
+    expect(probe.code).toBe(127);
     expect(probe.stdout).toBe("");
     expect(probe.stderr).toEqual(result.stderr);
   });

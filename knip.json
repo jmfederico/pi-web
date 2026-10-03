@@ -27,7 +27,6 @@
   ],
   "ignoreBinaries": ["mkfifo", "ps"],
   "ignoreDependencies": [
-    "pi-effort",
     "pi-mcp-adapter",
     "pi-subagents",
     "version",
