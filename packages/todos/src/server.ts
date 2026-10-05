@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { PiWebServerPlugin } from "@jmfederico/pi-web/server-plugin-api";
 import { TodoStore } from "./store.js";
+import { ProjectResolver } from "./projects.js";
 
 const plugin: PiWebServerPlugin = {
   apiVersion: 3,
@@ -8,6 +9,7 @@ const plugin: PiWebServerPlugin = {
   activate(host) {
     const role = host.settings["role"];
     if (role !== "server" && role !== "client") throw new Error("Configure todos settings.role as server or client");
+    const projects = new ProjectResolver(host);
     if (role === "client") {
       const target = host.settings["targetMachineId"];
       const transport = host.transport;
@@ -18,6 +20,7 @@ const plugin: PiWebServerPlugin = {
           async request({ operation, input, signal }) {
             signal.throwIfAborted();
             host.lifetimeSignal.throwIfAborted();
+            if (operation === "resolve-project") return await projects.resolve(input, signal);
             return await transport.request({ machineId: target, operation, input, signal });
           },
         },
@@ -30,6 +33,7 @@ const plugin: PiWebServerPlugin = {
           signal.throwIfAborted();
           host.lifetimeSignal.throwIfAborted();
           switch (operation) {
+            case "resolve-project": return projects.resolve(input, signal);
             case "list": return store.list(input);
             case "read": return store.read(input);
             case "mutate": return store.mutate(input);

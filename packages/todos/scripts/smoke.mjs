@@ -27,7 +27,7 @@ try {
   for (const path of metadata.files) await cp(join(packageRoot, path), join(packRoot, path), { recursive: true });
   const packed = JSON.parse(await runNpm(["pack", "--json", "--ignore-scripts", "--pack-destination", temp], packRoot))[0];
   const files = packed.files.map((file) => file.path);
-  for (const file of ["dist/browser/index.js", "dist/browser/panel.js", "dist/browser/protocol.js", "dist/server.js", "dist/store.js", "dist/companion.js", "docs/usage.md"]) assert.ok(files.includes(file), `Missing ${file}`);
+  for (const file of ["dist/browser/index.js", "dist/browser/panel.js", "dist/browser/protocol.js", "dist/server.js", "dist/store.js", "dist/projects.js", "dist/companion.js", "docs/usage.md"]) assert.ok(files.includes(file), `Missing ${file}`);
   assert.ok(files.every((file) => !file.startsWith("src/") && !file.includes("node_modules/") && !file.includes(".test.")));
   const install = join(temp, "install"); await mkdir(install);
   await runNpm(["install", "--prefix", install, "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund", join(temp, packed.filename)], install);
@@ -59,14 +59,22 @@ try {
   const { default: server } = await import(pathToFileURL(join(installed, entry.serverModule)).href);
   const dataDirectory = join(temp, "plugin-data"); await mkdir(dataDirectory);
   const lifetime = new AbortController();
-  const context = { dataDirectory, settings: { role: "server" }, lifetimeSignal: lifetime.signal };
+  const context = { dataDirectory, settings: { role: "server" }, lifetimeSignal: lifetime.signal,
+    execFile: async ({ file, args, signal }) => ({ ...(await exec(file, args, { signal })), exitCode: 0, signal: null, stdoutTruncated: false, stderrTruncated: false }) };
+  const clone = join(temp, "clone"); await mkdir(clone);
+  await exec("git", ["-C", clone, "init", "--quiet"]);
+  await exec("git", ["-C", clone, "remote", "add", "origin", "git@example.com:Owner/Repo.git"]);
   let activation = await server.activate(context);
   const request = (operation, input) => activation.backend.request({ operation, input, signal: new AbortController().signal });
-  const created = await request("mutate", { title: "Installed task", context: "Durable central authority" });
+  const resolved = await request("resolve-project", { path: clone });
+  assert.equal(resolved.ok, true); assert.equal(resolved.project.kind, "git");
+  const created = await request("mutate", { title: "Installed task", context: "Durable central authority", project: resolved.project });
   assert.equal(created.ok, true);
   await activation.dispose();
   activation = await server.activate(context);
   assert.deepEqual(await request("read", { id: created.task.id }), created);
+  assert.deepEqual(await request("list", { project: resolved.project.id }), { ok: true, tasks: [created.task] });
+  assert.deepEqual(await request("list", { project: null }), { ok: true, tasks: [] });
   await activation.dispose();
   const settingsManager = SettingsManager.inMemory({ packages: [installed] });
   const loader = new DefaultResourceLoader({ cwd: temp, agentDir: join(temp, "agent"), settingsManager, eventBus: createEventBus(),
@@ -74,7 +82,7 @@ try {
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, [], "Installed compiled companion must load through native Pi");
   const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
-  assert.deepEqual(tools.sort(), ["todos_list", "todos_mutate", "todos_read"]);
+  assert.deepEqual(tools.sort(), ["todos_list", "todos_mutate", "todos_project", "todos_read"]);
   assert.deepEqual(await readdir(join(root, "dist/pi-packages")).then((names) => names.filter((name) => name === "todos")), [], "To-dos must not ship in the host");
   const { KNOWN_PI_PACKAGES } = await import(pathToFileURL(join(root, "dist/server/knownPiPackages.js")).href);
   assert.ok(KNOWN_PI_PACKAGES.every((item) => item.id !== "@jmfederico/pi-todos"), "To-dos must not become a known automatic package");

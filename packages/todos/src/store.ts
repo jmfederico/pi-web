@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { isRecord, isStatus, isTask, type Failure, type ListResult, type TaskResult, type Task, type Mutation, type TaskFilter } from "./browser/protocol.js";
+import { isRecord, isProject, isProjectId, isStatus, isTask, type Failure, type ListResult, type TaskResult, type Task, type Mutation, type TaskFilter } from "./browser/protocol.js";
 
 class InvalidInput extends Error {}
 const invalid = (message: string): Failure => ({ ok: false, error: { code: "invalid", message } });
@@ -29,8 +29,8 @@ function parseFilter(value: unknown): TaskFilter {
     filter.archived = input["archived"];
   }
   if (Object.hasOwn(input, "project")) {
-    if (input["project"] !== null) throw new InvalidInput("This package slice supports unassigned tasks only; project must be null");
-    filter.project = null;
+    if (input["project"] !== null && !isProjectId(input["project"])) throw new InvalidInput("project filter must be a resolved project ID or null");
+    filter.project = input["project"];
   }
   return filter;
 }
@@ -46,8 +46,8 @@ function parseMutation(value: unknown): Mutation {
   if (Object.hasOwn(input, "title")) mutation.title = boundedString(input["title"], "title", 200, true);
   if (Object.hasOwn(input, "context")) mutation.context = boundedString(input["context"], "context", 2000);
   if (Object.hasOwn(input, "project")) {
-    if (input["project"] !== null) throw new InvalidInput("Project assignment is not supported yet; use null for unassigned");
-    mutation.project = null;
+    if (input["project"] !== null && !isProject(input["project"])) throw new InvalidInput("project must be a resolved descriptor or null for unassigned");
+    mutation.project = input["project"];
   }
   if (Object.hasOwn(input, "status")) {
     if (!isStatus(input["status"])) throw new InvalidInput("Invalid task status");
@@ -70,7 +70,7 @@ export class TodoStore {
     try {
       this.db.exec("PRAGMA busy_timeout = 1000");
       const version = this.db.prepare("PRAGMA user_version").get()?.["user_version"];
-      if (version !== 0 && version !== 1) throw new Error("Unsupported to-do database version; use a matching package");
+      if (version !== 0 && version !== 1 && version !== 2) throw new Error("Unsupported to-do database version; use a matching package");
       this.db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE IF NOT EXISTS tasks (
           id TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK (revision > 0),
@@ -78,7 +78,7 @@ export class TodoStore {
           status TEXT NOT NULL CHECK (status IN ('Open', 'Doing', 'On hold', 'Done')),
           archived INTEGER NOT NULL CHECK (archived IN (0, 1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         );
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
         COMMIT;`);
     } catch (error) { this.db.close(); throw error; }
   }
@@ -100,6 +100,7 @@ export class TodoStore {
       const text = filter.text?.toLowerCase() ?? "";
       const tasks = this.db.prepare("SELECT * FROM tasks ORDER BY updated_at DESC, id").all().map(rowTask).filter((task) =>
         (filter.status === undefined || task.status === filter.status)
+        && (filter.project === undefined || (task.project?.id ?? null) === filter.project)
         && (filter.archived === "all" || task.archived === (filter.archived ?? false))
         && `${task.title}\n${task.context}`.toLowerCase().includes(text));
       return { ok: true, tasks };
@@ -124,15 +125,17 @@ export class TodoStore {
       const task: Task = {
         id: previous?.id ?? this.id(), revision: (previous?.revision ?? 0) + 1,
         title: mutation.title ?? previous?.title ?? "", context: mutation.context ?? previous?.context ?? "",
-        project: null, status: mutation.status ?? previous?.status ?? "Open",
+        project: Object.hasOwn(mutation, "project") ? mutation.project ?? null : previous?.project ?? null,
+        status: mutation.status ?? previous?.status ?? "Open",
         archived: mutation.archived ?? previous?.archived ?? false,
         createdAt: previous?.createdAt ?? time, updatedAt: time,
       };
+      const project = task.project === null ? null : JSON.stringify(task.project);
       if (previous === undefined) {
-        this.db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id, task.revision, task.title, task.context, null, task.status, Number(task.archived), task.createdAt, task.updatedAt);
+        this.db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(task.id, task.revision, task.title, task.context, project, task.status, Number(task.archived), task.createdAt, task.updatedAt);
       } else {
-        this.db.prepare("UPDATE tasks SET revision = ?, title = ?, context = ?, status = ?, archived = ?, updated_at = ? WHERE id = ? AND revision = ?")
-          .run(task.revision, task.title, task.context, task.status, Number(task.archived), time, task.id, previous.revision);
+        this.db.prepare("UPDATE tasks SET revision = ?, title = ?, context = ?, project = ?, status = ?, archived = ?, updated_at = ? WHERE id = ? AND revision = ?")
+          .run(task.revision, task.title, task.context, project, task.status, Number(task.archived), time, task.id, previous.revision);
       }
       this.db.exec("COMMIT");
       return { ok: true, task };
@@ -140,8 +143,10 @@ export class TodoStore {
   }
 }
 function rowTask(row: Record<string, unknown>): Task {
+  const project: unknown = typeof row["project"] === "string" ? JSON.parse(row["project"]) : row["project"];
   const task = {
-    id: row["id"], revision: row["revision"], title: row["title"], context: row["context"], project: row["project"],
+    id: row["id"], revision: row["revision"], title: row["title"], context: row["context"],
+    project,
     status: row["status"], archived: row["archived"] === 1, createdAt: row["created_at"], updatedAt: row["updated_at"],
   };
   if (!isTask(task)) throw new Error("Invalid stored task; the database is not supported by this package");

@@ -1,10 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import { buildDirectory, buildTerminalPackage } from "../../../scripts/build-plugins.mjs";
-import { isRecord, resultTask, resultTasks } from "../src/browser/protocol.js";
+import { isRecord, resultProject, resultTask, resultTasks } from "../src/browser/protocol.js";
 
 interface FixtureProcess { child: ChildProcess; output: string; exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }> }
 const processes = new Set<FixtureProcess>();
@@ -45,6 +46,23 @@ it.skipIf(process.platform === "win32")("serves one durable list to two isolated
   const clientDaemon = start(root, client, "src/server/sessiond.ts");
   await ready(clientDaemon, "Server listening at");
   const clientUrl = await httpUrl(start(root, client, "web.mjs"));
+  const exec = promisify(execFile);
+  for (const [path, origin] of [[join(server, "clone"), "git@EXAMPLE.com:Owner/Repo.git"], [join(client, "clone"), "https://example.com/Owner/Repo/"]]) {
+    if (path === undefined || origin === undefined) throw new Error("Missing clone fixture");
+    await mkdir(path);
+    await exec("git", ["-C", path, "init", "--quiet"]);
+    await exec("git", ["-C", path, "remote", "add", "origin", origin]);
+  }
+  const shared = resultProject(await backend(clientUrl, "resolve-project", { path: join(client, "clone") }));
+  expect(resultProject(await backend(serverUrl, "resolve-project", { path: join(server, "clone") }))).toEqual(shared);
+  const plain = join(root, "plain"); await mkdir(plain);
+  const local = resultProject(await backend(clientUrl, "resolve-project", { path: plain }));
+  const otherLocal = resultProject(await backend(serverUrl, "resolve-project", { path: plain }));
+  expect(local.id).not.toBe(otherLocal.id);
+  const localTask = resultTask(await backend(clientUrl, "mutate", { title: "Originating client", project: local }));
+  const serverTask = resultTask(await backend(serverUrl, "mutate", { title: "Originating server", project: otherLocal }));
+  expect(resultTasks(await backend(clientUrl, "list", { project: local.id }))).toEqual([localTask]);
+  expect(resultTasks(await backend(serverUrl, "list", { project: otherLocal.id }))).toEqual([serverTask]);
   const first = resultTask(await backend(clientUrl, "mutate", { title: "Across machines", context: "One central SQLite authority" }));
   expect(resultTask(await backend(serverUrl, "read", { id: first.id }))).toEqual(first);
   expect(resultTasks(await backend(clientUrl, "list", { text: "SQLITE", project: null }))).toEqual([first]);
@@ -62,13 +80,15 @@ it.skipIf(process.platform === "win32")("serves one durable list to two isolated
   const commandUrl = `${clientUrl}/api/sessions/${encodeURIComponent(session.id)}/commands/run`;
   await post(commandUrl, { cwd, text: `/todos-probe ${first.id}` });
   const toolResult = await probe(client, clientDaemon);
-  expect(toolResult).toMatchObject({ task: { id: first.id, revision: 2, status: "Doing" }, listed: [first.id], staleRejected: true });
+  expect(toolResult).toMatchObject({ task: { id: first.id, revision: 2, status: "Doing", project: shared }, listed: [first.id], staleRejected: true });
+  expect(resultTasks(await backend(serverUrl, "list", { project: shared.id }))).toMatchObject([{ id: first.id }]);
+  expect(resultTasks(await backend(serverUrl, "list", { project: null }))).toEqual([]);
   expect(resultTask(await backend(serverUrl, "read", { id: first.id }))).toMatchObject({ revision: 2, status: "Doing", context: first.context });
   await post(commandUrl, { cwd, text: "/reload" });
   await rm(join(client, "probe.json"));
   await post(commandUrl, { cwd, text: `/todos-probe ${first.id}` });
   expect(await probe(client, clientDaemon)).toMatchObject({ task: { id: first.id, revision: 3 }, staleRejected: true });
-  expect(await readdir(join(client, "data/plugin-data/todos"))).toEqual([]);
+  expect(await readdir(join(client, "data/plugin-data/todos"))).toEqual(["project-machine-id"]);
   // Clean shutdown releases the database. Restart only our fixture's daemon,
   // preserving its data directory, and prove authority survives runtime replacement.
   serverDaemon.child.kill("SIGTERM");
@@ -78,6 +98,8 @@ it.skipIf(process.platform === "win32")("serves one durable list to two isolated
   await vi.waitFor(async () => {
     expect(resultTask(await backend(clientUrl, "read", { id: first.id }))).toMatchObject({ revision: 3, status: "Doing" });
   }, { timeout: 5_000 });
+  expect(resultProject(await backend(serverUrl, "resolve-project", { path: plain }))).toEqual(otherLocal);
+  expect(resultTasks(await backend(clientUrl, "list", {}))).toHaveLength(3);
   for (const daemon of [clientDaemon, restarted]) { daemon.child.kill("SIGTERM"); expect(await daemon.exited).toEqual({ code: 0, signal: null }); }
 }, 60_000);
 
@@ -104,8 +126,10 @@ async function machine(root: string, name: string, settings: Record<string, stri
         try {
         const read = await execute("todos_read", { id });
         const task = read.structuredContent.task;
-        const list = await execute("todos_list", { text: "Across", archived: "all", project: null });
-        const update = await execute("todos_mutate", { id, revision: task.revision, status: "Doing" });
+        const resolved = await execute("todos_project", { path: ${JSON.stringify(join(path, "clone"))} });
+        const project = resolved.structuredContent.project;
+        const update = await execute("todos_mutate", { id, revision: task.revision, status: "Doing", project });
+        const list = await execute("todos_list", { text: "Across", archived: "all", project: project.id });
         let staleRejected = false;
         try { await execute("todos_mutate", { id, revision: task.revision, context: "stale overwrite" }); }
         catch (error) { staleRejected = String(error).includes("Task changed"); }

@@ -39,7 +39,7 @@ npm --prefix packages/todos test
 npm run smoke:todos
 ```
 
-`build:todos` consumes the emitted public host declarations and emits only `packages/todos/dist`. The smoke consumes those artifacts, packs and installs the standalone package into a temporary npm tree with suppressed automatic peers, explicitly links the current built host peer, and verifies its browser graph, persistent SQLite server, native companion discovery and a temporary standalone source build against declared peers. The separate root `smoke:package-install` still owns the complete installed host. Do not install into live profiles to run these checks. See the [package guide](../packages/todos/docs/usage.md) for supported setup and current slice limitations.
+`build:todos` consumes the emitted public host declarations and emits only `packages/todos/dist`. The smoke consumes those artifacts, packs and installs the standalone package into a temporary npm tree with suppressed automatic peers, explicitly links the current built host peer, and verifies its browser graph, persistent SQLite server, native companion discovery and a temporary standalone source build against declared peers. The separate root `smoke:package-install` still owns the complete installed host. Do not install into live profiles to run these checks. See the [package guide](../packages/todos/docs/usage.md) for supported setup, project identity and storage upgrade guidance.
 
 ## Server-only TypeBox
 

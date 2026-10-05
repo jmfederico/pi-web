@@ -11,7 +11,7 @@ const plugin: PiWebPlugin = {
         applicationPanels: [{
           id: "list", title: "To-dos",
           render(context) {
-            return html`<pi-todos-panel .source=${{ machineId: context.machine.id, ...(context.backend === undefined ? {} : { backend: context.backend }), lifetime: lifetimeSignal }}></pi-todos-panel>`;
+            return html`<pi-todos-panel .source=${{ machineId: context.machine.id, ...(context.backend === undefined ? {} : { backend: context.backend }), ...(context.projects === undefined ? {} : { projects: context.projects }), lifetime: lifetimeSignal }}></pi-todos-panel>`;
           },
         }],
       },

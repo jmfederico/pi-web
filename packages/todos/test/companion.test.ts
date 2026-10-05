@@ -17,8 +17,10 @@ it("executes shipped list/read/mutate tools through native Pi and reports a stal
   const directory = await mkdtemp(join(tmpdir(), "todos-companion-"));
   const store = new TodoStore(join(directory, "todos.sqlite"));
   const task = resultTask(store.mutate({ title: "Personal tools", context: "One shared list" }));
+  const project = { id: `git:${"c".repeat(64)}`, label: "Personal", kind: "git" } as const;
   const registry = new PluginBackendRegistry({ contributions: [], machineContributions: [{ pluginId: "todos", backend: {
     request: ({ operation, input }) => {
+      if (operation === "resolve-project") return { ok: true, project };
       if (operation === "list") return store.list(input);
       if (operation === "read") return store.read(input);
       if (operation === "mutate") return store.mutate(input);
@@ -38,9 +40,10 @@ it("executes shipped list/read/mutate tools through native Pi and reports a stal
     connections.register(session, bus);
     const errors: unknown[] = []; await session.bindExtensions({ onError: (error) => errors.push(error) });
     const calls = [
+      { name: "todos_project", arguments: { path: directory } },
       { name: "todos_list", arguments: { text: "personal", project: null } },
       { name: "todos_read", arguments: { id: task.id } },
-      { name: "todos_mutate", arguments: { id: task.id, revision: 1, status: "On hold" } },
+      { name: "todos_mutate", arguments: { id: task.id, revision: 1, status: "On hold", project } },
       { name: "todos_mutate", arguments: { id: task.id, revision: 1, context: "stale" } },
     ];
     let turn = 0;
@@ -54,13 +57,13 @@ it("executes shipped list/read/mutate tools through native Pi and reports a stal
     };
     await session.prompt("Manage the shared tasks");
     const results = session.messages.filter((message) => message.role === "toolResult");
-    expect(results).toHaveLength(4);
-    expect(results.slice(0, 3).map((message) => ({ name: message.toolName, error: message.isError }))).toEqual([
-      { name: "todos_list", error: false }, { name: "todos_read", error: false }, { name: "todos_mutate", error: false },
+    expect(results).toHaveLength(5);
+    expect(results.slice(0, 4).map((message) => ({ name: message.toolName, error: message.isError }))).toEqual([
+      { name: "todos_project", error: false }, { name: "todos_list", error: false }, { name: "todos_read", error: false }, { name: "todos_mutate", error: false },
     ]);
-    expect(results[3]).toMatchObject({ toolName: "todos_mutate", isError: true });
-    expect(JSON.stringify(results[3])).toContain("Task changed");
-    expect(resultTask(store.read({ id: task.id }))).toMatchObject({ revision: 2, status: "On hold", context: task.context });
+    expect(results[4]).toMatchObject({ toolName: "todos_mutate", isError: true });
+    expect(JSON.stringify(results[4])).toContain("Task changed");
+    expect(resultTask(store.read({ id: task.id }))).toMatchObject({ revision: 2, status: "On hold", context: task.context, project });
     expect(errors).toEqual([]);
   } finally {
     if (session !== undefined) { connections.close(session); await session.abort(); session.dispose(); }

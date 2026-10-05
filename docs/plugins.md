@@ -350,7 +350,7 @@ See the [Captain's Log usage guide](https://github.com/jmfederico/pi-web/blob/ma
 
 ### Standalone To-dos
 
-The repository's [To-dos package](https://github.com/jmfederico/pi-web/tree/main/packages/todos) is an opt-in, separately built/local-installable package, not included in the PI WEB distribution or Available packages auto-installation. Its application tab and hosted companion tools manage one SQLite-backed list through a configured server and client machines. The first slice supports shared unassigned tasks, statuses, text/archived filters and revision-checked create/update/archive/restore; project assignment is not available yet. See its [usage guide](https://github.com/jmfederico/pi-web/blob/main/packages/todos/docs/usage.md) for build/install commands, machine-global JSON roles/targets and safe restart ordering.
+The repository's [To-dos package](https://github.com/jmfederico/pi-web/tree/main/packages/todos) is an opt-in, separately built/local-installable package, not included in the PI WEB distribution or Available packages auto-installation. Its application tab and hosted companion tools manage one SQLite-backed list through a configured server and client machines. It supports optional project assignment, one shared unassigned bucket, project/status/text/archived filters and revision-checked create/update/archive/restore. Git-origin identities match across machines; non-Git/no-origin identities stay local to their originating machine while tasks remain in the central list. See its [usage guide](https://github.com/jmfederico/pi-web/blob/main/packages/todos/docs/usage.md) for build/install commands, machine-global JSON roles/targets and safe restart ordering.
 
 ## Pi extension dialogs
 
