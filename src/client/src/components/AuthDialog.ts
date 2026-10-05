@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { AuthDialogState } from "../appState";
@@ -46,7 +47,7 @@ export class AuthDialog extends LitElement {
       >
         <header>
           <strong>${this.dialogTitle(state)}</strong>
-          <button title="Close" aria-label="Close" @click=${() => { this.cancel(); }}>×</button>
+          <button title="Close" aria-label="Close" @click=${() => { this.cancel(); }}>${renderHeroIcon("x-mark")}</button>
         </header>
         ${this.renderBody(state)}
       </modal-surface>
@@ -259,7 +260,7 @@ export class AuthDialog extends LitElement {
   }
 
   static override styles = [css`
-    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px var(--pi-ui-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100% - 40px)); }
     header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     .options { min-height: 0; overflow: auto; outline: none; }

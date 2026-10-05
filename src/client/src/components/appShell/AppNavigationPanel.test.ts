@@ -29,6 +29,16 @@ describe("shouldShowMachinesSection", () => {
 });
 
 describe("header identity", () => {
+  it("keeps the icon-only Actions control labelled and connected", async () => {
+    const panel = await mountHeaderPanel([machine("local")]);
+    panel.onShowActions = vi.fn();
+    await panel.updateComplete;
+    const button = panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Show Actions"]');
+    expect(button?.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    button?.click();
+    expect(panel.onShowActions).toHaveBeenCalledOnce();
+  });
+
   it("shows the plain brand without an icon or address", async () => {
     const panel = await mountHeaderPanel([machine("local")]);
 

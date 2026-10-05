@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import "./ModalSurface";
@@ -93,7 +94,7 @@ export class MachineDialog extends LitElement {
         <form @submit=${(event: SubmitEvent) => { this.handleSubmit(event); }}>
           <header>
             <strong>Add machine</strong>
-            <button type="button" @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+            <button type="button" @click=${() => { this.onCancel?.(); }} aria-label="Close">${renderHeroIcon("x-mark")}</button>
           </header>
           <div class="body">
             ${this.error === "" ? null : html`<div class="dialog-error" role="alert">${this.error}</div>`}
@@ -125,7 +126,8 @@ export class MachineDialog extends LitElement {
   }
 
   static override styles = css`
-    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px var(--pi-ui-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-place-items: start center; --modal-surface-backdrop-padding: min(12dvh, 90px) 0 max(20px, env(safe-area-inset-bottom)); --modal-surface-width: min(560px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, 100%); }
     /* The form is the surface's single slotted child: the section's flex column
        constrains it (min-height: 0 so the body can shrink and scroll). */

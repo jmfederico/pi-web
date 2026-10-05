@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, trustApi, type FileSuggestion } from "../api";
@@ -165,7 +166,7 @@ export class ProjectDialog extends LitElement {
       >
         <header>
           <strong>Add project</strong>
-          <button @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+          <button @click=${() => { this.onCancel?.(); }} aria-label="Close">${renderHeroIcon("x-mark")}</button>
         </header>
         <div class="body">
           <label>
@@ -196,7 +197,8 @@ export class ProjectDialog extends LitElement {
   }
 
   static override styles = css`
-    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px var(--pi-ui-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-place-items: start center; --modal-surface-backdrop-padding: min(12dvh, 90px) 0 max(20px, env(safe-area-inset-bottom)); --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(700px, 100%); }
     header, footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     footer { border-top: 1px solid var(--pi-border); border-bottom: 0; justify-content: end; }

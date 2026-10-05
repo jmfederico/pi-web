@@ -41,6 +41,7 @@ const tokens = {
 } satisfies ThemeTokens;
 
 const themes = [
+  theme("apple-dark", "Apple Dark", "dark"),
   theme("pi-web-dark", "PI WEB Dark", "dark"),
   theme("pi-web-light", "PI WEB Light", "light"),
   theme("classic", "PI WEB Classic", "dark"),
@@ -58,13 +59,19 @@ const themePairs: QualifiedThemePairContribution[] = [
 ];
 
 describe("resolveThemePreference", () => {
-  it("resolves the default auto preference to the dark member when the system is dark", () => {
-    expect(resolveThemePreference({ themes, themePairs, preference: DEFAULT_THEME_PREFERENCE, prefersLight: false }).activeTheme?.id)
+  it("defaults to Apple Dark without overriding an existing selection", () => {
+    expect(DEFAULT_THEME_PREFERENCE).toEqual({ themeId: "themes:apple-dark", auto: false });
+    expect(resolveThemePreference({ themes, themePairs, preference: DEFAULT_THEME_PREFERENCE, prefersLight: true }).activeTheme?.id).toBe("themes:apple-dark");
+    expect(resolveThemePreference({ themes, themePairs, preference: { themeId: CLASSIC_THEME_ID, auto: false }, prefersLight: false }).activeTheme?.id).toBe(CLASSIC_THEME_ID);
+  });
+
+  it("resolves the PI WEB auto preference to the dark member when the system is dark", () => {
+    expect(resolveThemePreference({ themes, themePairs, preference: { themeId: "themes:pi-web-dark", auto: true }, prefersLight: false }).activeTheme?.id)
       .toBe("themes:pi-web-dark");
   });
 
-  it("resolves the default auto preference to the light member when the system is light", () => {
-    expect(resolveThemePreference({ themes, themePairs, preference: DEFAULT_THEME_PREFERENCE, prefersLight: true }).activeTheme?.id)
+  it("resolves the PI WEB auto preference to the light member when the system is light", () => {
+    expect(resolveThemePreference({ themes, themePairs, preference: { themeId: "themes:pi-web-dark", auto: true }, prefersLight: true }).activeTheme?.id)
       .toBe("themes:pi-web-light");
   });
 

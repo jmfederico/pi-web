@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "../heroicons";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Machine, Project, SessionInfo, Workspace } from "../../api";
@@ -116,9 +117,7 @@ export class AppContextBar extends LitElement {
     if (this.onShowActions === undefined) return null;
     return html`
       <button type="button" class="context-action-button" title="Show Actions" aria-label="Show Actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.onShowActions?.(); }}>
-        <svg class="context-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M13 2 4 14h7l-1 8 10-13h-7V2Z"></path>
-        </svg>
+        ${renderHeroIcon("bolt", "context-action-icon")}
       </button>
     `;
   }
@@ -168,7 +167,7 @@ export class AppContextBar extends LitElement {
   static override styles = css`
     /* Keep the refresh menu in this shadow tree above the following mobile tab strip. */
     :host { position: relative; z-index: 20; flex: 0 0 auto; min-width: 0; }
-    .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: flex; align-items: center; gap: 0; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+    .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: flex; align-items: center; gap: 0; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-chrome-bg, var(--pi-surface)); }
     .context-bar::before, .context-bar::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
     .context-bar::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
     .context-bar::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
@@ -176,21 +175,24 @@ export class AppContextBar extends LitElement {
     .context-bar-label { display: none; }
     .context-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 5px; margin: 0; padding: 0 8px; list-style: none; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scroll-padding-inline: 8px; scrollbar-width: thin; }
     .context-item { flex: 0 0 auto; min-width: 0; display: flex; }
-    .context-actions { position: relative; flex: 0 0 auto; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--pi-bg); pointer-events: none; }
-    .context-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -24px; z-index: 0; width: 24px; background: linear-gradient(90deg, transparent, var(--pi-bg)); pointer-events: none; }
+    .context-item + .context-item { border-left: 1px solid var(--pi-border-muted); padding-left: 4px; }
+    .context-actions { position: relative; flex: 0 0 auto; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--pi-chrome-bg, var(--pi-surface)); pointer-events: none; }
+    .context-actions::before { content: ""; position: absolute; top: 0; bottom: 0; left: -24px; z-index: 0; width: 24px; background: linear-gradient(90deg, transparent, var(--pi-chrome-bg, var(--pi-surface))); pointer-events: none; }
     app-refresh-control, .context-action-button { position: relative; z-index: 1; pointer-events: auto; }
-    .context-action-button { box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 0; line-height: 1; }
+    .context-action-button { box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pi-text); padding: 0; line-height: 1; }
     .context-action-button.selected, .context-action-button:hover, .context-action-button:focus-visible { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
-    .context-action-icon { width: 18px; height: 18px; fill: currentColor; pointer-events: none; }
-    .context-chip { flex: 0 0 auto; min-width: 0; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pi-border-muted); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 4px 8px; font: inherit; text-align: left; }
+    .context-action-icon { width: 18px; height: 18px; fill: none; pointer-events: none; }
+    .context-chip { flex: 0 0 auto; min-width: 0; display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pi-text); padding: 4px 8px; font: inherit; text-align: left; }
     .context-chip-icon { flex: 0 0 auto; width: 14px; height: 14px; }
     .context-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-muted); font-size: 11px; }
     button.context-chip:hover { background: var(--pi-surface-hover); }
     button.context-chip:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
-    .context-chip.empty { border-style: dashed; color: var(--pi-muted); }
+    .context-chip.empty { color: var(--pi-muted); }
     .context-kind { display: none; }
     .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
     button { cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+    @media (pointer: coarse) { .context-action-button, .context-chip { min-height: 44px; } .context-action-button { width: 44px; } }
   `;
 }
 
@@ -244,7 +246,7 @@ function workspaceContextTitle(workspace: Workspace | undefined): string {
   return workspace === undefined ? "No workspace selected" : `${workspace.label}${workspace.isMain ? " · main" : ""} — ${workspace.path}`;
 }
 
-function sessionContextLabel(session: SessionInfo | undefined): string {
+export function sessionContextLabel(session: SessionInfo | undefined): string {
   const name = session?.name?.trim();
   const firstMessage = session?.firstMessage.trim();
   return name !== undefined && name !== "" ? name : firstMessage !== undefined && firstMessage !== "" ? firstMessage : session === undefined ? "No session" : shortSessionId(session.id);

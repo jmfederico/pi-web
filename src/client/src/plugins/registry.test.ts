@@ -7,6 +7,7 @@ import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
 import { PluginRegistry, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
 import { themePackPlugin } from "./themes";
+import { resolveThemePreference } from "../theme";
 import type { PiWebPlugin, PluginActivationResult, PluginCapability, PluginRuntimeContext, QualifiedContributionId, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
 import { createPluginPeer } from "./pluginPeer";
 import { adaptPublicPlugin, publicPluginState } from "./publicContext";
@@ -1318,13 +1319,43 @@ describe("PluginRegistry", () => {
     await registry.register({ id: "themes", plugin: themePackPlugin });
 
     expect(registry.getThemes().map((theme) => ({ id: theme.id, colorScheme: theme.colorScheme }))).toEqual([
+      { id: "themes:apple-dark", colorScheme: "dark" },
       { id: "themes:pi-web-dark", colorScheme: "dark" },
       { id: "themes:pi-web-light", colorScheme: "light" },
       { id: "themes:classic", colorScheme: "dark" },
+      { id: "themes:dracula", colorScheme: "dark" },
     ]);
     expect(registry.getThemePairs().map((pair) => ({ id: pair.id, light: pair.light, dark: pair.dark }))).toEqual([
       { id: "themes:pi-web", light: "themes:pi-web-light", dark: "themes:pi-web-dark" },
     ]);
+  });
+
+  it("keeps Dracula dark even when Auto follows a light system preference", async () => {
+    const registry = new PluginRegistry();
+    await registry.register({ id: "themes", plugin: themePackPlugin });
+    const resolution = resolveThemePreference({
+      themes: registry.getThemes(),
+      themePairs: registry.getThemePairs(),
+      preference: { themeId: "themes:dracula", auto: true },
+      prefersLight: true,
+    });
+
+    expect(resolution.activeTheme).toMatchObject({
+      id: "themes:dracula",
+      name: "Dracula",
+      colorScheme: "dark",
+      tokens: {
+        "--pi-bg": "#282a36",
+        "--pi-text": "#f8f8f2",
+        "--pi-accent": "#bd93f9",
+        "--pi-selection-bg": "#44475a",
+        "--pi-success": "#50fa7b",
+        "--pi-warning": "#f1fa8c",
+        "--pi-danger": "#ff5555",
+        "--pi-terminal-bg": "#282a36",
+      },
+    });
+    expect(resolution.selectedThemePair).toBeUndefined();
   });
 
   it("collects theme contributions in contribution order", async () => {

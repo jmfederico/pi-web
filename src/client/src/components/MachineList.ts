@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth } from "../api";
@@ -106,7 +107,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
           aria-expanded=${String(open)}
           aria-controls=${menuId}
           @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(machine.id, event.currentTarget); }}
-        >⋯</button>
+        >${renderHeroIcon("ellipsis-horizontal")}</button>
         ${open ? html`
           <div class="action-menu-panel machine-menu-panel" id=${menuId} style=${this.menuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             <button class="danger" title=${`Remove ${machine.name}`} @click=${() => { this.removeMachine(machine); }}>Remove</button>
@@ -154,7 +155,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   static override styles = [
     listStyles,
     css`
-      .machine-row.no-actions .action-main { border-radius: 8px; }
+      .machine-row.no-actions .action-main { border-radius: 0; }
       .machine-primary { display: flex; align-items: baseline; gap: 6px; }
       .machine-primary-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
       .machine-menu-panel button.danger { color: var(--pi-danger); }

@@ -32,6 +32,7 @@ export interface SessionEventSocket {
     onReconnect?: () => void,
     machineId?: string,
     onInitialOpen?: () => void,
+    onConnectionChange?: (connected: boolean) => void,
   ): void;
   setHandler(onEvent: (event: SessionUiEvent) => void): void;
   close(): void;
@@ -143,6 +144,11 @@ export class SessionController {
   private readonly beginNavigationOperation: SessionControllerDependencies["beginNavigationOperation"];
   private readonly browserErrors: BrowserErrorReporter;
   private selectionSeq = 0;
+  private extensionUiEpoch = 0;
+  private extensionUiConnectionGeneration = 0;
+  private readonly extensionUiEventGenerations = new WeakMap<SessionUiEvent, number>();
+  private extensionUiConnected = false;
+  private pendingExtensionUi: AppState["selectedExtensionUi"] | null = null;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
   // `SessionEventHub` sequence captured together with the seeded partial by the
@@ -207,6 +213,9 @@ export class SessionController {
     this.selectionSeq += 1;
     this.socket.close();
     this.notifications?.clearSelectedSession();
+    this.pendingExtensionUi = null;
+    this.extensionUiConnected = false;
+    this.setState({ selectedExtensionUi: undefined });
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
     // Note: sendingPrompts is intentionally NOT cleared here. Deselecting a
@@ -297,13 +306,16 @@ export class SessionController {
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     const seq = ++this.selectionSeq;
     this.socket.close();
+    this.pendingExtensionUi = null;
+    this.extensionUiConnected = false;
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
     this.notifications?.prepareSelectedSession(session, machineId);
-    const transcriptKey = this.sessionCacheKey(session.id);
+    const transcriptKey = this.transcriptCacheKey(session, machineId);
     const cached = this.transcripts.cachedView(transcriptKey);
     this.setState({
       selectedSession: session,
+      selectedExtensionUi: undefined,
       ...cached,
       isLoadingEarlierMessages: false,
       ...(options?.preserveTreeDialog === true ? {} : { treeDialog: undefined }),
@@ -327,10 +339,17 @@ export class SessionController {
       }
       this.socket.connect(
         session,
-        (event) => { this.applyEvent(event); },
+        (event) => {
+          if (!this.isCurrentSessionSelection(session.id, machineId, seq)) return;
+          if (event.type === "status.update" && this.extensionUiConnected) {
+            this.extensionUiEventGenerations.set(event, this.extensionUiConnectionGeneration);
+          }
+          this.applyEvent(event);
+        },
         () => { void this.refreshSelectedSession(session.id); },
         machineId,
         () => { void this.notifications?.refreshSelectedSession(session, machineId); },
+        (connected) => { this.syncExtensionUiConnection(session, machineId, seq, connected); },
       );
       socketConnected = true;
       const refreshTarget: SelectedSessionRefreshTarget = {
@@ -381,16 +400,22 @@ export class SessionController {
     if (!session || state.isLoadingEarlierMessages || state.messagePageStart <= 0) return;
     const machineId = selectedMachineId(state);
     const errorOwner = this.captureSessionErrorOwner(session);
+    const seq = this.selectionSeq;
+    const key = this.transcriptCacheKey(session, machineId);
+    const isCurrent = () => seq === this.selectionSeq
+      && selectedMachineId(this.getState()) === machineId
+      && this.getState().selectedSession?.id === session.id
+      && this.getState().selectedSession?.cwd === session.cwd;
     this.setState({ isLoadingEarlierMessages: true });
     try {
       const page = await this.api.messages(session, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, machineId);
-      if (this.getState().selectedSession?.id !== session.id) return;
-      const history = this.transcripts.mergeHistory(this.sessionCacheKey(session.id), page);
+      if (!isCurrent()) return;
+      const history = this.transcripts.mergeHistory(key, page);
       this.setState(history);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     } finally {
-      if (this.getState().selectedSession?.id === session.id) this.setState({ isLoadingEarlierMessages: false });
+      if (isCurrent()) this.setState({ isLoadingEarlierMessages: false });
     }
   }
 
@@ -634,7 +659,7 @@ export class SessionController {
 
     const editorText = result.editorText ?? "";
     saveDraft(cacheKey, editorText);
-    this.transcripts.discard(cacheKey);
+    this.transcripts.discard(this.transcriptCacheKey(session, machineId));
 
     // A user can reselect the same session while the request is in flight. Its
     // sequence changes, but the server mutation still belongs to the selected
@@ -677,7 +702,7 @@ export class SessionController {
     const machineId = selectedMachineId(state);
     const errorOwner = this.captureSessionErrorOwner(session);
     const expected = this.navigationSelection();
-    const originalCacheKey = machineSessionKey(machineId, session.id);
+    const originalCacheKey = this.transcriptCacheKey(session, machineId);
     let result: SessionTreeForkResult;
     try {
       result = await this.api.forkTree(session, { entryId, expectedLeafId: tree.activeLeafId }, machineId);
@@ -970,8 +995,8 @@ export class SessionController {
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
       await this.api.reloadSession(session, machineId);
-      this.transcripts.discard(this.sessionCacheKey(session.id));
-      if (this.getState().selectedSession?.id === session.id) {
+      this.transcripts.discard(this.transcriptCacheKey(session, machineId));
+      if (this.isSelectedSessionIdentity(session.id, machineId) && this.getState().selectedSession?.cwd === session.cwd) {
         await this.selectSession(session, { updateUrl: false });
       }
     } catch (error) {
@@ -1332,7 +1357,7 @@ export class SessionController {
 
   private requestSelectedSessionRefresh(target: SelectedSessionRefreshTarget): Promise<void> {
     if (!this.isCurrentRefreshTarget(target)) return Promise.resolve();
-    const key = machineSessionKey(target.machineId, target.session.id);
+    const key = this.transcriptCacheKey(target.session, target.machineId);
     // Start buffering synchronously, including the coordinator's queued phase.
     this.bufferRefreshEvents(target);
     // The notification controller coalesces its own refreshes. Keep that work
@@ -1347,6 +1372,7 @@ export class SessionController {
       if (!this.isCurrentRefreshTarget(target)) return;
       const buffer = this.bufferRefreshEvents(target);
       try {
+        const extensionUiGeneration = this.extensionUiConnected ? this.extensionUiConnectionGeneration : undefined;
         const snapshot = await this.api.transcriptSnapshot(target.session, { limit: MESSAGE_PAGE_SIZE }, target.machineId);
         if (!this.isCurrentRefreshTarget(target)) return;
         const { page, status } = snapshot;
@@ -1364,6 +1390,7 @@ export class SessionController {
             status,
             activity: this.getState().sessionActivities[target.session.id],
           });
+          this.observeExtensionUiStatus(status, extensionUiGeneration);
           this.applyStatus(status);
           this.lastAppliedSelectedRefresh = { selectionSeq: target.selectionSeq, partialJson: selectedRefreshPartialJson(snapshot) };
         }
@@ -1413,6 +1440,10 @@ export class SessionController {
     if (selectedRefreshPartialJson(streamSnapshot) !== last.partialJson) return false;
     if (!isHistoryTailSlice(this.transcripts.rawHistoryPage(key), page)) return false;
     if (JSON.stringify(status) !== JSON.stringify(this.getState().status)) return false;
+    // A separate connection snapshot may differ even when canonical status is
+    // unchanged. Reconcile its removal before replaying buffered older frames.
+    if (this.extensionUiConnected
+      && JSON.stringify(status.extensionUi) !== JSON.stringify(this.getState().selectedExtensionUi?.snapshot)) return false;
     // applyStatus has one effect even for identical input: it clears a stale
     // active activity. A tick that would clear is not redundant.
     return this.getState().sessionActivities[status.sessionId]?.phase !== "active" || isSessionActive(status);
@@ -1420,6 +1451,7 @@ export class SessionController {
 
   private isCurrentRefreshTarget(target: SelectedSessionRefreshTarget): boolean {
     return this.isCurrentSessionSelection(target.session.id, target.machineId, target.selectionSeq)
+      && this.getState().selectedSession?.cwd === target.session.cwd
       && navigationIsCurrent(target.navigation);
   }
 
@@ -1489,6 +1521,11 @@ export class SessionController {
 
   private sessionCacheKey(sessionId: string): string {
     return machineSessionKey(selectedMachineId(this.getState()), sessionId);
+  }
+
+  private transcriptCacheKey(session: SessionRef, machineId: string): string {
+    // Legacy machine/id caches have no cwd ownership, so do not reuse them.
+    return JSON.stringify([machineId, session.id, session.cwd]);
   }
 
   private statusForSession(session: SessionInfo | undefined): SessionStatus | undefined {
@@ -1900,6 +1937,41 @@ export class SessionController {
     this.setState({ sessions: [session, ...state.sessions] });
   }
 
+  private extensionUiSnapshot(session: SessionRef, machineId: string, snapshot: SessionStatus["extensionUi"]): AppState["selectedExtensionUi"] {
+    return snapshot === undefined ? undefined : { machineId, sessionId: session.id, cwd: session.cwd, snapshot };
+  }
+
+  private observeExtensionUiStatus(status: SessionStatus, connectionGeneration: number | undefined): void {
+    const state = this.getState();
+    const session = state.selectedSession;
+    if (!this.extensionUiConnected || connectionGeneration !== this.extensionUiConnectionGeneration || session?.id !== status.sessionId) return;
+    this.extensionUiEpoch += 1;
+    this.pendingExtensionUi = this.extensionUiSnapshot(session, selectedMachineId(state), status.extensionUi);
+  }
+
+  private syncExtensionUiConnection(session: SessionInfo, machineId: string, seq: number, connected: boolean): void {
+    if (!this.isCurrentSessionSelection(session.id, machineId, seq)) return;
+    const epoch = ++this.extensionUiEpoch;
+    // Retire both in-flight requests and buffered observations on disconnect.
+    // Their ordinary transcript reconciliation is independent of UI freshness.
+    if (!connected) this.extensionUiConnectionGeneration += 1;
+    this.extensionUiConnected = connected;
+    this.pendingExtensionUi = null;
+    this.setState({ selectedExtensionUi: undefined });
+    if (!connected) return;
+    // A cached transcript status is not proof of connection freshness. A newer
+    // stream frame or disconnect invalidates this reconnect snapshot request.
+    void this.api.status(session, machineId).then((status) => {
+      if (epoch !== this.extensionUiEpoch || !this.isCurrentSessionSelection(session.id, machineId, seq)) return;
+      if (status.sessionId !== session.id) return;
+      this.setState({ selectedExtensionUi: this.extensionUiSnapshot(session, machineId, status.extensionUi) });
+    }, (error: unknown) => {
+      if (epoch === this.extensionUiEpoch && this.isCurrentSessionSelection(session.id, machineId, seq)) {
+        this.reportSessionError(session, machineId, error);
+      }
+    });
+  }
+
   private applyActivity(activity: SessionActivity) {
     this.setState({
       sessionActivities: { ...this.getState().sessionActivities, [activity.sessionId]: activity },
@@ -1910,12 +1982,15 @@ export class SessionController {
   private applyStatus(status: SessionStatus) {
     const state = this.getState();
     const isSelected = state.selectedSession?.id === status.sessionId;
+    const extensionUiPatch = isSelected && this.pendingExtensionUi !== null ? { selectedExtensionUi: this.pendingExtensionUi } : {};
+    if (isSelected) this.pendingExtensionUi = null;
     const clearsStaleActivity = state.sessionActivities[status.sessionId]?.phase === "active" && !isSessionActive(status);
     this.setState({
       sessionStatuses: { ...state.sessionStatuses, [status.sessionId]: status },
       ...sessionMessageCountPatch(state, status.sessionId, status.messageCount),
       ...(clearsStaleActivity ? { sessionActivities: omitSessionActivity(state.sessionActivities, status.sessionId) } : {}),
       status: isSelected ? status : state.status,
+      ...extensionUiPatch,
       activity: isSelected && clearsStaleActivity ? undefined : state.activity,
       // The daemon owns whether an ask is open, so every status it publishes is
       // authoritative for the selected session's card, including its removal.
@@ -2017,6 +2092,7 @@ export class SessionController {
     // editor's DOM stable during streaming, so in-progress touch gestures (e.g.
     // the iOS long-press edit/paste callout) are not interrupted by a re-render.
     if (event.type === "status.update") {
+      this.observeExtensionUiStatus(event.status, this.extensionUiEventGenerations.get(event));
       this.queueStatusUpdate(event.status);
       return;
     }

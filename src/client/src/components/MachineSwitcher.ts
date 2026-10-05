@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth, MachineStatus } from "../api";
@@ -119,7 +120,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
               aria-label=${`Actions for ${machine.name}`}
               aria-expanded=${String(actionsOpen)}
               @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleActionsMenu(machine.id, event.currentTarget); }}
-            >⋯</button>
+            >${renderHeroIcon("ellipsis-horizontal")}</button>
             ${actionsOpen ? html`
               <div class="machine-option-actions-panel" style=${this.actionMenuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
                 <button class="danger" title=${`Remove ${machine.name}`} @click=${() => { this.removeMachine(machine); }}>Remove</button>
@@ -307,12 +308,14 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
   }
 
   static override styles = css`
+    button, input, select, textarea { font: inherit; }
     :host { min-width: 0; display: block; }
     .machine-switcher { min-width: 0; }
-    .machine-switcher-button { box-sizing: border-box; width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 8px; cursor: pointer; text-align: left; }
-    .machine-switcher-button:hover, .machine-switcher-button:focus-visible { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
+    .machine-switcher-button { box-sizing: border-box; width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pi-text); padding: 3px 6px; cursor: pointer; text-align: left; }
+    .machine-switcher-button:hover { background: var(--pi-surface-hover); }
+    .machine-switcher-button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
     .machine-switcher-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
-    .machine-switcher-kicker { color: var(--pi-muted); font-size: 10px; line-height: 1; text-transform: uppercase; letter-spacing: .02em; }
+    .machine-switcher-kicker { color: var(--pi-muted); font-size: 11px; line-height: 1; }
     .machine-switcher-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1.2; }
     .machine-status { flex: 0 0 auto; color: var(--pi-muted); font-size: 11px; }
     .machine-status.online { color: var(--pi-success); }
@@ -328,12 +331,12 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .machine-icon { flex: 0 0 auto; width: 16px; height: 16px; }
     .machine-icon.dimmed { filter: grayscale(1); opacity: .45; }
     .machine-option-main .machine-icon { width: 14px; height: 14px; }
-    .machine-info { box-sizing: border-box; width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 8px; }
+    .machine-info { box-sizing: border-box; width: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 0; background: transparent; color: var(--pi-text); padding: 5px 8px; }
     .machine-info-url { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
-    .machine-switcher-menu { position: fixed; z-index: 10000; box-sizing: border-box; min-width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); box-shadow: 0 8px 24px var(--pi-shadow); }
+    .machine-switcher-menu { position: fixed; z-index: 10000; box-sizing: border-box; min-width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); box-shadow: 0 8px 24px var(--pi-shadow); }
     .machine-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px; align-items: stretch; margin: 2px 0; }
     .machine-option.no-actions { grid-template-columns: minmax(0, 1fr); }
-    .machine-option-main, .machine-option-actions-toggle, .machine-option-actions-panel button { border: 0; border-radius: 7px; background: transparent; color: var(--pi-text); cursor: pointer; }
+    .machine-option-main, .machine-option-actions-toggle, .machine-option-actions-panel button { border: 0; border-radius: 0; background: transparent; color: var(--pi-text); cursor: pointer; }
     .machine-option-main { min-width: 0; display: grid; gap: 2px; padding: 7px 8px; text-align: left; }
     .machine-option-name { min-width: 0; display: flex; align-items: center; gap: 6px; }
     .machine-option-name span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

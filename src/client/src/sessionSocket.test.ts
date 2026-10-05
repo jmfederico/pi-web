@@ -338,6 +338,25 @@ describe("socket instance isolation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("reports disconnect/reconnect and ignores a stale close callback", () => {
+    const retries: (() => void)[] = [];
+    vi.stubGlobal("window", { clearTimeout: vi.fn(), setTimeout: (callback: () => void) => { retries.push(callback); return 1; } });
+    const changed = vi.fn();
+    const socket = new SessionSocket();
+    socket.connect({ id: "session-1", cwd: "/repo" }, vi.fn(), undefined, "local", undefined, changed);
+    const first = FakeWebSocket.instances[0];
+    if (first === undefined) throw new Error("Expected socket");
+    first.onopen?.();
+    first.onclose?.();
+    expect(changed.mock.calls).toEqual([[true], [false]]);
+    retries[0]?.();
+    FakeWebSocket.instances[1]?.onopen?.();
+    first.onclose?.();
+    expect(changed.mock.calls).toEqual([[true], [false], [true]]);
+    socket.close();
+    expect(changed.mock.calls).toEqual([[true], [false], [true], [false]]);
+  });
+
   it("drops queued session frames and close callbacks from a replaced machine socket", async () => {
     const socket = new SessionSocket();
     const oldHandler = vi.fn();

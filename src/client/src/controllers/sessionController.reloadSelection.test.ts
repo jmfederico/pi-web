@@ -5,7 +5,7 @@ import { browserErrorScopeKey, sessionBrowserErrorScope } from "../browserErrors
 import type { NavigationFreshness } from "./types";
 import { SessionController } from "./sessionController";
 import { InMemorySessionSelectionMemory } from "./sessionSelection";
-import { defaultApi, deferred, emptyPage, FakeSocket, oldSession, sessionKey, sessionLookupId, status, workspace, type AppState, type MessagePage } from "./sessionController.testSupport";
+import { defaultApi, deferred, emptyPage, FakeSocket, oldSession, sessionLookupId, status, workspace, type AppState, type MessagePage } from "./sessionController.testSupport";
 
 describe("SessionController reload and selection", () => {
   it("reconciles a restored selected session after a view-only navigation change", async () => {
@@ -154,7 +154,7 @@ describe("SessionController reload and selection", () => {
 
   it("reloads the selected session from disk, discards the cached transcript, and re-fetches history", async () => {
     const persistedSession = { ...oldSession, persisted: true };
-    const cacheKey = sessionKey(oldSession.id);
+    const cacheKey = JSON.stringify(["local", oldSession.id, oldSession.cwd]);
     const freshPage: MessagePage = { messages: [{ role: "assistant", content: "fresh from disk" }], start: 1, total: 2 };
     const cachedPages = new Map<string, MessagePage>([[cacheKey, { messages: [{ role: "user", content: "stale cached transcript" }], start: 0, total: 2 }]]);
     const reloadCalls: string[] = [];

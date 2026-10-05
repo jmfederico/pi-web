@@ -112,7 +112,7 @@ describe("SessionController session tree navigation", () => {
     const stalePage = deferred<MessagePage>();
     const staleStatus = deferred<SessionStatus>();
     const freshPage = page("fresh branch", 2);
-    const cacheKey = machineSessionKey("local", oldSession.id);
+    const cacheKey = JSON.stringify(["local", oldSession.id, oldSession.cwd]);
     const cachedPages = new Map<string, MessagePage>();
     const removedKeys: string[] = [];
     let snapshotCalls = 0;
@@ -173,7 +173,7 @@ describe("SessionController session tree navigation", () => {
     expect(cachedPages.get(cacheKey)).toEqual(freshPage);
     expect(state.messages).toEqual([{ role: "assistant", parts: [{ type: "text", text: "fresh branch" }] }]);
     expect(state.treeDialog).toBeUndefined();
-    expect(loadDraft(cacheKey)).toBe("edit original prompt");
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("edit original prompt");
     expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
     expect(socket.connectedSessionIds).toEqual([oldSession.id, oldSession.id]);
   });
@@ -456,8 +456,8 @@ describe("SessionController session tree navigation", () => {
 
   it("discards only the originating cache and does not refresh or replace another session after a selection race", async () => {
     const navigationResult = deferred<{ cancelled: false; editorText: string }>();
-    const oldCacheKey = machineSessionKey("local", oldSession.id);
-    const replacementCacheKey = machineSessionKey("local", replacementSession.id);
+    const oldCacheKey = JSON.stringify(["local", oldSession.id, oldSession.cwd]);
+    const replacementCacheKey = JSON.stringify(["local", replacementSession.id, replacementSession.cwd]);
     const cachedPages = new Map<string, MessagePage>([
       [oldCacheKey, page("old cached branch", 1)],
       [replacementCacheKey, page("replacement cached", 1)],
@@ -504,7 +504,7 @@ describe("SessionController session tree navigation", () => {
     expect(requestedMessages).toEqual([replacementSession.id]);
     expect(removedKeys).toEqual([oldCacheKey]);
     expect(cachedPages.get(replacementCacheKey)).toEqual(page("replacement authoritative", 1));
-    expect(loadDraft(oldCacheKey)).toBe("originating draft");
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("originating draft");
     expect(replacePromptEditorText).not.toHaveBeenCalled();
   });
 
@@ -567,7 +567,7 @@ describe("SessionController session tree navigation", () => {
 
 describe("SessionController session tree fork", () => {
   it("forks into a new session, stores the draft under the forked key, and switches to it", async () => {
-    const oldCacheKey = machineSessionKey("local", oldSession.id);
+    const oldCacheKey = JSON.stringify(["local", oldSession.id, oldSession.cwd]);
     const forkedCacheKey = machineSessionKey("local", replacementSession.id);
     const cachedPages = new Map<string, MessagePage>([[oldCacheKey, page("original branch", 1)]]);
     const removedKeys: string[] = [];
@@ -607,7 +607,7 @@ describe("SessionController session tree fork", () => {
     expect(state.selectedSession?.id).toBe(replacementSession.id);
     expect(state.treeDialog).toBeUndefined();
     expect(loadDraft(forkedCacheKey)).toBe("resend me");
-    expect(loadDraft(oldCacheKey)).toBe("");
+    expect(loadDraft(machineSessionKey("local", oldSession.id))).toBe("");
     expect(removedKeys).toEqual([oldCacheKey]);
   });
 

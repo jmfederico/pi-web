@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
@@ -35,7 +36,7 @@ export class ActionPalette extends LitElement {
               }
             }}
           >
-          <button title="Close" aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
+          <button title="Close" aria-label="Close" @click=${() => this.onCancel?.()}>${renderHeroIcon("x-mark")}</button>
         </header>
         <div class="options">
           ${actions.length === 0 ? html`<div class="empty">No actions found.</div>` : actions.map((action, index) => html`

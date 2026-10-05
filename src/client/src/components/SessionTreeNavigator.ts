@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNodeKind, SessionTreeSnapshot, SessionTreeSummaryChoice } from "../api";
@@ -88,7 +89,7 @@ export class SessionTreeNavigator extends LitElement {
             <span class="eyebrow">Conversation history</span>
             <h1>Navigate session tree</h1>
           </div>
-          <button class="close-button" ?disabled=${this.busy} title="Close session tree" aria-label="Close session tree" @click=${() => { this.onCancel?.(); }}>×</button>
+          <button class="close-button" ?disabled=${this.busy} title="Close session tree" aria-label="Close session tree" @click=${() => { this.onCancel?.(); }}>${renderHeroIcon("x-mark")}</button>
         </header>
         ${this.step === "tree" ? this.renderTreeStep() : this.renderActionStep()}
         ${this.renderFooter()}
@@ -520,7 +521,8 @@ export class SessionTreeNavigator extends LitElement {
   }
 
   static override styles = css`
-    :host { position: fixed; inset: 0; z-index: 40; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    :host { position: fixed; inset: 0; z-index: 40; color: var(--pi-text); font: 14px var(--pi-ui-font, system-ui, sans-serif); }
     * { box-sizing: border-box; }
     /* Full-viewport shell: the surface's centered-card defaults are overridden
        so the dialog keeps covering the whole viewport. */

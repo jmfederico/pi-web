@@ -46,6 +46,9 @@ import { findArchiveCandidateByIdOrPrefix, planSessionArchiveTree, type SessionA
 import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
+import { readActivitySource, readActivityTool, projectLiveTodos, projectLiveGoal, readLiveFleet, type ActivityRunner } from "./sessionActivityReader.js";
+import { parseActivityChildren, type SessionActivitySnapshot } from "../../shared/sessionActivity.js";
+import { sampleSystemMemory } from "../status/systemMemory.js";
 import { deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
@@ -105,6 +108,7 @@ import { plainTextTheme } from "./plainTextTheme.js";
 import { projectTranscriptMarkdown } from "./transcriptMarkdown.js";
 import { SessionUnreadStore, type SessionUnreadMutation } from "./sessionUnreadStore.js";
 import { applyEnabledModelToggle, catalogWithEnabledFirst, modelScopeId, persistedEnabledModelPatterns, resolveEnabledModelIds, resolveSessionModelOptions, scopedModelsFromEnabledIds, type EnabledModelCatalogEntry } from "./sessionModelScope.js";
+import { ExtensionUiState } from "./extensionUiState.js";
 
 /**
  * Minimal structured-logging seam, shaped like Fastify's logger so sessiond can
@@ -487,7 +491,7 @@ export interface PiAgentSession {
     getMarkdownTransformers(): MarkdownTransformer[];
     getUIContext(): ExtensionUIContext;
     setUIContext(uiContext?: ExtensionUIContext, mode?: "rpc"): void;
-  };
+  } & ActivityRunner;
   promptTemplates: readonly { name: string; description?: string; argumentHint?: string }[];
   resourceLoader: { getSkills(): { skills: readonly { name: string; description?: string }[] } };
   subscribe(listener: (event: unknown) => void): () => void;
@@ -1157,6 +1161,7 @@ export class PiSessionService implements SessionRouteService {
    * on full readiness.
    */
   private readonly startupSessions = new Map<string, PiAgentSession>();
+  private readonly extensionUiStates = new WeakMap<PiAgentSession, ExtensionUiState>();
   private readonly activities = new Map<string, { phase: "active" | "idle" | "error"; label: string; detail?: string; at: string }>();
   private readonly heartbeat: NodeJS.Timeout;
   private readonly commandService: SessionCommandService<PiAgentSession>;
@@ -1433,6 +1438,7 @@ export class PiSessionService implements SessionRouteService {
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const activeSessions = Array.from(new Set(this.active.values()));
     for (const active of activeSessions) {
+      this.clearExtensionUiState(active.runtime.session);
       this.forgetUnreadActivity(active.runtime.session);
       this.pendingAskStore.forgetSession(active.runtime.session.sessionId);
       this.endSessionExtensionDialogs(active.runtime.session.sessionId);
@@ -2453,6 +2459,31 @@ export class PiSessionService implements SessionRouteService {
     return this.statusFromSession(session, transcriptMessageCount(branch));
   }
 
+  async observability(ref: PiSessionRef): Promise<SessionActivitySnapshot> {
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    const runner = session.extensionRunner;
+    const deadline = new AbortController();
+    const timeout = setTimeout(() => { deadline.abort(); }, 2_000);
+    const signal = deadline.signal;
+    const sampledAt = new Date().toISOString();
+    try {
+      const [todos, goal, fleet, children, memory] = await Promise.all([
+        readActivitySource(async () => projectLiveTodos(await readActivityTool(runner, "todo", signal)), signal, "Live todo reader unavailable"),
+        readActivitySource(async () => projectLiveGoal(await readActivityTool(runner, "get_goal", signal)), signal, "Focused goal reader unavailable"),
+        readActivitySource(() => readLiveFleet(this.sessionEvents.connect(session, signal), signal), signal, "Extension fleet reader unavailable"),
+        readActivitySource(async () => parseActivityChildren(await this.listSubsessions(session.sessionId, session.sessionFile)), signal, "Native child status unavailable"),
+        readActivitySource(sampleSystemMemory, signal, "System memory sample unavailable"),
+      ]);
+      if (session.extensionRunner !== runner || (this.activeForRef(ref)?.runtime.session !== session && this.startupSessionForRef(ref) !== session)) {
+        throw new Error("Session runtime changed during activity sampling");
+      }
+      return { version: 1, sessionId: session.sessionId, cwd: ref.cwd, sampledAt, todos, goal, fleet, children, memory };
+    } finally {
+      clearTimeout(timeout);
+      deadline.abort();
+    }
+  }
+
   /**
    * Join-time snapshot of the in-flight assistant stream. The `seq` watermark and
    * the partial are read together in one synchronous tick (no await between the
@@ -3046,15 +3077,19 @@ export class PiSessionService implements SessionRouteService {
       [{ sessionId: session.sessionId, session }],
       "Stop current session activity before reloading",
       async () => {
+        this.clearExtensionUiState(session);
+        this.publishStatus(session);
         this.publishActivity(session, "reloading resources", "active");
         const priorGeneration = this.notificationGenerationBySession.get(session);
         let candidateGeneration: SessionNotificationGeneration | undefined;
         try {
-          await session.reload(priorGeneration === undefined ? undefined : {
+          await session.reload({
             beforeSessionStart: () => {
-              candidateGeneration = this.notificationStore.beginReplacement(priorGeneration, notificationIdentityForSession(session));
-              this.notificationGenerationBySession.set(session, candidateGeneration);
-              this.replaceSessionNotificationContext(session, candidateGeneration);
+              if (priorGeneration !== undefined) {
+                candidateGeneration = this.notificationStore.beginReplacement(priorGeneration, notificationIdentityForSession(session));
+                this.notificationGenerationBySession.set(session, candidateGeneration);
+              }
+              this.replaceSessionNotificationContext(session, candidateGeneration ?? priorGeneration);
             },
           });
           if (candidateGeneration !== undefined) {
@@ -3524,6 +3559,7 @@ export class PiSessionService implements SessionRouteService {
     // Open dialogs share that stance, but their extension waiters are parked
     // Promises inside the dying runtime: settle them rather than dropping them.
     this.endSessionExtensionDialogs(sessionId);
+    this.clearExtensionUiState(active.runtime.session);
     this.active.delete(sessionId);
     this.events.mediaIndex.forgetSession({ id: sessionId, cwd: active.runtime.session.sessionManager.getCwd() });
     this.activities.delete(sessionId);
@@ -3836,7 +3872,10 @@ export class PiSessionService implements SessionRouteService {
         const priorGeneration = notificationGeneration;
         let candidateGeneration: SessionNotificationGeneration | undefined;
         try {
-          await this.prepareUnreadRuntimeRebind(boundSession, session);
+          const previousSession = boundSession;
+          this.clearExtensionUiState(previousSession);
+          this.clearExtensionUiState(session);
+          await this.prepareUnreadRuntimeRebind(previousSession, session);
           await this.recoverSubsessionTrackingForOpenedSession(session);
           if (priorGeneration !== undefined) {
             candidateGeneration = this.notificationStore.beginReplacement(priorGeneration, notificationIdentityForSession(session));
@@ -3878,6 +3917,8 @@ export class PiSessionService implements SessionRouteService {
           this.publishNotificationMutations(this.notificationStore.abortReplacement(notificationGeneration));
         }
       }
+      this.clearExtensionUiState(boundSession);
+      this.clearExtensionUiState(runtime.session);
       active.unsubscribe();
       this.forgetUnreadActivity(boundSession);
       // A session_start dialog may already be parked when a later startup
@@ -3935,7 +3976,7 @@ export class PiSessionService implements SessionRouteService {
     }
   }
 
-  private replaceSessionNotificationContext(session: PiAgentSession, generation: SessionNotificationGeneration): void {
+  private replaceSessionNotificationContext(session: PiAgentSession, generation: SessionNotificationGeneration | undefined): void {
     session.extensionRunner.setUIContext(this.sessionUiContext(session, generation), "rpc");
   }
 
@@ -3945,6 +3986,7 @@ export class PiSessionService implements SessionRouteService {
     startupDialogs?: { signal: AbortSignal | undefined },
   ): ExtensionUIContext {
     const baseUiContext = session.extensionRunner.getUIContext();
+    const extensionUiState = this.extensionUiStateFor(session);
     const notify: ExtensionUIContext["notify"] = (message, type) => {
       if (generation === undefined) {
         this.events.publish(session.sessionId, {
@@ -3957,6 +3999,18 @@ export class PiSessionService implements SessionRouteService {
       const added = this.notificationStore.addNotification(generation, message, type);
       this.publishNotificationMutations(added.mutations);
     };
+    const setStatus: ExtensionUIContext["setStatus"] = (key, text) => {
+      if (!this.isCurrentExtensionUiContext(session, extensionUiState)) return;
+      if (extensionUiState.setStatus(key, text)) this.publishStatus(session);
+    };
+    const setWidget = (key: string, content: unknown): void => {
+      if (!this.isCurrentExtensionUiContext(session, extensionUiState)) return;
+      if (extensionUiState.setWidget(key, content)) this.publishStatus(session);
+    };
+    const setWorkingMessage: ExtensionUIContext["setWorkingMessage"] = (message) => {
+      if (!this.isCurrentExtensionUiContext(session, extensionUiState)) return;
+      if (extensionUiState.setWorkingMessage(message)) this.publishStatus(session);
+    };
     // PI WEB owns the browser-facing dialog, notification, and text-formatting
     // boundaries: the three dialog primitives park daemon-held Promises that
     // the browser answers, while every other UI method delegates to Pi's
@@ -3965,6 +4019,9 @@ export class PiSessionService implements SessionRouteService {
     return new Proxy(baseUiContext, {
       get: (target, property, receiver): unknown => {
         if (property === "notify") return notify;
+        if (property === "setStatus") return setStatus;
+        if (property === "setWidget") return setWidget;
+        if (property === "setWorkingMessage") return setWorkingMessage;
         if (property === "theme") return plainTextTheme;
         if (property === "confirm") {
           return (title: string, message: string, opts?: ExtensionUIDialogOptions) =>
@@ -3982,6 +4039,28 @@ export class PiSessionService implements SessionRouteService {
         return value;
       },
     });
+  }
+
+  private extensionUiStateFor(session: PiAgentSession): ExtensionUiState {
+    let state = this.extensionUiStates.get(session);
+    if (state === undefined) {
+      state = new ExtensionUiState();
+      this.extensionUiStates.set(session, state);
+    }
+    return state;
+  }
+
+  private clearExtensionUiState(session: PiAgentSession): void {
+    const state = this.extensionUiStates.get(session);
+    if (state === undefined) return;
+    state.dispose();
+    this.extensionUiStates.delete(session);
+  }
+
+  private isCurrentExtensionUiContext(session: PiAgentSession, state: ExtensionUiState): boolean {
+    if (this.extensionUiStates.get(session) !== state) return false;
+    return this.startupSessions.get(session.sessionId) === session
+      || this.active.get(session.sessionId)?.runtime.session === session;
   }
 
   private publishNotificationMutations(mutations: readonly SessionNotificationMutation[]): void {
@@ -4581,6 +4660,7 @@ export class PiSessionService implements SessionRouteService {
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
     const warnings = this.warningsForSession(session);
+    const extensionUi = this.extensionUiStates.get(session)?.snapshot();
     const pendingAsk = this.pendingAskStore.pendingAsk(session.sessionId);
     const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
     return {
@@ -4598,6 +4678,7 @@ export class PiSessionService implements SessionRouteService {
       tokens: stats.tokens,
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
+      ...(extensionUi === undefined ? {} : { extensionUi }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingAsk === undefined ? {} : { pendingAsk }),
       ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),

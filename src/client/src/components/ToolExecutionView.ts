@@ -15,7 +15,7 @@ export class ToolExecutionView extends LitElement {
   @property({ attribute: false }) execution: ToolExecutionPart | undefined;
   @state() private showFullDiff = false;
   @state() private copied = false;
-  @state() private diffOpen = true;
+  @state() private diffOpen = false;
 
   override render() {
     const execution = this.execution;
@@ -47,7 +47,7 @@ export class ToolExecutionView extends LitElement {
         </div>
 
         ${previewMismatch ? html`<p class="notice">Applied diff differs from the preview.</p>` : null}
-        ${errorText === undefined || errorText === "" ? null : html`<pre class="error-text">${errorText}</pre>`}
+        ${errorText === undefined || errorText === "" ? null : html`<pre class="error-text" tabindex="0" aria-label="Tool error">${errorText}</pre>`}
         ${visibleDiff === undefined ? this.renderTextBody(bodyText, execution.status === "error", target) : this.renderDiffBody(visibleDiff, actualDiff === undefined ? "Preview diff" : "Applied diff", target)}
       </section>
     `;
@@ -64,7 +64,7 @@ export class ToolExecutionView extends LitElement {
     return html`
       <div class="detail-target">
         <span class="detail-label">${target.label}</span>
-        <pre class="detail-target-value">${target.text}</pre>
+        <pre class="detail-target-value" tabindex="0">${target.text}</pre>
       </div>
     `;
   }
@@ -78,7 +78,7 @@ export class ToolExecutionView extends LitElement {
         ${text === undefined || text === "" ? null : html`
           <div class="detail-result">
             <span class="detail-label">Result</span>
-            <pre>${text}</pre>
+            <pre tabindex="0" aria-label="Tool result">${text}</pre>
           </div>
         `}
       </details>
@@ -100,7 +100,7 @@ export class ToolExecutionView extends LitElement {
           <span>${truncated ? `Showing ${String(visibleLines.length)} of ${String(lines.length)} lines` : "Full diff"}</span>
           <button type="button" @click=${() => { void this.copyDiff(diff); }}>${this.copied ? "Copied" : "Copy diff"}</button>
         </div>
-        <pre class="diff" aria-label=${label}><code class="diff-content">${visibleLines.map((line) => html`<span class=${diffLineClass(line)}>${line}</span>`)}</code></pre>
+        <pre class="diff" tabindex="0" aria-label=${label}><code class="diff-content">${visibleLines.map((line) => html`<span class=${diffLineClass(line)}>${line}</span>`)}</code></pre>
         ${truncated ? html`
           <button class="show-more" type="button" @click=${() => { this.showFullDiff = true; }}>
             Show all ${String(lines.length)} diff lines
@@ -126,40 +126,41 @@ export class ToolExecutionView extends LitElement {
   }
 
   static override styles = css`
+    button, input, select, textarea { font: inherit; }
     :host { display: block; width: 100%; max-width: 100%; min-width: 0; color: var(--pi-text); }
-    .tool-card { display: grid; gap: 8px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); padding: 9px; color: var(--pi-text); }
-    .tool-card.running, .tool-card.pending { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); }
-    .tool-card.success { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
-    .tool-card.error { border-color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); }
+    .tool-card { display: grid; gap: 8px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; border: 0; border-radius: 0; background: transparent; padding: 9px 12px; color: var(--pi-text); font-size: 13px; }
+    .tool-card.running .status-label, .tool-card.pending .status-label { color: var(--pi-warning); }
+    .tool-card.success .status-label { color: var(--pi-muted); }
+    .tool-card.error .status-label { color: var(--pi-danger); }
     .tool-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
     .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
     .status-icon { flex: 0 0 auto; color: var(--pi-muted); }
-    strong { flex: 0 0 auto; color: var(--pi-text); }
-    .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+    strong { flex: 0 0 auto; color: var(--pi-text-secondary); font-weight: 500; }
+    .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-muted); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
     .summary { color: var(--pi-muted); font-family: inherit; }
     .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 8px; color: var(--pi-muted); font-size: 12px; }
     .diff-stats { display: inline-flex; gap: 3px; }
     .added, .diff .added { color: var(--pi-success); }
     .removed, .diff .removed { color: var(--pi-danger); }
-    .status-label { text-transform: uppercase; letter-spacing: .04em; color: var(--pi-muted); }
+    .status-label { text-transform: none; color: var(--pi-muted); }
     .notice { margin: 0; color: var(--pi-warning); }
     .muted { margin: 0; color: var(--pi-muted); }
-    .error-text { margin: 0; border: 1px solid var(--pi-danger); border-radius: 7px; background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); color: var(--pi-danger); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .text-body { border-top: 1px solid var(--pi-border-muted); padding-top: 6px; }
+    .error-text { margin: 0; border: 1px solid var(--pi-danger); border-radius: 0; background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); color: var(--pi-danger); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .text-body { border-top: 0; padding-top: 6px; }
     .detail-target, .detail-result { display: grid; gap: 4px; margin-top: 8px; min-width: 0; }
-    .detail-label { color: var(--pi-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+    .detail-label { color: var(--pi-muted); font-size: 12px; }
     .text-body pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pi-text); }
-    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; border: 1px solid var(--pi-border-muted); border-radius: 7px; background: var(--pi-bg); padding: 8px; white-space: pre; overflow-wrap: normal; direction: ltr; text-align: left; unicode-bidi: isolate; }
+    .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; border: 1px solid var(--pi-border-muted); border-radius: 0; background: var(--pi-bg); padding: 8px; white-space: pre; overflow-wrap: normal; direction: ltr; text-align: left; unicode-bidi: isolate; }
     .detail-target-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pi-accent); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
-    .diff-details { min-width: 0; max-width: 100%; border-top: 1px solid var(--pi-border-muted); padding-top: 6px; }
-    .diff-details > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; color: var(--pi-muted); cursor: pointer; }
+    .diff-details { min-width: 0; max-width: 100%; border-top: 0; padding-top: 6px; }
+    .diff-details > summary { display: list-item; list-style-position: inside; min-width: 0; color: var(--pi-muted); cursor: pointer; }
     .diff-details > summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .diff-details > summary small { flex: 0 0 auto; color: var(--pi-dim); }
     .diff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; margin-top: 8px; color: var(--pi-muted); font-size: 12px; }
     .diff-toolbar span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    button { border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-text); padding: 3px 7px; font: 12px system-ui, sans-serif; cursor: pointer; }
+    button { border: 1px solid var(--pi-border); border-radius: 0; background: var(--pi-surface); color: var(--pi-text); padding: 3px 7px; font: 12px var(--pi-ui-font, system-ui, sans-serif); cursor: pointer; }
     button:hover, button:focus { border-color: var(--pi-accent); }
-    .diff { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; margin: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border: 1px solid var(--pi-border-muted); border-radius: 7px; background: var(--pi-bg); padding: 8px 0; color: var(--pi-muted); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+    .diff { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; margin: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border: 1px solid var(--pi-border-muted); border-radius: 0; background: var(--pi-bg); padding: 8px 0; color: var(--pi-muted); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
     .diff-content { display: block; width: max-content; min-width: 100%; }
     .diff span { display: block; min-height: 1.45em; padding: 0 8px; white-space: pre; }
     .diff .context { color: var(--pi-muted); }
@@ -169,6 +170,9 @@ export class ToolExecutionView extends LitElement {
     .diff .added { background: color-mix(in srgb, var(--pi-success) 12%, transparent); }
     .diff .removed { background: color-mix(in srgb, var(--pi-danger) 12%, transparent); }
     .show-more { justify-self: start; }
+    .detail-target-value, .detail-result pre, .diff, .error-text { box-sizing: border-box; max-height: 24rem; overflow: auto; }
+    .detail-target-value { border: 1px solid var(--pi-border-muted); background: var(--pi-bg); padding: 8px; }
+    pre:focus-visible { outline: 1px solid var(--pi-accent); outline-offset: 2px; }
   `;
 }
 
@@ -176,6 +180,8 @@ function toolTarget(execution: ToolExecutionPart, path: string | undefined): Too
   if (path !== undefined && path !== "") return { label: "File", text: path };
   const command = getString(execution.args, "command");
   if (command !== undefined && command !== "") return { label: "Command", text: command };
+  const code = typeof execution.args === "string" ? execution.args : getString(execution.args, "code") ?? getString(execution.args, "input");
+  if (code !== undefined && code !== "") return { label: "Input", text: code };
   if (execution.summary !== "") return { label: "Input", text: execution.summary };
   return undefined;
 }

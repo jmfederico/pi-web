@@ -153,13 +153,14 @@ export class ContentRendererHost extends LitElement {
   }
 
   static override styles = css`
+    button, input, select, textarea { font: inherit; }
     /* Keep natural height in flex viewers: shrinking this clipping boundary
        hides content instead of giving the surrounding viewer a scroll range. */
     :host { display: block; flex-shrink: 0; margin: 0 0 10px; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); overflow: hidden; color: var(--pi-text); }
     :host([external-controls]) { margin: 0; border: 0; border-radius: 0; }
     .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-surface); }
-    select { max-width: 100%; color: var(--pi-text); background: var(--pi-bg); border: 1px solid var(--pi-border); border-radius: 6px; padding: 3px; font: 12px/1.5 system-ui, sans-serif; }
-    button { color: var(--pi-muted); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; font: 12px/1.5 system-ui, sans-serif; cursor: pointer; }
+    select { max-width: 100%; color: var(--pi-text); background: var(--pi-bg); border: 1px solid var(--pi-border); border-radius: 6px; padding: 3px; font: 12px/1.5 var(--pi-ui-font, system-ui, sans-serif); }
+    button { color: var(--pi-muted); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 3px 8px; font: 12px/1.5 var(--pi-ui-font, system-ui, sans-serif); cursor: pointer; }
     button:hover { color: var(--pi-text); background: var(--pi-bg); border-color: var(--pi-border-muted); }
     button[aria-pressed="true"] { color: var(--pi-text); background: var(--pi-bg); border-color: var(--pi-border); }
     .copy { margin-inline-start: auto; }
@@ -167,7 +168,7 @@ export class ContentRendererHost extends LitElement {
     pre { overflow: auto; white-space: pre; text-align: left; direction: ltr; padding: 12px; margin: 0; }
     code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .preview { overflow: auto; padding: 12px; }
-    p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 system-ui, sans-serif; }
+    p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 var(--pi-ui-font, system-ui, sans-serif); }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `;
 }

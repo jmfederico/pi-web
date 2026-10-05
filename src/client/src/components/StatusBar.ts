@@ -32,13 +32,11 @@ export class StatusBar extends LitElement {
   override render() {
     const status = this.status;
     if (status === undefined) return html`<div class="bar muted">No session status yet</div>`;
-    const context = status.contextUsage;
-    const contextText = context
-      ? context.percent == null
-        ? `context ${formatTokenCount(context.contextWindow)}`
-        : `${context.percent.toFixed(1)}%/${formatTokenCount(context.contextWindow)}`
-      : "context unknown";
+    const contextText = formatContextUsage(status.contextUsage);
     const tokens = status.tokens;
+    const cacheRead = formatCacheTokenCount(tokens.cacheRead);
+    const cacheWrite = formatCacheTokenCount(tokens.cacheWrite);
+    const cost = formatCost(status.cost);
     const warningControl = statusBarWarningControlContent(this.warningCount, this.warningsExpanded);
     return html`
       <div class="bar">
@@ -58,11 +56,33 @@ export class StatusBar extends LitElement {
         <span>↑${formatTokenCount(tokens.input)}</span>
         <span>↓${formatTokenCount(tokens.output)}</span>
         <span class="context">${contextText}</span>
-        <span>${formatCost(status.cost)}</span>
+        <span
+          title="Provider-reported cumulative cache-read tokens; not added to input/output totals, and no hit rate is inferred."
+          aria-description="Provider-reported cumulative cache-read count; separate from input/output totals. No hit rate is inferred."
+        >cache read ${cacheRead}</span>
+        <span
+          title="Provider-reported cumulative cache-write tokens; not added to input/output totals, and no hit rate is inferred."
+          aria-description="Provider-reported cumulative cache-write count; separate from input/output totals. No hit rate is inferred."
+        >cache write ${cacheWrite}</span>
+        <span
+          title="Session-reported cost; may include reported tool/subagent usage and is not a complete fleet total."
+          aria-description="Session-reported cost; may include reported tool/subagent usage and is not a complete fleet total."
+        >session ${cost}</span>
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}
       </div>
     `;
   }
 
   static override styles = statusBarStyles;
+}
+
+function formatCacheTokenCount(count: number): string {
+  return Number.isFinite(count) && count >= 0 ? formatTokenCount(count) : "unknown";
+}
+
+function formatContextUsage(context: SessionStatus["contextUsage"]): string {
+  if (!context || !Number.isFinite(context.contextWindow) || context.contextWindow <= 0) return "context unknown";
+  if (context.percent == null) return `context ${formatTokenCount(context.contextWindow)}`;
+  if (!Number.isFinite(context.percent) || context.percent < 0) return "context unknown";
+  return `context ${context.percent.toFixed(1)}%/${formatTokenCount(context.contextWindow)}`;
 }

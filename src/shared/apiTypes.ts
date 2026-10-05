@@ -1135,6 +1135,13 @@ export interface SessionWarning {
   dismiss?: { id: string };
 }
 
+export interface SessionExtensionUi {
+  statuses: Record<string, string>;
+  widgets: Record<string, string[]>;
+  /** Runtime-owned loading text from ctx.ui.setWorkingMessage; absent after clearing. */
+  workingMessage?: string;
+}
+
 export interface SessionStatus {
   sessionId: string;
   /** True when the server has verified a backing session file exists; false when known transient. */
@@ -1156,6 +1163,8 @@ export interface SessionStatus {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   cost: number;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  /** Passive, runtime-scoped extension text and string-array widgets; absent in legacy/unavailable snapshots. */
+  extensionUi?: SessionExtensionUi;
   /**
    * Live, runtime-scoped warnings for this session (skill/resource diagnostics,
    * extension load errors, Anthropic subscription-auth billing notice, etc.).

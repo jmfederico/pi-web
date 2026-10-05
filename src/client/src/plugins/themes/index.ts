@@ -1,5 +1,43 @@
 import type { PiWebPlugin, ThemeTokens } from "../types";
 
+const appleDarkTokens = {
+  "--pi-bg": "#1c1c1e",
+  "--pi-surface": "#232325",
+  "--pi-surface-hover": "#2c2c2e",
+  "--pi-terminal-bg": "#18181a",
+  "--pi-terminal-text": "#e5e5ea",
+  "--pi-border": "#3a3a3c",
+  "--pi-border-muted": "#303033",
+  "--pi-text": "#e8e8ed",
+  "--pi-text-secondary": "#d1d1d6",
+  "--pi-text-bright": "#f5f5f7",
+  "--pi-muted": "#aaaab0",
+  "--pi-dim": "#a6a6ad",
+  "--pi-accent": "#70b0ff",
+  "--pi-accent-border": "#0a84ff",
+  "--pi-selection-bg": "#253951",
+  "--pi-success": "#65d58b",
+  "--pi-success-border": "#31553e",
+  "--pi-success-bg": "#202c25",
+  "--pi-success-surface": "#273b2e",
+  "--pi-success-ring": "#65d58b55",
+  "--pi-warning": "#f0bd65",
+  "--pi-warning-border": "#6a5130",
+  "--pi-warning-surface": "#332d22",
+  "--pi-danger": "#ff827c",
+  "--pi-purple": "#c2a4ea",
+  "--pi-purple-border": "#594969",
+  "--pi-purple-surface": "#302837",
+  "--pi-overlay": "#0009",
+  "--pi-shadow-soft": "#0003",
+  "--pi-shadow": "#0005",
+  "--pi-shadow-strong": "#0008",
+  "--pi-bg-overlay-soft": "#1c1c1edd",
+  "--pi-bg-overlay": "#1c1c1eea",
+  "--pi-success-bg-overlay": "#202c25ee",
+  "--pi-terminal-selection": "#344b68",
+} satisfies ThemeTokens;
+
 const classicTokens = {
   "--pi-bg": "#0d1117",
   "--pi-surface": "#161b22",
@@ -114,12 +152,60 @@ const piWebLightTokens = {
   "--pi-terminal-selection": "#8d7b64",
 } satisfies ThemeTokens;
 
+// Palette: https://github.com/dracula/visual-studio-code/blob/master/src/dracula.yml
+const draculaTokens = {
+  "--pi-bg": "#282a36",
+  "--pi-surface": "#21222c",
+  "--pi-surface-hover": "#343746",
+  "--pi-terminal-bg": "#282a36",
+  "--pi-terminal-text": "#f8f8f2",
+  "--pi-border": "#44475a",
+  "--pi-border-muted": "#343746",
+  "--pi-text": "#f8f8f2",
+  "--pi-text-secondary": "#f8f8f2",
+  "--pi-text-bright": "#ffffff",
+  // Dracula's comment blue is too low-contrast for small UI labels.
+  "--pi-muted": "#a6accd",
+  "--pi-dim": "#a6accd",
+  "--pi-accent": "#bd93f9",
+  "--pi-accent-border": "#bd93f9",
+  "--pi-selection-bg": "#44475a",
+  "--pi-success": "#50fa7b",
+  "--pi-success-border": "#50fa7b66",
+  "--pi-success-bg": "#263830",
+  "--pi-success-surface": "#2a4035",
+  "--pi-success-ring": "#50fa7b55",
+  "--pi-warning": "#f1fa8c",
+  "--pi-warning-border": "#f1fa8c66",
+  "--pi-warning-surface": "#3c3d32",
+  "--pi-danger": "#ff5555",
+  "--pi-purple": "#ff79c6",
+  "--pi-purple-border": "#ff79c666",
+  "--pi-purple-surface": "#3e3040",
+  "--pi-overlay": "#191a21bb",
+  "--pi-shadow-soft": "#191a2166",
+  "--pi-shadow": "#191a2188",
+  "--pi-shadow-strong": "#191a21bb",
+  "--pi-bg-overlay-soft": "#282a36dd",
+  "--pi-bg-overlay": "#282a36e6",
+  "--pi-success-bg-overlay": "#263830ee",
+  "--pi-terminal-selection": "#44475a",
+} satisfies ThemeTokens;
+
 export const themePackPlugin: PiWebPlugin = {
   apiVersion: 4,
   name: "PI WEB Themes",
   activate: () => ({
     contributions: {
       themes: [
+        {
+          id: "apple-dark",
+          name: "Apple Dark",
+          description: "Neutral charcoal surfaces, restrained blue accents and clear typography.",
+          order: 5,
+          colorScheme: "dark",
+          tokens: appleDarkTokens,
+        },
         {
           id: "pi-web-dark",
           name: "PI WEB Dark",
@@ -143,6 +229,14 @@ export const themePackPlugin: PiWebPlugin = {
           order: 30,
           colorScheme: "dark",
           tokens: classicTokens,
+        },
+        {
+          id: "dracula",
+          name: "Dracula",
+          description: "Dracula-inspired charcoal and pastel palette, based on the VS Code theme.",
+          order: 40,
+          colorScheme: "dark",
+          tokens: draculaTokens,
         },
       ],
       themePairs: [

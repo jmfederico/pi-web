@@ -16,6 +16,7 @@ export class SessionSocket {
   private hasOpened = false;
   private onReconnect: (() => void) | undefined;
   private onInitialOpen: (() => void) | undefined;
+  private onConnectionChange: ((connected: boolean) => void) | undefined;
   private machineId = "local";
 
   connect(
@@ -24,6 +25,7 @@ export class SessionSocket {
     onReconnect?: () => void,
     machineId = "local",
     onInitialOpen?: () => void,
+    onConnectionChange?: (connected: boolean) => void,
   ): void {
     this.close();
     this.machineId = machineId;
@@ -31,6 +33,7 @@ export class SessionSocket {
     this.onEvent = onEvent;
     this.onReconnect = onReconnect;
     this.onInitialOpen = onInitialOpen;
+    this.onConnectionChange = onConnectionChange;
     this.shouldReconnect = true;
     this.open();
   }
@@ -41,6 +44,8 @@ export class SessionSocket {
 
   close(): void {
     this.shouldReconnect = false;
+    this.onConnectionChange?.(false);
+    this.onConnectionChange = undefined;
     window.clearTimeout(this.reconnectTimer);
     closeSocketQuietly(this.socket);
     this.socket = undefined;
@@ -62,6 +67,7 @@ export class SessionSocket {
       this.reconnectDelay = 500;
       const isReconnect = this.hasOpened;
       this.hasOpened = true;
+      this.onConnectionChange?.(true);
       if (isReconnect) this.onReconnect?.();
       else this.onInitialOpen?.();
     };
@@ -70,6 +76,7 @@ export class SessionSocket {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = undefined;
+      this.onConnectionChange?.(false);
       this.scheduleReconnect();
     };
   }

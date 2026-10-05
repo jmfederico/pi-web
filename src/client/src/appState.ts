@@ -34,6 +34,8 @@ export interface AppState {
   selectedWorkspace: Workspace | undefined;
   selectedSession: SessionInfo | undefined;
   status: SessionStatus | undefined;
+  /** Extension snapshot observed through the current selected-session connection. */
+  selectedExtensionUi: { machineId: string; sessionId: string; cwd: string; snapshot: NonNullable<SessionStatus["extensionUi"]> } | undefined;
   activity: SessionActivity | undefined;
   /**
    * The selected session's open `ask_user` question set, derived from the
@@ -147,6 +149,7 @@ export function initialAppState(): AppState {
     selectedWorkspace: undefined,
     selectedSession: undefined,
     status: undefined,
+    selectedExtensionUi: undefined,
     activity: undefined,
     pendingAsk: undefined,
     pendingDialogs: [],

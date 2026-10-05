@@ -1,4 +1,4 @@
-import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserCloseResponse, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type PendingAskUser, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
+import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserCloseResponse, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type PendingAskUser, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionExtensionUi, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
 import { parseMachineStatusSnapshot, type MachineStatusSnapshot, type MachineStatusUiEvent } from "../../../shared/machineStatus";
 import type { JsonValue, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
 
@@ -553,6 +553,77 @@ function optionalNonEmptyString(record: Record<string, unknown>, key: string): s
   return value;
 }
 
+// Mirror the server state limits; the line cap preserves Pi's 32 KiB async JSON payload and its marker.
+const SESSION_EXTENSION_UI_STATUS_KEYS = 32;
+const SESSION_EXTENSION_UI_WIDGET_KEYS = 16;
+const SESSION_EXTENSION_UI_KEY_LENGTH = 128;
+const SESSION_EXTENSION_UI_STATUS_LENGTH = 512;
+const SESSION_EXTENSION_UI_WIDGET_LINES = 32;
+const SESSION_EXTENSION_UI_WIDGET_LINE_LENGTH = 33_000;
+const SESSION_EXTENSION_UI_WIDGET_LENGTH = 40_000;
+const SESSION_EXTENSION_UI_WIDGET_TOTAL_LENGTH = 65_536;
+const PRIVATE_EXTENSION_UI_WIDGET_KEY = "subagent-inspect";
+
+function requireExtensionUiMap(value: unknown, field: string): Record<string, unknown> {
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Expected object field: " + field);
+  return value;
+}
+
+function requireExtensionUiKey(key: string, field: string): void {
+  const hasControlCharacter = Array.from(key).some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+  if (key.length === 0 || key.length > SESSION_EXTENSION_UI_KEY_LENGTH
+    || hasControlCharacter || key === "prototype" || Object.prototype.hasOwnProperty.call(Object.prototype, key)) {
+    throw new Error("Invalid extension UI key: " + field);
+  }
+}
+
+function isExtensionUiWidgetLines(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length <= SESSION_EXTENSION_UI_WIDGET_LINES
+    && value.every((line: unknown) => typeof line === "string" && line.length <= SESSION_EXTENSION_UI_WIDGET_LINE_LENGTH);
+}
+
+function parseSessionExtensionUi(value: unknown): SessionExtensionUi {
+  const record = requireExtensionUiMap(value, "extensionUi");
+  const statusRecord = requireExtensionUiMap(record["statuses"], "extensionUi.statuses");
+  const widgetRecord = requireExtensionUiMap(record["widgets"], "extensionUi.widgets");
+  const statusEntries = Object.entries(statusRecord);
+  const widgetEntries = Object.entries(widgetRecord);
+  if (statusEntries.length > SESSION_EXTENSION_UI_STATUS_KEYS) throw new Error("Extension UI status key limit exceeded");
+  if (widgetEntries.length > SESSION_EXTENSION_UI_WIDGET_KEYS) throw new Error("Extension UI widget key limit exceeded");
+
+  const statuses: Record<string, string> = {};
+  for (const [key, status] of statusEntries) {
+    requireExtensionUiKey(key, "statuses");
+    if (typeof status !== "string" || status.length > SESSION_EXTENSION_UI_STATUS_LENGTH) {
+      throw new Error("Invalid extension UI status value");
+    }
+    statuses[key] = status;
+  }
+
+  const widgets: Record<string, string[]> = {};
+  let totalWidgetLength = 0;
+  for (const [key, lines] of widgetEntries) {
+    requireExtensionUiKey(key, "widgets");
+    if (key === PRIVATE_EXTENSION_UI_WIDGET_KEY) throw new Error("Private extension UI widget is not display data");
+    if (!isExtensionUiWidgetLines(lines)) throw new Error("Invalid extension UI widget lines");
+    const widgetLength = lines.reduce((length, line) => length + line.length, 0);
+    if (widgetLength > SESSION_EXTENSION_UI_WIDGET_LENGTH) throw new Error("Extension UI widget length limit exceeded");
+    totalWidgetLength += widgetLength;
+    if (totalWidgetLength > SESSION_EXTENSION_UI_WIDGET_TOTAL_LENGTH) {
+      throw new Error("Extension UI widget total length limit exceeded");
+    }
+    widgets[key] = [...lines];
+  }
+  const workingMessage = record["workingMessage"];
+  if (workingMessage !== undefined && (typeof workingMessage !== "string" || workingMessage.length > SESSION_EXTENSION_UI_STATUS_LENGTH)) {
+    throw new Error("Invalid extension UI working message");
+  }
+  return { statuses, widgets, ...optionalField("workingMessage", workingMessage) };
+}
+
 export function parseSessionStatus(value: unknown): SessionStatus {
   const record = requireRecord(value);
   const warnings = record["warnings"] === undefined ? undefined : arrayOf(parseSessionWarning)(record["warnings"]);
@@ -571,6 +642,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     cost: requireNumber(record, "cost"),
     ...optionalModel(record["model"]),
     ...optionalContextUsage(record["contextUsage"]),
+    ...optionalField("extensionUi", record["extensionUi"] === undefined ? undefined : parseSessionExtensionUi(record["extensionUi"])),
     ...optionalField("thinkingLevel", optionalString(record, "thinkingLevel")),
     ...optionalField("warnings", warnings?.filter((warning) => !isLegacyOtherInstanceActivityWarning(warning))),
     ...optionalPendingAsk(record["pendingAsk"]),

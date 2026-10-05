@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { defaultKeymap, history, historyKeymap, indentWithTab, insertNewlineAndIndent } from "@codemirror/commands";
 import { markdown, deleteMarkupBackward, insertNewlineContinueMarkup } from "@codemirror/lang-markdown";
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
@@ -6,20 +7,21 @@ import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } 
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
-import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
+import type { PromptAttachmentDelivery, SessionActivity } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery } from "../promptAttachmentCapture";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
 import { machineSessionKey } from "../machineKeys";
 import type { StagedPromptChip } from "../promptChips";
 import { detectPromptCompletionTrigger, fileCompletionInsertText, modelCompletionChoices, type PromptCompletionTrigger } from "../promptCompletions";
 import { promptArgumentHintExtension, setPromptArgumentHint } from "../promptArgumentHint";
+import { promptPasteFolding } from "../promptPasteFolding";
 import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, loadStagedAttachments, saveStagedAttachments, type PendingAttachment } from "../promptAttachmentStaging";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
 import { createMobilePromptEnterMedia, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
 import { composerSendShortcut, matchesComposerSend } from "../composerShortcuts";
 import type { ShortcutPreferenceConfig } from "../keyboardShortcuts";
-import { promptEditorStyles, type CompletionItem } from "./shared";
+import { promptEditorStyles, type ChatLine, type CompletionItem } from "./shared";
 import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
@@ -48,6 +50,8 @@ export class PromptEditor extends LitElement {
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
   @property({ attribute: false }) status?: SessionStatus;
+  @property({ attribute: false }) activity: SessionActivity | undefined;
+  @property() workingMessage: string | undefined;
   @property({ type: Boolean }) sending = false;
   @property({ attribute: false }) promptChips: readonly StagedPromptChip[] = [];
   @property({ attribute: false }) onRemoveChip?: (chip: StagedPromptChip) => void;
@@ -56,6 +60,7 @@ export class PromptEditor extends LitElement {
   @property({ attribute: false }) onSelectModel?: () => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
   @property({ attribute: false }) availableThinkingLevels: readonly string[] = [];
+  @property({ attribute: false }) promptHistory: readonly string[] = [];
   @query(".markdown-editor") private editorHost?: HTMLDivElement;
   @query(".attachment-input") private attachmentInput?: HTMLInputElement;
   // `draft` is the live document text but is intentionally NOT reactive: it
@@ -65,6 +70,8 @@ export class PromptEditor extends LitElement {
   // long-press edit/paste callout). Only `currentInputMode` (shell vs. normal)
   // is reactive, since that is the only draft-derived value the template shows.
   private draft = "";
+  private historyNavigation: { entries: readonly string[]; index: number; draft: string; cursor: number } | undefined;
+  private applyingHistory = false;
   @state() private currentInputMode: InputMode = { kind: "normal" };
   @state() private completions: CompletionItem[] = [];
   @state() private selectedIndex = 0;
@@ -87,9 +94,10 @@ export class PromptEditor extends LitElement {
     const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
     const previousKey = draftStorageKey(previousMachineId, previousSessionId);
     if (previousKey !== undefined) {
-      saveDraft(previousKey, this.draft);
+      saveDraft(previousKey, this.historyNavigation?.draft ?? this.draft);
       saveStagedAttachments(previousKey, this.attachments);
     }
+    this.historyNavigation = undefined;
     const currentKey = draftStorageKey(this.machineId, this.sessionId);
     this.draft = currentKey !== undefined ? loadDraft(currentKey) : "";
     this.attachments = currentKey !== undefined ? loadStagedAttachments(currentKey) : [];
@@ -101,6 +109,7 @@ export class PromptEditor extends LitElement {
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
+    if (changed.size === 1 && changed.has("promptHistory")) return false;
     // Status updates churn once per token during streaming and hand us a fresh
     // object reference each time. When nothing else changed, only re-render if a
     // status field the template actually displays differs, so streaming does not
@@ -133,18 +142,21 @@ export class PromptEditor extends LitElement {
     const busy = this.disabled || this.sending || this.chipSendingKey === this.composerKey();
     return html`
       <footer class=${shellMode ? "shell-mode" : ""} @paste=${(event: ClipboardEvent) => { void this.handlePaste(event); }} @dragover=${(event: DragEvent) => { this.handleDragOver(event); }} @drop=${(event: DragEvent) => { void this.handleDrop(event); }}>
+        <div class="composer-header">
+          ${this.renderCompactStatus()}
+          ${this.renderActivity()}
+        </div>
         <div class="editor-wrap">
           <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
           <input class="attachment-input" type="file" multiple hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
           <button class="editor-attach icon-button" ?disabled=${busy} title="Attach files" aria-label="Attach files" @click=${() => { this.attachmentInput?.click(); }}>${renderAttachIcon()}</button>
           ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
           ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
-          ${this.renderPromptChips()}
-          ${this.renderAttachments()}
           <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
         </div>
+        ${this.renderPromptChips()}
+        ${this.renderAttachments()}
         <div class="actions">
-          ${this.renderCompactStatus()}
           <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
           ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
           <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
@@ -158,6 +170,7 @@ export class PromptEditor extends LitElement {
   }
 
   replaceText(text: string): void {
+    if (!this.applyingHistory) this.historyNavigation = undefined;
     this.draft = text;
     const key = draftStorageKey(this.machineId, this.sessionId);
     if (key !== undefined) saveDraft(key, text);
@@ -192,7 +205,7 @@ export class PromptEditor extends LitElement {
     return html`
       <div class="compact-status" aria-label="Session status">
         <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
-        <button class="select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
+        <button class="select-thinking icon-button" data-thinking=${thinkingLevelLabel(status.thinkingLevel)} title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}<span>${thinkingLevelLabel(status.thinkingLevel)}</span></button>
       </div>
     `;
   }
@@ -212,6 +225,32 @@ export class PromptEditor extends LitElement {
     `;
   }
 
+  private renderActivity() {
+    const activity = this.activity?.sessionId === this.sessionId ? this.activity : undefined;
+    const text = this.activityText(activity);
+    const failed = !this.sending && activity?.phase === "error";
+    return html`<div class=${`composer-activity${failed ? " error" : ""}${text === undefined ? " inactive" : ""}`} role="status" aria-live="polite" aria-atomic="true" title=${text ?? ""}>
+      ${text === undefined ? null : html`<span class="activity-dot" aria-hidden="true"></span><span class="activity-text">${text}</span>`}
+    </div>`;
+  }
+
+  private activityText(activity: SessionActivity | undefined): string | undefined {
+    const status = this.status?.sessionId === this.sessionId ? this.status : undefined;
+    if (this.sending) return "Sending your message…";
+    const detail = activity?.detail !== undefined && activity.detail !== "" ? `${activity.label}: ${activity.detail}` : activity?.label;
+    if (activity?.phase === "error") return detail;
+    if (status?.isCompacting === true || this.isCompacting) return "Compacting history…";
+    if (status?.isBashRunning === true) return "Running shell command…";
+    if (activity?.phase === "active" && activity.label === "running tool") return detail;
+    if (status?.isStreaming === true) {
+      if (this.workingMessage !== undefined && this.workingMessage.trim() !== "") return this.workingMessage;
+      return activity?.phase === "active" ? detail : "Working…";
+    }
+    if (activity?.phase === "active") return detail;
+    if ((status?.pendingMessageCount ?? 0) > 0) return "Message queued…";
+    return undefined;
+  }
+
   private renderAttachments() {
     if (this.attachments.length === 0 && this.attachmentError === undefined) return null;
     const canUseInlineDelivery = promptAttachmentsCanUseInlineDelivery(this.attachments);
@@ -221,7 +260,7 @@ export class PromptEditor extends LitElement {
         ${this.attachments.map((attachment) => html`
           <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} title=${attachment.name}>
             ${this.renderAttachmentPreview(attachment)}
-            <button type="button" class="attachment-remove" title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
+            <button type="button" class="attachment-remove" title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>${renderHeroIcon("x-mark")}</button>
           </div>
         `)}
         ${this.attachments.length > 0 ? html`
@@ -326,6 +365,7 @@ export class PromptEditor extends LitElement {
           }),
           placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
           promptArgumentHintExtension,
+          promptPasteFolding,
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
           EditorView.updateListener.of((update) => {
@@ -333,8 +373,6 @@ export class PromptEditor extends LitElement {
           }),
           keymap.of([
             { any: (view, event) => this.handleEditorKeyDown(event, view) },
-            { key: "ArrowDown", run: () => this.moveCompletion(1) },
-            { key: "ArrowUp", run: () => this.moveCompletion(-1) },
             { key: "Escape", run: () => this.closeCompletions() },
             { key: "Tab", run: (view) => this.handleEditorTab(view) },
             { key: "Shift-Tab", run: (view) => indentWithTab.shift?.(view) ?? false },
@@ -368,6 +406,7 @@ export class PromptEditor extends LitElement {
   }
 
   private updateDraft(value: string) {
+    if (!this.applyingHistory) this.historyNavigation = undefined;
     this.draft = value;
     const key = draftStorageKey(this.machineId, this.sessionId);
     if (key !== undefined) saveDraft(key, this.draft);
@@ -436,6 +475,32 @@ export class PromptEditor extends LitElement {
     return true;
   }
 
+  private movePromptHistory(view: EditorView, delta: -1 | 1): boolean {
+    const selection = view.state.selection.main;
+    if (this.disabled || view.composing || !selection.empty) return false;
+    const line = view.state.doc.lineAt(selection.head).number;
+    if (delta < 0 ? line !== 1 : line !== view.state.doc.lines) return false;
+    if (this.historyNavigation === undefined) {
+      if (delta > 0 || this.promptHistory.length === 0) return false;
+      this.historyNavigation = { entries: [...this.promptHistory], index: this.promptHistory.length, draft: this.draft, cursor: selection.head };
+    }
+    const navigation = this.historyNavigation;
+    const next = Math.max(0, Math.min(navigation.entries.length, navigation.index + delta));
+    const restoring = next === navigation.entries.length;
+    const text = restoring ? navigation.draft : navigation.entries[next];
+    if (text === undefined) return false;
+    navigation.index = next;
+    this.applyingHistory = true;
+    try {
+      this.replaceText(text);
+      if (restoring) view.dispatch({ selection: EditorSelection.cursor(navigation.cursor) });
+    } finally {
+      this.applyingHistory = false;
+    }
+    if (restoring) this.historyNavigation = undefined;
+    return true;
+  }
+
   private closeCompletions(): boolean {
     if (!this.completions.length) return false;
     this.completions = [];
@@ -447,6 +512,7 @@ export class PromptEditor extends LitElement {
     if (this.editor === undefined || !event.composedPath().includes(this.editor.contentDOM)) return false;
     // Keep Enter/newline handling and IME composition inside the editor, too.
     return event.isComposing || this.editor.composing
+      || ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey)
       || (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey)
       || this.matchesSendShortcut(event);
   }
@@ -476,6 +542,10 @@ export class PromptEditor extends LitElement {
     if (send) {
       this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
       return true;
+    }
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      const delta = event.key === "ArrowUp" ? -1 : 1;
+      return this.moveCompletion(delta) || this.movePromptHistory(view, delta);
     }
     if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
       return insertNewlineContinueMarkup(view) || insertNewlineAndIndent(view);
@@ -573,6 +643,7 @@ export class PromptEditor extends LitElement {
   }
 
   private resetComposer() {
+    this.historyNavigation = undefined;
     this.draft = "";
     this.currentInputMode = { kind: "normal" };
     const key = draftStorageKey(this.machineId, this.sessionId);
@@ -591,17 +662,26 @@ export class PromptEditor extends LitElement {
   static override styles = promptEditorStyles;
 }
 
+export function promptHistoryFromMessages(messages: readonly ChatLine[]): string[] {
+  return messages.filter((message) => message.role === "user")
+    .map((message) => message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n\n"))
+    .filter((text) => text.trim() !== "");
+}
+
 // The only `status` fields the template reads directly are the model identity
-// and thinking level (shown in renderCompactStatus). Everything else the editor
-// cares about (canSteer/canStop/isCompacting/sending) is passed as a separate
-// property that Lit already diffs by value. Comparing just these fields lets us
-// ignore the per-token status churn that does not change anything on screen.
+// and thinking level, plus the operational state shown in the activity row.
+// Other changing status fields do not require touching the editor DOM.
 function sessionStatusRenderEqual(a: SessionStatus | undefined, b: SessionStatus | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
   return a.model?.id === b.model?.id
     && a.model?.provider === b.model?.provider
-    && a.thinkingLevel === b.thinkingLevel;
+    && a.thinkingLevel === b.thinkingLevel
+    && a.sessionId === b.sessionId
+    && a.isStreaming === b.isStreaming
+    && a.isCompacting === b.isCompacting
+    && a.isBashRunning === b.isBashRunning
+    && a.pendingMessageCount === b.pendingMessageCount;
 }
 
 function draftStorageKey(machineId: unknown, sessionId: unknown): string | undefined {

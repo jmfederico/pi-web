@@ -5,7 +5,7 @@ import type { FormattedText } from "./FormattedText";
 
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); });
 
-it("passes workspace context to queued, text, thinking, skill and tool-result Markdown and updates it on navigation", async () => {
+it("passes workspace context to prose but keeps tool results literal on navigation", async () => {
   const view = new ChatView();
   const text = "[file](result.zip)";
   view.sessionId = "session";
@@ -29,7 +29,10 @@ it("passes workspace context to queued, text, thinking, skill and tool-result Ma
     const formatted = [...view.renderRoot.querySelectorAll<FormattedText>("formatted-text")];
     expect(formatted).toHaveLength(5);
     await Promise.all(formatted.map((element) => element.updateComplete));
-    return formatted.map((element) => element.renderRoot.querySelector("a")?.getAttribute("href"));
+    const literal = formatted.find((element) => element.codeBlock);
+    expect(literal?.renderRoot.querySelector("pre code")?.textContent).toBe(text);
+    expect(literal?.renderRoot.querySelector("a")).toBeNull();
+    return formatted.filter((element) => !element.codeBlock).map((element) => element.renderRoot.querySelector("a")?.getAttribute("href"));
   }
 
   expect((await hrefs()).every((href) => href?.includes("/machines/remote/projects/p/workspaces/w/file/preview?path=result.zip&download=1") === true)).toBe(true);
@@ -38,5 +41,5 @@ it("passes workspace context to queued, text, thinking, skill and tool-result Ma
   expect((await hrefs()).every((href) => href?.includes("/machines/other/projects/p2/workspaces/w2/") === true)).toBe(true);
   view.workspaceContext = undefined;
   await view.updateComplete;
-  expect(await hrefs()).toEqual([null, null, null, null, null]);
+  expect(await hrefs()).toEqual([null, null, null, null]);
 });
