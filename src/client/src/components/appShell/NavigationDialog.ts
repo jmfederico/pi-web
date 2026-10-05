@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "../heroicons";
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { paletteStyles } from "../paletteStyles";
@@ -48,7 +49,7 @@ export class NavigationDialog extends LitElement {
               this.selectedIndex = 0;
             }
           }}>
-          <button aria-label="Close" title="Close" @click=${this.onClose}>×</button>
+          <button aria-label="Close" title="Close" @click=${this.onClose}>${renderHeroIcon("x-mark")}</button>
         </header>
         <span id="navigation-selection" class="sr-only" role="status" aria-live="polite" aria-atomic="true">${tabs.length === 0 ? "No destinations found." : `${tabs[this.selectedIndex]?.label ?? ""}, ${String(this.selectedIndex + 1)} of ${String(tabs.length)}`}</span>
         <h2>Navigation</h2>
@@ -61,9 +62,7 @@ export class NavigationDialog extends LitElement {
               <button type="button" class="pin-button" aria-label=${`Pin ${tab.label}`} title=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? `Unpin ${tab.label}` : `Pin ${tab.label}`} aria-pressed=${String(isNavigationPinned(tab.id, this.preferences.pinnedIds))} @click=${() => {
                 this.onPreferencesChange?.({ ...this.preferences, pinnedIds: toggleNavigationPin(tab.id, this.preferences.pinnedIds, this.pinUniverse ?? this.tabs.map((item) => item.id)) });
               }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? "currentColor" : "none"} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M8 3h8l-1 7 4 4v2H5v-2l4-4-1-7Z"></path><path d="M12 16v6"></path>
-                </svg>
+                ${renderHeroIcon("bookmark", "", isNavigationPinned(tab.id, this.preferences.pinnedIds))}
               </button>
             </div>
           `)}

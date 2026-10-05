@@ -53,6 +53,14 @@ describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (
 });
 
 describe("machine-scoped session proxy routes", () => {
+  it("forwards uncached session activity without dropping its freshness header", async () => {
+    daemon.respondWith({ statusCode: 200, headers: { "content-type": "application/json", "cache-control": "no-store" }, body: JSON.stringify({ version: 1, sessionId: "one" }) });
+    const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions/one/observability?cwd=%2Frepo" });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/sessions/one/observability?cwd=%2Frepo", body: undefined }]);
+  });
+
   it("strips the machine prefix before forwarding session requests", async () => {
     const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions?cwd=/repo" });
 

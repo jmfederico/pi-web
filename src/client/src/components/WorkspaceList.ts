@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { trustApi } from "../api";
@@ -152,7 +153,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
           aria-expanded=${String(open)}
           aria-controls=${menuId}
           @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(workspace.id, event.currentTarget); }}
-        >⋯</button>
+        >${renderHeroIcon("ellipsis-horizontal")}</button>
         ${open ? html`
           <div class="action-menu-panel workspace-menu-panel" id=${menuId} style=${this.menuStyle} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
             ${this.renderWorkspaceActions(workspace)}
@@ -261,7 +262,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
     const label = copied ? "Copied" : action;
     return html`
       <button type="button" class="detail-copy" title=${label} aria-label=${label} @click=${() => { void this.copyDetail(key, value); }}>
-        <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
+        ${renderHeroIcon(copied ? "check" : "document-duplicate")}
       </button>
     `;
   }

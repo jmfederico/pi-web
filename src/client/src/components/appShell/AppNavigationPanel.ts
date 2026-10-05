@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "../heroicons";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
@@ -141,7 +142,9 @@ export class AppNavigationPanel extends LitElement {
         ></machine-switcher>
         <div class="header-actions">
           ${this.refreshControl}
-          <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>Actions</button>
+          <button title="Show Actions" aria-label="Show Actions" @click=${() => { this.onShowActions?.(); }}>
+            ${renderHeroIcon("ellipsis-horizontal")}
+          </button>
         </div>
       </header>
       ${this.compact && shouldShowMachinesSection(this.machines) ? html`
@@ -252,13 +255,16 @@ export class AppNavigationPanel extends LitElement {
   }
 
   static override styles = css`
-    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    button, input, select, textarea { font: inherit; }
+    :host { display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--pi-chrome-bg, var(--pi-surface)); }
     :host([compact]) { flex: 1 1 auto; }
-    header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
-    header strong { flex: 0 0 auto; }
+    header { box-sizing: border-box; min-height: var(--pi-toolbar-height, 48px); flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--pi-border-muted); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--pi-text) 5%, transparent); }
+    header strong { flex: 0 0 auto; font-size: 12px; font-weight: 600; color: var(--pi-text-secondary); }
     machine-switcher { flex: 1 1 auto; min-width: 0; }
     :host([compact]) header { display: none; }
-    .header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+    .header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+    .header-actions button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+    .header-actions svg { width: 18px; height: 18px; fill: none; pointer-events: none; }
     /* Expanded sections share the panel height equally, so collapsing one
        section distributes its space to every remaining section, not just the
        session list. Collapsed sections keep only their heading height. */
@@ -267,7 +273,10 @@ export class AppNavigationPanel extends LitElement {
     project-list[collapsed],
     workspace-list[collapsed],
     session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
-    button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+    button:hover { background: var(--pi-surface-hover); }
+    button { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pi-text-secondary); padding: 7px 9px; cursor: pointer; }
+    @media (pointer: coarse) { .header-actions button { width: 44px; height: 44px; } }
   `;
 }
 

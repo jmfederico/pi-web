@@ -65,9 +65,9 @@ import "./SessionCleanupDialog";
 import "./SessionTreeNavigator";
 import "./ChatView";
 import type { ChatView } from "./ChatView";
-import "./PromptEditor";
-import type { PromptEditor } from "./PromptEditor";
+import { promptHistoryFromMessages, type PromptEditor } from "./PromptEditor";
 import "./StatusBar";
+import "./SessionObservability";
 import "./CommandPicker";
 import "./ModelPicker";
 import "./ActionPalette";
@@ -79,7 +79,7 @@ import { deepActiveElement, focusElement, hasRenderedModal } from "./modalLayerR
 import "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState, WorkspaceToolPanel } from "./WorkspacePanel";
-import "./appShell/AppContextBar";
+import { sessionContextLabel } from "./appShell/AppContextBar";
 import "./appShell/AppMobileMainTabs";
 import type { AppMobileMainTab } from "./appShell/AppMobileMainTabs";
 import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
@@ -3486,6 +3486,12 @@ export class PiWebApp extends LitElement {
       this.notificationView = selectedNotificationView(state.selectedNotificationInbox);
     }
     return html`
+      <session-observability
+        .machineId=${selectedMachineId(state)} .machineLabel=${state.selectedMachine?.name ?? "Local machine"}
+        .sessionId=${session.id} .cwd=${session.cwd}
+        .extensionUi=${state.selectedExtensionUi} .messages=${state.messages}
+        .loadActivity=${sessionsApi.sessionActivity}
+      ></session-observability>
       <chat-view .contentRendering=${this.plugins.chatContentRendering} .machineId=${selectedMachineId(state)} @workspace-file-open=${this.handleWorkspaceFileOpen} .workspaceContext=${markdownWorkspaceContext(selectedMachineId(state), state.selectedWorkspace, session)} .sessionId=${session.id} .sessionCwd=${session.cwd} .onMessageAction=${this.handleMessageAction} .messageActionsDisabled=${session.archived === true || state.sendingPrompts[session.id] === true || isSessionActive(state.status, state.activity)} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? this.emptyClientQueue} .status=${state.status} .activity=${state.activity} .pendingAsk=${state.pendingAsk} .pendingDialogs=${state.pendingDialogs} .closedDialogs=${state.closedDialogs} .onAnswerDialog=${this.handleAnswerDialog} .onCancelDialog=${this.handleCancelDialog} .onDismissClosedDialog=${this.handleDismissClosedDialog} .askDraftSessionId=${machineSessionKey(selectedMachineId(state), session.id)} .onSubmitAsk=${this.handleSubmitAsk} .notificationInbox=${this.notificationView} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .warningsVisible=${!this.sessionWarningVisibility.collapsed} .onToggleWarnings=${this.handleToggleWarnings} .onLoadMore=${this.handleLoadEarlierMessages}></chat-view>
     `;
   }
@@ -3644,11 +3650,23 @@ export class PiWebApp extends LitElement {
     const state = this.state;
     const mainView = this.effectiveMainView();
     const activityNoticeVisible = this.unacknowledgedActivitySessionKey(state) !== undefined;
+    const conversationTitle = state.selectedSession === undefined ? "Conversation" : sessionContextLabel(state.selectedSession);
+    const extensionUi = state.selectedExtensionUi;
+    const workingMessage = extensionUi?.machineId === selectedMachineId(state)
+      && extensionUi.sessionId === state.selectedSession?.id
+      && extensionUi.cwd === state.selectedSession.cwd ? extensionUi.snapshot.workingMessage : undefined;
     return html`
       <div class=${this.panelCollapse.shellClass(mainView)} style=${this.panelResize.shellStyle({ navigation: this.resizablePanelConstraints("navigation"), workspace: this.resizablePanelConstraints("workspace") })}>
         <aside id="navigation-panel">${this.appShell.isMobileNavigationLayout ? null : this.renderNavigationPanel()}</aside>
         ${this.renderNavigationPanelEdgeControl()}
         <main class=${mainViewClass(mainView)}>
+          ${this.appShell.isMobileNavigationLayout ? null : html`
+            <header class="session-toolbar" aria-label="Selected conversation">
+              <div class="session-identity">
+                <strong title=${conversationTitle}>${conversationTitle}</strong>
+                <span title=${state.selectedSession?.cwd ?? state.selectedWorkspace?.path ?? ""}>${state.selectedSession?.cwd ?? state.selectedWorkspace?.path ?? "No session selected"}</span>
+              </div>
+            </header>`}
           ${this.renderContextBar()}
           ${guard([...this.workspaceSurfaceInputs(), state.sessions, this.unreadSessionIds], () => this.renderMobileMainTabs())}
           ${this.unknownRouteView() === undefined ? null : html`<div class="error warning" role="alert"><span class="error-text">Unknown view: ${this.unknownRouteView()}</span></div>`}
@@ -3660,7 +3678,7 @@ export class PiWebApp extends LitElement {
           ${state.selectedSession ? html`
             ${this.renderChatView(state, state.selectedSession)}
             <div class="composer-area">
-              <prompt-editor ?inert=${activityNoticeVisible} .promptChips=${this.selectedPromptChips()} .onRemoveChip=${this.handleRemovePromptChip} .shortcuts=${this.shortcutConfig} .sessionId=${state.selectedSession.id} .cwd=${state.selectedWorkspace?.path} .machineId=${selectedMachineId(state)} .projectId=${state.selectedWorkspace?.projectId} .workspaceId=${state.selectedWorkspace?.id} .attachmentsFolder=${workspaceEffectiveAttachmentsFolder(state.selectedWorkspace?.effectiveConfig, this.workspaceAttachmentsDefaultFolder)} .disabled=${state.selectedSession.archived === true || activityNoticeVisible} .canSteer=${state.status?.isStreaming === true} .isCompacting=${state.status?.isCompacting === true} .canStop=${state.status?.isStreaming === true || state.status?.isBashRunning === true || state.status?.isCompacting === true || (state.status?.pendingMessageCount ?? 0) > 0} .status=${state.status} .availableThinkingLevels=${state.availableThinkingLevels} .sending=${state.sendingPrompts[state.selectedSession.id] === true} .onSend=${this.handleSendPrompt} .onStop=${this.handleStopActiveWork} .onSelectModel=${this.handleSelectModel} .onSelectThinking=${this.handleSelectThinking}></prompt-editor>
+              <prompt-editor .promptHistory=${guard([state.messages], () => promptHistoryFromMessages(state.messages))} .activity=${state.activity} .workingMessage=${workingMessage} ?inert=${activityNoticeVisible} .promptChips=${this.selectedPromptChips()} .onRemoveChip=${this.handleRemovePromptChip} .shortcuts=${this.shortcutConfig} .sessionId=${state.selectedSession.id} .cwd=${state.selectedWorkspace?.path} .machineId=${selectedMachineId(state)} .projectId=${state.selectedWorkspace?.projectId} .workspaceId=${state.selectedWorkspace?.id} .attachmentsFolder=${workspaceEffectiveAttachmentsFolder(state.selectedWorkspace?.effectiveConfig, this.workspaceAttachmentsDefaultFolder)} .disabled=${state.selectedSession.archived === true || activityNoticeVisible} .canSteer=${state.status?.isStreaming === true} .isCompacting=${state.status?.isCompacting === true} .canStop=${state.status?.isStreaming === true || state.status?.isBashRunning === true || state.status?.isCompacting === true || (state.status?.pendingMessageCount ?? 0) > 0} .status=${state.status} .availableThinkingLevels=${state.availableThinkingLevels} .sending=${state.sendingPrompts[state.selectedSession.id] === true} .onSend=${this.handleSendPrompt} .onStop=${this.handleStopActiveWork} .onSelectModel=${this.handleSelectModel} .onSelectThinking=${this.handleSelectThinking}></prompt-editor>
               ${this.renderSessionActivityNotice()}
             </div>
             ${this.renderStatusBar(state)}

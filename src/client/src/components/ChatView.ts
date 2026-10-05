@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -6,6 +7,7 @@ import { ChatDisclosureController } from "../chatDisclosure";
 import { machineSessionKey } from "../machineKeys";
 import { groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
 import { writeClipboardText } from "../clipboard";
+import { isLargeText, textSizeLabel } from "../largeText";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
 import { ChatScrollController, distanceFromScrollBottom, findFirstVisibleArticle, isNearScrollBottom, type ChatAnchorScrollPosition, type ChatScrollRestoreResult } from "../chatScrollPosition";
@@ -46,18 +48,13 @@ const notificationTimestampFormatter = new Intl.DateTimeFormat(undefined, { time
 
 function renderNotificationDisclosureIcon(collapsed: boolean) {
   return html`
-    <svg class=${`notification-icon notification-disclosure-icon${collapsed ? "" : " expanded"}`} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="m9 18 6-6-6-6"></path>
-    </svg>
+    ${renderHeroIcon("chevron-right", `notification-icon notification-disclosure-icon${collapsed ? "" : " expanded"}`)}
   `;
 }
 
 function renderNotificationCloseIcon() {
   return html`
-    <svg class="notification-icon notification-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M6 6l12 12"></path>
-      <path d="M18 6 6 18"></path>
-    </svg>
+    ${renderHeroIcon("x-mark", "notification-icon notification-close-icon")}
   `;
 }
 
@@ -470,7 +467,6 @@ export class ChatView extends LitElement {
           ${this.renderOpenAsk()}
           ${this.renderExtensionDialogs()}
         </div>
-        ${this.renderActivityDock()}
       </div>
       ${this.renderImageZoom()}
     `;
@@ -628,9 +624,7 @@ export class ChatView extends LitElement {
               aria-label="Minimise warnings"
               @click=${this.handleToggleWarnings}
             >
-              <svg class="session-warnings-collapse-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="m18 15-6-6-6 6"></path>
-              </svg>
+              ${renderHeroIcon("chevron-up", "session-warnings-collapse-icon")}
               <span>Minimise</span>
             </button>
           </div>
@@ -654,7 +648,7 @@ export class ChatView extends LitElement {
                 title="Don't show this warning again"
                 aria-label="Dismiss warning"
                 @click=${() => { this.onDismissWarning?.(dismissId); }}
-              >×</button>
+              >${renderHeroIcon("x-mark")}</button>
             `}
           </div>
         `;
@@ -667,7 +661,7 @@ export class ChatView extends LitElement {
     return html`
       <dialog class="image-zoom" @click=${this.onImageZoomDialogClick} @close=${this.closeImageZoom} @cancel=${this.closeImageZoom}>
         ${this.zoomedImage === undefined ? null : html`
-          <button type="button" class="image-zoom-close" aria-label="Close image" @click=${this.closeImageZoom}>×</button>
+          <button type="button" class="image-zoom-close" aria-label="Close image" @click=${this.closeImageZoom}>${renderHeroIcon("x-mark")}</button>
           <img class="image-zoom-full" src=${this.zoomedImage.src} alt=${this.zoomedImage.alt} />
         `}
       </dialog>
@@ -694,26 +688,6 @@ export class ChatView extends LitElement {
       || this.activity?.phase === "active";
   }
 
-  private renderActivityDock() {
-    if (this.isSendingPrompt) {
-      return html`
-        <div class="activity-dock active" aria-live="polite">
-          <span class="dot"></span>
-          <span class="activity-text">Sending your message…</span>
-        </div>
-      `;
-    }
-    const state = this.activityState();
-    if (state === undefined) return null;
-    if (state === "idle" && this.activity?.phase !== "active") return null;
-    return html`
-      <div class="activity-dock active" aria-live="polite">
-        <span class="dot"></span>
-        <span class="activity-text">${this.activityText(state)}</span>
-      </div>
-    `;
-  }
-
   private renderQueuedMessages() {
     const serverQueued = this.status?.queuedMessages ?? [];
     return html`${chatQueuedMessageSections(this.clientQueuedMessages, serverQueued).map((section) => this.renderQueuedMessageList(section))}`;
@@ -735,7 +709,7 @@ export class ChatView extends LitElement {
         ${section.messages.map((message, index) => html`
           <div class="queued-message">
             <span class="queued-kind">${message.kind === "steer" ? "Steer" : "Follow-up"} ${String(index + 1)}</span>
-            <formatted-text .intentKey=${JSON.stringify([this.machineId, this.sessionId, "queue", section.source, index, message.kind])} .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${message.text}></formatted-text>
+            ${this.renderUserText(message.text, JSON.stringify([this.machineId, this.sessionId, "queue", section.source, index, message.kind]))}
           </div>
         `)}
       </aside>
@@ -795,23 +769,6 @@ export class ChatView extends LitElement {
         ${this.pendingMessageCount > 0 ? html`<small>${this.pendingMessageCount} queued ${this.pendingMessageCount === 1 ? "message" : "messages"}</small>` : null}
       </aside>
     `;
-  }
-
-  private activityState(): string | undefined {
-    const status = this.status;
-    if (status === undefined) return this.activity?.label;
-    if (status.isCompacting) return "compacting";
-    if (status.isBashRunning) return "bash";
-    if (status.isStreaming) return "running";
-    if (status.pendingMessageCount > 0) return "queued";
-    return "idle";
-  }
-
-  private activityText(state: string): string {
-    const activity = this.activity;
-    if (activity === undefined) return state;
-    if (state !== "idle" && activity.phase === "idle") return state;
-    return activity.detail !== undefined && activity.detail !== "" ? `${activity.label}: ${activity.detail}` : activity.label;
   }
 
   private renderConversationRail() {
@@ -935,7 +892,7 @@ export class ChatView extends LitElement {
         <b class="label">${label}</b>
         <div class="msg-header-trailing">
           ${this.renderMessageActions(message, key)}
-          <span class=${expanded ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${meta} aria-label=${meta} aria-expanded=${String(expanded)} @click=${() => { this.expandedMetaKey = expanded ? undefined : key; }} @keydown=${(event: KeyboardEvent) => { this.onMetaKeydown(event, key, expanded); }}>${meta}</span>
+          <span class=${expanded ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${meta} aria-label=${meta} aria-expanded=${String(expanded)} @click=${() => { this.expandedMetaKey = expanded ? undefined : key; }} @keydown=${(event: KeyboardEvent) => { this.onMetaKeydown(event, key, expanded); }}>${renderHeroIcon("information-circle", "msg-meta-icon")}${meta}</span>
         </div>
       </div>
     `;
@@ -950,11 +907,11 @@ export class ChatView extends LitElement {
     return html`
       <div class="msg-actions" aria-label="Message actions">
         ${canNavigate ? html`
-          <button type="button" class="msg-action" title="Clone session from this message" aria-label="Clone session from this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "fork", event); }}><span class="msg-fork-icon" aria-hidden="true">⑂</span></button>
-          <button type="button" class="msg-action" title="Go back to this message" aria-label="Go back to this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "back", event); }}><svg aria-hidden="true" width="16" height="16" viewBox="-3 -3 30 30" fill="none" stroke="currentColor" stroke-width="0.85" stroke-linecap="round" stroke-linejoin="round"><path vector-effect="non-scaling-stroke" d="M4 5h11a6 6 0 0 1 0 12H4m5-5-5 5 5 5" /></svg></button>
+          <button type="button" class="msg-action" title="Clone session from this message" aria-label="Clone session from this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "fork", event); }}>${renderHeroIcon("square-2-stack")}</button>
+          <button type="button" class="msg-action" title="Go back to this message" aria-label="Go back to this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "back", event); }}>${renderHeroIcon("arrow-uturn-left")}</button>
         ` : null}
         ${canCopy ? html`<button type="button" class="msg-action" title=${copied ? "Copied" : "Copy message"} aria-label=${`${copied ? "Copied" : "Copy"} ${message.role} message`} @click=${(event: MouseEvent) => { void this.copyMessage(message, key, event); }}>
-          <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
+          ${renderHeroIcon(copied ? "check" : "document-duplicate")}
         </button>` : null}
         ${this.messageActionError?.sessionId === this.sessionId && this.messageActionError.entryId === message.entryId ? html`<span role="alert">${this.messageActionError.message}</span>` : null}
       </div>
@@ -1018,13 +975,24 @@ export class ChatView extends LitElement {
     return label;
   }
 
+  private renderUserText(text: string, intentKey: string) {
+    if (isLargeText(text)) return html`
+      <details class="part large-text">
+        <summary>Text · ${textSizeLabel(text)}<span class="paste-preview">${text.slice(0, 120)}</span></summary>
+        <formatted-text .codeBlock=${true} .text=${text}></formatted-text>
+      </details>
+    `;
+    return html`<formatted-text class="part" .intentKey=${intentKey} .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${text}></formatted-text>`;
+  }
+
   private renderPart(part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
     const intentKey = JSON.stringify([this.machineId, this.sessionId, message.entryId ?? messageIndex, partIndex]);
     if (part.type === "text" || part.type === "thinking") {
       const text = part.displayText ?? part.text;
       if (text === "") return null;
       if (part.type === "thinking") return html`<details class="part"><summary>thinking</summary><formatted-text .intentKey=${intentKey} .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${text}></formatted-text></details>`;
-      if (message.role === "bash") return html`<pre class="part shell-output">${text}</pre>`;
+      if (message.role === "bash") return html`<formatted-text class="part shell-output" .codeBlock=${true} .text=${text}></formatted-text>`;
+      if (message.role === "user") return this.renderUserText(text, intentKey);
       return html`<formatted-text .intentKey=${intentKey} class="part" .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${text}></formatted-text>`;
     }
     if (part.type === "skillInvocation") return html`
@@ -1057,7 +1025,7 @@ export class ChatView extends LitElement {
     if (part.type === "toolResult") return html`
       <details class="part" ?open=${part.isError}>
         <summary>${part.isError ? "✖" : "✓"} ${part.toolName} result</summary>
-        <formatted-text .intentKey=${intentKey} .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${part.text}></formatted-text>
+        <formatted-text .codeBlock=${true} .text=${part.text}></formatted-text>
       </details>
     `;
     return null;

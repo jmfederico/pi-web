@@ -3,18 +3,19 @@
 import { LitElement, html } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppState, type AppState } from "../appState";
-import type { SessionInfo, SessionStatus, SessionWarning, Workspace } from "../api";
+import { sessionsApi, type SessionInfo, type SessionStatus, type SessionWarning, type Workspace } from "../api";
 import { SessionController } from "../controllers/sessionController";
 import { machineSessionKey } from "../machineKeys";
 import { saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, saveStagedAttachments } from "../promptAttachmentStaging";
-import { PromptEditor } from "./PromptEditor";
 import { StatusBar } from "./StatusBar";
 import { PluginRegistry } from "../plugins/registry";
 import { corePlugin } from "../plugins/core";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
 import { ChatView } from "./ChatView";
+import { PromptEditor } from "./PromptEditor";
+import { SessionObservability } from "./SessionObservability";
 import type { ActionPalette } from "./ActionPalette";
 import { FormattedText } from "./FormattedText";
 import { WorkspacePanel } from "./WorkspacePanel";
@@ -44,6 +45,12 @@ beforeEach(() => {
   unexpectedRequest.mockClear();
   window.history.replaceState(null, "", "/");
   vi.stubGlobal("fetch", unexpectedRequest);
+  // Activity has its own read-only sampler; keep the shell harness network-free.
+  vi.spyOn(sessionsApi, "sessionActivity").mockImplementation((ref) => {
+    const unavailable = { state: "unavailable" as const, reason: "Not sampled in shell tests" };
+    return Promise.resolve({ version: 1, sessionId: ref.id, cwd: ref.cwd, sampledAt: "2026-10-05T00:00:00Z",
+      todos: unavailable, goal: unavailable, fleet: unavailable, children: unavailable, memory: unavailable });
+  });
   // Scroll scheduling is not under test; happy-dom supplies no layout metrics.
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => undefined);
@@ -60,6 +67,81 @@ afterEach(() => {
 });
 
 describe("application rendering boundaries", () => {
+  it("supplies original loaded user prompts to the selected composer and clears history on session change", async () => {
+    const app = await mountApp({ selectedSession: session, messages: [
+      { role: "user", parts: [{ type: "text", text: "original prompt", displayText: "display only" }] },
+      { role: "assistant", parts: [{ type: "text", text: "response" }] },
+    ] });
+    await settle(app);
+    const editor = app.shadowRoot?.querySelector("prompt-editor");
+    if (!(editor instanceof PromptEditor)) throw new Error("Expected composer");
+    expect(editor.promptHistory).toEqual(["original prompt"]);
+    patchState(app, { selectedSession: { ...session, id: "next" }, messages: [] });
+    await settle(app);
+    expect(editor.promptHistory).toEqual([]);
+  });
+
+  it("only passes working text from the selected connected extension snapshot to the composer", async () => {
+    const selectedExtensionUi = { machineId: "local", sessionId: session.id, cwd: session.cwd, snapshot: { statuses: {}, widgets: {}, workingMessage: "Consulting the rubber duck" } };
+    const activity: AppState["activity"] = { sessionId: session.id, phase: "active", label: "agent running", at: "now" };
+    const app = await mountApp({ selectedSession: session, selectedWorkspace: workspace, selectedExtensionUi, activity });
+    await settle(app);
+    const editor = app.shadowRoot?.querySelector("prompt-editor");
+    if (!(editor instanceof PromptEditor)) throw new Error("Expected composer");
+    expect(editor.workingMessage).toBe(selectedExtensionUi.snapshot.workingMessage);
+    expect(editor.activity).toBe(activity);
+    for (const field of ["machineId", "sessionId", "cwd"] as const) {
+      patchState(app, { selectedExtensionUi: { ...selectedExtensionUi, [field]: "other" } });
+      await settle(app);
+      expect(editor.workingMessage).toBeUndefined();
+    }
+    patchState(app, { selectedExtensionUi });
+    await settle(app);
+    expect(editor.workingMessage).toBe(selectedExtensionUi.snapshot.workingMessage);
+    patchState(app, { selectedExtensionUi: undefined });
+    await settle(app);
+    expect(editor.workingMessage).toBeUndefined();
+  });
+
+  it("keeps the session heading tied to the selected conversation and clears it on deselection", async () => {
+    const app = await mountApp({ selectedSession: session, selectedWorkspace: workspace });
+    const heading = () => app.shadowRoot?.querySelector('header[aria-label="Selected conversation"]');
+    expect(heading()?.textContent).toContain("Current chat");
+    expect(heading()?.textContent).toContain("/repo");
+    patchState(app, { selectedSession: { ...session, id: "next", name: "", firstMessage: "Next conversation", cwd: "/other" } });
+    await settle(app);
+    expect(heading()?.textContent).toContain("Next conversation");
+    expect(heading()?.textContent).toContain("/other");
+    expect(heading()?.textContent).not.toContain("Current chat");
+    patchState(app, { selectedSession: undefined, selectedWorkspace: undefined });
+    await settle(app);
+    expect(heading()?.textContent).toContain("Conversation");
+    expect(heading()?.textContent).not.toContain("/other");
+  });
+
+  it("mounts observability with the same selected identity and history as chat", async () => {
+    const messages: AppState["messages"] = [{ role: "assistant", parts: [{ type: "text", text: "hello" }] }];
+    const selectedExtensionUi = { machineId: "local", sessionId: session.id, cwd: session.cwd, snapshot: { statuses: { demo: "ready" }, widgets: {} } };
+    const app = await mountApp({ selectedSession: session, selectedWorkspace: workspace, mainView: "chat", messages, selectedExtensionUi });
+    await settle(app);
+    const panel = app.shadowRoot?.querySelector("session-observability");
+    if (!(panel instanceof SessionObservability)) throw new Error("Expected observability panel");
+    expect(panel.sessionId).toBe(session.id);
+    expect(panel.machineId).toBe("local");
+    expect(panel.cwd).toBe(session.cwd);
+    expect(panel.messages).toBe(messages);
+    expect(panel.extensionUi).toBe(selectedExtensionUi);
+    const request = vi.mocked(sessionsApi.sessionActivity).mock.calls[0];
+    expect(request?.[0]).toEqual({ id: session.id, cwd: session.cwd });
+    expect(request?.[1]).toBe("local");
+    expect(request?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    patchState(app, { selectedSession: { ...session, id: "next" }, messages: [], selectedExtensionUi: undefined });
+    await settle(app);
+    expect(panel.sessionId).toBe("next");
+    expect(panel.messages).toEqual([]);
+    expect(panel.extensionUi).toBeUndefined();
+  });
+
   it("reactively filters navigation at both layout boundaries without losing hidden pins", async () => {
     let width = 1181;
     const originalMatchMedia = window.matchMedia.bind(window);
@@ -105,6 +187,7 @@ describe("application rendering boundaries", () => {
       [1181, ["render-test:panel"]],
     ] as const) {
       await resize(next);
+      expect(app.shadowRoot?.querySelector('header[aria-label="Selected conversation"]') !== null).toBe(next > 760);
       expect(destinations()).toEqual(expected);
       expect(dialog.selectedTab).toBe(next > 1180 ? "render-test:panel" : "chat");
       const labels: Record<string, string> = { navigation: "Sessions", chat: "Chat", "render-test:panel": "Test" };

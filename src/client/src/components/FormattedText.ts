@@ -1,4 +1,5 @@
-import { LitElement, html } from "lit";
+import { LitElement, html, render } from "lit";
+import { renderHeroIcon } from "./heroicons";
 import type { ChatContentRendering } from "../formatting/contentRendering";
 import { customElement, property } from "lit/decorators.js";
 import { unsafeHTML } from "lit/directives/unsafe-html.js";
@@ -10,13 +11,14 @@ import { formattedTextStyles } from "./shared";
 @customElement("formatted-text")
 export class FormattedText extends LitElement {
   @property() text = "";
+  @property({ type: Boolean }) codeBlock = false;
   @property() intentKey: string | undefined;
   @property({ attribute: false }) contentRendering: ChatContentRendering | undefined;
   @property() machineId = "local";
   @property({ attribute: false }) workspaceContext: MarkdownWorkspaceContext | undefined;
 
   override render() {
-    const content = this.contentRendering?.renderMarkdown({
+    const content = this.codeBlock ? html`<pre tabindex="0" aria-label="Code or tool output"><code>${this.text}</code></pre>` : this.contentRendering?.renderMarkdown({
       text: this.text,
       machineId: this.workspaceContext?.machineId ?? this.machineId,
       toSafeHtml: (text) => toSafeMarkdownHtml(text, this.workspaceContext, this.intentKey),
@@ -33,6 +35,7 @@ export class FormattedText extends LitElement {
       if (!(element instanceof HTMLPreElement) || element.parentElement?.classList.contains("code-block-wrapper") === true) return;
       const code = element.querySelector("code");
       if (!(code instanceof HTMLElement)) return;
+      element.tabIndex = 0;
       const wrapper = document.createElement("div");
       wrapper.className = "code-block-wrapper";
       const button = document.createElement("button");
@@ -42,7 +45,7 @@ export class FormattedText extends LitElement {
       button.setAttribute("aria-label", "Copy code block");
       const icon = document.createElement("span");
       icon.setAttribute("aria-hidden", "true");
-      icon.textContent = "⧉";
+      render(renderHeroIcon("document-duplicate"), icon);
       button.append(icon);
       element.before(wrapper);
       wrapper.append(element, button);
@@ -83,7 +86,7 @@ export class FormattedText extends LitElement {
 
   private setCopyButtonState(button: HTMLButtonElement, state: "idle" | "copied" | "failed"): void {
     const icon = button.querySelector("span");
-    if (icon !== null) icon.textContent = state === "copied" ? "✓" : "⧉";
+    if (icon !== null) render(renderHeroIcon(state === "copied" ? "check" : "document-duplicate"), icon);
     const label = state === "copied" ? "Copied code block" : state === "failed" ? "Failed to copy code block" : "Copy code block";
     button.title = label;
     button.setAttribute("aria-label", label);

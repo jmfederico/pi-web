@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -153,7 +154,7 @@ export class ModelPicker extends LitElement {
       >
         <header>
           <strong>${this.title}</strong>
-          <button aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
+          <button aria-label="Close" @click=${() => this.onCancel?.()}>${renderHeroIcon("x-mark")}</button>
         </header>
         <div class="scope-toggle" role="group" aria-label="Model scope">
           ${this.renderScopeToggleButton("enabled", "Enabled")}
@@ -460,7 +461,7 @@ export class ModelPicker extends LitElement {
   }
 
   static override styles = [css`
-    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px var(--pi-ui-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100% - 40px)); }
     header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
     .scope-toggle { display: flex; gap: 4px; margin: 10px 12px 0; padding: 3px; border: 1px solid var(--pi-border); border-radius: 8px; }

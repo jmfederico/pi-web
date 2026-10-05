@@ -4,7 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>PI WEB</title>
-    <meta name="theme-color" content="#0d1117" />
+    <meta name="theme-color" content="#1c1c1e" />
+    <link rel="preload" href="./src/assets/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="manifest" crossorigin="use-credentials" href="%BASE_URL%manifest.webmanifest" />
@@ -12,9 +13,10 @@
       :root {
         color-scheme: dark;
         --pi-control-font-size: 16px;
-        --pi-control-font-family: system-ui, sans-serif;
+        --pi-ui-font: -apple-system, BlinkMacSystemFont, "InterVariable", "Segoe UI", sans-serif;
+        --pi-control-font-family: var(--pi-ui-font);
         --pi-control-monospace-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        --pi-bg: #0d1117;
+        --pi-bg: #1c1c1e;
         --pi-surface: #161b22;
         --pi-surface-hover: #21262d;
         --pi-terminal-bg: #05070a;

@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "../heroicons";
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { clampPanelWidth, panelResizeConstraints, panelWidthFromDrag, panelWidthFromKeyboard, type PanelResizeConstraints, type ResizablePanelSide } from "../../appShell/panelResizeController";
@@ -88,9 +89,7 @@ export class AppPanelEdgeControl extends LitElement {
   }
 
   private renderIcon() {
-    const direction = this.iconDirection();
-    const path = direction === "left" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6";
-    return html`<svg class="edge-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d=${path}/></svg>`;
+    return renderHeroIcon(this.iconDirection() === "left" ? "chevron-left" : "chevron-right", "edge-icon");
   }
 
   private iconDirection(): "left" | "right" {
@@ -211,7 +210,7 @@ export class AppPanelEdgeControl extends LitElement {
     .edge-button:hover, .edge-button:focus-visible { color: var(--pi-text); background: var(--pi-surface-hover); opacity: 1; }
     :host([side="navigation"][collapsed]) .edge-button { transform: translateX(calc(50% - .5px)); }
     :host([side="workspace"][collapsed]) .edge-button { transform: translateX(calc(-50% + .5px)); }
-    .edge-icon { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    .edge-icon { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
     @media (max-width: 1180px) {
       :host([side="navigation"]) { grid-row: 1 / 3; }
       :host([side="workspace"]) { display: none; }

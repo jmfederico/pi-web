@@ -155,8 +155,9 @@ export class AppMobileMainTabs extends LitElement {
   };
 
   static override styles = css`
+    button, input, select, textarea { font: inherit; }
     :host { flex: 0 0 auto; min-width: 0; }
-    .mobile-tabs-frame { position: relative; display: flex; flex: 0 0 auto; min-width: 0; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg); }
+    .mobile-tabs-frame { position: relative; display: flex; flex: 0 0 auto; min-width: 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-chrome-bg, var(--pi-surface)); }
     .mobile-tabs-frame::before, .mobile-tabs-frame::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
     .mobile-tabs-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
     .mobile-tabs-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
@@ -164,15 +165,17 @@ export class AppMobileMainTabs extends LitElement {
     .mobile-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
     .mobile-tabs-frame button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
     .mobile-tabs .navigation-tab { display: none; }
-    .mobile-tabs-frame button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
-    .tab-icon { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    .mobile-tabs-frame button.selected { border-color: var(--pi-border-muted); background: var(--pi-surface-hover); color: var(--pi-text-bright); box-shadow: 0 1px 3px var(--pi-shadow-soft); }
+    .tab-icon { flex: 0 0 auto; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
     .tab-custom-icon { flex: 0 0 auto; width: 18px; height: 18px; display: inline-grid; place-items: center; color: currentColor; pointer-events: none; }
     .tab-custom-icon svg { width: 18px; height: 18px; pointer-events: none; }
     .tab-fallback { display: none; font-weight: 650; letter-spacing: .01em; pointer-events: none; }
     .tab-label { min-width: 0; }
-    .tab-badge { flex: 0 0 auto; display: inline-block; min-width: 14px; margin-left: 0; border: 1px solid var(--pi-success-border); border-radius: 999px; background: var(--pi-success-surface); color: var(--pi-success); padding: 0 5px; font-size: 11px; line-height: 16px; text-align: center; }
+    .tab-badge { flex: 0 0 auto; display: inline-block; min-width: 14px; margin-left: 0; border: 1px solid var(--pi-success-border); border-radius: 0; background: var(--pi-success-surface); color: var(--pi-success); padding: 0 5px; font-size: 11px; line-height: 16px; text-align: center; }
     .tab-badge.unread { border-color: var(--pi-accent-border); background: var(--pi-selection-bg); color: var(--pi-accent); }
-    button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+    button:hover { background: var(--pi-surface-hover); }
+    button { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--pi-text-secondary); padding: 7px 9px; cursor: pointer; }
     @media (max-width: 760px) {
       .mobile-tabs { gap: 4px; padding: 6px 8px; }
       .mobile-tabs-frame button { min-width: 44px; height: 44px; justify-content: center; gap: 4px; padding: 0 8px; }

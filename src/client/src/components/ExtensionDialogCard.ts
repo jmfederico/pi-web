@@ -270,13 +270,14 @@ export class ExtensionDialogCard extends LitElement {
   }
 
   static override styles = css`
+    button, input, select, textarea { font: inherit; }
     :host {
       display: block;
       box-sizing: border-box;
       width: 100%;
       margin: 0 0 14px;
       color: var(--pi-text);
-      font: 14px system-ui, sans-serif;
+      font: 14px var(--pi-ui-font, system-ui, sans-serif);
       container-type: inline-size;
     }
     .card {

@@ -1,3 +1,4 @@
+import { renderHeroIcon } from "./heroicons";
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Project } from "../api";
@@ -68,7 +69,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   ${this.renderActivity(project)}
                 </div>
                 <div class="action-menu">
-                  <button class="action-menu-toggle" title="Project actions" aria-label=${`Actions for ${project.name}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id, event.currentTarget); }}>⋯</button>
+                  <button class="action-menu-toggle" title="Project actions" aria-label=${`Actions for ${project.name}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id, event.currentTarget); }}>${renderHeroIcon("ellipsis-horizontal")}</button>
                   ${this.openMenuProjectId === project.id ? html`
                     <div class="action-menu-panel" style=${this.menuStyle}>
                       <button title="Close project" @click=${() => { this.close(project); }}>Close</button>

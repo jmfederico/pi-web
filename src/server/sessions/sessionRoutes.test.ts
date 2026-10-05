@@ -61,6 +61,22 @@ afterEach(async () => {
 });
 
 describe("session routes", () => {
+  it("scopes live activity by session and cwd and disables caching", async () => {
+    let captured: SessionRef | undefined;
+    service.observability = (ref) => {
+      captured = ref;
+      const missing = { state: "unavailable" as const, reason: "Unsupported source" };
+      return Promise.resolve({ version: 1, sessionId: ref.id, cwd: ref.cwd, sampledAt: "2026-10-05T00:00:00Z",
+        goal: missing, todos: missing, fleet: missing, children: missing, memory: missing });
+    };
+    const invalid = await app.inject({ method: "GET", url: "/sessions/session-1/observability" });
+    expect(invalid.statusCode).toBe(400); expect(captured).toBeUndefined();
+    const response = await app.inject({ method: "GET", url: "/sessions/session-1/observability?cwd=%2Frepo" });
+    expect(response.statusCode).toBe(200); expect(response.headers["cache-control"]).toBe("no-store");
+    expect(captured).toEqual({ id: "session-1", cwd: resolve("/repo") });
+    expect(response.json()).toMatchObject({ version: 1, sessionId: "session-1", cwd: resolve("/repo") });
+  });
+
   it("returns notification catalog and selected-inbox snapshots with required cwd context", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);

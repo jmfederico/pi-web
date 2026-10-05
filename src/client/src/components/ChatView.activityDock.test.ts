@@ -43,8 +43,8 @@ const transitions = {
   sending: (view: ChatView, active: boolean) => { view.isSendingPrompt = active; },
 };
 
-describe.each(Object.entries(transitions))("ChatView activity overlay: %s", (_name, transition) => {
-  it.each([true, false])("toggles visibility without scrolling (at bottom: %s)", async (atBottom) => {
+describe.each(Object.entries(transitions))("ChatView activity changes: %s", (_name, transition) => {
+  it.each([true, false])("leaves activity to the composer without scrolling (at bottom: %s)", async (atBottom) => {
     const view = new ChatView();
     transition(view, false);
     document.body.append(view);
@@ -53,8 +53,7 @@ describe.each(Object.entries(transitions))("ChatView activity overlay: %s", (_na
     const chat = view.shadowRoot?.querySelector<HTMLElement>(".chat");
     if (!chat) throw new Error("Missing transcript");
 
-    // Supply stable browser metrics, not simulated CSS layout. The overlay's
-    // visual geometry is checked in a browser; this verifies scroll side effects.
+    // Supply stable browser metrics to verify scroll side effects, not CSS layout.
     let top = atBottom ? 600 : 200;
     const scroll = vi.fn((value: number) => { top = value; });
     Object.defineProperties(chat, {
@@ -72,7 +71,7 @@ describe.each(Object.entries(transitions))("ChatView activity overlay: %s", (_na
       transition(view, active);
       await view.updateComplete;
       flushFrame();
-      expect(view.shadowRoot?.querySelector(".activity-dock") !== null).toBe(active);
+      expect(view.shadowRoot?.querySelector(".activity-dock")).toBeNull();
       expect(scroll).not.toHaveBeenCalled();
     }
   });

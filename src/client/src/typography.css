@@ -1,0 +1,23 @@
+/*! Inter 4.1, SIL Open Font License 1.1. Copyright The Inter Project Authors. See licenses/Inter.txt. */
+@font-face {
+  font-family: "InterVariable";
+  src: url("./assets/InterVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "InterVariable";
+  src: url("./assets/InterVariable-Italic.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --pi-ui-font: -apple-system, BlinkMacSystemFont, "InterVariable", "Segoe UI", sans-serif;
+  --pi-control-font-family: var(--pi-ui-font);
+  font-family: var(--pi-ui-font);
+  font-optical-sizing: auto;
+}
