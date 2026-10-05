@@ -6,6 +6,7 @@ import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 import { parseDeprecatedAgentInputs } from "../../../shared/piWebStatusParsing";
 import { PI_WEB_PLUGIN_RECOVERY_COMMANDS, pluginDisableRecoveryCommand } from "../../../shared/pluginRecoveryCommands";
 import { parseServerNoticeScope } from "../../../shared/serverNoticeContract";
+import { requireDefaultThemePreference } from "../../../shared/themePreference";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -575,6 +576,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     ...optionalField("warnings", warnings?.filter((warning) => !isLegacyOtherInstanceActivityWarning(warning))),
     ...optionalPendingAsk(record["pendingAsk"]),
     ...optionalPendingDialogs(record["pendingDialogs"]),
+    ...optionalField("suggestedInput", optionalString(record, "suggestedInput")),
   };
 }
 
@@ -768,6 +770,8 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
       return parseSessionNameEvent(record);
     case "session.created":
       return { type: "session.created", session: parseSessionInfo(record["session"]) };
+    case "session.tree.changed":
+      return { type: "session.tree.changed" };
     case "pi.event":
       return { type: "pi.event", eventType: requireString(record, "eventType") };
     default:
@@ -1482,6 +1486,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("port", optionalNumber(record, "port")),
     ...optionalField("allowedHosts", optionalAllowedHosts(record["allowedHosts"])),
     ...optionalField("shortcuts", optionalShortcuts(record["shortcuts"])),
+    ...optionalField("defaultTheme", record["defaultTheme"] === undefined ? undefined : requireDefaultThemePreference(record["defaultTheme"], "response")),
     ...optionalField("plugins", optionalPlugins(record["plugins"])),
     ...optionalField("pathAccess", optionalPathAccess(record["pathAccess"])),
     ...optionalField("uploads", optionalUploads(record["uploads"])),

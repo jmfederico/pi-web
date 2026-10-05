@@ -164,15 +164,17 @@ function expectIgnoredMutations(
 ): void {
   const ignored = ignoredMutationEntries(entries);
   expect(ignored).toHaveLength(expected.length);
-  expect(ignored.map((entry) => entry.details)).toEqual(expect.arrayContaining(
-    expected.map(({ operation, providerId }) => ({
-      context: "global-provider-bootstrap",
-      operation,
-      providerId,
-    })),
-  ));
-  expect(ignored.every((entry) => entry.level === "info")).toBe(true);
-  const operationProviderKeys = ignored.map((entry) => `${String(entry.details["operation"])}:${String(entry.details["providerId"])}`);
+  expect(ignored.map(({ details }) => ({ operation: details["operation"], providerId: details["providerId"] })))
+    .toEqual(expect.arrayContaining([...expected]));
+  for (const { details } of ignored) {
+    expect(details["context"]).toBe("global-provider-bootstrap");
+    expect(details["code"]).toBe("PROVIDER_MUTATION_IGNORED");
+    expect(details["reason"]).toBeTypeOf("string");
+    expect(details["guidance"]).toEqual(expect.stringContaining("manually restart the session daemon when safe"));
+  }
+  const operationProviderKeys = ignored.map((entry) => JSON.stringify([
+    entry.details["operation"], entry.details["providerId"], entry.details["reason"],
+  ]));
   expect(new Set(operationProviderKeys).size).toBe(ignored.length);
 }
 
@@ -353,9 +355,9 @@ describe("immutable global provider bootstrap acceptance", () => {
       expect.objectContaining({ provider: "global-native", id: modelId("global-native", "baseline") }),
     ]));
     expectIgnoredMutations(logEntries, [
-      { operation: "registerProvider", providerId: "global-config" },
       { operation: "registerNativeProvider", providerId: "global-native" },
     ]);
+    expect(ignoredMutationEntries(logEntries).every((entry) => entry.level === "info")).toBe(true);
     await expectNoProviderMutationFeedback(service, ref);
   });
 
@@ -467,9 +469,8 @@ describe("immutable global provider bootstrap acceptance", () => {
     expect(await service.availableModels(ref)).toEqual(expect.arrayContaining([
       expect.objectContaining({ provider: providerId, id: refreshedModelId }),
     ]));
-    // The extension body replays its unchanged startup config when the session
-    // loads it; that is not a catalog change and stays an ignored no-op.
-    expectIgnoredMutations(logEntries, [{ operation: "registerProvider", providerId }]);
+    // The unchanged startup replay is a silent no-op, not a diagnostic.
+    expectIgnoredMutations(logEntries, []);
     expect(logEntries).toContainEqual({
       level: "info",
       details: {
@@ -559,6 +560,85 @@ describe("immutable global provider bootstrap acceptance", () => {
     });
     expect(secondDaemon.runtime.getModel(providerId, "model-first")).toBeUndefined();
     expect(secondDaemon.runtime.getModel(providerId, "model-second")).toBeDefined();
+  });
+
+  it("diagnoses a provider extension installed after bootstrap without session warnings or duplicate logs", async () => {
+    const providerId = "late-global";
+    const agentDir = await tempDir("pi-web-policy-agent-");
+    await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { [providerId]: providerConfig(providerId) } }));
+    const runtime = await ModelRuntime.create({
+      credentials: new InMemoryCredentialStore(),
+      modelsPath: join(agentDir, "models.json"),
+      allowModelNetwork: false,
+    });
+    const { service, logEntries, events } = await policyHarness({ runtime, agentDir });
+    expect(runtime.getRegisteredProviderIds()).toEqual([]);
+    await writeAgentExtension(agentDir, `
+      export default function (pi) {
+        pi.registerProvider(${JSON.stringify(providerId)}, {
+          api: "openai-completions",
+          streamSimple() { throw new Error("late-stream-secret"); }
+        });
+      }
+    `);
+    const cwd = await tempDir("pi-web-policy-project-");
+    const first = { id: (await service.start(cwd)).id, cwd };
+    const second = { id: (await service.start(cwd)).id, cwd };
+    await expect(service.runCommand(first, "/reload")).resolves.toMatchObject({ type: "done" });
+
+    expectIgnoredMutations(logEntries, [{ operation: "registerProvider", providerId }]);
+    expect(ignoredMutationEntries(logEntries)[0]).toMatchObject({
+      level: "warn",
+      details: { code: "PROVIDER_MUTATION_IGNORED", reason: "not-in-startup-baseline" },
+    });
+    expect(runtime.getRegisteredProviderConfig(providerId)).toBeUndefined();
+    expect(runtime.getModel(providerId, modelId(providerId, "baseline"))).toBeDefined();
+    expect(JSON.stringify(ignoredMutationEntries(logEntries))).not.toContain("secret");
+    expect(events.sessionEvents.filter(({ event }) => event.type === "session.error")).toEqual([]);
+    await expectNoProviderMutationFeedback(service, first);
+    await expectNoProviderMutationFeedback(service, second);
+  });
+
+  it("retains a startup custom stream through fresh callback replays and reload without warning", async () => {
+    const providerId = "startup-stream";
+    const agentDir = await agentDirWithExtension(`
+      import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+      export default function (pi) {
+        pi.registerProvider(${JSON.stringify(providerId)}, {
+          ...${JSON.stringify(providerConfig(providerId))},
+          streamSimple(model) {
+            const stream = createAssistantMessageEventStream();
+            stream.push({
+              type: "done", reason: "stop", message: {
+                role: "assistant", content: [{ type: "text", text: "startup stream is active" }],
+                api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: "stop",
+                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+              }
+            });
+            stream.end();
+            return stream;
+          }
+        });
+      }
+    `);
+    const { service, runtime, logEntries } = await policyHarness({ agentDir });
+    const baselineStream = runtime.getRegisteredProviderConfig(providerId)?.streamSimple;
+    expect(baselineStream).toBeTypeOf("function");
+    const cwd = await tempDir("pi-web-policy-project-");
+    const ref = { id: (await service.start(cwd)).id, cwd };
+    await expect(service.runCommand(ref, "/reload")).resolves.toMatchObject({ type: "done" });
+    const model = runtime.getModel(providerId, modelId(providerId, "baseline"));
+    if (!model) throw new Error("Missing startup stream model");
+    const result = await runtime.completeSimple(model, { messages: [] });
+    expect(result.content).toEqual([{ type: "text", text: "startup stream is active" }]);
+    expect(runtime.getRegisteredProviderConfig(providerId)?.streamSimple).toBe(baselineStream);
+    expectIgnoredMutations(logEntries, [{ operation: "registerProvider", providerId }]);
+    expect(ignoredMutationEntries(logEntries)[0]).toMatchObject({
+      level: "info", details: { reason: "implementation-unverified" },
+    });
+    expect(logEntries.filter((entry) => entry.level === "warn" || entry.level === "error")).toEqual([]);
+    await expectNoProviderMutationFeedback(service, ref);
   });
 
   it("leaves project-level models.json behavior unchanged", async () => {

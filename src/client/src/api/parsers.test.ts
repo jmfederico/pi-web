@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
-import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseRealtimeStreamEvent, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
+import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseExtensionDialogCloseResponse, parseFileContentResponse, parseFileSuggestion, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseRealtimeStreamEvent, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionModelCatalogResponse, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamEvent, parseSessionStreamSnapshot, parseSessionTreeForkResult, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseWorkspace, parseWorkspaceProviderResolution } from "./parsers";
 
 const legacyActivityWarning = {
   severity: "info", source: "PI-WEB",
@@ -67,6 +67,17 @@ describe("API parsers", () => {
       effectiveConfig: { host: "127.0.0.1", port: 8504, allowedHosts: true, pathAccess: { allowedPaths: ["/tmp"] }, uploads: { defaultFolder: ".pi-web/uploads" }, attachments: { defaultFolder: ".pi-web/attachments" }, agent: { command: "agent-lab", dir: "/Users/dev/agent-profiles/lab" } },
       envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
     });
+  });
+
+  it("preserves theme defaults and rejects malformed theme data", () => {
+    const defaultTheme = { themeId: "themes:pi-web-light", auto: false };
+    const response = {
+      path: "/tmp/config.json", exists: true,
+      config: { defaultTheme }, effectiveConfig: { defaultTheme },
+      envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    };
+    expect(parsePiWebConfigResponse(response)).toMatchObject({ config: { defaultTheme }, effectiveConfig: { defaultTheme } });
+    expect(() => parsePiWebConfigResponse({ ...response, config: { defaultTheme: "dark" } })).toThrow("PI WEB config defaultTheme");
   });
 
   it("rejects malformed PI WEB attachments config fields", () => {
@@ -615,6 +626,21 @@ describe("API parsers", () => {
       contextUsage: { tokens: null, contextWindow: 100, percent: 0.5 },
       thinkingLevel: "medium",
     });
+  });
+
+  it("parses optional suggested input verbatim, including empty input", () => {
+    expect(parseSessionStatus(statusWire()).suggestedInput).toBeUndefined();
+    for (const suggestedInput of ["suggestion\nwith whitespace  ", ""]) {
+      expect(parseSessionStatus({ ...statusWire(), suggestedInput }).suggestedInput).toBe(suggestedInput);
+    }
+    expect(() => parseSessionStatus({ ...statusWire(), suggestedInput: 42 })).toThrow("Expected optional string field: suggestedInput");
+  });
+
+  it("rebuilds a payload-free tree invalidation and rejects retired tree result events", () => {
+    expect(parseSessionStreamEvent({ type: "session.tree.changed", result: { editorText: "ignored" } })).toEqual({ type: "session.tree.changed" });
+    for (const type of ["session.tree.navigated", "session.tree.forked"]) {
+      expect(() => parseSessionStreamEvent({ type, result: { cancelled: true } })).toThrow("Unsupported session stream event type");
+    }
   });
 
   it.each([true, false])("preserves recentlyActiveElsewhere=%s independently of warnings", (recentlyActiveElsewhere) => {

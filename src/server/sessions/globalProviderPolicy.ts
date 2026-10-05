@@ -62,6 +62,56 @@ function isModelsOnlyProviderUpdate(baseline: RegisteredProviderConfig, incoming
   return incoming.models !== undefined && !isDeepStrictEqual(incoming.models, baseline.models);
 }
 
+/**
+ * Diagnostic comparison only: fresh closures are not evidence of changed code.
+ * The acceptance gate above still uses strict equality and remains unchanged.
+ * Compare plain config objects recursively so a real OAuth setting change is
+ * not hidden just because that object also contains callbacks.
+ */
+function matchesIgnoringFunctionReferences(
+  baseline: unknown,
+  incoming: unknown,
+  compared = new WeakMap<object, WeakSet<object>>(),
+): boolean {
+  if (isDeepStrictEqual(baseline, incoming)) return true;
+  if (typeof baseline === "function" && typeof incoming === "function") return true;
+  if (typeof baseline !== "object" || baseline === null || typeof incoming !== "object" || incoming === null) return false;
+  const prototype: unknown = Object.getPrototypeOf(baseline);
+  if (prototype !== Object.getPrototypeOf(incoming) || (prototype !== Object.prototype && prototype !== null)) return false;
+  const paired = compared.get(baseline) ?? new WeakSet();
+  if (paired.has(incoming)) return true;
+  paired.add(incoming);
+  compared.set(baseline, paired);
+  const baselineFields = new Map(Object.entries(baseline));
+  const incomingFields = Object.entries(incoming);
+  return baselineFields.size === incomingFields.length && incomingFields.every(([field, value]) =>
+    baselineFields.has(field) && matchesIgnoringFunctionReferences(baselineFields.get(field), value, compared));
+}
+
+function ignoredConfigReason(baseline: RegisteredProviderConfig, incoming: RegisteredProviderConfig): IgnoredMutationReason | undefined {
+  const baselineFields = new Map(Object.entries(baseline));
+  const changedFields = Object.entries(incoming).filter(([field, value]) =>
+    field !== MODELS_FIELD && value !== undefined && !isDeepStrictEqual(value, baselineFields.get(field)));
+  if (changedFields.length === 0) return undefined; // Unchanged replay: no diagnostic needed.
+  return changedFields.every(([field, value]) => matchesIgnoringFunctionReferences(baselineFields.get(field), value))
+    ? "implementation-unverified"
+    : "configuration-change";
+}
+
+type IgnoredMutationReason =
+  | "not-in-startup-baseline"
+  | "configuration-change"
+  | "implementation-unverified"
+  | "native-registration-frozen"
+  | "unregistration-frozen";
+
+const PROVIDER_RECOVERY_GUIDANCE = "The startup provider, if any, remains in use. "
+  + "Provider registrations are shared across sessions and fixed at daemon startup. "
+  + "For a global extension, register providers in its factory in the active agent directory, then manually restart "
+  + "the session daemon when safe; this interrupts active sessions and terminals. Project-only or session_start-only "
+  + "registrations are not enabled by a restart. /reload and web/API restarts do not rebuild the provider baseline. "
+  + "See https://pi-web.dev/faq#provider-extension-no-effect.";
+
 async function loadGlobalExtensionServices(runtime: ModelRuntime, agentDir: string): Promise<AgentSessionServices> {
   const scratchCwd = await mkdtemp(join(tmpdir(), "pi-web-global-ext-"));
   try {
@@ -121,30 +171,43 @@ function freezeProviderMutations(
     registerProvider: runtime.registerProvider.bind(runtime),
     unregisterProvider: runtime.unregisterProvider.bind(runtime),
   };
-  const loggedProviderIds: Record<ProviderMutationOperation, Set<string>> = {
-    registerNativeProvider: new Set(),
-    registerProvider: new Set(),
-    unregisterProvider: new Set(),
-  };
+  const startupProviderIds = new Set(runtime.getRegisteredProviderIds());
+  const loggedMutations = new Set<string>();
   // Logging must never turn a provider mutation into an extension failure.
-  const logQuietly = (details: Record<string, unknown>, message: string): void => {
+  const logQuietly = (details: Record<string, unknown>, message: string, level: "info" | "warn" = "info"): void => {
     try {
-      logger.info(details, message);
+      logger[level](details, message);
     } catch {
       // Intentionally ignored; the mutation decision already stands.
     }
   };
-  const logIgnoredMutation = (operation: ProviderMutationOperation, providerId: string): void => {
-    const loggedIds = loggedProviderIds[operation];
-    if (loggedIds.has(providerId)) return;
-    loggedIds.add(providerId);
-    logQuietly({ context: LOG_CONTEXT, operation, providerId }, "ignored provider mutation after global bootstrap");
+  const logIgnoredMutation = (operation: ProviderMutationOperation, providerId: string, reason: IgnoredMutationReason): void => {
+    // An ordinary callback replay must not suppress a later actionable warning.
+    const key = JSON.stringify([operation, providerId, reason]);
+    if (loggedMutations.has(key)) return;
+    loggedMutations.add(key);
+    const level = reason === "not-in-startup-baseline" || reason === "configuration-change" ? "warn" : "info";
+    logQuietly(
+      {
+        context: LOG_CONTEXT,
+        code: "PROVIDER_MUTATION_IGNORED",
+        operation,
+        providerId,
+        reason,
+        guidance: PROVIDER_RECOVERY_GUIDANCE,
+      },
+      "ignored provider mutation after global bootstrap",
+      level,
+    );
   };
   const frozenMethods: ProviderMutationMethods = {
     registerProvider(providerId, config) {
       const baseline = configBaseline.get(providerId);
       if (!baseline || !isModelsOnlyProviderUpdate(baseline, config)) {
-        logIgnoredMutation("registerProvider", providerId);
+        const reason = baseline === undefined
+          ? (startupProviderIds.has(providerId) ? "configuration-change" : "not-in-startup-baseline")
+          : ignoredConfigReason(baseline, config);
+        if (reason !== undefined) logIgnoredMutation("registerProvider", providerId, reason);
         return;
       }
       // Pi validates the registration and ends in a fire-and-forget local
@@ -164,10 +227,13 @@ function freezeProviderMutations(
       );
     },
     registerNativeProvider(provider) {
-      logIgnoredMutation("registerNativeProvider", provider.id);
+      const reason = configBaseline.has(provider.id)
+        ? "configuration-change"
+        : startupProviderIds.has(provider.id) ? "native-registration-frozen" : "not-in-startup-baseline";
+      logIgnoredMutation("registerNativeProvider", provider.id, reason);
     },
     unregisterProvider(providerId) {
-      logIgnoredMutation("unregisterProvider", providerId);
+      logIgnoredMutation("unregisterProvider", providerId, "unregistration-frozen");
     },
   };
 
@@ -192,7 +258,9 @@ function freezeProviderMutations(
  * Documented initialization-time config and native registrations reach Pi's
  * public service factory. Pi exposes no provider-freeze hook, so the daemon
  * deliberately shadows the three public instance mutation methods afterward;
- * every provider registration replay or later mutation is then a logged no-op.
+ * every later mutation is then a no-op, with daemon-log-only diagnostics.
+ * Unchanged config replays are silent; fresh closures and native replays are
+ * informational because their implementation cannot be compared reliably.
  *
  * The one exception is a known config provider refreshing its own model
  * catalog: a `registerProvider` call whose config matches the recorded

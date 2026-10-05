@@ -210,6 +210,7 @@ export class ChatView extends LitElement {
   @property({ type: Number }) pendingMessageCount = 0;
   @property({ attribute: false }) clientQueuedMessages: QueuedSessionMessage[] = [];
   @property({ attribute: false }) status?: SessionStatus;
+  @property({ attribute: false }) onUseSuggestedInput: ((machineId: string, sessionId: string) => void) | undefined;
   @property({ attribute: false }) activity?: SessionActivity;
   @property({ attribute: false }) pendingAsk?: PendingAskUser;
   @property({ attribute: false }) askDraftSessionId = "";
@@ -467,6 +468,7 @@ export class ChatView extends LitElement {
           ))}
           ${this.renderQueuedMessages()}
           ${this.renderSessionActivity()}
+          ${this.renderSuggestedInput()}
           ${this.renderOpenAsk()}
           ${this.renderExtensionDialogs()}
         </div>
@@ -738,6 +740,19 @@ export class ChatView extends LitElement {
             <formatted-text .intentKey=${JSON.stringify([this.machineId, this.sessionId, "queue", section.source, index, message.kind])} .contentRendering=${this.contentRendering} .machineId=${this.machineId} .workspaceContext=${this.workspaceContext} .text=${message.text}></formatted-text>
           </div>
         `)}
+      </aside>
+    `;
+  }
+
+  private renderSuggestedInput() {
+    const text = this.status?.sessionId === this.sessionId ? this.status.suggestedInput : undefined;
+    if (text === undefined || this.onUseSuggestedInput === undefined) return null;
+    return html`
+      <aside class="suggested-input">
+        <strong>Suggested input</strong>
+        <p class="suggested-input-text" dir="auto">${text === "" ? "Empty input" : text}</p>
+        <small>Replaces your current draft. Nothing is sent.</small>
+        <button type="button" @click=${() => { this.onUseSuggestedInput?.(this.machineId, this.sessionId); }}>Use suggested input</button>
       </aside>
     `;
   }

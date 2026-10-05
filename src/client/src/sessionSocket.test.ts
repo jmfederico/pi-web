@@ -222,9 +222,18 @@ describe("socket stream validation", () => {
       { type: "session.error", message: "boom" },
       { type: "session.name", sessionId: "session-1", name: "rename" },
       { type: "session.created", session: sessionInfoWire() },
+      { type: "session.tree.changed" },
       { type: "pi.event", eventType: "turn_start" },
     ];
     for (const frame of validFrames) expect(parseSessionSocketEvent(frame)).toEqual(frame);
+  });
+
+  it("accepts factual tree invalidation without payload, retains seq, and rejects retired result events", () => {
+    const changed = { type: "session.tree.changed", seq: 41 };
+    expect(parseSessionSocketEvent({ ...changed, result: { editorText: "do not apply" }, session: sessionInfoWire(), stray: true })).toEqual(changed);
+    expect(parseRealtimeSocketEvent(changed)).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "session.tree.navigated", result: { cancelled: false, editorText: "old result" } })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "session.tree.forked", result: { cancelled: false, session: sessionInfoWire(), promptDraft: "old draft" } })).toBeUndefined();
   });
 
   it("drops malformed session stream frames instead of accepting them on type alone", () => {

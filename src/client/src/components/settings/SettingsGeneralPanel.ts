@@ -60,6 +60,7 @@ export class SettingsGeneralPanel extends LitElement {
         .onAction=${() => { this.reloadAll(); }}
       >
         <div class="settings-sections">
+          <slot name="appearance"></slot>
           ${this.renderGatewayServerSettings()}
           ${this.renderSelectedMachineAccessSettings()}
         </div>
@@ -178,7 +179,7 @@ export class SettingsGeneralPanel extends LitElement {
   private panelNotices(): readonly SettingsNotice[] {
     const notices: SettingsNotice[] = [];
     const gatewayError = this.gatewayLocalError || this.error;
-    if (gatewayError !== "") notices.push({ type: "error", title: "Gateway server", content: gatewayError });
+    if (gatewayError !== "") notices.push({ type: "error", title: "Configuration", content: gatewayError });
     if (this.savedMessage !== "") notices.push({ type: "success", content: this.savedMessage });
     return notices;
   }

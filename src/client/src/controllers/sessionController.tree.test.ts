@@ -175,7 +175,7 @@ describe("SessionController session tree navigation", () => {
     expect(state.treeDialog).toBeUndefined();
     expect(loadDraft(cacheKey)).toBe("edit original prompt");
     expect(replacePromptEditorText).toHaveBeenCalledWith({ machineId: "local", sessionId: oldSession.id, text: "edit original prompt" });
-    expect(socket.connectedSessionIds).toEqual([oldSession.id, oldSession.id]);
+    expect(socket.connectedSessionIds).toEqual([oldSession.id]);
   });
 
   it("keeps the busy tree mounted until authoritative history and editor replacement finish", async () => {
@@ -496,6 +496,9 @@ describe("SessionController session tree navigation", () => {
 
     const navigation = controller.navigateTree("root", { mode: "none" });
     await controller.selectSession(replacementSession, { updateUrl: false });
+    // The destination's own join refreshes its cache independently. Inspect
+    // only the delayed source mutation's effects from here.
+    removedKeys.length = 0;
     navigationResult.resolve({ cancelled: false, editorText: "originating draft" });
     await navigation;
 

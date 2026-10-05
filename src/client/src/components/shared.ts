@@ -425,6 +425,11 @@ export const chatStyles = css`
   .queued-message:first-of-type { padding-top: 0; border-top: 0; }
   .queued-kind { color: var(--pi-muted); font-size: 12px; text-transform: uppercase; }
   .queued-dialogs { margin: -8px 0 14px; padding: 0 4px; color: var(--pi-muted); font-size: 12px; text-align: center; }
+  .suggested-input { display: grid; gap: 8px; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); }
+  .suggested-input-text { max-height: 12em; overflow: auto; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .suggested-input small { color: var(--pi-muted); }
+  .suggested-input button { justify-self: start; padding: 6px 10px; border: 1px solid var(--pi-accent-border); border-radius: 6px; background: var(--pi-selection-bg); color: var(--pi-text); font: inherit; cursor: pointer; }
+  .suggested-input button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
   .session-activity { max-width: 100%; min-width: 0; box-sizing: border-box; display: grid; gap: 4px; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); color: var(--pi-text); overflow: hidden; }
   .session-activity.compacting { border-color: var(--pi-purple-border); background: var(--pi-purple-surface); }
   .session-activity strong { color: var(--pi-purple); }

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { ExtensionCommandContextActions } from "@earendil-works/pi-coding-agent";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
 import type { ClientCommandResult, ClientSession, ClientSessionTreeSnapshot } from "../types.js";
 import { isBuiltinCommand } from "./builtinCommands.js";
@@ -33,7 +34,7 @@ export interface CommandSession {
 export interface CommandRuntime<TSession extends CommandSession = CommandSession> {
   cwd: string;
   session: TSession;
-  fork: (entryId: string, options?: { position?: "before" | "at" }) => Promise<{ cancelled: boolean; selectedText?: string }>;
+  fork: (entryId: string, options?: Parameters<ExtensionCommandContextActions["fork"]>[1]) => Promise<{ cancelled: boolean; selectedText?: string }>;
 }
 
 export interface CommandActiveSession<TSession extends CommandSession = CommandSession> {
@@ -61,9 +62,11 @@ export interface SessionCommandNaming {
   listSessionNames?: (cwd: string) => Promise<readonly string[]>;
 }
 
-export interface ForkEntryOptions {
-  /** Rechecked inside the serialized replacement boundary when supplied by /tree. */
+export interface ForkEntryOptions<TSession extends CommandSession = CommandSession> extends NonNullable<Parameters<ExtensionCommandContextActions["fork"]>[1]> {
+  /** Rechecked inside the serialized replacement boundary for tree/extension callers. */
   expectedLeafId: string | null;
+  /** A copied leaf ID must not authorize mutation of a replacement runtime. */
+  expectedSession?: TSession;
 }
 
 type RelatedSessionKind = "fork" | "copy";
@@ -127,9 +130,9 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
    * the original session untouched. Shared by the `/fork` select response and the
    * session-tree fork-from-entry path. User entries fork from "before" so their
    * text returns as a prompt draft; every other entry forks "at" so the forked
-   * file includes it.
+   * file includes it. Extension commands may explicitly choose the SDK position.
    */
-  async forkEntry(sessionId: string, entryId: string, options?: ForkEntryOptions): Promise<ClientCommandResult> {
+  async forkEntry(sessionId: string, entryId: string, options?: ForkEntryOptions<TSession>): Promise<ClientCommandResult> {
     const active = await this.getActive(sessionId);
     if (this.lifecycle.isTreeNavigationActive?.(active.runtime.session) === true) return treeNavigationActiveUnsupported();
     if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
@@ -138,13 +141,19 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
     if (this.hasActiveWork(active.runtime.session)) return forkActiveUnsupported("fork");
     const result = await this.runSessionReplacement(active.runtime, async () => {
       const session = active.runtime.session;
+      if (options?.expectedSession !== undefined && session !== options.expectedSession) {
+        throw new Error("The session runtime changed before forking. Try again from the current session.");
+      }
       if (options !== undefined && session.sessionManager.getLeafId() !== options.expectedLeafId) {
         throw new Error("The session changed since /tree was opened. Reopen /tree and try again.");
       }
       // Resolve the entry kind from the session state protected by the same
       // replacement boundary as the fork, not Pi's text-only /fork selector.
-      const position = this.forkPosition(session, entryId);
-      const forkResult = await active.runtime.fork(entryId, { position });
+      const position = options?.position ?? this.forkPosition(session, entryId);
+      const forkResult = await active.runtime.fork(entryId, {
+        position,
+        ...(options?.withSession === undefined ? {} : { withSession: options.withSession }),
+      });
       if (!forkResult.cancelled) this.tryNameRelatedSession(active.runtime.session, relatedName);
       return forkResult;
     });

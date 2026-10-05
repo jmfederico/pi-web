@@ -156,7 +156,14 @@ export interface PiWebDeprecatedAgentInput {
   readonly replacement?: string;
 }
 
+export interface PiWebThemePreference {
+  themeId: string;
+  auto: boolean;
+}
+
 export interface PiWebConfigValues {
+  /** App-wide theme default; browser-local theme preferences take precedence. */
+  defaultTheme?: PiWebThemePreference;
   host?: string;
   port?: number;
   allowedHosts?: string[] | true;
@@ -1174,6 +1181,8 @@ export interface SessionStatus {
    * restarts. Several may be open at once; the UI presents them as a queue.
    */
   pendingDialogs?: PendingExtensionDialog[];
+  /** Latest tree-generated input, retained while hosted by this daemon. Applying it is a client choice. */
+  suggestedInput?: string;
 }
 
 export interface SlashCommand {
@@ -1369,6 +1378,8 @@ type SessionUiEventBody =
   | { type: "dialog.closed"; dialogId: string; reason: ExtensionDialogCloseReason; answer?: ExtensionDialogAnswer }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
+  /** The selected branch/runtime changed; clients refresh reads without changing local selection or drafts. */
+  | { type: "session.tree.changed" }
   | { type: "pi.event"; eventType: string };
 
 /** Global invalidation for the daemon-owned enabled-model scope. */

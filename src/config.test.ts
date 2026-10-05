@@ -21,6 +21,7 @@ describe("PI WEB config persistence", () => {
     const requestedConfig = {
       host: "0.0.0.0",
       port: 9000,
+      defaultTheme: { themeId: "custom-theme:night", auto: false },
       allowedHosts: ["example.local"],
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
       plugins: {
@@ -47,6 +48,23 @@ describe("PI WEB config persistence", () => {
     savePiWebConfig({ port: 9000, allowedHosts: [], pathAccess: { allowedPaths: ["/new"] }, uploads: { defaultFolder: "new" }, attachments: { defaultFolder: "new-attachments" } }, testOptions());
 
     expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({ serverPlugins: { safeStart: "none" }, future: { enabled: true }, port: 9000, allowedHosts: [], pathAccess: { allowedPaths: ["/new"] }, uploads: { defaultFolder: "new" }, attachments: { defaultFolder: "new-attachments" } });
+  });
+
+  it("preserves the theme default across unrelated saves and allows removing it", async () => {
+    const defaultTheme = { themeId: "themes:pi-web-light", auto: false };
+    savePiWebConfig({ defaultTheme, shortcuts: { "core:view.chat": "mod+1" } }, testOptions());
+    const current = loadPiWebConfig(testOptions()).config;
+    savePiWebConfig({ ...current, port: 9000 }, testOptions());
+    expect(effectivePiWebConfig(testOptions()).config.defaultTheme).toEqual(defaultTheme);
+
+    savePiWebConfig({ port: 9000 }, testOptions());
+    expect(loadPiWebConfig(testOptions()).config.defaultTheme).toBeUndefined();
+    expect(JSON.parse(await readFile(configPath, "utf8"))).not.toHaveProperty("defaultTheme");
+  });
+
+  it("rejects an invalid theme default rather than silently ignoring it", async () => {
+    await writeFile(configPath, JSON.stringify({ defaultTheme: { themeId: "light", auto: true } }), "utf8");
+    expect(() => loadPiWebConfig(testOptions())).toThrow("PI WEB config defaultTheme");
   });
 
   it("rejects invalid plugin config", async () => {

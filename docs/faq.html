@@ -106,6 +106,7 @@
             <a href="#chat-images">How do chat images load?</a>
             <a href="#sessions-stop">Sessions stop unexpectedly</a>
             <a href="#model-response-terminated">Model responses fail with 'terminated'</a>
+            <a href="#provider-extension-no-effect">My provider extension has no effect</a>
             <a href="#logs">Where are logs?</a>
           </aside>
 
@@ -397,6 +398,23 @@
                 </div>
                 <pre id="http-idle-timeout-restart"><code><span class="prompt">$</span> systemctl --user restart pi-web-sessiond</code></pre>
               </div>
+            </article>
+
+            <article id="provider-extension-no-effect" class="faq-item">
+              <h2>My provider extension loads but has no effect</h2>
+              <p>
+                Look for <code>PROVIDER_MUTATION_IGNORED</code> in the <a href="#logs">session-daemon logs</a>;
+                each entry includes a reason and recovery guidance.
+              </p>
+              <p>
+                Global extensions must register providers in their factory before the daemon starts. After changing one,
+                manually restart the daemon; <code>/reload</code> is not enough. This interrupts active sessions and
+                terminals, so restart from outside hosted sessions after important work finishes.
+              </p>
+              <p>
+                Restarting does not enable project-only or <code>session_start</code>-only registrations.
+                See the <a href="config#pi-extension-provider-baseline">provider baseline rules</a>.
+              </p>
             </article>
 
             <article id="logs" class="faq-item">

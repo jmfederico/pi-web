@@ -5,6 +5,9 @@ import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineRuntime
 import type { SettingsSection } from "../settingsRoute";
 import "./ModalSurface";
 import "./settings/SettingsGeneralPanel";
+import "./settings/SettingsThemePanel";
+import type { QualifiedThemeContribution } from "../plugins/types";
+import { DEFAULT_THEME_PREFERENCE, type ThemePreference } from "../theme";
 import "./settings/SettingsSessiondPanel";
 import "./settings/SettingsPackagesPanel";
 import "./settings/SettingsPluginsPanel";
@@ -20,6 +23,12 @@ import { mergeSelectedMachineSessiondConfig } from "./settings/settingsSessiondC
 export class SettingsDialog extends LitElement {
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
+  @property({ attribute: false }) themes: readonly QualifiedThemeContribution[] = [];
+  @property({ attribute: false }) themePreference: ThemePreference = DEFAULT_THEME_PREFERENCE;
+  @property() activeThemeId = "";
+  @property({ type: Boolean }) hasLocalThemeOverride = false;
+  @property({ attribute: false }) onUseLocalTheme?: (preference: ThemePreference) => void;
+  @property({ attribute: false }) onUseDefaultTheme?: () => void;
   @property({ attribute: false }) machine: Machine | undefined;
   @property({ attribute: false }) machineRuntime: MachineRuntime | undefined;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
@@ -198,7 +207,21 @@ export class SettingsDialog extends LitElement {
         .onReloadMachine=${() => this.loadAccessConfigForTarget()}
         .onSave=${(config: PiWebConfigValues) => this.saveConfig(config)}
         .onSaveMachineConfig=${(config: PiWebConfigValues) => this.saveMachineAccessConfig(config)}
-      ></settings-general-panel>
+      >
+        <settings-theme-panel
+          slot="appearance"
+          .themes=${this.themes}
+          .preference=${this.themePreference}
+          .defaultPreference=${this.configResponse?.effectiveConfig.defaultTheme ?? DEFAULT_THEME_PREFERENCE}
+          .activeThemeId=${this.activeThemeId}
+          .hasLocalOverride=${this.hasLocalThemeOverride}
+          .loading=${this.loading || this.configResponse === undefined}
+          .saving=${this.saving}
+          .onUseLocal=${this.onUseLocalTheme}
+          .onUseDefault=${this.onUseDefaultTheme}
+          .onSetDefault=${(preference: ThemePreference) => this.saveDefaultTheme(preference)}
+        ></settings-theme-panel>
+      </settings-general-panel>
     `;
   }
 
@@ -227,7 +250,10 @@ export class SettingsDialog extends LitElement {
       });
       if (!this.isCurrentLoad(requestSeq)) return;
 
-      if (result.config !== undefined) this.configResponse = result.config;
+      if (result.config !== undefined) {
+        this.configResponse = result.config;
+        this.onConfigSaved?.(result.config.effectiveConfig);
+      }
       if (result.plugins !== undefined) this.pluginsResponse = result.plugins;
       this.error = result.error;
     } finally {
@@ -379,6 +405,28 @@ export class SettingsDialog extends LitElement {
       this.showSavedMessage();
     } catch (error) {
       this.error = `Failed to save config: ${errorMessage(error)}`;
+    } finally {
+      this.saving = false;
+    }
+  }
+
+  private async saveDefaultTheme(preference: ThemePreference): Promise<void> {
+    if (this.saving) return;
+    // Retire an older Reload result and read fresh gateway config so this
+    // focused action does not replace other settings with the dialog's snapshot.
+    this.loadRequestSeq += 1;
+    this.loading = false;
+    this.saving = true;
+    this.error = "";
+    this.savedMessage = "";
+    try {
+      const current = await configApi.config();
+      const response = await configApi.saveConfig({ ...current.config, defaultTheme: preference });
+      this.configResponse = response;
+      this.onConfigSaved?.(response.effectiveConfig);
+      this.showSavedMessage();
+    } catch (error) {
+      this.error = `Failed to save default theme: ${errorMessage(error)}`;
     } finally {
       this.saving = false;
     }
