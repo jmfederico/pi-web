@@ -27,7 +27,9 @@ describe("transcript DOM ownership", () => {
   it("keeps retained nodes bounded over 200 switches between differently shaped sessions", async () => {
     const view = new ChatView();
     document.body.append(view);
-    const conversation = Array.from({ length: 20 }, (_, index) => textMessage(index % 2 === 0 ? "user" : "assistant", `message ${String(index)}`));
+    // A small conversation still grows/shrinks repeat against the grouped tool turn;
+    // 200 switches exercise retention without repeatedly testing Markdown rendering.
+    const conversation = Array.from({ length: 4 }, (_, index) => textMessage(index % 2 === 0 ? "user" : "assistant", `message ${String(index)}`));
     const toolTurn = [textMessage("tool", "synthetic output"), textMessage("assistant", "tail")];
     const initialCounts = new Map<string, number>();
     const finalCounts = new Map<string, number>();
