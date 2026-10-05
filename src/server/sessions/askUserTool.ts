@@ -1,4 +1,4 @@
-import { Type, type Static } from "typebox";
+import { Type, type Static } from "pi-web-typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import {
   ASK_USER_ID_MAX_LENGTH,

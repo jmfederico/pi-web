@@ -1,6 +1,6 @@
 import { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import { Check } from "typebox/value";
+import { Check } from "pi-web-typebox/value";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { createSpawnSessionToolDefinition } from "./spawnSessionTool.js";
 import { stubExtensionToolContext } from "./piSessionService.testSupport.js";

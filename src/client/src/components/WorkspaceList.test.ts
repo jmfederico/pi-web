@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { trustApi } from "../api";
 import type { Workspace } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
@@ -9,11 +9,19 @@ import { WorkspaceList } from "./WorkspaceList";
 
 let restoreClipboardStub: () => void = () => undefined;
 
+beforeEach(() => {
+  // Every menu open loads trust, including removal and clipboard scenarios.
+  vi.spyOn(trustApi, "workspaceTrust").mockImplementation((_projectId, workspaceId) =>
+    Promise.resolve({ path: `/repo/${workspaceId}`, decision: true, trusted: true }),
+  );
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
   restoreClipboardStub();
   restoreClipboardStub = () => undefined;
   document.body.replaceChildren();
+  localStorage.clear();
 });
 
 describe("workspace-list removal actions", () => {
@@ -155,7 +163,6 @@ describe("workspace detail copy buttons", () => {
 
 describe("workspace trust toggle documentation link", () => {
   it("links to the project-trust docs from the toggle's label row instead of verbose text", async () => {
-    vi.spyOn(trustApi, "workspaceTrust").mockResolvedValue({ path: "/repo/ws-a", decision: true, trusted: true });
     const list = await mountWorkspaceList([workspace("ws-a")]);
     openMenu(list, "ws-a");
     await list.updateComplete;

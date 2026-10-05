@@ -1,4 +1,6 @@
-import { Type } from "typebox";
+// Server-only npm alias: native Node cannot use Pi's extension module mapping.
+// Keep this out of extensions; see docs/development-checks.md#server-only-typebox.
+import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
