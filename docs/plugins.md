@@ -348,6 +348,10 @@ The package is prebuilt; no compilation is required. It reads the source reply w
 
 See the [Captain's Log usage guide](https://github.com/jmfederico/pi-web/blob/main/pi-packages/captains-log/docs/usage.md) for the demo's behavior and troubleshooting.
 
+### Standalone To-dos
+
+The repository's [To-dos package](https://github.com/jmfederico/pi-web/tree/main/packages/todos) is an opt-in, separately built/local-installable package, not included in the PI WEB distribution or Available packages auto-installation. Its application tab and hosted companion tools manage one SQLite-backed list through a configured server and client machines. The first slice supports shared unassigned tasks, statuses, text/archived filters and revision-checked create/update/archive/restore; project assignment is not available yet. See its [usage guide](https://github.com/jmfederico/pi-web/blob/main/packages/todos/docs/usage.md) for build/install commands, machine-global JSON roles/targets and safe restart ordering.
+
 ## Pi extension dialogs
 
 Pi extensions can ask for confirmation, a selection, or text input. PI WEB shows these questions inline in the conversation, including during session startup or while a tool is waiting. They remain answerable after a browser reload, and the first answer wins across tabs.

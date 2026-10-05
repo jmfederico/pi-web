@@ -29,6 +29,18 @@ npm run check:artifacts
 
 CI and the publish workflow run artifact checks after their build. On Linux they also run `npm run smoke:package-install`, which checks an actual global installation, public API consumer resolution, native PTY execution, and the [server-only TypeBox boundary](#server-only-typebox). That installed-package boundary is distinct from inspecting build output.
 
+## Standalone To-dos package
+
+`packages/todos` is deliberately outside the root distribution and known-package installer. Root `verify` includes its source typecheck/lint/unused-code checks and ordinary tests. Linux CI runs its separate build/install boundary after the root build; locally run:
+
+```sh
+npm run build:todos
+npm --prefix packages/todos test
+npm run smoke:todos
+```
+
+`build:todos` consumes the emitted public host declarations and emits only `packages/todos/dist`. The smoke consumes those artifacts, packs and installs the standalone package into a temporary npm tree with suppressed automatic peers, explicitly links the current built host peer, and verifies its browser graph, persistent SQLite server, native companion discovery and a temporary standalone source build against declared peers. The separate root `smoke:package-install` still owns the complete installed host. Do not install into live profiles to run these checks. See the [package guide](../packages/todos/docs/usage.md) for supported setup and current slice limitations.
+
 ## Server-only TypeBox
 
 `pi-web-typebox` is an npm alias for the ordinary `typebox` package, pinned to the server's existing version. It is not a fork or vendored copy.

@@ -7,6 +7,6 @@ export default defineConfig({
     alias: { "@jmfederico/pi-web/server-plugin-api": fileURLToPath(new URL("./src/server-plugin-api.ts", import.meta.url)) },
   },
   test: {
-    include: ["src/**/*.test.ts", "pi-web-plugins/**/*.test.ts", "pi-packages/**/*.test.ts", "scripts/**/*.test.mjs"],
+    include: ["src/**/*.test.ts", "pi-web-plugins/**/*.test.ts", "pi-packages/**/*.test.ts", "packages/todos/**/*.test.ts", "scripts/**/*.test.mjs"],
   },
 });

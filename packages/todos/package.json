@@ -1,0 +1,40 @@
+{
+  "name": "@jmfederico/pi-todos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone PI WEB to-do list with a central SQLite backend and hosted Pi companion tools",
+  "license": "MIT",
+  "type": "module",
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["dist", "README.md", "docs"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --root ../.. --config vitest.config.ts packages/todos",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@jmfederico/pi-web": "^1.202610.1",
+    "@earendil-works/pi-coding-agent": "^1.0.0",
+    "@earendil-works/pi-ai": "^1.0.0",
+    "@types/node": "^24.13.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@jmfederico/pi-web": ">=1.202610.1"
+  },
+  "pi": { "extensions": ["./dist/companion.js"] },
+  "piWeb": {
+    "plugins": [{
+      "id": "todos",
+      "defaultEnabled": false,
+      "browserRoot": "dist/browser",
+      "module": "dist/browser/index.js",
+      "serverModule": "dist/server.js",
+      "machineSpecific": true
+    }]
+  }
+}
