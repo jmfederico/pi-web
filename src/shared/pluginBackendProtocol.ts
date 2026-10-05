@@ -48,12 +48,18 @@ export const PLUGIN_BACKEND_CHANNEL_MAX_LIFETIME_MS = 12 * 60 * 60_000;
 export const PLUGIN_BACKEND_CHANNEL_CLOSE_REASON_MAX_BYTES = 120;
 export const PLUGIN_BACKEND_CHANNEL_ERROR_MESSAGE_MAX_BYTES = 2_048;
 export const PLUGIN_BACKEND_CHANNEL_ERROR_CODE_MAX_LENGTH = 64;
+export const PLUGIN_BACKEND_MACHINE_REQUEST_ROUTE_PATH = "/plugin-backends/:pluginId/:operation";
 export const PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation";
 export const PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/channels/:operation";
 
 const OPERATION_PATTERN = /^[a-z][a-z0-9.-]*$/u;
 const CHANNEL_ERROR_CODE_PATTERN = /^[a-z][a-z0-9.-]*$/u;
 const MAX_JSON_DEPTH = 64;
+
+export interface PluginBackendMachineRequestEnvelope {
+  readonly version: 1;
+  readonly input: JsonValue;
+}
 
 export interface PluginBackendRequestEnvelope {
   revision: string;
@@ -143,6 +149,14 @@ export function parseBoundedPluginBackendJson(
     throw new Error(`${label} must be valid JSON`, { cause: error });
   }
   return cloneBoundedPluginBackendJson(value, label, maxBytes);
+}
+
+export function parsePluginBackendMachineRequestEnvelope(value: unknown): PluginBackendMachineRequestEnvelope {
+  if (!isPlainRecord(value) || value["version"] !== 1) throw new Error("Plugin backend request requires protocol version 1");
+  return Object.freeze({
+    version: 1,
+    input: cloneBoundedPluginBackendJson(value["input"], "Plugin backend request input"),
+  });
 }
 
 export function parsePluginBackendRequestEnvelope(value: unknown): PluginBackendRequestEnvelope {

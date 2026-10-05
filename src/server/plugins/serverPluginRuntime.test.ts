@@ -1535,6 +1535,35 @@ describe("server plugin runtime", () => {
     expect(inspection?.error).toContain("timed out");
   });
 
+  it("publishes machine-wide handlers only after successful start and snapshots their callbacks", async () => {
+    const backend = { request: () => ({ captured: true }) };
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("machine-only"), entry("invalid-machine"), entry("failed-machine"),
+      ])) },
+      importer: (url) => {
+        const id = pluginIdFromUrl(url);
+        return Promise.resolve(pluginModule(id, id === "invalid-machine" ? { backend: {} } : {
+          backend: id === "machine-only" ? backend : { request: () => null },
+          start: () => {
+            if (id === "failed-machine") throw new Error("start failed");
+            backend.request = () => ({ captured: false });
+          },
+        }));
+      },
+      logger: testLogger(),
+    });
+    expect(runtime.backendContributions().map(({ pluginId }) => pluginId)).toEqual(["machine-only"]);
+    expect(runtime.pairedBackendContributions()).toEqual([]);
+    expect(Object.isFrozen(runtime.backendContributions()[0]?.backend)).toBe(true);
+    expect(await runtime.backendContributions()[0]?.backend.request({ operation: "echo", input: null, signal: new AbortController().signal }))
+      .toEqual({ captured: true });
+    expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "invalid-machine"))
+      .toMatchObject({ state: "incompatible", message: "Server plugin backend must include a request handler" });
+    await runtime.stop();
+    expect(runtime.backendContributions()).toEqual([]);
+  });
+
   it("publishes paired request and channel capabilities independently", async () => {
     const runtime = await createServerPluginRuntime({
       catalog: { snapshot: () => Promise.resolve(testSnapshot([

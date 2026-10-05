@@ -4,7 +4,7 @@ import { PluginBackendRegistry } from "../plugins/pluginBackendRegistry.js";
 import type { ServerPluginPairedBackendContribution } from "../plugins/serverPluginRuntime.js";
 import type { Project } from "../types.js";
 import { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderRegistry.js";
-import { registerPairedPluginBackendRoutes } from "./pluginBackendRoutes.js";
+import { registerMachinePluginBackendRoutes, registerPairedPluginBackendRoutes } from "./pluginBackendRoutes.js";
 
 const project: Project = {
   id: "project one",
@@ -24,6 +24,24 @@ afterEach(async () => {
 });
 
 describe("session daemon paired plugin backend routes", () => {
+  it("admits versioned machine-wide operations and rejects invalid envelopes before dispatch", async () => {
+    const requestMachine = vi.fn<PluginBackendRegistry["requestMachine"]>(() => Promise.resolve(null));
+    registerMachinePluginBackendRoutes(app, { requestMachine });
+    const url = "/plugin-backends/board/read";
+    const valid = await app.inject({ method: "POST", url, payload: { version: 1, input: null } });
+    expect(valid.statusCode).toBe(200);
+    expect(valid.json()).toBeNull();
+    expect(requestMachine.mock.calls[0]?.[0]).toEqual({ pluginId: "board", operation: "read", input: null });
+    expect(requestMachine.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
+    requestMachine.mockClear();
+    for (const payload of [{ version: 2, input: null }, { revision: "r1", input: null }, { version: 1 }]) {
+      const response = await app.inject({ method: "POST", url, payload });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "invalid-request", pluginId: "board" });
+    }
+    expect(requestMachine).not.toHaveBeenCalled();
+  });
+
   it("routes a package peer against host-resolved workspace authority with an operation-scoped signal", async () => {
     let observedSignal: AbortSignal | undefined;
     const backends = registryFor(({ operation, input, signal }) => {

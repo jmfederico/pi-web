@@ -69,7 +69,10 @@ import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencie
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
 import { registerPluginBackendChannelRoutes } from "./sessiond/pluginBackendChannelRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
-import { registerPairedPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
+import { registerMachinePluginBackendRoutes, registerPairedPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
+import { createServerPluginTransport } from "./plugins/serverPluginTransport.js";
+import { MachineService } from "./machines/machineService.js";
+import { MachineStore, machineStorePath } from "./machines/machineStore.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
 import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js";
@@ -202,11 +205,13 @@ async function createSessionDaemonRuntime() {
   });
   const eventHub = new SessionEventHub();
   const serverNotices = new ServerNoticeService(new ServerNoticeStore(), eventHub);
+  const machines = new MachineService(new MachineStore(machineStorePath(daemonEnvironment)));
   const serverPlugins = await createServerPluginRuntime({
     catalog: serverPluginCatalog,
     ...(serverPluginRecovery.safeStart === undefined ? {} : { safeStart: serverPluginRecovery.safeStart }),
     logger: app.log,
     execFile: createServerPluginExecFile({ env: daemonEnvironment }),
+    transportFactory: (context) => createServerPluginTransport(context, machines),
     noticeSink: (source, input) => { serverNotices.record({ ...input, source }); },
     dataDir: piWebDataDir(daemonEnvironment),
     lateHostCapabilities: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY],
@@ -339,6 +344,7 @@ async function createSessionDaemonRuntime() {
       .sort((left, right) => left.pluginId.localeCompare(right.pluginId)));
     const pluginBackends = new PluginBackendRegistry({
       contributions: eligiblePluginBackendContributions(serverPlugins.pairedBackendContributions(), pluginHealth),
+      machineContributions: eligiblePluginBackendContributions(serverPlugins.backendContributions(), pluginHealth),
       workspaces: workspaceProviders,
       logger: app.log,
     });
@@ -428,6 +434,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
     backends: pluginBackends,
     onWorkspacesMutated: () => { statusAttribution.invalidate(); },
   });
+  registerMachinePluginBackendRoutes(app, pluginBackends);
   registerPluginBackendChannelRoutes(app, { projects, backends: pluginBackends });
   registerWorkspaceRemovalRoutes(app, {
     projects,

@@ -5,6 +5,7 @@ import type {
   ServerPluginPeerChannel,
   ServerPluginPeerChannelOpenContext,
   ServerPluginPeerRequestContext,
+  ServerPluginBackendRequestContext,
   ServerPluginPeerWorkspace,
   ProjectInput,
   WorkspaceProviderMetadata,
@@ -31,6 +32,7 @@ import type { WorkspaceListing } from "../../shared/apiTypes.js";
 import type { Project } from "../types.js";
 import type {
   ServerPluginHealthInspection,
+  ServerPluginBackendContribution,
   ServerPluginPairedBackendContribution,
 } from "./serverPluginRuntime.js";
 import { PluginCallbackDrain } from "../pluginCallbackDrain.js";
@@ -43,6 +45,12 @@ export interface PluginBackendRequest {
   workspaceId: string;
   operation: string;
   input: unknown;
+}
+
+export interface PluginBackendMachineRequest {
+  readonly pluginId: string;
+  readonly operation: string;
+  readonly input: unknown;
 }
 
 export type PluginBackendRequestErrorCode =
@@ -76,6 +84,8 @@ export class PluginBackendRequestError extends Error {
 export interface PluginBackendRegistryOptions {
   /** Healthy direct contributions from one immutable server-plugin snapshot. */
   contributions: readonly ServerPluginPairedBackendContribution[];
+  /** Machine-wide handlers; no workspace or browser module revision is required. */
+  machineContributions?: readonly ServerPluginBackendContribution[];
   /** Authoritative workspace resolver for browser-visible paired scope. */
   workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
   callbackTimeoutMs?: number;
@@ -152,11 +162,11 @@ export class PluginBackendChannelError extends Error {
   }
 }
 
-/** Keep active paired backends whose bounded startup health is not unhealthy. */
-export function eligiblePluginBackendContributions(
-  contributions: readonly ServerPluginPairedBackendContribution[],
+/** Keep active backends whose bounded startup health is not unhealthy. */
+export function eligiblePluginBackendContributions<T extends { readonly pluginId: string }>(
+  contributions: readonly T[],
   inspections: readonly ServerPluginHealthInspection[],
-): readonly ServerPluginPairedBackendContribution[] {
+): readonly T[] {
   const healthByPluginId = new Map(inspections.map(({ pluginId, health }) => [pluginId, health.status]));
   return Object.freeze(contributions.filter(({ pluginId }) => {
     const status = healthByPluginId.get(pluginId);
@@ -164,9 +174,10 @@ export function eligiblePluginBackendContributions(
   }));
 }
 
-/** Dispatches only to a browser package's revision-matched paired server entry. */
+/** Dispatches healthy machine backends and revision-matched workspace peers. */
 export class PluginBackendRegistry {
   private readonly contributions: readonly ServerPluginPairedBackendContribution[];
+  private readonly machineContributions: readonly ServerPluginBackendContribution[];
   private readonly callbackTimeoutMs: number;
   private readonly dispatchTimeoutMs: number;
   private readonly channelCallbackTimeoutMs: number;
@@ -190,6 +201,7 @@ export class PluginBackendRegistry {
 
   constructor(private readonly options: PluginBackendRegistryOptions) {
     this.contributions = snapshotContributions(options.contributions);
+    this.machineContributions = snapshotContributions(options.machineContributions ?? []);
     this.callbackTimeoutMs = positiveInteger(
       options.callbackTimeoutMs,
       PLUGIN_BACKEND_REQUEST_TIMEOUT_MS,
@@ -208,16 +220,28 @@ export class PluginBackendRegistry {
     this.channelMaxPerPluginWorkspace = positiveInteger(options.channelMaxPerPluginWorkspace, PLUGIN_BACKEND_CHANNEL_MAX_PER_PLUGIN_WORKSPACE, "channelMaxPerPluginWorkspace");
   }
 
-  async request(request: PluginBackendRequest, signal?: AbortSignal): Promise<JsonValue> {
-    if (this.channelsAreShuttingDown()) throw requestShutdownError(request.pluginId);
+  request(request: PluginBackendRequest, signal?: AbortSignal): Promise<JsonValue> {
+    return this.runRequest(request.pluginId, (dispatchSignal) => this.dispatch(request, dispatchSignal), signal);
+  }
+
+  requestMachine(request: PluginBackendMachineRequest, signal?: AbortSignal): Promise<JsonValue> {
+    return this.runRequest(request.pluginId, (dispatchSignal) => this.dispatchMachine(request, dispatchSignal), signal);
+  }
+
+  private async runRequest(
+    pluginId: string,
+    dispatch: (signal: AbortSignal) => Promise<JsonValue>,
+    signal?: AbortSignal,
+  ): Promise<JsonValue> {
+    if (this.channelsAreShuttingDown()) throw requestShutdownError(pluginId);
     const operationSignal = signal === undefined
       ? this.shutdown.signal
       : AbortSignal.any([signal, this.shutdown.signal]);
     const task = runBoundedPluginBackendOperation(
-      request.pluginId,
+      pluginId,
       "dispatch",
       this.dispatchTimeoutMs,
-      (dispatchSignal) => this.dispatch(request, dispatchSignal),
+      dispatch,
       operationSignal,
     );
     this.requestTasks.add(task);
@@ -228,11 +252,11 @@ export class PluginBackendRegistry {
         throw backendError(
           "request-cancelled",
           499,
-          `Server plugin ${request.pluginId} backend request was cancelled`,
+          `Server plugin ${pluginId} backend request was cancelled`,
           error,
         );
       }
-      if (this.channelsAreShuttingDown()) throw requestShutdownError(request.pluginId, error);
+      if (this.channelsAreShuttingDown()) throw requestShutdownError(pluginId, error);
       if (error instanceof PluginBackendTimeoutError) {
         throw backendError("request-timeout", 504, boundedErrorMessage(error), error);
       }
@@ -558,13 +582,35 @@ export class PluginBackendRegistry {
       input,
       signal: dispatchSignal,
     });
+    return await this.invokeRequest(pluginId, operation, context, pairedRequest, dispatchSignal);
+  }
+
+  private async dispatchMachine(request: PluginBackendMachineRequest, signal: AbortSignal): Promise<JsonValue> {
+    const pluginId = parsePluginId(request.pluginId);
+    const operation = parseOperation(request.operation);
+    const input = parseInput(request.input, pluginId, operation);
+    const contribution = this.machineContributions.find((candidate) => candidate.pluginId === pluginId);
+    if (contribution === undefined) {
+      throw backendError("inactive-plugin", 409, `Server plugin ${pluginId} does not expose a machine backend for operation ${operation}`);
+    }
+    const context: ServerPluginBackendRequestContext = Object.freeze({ operation, input, signal });
+    return await this.invokeRequest(pluginId, operation, context, contribution.backend.request.bind(contribution.backend), signal);
+  }
+
+  private async invokeRequest<Context extends ServerPluginBackendRequestContext>(
+    pluginId: string,
+    operation: string,
+    context: Context,
+    callback: (context: Context) => JsonValue | Promise<JsonValue>,
+    dispatchSignal: AbortSignal,
+  ): Promise<JsonValue> {
     let result: unknown;
     try {
       result = await runBoundedPluginBackendOperation(
         pluginId,
         operation,
         this.callbackTimeoutMs,
-        (callbackSignal) => pairedRequest(Object.freeze({ ...context, signal: callbackSignal })),
+        (callbackSignal) => callback(Object.freeze({ ...context, signal: callbackSignal })),
         dispatchSignal,
         (callback) => { this.requestCallbacks.track(callback); },
       );
@@ -917,9 +963,9 @@ function channelError(
   return new PluginBackendChannelError(code, closeCode, message, cause === undefined ? {} : { cause });
 }
 
-function snapshotContributions(
-  contributions: readonly ServerPluginPairedBackendContribution[],
-): readonly ServerPluginPairedBackendContribution[] {
+function snapshotContributions<T extends { readonly pluginId: string }>(
+  contributions: readonly T[],
+): readonly T[] {
   const sorted = [...contributions].sort((left, right) => left.pluginId.localeCompare(right.pluginId));
   for (let index = 1; index < sorted.length; index += 1) {
     if (sorted[index - 1]?.pluginId === sorted[index]?.pluginId) {

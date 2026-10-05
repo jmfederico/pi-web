@@ -184,6 +184,51 @@ Server plugins receive a persistent `dataDirectory`, separate from installed pac
 
 Requests and channels are bounded and can fail, time out, or disconnect. A successful send does not guarantee delivery, and the host does not automatically retry uncertain work. Long-running jobs should maintain their own state and let the UI reconnect without accidentally starting the job twice.
 
+### Requests between machine backends
+
+A server entry can serve machine-wide operations through `backend.request()` and call the same plugin on another registered machine through activation's `transport` service. Neither side needs a project or workspace, a browser entry, or a separate HTTP listener. The backend chooses the target; PI WEB resolves the machine's registered URL and existing connection settings.
+
+```ts
+import type { PiWebServerPlugin } from "@jmfederico/pi-web/server-plugin-api";
+
+export default {
+  apiVersion: 3,
+  name: "Transport example",
+  activate({ transport, settings }) {
+    if (transport?.version !== 1) throw new Error("Update PI WEB to use backend transport");
+    return {
+      backend: {
+        async request({ operation, input, signal }) {
+          if (operation === "echo") return input;
+          if (operation !== "forward") throw new Error("Unknown operation");
+          const machineId = settings["targetMachineId"];
+          if (typeof machineId !== "string") throw new Error("Configure targetMachineId");
+          return await transport.request({ machineId, operation: "echo", input, signal });
+        },
+      },
+    };
+  },
+} satisfies PiWebServerPlugin;
+```
+
+Install and enable the entry with the **same plugin ID on both machines**. Register the receiving machine in the initiating machine's Settings, then configure that registry-local ID through normal machine-global plugin settings, for example:
+
+```json
+{
+  "plugins": {
+    "example.transport": {
+      "settings": { "targetMachineId": "registered-machine-id" }
+    }
+  }
+}
+```
+
+Use an ID, not a URL or `local`. Changing server settings requires a restart of that machine's session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit `transport`; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. This service is backend-to-backend; it does not add an agent request service or an application-panel peer by itself.
+
+The receiving callback gets only frozen `operation`, detached/frozen JSON `input`, and a bounded `signal`. Operations use lowercase letters, digits, dots, and hyphens, begin with a letter, and are limited to 128 characters. Input is limited to 256 KiB of JSON and results to 8 MiB. Each backend callback has a 10-second budget; remote transport has a 30-second maximum and also follows the caller's signal and the initiating plugin's lifetime. Forward the callback signal for nested calls. Shutdown, failed activation/start, or a completed request cannot leave a retained facade's old operation live.
+
+Unknown or unavailable machines, inactive handlers, unsupported hosts, invalid JSON, and remote failures reject. There is no automatic retry or local fallback; a timeout does not prove that remote work was never performed. Hosts do not require matching installed module revisions for these operations, so plugins must validate their own operation/input schema. Operations are exposed through PI WEB's existing HTTP accessibility, with no new transport permissions or authentication model; plugins may add their own checks.
+
 ### Workspace providers
 
 A provider decides which workspaces belong to a project. A primary provider can replace bundled Git for projects it claims. Git is the fallback; without a claimant, the project folder remains usable as a workspace.

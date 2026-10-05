@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
-import { registerPairedPluginBackendProxyRoutes } from "./pluginBackendProxyRoutes.js";
+import { registerMachinePluginBackendProxyRoutes, registerPairedPluginBackendProxyRoutes } from "./pluginBackendProxyRoutes.js";
 
 let app: FastifyInstance;
 let request: ReturnType<typeof vi.fn<SessionDaemonRequestClient["request"]>>;
@@ -14,6 +14,7 @@ beforeEach(() => {
     body: JSON.stringify({ counts: { open: 2 } }),
   }));
   registerPairedPluginBackendProxyRoutes(app, { request });
+  registerMachinePluginBackendProxyRoutes(app, { request });
 });
 
 afterEach(async () => {
@@ -21,6 +22,13 @@ afterEach(async () => {
 });
 
 describe("local paired plugin backend proxy route", () => {
+  it("forwards machine-wide requests without adding workspace or revision fields", async () => {
+    const payload = { version: 1, input: { text: "hello" } };
+    const response = await app.inject({ method: "POST", url: "/api/plugin-backends/fixture/read", payload });
+    expect(response.statusCode).toBe(200);
+    expect(request.mock.calls[0]?.slice(0, 3)).toEqual(["POST", "/plugin-backends/fixture/read", payload]);
+  });
+
   it("encodes every daemon path segment and forwards the JSON envelope once", async () => {
     const payload = { revision: "server-r1", input: { cards: ["alpha", "beta"] } };
     const response = await app.inject({
