@@ -66,6 +66,7 @@ import {
 } from "./plugins/pluginBackendRegistry.js";
 import { runSessionDaemonShutdown } from "./sessiond/sessionDaemonShutdown.js";
 import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencies.js";
+import { PiSessionEventConnections } from "./sessions/piSessionEventConnections.js";
 import { registerWorkspaceCatalogRoutes } from "./sessiond/workspaceCatalogRoutes.js";
 import { registerPluginBackendChannelRoutes } from "./sessiond/pluginBackendChannelRoutes.js";
 import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBridge.js";
@@ -287,7 +288,18 @@ async function createSessionDaemonRuntime() {
     projectLifecycleForFailedConstruction = projectLifecycle;
     const projectWorkspaceDeps = { projects, workspaces: workspaceProviders };
     const spawnTargets = config.spawnSessions ? new ProjectScopedSpawnTargetResolver(projectWorkspaceDeps) : undefined;
+    // Session-capability plugins start before the final healthy backend snapshot.
+    // A companion invoked during that boundary fails explicitly, never dispatching
+    // to a partially started handler. Later calls use the immutable registry.
+    const companionBackends: { current?: PluginBackendRegistry } = {};
+    const sessionEvents = new PiSessionEventConnections({
+      requestMachine: async (request, signal) => {
+        if (companionBackends.current === undefined) throw new Error("Plugin backends are still initializing");
+        return await companionBackends.current.requestMachine(request, signal);
+      },
+    });
     const sessions = new PiSessionService(eventHub, sessionServiceDependencies({
+      sessionEvents,
       modelRuntime: auth.runtime,
       agentDir: activeAgentProfile.dir,
       archiveStore: new SessionArchiveStore(defaultSessionArchiveFilePath(daemonEnvironment)),
@@ -348,6 +360,7 @@ async function createSessionDaemonRuntime() {
       workspaces: workspaceProviders,
       logger: app.log,
     });
+    companionBackends.current = pluginBackends;
     const workspaceProviderRuntime = createWorkspaceProviderRuntimeSnapshot(
       serverPlugins.healthRecords(),
       pluginHealth,

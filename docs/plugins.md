@@ -65,6 +65,8 @@ activate: ({ html }) => ({
 
 `ApplicationPanelContext` supplies the current `machine`, basic selection `state`, `navigate`, `prompt`, and `host.requestRender()`. `state.selectedProject`, `state.selectedWorkspace`, and `state.selectedSession` are optional snapshots, refreshed as selections change without reactivating the plugin. `workspace` is available only when a workspace is selected; its workspace-bound `terminal` is supplied only when that machine also has an available Terminal provider (not in Terminal-disabled recovery mode). Render callbacks may run repeatedly; an inactive tab need not stay mounted. Portable gateway panels follow the selected machine, while machine-specific panels use the existing per-machine availability rules.
 
+Application panels also receive optional `backend` v1 access to their own package's machine-wide server handler. From an event handler or component, call `await context.backend.request("summary", null, { signal })`; feature-detect `context.backend?.version === 1` on older hosts. It needs no selected project, workspace, or session. The service captures the context's machine and stable package ID: retained services and in-flight requests never drift to a later selection, and plugin shutdown cancels their work. It uses the selected machine's backend, not a gateway substitute; that backend owns any remote routing through `transport`. This is separate from revision-paired, workspace-scoped `peer` requests/channels.
+
 ### Follow selection while a tab is closed
 
 Capture `selection` from the public activation context to observe basic machine, project, workspace, and session information independently of panel mounting. `getSnapshot()` reads the current selection synchronously. `subscribe(listener)` reports changes after the host commits its UI state; several changes in one commit may be coalesced. It does not call the listener immediately, and unrelated status updates, tool changes, and route queries are not selection notifications. Snapshots are detached from host state and other subscribers; they contain no transcript or private session-file path.
@@ -178,6 +180,30 @@ A server plugin can create a normal, visible Pi conversation, with or without an
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
 
+For an agent tool that only needs the package backend, use `createCompanionBackend(pi.events, pluginId)` from `@jmfederico/pi-web/server-plugin-api`. No backend-created session connection or remote-networking code is needed:
+
+```ts
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createCompanionBackend } from "@jmfederico/pi-web/server-plugin-api";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool(defineTool({
+    name: "package_summary",
+    label: "Package summary",
+    description: "Read this package's backend summary",
+    parameters: Type.Object({}),
+    async execute(_id, _input, signal) {
+      const backend = createCompanionBackend(pi.events, "example.transport");
+      const result = await backend.request("summary", null, signal ? { signal } : {});
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+```
+
+Use the package manifest's PI WEB plugin ID. Obtain the service inside tool execution or `session_start`, not while the extension factory loads. Calls always enter that hosted session's current-machine backend; the helper accepts neither a URL nor a remote machine target. The backend may route onward. Native `/reload` needs no reconnect setup. Closing or replacing the hosted runtime revokes retained services and cancels pending requests. Outside a supporting PI WEB hosted session, discovery fails immediately rather than opening a listener or falling back to HTTP. Install/enable the matching server entry on that machine; inactive backends reject. Extensions remain trusted in-process code, not a new permission boundary. During daemon startup, calls before the healthy backend snapshot is ready reject explicitly.
+
 ### Storage and background work
 
 Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own their data format, migrations, and cleanup; there is no host storage API to learn.
@@ -223,7 +249,7 @@ Install and enable the entry with the **same plugin ID on both machines**. Regis
 }
 ```
 
-Use an ID, not a URL or `local`. Changing server settings requires a restart of that machine's session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit `transport`; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. This service is backend-to-backend; it does not add an agent request service or an application-panel peer by itself.
+Use an ID, not a URL or `local`. Changing server settings requires a restart of that machine's session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit `transport`; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. Application panels use `context.backend`, and hosted companion tools use `createCompanionBackend`, to enter their own current-machine handler before it chooses any remote target.
 
 The receiving callback gets only frozen `operation`, detached/frozen JSON `input`, and a bounded `signal`. Operations use lowercase letters, digits, dots, and hyphens, begin with a letter, and are limited to 128 characters. Input is limited to 256 KiB of JSON and results to 8 MiB. Each backend callback has a 10-second budget; remote transport has a 30-second maximum and also follows the caller's signal and the initiating plugin's lifetime. Forward the callback signal for nested calls. Shutdown, failed activation/start, or a completed request cannot leave a retained facade's old operation live.
 

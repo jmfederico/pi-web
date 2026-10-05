@@ -1,4 +1,5 @@
 import {
+  createCompanionBackend,
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
@@ -73,6 +74,10 @@ const plugin: PiWebServerPlugin = {
     };
   },
 };
+
+export function requestCompanionBackend(events: { emit(channel: string, data: unknown): void }, signal: AbortSignal) {
+  return createCompanionBackend(events, "fixture.transport").request("echo", null, { signal });
+}
 
 export { channelOnlyPeer };
 export default plugin;

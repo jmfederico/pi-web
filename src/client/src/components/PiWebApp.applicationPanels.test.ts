@@ -367,6 +367,54 @@ function discoveryRequestUrl(input: Parameters<typeof fetch>[0]): string {
   return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 }
 
+it("requests the same package backend without selections, captures the machine and revokes on plugin shutdown", async () => {
+  const contexts: ApplicationPanelContext[] = [];
+  let result = "";
+  const plugin: PiWebPlugin = { apiVersion: 4, name: "Transport probe", activate: () => ({ contributions: { applicationPanels: [{
+    id: "workspace.probe", title: "Probe", render: (context) => {
+      contexts.push(context);
+      return html`<button @click=${async () => {
+        if (context.backend?.version !== 1) throw new Error("Backend service missing");
+        result = JSON.stringify(await context.backend.request("echo", { text: "panel" }));
+        context.host.requestRender();
+      }}>Request backend</button><p>${result}</p>`;
+    },
+  }] } }) };
+  const app = await mount(plugin, { id: "probe" });
+  const fetchMock = vi.fn<typeof fetch>((url) => Promise.resolve(new Response(JSON.stringify({ url: discoveryRequestUrl(url) }))));
+  vi.stubGlobal("fetch", fetchMock);
+  const localBackend = contexts.at(-1)?.backend;
+  expect(contexts.at(-1)?.workspace).toBeUndefined();
+  expect(contexts.at(-1)?.state.selectedProject).toBeUndefined();
+  toolSurface(app).shadowRoot?.querySelector<HTMLButtonElement>(".panel-content button")?.click();
+  await vi.waitFor(() => { expect(toolSurface(app).shadowRoot?.textContent).toContain("api/plugin-backends/probe/echo"); });
+  expect(fetchMock.mock.calls[0]?.[1]?.body).toBe('{"version":1,"input":{"text":"panel"}}');
+  patchState(app, { selectedMachine: remote });
+  await settle(app);
+  const remoteBackend = contexts.at(-1)?.backend;
+  expect(await remoteBackend?.request("echo", null)).toEqual({ url: "http://localhost:3000/api/machines/remote/plugin-backends/probe/echo" });
+  expect(await localBackend?.request("echo", null)).toEqual({ url: "http://localhost:3000/api/plugin-backends/probe/echo" });
+  // A federated runtime id is never sent as the package id.
+  const remoteContexts: import("../plugins/types").ApplicationPanelContext[] = [];
+  await registryFor(app).register({ id: "remote-probe", sourcePluginId: "probe", machineId: "remote", machineSpecific: true,
+    plugin: { apiVersion: 4, name: "Remote probe", activate: () => ({ contributions: { applicationPanels: [{
+      id: "workspace.probe", title: "Probe", render: (context) => { remoteContexts.push(context); return html`Remote probe`; },
+    }] } }) },
+  });
+  invalidateToolSurface(app);
+  await settle(app);
+  toolSurface(app).shadowRoot?.querySelector<HTMLButtonElement>('[aria-label="Probe"]')?.click();
+  await settle(app);
+  const federatedBackend = remoteContexts.at(-1)?.backend;
+  expect(federatedBackend).toBeDefined();
+  expect(await federatedBackend?.request("echo", null)).toEqual({ url: "http://localhost:3000/api/machines/remote/plugin-backends/probe/echo" });
+  const requests = fetchMock.mock.calls.length;
+  app.remove();
+  await expect(localBackend?.request("echo", null)).rejects.toThrow();
+  await expect(federatedBackend?.request("echo", null)).rejects.toThrow();
+  expect(fetchMock).toHaveBeenCalledTimes(requests);
+});
+
 it("opens an application tab through existing navigation without a workspace and retains invalid-tool errors", async () => {
   const app = await mount(infoPlugin);
   const tabs = app.shadowRoot?.querySelector("app-mobile-main-tabs");

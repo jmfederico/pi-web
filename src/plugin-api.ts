@@ -20,6 +20,7 @@ export type {
   PiWebStatusResponse,
   PiWebStatusSeverity,
   PiWebVersionResponse,
+  PluginBackend,
   PluginCapability,
   PluginCapabilityProvision,
   TerminalCommandRun,
@@ -496,6 +497,8 @@ export interface ApplicationPanelContext {
   state: PluginRuntimeState;
   /** Read-only discovery on this context's machine. Omitted by older hosts. */
   projects?: PluginProjects;
+  /** This package's backend on the captured machine, without workspace selection. Omitted by older hosts. */
+  backend?: import("./shared/pluginApiTypes.js").PluginBackend;
   /** Present only when a workspace is selected on this machine. */
   workspace?: Workspace;
   /** Workspace-bound terminal; present only with a selected workspace and an available Terminal provider. */

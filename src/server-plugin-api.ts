@@ -1,4 +1,5 @@
 import type {
+  PluginBackend,
   JsonObject,
   JsonPrimitive,
   JsonValue,
@@ -9,6 +10,7 @@ import type {
 } from "./shared/pluginApiTypes.js";
 
 export type {
+  PluginBackend,
   JsonObject,
   JsonPrimitive,
   JsonValue,
@@ -426,6 +428,27 @@ export interface WorkspaceRemovePlan {
    * meaning the removal succeeded.
    */
   command: string;
+}
+
+/** The native pi.events surface; no SDK or networking dependency is required. */
+export interface CompanionBackendEvents {
+  emit(channel: string, data: unknown): void;
+}
+
+/**
+ * Obtain this package's current-machine backend inside a hosted companion tool
+ * or session_start handler. Throws immediately outside a supporting PI WEB host.
+ * The supplied plugin id is the package manifest's stable PI WEB plugin id.
+ */
+export function createCompanionBackend(events: CompanionBackendEvents, pluginId: string): PluginBackend {
+  let backend: PluginBackend | undefined;
+  events.emit("pi-web:companion-backend:v1", {
+    version: 1,
+    pluginId,
+    accept(value: PluginBackend) { backend = value; },
+  });
+  if (backend === undefined) throw new Error("PI WEB companion backend unavailable; use a hosted session on an updated host");
+  return backend;
 }
 
 function snapshotPiWebHostWorkspacesV1(value: unknown): PiWebHostWorkspacesV1 {

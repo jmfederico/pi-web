@@ -38,7 +38,7 @@ it("gates application callbacks and scopes host helpers to the registration", as
   expect(panel?.badge?.(base)).toBe("1");
   panel?.render(base);
   expect(scope).toHaveBeenCalledWith("info");
-  expect(render).toHaveBeenCalledWith(scoped);
+  expect(render).toHaveBeenCalledWith(expect.objectContaining(scoped));
   render.mockClear(); visible.mockClear(); badge.mockClear();
   enabled = false;
   expect(panel?.visible?.(base)).toBe(false);

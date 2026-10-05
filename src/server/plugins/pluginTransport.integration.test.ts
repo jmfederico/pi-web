@@ -2,7 +2,11 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { copyFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { initialAppState } from "../../client/src/appState.js";
+import { loadExternalPlugins } from "../../client/src/plugins/external.js";
+import { PluginRegistry } from "../../client/src/plugins/registry.js";
+import type { PluginBackend } from "../../plugin-api.js";
 import { buildTerminalPackage } from "../../../scripts/build-plugins.mjs";
 
 interface FixtureProcess {
@@ -22,6 +26,8 @@ afterEach(async () => {
   processes.clear();
   for (const root of roots) await rm(root, { recursive: true, force: true });
   roots.clear();
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(globalThis, "transportPanelBackend");
 });
 
 describe("host-managed plugin transport over isolated PI WEB instances", () => {
@@ -64,11 +70,58 @@ describe("host-managed plugin transport over isolated PI WEB instances", () => {
       body: JSON.stringify({ version: 1, input: { text: "cross-machine" } }),
       signal: AbortSignal.timeout(5_000),
     });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
+    const responseBody: unknown = await response.json();
+    expect(response.status, `${JSON.stringify(responseBody)}\n${clientDaemon.output}\n${serverDaemon.output}`).toBe(200);
+    expect(responseBody).toEqual({
       role: "server", operation: "echo", input: { text: "cross-machine" },
       scopeKeys: ["input", "operation", "signal"], frozen: true,
     });
+    // Load the real published browser module and invoke its application-panel
+    // callback without any project/workspace selection. The DOM test owns clicks.
+    vi.stubGlobal("document", { baseURI: `${clientUrl}/` });
+    const browser = new PluginRegistry();
+    try {
+      const loaded = await loadExternalPlugins(undefined, {
+        shouldLoadPlugin: (entry) => entry.id === "fixture.transport",
+        moduleLoader: async (url) => {
+          const module = await fetch(url);
+          expect(module.status).toBe(200);
+          const imported: unknown = await import(`data:text/javascript;base64,${Buffer.from(await module.text()).toString("base64")}`);
+          return imported;
+        },
+      });
+      expect(loaded.failures).toEqual([]);
+      expect((await browser.registerBatch(loaded.registrations, { declarations: loaded.declarations })).failures).toEqual([]);
+      const panel = browser.getApplicationPanels()[0];
+      expect(panel).toBeDefined();
+      panel?.render({ machine: { id: "local", name: "Client", kind: "local" }, state: initialAppState(),
+        navigate: () => Promise.resolve(), prompt: { getText: () => "", getSelection: () => null, insertText: () => undefined },
+        host: { requestRender: () => undefined } });
+      const backend = requiredPanelBackend();
+      expect(await backend.request("forward", { text: "application panel" })).toMatchObject({ role: "server", input: { text: "application panel" } });
+      await browser.dispose();
+      await expect(backend.request("echo", null)).rejects.toThrow();
+    } finally { await browser.dispose(); }
+
+    // A normal discovered companion tool uses the same client backend. Drive
+    // its execute implementation via a fixture command, without model/network credentials.
+    const cwd = join(client, "project");
+    await mkdir(cwd, { recursive: true });
+    const sessionResponse = await postJson(`${clientUrl}/api/sessions`, { cwd });
+    expect(sessionResponse).toHaveProperty("id");
+    if (typeof sessionResponse !== "object" || sessionResponse === null || !("id" in sessionResponse) || typeof sessionResponse.id !== "string") {
+      throw new Error("Missing fixture hosted session id");
+    }
+    const commandUrl = `${clientUrl}/api/sessions/${encodeURIComponent(sessionResponse.id)}/commands/run`;
+    expect(await postJson(commandUrl, { cwd, text: "/transport-probe" })).toMatchObject({ type: "done" });
+    const toolResult = await waitForToolResult(client, clientDaemon);
+    expect(toolResult).toMatchObject({ role: "server", input: { text: "companion tool" } });
+    // Native extension reload keeps host ingress available, without backend reconnect setup.
+    expect(await postJson(commandUrl, { cwd, text: "/reload" })).toMatchObject({ type: "done" });
+    await rm(join(client, "tool-result.json"));
+    expect(await postJson(commandUrl, { cwd, text: "/transport-probe" })).toMatchObject({ type: "done" });
+    expect(await waitForToolResult(client, clientDaemon)).toEqual(toolResult);
+
     // Prove the generic allowlisted gateway path as well, not just direct remote access.
     const federated = await fetch(`${clientUrl}/api/machines/registered-server/plugin-backends/fixture.transport/echo`, {
       method: "POST", headers: { "content-type": "application/json" },
@@ -99,8 +152,37 @@ async function createMachine(root: string, name: string, settings: Record<string
     profileDir: join(machine, "agent"), packageId: "@jmfederico/pi-relay", dismissedAt: "2026-10-01T00:00:00.000Z",
   }] }));
   await writeFile(join(plugin, "package.json"), JSON.stringify({
-    name: "transport-fixture", piWeb: { plugins: [{ id: "fixture.transport", serverModule: "server.mjs" }] },
+    name: "transport-fixture", piWeb: { plugins: [{ id: "fixture.transport", serverModule: "server.mjs", module: "browser/index.mjs", browserRoot: "browser", machineSpecific: true }] },
   }));
+  await mkdir(join(plugin, "browser"), { recursive: true });
+  await writeFile(join(plugin, "browser", "index.mjs"), `
+    export default { apiVersion: 4, name: "Generic transport panel", activate: ({ html }) => ({ contributions: {
+      applicationPanels: [{ id: "probe", title: "Probe", render(context) {
+        if (context.workspace || context.state.selectedProject) throw new Error("Unexpected panel scope");
+        globalThis.transportPanelBackend = context.backend;
+        return html\`Transport probe\`;
+      } }]
+    } }) };
+  `);
+  const extensions = join(machine, "agent", "extensions");
+  await mkdir(extensions, { recursive: true });
+  await writeFile(join(extensions, "transport.js"), `
+    import { defineTool } from "@earendil-works/pi-coding-agent";
+    import { Type } from "typebox";
+    import { writeFile } from "node:fs/promises";
+    import { createCompanionBackend } from "../../../src/server-plugin-api.ts";
+    export default function(pi) {
+      const execute = async () => {
+        const backend = createCompanionBackend(pi.events, "fixture.transport");
+        const result = await backend.request("forward", { text: "companion tool" });
+        await writeFile(${JSON.stringify(join(machine, "tool-result.json"))}, JSON.stringify(result));
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      };
+      pi.registerTool(defineTool({ name: "transport_probe", label: "Transport probe",
+        description: "Generic backend verification", parameters: Type.Object({}), execute }));
+      pi.registerCommand("transport-probe", { description: "Drive the fixture tool without a model", handler: execute });
+    }
+  `);
   await writeFile(join(plugin, "server.mjs"), `
     import { writeFile } from "node:fs/promises";
     import { join } from "node:path";
@@ -134,6 +216,35 @@ async function createMachine(root: string, name: string, settings: Record<string
     };
   `);
   return machine;
+}
+
+async function waitForToolResult(machine: string, daemon: FixtureProcess): Promise<unknown> {
+  return await vi.waitFor(async () => {
+    try {
+      const result: unknown = JSON.parse(await readFile(join(machine, "tool-result.json"), "utf8"));
+      return result;
+    } catch (error) { throw new Error(`Fixture tool result not ready:\n${daemon.output}`, { cause: error }); }
+  }, { timeout: 5_000 });
+}
+
+function requiredPanelBackend(): PluginBackend {
+  const value: unknown = Reflect.get(globalThis, "transportPanelBackend");
+  Reflect.deleteProperty(globalThis, "transportPanelBackend");
+  if (!isPanelBackend(value)) throw new Error("Missing published application-panel backend");
+  return value;
+}
+
+function isPanelBackend(value: unknown): value is PluginBackend {
+  return typeof value === "object" && value !== null && "version" in value && value.version === 1
+    && "request" in value && typeof value.request === "function";
+}
+
+async function postJson(url: string, body: unknown): Promise<unknown> {
+  const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+  const result: unknown = await response.json();
+  expect(response.status, JSON.stringify(result)).toBe(200);
+  return result;
 }
 
 function start(root: string, machine: string, entry: string): FixtureProcess {

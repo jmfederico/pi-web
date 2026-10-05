@@ -183,6 +183,7 @@
   },
 })</code></pre>
 <p><code>ApplicationPanelContext</code> supplies the current <code>machine</code>, basic selection <code>state</code>, <code>navigate</code>, <code>prompt</code>, and <code>host.requestRender()</code>. <code>state.selectedProject</code>, <code>state.selectedWorkspace</code>, and <code>state.selectedSession</code> are optional snapshots, refreshed as selections change without reactivating the plugin. <code>workspace</code> is available only when a workspace is selected; its workspace-bound <code>terminal</code> is supplied only when that machine also has an available Terminal provider (not in Terminal-disabled recovery mode). Render callbacks may run repeatedly; an inactive tab need not stay mounted. Portable gateway panels follow the selected machine, while machine-specific panels use the existing per-machine availability rules.</p>
+<p>Application panels also receive optional <code>backend</code> v1 access to their own package's machine-wide server handler. From an event handler or component, call <code>await context.backend.request("summary", null, { signal })</code>; feature-detect <code>context.backend?.version === 1</code> on older hosts. It needs no selected project, workspace, or session. The service captures the context's machine and stable package ID: retained services and in-flight requests never drift to a later selection, and plugin shutdown cancels their work. It uses the selected machine's backend, not a gateway substitute; that backend owns any remote routing through <code>transport</code>. This is separate from revision-paired, workspace-scoped <code>peer</code> requests/channels.</p>
 <h3>Follow selection while a tab is closed</h3>
 <p>Capture <code>selection</code> from the public activation context to observe basic machine, project, workspace, and session information independently of panel mounting. <code>getSnapshot()</code> reads the current selection synchronously. <code>subscribe(listener)</code> reports changes after the host commits its UI state; several changes in one commit may be coalesced. It does not call the listener immediately, and unrelated status updates, tool changes, and route queries are not selection notifications. Snapshots are detached from host state and other subscribers; they contain no transcript or private session-file path.</p>
 <pre><code>export default {
@@ -254,7 +255,26 @@ prompt.setChip({
 <p>A server plugin can create a normal, visible Pi conversation, with or without an initial prompt. A companion Pi extension can exchange messages with the backend and use Pi&#39;s own APIs to do agent work.</p>
 <p><strong>The conversation belongs to the user once it is published.</strong> Finishing the initial task, closing the browser, or disposing the initiating plugin does not discard it or stop later user work. Users can continue it like any other conversation.</p>
 <p>A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.</p>
-<span id="plugin-data-directory"></span><h3 id="storage-and-background-work">Storage and background work</h3>
+<span id="plugin-data-directory"></span><p>For an agent tool that only needs the package backend, use <code>createCompanionBackend(pi.events, pluginId)</code> from <code>@jmfederico/pi-web/server-plugin-api</code>. No backend-created session connection or remote-networking code is needed:</p>
+<pre><code>import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createCompanionBackend } from "@jmfederico/pi-web/server-plugin-api";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool(defineTool({
+    name: "package_summary",
+    label: "Package summary",
+    description: "Read this package's backend summary",
+    parameters: Type.Object({}),
+    async execute(_id, _input, signal) {
+      const backend = createCompanionBackend(pi.events, "example.transport");
+      const result = await backend.request("summary", null, signal ? { signal } : {});
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}</code></pre>
+<p>Use the package manifest's PI WEB plugin ID. Obtain the service inside tool execution or <code>session_start</code>, not while the extension factory loads. Calls always enter that hosted session's current-machine backend; the helper accepts neither a URL nor a remote machine target. The backend may route onward. Native <code>/reload</code> needs no reconnect setup. Closing or replacing the hosted runtime revokes retained services and cancels pending requests. Outside a supporting PI WEB hosted session, discovery fails immediately rather than opening a listener or falling back to HTTP. Install/enable the matching server entry on that machine; inactive backends reject. Extensions remain trusted in-process code, not a new permission boundary. During daemon startup, calls before the healthy backend snapshot is ready reject explicitly.</p>
+<h3 id="storage-and-background-work">Storage and background work</h3>
 <p>Server plugins receive a persistent <code>dataDirectory</code>, separate from installed package code. The directory is shared across that plugin&#39;s projects on the machine. Plugins own their data format, migrations, and cleanup; there is no host storage API to learn.</p>
 <p>Requests and channels are bounded and can fail, time out, or disconnect. A successful send does not guarantee delivery, and the host does not automatically retry uncertain work. Long-running jobs should maintain their own state and let the UI reconnect without accidentally starting the job twice.</p>
 <h3 id="requests-between-machine-backends">Requests between machine backends</h3>
@@ -289,7 +309,7 @@ export default {
   }
 }
 </code></pre>
-<p>Use an ID, not a URL or <code>local</code>. Changing server settings requires a restart of that machine’s session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit <code>transport</code>; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. This service is backend-to-backend; it does not add an agent request service or an application-panel peer by itself.</p>
+<p>Use an ID, not a URL or <code>local</code>. Changing server settings requires a restart of that machine’s session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit <code>transport</code>; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. Application panels use <code>context.backend</code>, and hosted companion tools use <code>createCompanionBackend</code>, to enter their own current-machine handler before it chooses any remote target.</p>
 <p>The receiving callback gets only frozen <code>operation</code>, detached/frozen JSON <code>input</code>, and a bounded <code>signal</code>. Operations use lowercase letters, digits, dots, and hyphens, begin with a letter, and are limited to 128 characters. Input is limited to 256 KiB of JSON and results to 8 MiB. Each backend callback has a 10-second budget; remote transport has a 30-second maximum and also follows the caller’s signal and the initiating plugin’s lifetime. Forward the callback signal for nested calls. Shutdown, failed activation/start, or a completed request cannot leave a retained facade’s old operation live.</p>
 <p>Unknown or unavailable machines, inactive handlers, unsupported hosts, invalid JSON, and remote failures reject. There is no automatic retry or local fallback; a timeout does not prove that remote work was never performed. Hosts do not require matching installed module revisions for these operations, so plugins must validate their own operation/input schema. Operations are exposed through PI WEB’s existing HTTP accessibility, with no new transport permissions or authentication model; plugins may add their own checks.</p>
 <span id="provider-contract"></span><h3 id="workspace-providers">Workspace providers</h3>

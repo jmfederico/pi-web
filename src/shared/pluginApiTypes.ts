@@ -8,6 +8,13 @@ export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
+/** Requests to a package's backend on the captured machine, without workspace scope. */
+export interface PluginBackend {
+  readonly version: 1;
+  /** No retry or fallback. Remote routing, if needed, belongs to the backend. */
+  readonly request: (operation: string, input: JsonValue, options?: { readonly signal?: AbortSignal }) => Promise<JsonValue>;
+}
+
 /**
  * Typed token for one exact host/plugin capability version. The provider id
  * and package-local id together with the version form the stable capability

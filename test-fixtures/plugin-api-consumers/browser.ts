@@ -1,4 +1,6 @@
 import type {
+  ApplicationPanelContext,
+  PluginBackend,
   ContentRenderingCapability,
   ContentRendererInput,
   JsonValue,
@@ -119,6 +121,11 @@ function openPeerChannel(context: WorkspacePanelContext): void {
   const peer = context.peer;
   if (peer?.openChannel === undefined) return;
   void peer.openChannel("fixture.watch", null, { onData: echoJson });
+}
+
+export async function requestApplicationBackend(context: ApplicationPanelContext): Promise<JsonValue | undefined> {
+  const backend: PluginBackend | undefined = context.backend;
+  return await backend?.request("fixture.summary", null, { signal: new AbortController().signal });
 }
 
 const echoJson = (value: JsonValue): JsonValue => value;

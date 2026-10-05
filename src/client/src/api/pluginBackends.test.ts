@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import {
+  machinePluginBackendRequestPath,
+  requestMachinePluginBackend,
   pairedPluginBackendRequestPath,
   pairedPluginBackendRequestUrl,
   requestPairedPluginBackend,
@@ -21,9 +23,30 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("browser plugin backend helper", () => {
+  it("requests the package's machine backend under a nested base with no revision or workspace", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/pi/" });
+    const fetchMock = vi.fn<typeof fetch>(() => Promise.resolve(new Response('{"ok":true}')));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    expect(machinePluginBackendRequestPath(target, "echo")).toBe("api/machines/remote%20%2F%20one/plugin-backends/board.tools/echo");
+    expect(machinePluginBackendRequestPath({ ...target, machineId: "local" }, "echo")).toBe("api/plugin-backends/board.tools/echo");
+    await expect(requestMachinePluginBackend(target, "echo", null, { signal: controller.signal })).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "https://pi.example.test/nested/pi/api/machines/remote%20%2F%20one/plugin-backends/board.tools/echo",
+      expect.objectContaining({ body: '{"version":1,"input":null}', signal: controller.signal }),
+    );
+    await expect(requestMachinePluginBackend(target, "invalid/operation", null)).rejects.toThrow("operation must match");
+    await expect(requestMachinePluginBackend(target, "echo", { bad: NaN })).rejects.toThrow("finite JSON numbers");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    fetchMock.mockResolvedValueOnce(new Response('{"error":"Backend inactive"}', { status: 409 }));
+    await expect(requestMachinePluginBackend(target, "echo", null)).rejects.toThrow("Backend inactive");
+    expect(fetchMock).toHaveBeenCalledTimes(2); // No workspace route or local retry.
+  });
   it("builds package-paired routes with encoded dynamic segments", () => {
     expect(pairedPluginBackendRequestPath({ ...target, machineId: "local" }, "cards.summary")).toBe(
       "api/paired-plugin-backends/board.tools/projects/project%20%2F%20one/workspaces/workspace%20%231/cards.summary",
