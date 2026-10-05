@@ -1,5 +1,5 @@
-import type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
-export type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, };
+import type { PluginBackend, JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
+export type { PluginBackend, JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, };
 type MaybePromise<T> = T | Promise<T>;
 /** Public server entry exported by a package's `serverModule`. */
 export interface PiWebServerPlugin {
@@ -359,3 +359,13 @@ export interface WorkspaceRemovePlan {
      */
     command: string;
 }
+/** The native pi.events surface; no SDK or networking dependency is required. */
+export interface CompanionBackendEvents {
+    emit(channel: string, data: unknown): void;
+}
+/**
+ * Obtain this package's current-machine backend inside a hosted companion tool
+ * or session_start handler. Throws immediately outside a supporting PI WEB host.
+ * The supplied plugin id is the package manifest's stable PI WEB plugin id.
+ */
+export declare function createCompanionBackend(events: CompanionBackendEvents, pluginId: string): PluginBackend;
