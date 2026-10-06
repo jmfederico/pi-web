@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { html, render } from "lit";
+import { html, render, type TemplateResult } from "lit";
 import type { ContentRendererContribution, ContentRendererInput } from "../../../plugin-api";
 import { FormattedText } from "../components/FormattedText";
 import { ContentRendererHost } from "../components/ContentRendererHost";
+import { ContentRenderingBoundary } from "../components/ContentRenderingBoundary";
 import { writeClipboardText } from "../clipboard";
 import { PluginRegistry } from "../plugins/registry";
 import { renderWorkspaceMarkdownHtml } from "../../../../pi-web-plugins/files/workspaceMarkdown";
@@ -38,6 +39,13 @@ async function hostIn(element: Element): Promise<ContentRendererHost> {
   if (!(host instanceof ContentRendererHost)) throw new Error("Expected a content renderer host");
   await host.updateComplete;
   return host;
+}
+
+async function renderPublicMarkdown(content: TemplateResult, root: HTMLElement): Promise<void> {
+  render(content, root);
+  const boundary = root.querySelector("pi-web-content-rendering-boundary");
+  if (!(boundary instanceof ContentRenderingBoundary)) throw new Error("Expected a host rendering boundary");
+  await boundary.updateComplete;
 }
 
 function button(host: ContentRendererHost, label: string): HTMLButtonElement {
@@ -216,7 +224,7 @@ describe("shared content rendering", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const mountHost = async () => {
-      render(capability.renderMarkdown(request), root);
+      await renderPublicMarkdown(capability.renderMarkdown(request), root);
       const host = root.querySelector<ContentRendererHost>("pi-web-content-renderer");
       if (host === null) throw new Error("Expected host");
       await host.updateComplete;
@@ -383,37 +391,37 @@ describe("shared content rendering", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const request = { machineId: "local", text: "```diagram\nsource\n```", toSafeHtml: renderWorkspaceMarkdownHtml };
-    render(capability.renderMarkdown(request), root);
+    await renderPublicMarkdown(capability.renderMarkdown(request), root);
     const host = root.querySelector<ContentRendererHost>("pi-web-content-renderer");
     if (host === null) throw new Error("Expected fence host");
     await host.updateComplete;
     expect(draw).toHaveBeenCalledTimes(renderMode === "automatic" ? 1 : 0);
-    render(capability.renderMarkdown({ ...request, allowManualPreview: false }), root);
+    await renderPublicMarkdown(capability.renderMarkdown({ ...request, allowManualPreview: false }), root);
     await host.updateComplete;
     expect(draw).toHaveBeenCalledTimes(renderMode === "automatic" ? 1 : 0);
-    render(capability.renderMarkdown({ ...request, allowManualPreview: true }), root);
+    await renderPublicMarkdown(capability.renderMarkdown({ ...request, allowManualPreview: true }), root);
     await host.updateComplete;
     expect(draw).toHaveBeenCalledOnce();
     button(host, "Raw").click();
     await host.updateComplete;
-    render(capability.renderMarkdown({ ...request, allowManualPreview: true }), root);
+    await renderPublicMarkdown(capability.renderMarkdown({ ...request, allowManualPreview: true }), root);
     await host.updateComplete;
     expect(host.renderRoot.querySelector("pre")?.textContent).toBe("source");
     expect(draw).toHaveBeenCalledOnce();
   });
 
-  it("retains the Files sanitizer while rendering fences and refuses truncated/oversize plugin input", () => {
+  it("retains the Files sanitizer while rendering fences and refuses truncated/oversize plugin input", async () => {
     const select = vi.fn(() => [{ id: "test:diagram", label: "Test / diagram", renderer: renderer() }]);
     const capability = createContentRenderingCapability(select);
     const root = document.createElement("div");
     document.body.append(root);
     const text = "```diagram\nsafe\n```\n\n![tracking](https://evil.test/pixel)\n\n<svg onload=bad()>";
-    render(capability.renderMarkdown({ machineId: "remote", text, toSafeHtml: renderWorkspaceMarkdownHtml }), root);
+    await renderPublicMarkdown(capability.renderMarkdown({ machineId: "remote", text, toSafeHtml: renderWorkspaceMarkdownHtml }), root);
     expect(root.querySelector("pi-web-content-renderer")).not.toBeNull();
     expect(root.querySelector("img,svg,script")).toBeNull();
     expect(root.textContent).toContain("Image omitted");
     expect(select).toHaveBeenCalledWith(expect.objectContaining({ machineId: "remote", text: "safe", language: "diagram" }));
-    render(capability.renderMarkdown({ machineId: "remote", text, truncated: true, toSafeHtml: renderWorkspaceMarkdownHtml }), root);
+    await renderPublicMarkdown(capability.renderMarkdown({ machineId: "remote", text, truncated: true, toSafeHtml: renderWorkspaceMarkdownHtml }), root);
     expect(root.querySelector("pi-web-content-renderer")).toBeNull();
     expect(capability.renderText({ machineId: "remote", text: "x".repeat(MAX_CONTENT_RENDERER_LENGTH + 1), filePath: "a.diag" })).toBeUndefined();
     expect(capability.renderText({ machineId: "remote", text: "safe", truncated: true, filePath: "a.diag" })).toBeUndefined();

@@ -6,6 +6,7 @@ import { marked, type Tokens } from "marked";
 import type { ContentRenderingCapability, ContentRenderRequest, ContentMarkdownRenderRequest, ContentTextRenderRequest, PluginCapability } from "../../../plugin-api";
 import type { ContentRendererChoice } from "../plugins/contentRenderers";
 import "../components/ContentRendererHost";
+import "../components/ContentRenderingBoundary";
 import { renderIntentMemory } from "./renderIntentMemory";
 
 export const contentRenderingCapabilityToken: PluginCapability<ContentRenderingCapability> = {
@@ -109,7 +110,11 @@ export function createContentRenderingService(select: SelectRenderer): ChatConte
       const external = request.controls === "external";
       return selected.length === 0 ? undefined : host(request.text, selected, external, external ? request.rendererId : undefined, request.allowManualPreview);
     },
-    renderMarkdown: (request: ContentMarkdownRenderRequest) => renderMarkdown(request),
+    // Plain templates cross Lit copies, but directive instances do not (notably
+    // the dev host's unsafeHTML/ref inside the production-bundled Files plugin).
+    renderMarkdown: (request: ContentMarkdownRenderRequest) => html`<pi-web-content-rendering-boundary
+      style="display: contents" .content=${renderMarkdown(request)}
+    ></pi-web-content-rendering-boundary>`,
   });
   return { capability, renderMarkdown };
 }
