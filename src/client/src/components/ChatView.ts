@@ -3,9 +3,10 @@ import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import { keyed } from "lit/directives/keyed.js";
 import { ChatDisclosureController } from "../chatDisclosure";
+import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionFeedback, MessageActionResult } from "../../../plugin-api";
+import { displayedMessageActionMessage, messageActionMessage, MessageActionAvailabilityCache, type RegisteredMessageAction } from "../plugins/messageActions";
 import { machineSessionKey } from "../machineKeys";
-import { groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
-import { writeClipboardText } from "../clipboard";
+import { canonicalEntryActionHeaders, chatMessageHasHeader, groupChatMessages, summarizeChatGroup, type ChatGroup } from "../chatGroups";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
 import { ChatScrollController, distanceFromScrollBottom, findFirstVisibleArticle, isNearScrollBottom, type ChatAnchorScrollPosition, type ChatScrollRestoreResult } from "../chatScrollPosition";
@@ -196,10 +197,17 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) workspaceContext: MarkdownWorkspaceContext | undefined;
   @property({ attribute: false }) contentRendering: import("../formatting/contentRendering").ChatContentRendering | undefined;
   @property() machineId = "local";
-  @property({ attribute: false }) onMessageAction?: (entryId: string, action: "fork" | "back") => Promise<void>;
-  @property({ type: Boolean }) messageActionsDisabled = false;
+  @property({ attribute: false }) messageActions: readonly RegisteredMessageAction[] = [];
+  @property({ attribute: false }) messageActionContext?: Omit<MessageActionAvailabilityContext, "message">;
+  @property({ attribute: false }) onMessageAction?: (input: MessageActionAvailabilityContext, actionId: string) => Promise<MessageActionResult>;
+  @property({ attribute: false }) onDisplayedMessageAction?: (input: DisplayedMessageActionAvailabilityContext, actionId: string) => Promise<MessageActionResult>;
+  private readonly messageActionAvailability = new MessageActionAvailabilityCache();
   @state() private messageActionPending = false;
-  @state() private messageActionError: { sessionId: string; entryId: string; message: string } | undefined;
+  @state() private displayedMessageActionsPending: ReadonlySet<string> = new Set();
+  @state() private messageActionError: { machineId: string; sessionId: string; key: string; message: string } | undefined;
+  @state() private messageActionFeedback: { machineId: string; sessionId: string; key: string; actionId: string; presentation: MessageActionFeedback } | undefined;
+  private messageActionFeedbackTimer: number | undefined;
+  private messageActionGeneration = 0;
   @property({ type: Number }) messageStart = 0;
   @property({ type: Number }) messageEnd = 0;
   @property({ type: Number }) messageTotal = 0;
@@ -210,6 +218,7 @@ export class ChatView extends LitElement {
   @property({ type: Number }) pendingMessageCount = 0;
   @property({ attribute: false }) clientQueuedMessages: QueuedSessionMessage[] = [];
   @property({ attribute: false }) status?: SessionStatus;
+  @property({ attribute: false }) onUseSuggestedInput: ((machineId: string, sessionId: string) => void) | undefined;
   @property({ attribute: false }) activity?: SessionActivity;
   @property({ attribute: false }) pendingAsk?: PendingAskUser;
   @property({ attribute: false }) askDraftSessionId = "";
@@ -232,7 +241,6 @@ export class ChatView extends LitElement {
   @state() private pinnedToBottom = true;
   @state() private zoomedImage: { src: string; alt: string } | undefined = undefined;
   @state() private expandedMetaKey: string | undefined;
-  @state() private copiedMessageKey: string | undefined;
   @state() private currentConversationIndex: number | undefined;
   @state() private collapsedNotificationTargetKeys: ReadonlySet<string> = new Set();
   @state() private retainedEmptyNotificationTrayTargetKey: string | undefined;
@@ -252,7 +260,6 @@ export class ChatView extends LitElement {
   private groupedMessagesStart = 0;
   private groupedMessagesCache: ChatGroup[] = [];
   private readonly messageMetaCache = new WeakMap<ChatLine, string>();
-  private readonly messageCopyTextCache = new WeakMap<ChatLine, string>();
   private lastScrollTop = 0;
   private lastClientHeight = 0;
   private touchStartY: number | undefined;
@@ -317,6 +324,8 @@ export class ChatView extends LitElement {
     this.scrollController.dispose();
     this.imageLayoutScroll.reset();
     this.releaseImageZoomModal();
+    this.messageActionGeneration += 1;
+    this.clearMessageActionFeedback();
     this.prependRestoreToken += 1;
     if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
     if (this.loadMoreCheckFrame !== undefined) cancelAnimationFrame(this.loadMoreCheckFrame);
@@ -366,7 +375,12 @@ export class ChatView extends LitElement {
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
-    if (changed.has("sessionId") || changed.has("machineId")) this.imageLayoutScroll.reset();
+    if (changed.has("sessionId") || changed.has("machineId")) {
+      this.imageLayoutScroll.reset();
+      this.messageActionGeneration += 1;
+      this.clearMessageActionFeedback();
+      this.messageActionError = undefined;
+    }
     if (changed.has("sessionId")) {
       this.savePreviousSessionScrollPosition(changed.get("sessionId"));
       this.prepareSessionUiState();
@@ -444,6 +458,7 @@ export class ChatView extends LitElement {
 
   override render() {
     const groups = this.groupedMessages();
+    const entryActionHeaders = canonicalEntryActionHeaders(groups);
     // Keep incremental updates within one transcript, but dispose the whole
     // repeat part when the transcript changes. Besides preventing cross-session
     // DOM reuse, clearing the part reclaims the end markers that the current Lit
@@ -460,13 +475,14 @@ export class ChatView extends LitElement {
             groups,
             (group) => group.kind === "group" ? this.groupRenderKey(group.startIndex) : this.messageAnchorKey(group.index),
             (group, index) => {
-              if (group.kind === "group") return this.renderMessageGroup(group.messages, group.startIndex, group.endIndex, this.isLiveTailGroup(groups, index));
-              if (group.kind === "tool-image") return this.renderToolImageOutput(group.message, group.index, group.toolName);
-              return this.renderMessage(group.message, group.index);
+              if (group.kind === "group") return this.renderMessageGroup(group.messages, group.startIndex, group.endIndex, this.isLiveTailGroup(groups, index), entryActionHeaders);
+              if (group.kind === "tool-image") return this.renderToolImageOutput(group.message, group.index, entryActionHeaders, group.toolName);
+              return this.renderMessage(group.message, group.index, entryActionHeaders);
             },
           ))}
           ${this.renderQueuedMessages()}
           ${this.renderSessionActivity()}
+          ${this.renderSuggestedInput()}
           ${this.renderOpenAsk()}
           ${this.renderExtensionDialogs()}
         </div>
@@ -742,6 +758,19 @@ export class ChatView extends LitElement {
     `;
   }
 
+  private renderSuggestedInput() {
+    const text = this.status?.sessionId === this.sessionId ? this.status.suggestedInput : undefined;
+    if (text === undefined || this.onUseSuggestedInput === undefined) return null;
+    return html`
+      <aside class="suggested-input">
+        <strong>Suggested input</strong>
+        <p class="suggested-input-text" dir="auto">${text === "" ? "Empty input" : text}</p>
+        <small>Replaces your current draft. Nothing is sent.</small>
+        <button type="button" @click=${() => { this.onUseSuggestedInput?.(this.machineId, this.sessionId); }}>Use suggested input</button>
+      </aside>
+    `;
+  }
+
   private renderOpenAsk() {
     if (this.pendingAsk === undefined) return null;
     return html`
@@ -860,25 +889,25 @@ export class ChatView extends LitElement {
     return Math.max(this.messageEnd, this.messageStart + this.messages.length);
   }
 
-  private renderMessage(message: ChatLine, index: number) {
+  private renderMessage(message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
     const toolOnly = this.isToolExecutionOnlyMessage(message);
-    const askUserRecordOnly = this.isAskUserRecordOnlyMessage(message);
+    const hasHeader = chatMessageHasHeader(message);
     const shellClass = toolOnly ? "msg tool-execution-shell" : "msg ask-user-record-shell";
     return html`
       ${this.renderScrollMarker(this.messageScrollMarkerId(index))}
-      <article class=${toolOnly || askUserRecordOnly ? shellClass : `msg ${message.role}`} data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
-        ${toolOnly || askUserRecordOnly ? null : this.renderMessageHeader(message, String(index))}
+      <article class=${hasHeader ? `msg ${message.role}` : shellClass} data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
+        ${hasHeader ? this.renderMessageHeader(message, String(index), index, entryActionHeaders) : null}
         ${message.parts.map((part, partIndex) => this.renderPart(part, message, index, partIndex))}
       </article>
     `;
   }
 
-  private renderToolImageOutput(message: ChatLine, index: number, toolName?: string) {
+  private renderToolImageOutput(message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>, toolName?: string) {
     const label = chatToolOutputLabel(toolName);
     return html`
       ${this.renderScrollMarker(this.messageScrollMarkerId(index))}
       <article class="msg tool-image-output" data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
-        ${this.renderMessageHeader(message, String(index), label)}
+        ${this.renderMessageHeader(message, String(index), index, entryActionHeaders, label)}
         ${message.parts.map((part, partIndex) => this.renderPart(part, message, index, partIndex))}
       </article>
     `;
@@ -888,11 +917,7 @@ export class ChatView extends LitElement {
     return message.role === "tool" && message.parts.length > 0 && message.parts.every((part) => part.type === "toolExecution");
   }
 
-  private isAskUserRecordOnlyMessage(message: ChatLine): boolean {
-    return message.parts.length > 0 && message.parts.every((part) => part.type === "askUserRecord");
-  }
-
-  private renderMessageGroup(messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean) {
+  private renderMessageGroup(messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean, entryActionHeaders: ReadonlySet<ChatLine> = new Set()) {
     const disclosureKey = this.groupDisclosureKey(startIndex, endIndex, defaultOpen);
     const open = this.disclosures.isOpen(disclosureKey, defaultOpen);
     return html`
@@ -902,19 +927,19 @@ export class ChatView extends LitElement {
           <b class="label">${chatMessageGroupLabel(defaultOpen)}</b>
           <span>${summarizeChatGroup(messages)}</span>
         </summary>
-        ${open ? this.renderMessageGroupBody(messages, startIndex) : null}
+        ${open ? this.renderMessageGroupBody(messages, startIndex, entryActionHeaders) : null}
       </details>
     `;
   }
 
-  private renderMessageGroupBody(messages: ChatLine[], startIndex: number) {
+  private renderMessageGroupBody(messages: ChatLine[], startIndex: number, entryActionHeaders: ReadonlySet<ChatLine> = new Set()) {
     return html`
       <div class="group-body">
         ${messages.map((message, offset) => {
           const toolOnly = this.isToolExecutionOnlyMessage(message);
           return html`
             <section class=${toolOnly ? "group-msg tool-execution-shell" : `group-msg ${message.role}`} data-index=${startIndex + offset} data-scroll-anchor-id=${this.eventAnchorKey(startIndex + offset)}>
-              ${toolOnly ? null : this.renderMessageHeader(message, `${String(startIndex)}:${String(offset)}`)}
+              ${chatMessageHasHeader(message) ? this.renderMessageHeader(message, `${String(startIndex)}:${String(offset)}`, startIndex + offset, entryActionHeaders) : null}
               ${message.parts.map((part, partIndex) => this.renderPart(part, message, startIndex + offset, partIndex))}
             </section>
           `;
@@ -927,54 +952,81 @@ export class ChatView extends LitElement {
     return html`<span class="scroll-marker" data-marker-id=${markerId} aria-hidden="true"></span>`;
   }
 
-  private renderMessageHeader(message: ChatLine, key: string, label: string = message.role) {
+  private renderMessageHeader(message: ChatLine, key: string, index: number, entryActionHeaders: ReadonlySet<ChatLine>, label: string = message.role) {
     const meta = this.messageMetaLabel(message);
     const expanded = this.expandedMetaKey === key;
     return html`
       <div class="msg-header">
         <b class="label">${label}</b>
         <div class="msg-header-trailing">
-          ${this.renderMessageActions(message, key)}
+          ${this.renderMessageActions(message, key, this.messages[index - this.messageStart] ?? message, entryActionHeaders.has(message))}
           <span class=${expanded ? "msg-meta expanded" : "msg-meta"} role="button" tabindex="0" title=${meta} aria-label=${meta} aria-expanded=${String(expanded)} @click=${() => { this.expandedMetaKey = expanded ? undefined : key; }} @keydown=${(event: KeyboardEvent) => { this.onMetaKeydown(event, key, expanded); }}>${meta}</span>
         </div>
       </div>
     `;
   }
 
-  private renderMessageActions(message: ChatLine, key: string) {
-    if (message.role !== "user" && message.role !== "assistant") return null;
-    const canNavigate = message.entryId !== undefined && this.onMessageAction !== undefined;
-    const canCopy = this.isCopyableMessage(message);
-    if (!canNavigate && !canCopy) return null;
-    const copied = this.copiedMessageKey === key;
+  private renderMessageActions(message: ChatLine, key: string, source: ChatLine, includeEntryActions: boolean) {
+    const actions = this.messageActionContext === undefined ? []
+      : this.messageActionAvailability.get(source, this.messageActions, this.messageActionContext, message, includeEntryActions)
+        .filter(({ action }) => action.target === "display" ? this.onDisplayedMessageAction !== undefined : this.onMessageAction !== undefined);
+    if (actions.length === 0) return null;
+    const feedback = this.messageActionFeedback;
     return html`
       <div class="msg-actions" aria-label="Message actions">
-        ${canNavigate ? html`
-          <button type="button" class="msg-action" title="Clone session from this message" aria-label="Clone session from this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "fork", event); }}><span class="msg-fork-icon" aria-hidden="true">⑂</span></button>
-          <button type="button" class="msg-action" title="Go back to this message" aria-label="Go back to this message" ?disabled=${this.messageActionsDisabled || this.messageActionPending} @click=${(event: MouseEvent) => { void this.actOnMessage(message, "back", event); }}><svg aria-hidden="true" width="16" height="16" viewBox="-3 -3 30 30" fill="none" stroke="currentColor" stroke-width="0.85" stroke-linecap="round" stroke-linejoin="round"><path vector-effect="non-scaling-stroke" d="M4 5h11a6 6 0 0 1 0 12H4m5-5-5 5 5 5" /></svg></button>
-        ` : null}
-        ${canCopy ? html`<button type="button" class="msg-action" title=${copied ? "Copied" : "Copy message"} aria-label=${`${copied ? "Copied" : "Copy"} ${message.role} message`} @click=${(event: MouseEvent) => { void this.copyMessage(message, key, event); }}>
-          <span aria-hidden="true">${copied ? "✓" : "⧉"}</span>
-        </button>` : null}
-        ${this.messageActionError?.sessionId === this.sessionId && this.messageActionError.entryId === message.entryId ? html`<span role="alert">${this.messageActionError.message}</span>` : null}
+        ${actions.map(({ action, enabled, ariaLabel }) => {
+          const presentation = feedback?.machineId === this.machineId && feedback.sessionId === this.sessionId && feedback.key === key && feedback.actionId === action.id
+            ? feedback.presentation : undefined;
+          const pending = action.target === "display" ? this.displayedMessageActionsPending.has(this.messageActionKey(key, action.id)) : this.messageActionPending;
+          return html`<button type="button" class="msg-action" title=${presentation?.title ?? action.title} aria-label=${presentation?.ariaLabel ?? presentation?.title ?? ariaLabel} ?disabled=${!enabled || pending} @click=${(event: MouseEvent) => { void this.actOnMessage(source, message, key, action, event); }}>${presentation?.icon ?? action.icon ?? action.title}</button>`;
+        })}
+        ${this.messageActionError?.machineId === this.machineId && this.messageActionError.sessionId === this.sessionId && this.messageActionError.key === key ? html`<span role="alert">${this.messageActionError.message}</span>` : null}
       </div>
     `;
   }
 
-  private async actOnMessage(message: ChatLine, action: "fork" | "back", event: MouseEvent): Promise<void> {
+  private messageActionKey(key: string, actionId: string): string {
+    return JSON.stringify([this.machineId, this.sessionId, this.messageActionGeneration, key, actionId]);
+  }
+
+  private async actOnMessage(source: ChatLine, displayed: ChatLine, key: string, action: RegisteredMessageAction, event: MouseEvent): Promise<void> {
     event.stopPropagation();
-    if (this.messageActionsDisabled || this.messageActionPending || message.entryId === undefined || this.onMessageAction === undefined) return;
-    if (!window.confirm(action === "fork" ? "Are you sure you want to fork this session?" : "Are you sure you want to go back to this message?")) return;
+    const context = this.messageActionContext;
+    if (context === undefined) return;
+    const pendingKey = this.messageActionKey(key, action.id);
+    if (action.target === "display" ? this.displayedMessageActionsPending.has(pendingKey) : this.messageActionPending) return;
+    const entry = messageActionMessage(source, displayed.role);
+    const onEntry = this.onMessageAction;
+    const onDisplay = this.onDisplayedMessageAction;
+    const run = action.target === "display"
+      ? onDisplay === undefined ? undefined : () => onDisplay({ ...context, message: displayedMessageActionMessage(displayed) }, action.id)
+      : entry === undefined || onEntry === undefined ? undefined : () => onEntry({ ...context, message: entry }, action.id);
+    if (run === undefined) return;
     const sessionId = this.sessionId;
-    this.messageActionPending = true;
+    const machineId = this.machineId;
+    const generation = this.messageActionGeneration;
+    if (action.target === "display") this.displayedMessageActionsPending = new Set([...this.displayedMessageActionsPending, pendingKey]);
+    else this.messageActionPending = true;
     this.messageActionError = undefined;
     try {
-      await this.onMessageAction(message.entryId, action);
+      const presentation = await run();
+      if (presentation !== undefined && this.isConnected && this.messageActionGeneration === generation && this.sessionId === sessionId && this.machineId === machineId) {
+        this.clearMessageActionFeedback();
+        this.messageActionFeedback = { machineId, sessionId, key, actionId: action.id, presentation };
+        this.messageActionFeedbackTimer = window.setTimeout(() => { this.clearMessageActionFeedback(); }, 1200);
+      }
     } catch (error) {
-      if (this.sessionId === sessionId) this.messageActionError = { sessionId, entryId: message.entryId, message: error instanceof Error ? error.message : String(error) };
+      if (this.isConnected && this.messageActionGeneration === generation && this.sessionId === sessionId && this.machineId === machineId) this.messageActionError = { machineId, sessionId, key, message: error instanceof Error ? error.message : String(error) };
     } finally {
-      this.messageActionPending = false;
+      if (action.target === "display") this.displayedMessageActionsPending = new Set([...this.displayedMessageActionsPending].filter((item) => item !== pendingKey));
+      else this.messageActionPending = false;
     }
+  }
+
+  private clearMessageActionFeedback(): void {
+    if (this.messageActionFeedbackTimer !== undefined) window.clearTimeout(this.messageActionFeedbackTimer);
+    this.messageActionFeedbackTimer = undefined;
+    this.messageActionFeedback = undefined;
   }
 
   private onMetaKeydown(event: KeyboardEvent, key: string, expanded: boolean) {
@@ -982,33 +1034,6 @@ export class ChatView extends LitElement {
     event.preventDefault();
     this.expandedMetaKey = expanded ? undefined : key;
   }
-
-  private isCopyableMessage(message: ChatLine): boolean {
-    return (message.role === "user" || message.role === "assistant") && this.messageCopyText(message) !== "";
-  }
-
-  private messageCopyText(message: ChatLine): string {
-    const cached = this.messageCopyTextCache.get(message);
-    if (cached !== undefined) return cached;
-    const text = message.parts
-      .filter((part): part is Extract<ChatPart, { type: "text" }> => part.type === "text")
-      .map((part) => part.text.trim())
-      .filter((partText) => partText !== "")
-      .join("\n\n");
-    this.messageCopyTextCache.set(message, text);
-    return text;
-  }
-
-  private async copyMessage(message: ChatLine, key: string, event: MouseEvent): Promise<void> {
-    event.stopPropagation();
-    const copied = await writeClipboardText(this.messageCopyText(message));
-    if (!copied) return;
-    this.copiedMessageKey = key;
-    window.setTimeout(() => {
-      if (this.copiedMessageKey === key) this.copiedMessageKey = undefined;
-    }, 1200);
-  }
-
 
   private messageMetaLabel(message: ChatLine): string {
     const cached = this.messageMetaCache.get(message);

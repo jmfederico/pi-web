@@ -34,6 +34,22 @@ describe("ChatTranscriptStore", () => {
     });
   });
 
+  it("replaces incompatible cached snapshots even when the cache adapter cannot remove entries", () => {
+    const cache = new MemoryChatHistoryCache();
+    cache.write("s1", page(1, 4, [
+      { role: "user", content: "old-a" }, { role: "assistant", content: "old-b" }, { role: "user", content: "old-c" },
+    ]));
+    const store = new ChatTranscriptStore(cache);
+    const current = page(1, 3, [{ role: "user", content: "new-a" }, { role: "assistant", content: "new-b" }]);
+
+    const view = store.mergeSnapshot("s1", current);
+
+    expect(view.messagePageTotal).toBe(3);
+    expect(store.rawHistoryPage("s1")).toEqual(current);
+    expect(cache.read("s1")).toEqual(current);
+    expect(store.historyRevision("s1")).toBe(1);
+  });
+
   it("tracks the raw page end separately from normalized display messages", () => {
     const store = new ChatTranscriptStore(new MemoryChatHistoryCache());
 

@@ -99,6 +99,7 @@ describe("config routes", () => {
       spawnSessions: true,
       subsessions: true,
       shortcuts: { "core:view.chat": "mod+1", "core:session.stop": null },
+      defaultTheme: { themeId: "themes:pi-web-light", auto: false },
       plugins: { info: { enabled: false, settings: { note: "hidden" } } },
       pathAccess: { allowedPaths: ["/tmp"] },
       uploads: { defaultFolder: "uploads\\manual" },
@@ -133,6 +134,23 @@ describe("config routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toHaveProperty("error");
     expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed theme defaults before writing", async () => {
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config: { defaultTheme: { themeId: "themes:pi-web-dark", auto: "yes" } } } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("defaultTheme");
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it("keeps theme defaults gateway-only in selected-machine reads and writes", async () => {
+    savedConfig.defaultTheme = { themeId: "themes:pi-web-light", auto: true };
+    const read = await app.inject({ method: "GET", url: "/api/machines/local/config" });
+    expect(read.json<PiWebConfigResponse>().config).not.toHaveProperty("defaultTheme");
+    const write = await app.inject({ method: "PUT", url: "/api/machines/local/config", payload: { config: { defaultTheme: { themeId: "themes:classic", auto: false } } } });
+    expect(write.statusCode).toBe(400);
+    expect(service.write).not.toHaveBeenCalled();
+    expect(savedConfig.defaultTheme.themeId).toBe("themes:pi-web-light");
   });
 
   it("rejects invalid path access payloads before writing", async () => {

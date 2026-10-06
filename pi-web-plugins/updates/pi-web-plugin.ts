@@ -180,7 +180,7 @@ const plugin = {
           run: (context) => context.checkForPiWebUpdates?.(),
         },
       ],
-      workspacePanels: [
+      applicationPanels: [
         {
           id: "workspace.updates",
           title: "Updates",

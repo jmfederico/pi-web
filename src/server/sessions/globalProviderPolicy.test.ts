@@ -234,7 +234,7 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
 
     const ignoredMutations = entries
       .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
-      .map((entry) => entry.details);
+      .map(({ details }) => ({ context: details["context"], operation: details["operation"], providerId: details["providerId"] }));
     expect(ignoredMutations).toEqual([
       { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "global-config" },
       { context: "global-provider-bootstrap", operation: "registerNativeProvider", providerId: "global-config" },
@@ -243,7 +243,7 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
       { context: "global-provider-bootstrap", operation: "registerNativeProvider", providerId: "project-native" },
       { context: "global-provider-bootstrap", operation: "unregisterProvider", providerId: "project-only" },
     ]);
-    expect(JSON.stringify(ignoredMutations)).not.toContain("secret");
+    expect(JSON.stringify(entries)).not.toContain("secret");
   });
 
   it("keeps the frozen baseline intact across runtime refreshes that rebuild every provider", async () => {
@@ -300,16 +300,16 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(runtime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID)).toBeDefined();
   });
 
-  it("keeps ignored mutations as no-ops when structured logging fails", async () => {
+  it.each(["info", "warn"] as const)("keeps ignored mutations as no-ops when %s logging fails", async (level) => {
     const agentDir = await tempDir("pi-web-global-provider-unit-");
     const runtime = await createTestModelRuntime();
     const { logger } = capturingLogger();
     const loggingError = new Error("provider mutation logger failed");
     const throwingLogger: GlobalProviderBootstrapLogger = {
       ...logger,
-      info(details, message) {
+      [level](details: Record<string, unknown>, message: string) {
         if (message === "ignored provider mutation after global bootstrap") throw loggingError;
-        logger.info(details, message);
+        logger[level](details, message);
       },
     };
 
@@ -375,15 +375,10 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
       runtime.registerProvider("global-config", refreshed);
     }
 
-    // Applied once, then the replays fall through to the de-duplicated
-    // ignored-mutation path exactly like any other rejected registration.
+    // Applied once; subsequent unchanged replays are completely silent.
     expect(entries.filter((entry) => entry.message === "applied models-only provider update after global bootstrap"))
       .toHaveLength(1);
-    expect(entries
-      .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
-      .map((entry) => entry.details)).toEqual([
-      { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "global-config" },
-    ]);
+    expect(entries.filter((entry) => entry.message === "ignored provider mutation after global bootstrap")).toEqual([]);
     expect(runtime.getModel("global-config", "refreshed-model")).toBeDefined();
   });
 
@@ -492,16 +487,115 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(runtime.getRegisteredProviderIds()).toEqual(["global-config"]);
     expect(entries.filter((entry) => entry.message === "applied models-only provider update after global bootstrap"))
       .toEqual([]);
-    // Repeated ignored registrations stay de-duplicated per (operation, provider).
+    // Repeated definite configuration changes stay de-duplicated.
     const ignoredDetails = entries
       .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
-      .map((entry) => entry.details);
+      .map(({ details }) => ({ context: details["context"], operation: details["operation"], providerId: details["providerId"] }));
     expect(ignoredDetails).toEqual([
       { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "global-config" },
       { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "unknown-config" },
     ]);
     // Rejected configs carry credentials; the decision log must never echo them.
-    expect(JSON.stringify(ignoredDetails)).not.toContain("secret");
+    expect(JSON.stringify(entries)).not.toContain("secret");
+  });
+
+  it("keeps callback replays informational without suppressing later configuration warnings or leaking secrets", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE.replace(
+      'api: "openai-completions",',
+      `api: "openai-completions",
+       streamSimple() { throw new Error("startup-stream-secret"); },
+       oauth: {
+         name: "Global OAuth",
+         async login() { throw new Error("startup-login-secret"); },
+         async refreshToken() { throw new Error("startup-refresh-secret"); },
+         getApiKey() { return "startup-oauth-secret"; }
+       },`,
+    ));
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    const baseline = runtime.getRegisteredProviderConfig("global-config");
+    if (!baseline?.oauth) throw new Error("Missing startup OAuth fixture");
+    const freshCallbacks = {
+      ...baseline,
+      streamSimple() { throw new Error("replacement-stream-secret"); },
+      oauth: {
+        ...baseline.oauth,
+        login: () => Promise.reject(new Error("replacement-login-secret")),
+        refreshToken: () => Promise.reject(new Error("replacement-refresh-secret")),
+        getApiKey() { return "replacement-oauth-secret"; },
+      },
+    } satisfies ProviderConfigInput;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      runtime.registerProvider("global-config", baseline);
+      runtime.registerProvider("global-config", {});
+      runtime.registerProvider("global-config", freshCallbacks);
+      runtime.registerProvider("global-config", {
+        ...freshCallbacks,
+        oauth: { ...freshCallbacks.oauth, name: "replacement-oauth-name-secret" },
+      });
+      runtime.registerProvider("global-config", { headers: { Authorization: "replacement-header-secret" } });
+    }
+    const ignored = entries.filter((entry) => entry.message === "ignored provider mutation after global bootstrap");
+    expect(ignored.map(({ level, details }) => ({ level, reason: details["reason"] }))).toEqual([
+      { level: "info", reason: "implementation-unverified" },
+      { level: "warn", reason: "configuration-change" },
+    ]);
+    for (const { details } of ignored) {
+      expect(details).toMatchObject({
+        code: "PROVIDER_MUTATION_IGNORED",
+        operation: "registerProvider",
+        providerId: "global-config",
+      });
+      expect(details["guidance"]).toEqual(expect.stringContaining("The startup provider, if any, remains in use"));
+      expect(details["guidance"]).toEqual(expect.stringContaining("Project-only or session_start-only registrations are not enabled by a restart"));
+      expect(details["guidance"]).toEqual(expect.stringContaining("interrupts active sessions and terminals"));
+    }
+    expect(JSON.stringify(ignored)).not.toContain("secret");
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baseline);
+  });
+
+  it("keeps callback replays with cyclic config metadata as non-fatal informational no-ops", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE.replace(
+      'api: "openai-completions",',
+      `api: "openai-completions",
+       oauth: (() => {
+         const oauth = {
+           name: "Cyclic OAuth",
+           async login() { throw new Error("unused login"); },
+           async refreshToken() { throw new Error("unused refresh"); },
+           getApiKey() { return "unused key"; }
+         };
+         oauth.self = oauth;
+         return oauth;
+       })(),`,
+    ));
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    const baseline = runtime.getRegisteredProviderConfig("global-config");
+    if (!baseline?.oauth) throw new Error("Missing cyclic OAuth fixture");
+    const oauth = { ...baseline.oauth, login: () => Promise.reject(new Error("unused replacement login")) };
+    Object.assign(oauth, { self: oauth });
+    expect(() => { runtime.registerProvider("global-config", { ...baseline, oauth }); }).not.toThrow();
+    expect(entries.filter((entry) => entry.message === "ignored provider mutation after global bootstrap"))
+      .toMatchObject([{ level: "info", details: { reason: "implementation-unverified" } }]);
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baseline);
+  });
+
+  it("warns when adding a callback absent from a known startup registration", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    runtime.registerProvider("global-config", {
+      api: "openai-completions",
+      streamSimple() { throw new Error("new-stream-secret"); },
+    });
+    expect(entries.find((entry) => entry.level === "warn")).toMatchObject({
+      details: { code: "PROVIDER_MUTATION_IGNORED", reason: "configuration-change" },
+    });
+    expect(JSON.stringify(entries)).not.toContain("new-stream-secret");
   });
 
   it("keeps native registration and unregistration frozen for a known provider", async () => {
@@ -520,7 +614,7 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(runtime.getModel("global-config", "global-model")).toBeDefined();
     expect(entries
       .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
-      .map((entry) => entry.details)).toEqual([
+      .map(({ details }) => ({ context: details["context"], operation: details["operation"], providerId: details["providerId"] }))).toEqual([
       { context: "global-provider-bootstrap", operation: "registerNativeProvider", providerId: "global-config" },
       { context: "global-provider-bootstrap", operation: "unregisterProvider", providerId: "global-config" },
     ]);
@@ -546,12 +640,14 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
 
     runtime.registerProvider("after-diagnostic", {});
     expect(runtime.getRegisteredProviderIds()).toEqual([]);
-    expect(entries).toContainEqual({
-      level: "info",
+    expect(entries.find((entry) => entry.details["providerId"] === "after-diagnostic")).toMatchObject({
+      level: "warn",
       details: {
         context: "global-provider-bootstrap",
+        code: "PROVIDER_MUTATION_IGNORED",
         operation: "registerProvider",
         providerId: "after-diagnostic",
+        reason: "not-in-startup-baseline",
       },
       message: "ignored provider mutation after global bootstrap",
     });

@@ -139,7 +139,7 @@ describe("public browser plugin API", () => {
     type RequestOnlyIsValid = { request: PeerRequest } extends PluginPeer ? true : false;
     type ChannelOnlyIsValid = { openChannel: PeerChannel } extends PluginPeer ? true : false;
     type BothCapabilitiesAreValid = { request: PeerRequest; openChannel: PeerChannel } extends PluginPeer ? true : false;
-    expectTypeOf<keyof WorkspaceContext>().toEqualTypeOf<"machine" | "workspace" | "state" | "files" | "peer" | "host">();
+    expectTypeOf<keyof WorkspaceContext>().toEqualTypeOf<"machine" | "workspace" | "state" | "files" | "projects" | "peer" | "host">();
     expectTypeOf<keyof PluginPeer>().toEqualTypeOf<"request" | "openChannel">();
     expectTypeOf<PeerIsOptional>().toEqualTypeOf<true>();
     expectTypeOf<PeerRequestIsOptional>().toEqualTypeOf<true>();

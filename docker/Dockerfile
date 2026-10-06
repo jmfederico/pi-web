@@ -16,6 +16,7 @@ ARG PI_WEB_GID=1000
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
+  LANG=C.UTF-8 \
   SHELL=/bin/bash \
   TERM=xterm-256color
 

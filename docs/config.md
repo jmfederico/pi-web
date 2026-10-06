@@ -11,7 +11,7 @@ PI WEB uses two config files:
 - **Global PI WEB config:** `$PI_WEB_CONFIG`, or `$XDG_CONFIG_HOME/pi-web/config.json`, or `~/.config/pi-web/config.json`.
 - **Project-local PI WEB config:** `<project>/.pi-web/config.json` for commit-able project settings.
 
-Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: keyboard shortcuts, remote machine registry/tokens, gateway host/port/allowed-hosts, and experimental Safe Tunnel availability.
+Each PI WEB machine has its own config. When using Fleet/machine federation, Settings uses the selected machine for config that affects work running there: session daemon tools, desired PI WEB plugin enablement/settings, external path access, and upload defaults. Gateway/browser-only settings stay local to the gateway: the default theme, keyboard shortcuts, remote machine registry/tokens, gateway host/port/allowed-hosts, and experimental Safe Tunnel availability.
 
 Pi package settings are separate from PI WEB config. They live in Pi's package-manager settings on the target machine and are managed by Pi (`pi install`, `pi remove`, `pi update`) or **Settings → Pi packages**. In a federated setup, **Settings → Pi packages** targets the currently selected machine. The PI WEB `plugins` config key controls desired enablement/settings for discovered browser-only, server-only, and dual-entry PI WEB plugins on that machine; it does not install, remove, or update Pi packages.
 
@@ -66,6 +66,7 @@ Process restarts depend on the key:
 - `serverPlugins.safeStart`: persistent offline recovery state applied before server-plugin discovery/import on the next sessiond start; use the `pi-web plugins safe-start ...` CLI rather than hand-editing it.
 - Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with `serverModule`, manually restart `pi-web-sessiond.service`, then reload the browser. If a global Pi extension adds or removes a model provider, or changes a provider's connection settings, the same manual sessiond restart is required; `/reload` cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See [Pi extension provider baseline](#pi-extension-provider-baseline).
 - `shortcuts`: saved settings apply in the browser after config refresh/save.
+- `defaultTheme`: applies after settings save or browser config refresh when the browser has no local theme override; no service restart.
 
 ## Global config example
 
@@ -73,6 +74,7 @@ Process restarts depend on the key:
 {
   "host": "127.0.0.1",
   "port": 8504,
+  "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true },
   "pathAccess": {
     "allowedPaths": ["~/SDKs", "/opt/reference"]
   },
@@ -190,6 +192,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Session environment facts | `environmentFacts` | `PI_WEB_ENVIRONMENT_FACTS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | PI WEB plugin desired enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global + sessiond startup snapshot for server entries | Not core local config; plugins may read their own project files | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
 | Server-plugin safe start | `serverPlugins.safeStart` | — | Global/offline recovery | Not supported locally; manage with `pi-web plugins safe-start ...` | Applied before discovery/import on next sessiond start |
+| Default browser theme | `defaultTheme.themeId`, `defaultTheme.auto` | — | Gateway global | Not supported locally; device choices take precedence | Settings save / browser config refresh; no restart |
 | Keyboard shortcuts | `shortcuts.<actionId>` | — | Global | Not supported locally | Applies after settings save/config refresh |
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
 | **Runtime-only environment variables** |  |  |  |  |  |
@@ -340,7 +343,7 @@ Model lists are shared daemon-wide state. If extensions in two workspaces regist
 
 #### Provider decisions in the daemon log
 
-Check the session-daemon log for ignored provider changes and applied model-list refreshes; these do not produce browser notifications. Log entries omit provider configuration and credentials.
+Provider decisions are recorded in daemon logs, not browser notifications. Entries omit provider configuration and credentials. See [provider extension troubleshooting](https://pi-web.dev/faq#provider-extension-no-effect) for ignored changes.
 
 This prevents accidental provider, configuration, or credential contamination between projects; it is not a security boundary because Pi extensions remain trusted daemon code.
 
@@ -470,6 +473,31 @@ pi-web plugins safe-start clear --restart
 `--restart` performs a restart only for a recognized safe installed-service plan; otherwise it prints manual instructions. The config mutation is durable before PI WEB attempts the restart. If the service-manager command itself fails, restart sessiond manually.
 
 Ordinary import/activation/start/health failures are quarantined when possible, but server plugins are trusted in-process code, share sessiond's event loop, and are not crash-isolated. `bundled-only` bypasses external plugin failures; `none` is the emergency level that also bypasses bundled server plugins. Setting, clearing, or disabling takes effect for server code only after sessiond restarts, and that restart may interrupt active sessions/runtime ownership.
+
+### Theme default and device choices
+
+In **Settings → General → Theme**, choose a theme and whether **Auto** should follow the device's light/dark preference when that theme has a pair. Then choose one of three actions:
+
+- **Use on this device** saves the theme and Auto choice in this browser. Other browsers are unchanged.
+- **Set as default** saves the theme and Auto choice to the global PI WEB config. Browsers using the default pick it up after a page reload or config refresh; existing device choices are unchanged.
+- **Use the default** removes this browser's saved override and follows the configured default.
+
+The action palette's **Select theme** action opens these settings too. Existing browser-local choices remain device overrides; they are not copied into shared config.
+
+```json
+{
+  "defaultTheme": {
+    "themeId": "themes:pi-web-dark",
+    "auto": true
+  }
+}
+```
+
+`themeId` must be a qualified theme contribution ID (`<plugin-id>:<theme-id>`), not its display name or a theme-pair ID. Built-in IDs are `themes:pi-web-dark`, `themes:pi-web-light`, and `themes:classic`; installed gateway plugins may provide additional themes. `auto` must be a boolean. With Auto off, the selected theme stays fixed. Without a pair, Auto leaves the selected theme unchanged.
+
+Precedence is **device choice → configured default → built-in default**. The built-in default is PI WEB Dark with Auto on. A missing or disabled plugin theme temporarily falls back to Classic without erasing the requested choice, so it can return when the plugin is available again. Applying a configured default does not create a device override.
+
+The theme default belongs to the browser-facing gateway, even when a remote machine is selected. It is not a project-local `.pi-web/config.json` setting; remote plugins cannot change the app-wide theme. No session-daemon or web service restart is needed for a theme preference change.
 
 ### Shortcut config
 

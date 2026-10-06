@@ -45,6 +45,8 @@ const DOCKER_TESTS = [
   "src/docker/piWebDockerDocs.test.ts",
   "src/docker/piWebDockerEntrypoint.test.ts",
   "src/server/dockerControlAssets.test.ts",
+  "src/server/dockerDevCompose.test.ts",
+  "src/server/dockerDevDependencySync.test.ts",
 ];
 
 const DOCKER_DOCS_TEST = "src/docker/piWebDockerDocs.test.ts";

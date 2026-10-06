@@ -265,7 +265,7 @@ describe("session routes", () => {
     }
   });
 
-  it("strictly parses cwd-scoped session tree navigation requests", async () => {
+  it("strictly parses cwd-scoped exact-entry navigation requests without retainCheckpoint", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
@@ -297,7 +297,7 @@ describe("session routes", () => {
 
       expect([response.statusCode, withoutSummary.statusCode, withDefaultSummary.statusCode]).toEqual([200, 200, 200]);
       expect(response.json()).toEqual({ cancelled: false, editorText: "edit this" });
-      expect(routeService.navigateTreeCalls).toEqual([
+      expect(routeService.navigateTreeCalls).toStrictEqual([
         {
           lookup: { id: "session-1", cwd: resolve("/repo") },
           request: { targetId: "entry-2", expectedLeafId: null, summary: { mode: "custom", instructions: "focus on tests" } },
@@ -348,7 +348,7 @@ describe("session routes", () => {
     }
   });
 
-  it("strictly parses cwd-scoped session tree fork requests", async () => {
+  it("strictly parses cwd-scoped exact-entry fork requests without retainCheckpoint", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
@@ -381,7 +381,7 @@ describe("session routes", () => {
         },
         promptDraft: "draft this",
       });
-      expect(routeService.forkFromTreeCalls).toEqual([
+      expect(routeService.forkFromTreeCalls).toStrictEqual([
         {
           lookup: { id: "session-1", cwd: resolve("/repo") },
           request: { entryId: "entry-2", expectedLeafId: "leaf-1" },
@@ -391,6 +391,69 @@ describe("session routes", () => {
           request: { entryId: "entry-3", expectedLeafId: null },
         },
       ]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it.each([true, false])("forwards retainCheckpoint=%s for session tree navigation and forks", async (retainCheckpoint) => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, new SessionEventHub());
+    const navigation: SessionTreeNavigateRequest = {
+      targetId: "entry-2",
+      expectedLeafId: "leaf-1",
+      summary: { mode: "none" },
+      retainCheckpoint,
+    };
+    const fork: SessionTreeForkRequest = { entryId: "entry-2", expectedLeafId: "leaf-1", retainCheckpoint };
+
+    try {
+      const navigateResponse = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/tree/navigate",
+        payload: { cwd: "/repo", ...navigation },
+      });
+      const forkResponse = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/tree/fork",
+        payload: { cwd: "/repo", ...fork },
+      });
+
+      expect([navigateResponse.statusCode, forkResponse.statusCode]).toEqual([200, 200]);
+      expect(routeService.navigateTreeCalls).toStrictEqual([{ lookup: { id: "session-1", cwd: resolve("/repo") }, request: navigation }]);
+      expect(routeService.forkFromTreeCalls).toStrictEqual([{ lookup: { id: "session-1", cwd: resolve("/repo") }, request: fork }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it.each(["navigate", "fork"])("rejects non-boolean retainCheckpoint on tree/%s before calling the service", async (operation) => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, new SessionEventHub());
+    const base = operation === "navigate"
+      ? { cwd: "/repo", targetId: "entry-2", expectedLeafId: "leaf-1", summary: { mode: "none" } }
+      : { cwd: "/repo", entryId: "entry-2", expectedLeafId: "leaf-1" };
+    const malformed: unknown[] = [null, "true", "false", "", 0, 1, [], {}];
+
+    try {
+      for (const retainCheckpoint of malformed) {
+        const response = await routeApp.inject({
+          method: "POST",
+          url: `/sessions/session-1/tree/${operation}`,
+          payload: { ...base, retainCheckpoint },
+        });
+
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: "retainCheckpoint field must be a boolean" });
+      }
+      expect(routeService.navigateTreeCalls).toEqual([]);
+      expect(routeService.forkFromTreeCalls).toEqual([]);
     } finally {
       await routeService.dispose();
       await routeApp.close();

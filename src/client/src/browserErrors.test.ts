@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { initialAppState } from "./appState";
 import {
   browserErrorScopeKey,
+  BrowserErrorReporter,
   clearBrowserError,
   machineBrowserErrorScope,
   discardBrowserErrors,
@@ -54,6 +56,36 @@ describe("browser error scopes", () => {
 
     expect(clearBrowserError(errors, workspaceA, "first failure")).toBe(errors);
     expect(clearBrowserError(errors, workspaceA, "replacement failure")).toEqual({});
+  });
+
+  it("clears only the captured recoverable error after a successful read", () => {
+    let state = initialAppState();
+    const reporter = new BrowserErrorReporter(() => state, (patch) => { state = { ...state, ...patch }; });
+    reporter.report(sessionA, "refresh unavailable", "session-refresh");
+    reporter.report(workspaceA, "prompt delivery failed");
+    const captured = reporter.captureRecovery(sessionA, "session-refresh");
+
+    expect(reporter.captureRecovery(sessionA, "workspace-sessions-refresh")).toBeUndefined();
+    expect(reporter.captureRecovery(workspaceA, "workspace-sessions-refresh")).toBeUndefined();
+    reporter.clearRecovered(captured);
+
+    expect(Object.values(state.browserErrors)).toEqual([{ scope: workspaceA, message: "prompt delivery failed" }]);
+  });
+
+  it("preserves replacement failures, including identical text, when an older read recovers", () => {
+    let state = initialAppState();
+    const reporter = new BrowserErrorReporter(() => state, (patch) => { state = { ...state, ...patch }; });
+    reporter.report(sessionA, "refresh unavailable", "session-refresh");
+    const captured = reporter.captureRecovery(sessionA, "session-refresh");
+    reporter.report(sessionA, "refresh unavailable", "session-refresh");
+    const replacement = state.browserErrors;
+
+    reporter.clearRecovered(captured);
+
+    expect(state.browserErrors).toBe(replacement);
+    reporter.report(sessionA, "prompt delivery failed");
+    reporter.clearRecovered(captured);
+    expect(state.browserErrors[browserErrorScopeKey(sessionA)]?.message).toBe("prompt delivery failed");
   });
 
   it("discards a workspace and its child session errors without touching another workspace", () => {

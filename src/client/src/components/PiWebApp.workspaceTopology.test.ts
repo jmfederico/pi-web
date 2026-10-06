@@ -54,12 +54,34 @@ describe("PiWebApp workspace topology refresh wiring", () => {
     const refreshTopology = spyOnTopologyRefresh(app);
     const refreshSurface = replaceRefresh(app, "refreshCurrentWorkspaceSurface");
     const refreshSessions = spyOnWorkspaceSessionsRefresh(app);
+    const sessions: unknown = Reflect.get(app, "sessions");
+    if (!(sessions instanceof SessionController)) throw new Error("SessionController was unavailable");
+    const refreshSelected = vi.spyOn(sessions, "refreshSelectedSession").mockResolvedValue();
 
     await browserResumeRefresh(app)();
 
-    expect(refreshSessions).toHaveBeenCalledOnce();
+    expect(refreshSelected).toHaveBeenCalledExactlyOnceWith(undefined, { recoverNetwork: true });
+    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local", { recoverNetwork: true });
     expect(refreshTopology).toHaveBeenCalledOnce();
     expect(refreshSurface).toHaveBeenCalledOnce();
+  });
+
+  it("does not wait for an unread request before refreshing the conversation after resume", async () => {
+    const app = createApp();
+    stubBackgroundRefreshes(app);
+    const unread: unknown = Reflect.get(app, "sessionUnread");
+    if (typeof unread !== "object" || unread === null) throw new Error("Unread controller was unavailable");
+    let finishUnread: (() => void) | undefined;
+    const pendingUnread = new Promise<void>((resolve) => { finishUnread = resolve; });
+    Reflect.set(unread, "refreshAll", () => pendingUnread);
+    const refreshSessions = spyOnWorkspaceSessionsRefresh(app);
+    spyOnTopologyRefresh(app);
+
+    const refresh = browserResumeRefresh(app)();
+    expect(refreshSessions).toHaveBeenCalledOnce();
+    if (finishUnread === undefined) throw new Error("Unread completion was unavailable");
+    finishUnread();
+    await refresh;
   });
 
   it("re-lists the selected project's workspaces on the plugin-facing app-data refresh", async () => {
@@ -104,11 +126,11 @@ describe("PiWebApp realtime session-list recovery", () => {
     if (onOpen === undefined) throw new Error("Realtime onOpen callback was unavailable");
 
     onOpen();
-    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local");
+    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local", { recoverNetwork: true });
 
     refreshSessions.mockClear();
     onOpen();
-    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local");
+    expect(refreshSessions).toHaveBeenCalledExactlyOnceWith("local", { recoverNetwork: true });
   });
 });
 

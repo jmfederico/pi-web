@@ -24,6 +24,7 @@ ENV PATH=/workspace/node_modules/.bin:$PATH \
   PI_WEB_SESSIOND_SOCKET=/data/pi-web/sessiond.sock \
   PI_CODING_AGENT_DIR=/data/pi-agent \
   HOSTEXEC_IMAGE=alpine:3.22 \
+  LANG=C.UTF-8 \
   SHELL=/bin/bash \
   TERM=xterm-256color
 
@@ -44,7 +45,7 @@ RUN npm ci \
   && chmod -R a+rwX /workspace/node_modules \
   && mv /workspace/node_modules /opt/pi-web-dev-dependencies/node_modules \
   && ln -s /opt/pi-web-dev-dependencies/node_modules /workspace/node_modules \
-  && ln -sf /opt/pi-web-dev-dependencies/node_modules/.bin/pi /usr/local/bin/pi \
+  && ln -sf /workspace/node_modules/.bin/pi /usr/local/bin/pi \
   && npm cache clean --force \
   && chmod -R a+rwX /data \
   && chmod 0777 /workspace

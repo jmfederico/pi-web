@@ -29,7 +29,7 @@ const plugin = {
           items: (context) => [{ type: "text", text: context.workspace.provider?.pluginId ?? "folder", title: context.workspace.path }],
         },
       ],
-      workspacePanels: [
+      applicationPanels: [
         {
           id: "workspace.info",
           title: "Info",

@@ -613,13 +613,18 @@ function requireRefCwd(cwd: unknown): string {
 function sessionTreeNavigateRequestFromBody(body: Record<string, unknown>): SessionTreeNavigateRequest {
   const targetId = requireNonEmptyString(body, "targetId");
   const expectedLeafId = requireNullableString(body, "expectedLeafId");
-  return { targetId, expectedLeafId, summary: sessionTreeSummaryChoice(body["summary"]) };
+  return {
+    targetId,
+    expectedLeafId,
+    summary: sessionTreeSummaryChoice(body["summary"]),
+    ...optionalField("retainCheckpoint", optionalBoolean(body, "retainCheckpoint")),
+  };
 }
 
 function sessionTreeForkRequestFromBody(body: Record<string, unknown>): SessionTreeForkRequest {
   const entryId = requireNonEmptyString(body, "entryId");
   const expectedLeafId = requireNullableString(body, "expectedLeafId");
-  return { entryId, expectedLeafId };
+  return { entryId, expectedLeafId, ...optionalField("retainCheckpoint", optionalBoolean(body, "retainCheckpoint")) };
 }
 
 function sessionTreeSummaryChoice(value: unknown): SessionTreeSummaryChoice {
@@ -719,6 +724,10 @@ function requireBoolean(record: Record<string, unknown>, field: string): boolean
   const value = record[field];
   if (typeof value !== "boolean") throw new Error(`${field} field must be a boolean`);
   return value;
+}
+
+function optionalBoolean(record: Record<string, unknown>, field: string): boolean | undefined {
+  return record[field] === undefined ? undefined : requireBoolean(record, field);
 }
 
 function requireNonEmptyString(record: Record<string, unknown>, field: string): string {

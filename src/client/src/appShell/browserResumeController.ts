@@ -22,7 +22,7 @@ export interface BrowserResumeControllerOptions {
   scheduleFrame?: ((callback: () => void) => ScheduledFrame) | undefined;
 }
 
-/** Owns browser resume listeners and batches focus/visibility refreshes per frame. */
+/** Owns browser resume listeners and batches refreshes per frame. */
 export class BrowserResumeController {
   private readonly windowTarget: BrowserEventTarget | undefined;
   private readonly documentTarget: BrowserEventTarget | undefined;
@@ -42,28 +42,29 @@ export class BrowserResumeController {
   connect(): void {
     if (this.connected) return;
     this.connected = true;
-    this.windowTarget?.addEventListener("focus", this.onFocus);
-    this.documentTarget?.addEventListener("visibilitychange", this.onVisibilityChange);
+    this.windowTarget?.addEventListener("focus", this.onResume);
+    this.windowTarget?.addEventListener("pageshow", this.onResume);
+    this.windowTarget?.addEventListener("online", this.onResume);
+    this.documentTarget?.addEventListener("visibilitychange", this.onResume);
   }
 
   disconnect(): void {
     if (!this.connected) return;
     this.connected = false;
-    this.windowTarget?.removeEventListener("focus", this.onFocus);
-    this.documentTarget?.removeEventListener("visibilitychange", this.onVisibilityChange);
+    this.windowTarget?.removeEventListener("focus", this.onResume);
+    this.windowTarget?.removeEventListener("pageshow", this.onResume);
+    this.windowTarget?.removeEventListener("online", this.onResume);
+    this.documentTarget?.removeEventListener("visibilitychange", this.onResume);
     this.scheduledRefresh?.cancel();
     this.scheduledRefresh = undefined;
   }
 
-  private readonly onFocus: EventListener = () => {
+  private readonly onResume: EventListener = () => {
     this.handleResumeSignal();
   };
 
-  private readonly onVisibilityChange: EventListener = () => {
-    if (this.isDocumentVisible()) this.handleResumeSignal();
-  };
-
   private handleResumeSignal(): void {
+    if (!this.isDocumentVisible()) return;
     this.callbacks.onResumeSignal();
     if (this.scheduledRefresh !== undefined) return;
     this.scheduledRefresh = this.scheduleFrame(() => {

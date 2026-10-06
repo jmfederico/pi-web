@@ -9,15 +9,34 @@ export class HttpRequestError extends Error {
   }
 }
 
+/** A browser transport failure, distinct from HTTP, cancellation, and parsing failures. */
+export class NetworkRequestError extends Error {
+  override name = "NetworkRequestError";
+
+  constructor(message: string, options: ErrorOptions = {}) {
+    super(message, options);
+  }
+}
+
 export async function request<T>(url: string, parse: (value: unknown) => T, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json");
-  const response = await fetch(resolveAppUrl(url), { ...init, headers });
-  if (!response.ok) {
-    const body: unknown = await response.json().catch((): unknown => ({}));
-    throw new HttpRequestError(errorMessage(body) ?? response.statusText, response.status);
+  const requestUrl = resolveAppUrl(url);
+  let body: unknown;
+  try {
+    const response = await fetch(requestUrl, { ...init, headers });
+    if (!response.ok) {
+      const errorBody: unknown = await response.json().catch((): unknown => ({}));
+      throw new HttpRequestError(errorMessage(errorBody) ?? response.statusText, response.status);
+    }
+    body = await response.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.name !== "AbortError" && init?.signal?.aborted !== true) {
+      throw new NetworkRequestError(error.message, { cause: error });
+    }
+    throw error;
   }
-  const body: unknown = await response.json();
+  // Parser TypeErrors are not transport failures and must never become retryable.
   return parse(body);
 }
 

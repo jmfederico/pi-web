@@ -110,16 +110,17 @@ describe("runPiWebUpdate", () => {
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining("original tooling"));
   });
 
-  it("fast-forwards, installs, builds, and restarts a clean local checkout", async () => {
+  it("fast-forwards, installs, and builds the detected local checkout when invoked from another project", async () => {
     const deps = fixture(localInstall);
     configureLocalCheckout(deps);
+    expect(deps.cwd).not.toBe(localInstall.path);
 
     await runPiWebUpdate(["--yes"], deps);
 
     expect(deps.run.mock.calls.map(([command]) => [command.executable, command.args])).toEqual([
       ["git", ["-C", "/workspace/pi-web", "pull", "--ff-only"]],
-      ["npm", ["install"]],
-      ["npm", ["run", "build"]],
+      ["npm", ["--prefix", "/workspace/pi-web", "install"]],
+      ["npm", ["--prefix", "/workspace/pi-web", "run", "build"]],
       ["/tools/node", [join("/workspace/pi-web", "dist", "cli.js"), "restart"]],
     ]);
     expect(deps.run.mock.calls[0]?.[0].env).toEqual({ PATH: "/tools/bin", GIT_TERMINAL_PROMPT: "0" });
@@ -151,6 +152,19 @@ describe("runPiWebUpdate", () => {
 
     expect(deps.run).not.toHaveBeenCalled();
     expect(deps.log).toHaveBeenCalledWith("Update cancelled. Nothing changed.");
+  });
+
+  it.each(["install", "build"])("does not restart when the local %s fails", async (failure) => {
+    const deps = fixture(localInstall);
+    configureLocalCheckout(deps);
+    deps.run.mockImplementation((command) => {
+      if (command.executable === "npm" && command.args.includes(failure)) return Promise.reject(new Error(`${failure} failed`));
+      return Promise.resolve();
+    });
+
+    await expect(runPiWebUpdate(["--yes"], deps)).rejects.toThrow(`${failure} failed`);
+    expect(deps.run.mock.calls.some(([command]) => command.args.includes("restart"))).toBe(false);
+    if (failure === "install") expect(deps.run.mock.calls.some(([command]) => command.args.includes("build"))).toBe(false);
   });
 
   it("stops before install when a local checkout cannot fast-forward", async () => {

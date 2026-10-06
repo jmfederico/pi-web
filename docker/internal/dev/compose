@@ -289,7 +289,7 @@ fi
 env_file=$generated_env_file
 override_file=$repo_root/.pi-web/docker-compose-dev.host.generated.yml
 
-if ! pi_web_docker_host_write_compose_override "$override_file" "$PI_WEB_DETECTED_DOCKER_HOST_PROFILE" "$pi_web_extra_host_paths" "$repo_root"; then
+if ! pi_web_docker_host_write_compose_override "$override_file" "$PI_WEB_DETECTED_DOCKER_HOST_PROFILE" "$pi_web_extra_host_paths"; then
   die "could not write host-specific Compose override"
 fi
 

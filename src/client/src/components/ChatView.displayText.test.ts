@@ -4,6 +4,8 @@ import { ChatView } from "./ChatView";
 import type { FormattedText } from "./FormattedText";
 import { normalizeMessages } from "../chatMessages";
 import { createContentRenderingService } from "../formatting/contentRendering";
+import { corePlugin } from "../plugins/core";
+import { PluginRegistry } from "../plugins/registry";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -17,8 +19,19 @@ it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while 
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   vi.stubGlobal("isSecureContext", true);
   const select = vi.fn(() => []);
+  const registry = new PluginRegistry();
+  await registry.register({ id: "core", plugin: corePlugin });
   const view = new ChatView();
   view.contentRendering = createContentRenderingService(select);
+  view.messageActions = registry.getMessageActions("local");
+  view.messageActionContext = {
+    machine: { id: "local", name: "Local", kind: "local" },
+    session: { id: "s", cwd: "/repo", archived: false, pending: false, busy: false },
+  };
+  view.onDisplayedMessageAction = (input, id) => registry.runDisplayedMessageAction(id, input, () => ({
+    ...input, prompt: { insertText: vi.fn(), getText: () => "", getSelection: () => null },
+    navigate: vi.fn(), projects: { machineId: "local", listProjects: vi.fn(), suggestDirectories: vi.fn() },
+  }));
   view.messages = normalizeMessages([{ role: "assistant", content: [
     { type: "text", text: "original", displayText },
     { type: "thinking", thinking: "original reasoning", displayText },
@@ -57,4 +70,5 @@ it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while 
   copy?.click();
   await view.updateComplete;
   expect(writeText).toHaveBeenCalledWith("original");
+  await registry.dispose();
 });

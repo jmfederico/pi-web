@@ -261,8 +261,8 @@ async function planLocalCheckoutUpdate(deps: PiWebUpdateDependencies, path: stri
   if (upstream === "") throw new Error(`The local checkout branch ${JSON.stringify(branch)} has no upstream branch configured. Nothing changed.`);
   return {
     pull: git(["pull", "--ff-only"]),
-    install: { executable: "npm", args: ["install"], env: { ...deps.env } },
-    build: { executable: "npm", args: ["run", "build"], env: { ...deps.env } },
+    install: { executable: "npm", args: ["--prefix", path, "install"], env: { ...deps.env } },
+    build: { executable: "npm", args: ["--prefix", path, "run", "build"], env: { ...deps.env } },
   };
 }
 

@@ -1,8 +1,12 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { setTimeout as delay } from "node:timers/promises";
+import { describe, expect, it, vi } from "vitest";
 import { createServerPluginExecFile } from "./serverPluginExec.js";
+
+// Readiness polling must use real time without advancing the fake command deadline.
+const waitForIo = delay;
 
 describe("server plugin execFile helper", () => {
   it("runs argv without a shell, returns nonzero exits, and bounds both output streams", async () => {
@@ -91,9 +95,13 @@ describe("server plugin execFile helper", () => {
   it.skipIf(process.platform === "win32")("terminates the command process group when a deadline expires", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "pi-web-plugin-exec-tree-"));
     const pidPath = join(tempDir, "descendant.pid");
+    const controller = new AbortController();
+    const execFile = createServerPluginExecFile({ maxTimeoutMs: 200 });
+    let command: ReturnType<typeof execFile> | undefined;
     let descendantPid: number | undefined;
+    // Keep real process startup outside the 200 ms deadline, even under suite load.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const execFile = createServerPluginExecFile({ maxTimeoutMs: 200 });
       const parentSource = `
         const { spawn } = require("node:child_process");
         const { writeFileSync } = require("node:fs");
@@ -102,21 +110,38 @@ describe("server plugin execFile helper", () => {
         setInterval(() => {}, 1000);
       `;
 
-      await expect(execFile({
+      command = execFile({
         file: process.execPath,
         args: ["-e", parentSource],
-        signal: new AbortController().signal,
-      })).rejects.toThrow("200ms");
-      descendantPid = Number(await readFile(pidPath, "utf8"));
+        signal: controller.signal,
+      });
+      // Observe early spawn errors; the original promise is still asserted below.
+      void command.catch(() => undefined);
+      descendantPid = await waitForDescendantPid(pidPath);
+      expect(processIsAlive(descendantPid)).toBe(true);
 
+      const timedOut = expect(command).rejects.toThrow("200ms");
+      await vi.advanceTimersByTimeAsync(200);
+      await timedOut;
+      await vi.runOnlyPendingTimersAsync();
       await expectProcessExit(descendantPid);
     } finally {
-      if (descendantPid !== undefined && processIsAlive(descendantPid)) {
-        process.kill(descendantPid, "SIGKILL");
+      controller.abort();
+      try {
+        await vi.runOnlyPendingTimersAsync();
+        await command?.catch(() => undefined);
+      } finally {
+        vi.useRealTimers();
+        try {
+          if (descendantPid !== undefined && processIsAlive(descendantPid)) {
+            process.kill(descendantPid, "SIGKILL");
+          }
+        } finally {
+          await rm(tempDir, { recursive: true, force: true });
+        }
       }
-      await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 10_000);
 
   it("enforces the host timeout cap", async () => {
     const execFile = createServerPluginExecFile({ maxTimeoutMs: 40 });
@@ -130,10 +155,23 @@ describe("server plugin execFile helper", () => {
   });
 });
 
+async function waitForDescendantPid(pidPath: string): Promise<number> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    try {
+      const pid = Number(await readFile(pidPath, "utf8"));
+      if (Number.isSafeInteger(pid) && pid > 0) return pid;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    await waitForIo(10);
+  }
+  throw new Error("Command fixture did not publish its descendant PID");
+}
+
 async function expectProcessExit(pid: number): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (!processIsAlive(pid)) return;
-    await new Promise((resolvePromise) => { setTimeout(resolvePromise, 10); });
+    await waitForIo(10);
   }
   throw new Error(`Descendant process ${String(pid)} survived the command deadline`);
 }

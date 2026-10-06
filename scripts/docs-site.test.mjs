@@ -53,8 +53,7 @@ describe("configuration documentation navigation", () => {
     }
   });
 
-  it("keeps local links and copy targets valid in config.html", () => {
-    const page = "config.html";
+  it.each(["config.html", "plugins.html", "faq.html"])("keeps local links and copy targets valid in %s", (page) => {
     const window = new Window({ url: `https://pi-web.dev/${page}` });
     try {
       window.document.write(readFileSync(new URL(`../docs/${page}`, import.meta.url), "utf8"));

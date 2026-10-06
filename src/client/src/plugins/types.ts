@@ -1,4 +1,5 @@
 import type { TemplateResult } from "lit";
+import type { PluginProjects, PluginPromptEditor, PluginSelectionService } from "../../../plugin-api";
 import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
@@ -57,6 +58,7 @@ export interface PluginActivationContext {
   readonly signal: AbortSignal;
   /** Aborted before failed-start rollback or browser-host shutdown disposal. */
   readonly lifetimeSignal: AbortSignal;
+  readonly selection?: PluginSelectionService;
 }
 
 export interface PluginCapabilityResolver {
@@ -77,7 +79,9 @@ export interface PluginActivationResult {
 
 export interface PluginContributions {
   contentRenderers?: import("../../../plugin-api").ContentRendererContribution[];
+  messageActions?: import("../../../plugin-api").MessageActionContribution[];
   actions?: PluginAction[];
+  applicationPanels?: ApplicationPanelContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
   themes?: ThemeContribution[];
@@ -184,6 +188,7 @@ export interface WorkspaceContext {
   workspace: Workspace;
   state: AppState;
   files: WorkspaceFilesContextValue;
+  projects?: PluginProjects;
   peer?: PluginPeer;
   host: WorkspaceHost;
 }
@@ -204,17 +209,14 @@ export interface PiWebUnstableRuntimeContext {
   openSettings?: (section?: SettingsSection) => void;
 }
 
-export interface PluginPromptEditor {
-  insertText(text: string): void;
-  getText(): string;
-  getSelection(): { start: number; end: number; text: string } | null;
-}
+export type { PluginPromptEditor } from "../../../plugin-api";
 
 export type { PluginNavigationDestination } from "../../../plugin-api";
 
 export interface PluginRuntimeContext {
   navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
   state: AppState;
+  projects?: PluginProjects;
   prompt: PluginPromptEditor;
   piWebUnstable?: PiWebUnstableRuntimeContext;
   openActionPalette: () => void;
@@ -282,6 +284,36 @@ export interface WorkspacePanelContext extends WorkspaceContext {
   terminal: WorkspacePanelTerminal;
   /** Contribution-scoped address-bar state for deep links and browser history. */
   navigation?: WorkspacePanelNavigationV1;
+}
+
+export interface ApplicationPanelContext {
+  machine: PluginMachine;
+  state: AppState;
+  projects?: PluginProjects;
+  workspace?: Workspace;
+  terminal?: WorkspacePanelTerminal;
+  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  prompt: PluginPromptEditor;
+  host: WorkspaceHost;
+}
+
+export interface ApplicationPanelContribution {
+  id: LocalContributionId;
+  title: string;
+  icon?: TemplateResult;
+  order?: number;
+  routeAliases?: string[];
+  visible?: (context: ApplicationPanelContext) => boolean;
+  badge?: (context: ApplicationPanelContext) => string | number | TemplateResult | undefined;
+  render: (context: ApplicationPanelContext) => TemplateResult;
+}
+
+export interface QualifiedApplicationPanelContribution extends ApplicationPanelContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
+  sourcePluginId?: PluginId;
 }
 
 export type WorkspacePanelIcon = TemplateResult;

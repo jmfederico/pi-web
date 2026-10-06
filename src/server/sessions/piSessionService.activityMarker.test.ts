@@ -5,9 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, fakeRuntime, runtimeCreator, sessionGateway, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";
 
-const activityMessage = "Recently active in another PI-WEB instance. Avoid working on this session in both instances at once.";
-
-describe("PiSessionService shared activity notice", () => {
+describe("PiSessionService shared activity status", () => {
   it("publishes changing foreign activity through heartbeats for an already-open idle chat", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const dir = await mkdtemp(join(tmpdir(), "pi-web-activity-heartbeat-"));
@@ -31,14 +29,15 @@ describe("PiSessionService shared activity notice", () => {
       now += 2_001;
       await vi.advanceTimersByTimeAsync(2_001);
       await vi.waitFor(() => {
-        expect(lastStatus()?.warnings).toContainEqual({ severity: "info", source: "PI-WEB", message: activityMessage });
+        expect(lastStatus()?.recentlyActiveElsewhere).toBe(true);
+        expect(lastStatus()?.warnings ?? []).toEqual([]);
       });
 
       // A crashed owner's marker disappears from the UI without a status fetch.
       now += 16_000;
       await vi.advanceTimersByTimeAsync(2_000);
       await vi.waitFor(() => {
-        expect(lastStatus()?.warnings?.some((warning) => warning.message === activityMessage) ?? false).toBe(false);
+        expect(lastStatus()?.recentlyActiveElsewhere).toBe(false);
       });
     } finally {
       await service.dispose();
@@ -47,7 +46,7 @@ describe("PiSessionService shared activity notice", () => {
     }
   });
 
-  it("exposes another daemon's work in active-session warnings without claiming an idle viewer", async () => {
+  it("reports another daemon's work as status rather than a warning without claiming an idle viewer", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-web-shared-activity-"));
     const sessionFile = join(dir, "shared.jsonl");
     const markerFile = `${sessionFile}.pi-web-activity.json`;
@@ -73,19 +72,20 @@ describe("PiSessionService shared activity notice", () => {
       const second = createService(viewer);
       await first.start("/workspace");
       const local = await first.status(sessionRef("shared"));
-      expect(local.warnings?.some((warning) => warning.message === activityMessage) ?? false).toBe(false);
+      expect(local.recentlyActiveElsewhere).toBe(false);
       const ownedMarker = await readFile(markerFile, "utf8");
 
       await second.start("/workspace");
       const remote = await second.status(sessionRef("shared"));
-      expect(remote.warnings).toContainEqual({ severity: "info", source: "PI-WEB", message: activityMessage });
+      expect(remote.recentlyActiveElsewhere).toBe(true);
+      expect(remote.warnings ?? []).toEqual([]);
       expect(await readFile(markerFile, "utf8")).toBe(ownedMarker);
 
       worker.session.isStreaming = false;
       now += 2_001;
       await first.status(sessionRef("shared"));
       const idle = await second.status(sessionRef("shared"));
-      expect(idle.warnings?.some((warning) => warning.message === activityMessage) ?? false).toBe(false);
+      expect(idle.recentlyActiveElsewhere).toBe(false);
       await expect(readFile(markerFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
 
       worker.session.isStreaming = true;

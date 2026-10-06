@@ -240,6 +240,8 @@ PI_WEB_MACHINES_FILE=/data/pi-web/machines-dev.json
 
 Omitted keys inherit the shared file (or the application's default when neither file sets them). Explicit Compose `environment:` values still win over either env file. These files use Docker Compose dotenv syntax, not shell scripts.
 
+Both images default to `LANG=C.UTF-8`, giving terminals and agent tools a UTF-8 locale. Set `LANG` or individual `LC_*` values in either container environment file to use another installed locale.
+
 Apply changes by recreating the affected containers. Recreating `sessiond` interrupts active sessions; schedule this when those sessions can be stopped:
 
 ```bash
@@ -315,7 +317,7 @@ From the repository root, use the canonical Docker command so the same fail-clos
 ./docker/pi-web-docker --dev start
 ```
 
-The command creates `.pi-web/docker-compose-dev.local.env` on first run, writes `.pi-web/docker-compose-dev.generated.env` and `.pi-web/docker-compose-dev.host.generated.yml`, then runs Docker Compose with `docker/compose.dev.yml` plus that generated host override. The generated environment includes the host repository root as `PI_WEB_DOCKER_DEV_REPO_ROOT`, and the generated override mounts that path back into the containers so Docker helper commands can run Compose from the same absolute path. Edit only the `.local.env` file for persistent dev settings; the `.generated.env` and `.host.generated.yml` files are refreshed by the command. Extra environment variables for the dev containers go in the shared `container.env` or the dev-only `.pi-web/docker-compose-dev.container.env`; see [Container environment](#container-environment).
+The command creates `.pi-web/docker-compose-dev.local.env` on first run, writes `.pi-web/docker-compose-dev.generated.env` and `.pi-web/docker-compose-dev.host.generated.yml`, then runs Docker Compose with `docker/compose.dev.yml` plus that generated host override. The generated environment includes the host repository root as `PI_WEB_DOCKER_DEV_REPO_ROOT`. Development Compose exposes the checkout at both `/workspace` and that original host path, with the same container-managed dependency volume at both paths; the generated host override supplies only the profile-specific host mounts. Edit only the `.local.env` file for persistent dev settings; the `.generated.env` and `.host.generated.yml` files are refreshed by the command. Extra environment variables for the dev containers go in the shared `container.env` or the dev-only `.pi-web/docker-compose-dev.container.env`; see [Container environment](#container-environment).
 
 Values used by the command are resolved in this order:
 
@@ -404,7 +406,9 @@ Use this shared directory to switch between runtime and dev mode, not to run bot
 
 For sessions to appear under the same workspace in both modes, use the same project path in PI WEB. On Linux, prefer host-mounted paths such as `/home/core/<repo>`, `/srv/<project>`, or `/opt/<project>`. On Mac, prefer paths under `/Users/<you>/...`. The dev container also exposes this checkout as `/workspace` so the PI WEB dev server can run from it, but sessions started against `/workspace` are organized under that different working-directory path and will not line up with runtime sessions for the host-mounted path.
 
-Development startup keeps the persistent `node_modules` volume synchronized with the dependency tree built into the dev image. When `package.json`, `package-lock.json`, the Node image, or another dependency-build input changes, `start` or `update` rebuilds the image and `data-init` refreshes the volume before `sessiond` starts. Manual volume removal is not required.
+Development mode owns one persistent `node_modules` volume, mounted at both `/workspace/node_modules` and `<host-repository-path>/node_modules` inside the application containers. Commands run from either checkout path use the same dependencies. The host checkout's own `node_modules` is hidden inside these containers and is neither used nor modified; manage a separate native host installation with its own npm commands.
+
+Development startup keeps that volume synchronized with the dependency tree built into the dev image. When `package.json`, `package-lock.json`, the Node image, or another dependency-build input changes, `start` or `update` rebuilds the image and `data-init` refreshes the volume before `sessiond` starts. Unchanged dependency-build inputs can reuse Docker's build cache; updates do not force an unnecessary reinstall. Manual volume removal is not required.
 
 If Compose is invoked directly without rebuilding after a manifest change, `data-init` stops with a mismatch message instead of starting against stale dependencies. Run `./docker/pi-web-docker --dev start` or `./docker/pi-web-docker --dev update` to rebuild and synchronize it.
 

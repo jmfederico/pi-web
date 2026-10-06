@@ -65,6 +65,8 @@ describe("staged validation planning", () => {
         "src/docker/piWebDockerDocs.test.ts",
         "src/docker/piWebDockerEntrypoint.test.ts",
         "src/server/dockerControlAssets.test.ts",
+        "src/server/dockerDevCompose.test.ts",
+        "src/server/dockerDevDependencySync.test.ts",
       ],
     });
   });

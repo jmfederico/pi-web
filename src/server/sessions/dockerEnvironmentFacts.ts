@@ -257,11 +257,19 @@ function devWorkspaceFacts(mounts: readonly ContainerMount[], devRepoRoot: strin
   const nested = mounts
     .filter((mount) => mount.target !== DEV_WORKSPACE_MOUNT && isWithin(mount.target, DEV_WORKSPACE_MOUNT))
     .map((mount) => `\`${mount.target}\``);
+  const hostDependencies = devRepoRoot === undefined ? undefined : `${devRepoRoot}/node_modules`;
+  const sharedDependencies = hostDependencies !== undefined
+    && hostDependencies !== `${DEV_WORKSPACE_MOUNT}/node_modules`
+    && mounts.some((mount) => mount.target === `${DEV_WORKSPACE_MOUNT}/node_modules`)
+    && mounts.some((mount) => mount.target === hostDependencies);
   return [
     `The PI WEB checkout this deployment runs is bind-mounted at \`${DEV_WORKSPACE_MOUNT}\`.${hostPath}`,
     ...(nested.length === 0
       ? []
       : [`Inside it, ${nested.join(", ")} ${nested.length === 1 ? "is a separate container-managed mount" : "are separate container-managed mounts"}, not the host directory of the same path.`]),
+    ...(sharedDependencies
+      ? [`Inside this container, \`${hostDependencies}\` uses the same container-managed dependency volume as \`${DEV_WORKSPACE_MOUNT}/node_modules\`. Neither checkout path uses or modifies the host checkout's \`node_modules\`.`]
+      : []),
   ];
 }
 

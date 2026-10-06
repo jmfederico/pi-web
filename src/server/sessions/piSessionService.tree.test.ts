@@ -109,6 +109,87 @@ describe("PiSessionService session-tree behavior", () => {
     },
   );
 
+  it.each(["fork", "back"] as const)("%s message shortcuts resolve checkpoint history only on the active branch", async (action) => {
+    const selected = { id: "selected", type: "message", message: { role: "assistant", content: [
+      { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "date" } },
+      { type: "toolCall", id: "call-2", name: "read", arguments: { path: "file" } },
+    ] } };
+    const result = { id: "recorded-result", type: "message", message: { role: "toolResult", toolCallId: "call-1" } };
+    const leaf = { id: "leaf-1", type: "message", message: { role: "assistant", content: "Later response" } };
+    const otherBranchResult = { id: "other-branch-result", type: "message", message: { role: "toolResult", toolCallId: "call-2" } };
+    const navigateTree = vi.fn<NavigateTree>(() => Promise.resolve({ cancelled: false }));
+    const fork = vi.fn(() => Promise.resolve({ cancelled: false }));
+    const { service, fake } = treeHarness({
+      getBranch: () => [selected, result, leaf],
+      getEntries: () => [selected, result, otherBranchResult, leaf],
+    }, { navigateTree });
+    fake.runtime.fork = fork;
+    const executeBash = vi.spyOn(fake.session, "executeBash");
+    const act = (id: string, expectedLeafId = "leaf-1") => action === "fork"
+      ? service.forkFromTree(sessionRef(SESSION_ID), { entryId: id, expectedLeafId, retainCheckpoint: true })
+      : service.navigateTree(sessionRef(SESSION_ID), { targetId: id, expectedLeafId, retainCheckpoint: true, summary: { mode: "none" } });
+
+    try {
+      await expect(act("selected", "stale-leaf")).rejects.toThrow("session changed");
+      await expect(act("other-branch-result")).rejects.toThrow("no longer available on the active session branch");
+      expect(fork).not.toHaveBeenCalled();
+      expect(navigateTree).not.toHaveBeenCalled();
+      await expect(act("selected")).resolves.toMatchObject({ cancelled: false });
+      if (action === "fork") expect(fork).toHaveBeenCalledWith("recorded-result", { position: "at" });
+      else expect(navigateTree).toHaveBeenCalledWith("recorded-result", { summarize: false });
+      expect(fake.calls.prompt).toEqual([]);
+      expect(executeBash).not.toHaveBeenCalled();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("does not overwrite an extension's new leaf after native checkpoint navigation returns", async () => {
+    let leafId = "leaf-1";
+    const selected = { id: "selected", type: "message", parentId: null, message: { role: "assistant", content: "Selected reply" } };
+    const notice = { id: "notice", type: "custom_message", parentId: "selected", content: "Retain this notice", display: true };
+    const leaf = { id: "leaf-1", type: "message", parentId: "notice", message: { role: "assistant", content: "Later reply" } };
+    const branch = vi.fn((id: string) => { leafId = id; });
+    const navigateTree = vi.fn<NavigateTree>(() => {
+      leafId = "extension-leaf";
+      return Promise.resolve({ cancelled: false, editorText: "Retain this notice" });
+    });
+    const { service } = treeHarness({
+      getLeafId: () => leafId, getBranch: () => [selected, notice, leaf], branch,
+    }, { navigateTree });
+    try {
+      await expect(service.navigateTree(sessionRef(SESSION_ID), {
+        targetId: "selected", expectedLeafId: "leaf-1", retainCheckpoint: true, summary: { mode: "none" },
+      })).resolves.toEqual({ cancelled: false });
+      expect(navigateTree).toHaveBeenCalledWith("notice", { summarize: false });
+      expect(leafId).toBe("extension-leaf");
+      expect(branch).not.toHaveBeenCalled();
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("restores native tree methods if checkpoint navigation fails before moving the leaf", async () => {
+    const selected = { id: "selected", type: "message", parentId: null, message: { role: "assistant", content: "Selected reply" } };
+    const notice = { id: "notice", type: "custom_message", parentId: "selected", content: "Retain this notice", display: true };
+    const leaf = { id: "leaf-1", type: "message", parentId: "notice", message: { role: "assistant", content: "Later reply" } };
+    const navigateTree = vi.fn<NavigateTree>().mockRejectedValue(new Error("navigation failed"));
+    const { service, fake } = treeHarness({ getBranch: () => [selected, notice, leaf] }, { navigateTree });
+    const manager = fake.session.sessionManager;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Capture identity for restoration assertions, never invoke these methods.
+    const { branch, resetLeaf } = manager;
+    try {
+      await expect(service.navigateTree(sessionRef(SESSION_ID), {
+        targetId: "selected", expectedLeafId: "leaf-1", retainCheckpoint: true, summary: { mode: "none" },
+      })).rejects.toThrow("navigation failed");
+      expect(manager.getLeafId()).toBe("leaf-1");
+      expect(manager).toHaveProperty("branch", branch);
+      expect(manager).toHaveProperty("resetLeaf", resetLeaf);
+    } finally {
+      await service.dispose();
+    }
+  });
+
   it("opens /tree from the live manager through the safe projection boundary", async () => {
     const navigateTree = vi.fn<NavigateTree>(() => Promise.resolve({ cancelled: false }));
     const roots = [treeNode({

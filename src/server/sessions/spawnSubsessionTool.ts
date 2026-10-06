@@ -1,4 +1,4 @@
-import { Type } from "typebox";
+import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TranscriptContentKind, TranscriptEntry, TranscriptRole, TranscriptView } from "./subsessionTranscript.js";

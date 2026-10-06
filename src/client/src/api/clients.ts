@@ -276,7 +276,12 @@ export const sessionsApi = {
   respondToCommand: (session: SessionRef, requestId: string, value: string, machineId = "local") => request(sessionPath(session, "commands/respond", machineId), parseCommandResult, { method: "POST", body: sessionBody(session, { requestId, value }) }),
   navigateTree: (session: SessionRef, navigation: SessionTreeNavigateRequest, machineId = "local") => request(sessionPath(session, "tree/navigate", machineId), parseSessionTreeNavigateResult, {
     method: "POST",
-    body: sessionBody(session, { targetId: navigation.targetId, expectedLeafId: navigation.expectedLeafId, summary: navigation.summary }),
+    body: sessionBody(session, {
+      targetId: navigation.targetId,
+      expectedLeafId: navigation.expectedLeafId,
+      summary: navigation.summary,
+      ...(navigation.retainCheckpoint === undefined ? {} : { retainCheckpoint: navigation.retainCheckpoint }),
+    }),
   }),
   forkTree: (session: SessionRef, fork: SessionTreeForkRequest, machineId = "local") => requestSessionTreeFork(session, fork, machineId),
   abort: (session: SessionRef, machineId = "local") => request(sessionPath(session, "abort", machineId), parseAborted, { method: "POST", body: sessionBody(session) }),
@@ -316,7 +321,11 @@ async function requestSessionTreeFork(session: SessionRef, fork: SessionTreeFork
   const response = await fetch(resolveAppUrl(sessionPath(session, "tree/fork", machineId)), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: sessionBody(session, { entryId: fork.entryId, expectedLeafId: fork.expectedLeafId }),
+    body: sessionBody(session, {
+      entryId: fork.entryId,
+      expectedLeafId: fork.expectedLeafId,
+      ...(fork.retainCheckpoint === undefined ? {} : { retainCheckpoint: fork.retainCheckpoint }),
+    }),
   });
   if (!response.ok) {
     const body: unknown = await response.json().catch((): unknown => ({}));

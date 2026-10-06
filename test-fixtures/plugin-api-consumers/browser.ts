@@ -70,6 +70,32 @@ const plugin: PiWebPlugin = {
       if (signal.aborted) return;
     },
     contributions: {
+      messageActions: [{
+        id: "history",
+        title: "Fork from entry",
+        run: async ({ message, history }) => {
+          // Existing entry callbacks keep their durable identity and void return.
+          const entryId: string = message.entryId;
+          if (entryId !== "") await history.fork();
+        },
+      }, {
+        target: "display",
+        id: "copy",
+        title: "Copy displayed text",
+        ariaLabel: ({ message }) => `Copy ${message.role} message`,
+        visible: ({ message }) => message.text !== "",
+        run: async (input) => {
+          const entryId: string | undefined = input.message.entryId;
+          // @ts-expect-error Display actions cannot mutate history.
+          input.history;
+          await navigator.clipboard.writeText(input.message.text);
+          return {
+            title: entryId === undefined ? "Copied streaming text" : "Copied",
+            ariaLabel: `Copied ${input.message.role} message`,
+            icon: context.html`<span aria-hidden="true">✓</span>`,
+          };
+        },
+      }],
       actions: [{
         id: "identity",
         title: context.pluginId,

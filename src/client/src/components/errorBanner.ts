@@ -6,12 +6,18 @@ import type { ServerNoticeSeverity } from "../../../shared/apiTypes";
  * severity; server-owned notices reuse the same presentation with their own
  * severity and dismissal callback.
  */
-export function errorBanner(error: string, onDismiss: () => void, severity: ServerNoticeSeverity = "error"): TemplateResult | null {
+export function errorBanner(
+  error: string,
+  onDismiss: () => void,
+  severity: ServerNoticeSeverity = "error",
+  onRetry?: () => void,
+): TemplateResult | null {
   if (error === "") return null;
   const severityLabel = bannerSeverityLabel(severity);
   const dismissLabel = `Dismiss ${severityLabel.toLowerCase()}`;
   return html`<div class=${`error ${severity}`} role="alert">
     <span class="error-text">${error}</span>
+    ${onRetry === undefined ? null : html`<button type="button" class="error-retry" @click=${() => { onRetry(); }}>Retry</button>`}
     <button type="button" class="error-dismiss" aria-label=${dismissLabel} title=${dismissLabel} @click=${() => { onDismiss(); }}>✕</button>
   </div>`;
 }

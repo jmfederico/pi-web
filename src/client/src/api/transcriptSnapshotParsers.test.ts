@@ -23,7 +23,7 @@ describe("parseSessionTranscriptSnapshot", () => {
     const wire = { ...snapshot(), partial };
     expect(parseSessionTranscriptSnapshot(wire)).toEqual({
       ...wire,
-      status: { ...wire.status, queuedMessages: [] },
+      status: { ...wire.status, queuedMessages: [], recentlyActiveElsewhere: false },
     });
   });
 

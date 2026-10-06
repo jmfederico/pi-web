@@ -40,13 +40,38 @@ x-pi-web-dev-data-volume: &pi-web-dev-data-volume
   source: ${PI_WEB_DOCKER_DATA_DIR:-${HOME}/.local/share/pi-web-docker/data}
   target: /data
 
+x-pi-web-dev-checkout-volume: &pi-web-dev-checkout-volume
+  type: bind
+  source: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}
+  target: /workspace
+
+x-pi-web-dev-dependency-volume: &pi-web-dev-dependency-volume
+  type: volume
+  source: node_modules
+  target: /workspace/node_modules
+  volume:
+    nocopy: true
+
+# Only data-init needs the image dependency seed; broad host mounts belong to
+# the application services and may hide image paths such as /opt.
+x-pi-web-dev-init-volumes: &pi-web-dev-init-volumes
+  - *pi-web-dev-checkout-volume
+  - *pi-web-dev-dependency-volume
+  - *pi-web-dev-data-volume
+
+# One checkout and one dependency volume, visible at both container paths.
+# Compose merges mounts by target when the host checkout is already /workspace.
 x-pi-web-dev-volumes: &pi-web-dev-volumes
+  - *pi-web-dev-checkout-volume
+  - *pi-web-dev-dependency-volume
   - type: bind
-    source: ..
-    target: /workspace
+    source: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}
+    target: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}
   - type: volume
     source: node_modules
-    target: /workspace/node_modules
+    target: ${PI_WEB_DOCKER_DEV_REPO_ROOT:?set by docker/pi-web-docker --dev}/node_modules
+    volume:
+      nocopy: true
   - *pi-web-dev-data-volume
 
 services:
@@ -67,7 +92,7 @@ services:
     environment:
       PI_WEB_UID: ${PI_WEB_UID:-1000}
       PI_WEB_GID: ${PI_WEB_GID:-1000}
-    volumes: *pi-web-dev-volumes
+    volumes: *pi-web-dev-init-volumes
 
   sessiond:
     build: *pi-web-dev-build

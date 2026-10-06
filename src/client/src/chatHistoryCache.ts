@@ -59,6 +59,25 @@ export function mergeChatHistory(existing: RawMessagePage | undefined, incoming:
 }
 
 /**
+ * An authoritative snapshot can retain cached pages only when their overlap
+ * proves continuity. Counts alone cannot distinguish branches after a missed
+ * invalidation; without overlap, fetch older history again rather than guess.
+ * Pagination still uses mergeChatHistory's tolerant out-of-order semantics.
+ */
+export function canMergeHistorySnapshot(history: RawMessagePage, snapshot: RawMessagePage): boolean {
+  if (!isValidMessagePage(history) || !isValidMessagePage(snapshot)) return false;
+  // Pagination may have observed a newer append than this snapshot. Its total
+  // is only a hint; reject cached messages beyond the authoritative range.
+  const historyEnd = history.start + history.messages.length;
+  if (historyEnd > snapshot.total) return false;
+  if (history.total === 0) return true;
+  const start = Math.max(history.start, snapshot.start);
+  const end = Math.min(historyEnd, snapshot.start + snapshot.messages.length);
+  return start < end && JSON.stringify(history.messages.slice(start - history.start, end - history.start))
+    === JSON.stringify(snapshot.messages.slice(start - snapshot.start, end - snapshot.start));
+}
+
+/**
  * True when `page` is exactly the already-held tail of `history`, so merging it
  * would reproduce `history` unchanged. Poll responses arrive as fresh JSON
  * objects, so identity never holds; the messages are compared by JSON text,

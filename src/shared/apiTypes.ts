@@ -161,7 +161,14 @@ export interface PiWebDeprecatedAgentInput {
   readonly replacement?: string;
 }
 
+export interface PiWebThemePreference {
+  themeId: string;
+  auto: boolean;
+}
+
 export interface PiWebConfigValues {
+  /** App-wide theme default; browser-local theme preferences take precedence. */
+  defaultTheme?: PiWebThemePreference;
   host?: string;
   port?: number;
   allowedHosts?: string[] | true;
@@ -1242,6 +1249,12 @@ export interface SessionStatus {
   sessionId: string;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
+  /**
+   * Best-effort observation of recent activity on this session in another PI WEB
+   * instance, not an ownership lock. Current daemons report both true and false;
+   * optional for older producers. Browsers own acknowledgement and presentation.
+   */
+  recentlyActiveElsewhere?: boolean;
   model?: SessionModel;
   thinkingLevel?: string;
   isStreaming: boolean;
@@ -1271,6 +1284,8 @@ export interface SessionStatus {
    * restarts. Several may be open at once; the UI presents them as a queue.
    */
   pendingDialogs?: PendingExtensionDialog[];
+  /** Latest tree-generated input, retained while hosted by this daemon. Applying it is a client choice. */
+  suggestedInput?: string;
 }
 
 export interface SlashCommand {
@@ -1373,6 +1388,8 @@ export interface SessionTreeNavigateRequest {
   /** Leaf shown when the navigator opened; null is valid for an empty/root position. */
   expectedLeafId: string | null;
   summary: SessionTreeSummaryChoice;
+  /** Message shortcuts retain a complete non-user checkpoint and its intervening history. */
+  retainCheckpoint?: boolean;
 }
 
 export type SessionTreeNavigateResult =
@@ -1383,6 +1400,8 @@ export interface SessionTreeForkRequest {
   entryId: string;
   /** Leaf shown when the navigator opened; null is valid for an empty/root position. */
   expectedLeafId: string | null;
+  /** Message shortcuts retain a complete non-user checkpoint and its intervening history. */
+  retainCheckpoint?: boolean;
 }
 
 /**
@@ -1466,6 +1485,8 @@ type SessionUiEventBody =
   | { type: "dialog.closed"; dialogId: string; reason: ExtensionDialogCloseReason; answer?: ExtensionDialogAnswer }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
+  /** The selected branch/runtime changed; clients refresh reads without changing local selection or drafts. */
+  | { type: "session.tree.changed" }
   | { type: "pi.event"; eventType: string };
 
 /** Global invalidation for the daemon-owned enabled-model scope. */

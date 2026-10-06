@@ -3,7 +3,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { runAgentLoop, type AgentEvent, type AgentMessage, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import { ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { stubExtensionToolContext } from "./piSessionService.testSupport.js";
-import { Type } from "typebox";
+import { Type } from "pi-web-typebox";
 import { describe, expect, it, vi } from "vitest";
 import { createSubsessionToolDefinitions, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 

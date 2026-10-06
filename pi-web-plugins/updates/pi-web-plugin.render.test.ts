@@ -2,7 +2,7 @@
 
 import { html, render, svg } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { PiWebComponentStatus, PiWebStatusResponse, PluginRuntimeState, TerminalCommandRun, TerminalCommandRunHandle, WorkspacePanelContext, WorkspacePanelTerminal } from "@jmfederico/pi-web/plugin-api";
+import type { PiWebComponentStatus, PiWebStatusResponse, PluginRuntimeState, TerminalCommandRun, TerminalCommandRunHandle, ApplicationPanelContext, WorkspacePanelTerminal } from "@jmfederico/pi-web/plugin-api";
 import plugin from "./pi-web-plugin.js";
 
 function component(overrides: Partial<PiWebComponentStatus> = {}): PiWebComponentStatus {
@@ -48,23 +48,18 @@ function commandRunHandle(input: { title: string; command: string }): TerminalCo
   return { run, completed: Promise.resolve({ ...run, status: "succeeded" }) };
 }
 
-function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTerminal): WorkspacePanelContext {
+function panelContext(state: PluginRuntimeState, terminal?: WorkspacePanelTerminal): ApplicationPanelContext {
   const noop = () => undefined;
   return {
     navigate: () => Promise.resolve(),
     machine: { id: "local", name: "local", kind: "local" },
-    workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
     state,
-    files: {
-      readFile: () => Promise.reject(new Error("not implemented")),
-      listFiles: () => Promise.reject(new Error("not implemented")),
-      writeFile: () => Promise.reject(new Error("not implemented")),
-      deleteFile: () => Promise.reject(new Error("not implemented")),
-      moveFile: () => Promise.reject(new Error("not implemented")),
-    },
     host: { requestRender: noop },
     prompt: { insertText: noop, getText: () => "", getSelection: () => null },
-    terminal: terminal ?? { open: noop, runCommand: () => Promise.reject(new Error("not implemented")) },
+    ...(terminal === undefined ? {} : {
+      workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
+      terminal,
+    }),
   };
 }
 
@@ -78,8 +73,8 @@ function renderPanel(value: PiWebStatusResponse, terminal?: WorkspacePanelTermin
     signal: new AbortController().signal,
     lifetimeSignal: new AbortController().signal,
   }).contributions;
-  const panel = contributions.workspacePanels[0];
-  if (panel === undefined) throw new Error("Expected Updates workspace panel");
+  const panel = contributions.applicationPanels[0];
+  if (panel === undefined) throw new Error("Expected Updates application panel");
   const container = document.createElement("div");
   document.body.append(container);
   render(panel.render(panelContext({ piWebStatus: value }, terminal)), container);

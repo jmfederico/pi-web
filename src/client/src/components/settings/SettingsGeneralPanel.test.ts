@@ -47,7 +47,7 @@ describe("settings-general-panel copy", () => {
     const notices = values.find(isSettingsNoticeArray);
 
     expect(notices).toEqual([
-      { type: "error", title: "Gateway server", content: "Gateway failed" },
+      { type: "error", title: "Configuration", content: "Gateway failed" },
       { type: "success", content: "Config saved." },
     ]);
     expect(values).toContain("Selected-machine failed");

@@ -205,7 +205,7 @@
 </details>
 </section>
 <section id="ui-settings"><h2>UI & new-session defaults</h2>
-<p>Use the selectors in chat or <strong>Settings → Keyboard</strong>. Pi defaults and PI WEB shortcuts live in different configuration files.</p>
+<p>Use the selectors in chat, <strong>Settings → General → Theme</strong>, or <strong>Settings → Keyboard</strong>. Pi defaults and PI WEB UI settings live in different configuration files.</p>
 <div class="table-scroll" role="region" aria-label="UI preferences" tabindex="0">
 <table class="reference-table settings-table">
 <caption>UI preferences</caption>
@@ -232,6 +232,13 @@
 <td>No restart; new sessions</td>
 </tr>
 <tr>
+<th scope="row"><span id="theme-default" class="reference-anchor"></span>Default theme<br><code>defaultTheme.themeId / defaultTheme.auto</code></th>
+<td>Gateway; device choices take precedence</td>
+<td>PI WEB Dark with Auto on</td>
+<td>Starting theme for browsers using the default; not a forced theme or a project setting.</td>
+<td>Settings save / browser config refresh; no restart</td>
+</tr>
+<tr>
 <th scope="row"><span id="shortcut-config" class="reference-anchor"></span>Keyboard bindings<br><code>shortcuts.&lt;actionId&gt;</code></th>
 <td>Gateway</td>
 <td>Built-in bindings</td>
@@ -254,6 +261,7 @@
 </tr>
 </tbody></table></div>
 <details class="config-details"><summary>Default selection and shortcut rules</summary><ul><li>Model/thinking stars change new-session defaults, not the current session. Resumed sessions keep saved choices.</li><li>Project Pi settings, explicit startup choices, and per-model thinking settings can override defaults. If the default model is disabled, startup falls back to the first enabled model.</li><li><code>mod</code> means Ctrl or ⌘. App shortcuts support sequences; composer send bindings support one combination only.</li><li>Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. <code>null</code> disables keyboard submission, not the send button.</li><li>Existing browser-local Enter preferences remain the fallback until a composer binding is configured. Reset restores that fallback.</li></ul><p><a href="config.md#shortcut-config">Full shortcut matching rules →</a></p></details>
+<details class="config-details"><summary>Theme defaults and device choices</summary><p>In <strong>Settings → General → Theme</strong>, choose a theme and Auto mode, then select <strong>Use on this device</strong>, <strong>Set as default</strong>, or <strong>Use the default</strong>. The action palette’s Select theme action opens the same controls.</p><ul><li>Use on this device saves a browser-local override. Existing browser choices remain overrides.</li><li>Set as default writes global gateway config without changing saved device choices. Browsers following the default pick it up after a page reload or config refresh.</li><li>Use the default clears this browser’s override. Precedence is device choice → configured default → built-in default.</li><li>Use a qualified theme contribution ID, not a display name or theme-pair ID. Built-in IDs are <code>themes:pi-web-dark</code>, <code>themes:pi-web-light</code>, and <code>themes:classic</code>.</li><li>Auto must be a boolean. It follows this device’s light/dark preference for paired themes; unpaired themes stay selected. Auto off keeps the theme fixed.</li><li>Unavailable themes fall back to Classic without erasing the requested choice. Applying a default never creates a device override.</li><li>The default stays on the gateway, even with a remote machine selected. Project-local theme defaults and remote theme contributions are unsupported.</li></ul><pre><code>{ "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true } }</code></pre><p><a href="config.md#theme-default-and-device-choices">Full theme preference reference →</a></p></details>
 <h3 id="prompt-completions">Composer shortcuts (not config keys)</h3>
 <div class="table-scroll" role="region" aria-label="Completion triggers" tabindex="0">
 <table class="reference-table ">
@@ -715,7 +723,7 @@
 </details>
 <details class="config-details"><summary>Catalog refresh timing and failures</summary><ul><li><strong>Freshness:</strong> Pi treats catalogs as fresh for four hours, so most hourly checks make no network request.</li><li><strong>Login/logout:</strong> refresh immediately, bypassing the freshness window (except in offline mode).</li><li><strong>Timeout:</strong> 60 seconds. Timeout or unreachable provider gets one retry after five minutes; an HTTP error waits until the next scheduled refresh.</li><li><strong>Failure:</strong> retain the last successful catalog and log the problem.</li><li><strong>While refreshing:</strong> session startup can briefly wait on shared runtime state. The activity line reports concurrent refreshes.</li></ul></details>
 <p>Pi virtual models are unsupported in PI WEB, even from global extensions: their routers capture session-bound context that cannot safely be shared across sessions. Calls to <code>registerVirtualModel()</code> or <code>unregisterVirtualModel()</code> on the shared runtime raise explicit errors, reported in bootstrap diagnostics or session extension errors. Disable the extension's virtual-model feature and select a physical model instead; restarting the daemon does not enable it.</p>
-<details class="config-details"><summary>Provider safety and logging</summary><ul><li>Provider registrations/configuration are a startup snapshot. <code>/reload</code> cannot rebuild it.</li><li>Accepted model-list updates are machine-wide; if two workspaces register lists for one provider, the last registration wins.</li><li>Model entries can override provider URLs/headers. Pi extensions remain trusted code; this is not a security boundary.</li><li>Provider decisions are recorded in daemon logs without credentials/configuration, not browser notifications.</li></ul></details>
+<details class="config-details"><summary>Provider safety and logging</summary><ul><li>Provider registrations/configuration are a startup snapshot. <code>/reload</code> cannot rebuild it.</li><li>Accepted model-list updates are machine-wide; if two workspaces register lists for one provider, the last registration wins.</li><li>Model entries can override provider URLs/headers. Pi extensions remain trusted code; this is not a security boundary.</li><li>Provider decisions are recorded in daemon logs, not browser notifications. Entries omit provider configuration and credentials. See <a href="faq#provider-extension-no-effect">provider extension troubleshooting</a> for ignored changes.</li></ul></details>
 </section>
 <section id="environment"><h2>Environment overrides</h2>
 <p>Look up the JSON setting above for its scope and restart requirements. These environment values take precedence over machine config.</p>

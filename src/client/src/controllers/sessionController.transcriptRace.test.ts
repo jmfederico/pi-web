@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
+import { NetworkRequestError } from "../api/http";
 import type { PendingExtensionDialog, SessionTranscriptSnapshot } from "../api";
 import type { SessionUiEvent } from "../sessionSocket";
 import { SessionController } from "./sessionController";
@@ -109,6 +110,73 @@ describe("SessionController snapshot reconciliation", () => {
       expect(h.state().messages).toEqual(twoTurns);
     } finally {
       h.controller.dispose();
+    }
+  });
+
+  it("keeps live output and dialogs visible during backoff, even when another caller requests a refresh", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const dialog: PendingExtensionDialog = { dialogId: "retry-dialog", kind: "confirm", title: "Continue?", askedAt: "now", runScoped: true };
+    try {
+      await h.controller.selectSession(oldSession, { updateUrl: false });
+      const failedRead = deferred<SessionTranscriptSnapshot>();
+      h.transcriptSnapshot.mockImplementationOnce(() => failedRead.promise);
+      const recoveredSnapshot = snapshot({
+        page: secondQuestionPage, status: { ...streamingStatus, pendingDialogs: [dialog] }, seq: 14, partial: partial("new answer"),
+      });
+      h.nextSnapshot(Promise.resolve(recoveredSnapshot));
+      const refresh = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+      await vi.advanceTimersByTimeAsync(0);
+      h.socket.emit(secondUserEvent());
+      failedRead.reject(new NetworkRequestError("Load failed"));
+      await vi.advanceTimersByTimeAsync(0);
+      runPendingAnimationFrames();
+      expect(h.state().messages).toHaveLength(3);
+
+      const coalesced = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+      h.socket.emit({ type: "assistant.delta", text: "new answer", seq: 13 });
+      h.socket.emit({ type: "dialog.opened", dialog, seq: 14 });
+      runPendingAnimationFrames();
+      expect(h.state().messages).toEqual(twoTurns);
+      expect(h.state().pendingDialogs).toEqual([dialog]);
+      expect(h.state().browserErrors).toEqual({});
+
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.all([refresh, coalesced]);
+      runPendingAnimationFrames();
+      expect(h.state().messages).toEqual(twoTurns);
+      expect(h.state().pendingDialogs).toEqual([dialog]);
+      expect(h.state().browserErrors).toEqual({});
+    } finally {
+      h.controller.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps streaming events and dialogs after exhausting HTTP recovery", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const dialog: PendingExtensionDialog = { dialogId: "retry-dialog", kind: "confirm", title: "Continue?", askedAt: "now", runScoped: true };
+    try {
+      await h.controller.selectSession(oldSession, { updateUrl: false });
+      h.transcriptSnapshot.mockRejectedValue(new NetworkRequestError("Load failed"));
+      const refresh = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+      await vi.advanceTimersByTimeAsync(0);
+      h.socket.emit(secondUserEvent());
+      h.socket.emit({ type: "assistant.delta", text: "new answer", seq: 13 });
+      h.socket.emit({ type: "dialog.opened", dialog, seq: 14 });
+      runPendingAnimationFrames();
+      expect(h.state().messages).toEqual(twoTurns);
+      expect(h.state().pendingDialogs).toEqual([dialog]);
+      await vi.runAllTimersAsync();
+      await refresh;
+      runPendingAnimationFrames();
+      expect(h.state().messages).toEqual(twoTurns);
+      expect(h.state().pendingDialogs).toEqual([dialog]);
+      expect(Object.values(h.state().browserErrors).map((error) => error.recovery)).toEqual(["session-refresh"]);
+    } finally {
+      h.controller.dispose();
+      vi.useRealTimers();
     }
   });
 

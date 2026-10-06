@@ -124,6 +124,17 @@ describe("dockerEnvironmentFacts", () => {
     expect(facts).toContain("`/workspace/node_modules` is a separate container-managed mount");
     expect(facts).toContain("`pi-web-docker --dev update`");
     expect(facts).toContain("the build hooks in /home/user/projects/pi-web/docker/custom-image.d/*.sh");
+    expect(facts).not.toContain("same container-managed dependency volume");
+  });
+
+  it("explains that the host-looking checkout path shares container dependencies when its alias is mounted", () => {
+    const facts = dockerEnvironmentFacts({
+      env: DEV_ENV,
+      mounts: [...mounts(), { target: "/home/user/projects/pi-web/node_modules", fsType: "ext4", readOnly: false }],
+    });
+
+    expect(facts).toContain("`/home/user/projects/pi-web/node_modules` uses the same container-managed dependency volume as `/workspace/node_modules`");
+    expect(facts).toContain("Neither checkout path uses or modifies the host checkout's `node_modules`");
   });
 
   it("omits facts for absent mounts", () => {
