@@ -1,1 +1,0 @@
-../../../../skills/relay/SKILL.md

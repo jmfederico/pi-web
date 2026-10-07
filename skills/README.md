@@ -30,9 +30,6 @@ npx skills add jmfederico/pi-web --skill relay-runner -a pi -g
 ```
 
 `relay-runner` is not standalone; install the base `relay` skill as well when
-using these commands directly. The `relays` Pi package ships and installs both
-skills atomically. Its files under
-`pi-packages/relays/skills/` are symlinks to the canonical `SKILL.md` files in
-this directory; the package build (`npm run build:plugins`, or the dev watch)
-materializes them as real packaged files. Edit the canonical copies here, not
-the package links.
+using these commands directly. The `SKILL.md` files live here in the
+repository root and the Relay Pi package ships alongside its prompts and
+TypeScript code.
