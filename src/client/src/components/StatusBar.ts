@@ -35,9 +35,9 @@ export class StatusBar extends LitElement {
     const context = status.contextUsage;
     const contextText = context
       ? context.percent == null
-        ? `context ${formatTokenCount(context.contextWindow)}`
-        : `${context.percent.toFixed(1)}%/${formatTokenCount(context.contextWindow)}`
-      : "context unknown";
+        ? `Context ${formatTokenCount(context.contextWindow)}`
+        : `Context ${context.percent.toFixed(1)}%/${formatTokenCount(context.contextWindow)}`
+      : "Context unknown";
     const tokens = status.tokens;
     const warningControl = statusBarWarningControlContent(this.warningCount, this.warningsExpanded);
     return html`
@@ -55,10 +55,10 @@ export class StatusBar extends LitElement {
             <span>${warningControl.countText}</span>
           </button>
         `}
-        <span>↑${formatTokenCount(tokens.input)}</span>
-        <span>↓${formatTokenCount(tokens.output)}</span>
+        <span title="Total input tokens">↑ In ${formatTokenCount(tokens.input)}</span>
+        <span title="Total output tokens">↓ Out ${formatTokenCount(tokens.output)}</span>
         <span class="context">${contextText}</span>
-        <span>${formatCost(status.cost)}</span>
+        <span class="estimated-cost">Est. cost ${formatCost(status.cost)}</span>
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}
       </div>
     `;

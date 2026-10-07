@@ -219,7 +219,7 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [], availableThinkingLevels: [], treeDialog: undefined });
+    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [], treeDialog: undefined });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -318,7 +318,6 @@ export class SessionController {
       pendingAsk: session.archived === true ? undefined : this.getState().sessionStatuses[session.id]?.pendingAsk,
       pendingDialogs: session.archived === true ? [] : (this.getState().sessionStatuses[session.id]?.pendingDialogs ?? []),
       closedDialogs: [],
-      availableThinkingLevels: [],
     });
     let socketConnected = false;
     try {
@@ -352,7 +351,6 @@ export class SessionController {
       };
       await this.requestSelectedSessionRefresh(refreshTarget);
       if (!this.isCurrentRefreshTarget(refreshTarget) || !navigationIsCurrent(options?.navigation)) return;
-      void this.refreshAvailableThinkingLevels();
       this.onSelectedSessionReady?.({ machineId, session });
       if (options?.updateUrl !== false) this.updateUrl();
     } catch (error) {
@@ -1173,7 +1171,6 @@ export class SessionController {
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
       this.applyStatus(await this.api.setModel(session, provider, modelId, machineId));
-      await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1186,7 +1183,6 @@ export class SessionController {
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
       this.applyStatus(await this.api.cycleModel(session, direction, machineId));
-      await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1203,18 +1199,6 @@ export class SessionController {
       this.reportSessionError(session, machineId, error, errorOwner);
       return [];
     }
-  }
-
-  /** Refresh the available thinking levels for the selected session's model. */
-  async refreshAvailableThinkingLevels() {
-    const session = this.getState().selectedSession;
-    if (!session || session.archived === true) {
-      if (this.getState().availableThinkingLevels.length > 0) this.setState({ availableThinkingLevels: [] });
-      return;
-    }
-    const levels = await this.listThinkingLevels();
-    if (this.getState().selectedSession?.id !== session.id) return;
-    this.setState({ availableThinkingLevels: levels });
   }
 
   async setThinkingLevel(level: string) {
@@ -1708,7 +1692,6 @@ export class SessionController {
       pendingAsk: undefined,
       pendingDialogs: [],
       closedDialogs: [],
-      availableThinkingLevels: [],
       treeDialog: undefined,
       ...(activity === undefined ? {} : { sessionActivities: { ...state.sessionActivities, [session.id]: activity } }),
       error: "",

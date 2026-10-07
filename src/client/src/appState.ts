@@ -55,8 +55,6 @@ export interface AppState {
    * the closed card; deselection and reloads drop these.
    */
   closedDialogs: ClosedExtensionDialog[];
-  /** Thinking levels available for the selected session's current model. */
-  availableThinkingLevels: readonly string[];
   sessionStatuses: Record<string, SessionStatus>;
   sessionActivities: Record<string, SessionActivity>;
   /** Authoritative projection plus browser-local optimistic overlays for the selected inbox. */
@@ -150,7 +148,6 @@ export function initialAppState(): AppState {
     pendingAsk: undefined,
     pendingDialogs: [],
     closedDialogs: [],
-    availableThinkingLevels: [],
     sessionStatuses: {},
     sessionActivities: {},
     selectedNotificationInbox: undefined,

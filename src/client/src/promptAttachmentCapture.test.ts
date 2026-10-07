@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { PromptEditor } from "./components/PromptEditor";
 import { capturePromptAttachments, DEFAULT_FILE_MIME_TYPE, effectivePromptAttachmentDelivery, READ_FAILURE_MESSAGE, type CapturableFile } from "./promptAttachmentCapture";
-import { templateEventHandlerAfterMarker, templateEventHandlerAfterValue } from "./templateInspection.testSupport";
+import { templateEventHandlerAfterMarker } from "./templateInspection.testSupport";
 
 function file(name: string, type: string, size = 10): CapturableFile {
   return { name, type, size };
@@ -112,7 +112,7 @@ describe("PromptEditor attachment wiring", () => {
 
       expect(preventDefault).toHaveBeenCalledOnce();
 
-      const send = templateEventHandlerAfterMarker(editor.render(), "send-button");
+      const send = templateEventHandlerAfterMarker(editor.render(), "primary-button");
       send(new Event("click"));
 
       // report.pdf failed to read, so only the successfully-read image survives to onSend — proving
@@ -127,29 +127,6 @@ describe("PromptEditor attachment wiring", () => {
     }
   });
 
-  it("removes a pending attachment chip before sending the remaining attachments", () => {
-    const editor = new PromptEditor();
-    const onSend = vi.fn<NonNullable<PromptEditor["onSend"]>>();
-    editor.onSend = onSend;
-    setPromptEditorPrivate(editor, "draft", "please review");
-    setPromptEditorPrivate(editor, "attachments", [
-      { id: "attachment-1", kind: "file", name: "report.pdf", mimeType: "application/pdf", data: "UkVQT1JU", size: 6 },
-      { id: "attachment-2", kind: "image", name: "shot.png", mimeType: "image/png", data: "UE5H", size: 3 },
-    ]);
-
-    const removeReport = templateEventHandlerAfterValue(editor.render(), "Remove report.pdf", "@click=");
-    removeReport(new Event("click"));
-
-    const send = templateEventHandlerAfterMarker(editor.render(), "send-button");
-    send(new Event("click"));
-
-    // onSend receives only the image, proving the remove handler dropped report.pdf while leaving
-    // shot.png queued (folder delivery is not forced because no generic file remains).
-    expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith("please review", undefined, [
-      { kind: "image", mimeType: "image/png", data: "UE5H", name: "shot.png" },
-    ], "inline", undefined);
-  });
 });
 
 type StubFileReaderOutcome =

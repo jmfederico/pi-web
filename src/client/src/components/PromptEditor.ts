@@ -5,7 +5,7 @@ import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
-import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
+import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionActivity, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
 import { capturePromptAttachments, effectivePromptAttachmentDelivery, isInlinePromptAttachment, promptAttachmentsCanUseInlineDelivery } from "../promptAttachmentCapture";
 import { inputModeForDraft, inputModesEqual, type InputMode } from "../inputModes";
@@ -20,8 +20,10 @@ import { createMobilePromptEnterMedia, shouldUsePromptEnterShiftShortcut } from 
 import { composerSendShortcut, matchesComposerSend } from "../composerShortcuts";
 import type { ShortcutPreferenceConfig } from "../keyboardShortcuts";
 import { promptEditorStyles, type CompletionItem } from "./shared";
-import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
-import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
+import { composerActivityText } from "../composerActivity";
+import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon } from "./promptEditorIcons";
+import { thinkingLevelLabel } from "../../../shared/thinkingLevels";
+import { isSessionActive } from "../../../shared/activity";
 import "./AutocompleteMenu";
 
 type PromptSendArgs = [text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string, chips?: readonly StagedPromptChip[]];
@@ -48,6 +50,7 @@ export class PromptEditor extends LitElement {
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
   @property({ attribute: false }) status?: SessionStatus;
+  @property({ attribute: false }) activity?: SessionActivity;
   @property({ type: Boolean }) sending = false;
   @property({ attribute: false }) promptChips: readonly StagedPromptChip[] = [];
   @property({ attribute: false }) onRemoveChip?: (chip: StagedPromptChip) => void;
@@ -55,7 +58,6 @@ export class PromptEditor extends LitElement {
   @property({ attribute: false }) onStop?: () => void;
   @property({ attribute: false }) onSelectModel?: () => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
-  @property({ attribute: false }) availableThinkingLevels: readonly string[] = [];
   @query(".markdown-editor") private editorHost?: HTMLDivElement;
   @query(".attachment-input") private attachmentInput?: HTMLInputElement;
   // `draft` is the live document text but is intentionally NOT reactive: it
@@ -80,7 +82,6 @@ export class PromptEditor extends LitElement {
   private readonly readOnlyCompartment = new Compartment();
   private readonly mobilePromptEnterMedia = createMobilePromptEnterMedia();
   private explicitShiftKeyActive = false;
-
   protected override willUpdate(changed: PropertyValues<this>) {
     if (!changed.has("sessionId") && !changed.has("machineId")) return;
     const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
@@ -129,26 +130,40 @@ export class PromptEditor extends LitElement {
   override render() {
     const shellInputMode = this.promptChips.length === 0 && this.currentInputMode.kind === "shell" ? this.currentInputMode : undefined;
     const shellMode = shellInputMode !== undefined;
-    const queuesInput = this.canSteer || this.isCompacting;
-    const busy = this.disabled || this.sending || this.chipSendingKey === this.composerKey();
+    const canQueue = this.canSteer || this.isCompacting;
+    const canSteer = this.canSteer && !this.isCompacting;
+    const sending = this.sending || this.chipSendingKey === this.composerKey();
+    const busy = this.disabled || sending;
+    const hasWork = sending || canQueue || this.canStop || isSessionActive(this.status, this.activity);
+    const activityText = composerActivityText(this.status, this.activity, sending);
     return html`
       <footer class=${shellMode ? "shell-mode" : ""} @paste=${(event: ClipboardEvent) => { void this.handlePaste(event); }} @dragover=${(event: DragEvent) => { this.handleDragOver(event); }} @drop=${(event: DragEvent) => { void this.handleDrop(event); }}>
-        <div class="editor-wrap">
-          <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
+        <div class="composer-line" aria-live="polite">
+          ${activityText === undefined ? null : html`<span class="composer-activity" title=${activityText}>${activityText}</span>`}
+        </div>
+        <div class="writing-area">
+          <div class="editor-wrap">
+            <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
+            <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
+          </div>
           <input class="attachment-input" type="file" multiple hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
           <button class="editor-attach icon-button" ?disabled=${busy} title="Attach files" aria-label="Attach files" @click=${() => { this.attachmentInput?.click(); }}>${renderAttachIcon()}</button>
-          ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
-          ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
-          ${this.renderPromptChips()}
-          ${this.renderAttachments()}
-          <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
         </div>
+        ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
+        ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
+        ${this.renderPromptChips()}
+        ${this.renderAttachments()}
         <div class="actions">
           ${this.renderCompactStatus()}
-          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
-          ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
-          <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
+          <div class="message-actions">
+          <button class="icon-button queue-button" ?disabled=${busy || !canQueue} title="Queue until the current activity finishes" aria-label="Queue message" @click=${() => { this.send("followUp"); }}>${renderQueueIcon()}</button>
+          <button class="icon-button steer-button" ?disabled=${busy || !canSteer} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>
+          <button class="icon-button primary-button ${hasWork ? "stop-button" : "send-button"}" ?disabled=${hasWork ? this.disabled || !this.canStop : busy}
+            title=${hasWork ? "Stop current work and clear queued messages" : "Send message"} aria-label=${hasWork ? "Stop current work" : "Send message"}
+            @click=${() => { if (hasWork) this.onStop?.(); else this.send("followUp"); }}>${hasWork ? renderStopIcon() : renderSendIcon()}</button>
+          </div>
         </div>
+        <div class="composer-line composer-line-bottom" aria-hidden="true"></div>
       </footer>
     `;
   }
@@ -192,7 +207,7 @@ export class PromptEditor extends LitElement {
     return html`
       <div class="compact-status" aria-label="Session status">
         <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
-        <button class="select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
+        <button class="select-thinking" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${thinkingLevelLabel(status.thinkingLevel)}</button>
       </div>
     `;
   }
@@ -219,20 +234,19 @@ export class PromptEditor extends LitElement {
     return html`
       <div class="attachments" aria-label="Pending attachments">
         ${this.attachments.map((attachment) => html`
-          <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} title=${attachment.name}>
+          <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} data-attachment-id=${attachment.id} title=${attachment.name}>
             ${this.renderAttachmentPreview(attachment)}
             <button type="button" class="attachment-remove" title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
           </div>
         `)}
         ${this.attachments.length > 0 ? html`
           <label class="attachment-delivery" title=${canUseInlineDelivery ? "How attachments are delivered to the agent" : "General files are saved and mentioned from the workspace"}>
-            <select .value=${delivery} @change=${(event: Event) => { this.changeDelivery(event); }}>
-              <option value="inline" ?disabled=${!canUseInlineDelivery}>Attach to message${canUseInlineDelivery ? "" : " (images only)"}</option>
-              <option value="folder">${attachmentFolderDeliveryLabel(this.attachmentsFolder)}</option>
-            </select>
+            <input type="checkbox" .checked=${delivery === "folder"} ?disabled=${!canUseInlineDelivery} aria-describedby="attachment-delivery-hint" @change=${(event: Event) => { this.changeDelivery(event); }} />
+            <span>${attachmentFolderDeliveryLabel(this.attachmentsFolder)}</span>
           </label>
+          <small id="attachment-delivery-hint" class="attachment-delivery-hint">${canUseInlineDelivery ? "Unchecked: attach images to the message" : "Non-image files must be saved to the workspace folder"}</small>
         ` : null}
-        ${this.attachmentError !== undefined ? html`<div class="attachment-error">${this.attachmentError}</div>` : null}
+        ${this.attachmentError !== undefined ? html`<div class="attachment-error" role="alert">${this.attachmentError}</div>` : null}
       </div>
     `;
   }
@@ -248,10 +262,10 @@ export class PromptEditor extends LitElement {
   }
 
   private changeDelivery(event: Event) {
-    if (!(event.target instanceof HTMLSelectElement)) return;
-    const requested = event.target.value === "folder" ? "folder" : "inline";
-    if (requested === "inline" && !promptAttachmentsCanUseInlineDelivery(this.attachments)) {
-      event.target.value = "folder";
+    if (!(event.target instanceof HTMLInputElement)) return;
+    const requested = event.target.checked ? "folder" : "inline";
+    if (!promptAttachmentsCanUseInlineDelivery(this.attachments)) {
+      event.target.checked = true;
       return;
     }
     this.attachmentDelivery = requested;
@@ -259,7 +273,15 @@ export class PromptEditor extends LitElement {
   }
 
   private removeAttachment(id: string) {
+    const buttons = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>(".attachment-remove"));
+    const focusedIndex = buttons.findIndex((button) => button === (this.renderRoot instanceof ShadowRoot ? this.renderRoot.activeElement : this.ownerDocument.activeElement) && button.closest<HTMLElement>("[data-attachment-id]")?.dataset["attachmentId"] === id);
     this.attachments = this.attachments.filter((attachment) => attachment.id !== id);
+    if (focusedIndex < 0) return;
+    void this.updateComplete.then(() => {
+      const remaining = this.renderRoot.querySelectorAll<HTMLButtonElement>(".attachment-remove");
+      const next = remaining[Math.min(focusedIndex, remaining.length - 1)] ?? this.renderRoot.querySelector<HTMLButtonElement>(".editor-attach");
+      next?.focus({ preventScroll: true });
+    });
   }
 
   private async handlePaste(event: ClipboardEvent) {
@@ -324,7 +346,7 @@ export class PromptEditor extends LitElement {
             keyup: (event) => this.handleEditorKeyUp(event),
             blur: () => this.resetEditorModifierState(),
           }),
-          placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
+          placeholder("Message pi… / commands · @ tracked files · @ Space all files · # models"),
           promptArgumentHintExtension,
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
@@ -540,7 +562,7 @@ export class PromptEditor extends LitElement {
       return;
     }
     this.resetComposer();
-    // Sending is owned by the controller (it drives the chat activity dock and,
+    // Sending is owned by the controller (it drives the composer activity line and,
     // for folder mode, orchestrates the upload + reference rewrite), so this is
     // fire-and-forget here.
     void this.onSend?.(text, behavior, attachments, attachments === undefined ? undefined : delivery, folder);
@@ -591,17 +613,18 @@ export class PromptEditor extends LitElement {
   static override styles = promptEditorStyles;
 }
 
-// The only `status` fields the template reads directly are the model identity
-// and thinking level (shown in renderCompactStatus). Everything else the editor
-// cares about (canSteer/canStop/isCompacting/sending) is passed as a separate
-// property that Lit already diffs by value. Comparing just these fields lets us
-// ignore the per-token status churn that does not change anything on screen.
+// Ignore per-token status churn while retaining model/thinking and activity
+// transitions. Action permissions remain separate controller-owned properties.
 function sessionStatusRenderEqual(a: SessionStatus | undefined, b: SessionStatus | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
   return a.model?.id === b.model?.id
     && a.model?.provider === b.model?.provider
-    && a.thinkingLevel === b.thinkingLevel;
+    && a.thinkingLevel === b.thinkingLevel
+    && a.isStreaming === b.isStreaming
+    && a.isCompacting === b.isCompacting
+    && a.isBashRunning === b.isBashRunning
+    && a.pendingMessageCount === b.pendingMessageCount;
 }
 
 function draftStorageKey(machineId: unknown, sessionId: unknown): string | undefined {

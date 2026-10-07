@@ -11,6 +11,33 @@ function page(text: string, total: number): MessagePage {
 }
 
 describe("SessionController selected-session refresh", () => {
+  it("fetches thinking levels on demand, not during session or model changes", async () => {
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const thinkingLevels = vi.fn<typeof defaultApi.thinkingLevels>().mockResolvedValue({ levels: ["off", "high"] });
+    const setModel = vi.fn<typeof defaultApi.setModel>().mockResolvedValue(status(oldSession.id));
+    const cycleModel = vi.fn<typeof defaultApi.cycleModel>().mockResolvedValue(status(oldSession.id));
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      transcriptSnapshot: () => transcriptSnapshotFixture(emptyPage, status(oldSession.id)),
+      thinkingLevels, setModel, cycleModel,
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { api, socket: new FakeSocket() },
+    );
+    await controller.selectSession(oldSession, { updateUrl: false });
+    await controller.setModel("provider", "model");
+    await controller.cycleModel("forward");
+    expect(setModel).toHaveBeenCalledWith(oldSession, "provider", "model", "local");
+    expect(cycleModel).toHaveBeenCalledWith(oldSession, "forward", "local");
+    expect(thinkingLevels).not.toHaveBeenCalled();
+    expect(await controller.listThinkingLevels()).toEqual(["off", "high"]);
+    expect(thinkingLevels).toHaveBeenCalledExactlyOnceWith(oldSession, "local");
+  });
+
   it("signals selection readiness only after the initial transcript join succeeds", async () => {
     const messages = deferred<MessagePage>();
     const selectedStatus = deferred<SessionStatus>();
