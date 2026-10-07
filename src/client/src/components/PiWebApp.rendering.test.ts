@@ -6,7 +6,6 @@ import { initialAppState, type AppState } from "../appState";
 import type { SessionInfo, SessionStatus, SessionWarning, Workspace } from "../api";
 import { SessionController } from "../controllers/sessionController";
 import { reportBrowserError, sessionBrowserErrorScope, workspaceBrowserErrorScope, type BrowserErrorRecovery } from "../browserErrors";
- (fix(sessions): gate composer on external activity status)
 import { machineSessionKey } from "../machineKeys";
 import { saveDraft } from "../promptDraftStorage";
 import { clearStagedAttachments, saveStagedAttachments } from "../promptAttachmentStaging";
@@ -335,7 +334,6 @@ describe("application rendering boundaries", () => {
 
   it("keeps the activity notice in the blocked composer until dismissal without losing drafts or attachments", async () => {
     const send = vi.spyOn(SessionController.prototype, "send").mockResolvedValue(true);
- (fix(sessions): gate composer on external activity status)
     const key = machineSessionKey("local", session.id);
     saveDraft(key, "Unsent draft");
     saveStagedAttachments(key, [{ id: "file", kind: "file", name: "notes.txt", mimeType: "text/plain", data: "aGk=", size: 2 }]);

@@ -7,11 +7,6 @@ const legacyActivityWarning = {
   message: "Recently active in another PI-WEB instance. Avoid working on this session in both instances at once.",
 };
 
-const legacyActivityWarning = {
-  severity: "info", source: "PI-WEB",
-  message: "Recently active in another PI-WEB instance. Avoid working on this session in both instances at once.",
-};
-
 describe("API parsers", () => {
   it("preserves interactive API-key flow hints and defaults providers without one", () => {
     const base = { id: "openai", name: "OpenAI", authType: "api_key", status: { configured: false } };
@@ -692,7 +687,6 @@ describe("API parsers", () => {
     }
   });
 
- (fix(sessions): gate composer on external activity status)
   it.each([true, false])("preserves recentlyActiveElsewhere=%s independently of warnings", (recentlyActiveElsewhere) => {
     const wire = { ...statusWire(), recentlyActiveElsewhere };
     expect(parseSessionStatus(wire)).toMatchObject({ recentlyActiveElsewhere });

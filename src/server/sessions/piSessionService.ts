@@ -2426,7 +2426,7 @@ export class PiSessionService implements SessionRouteService {
     );
   }
 
-  private browserTranscriptMessage(session: PiAgentSession, message: unknown): unknown {
+  private browserTranscriptMessage<T>(session: PiAgentSession, message: T): T {
     return projectTranscriptMarkdown(message, session.extensionRunner.getMarkdownTransformers(), (error, transformerIndex) => {
       this.logger.info({ err: error, sessionId: session.sessionId, transformerIndex }, "Transcript Markdown transformer failed");
     });
@@ -4328,12 +4328,6 @@ export class PiSessionService implements SessionRouteService {
       } else if (eventType === "message_start" || eventType === "message_end" || eventType === "agent_end") {
         this.publishedAssistantPartials.delete(session);
       }
-      const clientEvent = toClientEvent(event, session.thinkingLevel);
-      if ((clientEvent.type === "message.end" || clientEvent.type === "message.append") && clientEvent.message !== undefined) {
-        clientEvent.message = this.browserTranscriptMessage(session, clientEvent.message);
-      }
-      this.events.publish(session.sessionId, clientEvent, { id: session.sessionId, cwd: session.sessionManager.getCwd() });
-      this.publishActivityForEvent(session, event);
       // Queued messages can reach the model after an ask opened, even though
       // there was no ask to dismiss when the user originally submitted them.
       if (eventType === "message_start" && isRecord(event) && getString(event["message"], "role") === "user") {

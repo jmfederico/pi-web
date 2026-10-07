@@ -1,7 +1,15 @@
 import type { MarkdownTransformer, MarkdownTransformContext } from "@earendil-works/pi-coding-agent";
 
 /** Browser-only projection: never replace canonical content or pass this result back to Pi. */
-export function projectTranscriptMarkdown(
+export function projectTranscriptMarkdown<T>(
+  message: T,
+  transformers: readonly MarkdownTransformer[],
+  onError: (error: unknown, transformerIndex: number) => void,
+): T {
+  return projectUnknownTranscriptMarkdown(message, transformers, onError) as T;
+}
+
+function projectUnknownTranscriptMarkdown(
   message: unknown,
   transformers: readonly MarkdownTransformer[],
   onError: (error: unknown, transformerIndex: number) => void,
