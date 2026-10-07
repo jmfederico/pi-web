@@ -6,7 +6,7 @@
     <title>Install PI WEB — web UI for Pi Coding Agent</title>
     <meta
       name="description"
-      content="Install PI WEB, the web UI for Pi Coding Agent, on Linux, macOS, or Windows WSL with persistent user services."
+      content="Install PI WEB, the web UI for Pi Coding Agent, on Linux, macOS, or native Windows with per-user autostart."
     />
     <link rel="canonical" href="https://pi-web.dev/install" />
     <meta property="og:type" content="website" />
@@ -91,6 +91,7 @@
             <strong>On this page</strong>
             <a href="#requirements">Requirements</a>
             <a href="#user-services">User service install</a>
+            <a href="#windows">Native Windows autostart</a>
             <a href="#one-line">One-line install</a>
             <a href="#pi-package">Install through Pi</a>
             <a href="#manual-run">WSL / manual run</a>
@@ -114,7 +115,7 @@
               <p>PI WEB requires Pi 1.x; Pi 0.x and Pi 2.x are outside the supported dependency range. When upgrading from Pi 0.x, update Pi and PI WEB together, then restart the web/API service before the session daemon. Restarting the daemon interrupts active sessions.</p>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>
-                PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
+                On Linux and macOS, PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
                 interactive shell files or prompt hooks may not be visible to services. The installer checks the service
                 environment before changing config or replacing services. Run <code>pi-web doctor</code> to diagnose
                 missing tools; custom command overrides still need to be verified by you.
@@ -144,6 +145,36 @@
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
               <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
+            </section>
+
+            <section id="windows">
+              <h2>Native Windows autostart</h2>
+              <p>
+                Run the same <code>npm install -g @jmfederico/pi-web --allow-scripts=node-pty</code> and
+                <code>pi-web install</code> commands in an external PowerShell terminal. Windows PowerShell 5.1 and
+                Task Scheduler are included with Windows; no WSL, VBS startup shortcut, service wrapper, or stored password is needed.
+              </p>
+              <p>
+                The installer creates two limited-privilege tasks for the current Windows user, named
+                <code>PI-WEB-&lt;user SID&gt;-sessiond</code> and <code>PI-WEB-&lt;user SID&gt;-web</code>.
+                They start immediately and at sign-in, without a console window. This is per-user sign-in autostart,
+                not a Windows Service Control Manager service: it does not run before login or survive sign-out.
+                Locking the desktop does not sign you out. Tasks have no runtime limit and can run on battery power.
+              </p>
+              <ul>
+                <li><code>pi-web start|stop|restart|status|doctor|uninstall</code> manage these tasks. Stop, restart, uninstall, and sign-out terminate active sessions. Run mutation commands outside PI WEB itself.</li>
+                <li><code>pi-web logs</code> prints the last 100 lines of each log under <code>~/.pi-web/logs</code> (or the installed <code>PI_WEB_DATA_DIR</code>). Logs append; rotate them yourself while tasks are stopped.</li>
+                <li>Config stays in <code>~/.config/pi-web/config.json</code>, or the path selected by <code>--config</code> or <code>PI_WEB_CONFIG</code>. Existing config is preserved. Web defaults to <code>127.0.0.1:8504</code>; the daemon uses loopback TCP port <code>8505</code>. Set <code>$env:PI_WEB_SESSIOND_PORT</code> before install to choose another daemon port.</li>
+                <li>The installer pins the current Node executable, built package entrypoints, config/data paths, PATH, and any explicit SHELL or Pi profile-directory overrides. Other user environment variables come from Windows, including runtime overrides such as <code>PI_WEB_OFFLINE</code>, <code>PI_WEB_ALLOWED_HOSTS</code>, and feature flags. The runner removes nested-session identity, inherited daemon socket and Docker deployment wiring, and directory aliases superseded by captured overrides. Reinstall after moving Node/the package or changing the captured environment.</li>
+                <li>One installation is managed per Windows user. Reinstallation requires <code>pi-web uninstall</code> first; config, logs, and data are retained. Tasks do not automatically restart crashed processes: inspect the logs, then use <code>pi-web start</code>.</li>
+                <li>For a checkout, run <code>npm run build</code>, then <code>node dist/cli.js install</code>. Windows <code>--dev</code> autostart is not supported.</li>
+              </ul>
+              <p>
+                Migrating from a Startup-folder script: disable that startup entry yourself and stop its old processes
+                from an external terminal before installing the tasks. PI WEB does not remove custom startup scripts or stop unmanaged processes.
+                If Task Scheduler registration is denied by machine policy, ask your administrator; do not switch to running as SYSTEM,
+                which uses a different user profile and credentials. For unattended pre-login operation, use a Linux host with systemd instead.
+              </p>
             </section>
 
             <section id="one-line">
@@ -202,7 +233,7 @@
                 manual run approach above.
               </p>
               <p>
-                From a PI WEB checkout, <code>pi-web install --dev</code> installs the split development services on supported user-service platforms.
+                From a PI WEB checkout, <code>pi-web install --dev</code> installs the split development services on Linux and macOS.
                 <code>pi-web uninstall</code> removes both production and development service files; no uninstall flags are needed.
               </p>
               <h3 id="development-restarts">Development restarts</h3>
@@ -338,7 +369,7 @@ server {
 <span class="prompt">$</span> pi-web doctor
 <span class="prompt">$</span> pi-web version
 
-<span class="comment"># From a checkout, install the split development services:</span>
+<span class="comment"># Linux/macOS: install split development services from a checkout:</span>
 <span class="prompt">$</span> pi-web install --dev</code></pre>
               </div>
             </section>

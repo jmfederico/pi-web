@@ -120,7 +120,7 @@
               <ul>
                 <li><strong>User-service install:</strong> use <code>npm install -g @jmfederico/pi-web --allow-scripts=node-pty</code> and <code>pi-web install</code>.</li>
                 <li><strong>WSL:</strong> if your distro has systemd enabled, the installer may work; otherwise use the manual run path.</li>
-                <li><strong>Native Windows:</strong> outside WSL is not the recommended path today.</li>
+                <li><strong>Native Windows:</strong> <code>pi-web install</code> creates hidden per-user Task Scheduler tasks that start at sign-in. See <a href="install#windows">Windows autostart</a> for lifecycle, environment, and migration details.</li>
               </ul>
             </article>
 
