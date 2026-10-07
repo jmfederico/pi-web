@@ -3,12 +3,89 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandOption, SessionModelCatalogEntry } from "../api";
 import { deepActiveElement, dialogSurface, pressKey, requiredElement, settleRenderedDialog } from "./modalSurfaceTestSupport";
-import { ModelPicker } from "./ModelPicker";
+type ModelPicker = import("./ModelPicker").ModelPicker;
+
+const { ModelPicker } = await loadModelPicker();
+
+async function loadModelPicker() {
+  const notice = "Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.";
+  const originalWarn = console.warn;
+  const warnings = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+    if (args.length === 1 && args[0] === notice) return;
+    originalWarn(...args);
+  });
+  try {
+    const module = await import("./ModelPicker");
+    expect(warnings.mock.calls).toEqual([[notice]]);
+    return module;
+  } finally {
+    warnings.mockRestore();
+  }
+}
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+describe("model-picker initial selection", () => {
+  it("renders the supplied non-first model as current on its first completed update", async () => {
+    const warnings = vi.spyOn(console, "warn");
+    const picker = createPicker({ selectedValue: "anthropic/claude-sonnet-4-5" });
+    document.body.append(picker);
+
+    const firstComplete = await picker.updateComplete;
+
+    expect(enabledRows(picker).map((row) => row.getAttribute("aria-current"))).toEqual([null, "true"]);
+    expect(selectedRowText(picker)).toContain("claude-sonnet-4-5");
+    expect(firstComplete).toBe(true);
+    expect(picker.isUpdatePending).toBe(false);
+    expect(warnings).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "missing/model"])("keeps the first row when the initial value is %s", async (selectedValue) => {
+    const picker = createPicker(selectedValue === undefined ? {} : { selectedValue });
+    document.body.append(picker);
+
+    const firstComplete = await picker.updateComplete;
+
+    expect(enabledRows(picker).map((row) => row.getAttribute("aria-current"))).toEqual(["true", null]);
+    expect(selectedRowText(picker)).toContain("gpt-5");
+    expect(firstComplete).toBe(true);
+    expect(picker.isUpdatePending).toBe(false);
+  });
+
+  it("completes an empty enabled list without scheduling a selection correction", async () => {
+    const picker = createPicker({ options: [], selectedValue: "missing/model" });
+    document.body.append(picker);
+
+    expect(await picker.updateComplete).toBe(true);
+    expect(enabledRows(picker)).toEqual([]);
+    expect(picker.shadowRoot?.querySelector("[aria-current='true']")).toBeNull();
+    expect(picker.shadowRoot?.querySelector(".empty")?.textContent).toBe("No matching options");
+    expect(picker.isUpdatePending).toBe(false);
+  });
+
+  it("preserves keyboard selection on unrelated updates and reanchors when switching modes", async () => {
+    const picker = await mountPicker({ selectedValue: "anthropic/claude-sonnet-4-5" });
+    pressKey(searchInput(picker), "ArrowUp");
+    await settleRenderedDialog(picker);
+    picker.title = "Choose a model";
+    await settleRenderedDialog(picker);
+    expect(selectedRowText(picker)).toContain("gpt-5");
+
+    scopeToggle(picker, "All models").click();
+    expect(await picker.updateComplete).toBe(true);
+    const current = catalogRow(picker, "anthropic/claude-sonnet-4-5");
+    expect(current.classList.contains("selected")).toBe(true);
+    expect(membershipButton(current).getAttribute("aria-current")).toBe("true");
+    expect(picker.isUpdatePending).toBe(false);
+
+    scopeToggle(picker, "Enabled").click();
+    expect(await picker.updateComplete).toBe(true);
+    expect(enabledRows(picker).map((row) => row.getAttribute("aria-current"))).toEqual([null, "true"]);
+  });
 });
 
 describe("model-picker Enabled mode", () => {
@@ -360,7 +437,7 @@ function defaultCatalog(): SessionModelCatalogEntry[] {
   ];
 }
 
-async function mountPicker(props: ModelPickerProps = {}): Promise<ModelPicker> {
+function createPicker(props: ModelPickerProps = {}): ModelPicker {
   const picker = new ModelPicker();
   picker.options = props.options ?? [
     { value: "openai/gpt-5", label: "gpt-5", description: "openai" },
@@ -372,6 +449,11 @@ async function mountPicker(props: ModelPickerProps = {}): Promise<ModelPicker> {
   if (props.onCancel !== undefined) picker.onCancel = props.onCancel;
   if (props.onToggleEnabled !== undefined) picker.onToggleEnabled = props.onToggleEnabled;
   if (props.onSetScope !== undefined) picker.onSetScope = props.onSetScope;
+  return picker;
+}
+
+async function mountPicker(props: ModelPickerProps = {}): Promise<ModelPicker> {
+  const picker = createPicker(props);
   document.body.append(picker);
   await settleRenderedDialog(picker);
   return picker;
