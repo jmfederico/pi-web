@@ -26,7 +26,7 @@ export async function generateShortSessionName<TApi extends Api>(streamFn: Strea
       }],
     }),
     {
-      maxTokens: 24,
+      maxTokens: model.reasoning ? 2048 : 24,
       reasoning: "minimal",
       signal: AbortSignal.timeout(SESSION_NAME_TIMEOUT_MS),
     },
