@@ -88,6 +88,7 @@
 <a href="#file-settings">Files &amp; uploads</a>
 <a href="#session-tools">Session daemon</a>
 <a href="#plugin-config">Plugins</a>
+<a href="#mcp-servers">MCP servers</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
 <a href="#providers">Providers &amp; trust</a>
@@ -476,6 +477,13 @@
 <p><strong>Restart caution:</strong> <code>--restart</code> acts only for a recognized safe installation and can interrupt sessions. Config is saved first; follow manual guidance if restart fails.</p><p>Server plugins are trusted in-process code, not crash-isolated. <a href="plugins">Plugin guide →</a></p></details>
 <details class="config-details"><summary>Fleet compatibility and unavailable plugin UI</summary><ul><li>Upgrade the gateway and target together; mixed-version plugin operation is unsupported.</li><li>Restart updated web/API processes and target sessiond, then reload the browser.</li><li>A paired UI is withheld when its package/settings do not match running server code, or the server plugin is unhealthy/incompatible.</li></ul></details>
 </section>
+<section id="mcp-servers"><h2>MCP servers</h2>
+<p><strong>Settings → MCP servers</strong> lists existing connections on the selected machine and lets you enable or disable them. Choose <strong>Machine-wide</strong> or <strong>Selected workspace</strong> to inspect Pi’s <code>&lt;active-agent-dir&gt;/mcp.json</code> or the workspace’s <code>.pi/mcp.json</code>. These are Pi configuration, separate from PI WEB config. A trusted project entry overrides a user entry with the exact same server name. Names that differ only by <code>-</code> versus <code>_</code> conflict instead of overriding each other.</p>
+<p>Opening Settings only reads configuration. <strong>Check connections</strong> explicitly starts enabled local servers or connects to remote services, reports tool names and errors, and closes those temporary connections. Detached helpers that remove inherited ownership information need their own shutdown handling; Windows cleanup is best-effort when wrappers have already exited. This is a diagnostic snapshot, not live session status. Browser failures use safe summaries; inspect detailed errors with <code>pi mcp list</code> on the target machine. CLI checks do not use <code>auth.provider</code> credentials, so verify those servers with <code>/mcp</code> inside a session. Pi’s CLI requires a saved project-trust decision for project checks and reports when it skips project configuration; session defaults or extension-owned trust may differ.</p>
+<p>Toggles apply to new sessions. Run <code>/reload</code> in each idle existing session to apply them there; disabling saved config does not immediately stop other sessions’ connections. If a toggle reports that configuration changed during the update, refresh configuration and retry. Use <code>/mcp</code> to inspect session status and <code>/mcp reconnect &lt;server&gt;</code> to reconnect in a PI WEB session. Add or remove connections with <code>pi mcp add</code> / <code>pi mcp remove</code> on the target machine.</p>
+<p>The initial panel does not edit credentials or list extension-only servers. Configuration summaries omit environment values, headers, arguments, and connection URLs. Connect only trusted services using limited credentials. After upgrading to introduce this API, restart the updated web/API process and manually restart the target session daemon (which can interrupt active sessions). Ordinary toggle changes afterward need only a session reload. See the <a href="config.md#mcp-servers">detailed MCP reference</a>.</p>
+</section>
+
 <section id="network"><h2>Networking & deployment</h2>
 <div class="table-scroll" role="region" aria-label="Web/API settings" tabindex="0">
 <table class="reference-table settings-table">

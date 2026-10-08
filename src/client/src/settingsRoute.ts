@@ -1,4 +1,4 @@
-export type SettingsSection = "general" | "sessiond" | "packages" | "plugins" | "shortcuts";
+export type SettingsSection = "general" | "sessiond" | "packages" | "plugins" | "mcp" | "shortcuts";
 
 export function readSettingsSection(): SettingsSection | undefined {
   return parseSettingsSection(new URLSearchParams(window.location.search).get("settings"));
@@ -20,6 +20,7 @@ export function parseSettingsSection(value: string | null): SettingsSection | un
   if (value === "sessiond" || value === "sessions") return "sessiond";
   if (value === "packages" || value === "pi-packages") return "packages";
   if (value === "plugins") return "plugins";
+  if (value === "mcp") return "mcp";
   if (value === "shortcuts" || value === "keyboard" || value === "keyboard-shortcuts") return "shortcuts";
   return undefined;
 }

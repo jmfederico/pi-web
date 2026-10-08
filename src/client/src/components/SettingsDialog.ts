@@ -1,7 +1,7 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
-import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineRuntime, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
+import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineRuntime, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse, type Workspace } from "../api";
 import type { SettingsSection } from "../settingsRoute";
 import "./ModalSurface";
 import "./settings/SettingsGeneralPanel";
@@ -30,6 +30,7 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) onUseLocalTheme?: (preference: ThemePreference) => void;
   @property({ attribute: false }) onUseDefaultTheme?: () => void;
   @property({ attribute: false }) machine: Machine | undefined;
+  @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) machineRuntime: MachineRuntime | undefined;
   @property({ attribute: false }) onNavigate?: (section: SettingsSection) => void;
   @property({ attribute: false }) onClose?: () => void;
@@ -56,6 +57,9 @@ export class SettingsDialog extends LitElement {
   @state() private packageError = "";
   @state() private savedMessage = "";
   @state() private packageMessage = "";
+  @state() private mcpPanelReady = false;
+  @state() private mcpPanelError = "";
+  private mcpPanelLoading = false;
   private savedMessageTimer: number | undefined;
   private loadRequestSeq = 0;
   private accessLoadRequestSeq = 0;
@@ -80,6 +84,7 @@ export class SettingsDialog extends LitElement {
   }
 
   protected override updated(changed: PropertyValues<this>): void {
+    if (this.section === "mcp") void this.loadMcpPanel();
     const currentTarget = this.settingsTarget();
     if (changed.has("machine")) {
       const previousTarget = settingsMachineTarget(changed.get("machine"));
@@ -118,6 +123,7 @@ export class SettingsDialog extends LitElement {
             ${this.renderNavButton("sessiond", "Session daemon", "Selected machine")}
             ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
             ${this.renderNavButton("plugins", "PI WEB plugins", "Selected machine")}
+            ${this.renderNavButton("mcp", "MCP servers", "Selected machine + workspace")}
             ${this.renderNavButton("shortcuts", "Keyboard", "Gateway shortcuts")}
           </nav>
           <main class="settings-content">
@@ -132,6 +138,11 @@ export class SettingsDialog extends LitElement {
     // Keep the section -> panel routing in sync with the public
     // `activeSettingsPanelTag` seam below, which tests assert against instead of
     // scraping this template's markup.
+    if (this.section === "mcp") {
+      if (this.mcpPanelError !== "") return html`<p role="alert">${this.mcpPanelError}</p>`;
+      if (!this.mcpPanelReady) return html`<p role="status">Loading MCP settings…</p>`;
+      return html`<settings-mcp-panel .machine=${this.machine} .workspace=${this.workspace}></settings-mcp-panel>`;
+    }
     if (this.section === "sessiond") {
       return html`
         <settings-sessiond-panel
@@ -223,6 +234,19 @@ export class SettingsDialog extends LitElement {
         ></settings-theme-panel>
       </settings-general-panel>
     `;
+  }
+
+  private async loadMcpPanel(): Promise<void> {
+    if (this.mcpPanelReady || this.mcpPanelLoading || this.mcpPanelError !== "") return;
+    this.mcpPanelLoading = true;
+    try {
+      await import("./settings/SettingsMcpPanel");
+      this.mcpPanelReady = true;
+    } catch (error) {
+      this.mcpPanelError = `Failed to load MCP settings: ${errorMessage(error)}`;
+    } finally {
+      this.mcpPanelLoading = false;
+    }
   }
 
   private renderNavButton(section: SettingsSection, label: string, detail: string): TemplateResult {
@@ -673,6 +697,7 @@ export type SettingsPanelTag =
   | "settings-sessiond-panel"
   | "settings-packages-panel"
   | "settings-plugins-panel"
+  | "settings-mcp-panel"
   | "settings-shortcuts-panel";
 
 /**
@@ -691,6 +716,8 @@ export function activeSettingsPanelTag(section: SettingsSection): SettingsPanelT
       return "settings-packages-panel";
     case "plugins":
       return "settings-plugins-panel";
+    case "mcp":
+      return "settings-mcp-panel";
     case "shortcuts":
       return "settings-shortcuts-panel";
     case "general":

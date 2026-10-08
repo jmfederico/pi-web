@@ -286,6 +286,47 @@ export interface PiWebPluginsResponse {
   serverRuntime: PiWebPluginRuntimeInfo;
 }
 
+export type McpConfigScope = "user" | "project";
+
+/** Safe configuration summary; credentials, environment values and arguments are never included. */
+export interface McpServerInfo {
+  name: string;
+  scope: McpConfigScope;
+  source: string;
+  enabled: boolean;
+  transport: "stdio" | "http" | "unknown";
+  exposure: string;
+  description?: string;
+  /** A project entry takes precedence over this user entry. */
+  overridden: boolean;
+  error?: string;
+}
+
+export interface McpServersResponse {
+  servers: McpServerInfo[];
+  errors: string[];
+  userConfigPath: string;
+  projectConfigPath?: string;
+  /** Saved/default trust, not an extension-owned session trust decision. */
+  projectTrusted?: boolean;
+}
+
+/** An explicit, temporary CLI connection check, not the state of a running session. */
+export interface McpConnectionInfo {
+  name: string;
+  scope: McpConfigScope;
+  state: "disabled" | "connecting" | "connected" | "needs-auth" | "failed" | "disconnected";
+  tools: string[];
+  error?: string;
+}
+
+export interface McpCheckResponse {
+  checkedAt: string;
+  servers: McpConnectionInfo[];
+  errors: string[];
+  note?: string;
+}
+
 export type PiPackageScope = "user" | "project";
 
 export interface PiPackageInfo {
