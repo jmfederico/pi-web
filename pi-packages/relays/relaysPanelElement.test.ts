@@ -287,6 +287,11 @@ describe("document tabs", () => {
     const panel = await mountPanel(panelContext(fake));
 
     expect(viewerText(panel)).toContain("This relay has no documents yet.");
+    expect(viewerText(panel)).toContain("charter.md (goal)");
+    expect(viewerText(panel)).toContain("status.md (current baton)");
+    expect(viewerText(panel)).toContain("log.md (history)");
+    expect(viewerText(panel)).toContain("An optional decisions.md");
+    expect(viewerText(panel)).not.toContain("operations.md");
   });
 });
 

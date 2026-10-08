@@ -299,7 +299,9 @@ Open the **Tasks** tab to run a command in a workspace terminal. Tasks can also 
 
 ### Relays
 
-The shipped Relay package adds agent prompts and skills for carrying work across sessions, plus a read-only **Relays** tab for inspecting plans and progress under `.pi-web/relays/`. The tab does not start or edit a relay.
+The shipped Relay package adds `/relay` and `/relay-worktree` to clarify a goal and its boundaries with you, then dispatch after explicit approval. Each fresh session chooses the next useful slice, records progress, and hands off until the finish line is reached or human help is needed. Project instructions and skills govern the work; the development route remains adaptive. The runner requires a fresh-context review of the whole result before completion, with at most three attempts total. Further attempts follow concrete corrections; unresolved blockers after the third stop the relay for human help. These are limits, not three mandatory reviews.
+
+The read-only **Relays** tab shows the goal (`charter.md`), current baton (`status.md`), and history (`log.md`) under `.pi-web/relays/`. An optional `decisions.md` keeps consequential decisions and their reasons outside the baton; revisions are recorded in the log. The tab does not start or edit a relay. `/relay` uses the current checkout by default; `/relay-worktree` prepares a fresh worktree.
 
 PI WEB installs Relay automatically for the active agent profile if it is not configured. Removing it through **Settings → Pi packages** is remembered; it will not be silently reinstalled. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab but leaves its agent resources available.
 
