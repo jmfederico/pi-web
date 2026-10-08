@@ -16,13 +16,17 @@
     "pi-packages/captains-log/src/browser/index.ts",
     "pi-packages/captains-log/src/server.ts",
     "pi-packages/captains-log/src/companion.ts",
+    "packages/todos/src/browser/index.ts",
+    "packages/todos/src/server.ts",
+    "packages/todos/src/companion.ts",
     "scripts/*.mjs"
   ],
   "project": [
     "src/**/*.ts",
     "extensions/**/*.ts",
     "pi-web-plugins/**/*.ts",
-    "pi-packages/**/*.ts"
+    "pi-packages/**/*.ts",
+    "packages/todos/**/*.ts"
   ],
   "ignoreBinaries": ["mkfifo"],
   "ignoreExportsUsedInFile": true

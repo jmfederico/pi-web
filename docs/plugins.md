@@ -66,6 +66,8 @@ activate: ({ html }) => ({
 
 `ApplicationPanelContext` supplies the current `machine`, basic selection `state`, `navigate`, `prompt`, and `host.requestRender()`. `state.selectedProject`, `state.selectedWorkspace`, and `state.selectedSession` are optional snapshots, refreshed as selections change without reactivating the plugin. `workspace` is available only when a workspace is selected; its workspace-bound `terminal` is supplied only when that machine also has an available Terminal provider (not in Terminal-disabled recovery mode). Render callbacks may run repeatedly; an inactive tab need not stay mounted. Portable gateway panels follow the selected machine, while machine-specific panels use the existing per-machine availability rules.
 
+Application panels also receive optional `backend` v1 access to their own package's machine-wide server handler. From an event handler or component, call `await context.backend.request("summary", null, { signal })`; feature-detect `context.backend?.version === 1` on older hosts. It needs no selected project, workspace, or session. The service captures the context's machine and stable package ID: retained services and in-flight requests never drift to a later selection, and plugin shutdown cancels their work. It uses the selected machine's backend, not a gateway substitute; that backend owns any remote routing through `transport`. This is separate from revision-paired, workspace-scoped `peer` requests/channels.
+
 ### Follow selection while a tab is closed
 
 Capture `selection` from the public activation context to observe basic machine, project, workspace, and session information independently of panel mounting. `getSnapshot()` reads the current selection synchronously. `subscribe(listener)` reports changes after the host commits its UI state; several changes in one commit may be coalesced. It does not call the listener immediately, and unrelated status updates, tool changes, and route queries are not selection notifications. Snapshots are detached from host state and other subscribers; they contain no transcript or private session-file path.
@@ -217,11 +219,80 @@ A server plugin can create a normal, visible Pi conversation, with or without an
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
 
+For an agent tool that only needs the package backend, use `createCompanionBackend(pi.events, pluginId)` from `@jmfederico/pi-web/server-plugin-api`. No backend-created session connection or remote-networking code is needed:
+
+```ts
+import { Type } from "@earendil-works/pi-ai";
+import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createCompanionBackend } from "@jmfederico/pi-web/server-plugin-api";
+
+export default function (pi: ExtensionAPI) {
+  pi.registerTool(defineTool({
+    name: "package_summary",
+    label: "Package summary",
+    description: "Read this package's backend summary",
+    parameters: Type.Object({}),
+    async execute(_id, _input, signal) {
+      const backend = createCompanionBackend(pi.events, "example.transport");
+      const result = await backend.request("summary", null, signal ? { signal } : {});
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  }));
+}
+```
+
+Use the package manifest's PI WEB plugin ID. Obtain the service inside tool execution or `session_start`, not while the extension factory loads. Calls always enter that hosted session's current-machine backend; the helper accepts neither a URL nor a remote machine target. The backend may route onward. Native `/reload` needs no reconnect setup. Closing or replacing the hosted runtime revokes retained services and cancels pending requests. Outside a supporting PI WEB hosted session, discovery fails immediately rather than opening a listener or falling back to HTTP. Install/enable the matching server entry on that machine; inactive backends reject. Extensions remain trusted in-process code, not a new permission boundary. During daemon startup, calls before the healthy backend snapshot is ready reject explicitly.
+
 ### Storage and background work
 
 Server plugins receive a persistent `dataDirectory`, separate from installed package code. The directory is shared across that plugin's projects on the machine. Plugins own their data format, migrations, and cleanup; there is no host storage API to learn.
 
 Requests and channels are bounded and can fail, time out, or disconnect. A successful send does not guarantee delivery, and the host does not automatically retry uncertain work. Long-running jobs should maintain their own state and let the UI reconnect without accidentally starting the job twice.
+
+### Requests between machine backends
+
+A server entry can serve machine-wide operations through `backend.request()` and call the same plugin on another registered machine through activation's `transport` service. Neither side needs a project or workspace, a browser entry, or a separate HTTP listener. The backend chooses the target; PI WEB resolves the machine's registered URL and existing connection settings.
+
+```ts
+import type { PiWebServerPlugin } from "@jmfederico/pi-web/server-plugin-api";
+
+export default {
+  apiVersion: 3,
+  name: "Transport example",
+  activate({ transport, settings }) {
+    if (transport?.version !== 1) throw new Error("Update PI WEB to use backend transport");
+    return {
+      backend: {
+        async request({ operation, input, signal }) {
+          if (operation === "echo") return input;
+          if (operation !== "forward") throw new Error("Unknown operation");
+          const machineId = settings["targetMachineId"];
+          if (typeof machineId !== "string") throw new Error("Configure targetMachineId");
+          return await transport.request({ machineId, operation: "echo", input, signal });
+        },
+      },
+    };
+  },
+} satisfies PiWebServerPlugin;
+```
+
+Install and enable the entry with the **same plugin ID on both machines**. Register the receiving machine in the initiating machine's Settings, then configure that registry-local ID through normal machine-global plugin settings, for example:
+
+```json
+{
+  "plugins": {
+    "example.transport": {
+      "settings": { "targetMachineId": "registered-machine-id" }
+    }
+  }
+}
+```
+
+Use an ID, not a URL or `local`. Changing server settings requires a restart of that machine's session daemon. Both hosts need a PI WEB version supporting this service; update their web/API processes and safely restart their session daemons before use. Older hosts omit `transport`; feature-detect it. Server API v3 and existing workspace peer requests/channels remain unchanged. Application panels use `context.backend`, and hosted companion tools use `createCompanionBackend`, to enter their own current-machine handler before it chooses any remote target.
+
+The receiving callback gets only frozen `operation`, detached/frozen JSON `input`, and a bounded `signal`. Operations use lowercase letters, digits, dots, and hyphens, begin with a letter, and are limited to 128 characters. Input is limited to 256 KiB of JSON and results to 8 MiB. Each backend callback has a 10-second budget; remote transport has a 30-second maximum and also follows the caller's signal and the initiating plugin's lifetime. Forward the callback signal for nested calls. Shutdown, failed activation/start, or a completed request cannot leave a retained facade's old operation live.
+
+Unknown or unavailable machines, inactive handlers, unsupported hosts, invalid JSON, and remote failures reject. There is no automatic retry or local fallback; a timeout does not prove that remote work was never performed. Hosts do not require matching installed module revisions for these operations, so plugins must validate their own operation/input schema. Operations are exposed through PI WEB's existing HTTP accessibility, with no new transport permissions or authentication model; plugins may add their own checks.
 
 ### Workspace providers
 
@@ -315,6 +386,10 @@ Captain's Log is an optional example that retells a conversation's latest assist
 The package is prebuilt; no compilation is required. It reads the source reply without modifying that conversation and uses a separate pirate conversation. Model credentials are required, and the source text goes to the pirate's model provider. Previous results are saved. After a daemon restart, open the previous pirate conversation in Sessions if you want to reuse its context.
 
 See the [Captain's Log usage guide](https://github.com/jmfederico/pi-web/blob/main/pi-packages/captains-log/docs/usage.md) for the demo's behavior and troubleshooting.
+
+### Standalone To-dos
+
+The repository's [To-dos package](https://github.com/jmfederico/pi-web/tree/main/packages/todos) is an opt-in, separately built/local-installable package, not included in the PI WEB distribution or Available packages auto-installation. Its application tab and hosted companion tools manage one SQLite-backed list through a configured server and client machines. It supports optional project assignment, one shared unassigned bucket, project/status/text/archived filters and revision-checked create/update/archive/restore. Git-origin identities match across machines; non-Git/no-origin identities stay local to their originating machine while tasks remain in the central list. See its [usage guide](https://github.com/jmfederico/pi-web/blob/main/packages/todos/docs/usage.md) for build/install commands, machine-global JSON roles/targets and safe restart ordering.
 
 ## Pi extension dialogs
 

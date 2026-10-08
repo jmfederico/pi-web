@@ -4,6 +4,7 @@ import type {
   JsonValue,
   ServerPluginPeerChannelOpenContext,
   ServerPluginPeerRequestContext,
+  ServerPluginBackendRequestContext,
   WorkspaceProvider,
 } from "../../server-plugin-api.js";
 import type { Project } from "../types.js";
@@ -29,6 +30,58 @@ afterEach(() => {
 });
 
 describe("PluginBackendRegistry", () => {
+  it("serves machine-wide operations without workspace resolution or module revision", async () => {
+    let observed: ServerPluginBackendRequestContext | undefined;
+    const resolveWorkspace = vi.fn<WorkspaceProviderRegistry["resolve"]>();
+    const registry = new PluginBackendRegistry({
+      contributions: [],
+      machineContributions: [{ pluginId: "notes", backend: { request(context) {
+        observed = context;
+        return { operation: context.operation, input: context.input };
+      } } }],
+      workspaces: { resolve: resolveWorkspace },
+    });
+    const input = { title: "Original" };
+    const result = await registry.requestMachine({ pluginId: "notes", operation: "read", input });
+    input.title = "Changed";
+    expect(result).toEqual({ operation: "read", input: { title: "Original" } });
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(observed === undefined ? [] : Object.keys(observed).sort()).toEqual(["input", "operation", "signal"]);
+    expect(Object.isFrozen(observed)).toBe(true);
+    expect(Object.isFrozen(observed?.input)).toBe(true);
+    expect(observed?.signal.aborted).toBe(true);
+    await expect(registry.requestMachine({ pluginId: "missing", operation: "read", input: null }))
+      .rejects.toMatchObject({ code: "inactive-plugin", statusCode: 409 });
+    await registry.closeAll();
+    await expect(registry.requestMachine({ pluginId: "notes", operation: "read", input: null }))
+      .rejects.toMatchObject({ code: "shutdown", statusCode: 503 });
+  });
+
+  it("bounds machine-wide callbacks and rejects invalid results", async () => {
+    vi.useFakeTimers();
+    let observedSignal: AbortSignal | undefined;
+    const registry = new PluginBackendRegistry({
+      contributions: [],
+      machineContributions: [{ pluginId: "notes", backend: { request({ operation, signal }) {
+        if (operation === "invalid") return Number.NaN;
+        observedSignal = signal;
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => { reject(new Error("cancelled")); }, { once: true });
+        });
+      } } }],
+      workspaces: { resolve: vi.fn() },
+      callbackTimeoutMs: 50,
+    });
+    await expect(registry.requestMachine({ pluginId: "notes", operation: "invalid", input: null }))
+      .rejects.toMatchObject({ code: "invalid-result", statusCode: 502 });
+    const pending = registry.requestMachine({ pluginId: "notes", operation: "wait", input: null });
+    const failure = expect(pending).rejects.toMatchObject({ code: "request-timeout", statusCode: 504 });
+    await vi.advanceTimersByTimeAsync(50);
+    await failure;
+    expect(observedSignal?.aborted).toBe(true);
+    await registry.closeAll();
+  });
+
   it("dispatches a non-provider plugin against a host-resolved provider workspace", async () => {
     let observed: ServerPluginPeerRequestContext | undefined;
     const workspaces = providerRegistry([providerContribution("git", {

@@ -16,6 +16,10 @@ import type {
   PluginCapability,
   PluginCapabilityProvision,
   ServerPluginCapabilityResolver,
+  ServerPluginBackend,
+  ServerPluginBackendRequestContext,
+  ServerPluginTransportRequest,
+  ServerPluginTransportV1,
   ServerPluginPeer,
   ServerPluginPeerChannel,
   ServerPluginPeerChannelCloseContext,
@@ -339,7 +343,7 @@ describe("public server plugin API", () => {
 
   it("keeps host inputs readonly and concrete services out of the declaration surface", async () => {
     expectTypeOf<keyof ServerPluginActivationContext>().toEqualTypeOf<
-      "apiVersion" | "pluginId" | "packageRoot" | "dataDirectory" | "logger" | "settings" | "notices" | "execFile" | "signal" | "lifetimeSignal"
+      "apiVersion" | "pluginId" | "packageRoot" | "dataDirectory" | "logger" | "settings" | "notices" | "execFile" | "transport" | "signal" | "lifetimeSignal"
     >();
     expectTypeOf<keyof ServerPluginNoticeReporterV1>().toEqualTypeOf<"version" | "record">();
     expectTypeOf<keyof ServerPluginNoticeInput>().toEqualTypeOf<"severity" | "message" | "scope" | "context">();
@@ -357,7 +361,13 @@ describe("public server plugin API", () => {
       .toEqualTypeOf<"status" | "error">();
     expectTypeOf<keyof PiWebHostPiSessionsV1>().toEqualTypeOf<"version" | "create" | "run">();
     expectTypeOf<keyof ServerPluginStartContext>().toEqualTypeOf<"capabilities" | "signal">();
-    expectTypeOf<keyof ServerPluginActivation>().toEqualTypeOf<"workspaceProvider" | "peer" | "provides" | "start" | "dispose" | "health">();
+    expectTypeOf<keyof ServerPluginActivation>().toEqualTypeOf<"workspaceProvider" | "peer" | "backend" | "provides" | "start" | "dispose" | "health">();
+    expectTypeOf<keyof ServerPluginBackend>().toEqualTypeOf<"request">();
+    expectTypeOf<keyof ServerPluginBackendRequestContext>().toEqualTypeOf<"operation" | "input" | "signal">();
+    expectTypeOf<ReadonlyKeys<ServerPluginBackendRequestContext>>().toEqualTypeOf<keyof ServerPluginBackendRequestContext>();
+    expectTypeOf<keyof ServerPluginTransportRequest>().toEqualTypeOf<"machineId" | "operation" | "input" | "signal">();
+    expectTypeOf<ReadonlyKeys<ServerPluginTransportRequest>>().toEqualTypeOf<keyof ServerPluginTransportRequest>();
+    expectTypeOf<ServerPluginTransportV1["version"]>().toEqualTypeOf<1>();
     expectTypeOf<keyof ServerPluginNoticeScope>().toEqualTypeOf<"projectId" | "workspaceId" | "sessionId">();
     expectTypeOf<keyof WorkspaceProvider>().toEqualTypeOf<
       "fallback" | "probe" | "list" | "prepareRemove"

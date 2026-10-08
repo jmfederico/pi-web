@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { isPiWebPluginId } from "../../shared/pluginIds.js";
 import {
   PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  PLUGIN_BACKEND_MACHINE_REQUEST_ROUTE_PATH,
+  parsePluginBackendMachineRequestEnvelope,
   parsePluginBackendRequestEnvelope,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
@@ -14,6 +16,7 @@ import type { Project } from "../types.js";
 import {
   PluginBackendRequestError,
   type PluginBackendRequest,
+  type PluginBackendMachineRequest,
 } from "../plugins/pluginBackendRegistry.js";
 
 interface PluginBackendRouteParams {
@@ -96,6 +99,41 @@ export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependen
         return await pluginBackendRequestFailed(reply, error, pluginId, operation);
       } finally {
         dependencies.onWorkspacesMutated();
+        cancellation.dispose();
+      }
+    },
+  );
+}
+
+/** Machine-wide handler admission; intentionally follows existing HTTP accessibility. */
+export function registerMachinePluginBackendRoutes(
+  app: FastifyInstance,
+  backends: { requestMachine(request: PluginBackendMachineRequest, signal?: AbortSignal): Promise<unknown> },
+): void {
+  app.post<{ Params: { pluginId: string; operation: string }; Body: unknown }>(
+    PLUGIN_BACKEND_MACHINE_REQUEST_ROUTE_PATH,
+    { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
+    async (request, reply) => {
+      const { pluginId, operation } = request.params;
+      let input;
+      try {
+        if (!isPiWebPluginId(pluginId)) throw new Error(`Invalid PI WEB plugin id: ${pluginId}`);
+        requirePluginBackendOperation(operation);
+        input = parsePluginBackendMachineRequestEnvelope(request.body).input;
+      } catch (error) {
+        return attributedError(reply, 400, boundedErrorMessage(error), "invalid-request", pluginId, operation);
+      }
+      const cancellation = requestCancellation(request, reply);
+      try {
+        const result = await backends.requestMachine({ pluginId, operation, input }, cancellation.signal);
+        return await reply.type("application/json; charset=utf-8").send(serializeBoundedPluginBackendJson(
+          result,
+          `Server plugin ${pluginId} operation ${operation} result`,
+          PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
+        ));
+      } catch (error) {
+        return await pluginBackendRequestFailed(reply, error, pluginId, operation);
+      } finally {
         cancellation.dispose();
       }
     },

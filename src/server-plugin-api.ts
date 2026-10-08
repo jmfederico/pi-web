@@ -1,4 +1,5 @@
 import type {
+  PluginBackend,
   JsonObject,
   JsonPrimitive,
   JsonValue,
@@ -9,6 +10,7 @@ import type {
 } from "./shared/pluginApiTypes.js";
 
 export type {
+  PluginBackend,
   JsonObject,
   JsonPrimitive,
   JsonValue,
@@ -45,6 +47,8 @@ export interface ServerPluginActivationContext {
    * The caller must forward the signal for its current bounded operation.
    */
   readonly execFile: (request: ServerPluginExecFileRequest) => Promise<ServerPluginExecFileResult>;
+  /** Host-managed requests to this same plugin on a registered remote machine. Feature-detect on older hosts. */
+  readonly transport?: ServerPluginTransportV1;
   /**
    * Signal for this activation invocation. It is aborted when activation times
    * out or settles and must not be retained for lifetime cleanup.
@@ -243,6 +247,8 @@ export interface ServerPluginActivation {
   workspaceProvider?: WorkspaceProvider;
   /** Serve bounded requests and optional duplex channels from this package's paired browser entry. */
   peer?: ServerPluginPeer;
+  /** Machine-wide JSON operations, independent of project/workspace selection or browser revision. */
+  backend?: ServerPluginBackend;
   /** Typed capability values owned by this plugin and published only after start succeeds. */
   provides?: readonly PluginCapabilityProvision[];
   /** Initialize resources after every exact declared capability requirement is active. */
@@ -251,6 +257,33 @@ export interface ServerPluginActivation {
   dispose?(signal: AbortSignal): MaybePromise<void>;
   /** Inspect health within one host-bounded health invocation. */
   health?(signal: AbortSignal): MaybePromise<ServerPluginHealth>;
+}
+
+/** Machine-wide operation served by this plugin on the receiving host. */
+export interface ServerPluginBackend {
+  request(context: ServerPluginBackendRequestContext): MaybePromise<JsonValue>;
+}
+
+/** Detached, frozen JSON input. The signal is bounded to this invocation. */
+export interface ServerPluginBackendRequestContext {
+  readonly operation: string;
+  readonly input: JsonValue;
+  readonly signal: AbortSignal;
+}
+
+export interface ServerPluginTransportRequest {
+  /** Registry-local remote machine id on the initiating host; not a URL. */
+  readonly machineId: string;
+  readonly operation: string;
+  readonly input: JsonValue;
+  /** Forward the current operation's signal; also cancelled when the plugin lifetime ends. */
+  readonly signal: AbortSignal;
+}
+
+/** No automatic retry, fallback, or project scope; remote errors reject. */
+export interface ServerPluginTransportV1 {
+  readonly version: 1;
+  readonly request: (request: ServerPluginTransportRequest) => Promise<JsonValue>;
 }
 
 export interface ServerPluginHealth {
@@ -395,6 +428,27 @@ export interface WorkspaceRemovePlan {
    * meaning the removal succeeded.
    */
   command: string;
+}
+
+/** The native pi.events surface; no SDK or networking dependency is required. */
+export interface CompanionBackendEvents {
+  emit(channel: string, data: unknown): void;
+}
+
+/**
+ * Obtain this package's current-machine backend inside a hosted companion tool
+ * or session_start handler. Throws immediately outside a supporting PI WEB host.
+ * The supplied plugin id is the package manifest's stable PI WEB plugin id.
+ */
+export function createCompanionBackend(events: CompanionBackendEvents, pluginId: string): PluginBackend {
+  let backend: PluginBackend | undefined;
+  events.emit("pi-web:companion-backend:v1", {
+    version: 1,
+    pluginId,
+    accept(value: PluginBackend) { backend = value; },
+  });
+  if (backend === undefined) throw new Error("PI WEB companion backend unavailable; use a hosted session on an updated host");
+  return backend;
 }
 
 function snapshotPiWebHostWorkspacesV1(value: unknown): PiWebHostWorkspacesV1 {

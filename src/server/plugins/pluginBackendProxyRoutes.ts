@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  PLUGIN_BACKEND_MACHINE_REQUEST_ROUTE_PATH,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
   utf8ByteLength,
@@ -8,20 +9,33 @@ import {
 import type { SessionDaemonRequestClient } from "../../sessiond/sessionDaemonClient.js";
 import { requestCancellation } from "../requestCancellation.js";
 
-interface PluginBackendProxyParams {
+interface PluginBackendProxyIdentity {
   pluginId: string;
-  projectId: string;
-  workspaceId: string;
   operation: string;
 }
 
 /** Browser-facing package-paired route; package and workspace authority stay in sessiond. */
 export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
-  app.post<{ Params: PluginBackendProxyParams; Body: unknown }>(
-    `/api${PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH}`,
+  registerPluginBackendProxyRoute(app, daemon, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, daemonPluginBackendPath);
+}
+
+export function registerMachinePluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
+  registerPluginBackendProxyRoute(app, daemon, PLUGIN_BACKEND_MACHINE_REQUEST_ROUTE_PATH, (params: PluginBackendProxyIdentity) => (
+    `/plugin-backends/${encodeURIComponent(params.pluginId)}/${encodeURIComponent(params.operation)}`
+  ));
+}
+
+function registerPluginBackendProxyRoute(
+  app: FastifyInstance,
+  daemon: SessionDaemonRequestClient,
+  route: string,
+  daemonPath: (params: PluginBackendProxyIdentity) => string,
+): void {
+  app.post<{ Params: PluginBackendProxyIdentity; Body: unknown }>(
+    `/api${route}`,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
-      const path = daemonPluginBackendPath(request.params);
+      const path = daemonPath(request.params);
       const cancellation = requestCancellation(request, reply);
       try {
         let upstream: Awaited<ReturnType<SessionDaemonRequestClient["request"]>>;
@@ -65,7 +79,11 @@ export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, dae
   );
 }
 
-function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
+function daemonPluginBackendPath(params: PluginBackendProxyIdentity): string {
+  if (!("projectId" in params) || typeof params.projectId !== "string"
+    || !("workspaceId" in params) || typeof params.workspaceId !== "string") {
+    throw new Error("Paired plugin backend requires project and workspace scope");
+  }
   return [
     "/paired-plugin-backends",
     encodeURIComponent(params.pluginId),
@@ -77,7 +95,7 @@ function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
   ].join("/");
 }
 
-function daemonProtocolError(reply: FastifyReply, params: PluginBackendProxyParams, message: string): FastifyReply {
+function daemonProtocolError(reply: FastifyReply, params: PluginBackendProxyIdentity, message: string): FastifyReply {
   return reply.code(502).send({
     error: message,
     code: "daemon-protocol-error",

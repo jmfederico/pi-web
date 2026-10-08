@@ -80,6 +80,7 @@ describe("plugin delivery artifacts", () => {
       "examples/session-bridge-plugin/package.json",
     ]));
     expect(packagedFiles.some((path) => path.includes("/node_modules/") || /^examples\/[^/]+\/dist\//u.test(path))).toBe(false);
+    expect(packagedFiles.some((path) => path.startsWith("packages/todos/") || path.startsWith("dist/pi-packages/todos/"))).toBe(false);
     expect(packagedFiles).not.toContain("dist/plugin-api/unstable.d.ts");
     expect(packagedFiles).not.toContain("plugin-api/unstable.d.ts");
     const builtPluginFiles = (await recursiveFiles(builtPluginsRoot)).map((path) => `dist/pi-web-plugins/${path}`).sort();

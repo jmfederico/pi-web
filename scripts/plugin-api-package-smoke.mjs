@@ -152,6 +152,7 @@ async function assertExampleCompatibilityFloor(packageRoot) {
 async function assertServerRuntimeApi(consumerRoot) {
   const fixturePath = join(consumerRoot, "server-runtime.mjs");
   await writeFile(fixturePath, `
+    export { createCompanionBackend } from "@jmfederico/pi-web/server-plugin-api";
     import {
       PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
       PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY,
@@ -160,6 +161,11 @@ async function assertServerRuntimeApi(consumerRoot) {
     export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY];
   `, "utf8");
   const serverApi = await import(pathToFileURL(fixturePath).href);
+  if (typeof serverApi.createCompanionBackend !== "function") throw new Error("Installed companion backend helper is missing");
+  const backend = { version: 1, request: async () => null };
+  if (serverApi.createCompanionBackend({ emit: (_channel, query) => query.accept(backend) }, "fixture.transport") !== backend) {
+    throw new Error("Installed companion backend helper did not return the hosted service");
+  }
   const [workspacesCapability, piSessionsCapability, sessionEventsCapability] = serverApi.default;
   if (!Object.isFrozen(sessionEventsCapability) || sessionEventsCapability?.pluginId !== "pi-web.host"
     || sessionEventsCapability?.id !== "pi-session-events" || sessionEventsCapability?.version !== 1

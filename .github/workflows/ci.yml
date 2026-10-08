@@ -41,6 +41,12 @@ jobs:
       - name: Check delivery artifacts
         run: npm run check:artifacts
 
+      - name: Build and smoke test standalone To-dos package
+        if: runner.os == 'Linux'
+        run: |
+          npm run build:todos
+          npm run smoke:todos
+
       - name: Smoke test npm 12 global package install
         if: runner.os == 'Linux'
         run: npm run smoke:package-install

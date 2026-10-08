@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@jmfederico/pi-web/plugin-api": ["../../dist/plugin-api.d.ts"],
+      "@jmfederico/pi-web/server-plugin-api": ["../../dist/server-plugin-api.d.ts"]
+    }
+  }
+}

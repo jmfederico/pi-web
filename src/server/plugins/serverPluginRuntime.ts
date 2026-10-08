@@ -7,6 +7,9 @@ import type {
   JsonValue,
   PluginCapability,
   PluginCapabilityProvision,
+  ServerPluginBackend,
+  ServerPluginBackendRequestContext,
+  ServerPluginTransportV1,
   ServerPluginPeer,
   ServerPluginPeerChannel,
   ServerPluginPeerChannelCloseContext,
@@ -89,6 +92,11 @@ export interface ServerPluginPairedBackendContribution {
   backend: ServerPluginPeer;
 }
 
+export interface ServerPluginBackendContribution {
+  readonly pluginId: string;
+  readonly backend: ServerPluginBackend;
+}
+
 export interface ServerPluginHealthInspection {
   pluginId: string;
   health: ServerPluginHealth;
@@ -130,6 +138,8 @@ export interface CreateServerPluginRuntimeOptions {
   logger: ServerPluginRuntimeLogger;
   importer?: ServerPluginModuleImporter;
   execFile?: ServerPluginExecFile;
+  /** Host networking facade, attributed to each activation and revoked by its lifetime. */
+  transportFactory?: (context: ServerPluginHostCapabilityContext) => ServerPluginTransportV1;
   lifecycleTimeoutMs?: number;
   /** Core-owned sink; source is host-derived as `plugin:<catalog id>`. */
   noticeSink?: (source: string, input: ServerPluginNoticeInput) => void;
@@ -235,6 +245,7 @@ export class ServerPluginRuntime {
     private readonly logger: ServerPluginRuntimeLogger,
     private readonly importer: ServerPluginModuleImporter,
     private readonly execFile: ServerPluginExecFile,
+    private readonly transportFactory: CreateServerPluginRuntimeOptions["transportFactory"],
     private readonly lifecycleTimeoutMs: number,
     private readonly noticeSink: ((source: string, input: ServerPluginNoticeInput) => void) | undefined,
     hostCapabilities: readonly InternalCapabilityProvision[],
@@ -261,6 +272,7 @@ export class ServerPluginRuntime {
       options.logger,
       options.importer ?? importServerPluginModule,
       options.execFile ?? createServerPluginExecFile(),
+      options.transportFactory,
       positiveInteger(options.lifecycleTimeoutMs, DEFAULT_LIFECYCLE_TIMEOUT_MS, "lifecycleTimeoutMs"),
       options.noticeSink,
       snapshotHostCapabilities(options.hostCapabilities),
@@ -304,6 +316,12 @@ export class ServerPluginRuntime {
 
   pairedBackendContributions(): readonly ServerPluginPairedBackendContribution[] {
     return Object.freeze(this.activePlugins.flatMap((active) => active.pairedBackendContribution === undefined ? [] : [active.pairedBackendContribution]));
+  }
+
+  backendContributions(): readonly ServerPluginBackendContribution[] {
+    return Object.freeze(this.activePlugins.flatMap(({ entry, activation }) => activation.backend === undefined
+      ? []
+      : [Object.freeze({ pluginId: entry.id, backend: activation.backend })]));
   }
 
   /** Resolves one exact active capability for a core host consumer. */
@@ -457,6 +475,11 @@ export class ServerPluginRuntime {
       await mkdir(dataDirectory, { recursive: true });
       const scopedLogger = createScopedLogger(entry.id, this.logger);
       noticeReporter = createScopedNoticeReporter(entry.id, this.noticeSink);
+      const transport = this.transportFactory?.(Object.freeze({
+        pluginId: entry.id,
+        packageRoot: entry.packageRoot,
+        lifetimeSignal: lifetimeController.signal,
+      }));
       const activationValue = await runBounded(entry.id, phase, this.lifecycleTimeoutMs, (signal) => loadedPlugin.activate(Object.freeze({
         apiVersion: 3,
         pluginId: entry.id,
@@ -466,6 +489,7 @@ export class ServerPluginRuntime {
         settings,
         ...(noticeReporter === undefined ? {} : { notices: noticeReporter.reporter }),
         execFile: this.execFile,
+        ...(transport === undefined ? {} : { transport }),
         signal,
         lifetimeSignal: lifetimeController.signal,
       })));
@@ -961,6 +985,7 @@ function parseActivation(value: unknown, pluginId: string): ServerPluginActivati
   const candidate = {
     workspaceProvider: workspaceProviderValue === undefined ? undefined : snapshotWorkspaceProvider(workspaceProviderValue),
     peer: peerValue === undefined ? undefined : snapshotPluginPeer(peerValue),
+    backend: value["backend"] === undefined ? undefined : snapshotPluginBackend(value["backend"]),
     provides,
     start: value["start"],
     dispose: value["dispose"],
@@ -979,6 +1004,7 @@ function parseActivation(value: unknown, pluginId: string): ServerPluginActivati
   return Object.freeze({
     ...(candidate.workspaceProvider === undefined ? {} : { workspaceProvider: candidate.workspaceProvider }),
     ...(candidate.peer === undefined ? {} : { peer: candidate.peer }),
+    ...(candidate.backend === undefined ? {} : { backend: candidate.backend }),
     ...(provides.length === 0 ? {} : { provides }),
     ...(start === undefined ? {} : { start: (context: ServerPluginStartContext) => start(context) }),
     ...(dispose === undefined ? {} : { dispose: (signal: AbortSignal) => dispose(signal) }),
@@ -990,12 +1016,14 @@ function isServerPluginActivation(value: unknown): value is ServerPluginActivati
   if (!isRecord(value)) return false;
   const workspaceProvider = value["workspaceProvider"];
   const peer = value["peer"];
+  const backend = value["backend"];
   const provides = value["provides"];
   const start = value["start"];
   const dispose = value["dispose"];
   const health = value["health"];
   return (workspaceProvider === undefined || isWorkspaceProvider(workspaceProvider))
     && (peer === undefined || isPluginPeer(peer))
+    && (backend === undefined || isPluginBackend(backend))
     && (provides === undefined || Array.isArray(provides))
     && (start === undefined || typeof start === "function")
     && (dispose === undefined || typeof dispose === "function")
@@ -1299,6 +1327,20 @@ function combinedDisposalError(pluginError: unknown, hostCleanupError: unknown):
     [pluginError, hostCleanupError],
     `${errorMessage(pluginError)}; host capability cleanup failed: ${errorMessage(hostCleanupError)}`,
   );
+}
+
+function snapshotPluginBackend(value: unknown): ServerPluginBackend {
+  if (!isPluginBackend(value)) {
+    throw new IncompatibleServerPluginError("Server plugin backend must include a request handler");
+  }
+  const request = value.request.bind(value);
+  return Object.freeze({
+    request: (context: ServerPluginBackendRequestContext): JsonValue | Promise<JsonValue> => request(context),
+  });
+}
+
+function isPluginBackend(value: unknown): value is ServerPluginBackend {
+  return isRecord(value) && typeof value["request"] === "function";
 }
 
 function snapshotPluginPeer(value: unknown): ServerPluginPeer {

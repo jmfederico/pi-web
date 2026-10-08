@@ -12,6 +12,8 @@ export interface SessionServiceDependencyInput {
   /** Daemon-lifetime session archive, constructed against the captured daemon environment. */
   archiveStore: NonNullable<PiSessionServiceDependencies["archiveStore"]>;
   sessionManager: PiSessionServiceDependencies["sessionManager"];
+  /** Hosted event buses with the machine-local companion backend dispatcher. */
+  sessionEvents?: NonNullable<PiSessionServiceDependencies["sessionEvents"]>;
   modelRuntime: PiSessionServiceDependencies["modelRuntime"];
   workspaceActivity: NonNullable<PiSessionServiceDependencies["workspaceActivity"]>;
   logger: NonNullable<PiSessionServiceDependencies["logger"]>;
@@ -67,5 +69,6 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     catalogRefreshStatus: input.catalogRefreshStatus,
     config: input.config,
     sessionManager: input.sessionManager,
+    ...(input.sessionEvents === undefined ? {} : { sessionEvents: input.sessionEvents }),
   };
 }

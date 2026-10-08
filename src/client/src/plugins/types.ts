@@ -290,6 +290,7 @@ export interface ApplicationPanelContext {
   machine: PluginMachine;
   state: AppState;
   projects?: PluginProjects;
+  backend?: import("../../../shared/pluginApiTypes").PluginBackend;
   workspace?: Workspace;
   terminal?: WorkspacePanelTerminal;
   navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;

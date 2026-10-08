@@ -91,6 +91,24 @@ export function requestPairedPluginBackend(
   return requestPluginBackendAt(target, operation, input, options, pairedPluginBackendRequestUrl);
 }
 
+export function machinePluginBackendRequestPath(target: { pluginId: string; machineId: string }, operation: string): string {
+  if (!isPiWebPluginId(target.pluginId)) throw new Error("Invalid PI WEB plugin id");
+  if (target.machineId === "") throw new Error("Machine id is required");
+  const prefix = target.machineId === "local" ? "api" : `api/machines/${encodeURIComponent(target.machineId)}`;
+  return `${prefix}/plugin-backends/${encodeURIComponent(target.pluginId)}/${encodeURIComponent(requirePluginBackendOperation(operation))}`;
+}
+
+export async function requestMachinePluginBackend(
+  target: { pluginId: string; machineId: string },
+  operation: string,
+  input: JsonValue,
+  options: PluginBackendRequestOptions = {},
+): Promise<JsonValue> {
+  const path = machinePluginBackendRequestPath(target, operation);
+  const body = JSON.stringify({ version: 1, input: cloneBoundedPluginBackendJson(input, "Plugin backend request input") });
+  return await requestPluginBackendJson(resolveAppUrl(path), body, options);
+}
+
 export function openPairedPluginBackendChannel(
   target: PluginBackendRequestTarget,
   operation: string,
@@ -243,13 +261,18 @@ async function requestPluginBackendAt(
   const revision = requirePluginBackendRevision(target.backendRevision);
   const clonedInput = cloneBoundedPluginBackendJson(input, "Plugin backend request input");
   const body = JSON.stringify({ revision, input: clonedInput });
+  return await requestPluginBackendJson(requestUrl(target, operation), body, options);
+}
+
+async function requestPluginBackendJson(url: string, body: string, options: PluginBackendRequestOptions): Promise<JsonValue> {
+  options.signal?.throwIfAborted();
   if (utf8ByteLength(body) > PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES) {
     throw new Error(`Plugin backend request exceeds the ${String(PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES)} byte wire limit`);
   }
 
   let response: Response;
   try {
-    response = await fetch(requestUrl(target, operation), {
+    response = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body,

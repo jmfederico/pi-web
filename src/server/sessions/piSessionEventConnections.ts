@@ -1,15 +1,21 @@
 import type { createEventBus } from "@earendil-works/pi-coding-agent";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
+import { bindCompanionBackend, type CompanionBackendDispatcher } from "./companionBackend.js";
 
 type EventBus = ReturnType<typeof createEventBus>;
 
 /** Buses belong to concrete native sessions, never to a cwd or a reusable id. */
 export class PiSessionEventConnections {
-  private readonly sessions = new WeakMap<object, { bus: EventBus; connections: Set<PiWebHostPiSessionConnection> }>();
+  private readonly sessions = new WeakMap<object, { bus: EventBus; connections: Set<PiWebHostPiSessionConnection>; disposeBackend?: () => void }>();
+
+  constructor(private readonly backends?: CompanionBackendDispatcher) {}
 
   register(session: object, bus: EventBus): void {
     this.close(session);
-    this.sessions.set(session, { bus, connections: new Set() });
+    this.sessions.set(session, {
+      bus, connections: new Set(),
+      ...(this.backends === undefined ? {} : { disposeBackend: bindCompanionBackend(bus, this.backends) }),
+    });
   }
 
   connect(session: object, lifetime: AbortSignal): PiWebHostPiSessionConnection {
@@ -56,6 +62,7 @@ export class PiSessionEventConnections {
   close(session: object): void {
     const hosted = this.sessions.get(session);
     if (hosted === undefined) return;
+    hosted.disposeBackend?.();
     for (const connection of hosted.connections) connection.close();
     this.sessions.delete(session);
   }
