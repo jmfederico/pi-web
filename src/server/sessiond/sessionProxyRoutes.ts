@@ -6,6 +6,7 @@ import {
   type SessionDaemonStreamResponse,
 } from "../../sessiond/sessionDaemonClient.js";
 import { requestCancellation } from "../requestCancellation.js";
+import { MCP_HTTP_ROUTES } from "../../shared/federatedRoutes.js";
 
 export interface SessionProxyDaemon {
   request(
@@ -65,6 +66,27 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.get(`${prefix}/events`, { websocket: true }, (socket) => {
     bridgeSockets(socket, daemon.connectWebSocket("/events"));
   });
+
+  for (const spec of MCP_HTTP_ROUTES) {
+    app.route({
+      method: spec.method,
+      url: `${prefix}${spec.path}`,
+      handler: async (request, reply) => {
+        const cancellation = "propagateCancellation" in spec ? requestCancellation(request, reply) : undefined;
+        try {
+          const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body,
+            cancellation === undefined ? undefined : { signal: cancellation.signal });
+          reply.code(upstream.statusCode);
+          return upstream.body === "" ? undefined : parseJson(upstream.body);
+        } catch (error) {
+          requestFailed(reply, error);
+          return undefined;
+        } finally {
+          cancellation?.dispose();
+        }
+      },
+    });
+  }
 
   app.post(`${prefix}/projects`, (request, reply) => proxy(request, reply));
   app.delete(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));

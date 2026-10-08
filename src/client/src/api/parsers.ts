@@ -1,6 +1,6 @@
 import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserCloseResponse, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type PendingAskUser, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
 import { parseMachineStatusSnapshot, type MachineStatusSnapshot, type MachineStatusUiEvent } from "../../../shared/machineStatus";
-import type { JsonValue, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
+import type { JsonValue, McpCheckResponse, McpConfigScope, McpConnectionInfo, McpServerInfo, McpServersResponse, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
 
 import { parseKnownPiWebCapabilities } from "../../../shared/capabilities";
 import { parseDeprecatedAgentInputs } from "../../../shared/piWebStatusParsing";
@@ -1585,6 +1585,64 @@ function parsePiWebConfigEnvOverrides(value: unknown): PiWebConfigEnvOverrides {
     spawnSessions: requireBoolean(record, "spawnSessions"),
     subsessions: requireBoolean(record, "subsessions"),
     askUser: requireBoolean(record, "askUser"),
+  };
+}
+
+export function parseMcpServersResponse(value: unknown): McpServersResponse {
+  const record = requireRecord(value);
+  return {
+    servers: arrayOf(parseMcpServerInfo)(record["servers"]),
+    errors: arrayOfString(record["errors"], "errors"),
+    userConfigPath: requireString(record, "userConfigPath"),
+    ...optionalField("projectConfigPath", optionalString(record, "projectConfigPath")),
+    ...optionalField("projectTrusted", parseOptionalBoolean(record["projectTrusted"], "projectTrusted")),
+  };
+}
+
+function parseMcpConfigScope(value: unknown): McpConfigScope {
+  if (value !== "user" && value !== "project") throw new Error("Invalid MCP config scope");
+  return value;
+}
+
+function parseMcpServerInfo(value: unknown): McpServerInfo {
+  const record = requireRecord(value);
+  const transport = record["transport"];
+  if (transport !== "stdio" && transport !== "http" && transport !== "unknown") throw new Error("Invalid MCP transport");
+  return {
+    name: requireString(record, "name"),
+    scope: parseMcpConfigScope(record["scope"]),
+    source: requireString(record, "source"),
+    enabled: requireBoolean(record, "enabled"),
+    transport,
+    exposure: requireString(record, "exposure"),
+    overridden: requireBoolean(record, "overridden"),
+    ...optionalField("description", optionalString(record, "description")),
+    ...optionalField("error", optionalString(record, "error")),
+  };
+}
+
+export function parseMcpCheckResponse(value: unknown): McpCheckResponse {
+  const record = requireRecord(value);
+  return {
+    checkedAt: requireString(record, "checkedAt"),
+    servers: arrayOf(parseMcpConnectionInfo)(record["servers"]),
+    errors: arrayOfString(record["errors"], "errors"),
+    ...optionalField("note", optionalString(record, "note")),
+  };
+}
+
+function parseMcpConnectionInfo(value: unknown): McpConnectionInfo {
+  const record = requireRecord(value);
+  const state = record["state"];
+  if (state !== "disabled" && state !== "connecting" && state !== "connected" && state !== "needs-auth" && state !== "failed" && state !== "disconnected") {
+    throw new Error("Invalid MCP connection state");
+  }
+  return {
+    name: requireString(record, "name"),
+    scope: parseMcpConfigScope(record["scope"]),
+    state,
+    tools: arrayOfString(record["tools"], "tools"),
+    ...optionalField("error", optionalString(record, "error")),
   };
 }
 

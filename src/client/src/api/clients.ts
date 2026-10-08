@@ -1,5 +1,5 @@
 import { parseSessionDefaults } from "../../../shared/sessionDefaults";
-import type { SessionDefaultsUpdate } from "../../../shared/apiTypes";
+import type { McpConfigScope, SessionDefaultsUpdate } from "../../../shared/apiTypes";
 import type { AskUserSubmission, DeleteWorkspaceFileResponse, ExtensionDialogAnswer, FileSuggestion, MoveWorkspaceFileOptions, PiPackageInstallRequest, PiPackageRemoveRequest, PiPackageScope, PiPackageUpdateRequest, PiWebConfigValues, PromptAttachment, ServerNoticeDismissRequest, SessionBulkMutationRef, SessionCleanupRequest, SessionModelScopeMode, SessionNotificationDismissThrough, SessionRef, SessionTreeForkRequest, SessionTreeForkResult, SessionTreeNavigateRequest, SessionUnreadAcknowledgeRequest, WorkspaceRemovalRequest, WriteWorkspaceFileOptions } from "../../../shared/apiTypes";
 import { resolveAppUrl } from "../appUrl";
 import { request } from "./http";
@@ -22,6 +22,8 @@ import {
   parseMachineHealth,
   parseMachineRuntime,
   parseMachinesResponse,
+  parseMcpCheckResponse,
+  parseMcpServersResponse,
   parseMessagePage,
   parseModelSelectionResponse,
   parseSessionModelCatalogResponse,
@@ -123,6 +125,28 @@ export const configApi = {
 
 export const pluginsApi = {
   plugins: (machineId?: string) => request(pluginsPath(machineId), parsePiWebPluginsResponse),
+};
+
+export interface McpWorkspaceTarget {
+  projectId: string;
+  workspaceId: string;
+}
+
+function mcpPath(machineId?: string, workspace?: McpWorkspaceTarget): string {
+  const prefix = machineId === undefined ? "api" : machinePrefix(machineId);
+  return workspace === undefined
+    ? `${prefix}/mcp`
+    : `${prefix}/projects/${encodeURIComponent(workspace.projectId)}/workspaces/${encodeURIComponent(workspace.workspaceId)}/mcp`;
+}
+
+export const mcpApi = {
+  list: (machineId?: string, workspace?: McpWorkspaceTarget) => request(mcpPath(machineId, workspace), parseMcpServersResponse),
+  setEnabled: (name: string, scope: McpConfigScope, enabled: boolean, machineId?: string, workspace?: McpWorkspaceTarget) => request(
+    `${mcpPath(machineId, workspace)}/servers/${encodeURIComponent(name)}`,
+    parseMcpServersResponse,
+    { method: "PUT", body: JSON.stringify(workspace === undefined ? { enabled } : { scope, enabled }) },
+  ),
+  check: (machineId?: string, workspace?: McpWorkspaceTarget) => request(`${mcpPath(machineId, workspace)}/check`, parseMcpCheckResponse, { method: "POST" }),
 };
 
 function piPackagePath(endpoint = "", machineId?: string): string {

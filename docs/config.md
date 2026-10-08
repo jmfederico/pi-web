@@ -35,6 +35,23 @@ Open the model or thinking-level selector and click a row’s star under **New s
 
 Defaults are saved in Pi’s global `settings.json` on the selected session’s machine (`~/.pi/agent/settings.json` by default), using `defaultProvider`, `defaultModel`, and `defaultThinkingLevel`. They apply to new sessions without restarting. Project `.pi/settings.json` overrides, explicit startup choices, and per-model thinking settings still take precedence. A default model must be enabled; otherwise startup falls back to the first enabled model. Resumed sessions keep their saved model and thinking level.
 
+## MCP servers
+
+Use **Settings → MCP servers** to inspect existing MCP connections on the selected machine, enable or disable them, and explicitly **Check connections** to see tool names and connection errors. MCP adds service-specific tools (for example, documentation search or error tracking); it is optional for ordinary coding.
+
+The panel edits Pi's existing files, separate from PI WEB config:
+
+- **Machine-wide:** `<active-agent-dir>/mcp.json` (`~/.pi/agent/mcp.json` by default).
+- **Selected workspace:** `<workspace>/.pi/mcp.json`, alongside the machine-wide entries. A trusted project's entry overrides a user entry with the exact same server name. Names that differ only by `-` versus `_` conflict instead of overriding each other.
+
+Opening the panel only reads configuration. **Check connections** temporarily starts enabled local servers or connects to remote services using the selected machine's Pi CLI and credentials, then closes those test connections. Detached helpers that remove inherited ownership information need their own shutdown handling; Windows cleanup is best-effort when wrappers have already exited. Its results are a diagnostic snapshot, not the state of any running session. Browser failures use safe summaries rather than raw stderr, HTTP bodies, or parser errors, which can contain credentials; run `pi mcp list` on the target machine for detailed diagnostics. Pi CLI checks do not use `auth.provider` credentials, so those servers may report `needs-auth` even when a session works; use `/mcp` inside the session to verify them. The CLI only loads project servers when Pi has a saved trust decision; its report notes when project configuration was skipped. A session's default or extension-owned trust decision may differ.
+
+Toggles save configuration without changing connections in already-running sessions. New sessions read the saved state; run `/reload` in each idle existing session to apply it there. Saving a disabled entry does not immediately stop its connections in other sessions. If a toggle reports that configuration changed during the update, refresh configuration and retry.
+
+To add or remove connections, use `pi mcp add` / `pi mcp remove` on the selected machine or edit the appropriate file. Use `/mcp` to inspect session status and `/mcp reconnect <server>` to reconnect in a PI WEB session. The initial Settings panel does not add connections, edit credentials, or list servers registered only by extensions. It omits environment values, headers, arguments, and connection URLs from configuration summaries. Trust the services you connect and use narrowly scoped credentials.
+
+After upgrading to a PI WEB version that introduces this panel, restart the updated web/API process and manually restart the session daemon on each target machine to load its API. That daemon restart can interrupt active sessions; ordinary MCP toggle changes afterward need only the session reload described above.
+
 ## Reverse-proxy deployment paths
 
 The deployment path is not a PI WEB config-file key or environment setting. The published client is portable: one build works at `/` and at canonical trailing-slash prefixes such as `/ai/` or `/test/ai/`.
