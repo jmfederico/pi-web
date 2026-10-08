@@ -36,6 +36,24 @@ it("starts one builder, waits for publication, then starts the API without rebui
   expect(options.stop).toHaveBeenCalledWith(options.children[1]);
 });
 
+it.each([
+  [undefined, "http://127.0.0.1:8505"],
+  ["", "http://127.0.0.1:8505"],
+  ["https://dev.example.test", "https://dev.example.test"],
+])("passes the browser URL default or override (%s) to the sequenced children", async (configured, expected) => {
+  const options = harness();
+  options.env = { OTHER_SETTING: "preserved", ...(configured === undefined ? {} : { PI_WEB_BROWSER_URL: configured }) };
+  const originalEnv = { ...options.env };
+  const running = runDevelopmentWeb(options);
+  options.children[0].emit("message", { type: "plugin-build-ready" });
+  for (const call of options.launch.mock.calls) {
+    expect(call[2]).toEqual({ ...originalEnv, PI_WEB_BROWSER_URL: expected });
+  }
+  expect(options.env).toEqual(originalEnv);
+  options.signals.emit("SIGTERM");
+  expect(await running).toBe(143);
+});
+
 it("does not start the API when the initial build fails", async () => {
   const options = harness();
   const running = runDevelopmentWeb(options);

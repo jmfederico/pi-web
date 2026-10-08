@@ -15,9 +15,10 @@ export interface LoadedPiWebConfig {
   deprecatedAgentInputs: readonly DeprecatedAgentInput[];
 }
 
-export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "spawnSessions" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
+export interface EffectivePiWebConfig extends Omit<PiWebConfig, "uploads" | "attachments" | "safeTunnel" | "spawnSessions" | "subsessions" | "askUser" | "dockerEnvironmentFacts" | "agent" | "extensionDialogsTimeoutMs"> {
   uploads: NonNullable<PiWebConfig["uploads"]>;
   attachments: NonNullable<PiWebConfig["attachments"]>;
+  safeTunnel: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
   askUser: boolean;
@@ -195,6 +196,9 @@ export function resolveEffectivePiWebConfig(loaded: LoadedPiWebConfig, options: 
       ...(maxUpload !== undefined && maxUpload !== "" ? { maxUploadBytes: parseMaxUploadBytes(maxUpload, "PI_WEB_MAX_UPLOAD_BYTES") } : {}),
       uploads: effectiveUploadsConfig(loaded.config),
       attachments: effectiveAttachmentsConfig(loaded.config),
+      // Availability is a startup snapshot, distinct from Safe Tunnel's
+      // durable desired runtime state. Offline mode always dominates opt-in.
+      safeTunnel: safeTunnelAvailable(env, loaded.config),
       // Always resolved (on by default) so the effective config is the single
       // source of truth for the runtime state and the settings UI toggle.
       spawnSessions: spawnSessionsEnabled(env, loaded.config),
@@ -230,6 +234,7 @@ export function savePiWebConfig(config: PiWebConfig, options: LoadOptions = {}):
   delete existing["uploads"];
   delete existing["attachments"];
   delete existing["maxUploadBytes"];
+  delete existing["safeTunnel"];
   delete existing["spawnSessions"];
   delete existing["subsessions"];
   delete existing["askUser"];
@@ -261,6 +266,7 @@ function piWebConfigRecord(config: PiWebConfig): Record<string, unknown> {
     ...(config.uploads !== undefined ? { uploads: config.uploads } : {}),
     ...(config.attachments !== undefined ? { attachments: config.attachments } : {}),
     ...(config.maxUploadBytes !== undefined ? { maxUploadBytes: config.maxUploadBytes } : {}),
+    ...(config.safeTunnel !== undefined ? { safeTunnel: config.safeTunnel } : {}),
     ...(config.spawnSessions !== undefined ? { spawnSessions: config.spawnSessions } : {}),
     ...(config.subsessions !== undefined ? { subsessions: config.subsessions } : {}),
     ...(config.askUser !== undefined ? { askUser: config.askUser } : {}),
@@ -281,6 +287,7 @@ function parsePiWebConfig(value: Record<string, unknown>, path: string): PiWebCo
     ...(value["uploads"] !== undefined ? { uploads: parseUploadsConfig(value["uploads"], path) } : {}),
     ...(value["attachments"] !== undefined ? { attachments: parseAttachmentsConfig(value["attachments"], path) } : {}),
     ...(value["maxUploadBytes"] !== undefined ? { maxUploadBytes: parseMaxUploadBytes(value["maxUploadBytes"], "maxUploadBytes", path) } : {}),
+    ...(value["safeTunnel"] !== undefined ? { safeTunnel: parseBooleanKey(value["safeTunnel"], "safeTunnel", path) } : {}),
     ...(value["spawnSessions"] !== undefined ? { spawnSessions: parseSpawnSessions(value["spawnSessions"], path) } : {}),
     ...(value["subsessions"] !== undefined ? { subsessions: parseSubsessions(value["subsessions"], path) } : {}),
     ...(value["askUser"] !== undefined ? { askUser: parseAskUser(value["askUser"], path) } : {}),
@@ -294,6 +301,18 @@ function parseMaxUploadBytes(value: unknown, key: string, path = "environment"):
   const bytes = typeof value === "number" ? value : typeof value === "string" && value !== "" ? Number(value) : NaN;
   if (!Number.isInteger(bytes) || bytes < 1) throw new Error(`PI WEB config ${key} must be a positive integer: ${path}`);
   return bytes;
+}
+
+/**
+ * Whether this web/API process may expose and run the experimental Safe Tunnel.
+ * The gate is off by default, environment-over-config, and suppressed whenever
+ * PI WEB is offline. Changing it takes effect only when the web/API restarts.
+ */
+export function safeTunnelAvailable(env: NodeJS.ProcessEnv = process.env, config: PiWebConfig = {}): boolean {
+  if (offlineModeEnabled(env)) return false;
+  const fromEnv = env["PI_WEB_SAFE_TUNNEL"];
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv === "1" || fromEnv.toLowerCase() === "true";
+  return config.safeTunnel ?? false;
 }
 
 function parseSpawnSessions(value: unknown, path: string): boolean {

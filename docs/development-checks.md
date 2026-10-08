@@ -40,4 +40,3 @@ Pi warns when an extension package lists `typebox` in `dependencies`, even if on
 The installed-package smoke checks native Node schema creation/validation and imports all three built server tool modules after a normal global npm install. It also installs the tarball with Pi's `--legacy-peer-deps` policy and verifies native alias resolution without the Pi SDK peer present. Both installations load `/pi-web` through the real Pi resource loader with no dependency warning. The managed check covers TypeBox, not standalone provisioning of the server's separate Pi SDK peers.
 
 Revisit the alias if Pi introduces a supported way to distinguish standalone runtime dependencies from extension dependencies. Until then, keep the explicit server dependency and preserve these installation checks rather than moving it to peers or relying on an undeclared transitive dependency.
-

@@ -8,9 +8,23 @@ import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
 import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
+import {
+  loadSafeTunnelManagedAllowedHosts,
+  mergeViteAllowedHosts,
+} from "./src/server/safeTunnel/safeTunnelManagedHosts";
+import { defaultSafeTunnelStatePath } from "./src/server/safeTunnel/safeTunnelState";
+import { createViteProxyHostBypass } from "./src/server/safeTunnel/safeTunnelViteProxy";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
+// Host trust is a startup snapshot. Restart Vite after registering or changing a tunnel hostname.
+const managedAllowedHosts = config.safeTunnel
+  ? await loadSafeTunnelManagedAllowedHosts(defaultSafeTunnelStatePath())
+  : [];
+const viteAllowedHosts = mergeViteAllowedHosts(
+  config.allowedHosts,
+  managedAllowedHosts,
+);
 const docsRoot = resolve("docs");
 const docsPrefix = "/site";
 const clientPublicRoot = resolve("src/client/public");
@@ -193,7 +207,11 @@ function manualRefreshPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin()],
+  plugins: [
+    devDocsPlugin(),
+    devDeploymentIdentityPlugin(),
+    manualRefreshPlugin(),
+  ],
   root: "src/client",
   base: "./",
   build: {
@@ -220,11 +238,17 @@ export default defineConfig({
     // The application's /api WebSocket proxy remains enabled.
     hmr: false,
     ws: false,
+    // Keep in sync with scripts/dev-web.mjs and docker/compose.dev.yml: the
+    // API's browser pointer and Safe Tunnel's default local target use this port.
     port: 8505,
     strictPort: true,
-    ...(config.allowedHosts === undefined ? {} : { allowedHosts: config.allowedHosts }),
+    allowedHosts: viteAllowedHosts,
     proxy: {
-      "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
+      "/api": {
+        target: `http://localhost:${String(apiPort)}`,
+        ws: true,
+        bypass: createViteProxyHostBypass(viteAllowedHosts),
+      },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
     },
   },
