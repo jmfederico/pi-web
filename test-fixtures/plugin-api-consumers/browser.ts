@@ -10,6 +10,7 @@ import type {
   PluginNavigationOptions,
   PluginRuntimeContext,
   QualifiedContributionId,
+  SessionLabelContext,
   ContentRenderingCapability,
   ContentRendererInput,
   JsonValue,
@@ -75,7 +76,7 @@ export function readLegacyNavigationDestination(destination: PluginNavigationDes
 }
 
 export function checkPluginNavigation(
-  context: PluginRuntimeContext | MessageActionContext | DisplayedMessageActionContext | WorkspacePanelContext | ApplicationPanelContext,
+  context: PluginRuntimeContext | MessageActionContext | DisplayedMessageActionContext | WorkspacePanelContext | ApplicationPanelContext | SessionLabelContext,
   destination: PluginNavigationDestination,
   options: PluginNavigationOptions,
 ): void {

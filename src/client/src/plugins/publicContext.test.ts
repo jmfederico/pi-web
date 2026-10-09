@@ -2,7 +2,7 @@ import { html, svg } from "lit";
 import { expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
 import { adaptPublicPlugin, publicPluginSession, publicPluginState } from "./publicContext";
-import type { WorkspacePanelContext } from "./types";
+import type { SessionLabelContext, WorkspacePanelContext } from "./types";
 
 const session = {
   id: "session", cwd: "/workspace", name: "Conversation", path: "/private/session.jsonl",
@@ -76,6 +76,7 @@ it("projects state for every external workspace callback without changing the ho
   const plugin = adaptPublicPlugin({ apiVersion: 4, name: "External", activate: () => ({ contributions: {
     workspacePanels: [{ id: "panel", title: "Panel", visible, badge, onInvalidate, render }],
     workspaceLabels: [{ id: "label", visible, items }],
+    sessionLabels: [{ id: "session-label", visible, items }],
   } }) });
   const activation = await plugin.activate({ apiVersion: 4, pluginId: "external", runtimePluginId: "external", html, svg,
     signal: new AbortController().signal, lifetimeSignal: new AbortController().signal });
@@ -97,6 +98,10 @@ it("projects state for every external workspace callback without changing the ho
   panel?.render(context);
   label?.visible?.(context);
   label?.items(context);
+  const rowContext: SessionLabelContext = { ...context, session: publicPluginSession({ ...session, id: "row" }) };
+  activation.contributions.sessionLabels?.[0]?.visible?.(rowContext);
+  activation.contributions.sessionLabels?.[0]?.items(rowContext);
+  expect(items).toHaveBeenLastCalledWith(expect.objectContaining({ session: { id: "row", cwd: "/workspace", name: "Conversation", archived: false, pending: true } }));
   for (const callback of [visible, badge, onInvalidate, render, items]) {
     expect(callback).toHaveBeenCalledWith(expect.objectContaining({ state: publicPluginState(context.state) }),
       ...(callback === onInvalidate ? [{ reason: "manual", resources: ["workspace.files"] }] : []));

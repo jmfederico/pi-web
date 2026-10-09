@@ -7,7 +7,7 @@ import type { PluginPromptEditor } from "../../../plugin-api";
 import { compareContentRenderers, contentRendererMatches, snapshotContentRenderer, type ContentRendererChoice, type RegisteredContentRenderer } from "./contentRenderers";
 import { createContentRenderingService, contentRenderingCapabilityToken } from "../formatting/contentRendering";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
-import type { ApplicationPanelContext, ApplicationPanelContribution, QualifiedApplicationPanelContribution, PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
+import type { ApplicationPanelContext, ApplicationPanelContribution, QualifiedApplicationPanelContribution, PiWebPluginRegistration, PiWebPluginRegistrationDeclaration, PluginAction, PluginActivationContext, PluginActivationResult, PluginCapability, PluginCapabilityProvision, PluginContributions, PluginRuntimeContext, PluginStartContext, QualifiedContributionId, QualifiedPluginAction, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspaceLabelContribution, QualifiedWorkspacePanelContribution, QualifiedSessionLabelContribution, SessionLabelContext, SessionLabelContribution, SessionLabelItem, ThemeContribution, ThemePairContribution, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelContribution, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding, WorkspaceResource } from "./types";
 
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
@@ -21,6 +21,7 @@ type WorkspacePanelScope = (
 const workspacePanelScopes = new WeakMap<WorkspacePanelContext, WorkspacePanelScope>();
 const applicationPanelScopes = new WeakMap<ApplicationPanelContext, (pluginId: string) => ApplicationPanelContext>();
 const workspaceLabelScopes = new WeakMap<WorkspaceLabelContext, (binding: WorkspacePluginBinding) => WorkspaceLabelContext>();
+const sessionLabelScopes = new WeakMap<SessionLabelContext, (binding: WorkspacePluginBinding) => SessionLabelContext>();
 
 export interface PluginRegistryOptions {
   /** Request a composer refresh after browser-memory chip staging changes. */
@@ -86,6 +87,7 @@ interface PreparedPluginContributions {
   readonly workspacePanels: readonly QualifiedWorkspacePanelContribution[];
   readonly applicationPanels: readonly QualifiedApplicationPanelContribution[];
   readonly workspaceLabels: readonly QualifiedWorkspaceLabelContribution[];
+  readonly sessionLabels: readonly QualifiedSessionLabelContribution[];
   readonly themes: readonly QualifiedThemeContribution[];
   readonly themePairs: readonly QualifiedThemePairContribution[];
 }
@@ -188,6 +190,7 @@ export class PluginRegistry {
   private readonly workspacePanels: QualifiedWorkspacePanelContribution[] = [];
   private readonly applicationPanels: QualifiedApplicationPanelContribution[] = [];
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
+  private readonly sessionLabels: QualifiedSessionLabelContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
   private readonly themePairs: QualifiedThemePairContribution[] = [];
   private readonly pluginIds = new Set<string>();
@@ -283,6 +286,7 @@ export class PluginRegistry {
     this.workspacePanels.splice(0);
     this.applicationPanels.splice(0);
     this.workspaceLabels.splice(0);
+    this.sessionLabels.splice(0);
     this.themes.splice(0);
     this.themePairs.splice(0);
     this.contributionIds.clear();
@@ -491,13 +495,14 @@ export class PluginRegistry {
     const applicationPanels = (contributions.applicationPanels ?? []).map((panel) => this.qualifyApplicationPanel(runtimePluginId, panel, registration.machineId, registration.sourcePluginId, contributionIds));
     const workspacePanels = (contributions.workspacePanels ?? []).map((panel) => this.qualifyWorkspacePanel(runtimePluginId, panel, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const workspaceLabels = (contributions.workspaceLabels ?? []).map((contribution) => this.qualifyWorkspaceLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
+    const sessionLabels = (contributions.sessionLabels ?? []).map((contribution) => this.qualifySessionLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const themes = registration.machineId === undefined
       ? (contributions.themes ?? []).map((theme) => this.qualifyTheme(runtimePluginId, theme, contributionIds))
       : [];
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, contentRenderers, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, themes, themePairs });
+    return Object.freeze({ ids: contributionIds, contentRenderers, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, themes, themePairs });
   }
 
   private dependencyFailure(
@@ -607,6 +612,7 @@ export class PluginRegistry {
     this.workspacePanels.push(...staged.contributions.workspacePanels);
     this.applicationPanels.push(...staged.contributions.applicationPanels);
     this.workspaceLabels.push(...staged.contributions.workspaceLabels);
+    this.sessionLabels.push(...staged.contributions.sessionLabels);
     this.themes.push(...staged.contributions.themes);
     this.themePairs.push(...staged.contributions.themePairs);
     this.activeCapabilitiesByRegistration.set(staged.registration.id, new Map(staged.provisions.map((provision) => [provision.key, provision])));
@@ -841,6 +847,36 @@ export class PluginRegistry {
       });
   }
 
+  getSessionLabelItems(context: SessionLabelContext): SessionLabelItem[] {
+    return [...this.sessionLabels]
+      .sort((left, right) => (left.order ?? 1000) - (right.order ?? 1000) || left.id.localeCompare(right.id))
+      .flatMap((contribution) => {
+        const reportFailure = (phase: string, error: unknown) => {
+          console.warn(`PI WEB plugin session label ${contribution.id} ${phase} failed for session ${context.session.id} on machine ${context.machine.id}`, error);
+        };
+        let phase = "visible";
+        try {
+          if (contribution.visible?.(context) === false) return [];
+          phase = "items";
+          return contribution.items(context).flatMap((item): SessionLabelItem[] => {
+            if (item.type !== "render") return [item];
+            try {
+              // Resolve plugin templates while their owner is known, so a failed
+              // item is omitted before the list adds separators or renders rows.
+              const template = item.render();
+              return [{ ...item, render: () => template }];
+            } catch (error) {
+              reportFailure("render", error);
+              return [];
+            }
+          });
+        } catch (error) {
+          reportFailure(phase, error);
+          return [];
+        }
+      });
+  }
+
   private qualifyAction(
     pluginId: string,
     action: PluginAction,
@@ -951,6 +987,34 @@ export class PluginRegistry {
       ...(machineId === undefined ? {} : { machineId }),
       visible: (context) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) && (visible?.(workspaceLabelContextFor(context, binding)) ?? true),
       items: (context) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId) ? items(workspaceLabelContextFor(context, binding)) : [],
+    };
+  }
+
+  private qualifySessionLabelContribution(
+    pluginId: string,
+    contribution: SessionLabelContribution,
+    machineId: string | undefined,
+    sourcePluginId: string | undefined,
+    backendRevision: string | undefined,
+    pairedRequestVersion: 1 | undefined,
+    pairedChannelVersion: 1 | undefined,
+    contributionIds: Set<QualifiedContributionId>,
+  ): QualifiedSessionLabelContribution {
+    const id = this.qualify(pluginId, contribution.id, contributionIds);
+    const visible = contribution.visible;
+    const items = contribution.items;
+    const binding = workspacePluginBinding(pluginId, sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion);
+    const scopedContext = (context: SessionLabelContext) => sessionLabelScopes.get(context)?.(binding) ?? context;
+    return {
+      ...contribution,
+      id,
+      pluginId,
+      localId: contribution.id,
+      ...(machineId === undefined ? {} : { machineId }),
+      visible: (context) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId)
+        && (visible?.(scopedContext(context)) ?? true),
+      items: (context) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId)
+        ? items(scopedContext(context)) : [],
     };
   }
 
@@ -1122,6 +1186,14 @@ export function installWorkspaceLabelScope(
   scope: (binding: WorkspacePluginBinding) => WorkspaceLabelContext,
 ): WorkspaceLabelContext {
   workspaceLabelScopes.set(context, scope);
+  return context;
+}
+
+export function installSessionLabelScope(
+  context: SessionLabelContext,
+  scope: (binding: WorkspacePluginBinding) => SessionLabelContext,
+): SessionLabelContext {
+  sessionLabelScopes.set(context, scope);
   return context;
 }
 
@@ -1466,7 +1538,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "themes", "themePairs", "contentRenderers", "messageActions"];
+const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "themes", "themePairs", "contentRenderers", "messageActions"];
 
 function isPluginContributions(value: unknown): value is PluginContributions {
   if (!isRecord(value)) return false;

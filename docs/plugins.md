@@ -9,6 +9,7 @@ This guide explains what is possible and what to expect. For implementation, use
 | Goal | Plugin feature |
 | --- | --- |
 | Show project health, service links, or environment information | Workspace labels and panels |
+| Identify a conversation's workflow and link to its saved context | Session-list labels and public session metadata |
 | Add a dashboard, file viewer, or project-specific tool | Workspace panels, file helpers, and browser UI |
 | Make common actions easier to find | Action-palette commands and shortcuts |
 | Act on a chat message | Message-action callbacks |
@@ -92,6 +93,18 @@ Session snapshots can include optional `metadata`: JSON objects keyed by a packa
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
 
+### Add indicators to session-list rows
+
+Contribute `sessionLabels` to label individual conversations, including unselected and archived rows. Each contribution has a local `id`, optional `order` and `visible(context)`, and `items(context)`. Items support `{ type: "text", text, title? }`, `{ type: "link", text, href, title?, target? }`, and `{ type: "render", render }`, where `render()` returns a Lit template. Contributions are ordered by `order` then qualified ID, with the same machine availability and portable/machine-specific precedence as workspace labels.
+
+`SessionLabelContext.session` is the row's detached basic snapshot (`id`, `cwd`, optional `name` and `metadata`, `archived`, `pending`), not necessarily `state.selectedSession`. The context supplies the row's `machine` and `workspace`, basic selection `state`, file/project helpers, any package-paired `peer`, `navigate`, and `host.requestRender()`. It exposes no transcript or private session-file path. Read your namespace and validate its schema before showing membership; no live Pi connection is required.
+
+Keep `visible` and `items` synchronous and side-effect-free. Own asynchronous loading in a component and request a refresh through `host.requestRender()`. Links open a new tab by default with `noopener noreferrer`; HTTP(S), mail, and telephone links are allowed, while unsafe schemes display plain text. Custom buttons and links can use `context.navigate()` from event handlers without selecting the row. Session-label navigation defaults to the context's captured machine; supply the workspace and tool explicitly to open an exact item, using the query support below.
+
+If `visible` or `items` throws, the host skips that contribution for the row; if an item's `render()` throws, it skips only that item. Failures are logged in the browser console with the contribution, session, and machine identity, while the session list stays usable. Callbacks are tried again on the next render.
+
+Indicators appear only on session-list rows, not the top Session pill or transcript bubbles. Browser API v4 is unchanged; older hosts ignore `sessionLabels`, so update PI WEB to use them.
+
 ### Discover projects on the context's machine
 
 Action, application-panel, and workspace contexts supply read-only `projects` access directly. `listProjects()` returns registered projects with `id`, `name`, and `path`; `suggestDirectories(query)` returns directory suggestions with `path`, using the same path-search rules as the host's Add Project picker. Discovery works without a selected project or workspace. Call these asynchronous methods from an action, event handler, or component that owns loading and error display, not from the synchronous panel render itself.
@@ -153,7 +166,7 @@ The URL's `view` selects a responsive panel: `navigation`, `chat`, or `workspace
 
 Invalid values remain in the URL rather than triggering a redirect. An invalid `view` shows a warning and displays navigation on mobile; on two-column layouts, navigation remains alongside a valid requested tool or, otherwise, chat. Desktop keeps its normal columns. A valid workspace view with an invalid tool shows an unavailable-tab message inside the workspace panel, without selecting another tab or adding a duplicate warning. Omitted parameters use defaults and are not errors.
 
-Action, message-action, application-panel, workspace-panel contexts expose `navigate(destination, options?: PluginNavigationOptions): Promise<void>` to open a complete destination or patch the current URL:
+Action, message-action, application-panel, workspace-panel, and session-label contexts expose `navigate(destination, options?: PluginNavigationOptions): Promise<void>` to open a complete destination or patch the current URL:
 
 ```ts
 interface PluginNavigationOptions {
@@ -166,7 +179,7 @@ The defaults are `mode: "replace"` and `history: "push"`, preserving existing be
 
 **Session IDs.** Browser URLs, plugin navigation, and PI WEB session APIs use exact, case-sensitive IDs. Pass the full `session.id` returned by the session catalog or creation response. Abbreviated IDs produce a missing-session destination instead of matching or expanding a prefix; update old shortened links and integrations to use full IDs. Short IDs shown in labels are display-only.
 
-**Complete destinations (`mode: "replace"`).** Omitted location, tool, and view fields use normal host restoration defaults rather than copying the current URL's session, tool, or contribution query. Those defaults can select a remembered session. Omitted `machineId` means the machine selected at invocation, except message-action contexts use their captured machine. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations. For a selected workspace:
+**Complete destinations (`mode: "replace"`).** Omitted location, tool, and view fields use normal host restoration defaults rather than copying the current URL's session, tool, or contribution query. Those defaults can select a remembered session. Omitted `machineId` means the machine selected at invocation, except session-label and message-action contexts use their captured machine. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations. For a selected workspace:
 
 ```ts
 await context.navigate({
@@ -178,7 +191,7 @@ await context.navigate({
 });
 ```
 
-**Route patches (`mode: "patch"`).** A patch starts from the current URL at invocation, not a potentially stale component-state snapshot. Omitted or `undefined` fields preserve their URL values; message-action contexts still default to their captured machine. Scope changes follow these rules:
+**Route patches (`mode: "patch"`).** A patch starts from the current URL at invocation, not a potentially stale component-state snapshot. Omitted or `undefined` fields preserve their URL values; session-label and message-action contexts still default to their captured machine. Scope changes follow these rules:
 
 - Changing machine clears inherited project, workspace, session, tool, and all contribution query.
 - Changing project clears inherited workspace, session, and all contribution query.

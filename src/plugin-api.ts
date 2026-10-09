@@ -164,6 +164,7 @@ export interface PluginContributions {
   applicationPanels?: ApplicationPanelContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  sessionLabels?: SessionLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
 }
@@ -694,6 +695,42 @@ export interface WorkspaceLabelContribution {
   order?: number;
   visible?: (context: WorkspaceLabelContext) => boolean;
   items: (context: WorkspaceLabelContext) => WorkspaceLabelItem[];
+}
+
+/** Context for one session-list row, including unselected and archived sessions. */
+export interface SessionLabelContext extends WorkspaceContext {
+  /** Basic detached row snapshot, not necessarily state.selectedSession. */
+  session: Readonly<PluginSelectedSession>;
+  navigate: PluginNavigate;
+}
+
+export type SessionLabelItem = SessionLabelTextItem | SessionLabelLinkItem | SessionLabelRenderItem;
+
+export interface SessionLabelTextItem {
+  type: "text";
+  text: string;
+  title?: string;
+}
+
+export interface SessionLabelLinkItem {
+  type: "link";
+  text: string;
+  href: string;
+  title?: string;
+  target?: "_blank" | "_self";
+}
+
+export interface SessionLabelRenderItem {
+  type: "render";
+  render: () => TemplateResult;
+}
+
+/** Indicators on session-list rows only. Callbacks are synchronous and side-effect-free. */
+export interface SessionLabelContribution {
+  id: LocalContributionId;
+  order?: number;
+  visible?: (context: SessionLabelContext) => boolean;
+  items: (context: SessionLabelContext) => SessionLabelItem[];
 }
 
 export type ThemeColorScheme = "dark" | "light";

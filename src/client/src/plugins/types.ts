@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectionService } from "../../../plugin-api";
+import type { PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectedSession, PluginSelectionService } from "../../../plugin-api";
 import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
@@ -84,6 +84,7 @@ export interface PluginContributions {
   applicationPanels?: ApplicationPanelContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  sessionLabels?: SessionLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
 }
@@ -384,6 +385,27 @@ export interface WorkspaceLabelContribution {
   order?: number;
   visible?: (context: WorkspaceLabelContext) => boolean;
   items: (context: WorkspaceLabelContext) => WorkspaceLabelItem[];
+}
+
+export interface SessionLabelContext extends WorkspaceContext {
+  session: Readonly<PluginSelectedSession>;
+  navigate: PluginNavigate;
+}
+
+export type { SessionLabelItem } from "../../../plugin-api";
+
+export interface SessionLabelContribution {
+  id: LocalContributionId;
+  order?: number;
+  visible?: (context: SessionLabelContext) => boolean;
+  items: (context: SessionLabelContext) => import("../../../plugin-api").SessionLabelItem[];
+}
+
+export interface QualifiedSessionLabelContribution extends SessionLabelContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
 }
 
 export type ThemeColorScheme = "dark" | "light";

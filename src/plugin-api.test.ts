@@ -18,12 +18,16 @@ import type {
   PluginNavigate,
   PluginNavigationDestination,
   PluginNavigationPatchDestination,
+  PluginNavigationOptions,
   QualifiedContributionId,
   PluginRuntimeContext,
   ApplicationPanelContext,
   ApplicationPanelContribution,
   MessageActionContext,
   DisplayedMessageActionContext,
+  SessionLabelContext,
+  SessionLabelContribution,
+  SessionLabelItem,
   ContributionQueryValue,
   Workspace,
   PluginPeerChannel,
@@ -48,6 +52,7 @@ import type {
 import type {
   ApplicationPanelContext as InternalApplicationPanelContext,
   PluginRuntimeContext as InternalPluginRuntimeContext,
+  SessionLabelContext as InternalSessionLabelContext,
   WorkspacePanelContext as InternalWorkspacePanelContext,
 } from "./client/src/plugins/types";
 
@@ -100,6 +105,14 @@ describe("public browser plugin API", () => {
     expectTypeOf<keyof PluginSelectedSession>().toEqualTypeOf<"id" | "cwd" | "name" | "metadata" | "archived" | "pending">();
   });
 
+  it("exposes row labels with a public session snapshot and tool-scoped destination queries", () => {
+    expectTypeOf<PluginContributions["sessionLabels"]>().toEqualTypeOf<SessionLabelContribution[] | undefined>();
+    expectTypeOf<SessionLabelContext["session"]>().toEqualTypeOf<Readonly<PluginSelectedSession>>();
+    expectTypeOf<ReturnType<SessionLabelContribution["items"]>>().toEqualTypeOf<SessionLabelItem[]>();
+    expectTypeOf<PluginNavigationDestination["query"]>().toEqualTypeOf<Readonly<Record<string, ContributionQueryValue>> | undefined>();
+    expectTypeOf<PluginNavigationOptions>().toEqualTypeOf<{ mode?: "replace" | "patch"; history?: "push" | "replace" }>();
+  });
+
   it("preserves non-null legacy destinations and separates nullable patches", () => {
     expectTypeOf<PluginNavigationDestination>().toEqualTypeOf<{
       machineId?: string;
@@ -124,11 +137,13 @@ describe("public browser plugin API", () => {
 
   it("shares the navigation overloads across public and internal contexts", () => {
     expectTypeOf<PluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<SessionLabelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<WorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<ApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<MessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<DisplayedMessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<InternalPluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalSessionLabelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<InternalWorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
     expectTypeOf<InternalApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
   });

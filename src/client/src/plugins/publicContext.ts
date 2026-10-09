@@ -54,7 +54,7 @@ export function adaptPublicPlugin(plugin: PiWebPlugin): PiWebPlugin {
     ...plugin,
     async activate(context) {
       const activation = await plugin.activate(context);
-      const { actions, applicationPanels, workspacePanels, workspaceLabels } = activation.contributions;
+      const { actions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels } = activation.contributions;
       return {
         ...activation,
         ...(activation.start === undefined ? {} : { start: activation.start.bind(activation) }),
@@ -82,6 +82,11 @@ export function adaptPublicPlugin(plugin: PiWebPlugin): PiWebPlugin {
             render: (context) => render(publicContext(context)),
           })) }),
           ...(workspaceLabels === undefined ? {} : { workspaceLabels: workspaceLabels.map(({ visible, items, ...label }) => ({
+            ...label,
+            ...(visible === undefined ? {} : { visible: (context) => visible(publicContext(context)) }),
+            items: (context) => items(publicContext(context)),
+          })) }),
+          ...(sessionLabels === undefined ? {} : { sessionLabels: sessionLabels.map(({ visible, items, ...label }) => ({
             ...label,
             ...(visible === undefined ? {} : { visible: (context) => visible(publicContext(context)) }),
             items: (context) => items(publicContext(context)),

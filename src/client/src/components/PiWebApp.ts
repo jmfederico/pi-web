@@ -33,17 +33,17 @@ import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
 import type { ServerNotice } from "../../../shared/apiTypes";
-import type { ApplicationPanelContext, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, PluginRuntimeContext, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
+import type { ApplicationPanelContext, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, PluginRuntimeContext, SessionLabelContext, SessionLabelItem, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
 import { CLASSIC_THEME_ID, applyPiWebTheme, clearStoredThemePreference, effectiveThemePreference, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
-import { publicPluginSelection } from "../plugins/publicContext";
+import { publicPluginSelection, publicPluginSession } from "../plugins/publicContext";
 import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionContext, MessageActionResult } from "../../../plugin-api";
 import { messageActionMessage } from "../plugins/messageActions";
 import { createPluginProjects } from "../plugins/projects";
 import { REQUIRED_TERMINAL_PLUGIN_ID, type TerminalPluginMode } from "../../../shared/requiredTerminalPlugin";
-import { PluginRegistry, installApplicationPanelScope, installPluginRuntimeScope, installWorkspaceLabelScope, installWorkspacePanelScope, type BrowserPluginLifecyclePhase, type PluginRegistrationFailure } from "../plugins/registry";
+import { PluginRegistry, installApplicationPanelScope, installPluginRuntimeScope, installSessionLabelScope, installWorkspaceLabelScope, installWorkspacePanelScope, type BrowserPluginLifecyclePhase, type PluginRegistrationFailure } from "../plugins/registry";
 import { createPluginPeer } from "../plugins/pluginPeer";
 import { REQUIRED_TERMINAL_BROWSER_FACADE_CAPABILITY, requiredTerminalUnavailableError, type RequiredTerminalBrowserComposition, type WorkspaceContributionNavigationV1 } from "../plugins/requiredTerminalFacade";
 import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
@@ -1936,6 +1936,7 @@ export class PiWebApp extends LitElement {
         .workspacesCollapsed=${this.navigationSections.isCollapsed("workspaces")}
         .sessionsCollapsed=${this.navigationSections.isCollapsed("sessions")}
         .workspaceLabelItems=${guard(this.workspaceSurfaceInputs(), () => (workspace: Workspace) => this.workspaceLabelItems(workspace))}
+        .sessionLabelItems=${guard(this.workspaceSurfaceInputs(), () => (session: SessionInfo) => this.sessionLabelItems(session))}
         .refreshControl=${this.appShell.shouldShowAppRefreshInHeader() ? this.renderAppRefresh() : undefined}
         .onShowActions=${this.navigationActions.showActions}
         .onToggleProjects=${this.navigationActions.toggleProjects}
@@ -2270,6 +2271,27 @@ export class PiWebApp extends LitElement {
       }, createContext);
     };
     return createContext(coreWorkspacePluginBinding());
+  }
+
+  private sessionLabelItems(session: SessionInfo): SessionLabelItem[] {
+    const workspace = this.state.selectedWorkspace;
+    if (workspace === undefined) return [];
+    const machine = pluginMachineFromState(this.state);
+    const createContext = (binding: WorkspacePluginBinding): SessionLabelContext => {
+      const peer = createPluginPeer(binding, workspace, machine.id);
+      return installSessionLabelScope({
+        machine,
+        workspace,
+        session: publicPluginSession(session),
+        state: this.state,
+        files: this.createWorkspaceFiles(workspace, machine),
+        projects: createPluginProjects(projectsApi, machine.id),
+        ...(peer === undefined ? {} : { peer }),
+        navigate: (destination, options) => this.navigate(destination, options, machine.id),
+        host: this.createWorkspaceHost(),
+      }, createContext);
+    };
+    return this.plugins.getSessionLabelItems(createContext(coreWorkspacePluginBinding()));
   }
 
   private createWorkspaceFiles(workspace: Workspace, machine: PluginMachine): WorkspaceFilesCapabilityV1 {

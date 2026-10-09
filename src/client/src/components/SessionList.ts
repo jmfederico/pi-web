@@ -4,6 +4,8 @@ import { repeat } from "lit/directives/repeat.js";
 import type { SessionActivity, SessionInfo, SessionStatus } from "../api";
 import { isCachedNewSessionInfo } from "../cachedNewSessions";
 import { shortSessionId } from "../sessionLabels";
+import type { SessionLabelItem } from "../plugins/types";
+import { renderSessionLabelItems } from "./sessionLabel";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
 import { normalizeSessionPath } from "../sessionPaths";
 import { isSessionActive } from "../../../shared/activity";
@@ -42,6 +44,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) sending: Record<string, true> = {};
   @property({ attribute: false }) unreadSessionIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) selected?: SessionInfo;
+  @property({ attribute: false }) sessionLabelItems: (session: SessionInfo) => SessionLabelItem[] = () => [];
   @property({ type: Number }) startingCount = 0;
   @property({ type: Boolean }) canStart = false;
   @property({ type: Boolean, reflect: true }) collapsible = false;
@@ -314,6 +317,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const unread = sessionRowUnread(session, this.unreadSessionIds);
     const canArchive = isArchivableSessionInfo(session, status);
     const canDeleteTransient = isTransientNewSessionInfo(session, status);
+    const labelItems = this.sessionLabelItems(session);
     return html`
       <div
         class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""}"
@@ -325,7 +329,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
-          <span class="action-name-line"><span class="action-name" dir="auto">${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
+          <span class="action-name-line"><span class="action-name" dir="auto" title=${sessionLabel(session)}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span>
+          <small class="session-secondary"><span class="session-meta">${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</span>${labelItems.length === 0 ? null : html`<span class="session-label-separator" aria-hidden="true">·</span><span class="session-labels">${renderSessionLabelItems(labelItems)}</span>`}</small>
           ${this.renderActivity(indicatorKind, unread)}
         </div>
         <div class="action-menu">
@@ -519,8 +524,16 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .bulk-row button { padding: 5px 7px; font-size: 12px; white-space: nowrap; }
     .bulk-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; margin-left: auto; }
     .action-name, .section-selected { text-align: start; unicode-bidi: plaintext; }
+    .action-name { display: block; max-height: none; line-height: normal; white-space: nowrap; text-overflow: ellipsis; }
     .action-row.unread .action-name { color: var(--pi-text-bright); font-weight: 650; }
     .plain-heading { min-width: 0; }
+    .session-secondary { display: flex; align-items: baseline; gap: 5px; min-width: 0; margin-top: 3px; }
+    .session-meta, .session-label-separator { flex: 0 0 auto; }
+    .session-labels { min-width: 0; display: inline-flex; align-items: baseline; gap: 5px; max-width: 100%; overflow: hidden; white-space: nowrap; }
+    .session-label-item, .session-label-render { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    a.session-label-item { color: var(--pi-accent); text-decoration: none; }
+    a.session-label-item:hover, a.session-label-item:focus { text-decoration: underline; }
+    .session-label-render > * { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .action-name-line { min-width: 0; display: flex; align-items: flex-start; gap: 6px; }
     .action-name-line .action-name { flex: 1 1 auto; min-width: 0; }
     /* Badges must not sit inside the line-clamped title, or a long name hides them entirely. */
