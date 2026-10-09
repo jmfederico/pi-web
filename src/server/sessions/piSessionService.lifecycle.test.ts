@@ -888,7 +888,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     notify("duplicate", "warning");
     notify("duplicate", "error");
 
-    const snapshot = service.notificationInbox({ id: "notification-session", cwd: canonicalCwd });
+    const snapshot = (await service.notificationInbox({ id: "notification-session", cwd: canonicalCwd }));
     expect(snapshot.summary.cwd).toBe(canonicalCwd);
     expect(snapshot.notifications).toMatchObject([
       { id: "daemon-lifecycle-test:2", message: "duplicate", severity: "error" },
@@ -927,14 +927,14 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     await expect(service.runCommand(sessionRef("runtime-reload-notifications"), "/reload")).resolves.toMatchObject({ type: "done" });
 
-    expect(service.notificationInbox(sessionRef("runtime-reload-notifications"))).toMatchObject({
+    expect((await service.notificationInbox(sessionRef("runtime-reload-notifications")))).toMatchObject({
       summary: { retainedCount: 1, discardedCount: 0, highestSeverity: "error" },
       notifications: [{ message: "replacement startup", severity: "error" }],
     });
     expect(fake.calls.bindExtensions).toHaveLength(1);
-    const revision = service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision;
+    const revision = (await service.notificationInbox(sessionRef("runtime-reload-notifications"))).summary.inboxRevision;
     oldNotify("stale old runner", "error");
-    expect(service.notificationInbox(sessionRef("runtime-reload-notifications")).summary.inboxRevision).toBe(revision);
+    expect((await service.notificationInbox(sessionRef("runtime-reload-notifications"))).summary.inboxRevision).toBe(revision);
 
     await service.dispose();
   });
@@ -964,12 +964,12 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       type: "unsupported",
       message: "Reload failed: reload failed after rotation",
     });
-    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications.map((notification) => notification.message)).toEqual([
+    expect((await service.notificationInbox(sessionRef("failed-runtime-reload"))).notifications.map((notification) => notification.message)).toEqual([
       "candidate before failure",
       "prior",
     ]);
     currentNotify(fake)("after failed reload", "error");
-    expect(service.notificationInbox(sessionRef("failed-runtime-reload")).notifications[0]).toMatchObject({
+    expect((await service.notificationInbox(sessionRef("failed-runtime-reload"))).notifications[0]).toMatchObject({
       message: "after failed reload",
       severity: "error",
     });
@@ -991,14 +991,14 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     await service.status(sessionRef("failed-before-rotation"));
     boundNotify(fake)("prior", "warning");
-    const before = service.notificationInbox(sessionRef("failed-before-rotation"));
+    const before = (await service.notificationInbox(sessionRef("failed-before-rotation")));
     fake.session.reload = () => Promise.reject(new Error("reload failed before rotation"));
 
     await expect(service.runCommand(sessionRef("failed-before-rotation"), "/reload")).resolves.toEqual({
       type: "unsupported",
       message: "Reload failed: reload failed before rotation",
     });
-    expect(service.notificationInbox(sessionRef("failed-before-rotation"))).toEqual(before);
+    expect((await service.notificationInbox(sessionRef("failed-before-rotation")))).toEqual(before);
 
     await service.dispose();
   });
@@ -1029,13 +1029,13 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
     await rebindSession?.(replacement.session);
 
-    expect(() => service.notificationInbox(sessionRef("session-1"))).toThrow("Session not found");
-    expect(service.notificationInbox(sessionRef("session-2"))).toMatchObject({
+    await expect(service.notificationInbox(sessionRef("session-1"))).rejects.toThrow("Session not found");
+    expect((await service.notificationInbox(sessionRef("session-2")))).toMatchObject({
       notifications: [{ message: "replacement startup", severity: "error" }],
     });
-    const revision = service.notificationInbox(sessionRef("session-2")).summary.inboxRevision;
+    const revision = (await service.notificationInbox(sessionRef("session-2"))).summary.inboxRevision;
     staleNotify("stale", "error");
-    expect(service.notificationInbox(sessionRef("session-2")).summary.inboxRevision).toBe(revision);
+    expect((await service.notificationInbox(sessionRef("session-2"))).summary.inboxRevision).toBe(revision);
 
     await service.dispose();
   });
@@ -1065,14 +1065,14 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     Object.defineProperty(first.runtime, "session", { configurable: true, value: replacement.session });
     await expect(rebindSession?.(replacement.session)).rejects.toThrow("replacement bind failed");
 
-    expect(() => service.notificationInbox(sessionRef("session-1"))).toThrow("Session not found");
-    expect(service.notificationInbox(sessionRef("session-2")).notifications.map((notification) => notification.message)).toEqual([
+    await expect(service.notificationInbox(sessionRef("session-1"))).rejects.toThrow("Session not found");
+    expect((await service.notificationInbox(sessionRef("session-2"))).notifications.map((notification) => notification.message)).toEqual([
       "candidate before bind failure",
       "prior",
     ]);
     await expect(service.status(sessionRef("session-2"))).resolves.toMatchObject({ sessionId: "session-2" });
     currentNotify(replacement)("after failed rebind", "error");
-    expect(service.notificationInbox(sessionRef("session-2")).notifications[0]).toMatchObject({ message: "after failed rebind", severity: "error" });
+    expect((await service.notificationInbox(sessionRef("session-2"))).notifications[0]).toMatchObject({ message: "after failed rebind", severity: "error" });
 
     await service.dispose();
   });
@@ -1261,12 +1261,13 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     await service.status(sessionRef("stop-notification-session"));
     boundNotify(fake)("keep through abort", "warning");
     await service.abort(sessionRef("stop-notification-session"));
-    expect(service.notificationInbox(sessionRef("stop-notification-session")).summary.retainedCount).toBe(1);
+    expect((await service.notificationInbox(sessionRef("stop-notification-session"))).summary.retainedCount).toBe(1);
     await expect(service.stop(sessionRef("stop-notification-session", "/other"))).rejects.toThrow("Session cwd mismatch");
     expect(service.activeCount()).toBe(1);
 
     await service.stop(sessionRef("stop-notification-session"));
-    expect(() => service.notificationInbox(sessionRef("stop-notification-session"))).toThrow("Session not found");
+    await expect(service.notificationInbox(sessionRef("stop-notification-session"))).resolves.toMatchObject({ notifications: [], summary: { retainedCount: 0 } });
+    expect(store.currentGeneration("stop-notification-session", "/workspace")).toBeUndefined();
     expect(service.notificationCatalog().sessions).toEqual([]);
     expect(hub.notificationSummaryEvents.at(-1)).toMatchObject({ summary: { sessionId: "stop-notification-session", retainedCount: 0 } });
 
@@ -1367,7 +1368,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     };
     await service.reload(sessionRef("reload-notification-session"));
 
-    expect(service.notificationInbox(sessionRef("reload-notification-session"))).toMatchObject({
+    expect((await service.notificationInbox(sessionRef("reload-notification-session")))).toMatchObject({
       summary: { retainedCount: 1, highestSeverity: "error" },
       notifications: [{ message: "replacement startup", severity: "error" }],
     });
@@ -1408,14 +1409,14 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     };
     await expect(service.reload(sessionRef("failed-disk-reload"))).rejects.toThrow("replacement open failed");
 
-    expect(service.notificationInbox(sessionRef("failed-disk-reload")).notifications.map((notification) => notification.message)).toEqual([
+    expect((await service.notificationInbox(sessionRef("failed-disk-reload"))).notifications.map((notification) => notification.message)).toEqual([
       "candidate before open failure",
       "old shutdown",
       "prior",
     ]);
     expect(service.activeCount()).toBe(0);
     await service.stop(sessionRef("failed-disk-reload"));
-    expect(() => service.notificationInbox(sessionRef("failed-disk-reload"))).toThrow("Session not found");
+    await expect(service.notificationInbox(sessionRef("failed-disk-reload"))).resolves.toMatchObject({ notifications: [], summary: { retainedCount: 0 } });
     await service.dispose();
   });
 
@@ -1441,7 +1442,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     await expect(service.reload(sessionRef("failed-close-reload"))).rejects.toThrow("close failed");
 
-    expect(service.notificationInbox(sessionRef("failed-close-reload")).notifications.map((notification) => notification.message)).toEqual([
+    expect((await service.notificationInbox(sessionRef("failed-close-reload"))).notifications.map((notification) => notification.message)).toEqual([
       "shutdown before close failure",
       "prior",
     ]);

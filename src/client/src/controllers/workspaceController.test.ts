@@ -110,6 +110,67 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("WorkspaceController cached topology prefetch", () => {
+  it("starts session listing before topology resolves but waits for confirmation before selecting", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    let finishTopology!: (workspaces: Workspace[]) => void;
+    const loadWorkspaces = vi.fn(() => new Promise<Workspace[]>((resolve) => { finishTopology = resolve; }));
+    const loaded = session(main.path);
+    const loadSessions = vi.fn<LoadSessions>().mockResolvedValue([loaded]);
+    const test = harness({ selectedMachine: machine("local"), projects: [repo], workspacesByProjectId: { [repo.id]: [main] } }, loadWorkspaces, { loadSessions });
+
+    const selecting = test.controller.selectProject(repo);
+    expect(loadSessions).toHaveBeenCalledExactlyOnceWith(main.path, "local", undefined);
+    expect(test.state().workspaces).toEqual([main]);
+    expect(test.state().selectedWorkspace).toBeUndefined();
+    finishTopology([main]);
+    await selecting;
+    expect(test.state().selectedWorkspace).toEqual(main);
+    expect(test.state().sessions).toEqual([loaded]);
+    expect(loadSessions).toHaveBeenCalledOnce();
+  });
+
+  it("discards a prefetched list when the confirmed workspace path changed", async () => {
+    const repo = project("p1", "/repo");
+    const cached = workspace(repo.id, "/old", { id: "main", isMain: true });
+    const refreshed = { ...cached, path: "/new" };
+    const loadSessions = vi.fn<LoadSessions>().mockImplementation((path) => Promise.resolve([session(path)]));
+    const test = harness({ selectedMachine: machine("local"), projects: [repo], workspacesByProjectId: { [repo.id]: [cached] } }, vi.fn().mockResolvedValue([refreshed]), { loadSessions });
+
+    await test.controller.selectProject(repo);
+    expect(loadSessions.mock.calls.map(([path]) => path)).toEqual(["/old", "/new"]);
+    expect(test.state().sessions).toEqual([session("/new")]);
+  });
+
+  it("does not apply a prefetched result after navigation changed", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    let finishTopology!: (workspaces: Workspace[]) => void;
+    const loadWorkspaces = vi.fn(() => new Promise<Workspace[]>((resolve) => { finishTopology = resolve; }));
+    let current = true;
+    const navigation: NavigationFreshness = { generation: 1, scope: ["machine", "project", "workspace", "session"], isCurrent: () => current };
+    const test = harness({ selectedMachine: machine("local"), projects: [repo], workspacesByProjectId: { [repo.id]: [main] } }, loadWorkspaces, { loadSessions: vi.fn<LoadSessions>().mockResolvedValue([session(main.path)]) });
+
+    const selecting = test.controller.selectProject(repo, { navigation });
+    current = false;
+    finishTopology([main]);
+    await selecting;
+    expect(test.state().selectedWorkspace).toBeUndefined();
+    expect(test.state().sessions).toEqual([]);
+  });
+
+  it("handles a rejected speculative read even when topology rejects too", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const test = harness({ selectedMachine: machine("local"), projects: [repo], workspacesByProjectId: { [repo.id]: [main] } }, vi.fn().mockRejectedValue(new Error("topology unavailable")), { loadSessions: vi.fn<LoadSessions>().mockRejectedValue(new Error("sessions unavailable")) });
+
+    expect(await test.controller.selectProject(repo)).toBe("Error: topology unavailable");
+    expect(test.state().selectedWorkspace).toBeUndefined();
+    expect(Object.values(test.state().browserErrors).map((error) => error.message)).toEqual(["Error: topology unavailable"]);
+  });
+});
+
 describe("WorkspaceController route selection freshness", () => {
   it("keeps the newest project and workspace after overlapping project responses complete out of order", async () => {
     const firstProject = project("p1", "/first");

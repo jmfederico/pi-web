@@ -1,4 +1,4 @@
-import { api as defaultApi, type Project, type Workspace } from "../api";
+import { api as defaultApi, type Project, type SessionInfo, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { BrowserErrorReporter, projectBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
@@ -26,6 +26,11 @@ interface WorkspaceMutationGuard {
 }
 
 type WorkspaceSelectionTarget = RouteTarget & WorkspaceMutationGuard;
+
+interface PrefetchedSessions {
+  path: string;
+  result: Promise<{ sessions: SessionInfo[] } | { error: unknown }>;
+}
 
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
@@ -71,20 +76,35 @@ export class WorkspaceController {
 
   async selectProject(project: Project, target?: WorkspaceSelectionTarget): Promise<string | undefined> {
     const navigation = target?.navigation ?? this.beginNavigationOperation?.(WORKSPACE_SELECTION_SCOPE);
-    if (!this.navigationIsCurrent(navigation)) return;
+    if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
     const machineId = selectedMachineId(this.getState());
     const errorScope = projectBrowserErrorScope(machineId, project.id);
+    const cachedWorkspaces = this.getState().workspacesByProjectId[project.id] ?? [];
+    const cachedWorkspace = selectPreferredWorkspace(cachedWorkspaces, {
+      targetWorkspaceId: target?.workspaceId,
+      latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)),
+    });
+    // Overlap read-only listing with topology discovery, but do not select or
+    // open a session until the fresh topology confirms the workspace path.
+    const prefetched: PrefetchedSessions | undefined = cachedWorkspace === undefined ? undefined : {
+      path: cachedWorkspace.path,
+      result: this.api.sessions(cachedWorkspace.path, machineId, target?.signal === undefined ? undefined : { signal: target.signal })
+        .then((sessions) => ({ sessions }), (error: unknown) => ({ error })),
+    };
     this.sessions.clearActiveSession();
-    this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
+    this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: cachedWorkspaces, isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
     try {
-      const workspaces = await this.api.workspaces(project.id, machineId);
+      const workspaces = target?.signal === undefined
+        ? await this.api.workspaces(project.id, machineId)
+        : await this.api.workspaces(project.id, machineId, { signal: target.signal });
       if (!this.navigationIsCurrent(navigation)
+        || !workspaceMutationIsCurrent(target)
         || selectedMachineId(this.getState()) !== machineId
         || this.getState().selectedProject?.id !== project.id) return;
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
       if (workspace) {
-        return await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl, navigation });
+        return await this.selectWorkspace(workspace, { ...target, sessionId: target?.sessionId, updateUrl: target?.updateUrl, navigation }, prefetched?.path === workspace.path ? prefetched : undefined);
       }
       if (target?.workspaceId !== undefined && target.workspaceId !== "") {
         this.browserErrors.report(errorScope, `Workspace not found: ${target.workspaceId}`);
@@ -102,7 +122,7 @@ export class WorkspaceController {
     return undefined;
   }
 
-  async selectWorkspace(workspace: Workspace, target?: WorkspaceSelectionTarget): Promise<string | undefined> {
+  async selectWorkspace(workspace: Workspace, target?: WorkspaceSelectionTarget, prefetched?: PrefetchedSessions): Promise<string | undefined> {
     const navigation = target?.navigation ?? this.beginNavigationOperation?.(WORKSPACE_SELECTION_SCOPE);
     if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
     const machineId = selectedMachineId(this.getState());
@@ -111,9 +131,16 @@ export class WorkspaceController {
     this.sessions.clearActiveSession();
     this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     try {
-      const loadedSessions = target?.signal === undefined
-        ? await this.api.sessions(workspace.path, machineId)
-        : await this.api.sessions(workspace.path, machineId, { signal: target.signal });
+      let loadedSessions: SessionInfo[];
+      if (prefetched?.path === workspace.path) {
+        const result = await prefetched.result;
+        if ("error" in result) throw result.error;
+        loadedSessions = result.sessions;
+      } else {
+        loadedSessions = target?.signal === undefined
+          ? await this.api.sessions(workspace.path, machineId)
+          : await this.api.sessions(workspace.path, machineId, { signal: target.signal });
+      }
       const sessions = mergeCachedNewSessions(workspace.path, loadedSessions, machineId);
       if (!this.navigationIsCurrent(navigation)
         || !workspaceMutationIsCurrent(target)

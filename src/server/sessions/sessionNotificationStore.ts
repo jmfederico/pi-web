@@ -304,7 +304,22 @@ export class SessionNotificationStore {
     };
   }
 
-  inboxSnapshot(sessionId: string, cwd: string): SessionNotificationInboxSnapshot {
+  hasSession(sessionId: string): boolean {
+    return this.statesBySessionId.has(sessionId);
+  }
+
+  /** `allowMissing` is for identities the caller has verified in durable storage. */
+  inboxSnapshot(sessionId: string, cwd: string, options: { allowMissing?: boolean } = {}): SessionNotificationInboxSnapshot {
+    if (options.allowMissing === true && !this.hasSession(sessionId)) {
+      requireIdentity(sessionId, cwd);
+      return this.snapshot({
+        sessionId,
+        cwd,
+        inboxRevision: this.lastInboxRevisionBySessionId.get(sessionId) ?? 0,
+        overflowWatermark: this.lastOverflowWatermarkBySessionId.get(sessionId) ?? 0,
+        buckets: [],
+      });
+    }
     return this.snapshot(this.requireProjection(sessionId, cwd));
   }
 

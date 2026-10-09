@@ -1,6 +1,6 @@
 import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type MessagePage, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionModelCatalogEntry, type SessionModelScopeMode, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeForkResult, type SessionTreeNavigateResult, type SessionTreeSnapshot, type SessionTreeSummaryChoice, type Workspace } from "../api";
 import type { AppState, ClosedExtensionDialog } from "../appState";
-import { NetworkRequestError } from "../api/http";
+import { HttpRequestError, NetworkRequestError } from "../api/http";
 import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope, type SessionBrowserErrorOwner } from "../browserErrors";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
@@ -1473,7 +1473,36 @@ export class SessionController {
         if (this.selectedSessionRecoveryTarget === target) this.selectedSessionRecoveryTarget = undefined;
       }
     });
-    return transcriptRefresh.then(() => notificationsRefresh);
+    return transcriptRefresh.then(() => notificationsRefresh, async (error: unknown) => {
+      if (error instanceof HttpRequestError && error.status === 404 && error.message === "Session not found"
+        && !isCachedNewSessionInfo(target.session) && await this.reconcileMissingSelectedSession(target)) return;
+      throw error;
+    });
+  }
+
+  private async reconcileMissingSelectedSession(target: SelectedSessionRefreshTarget): Promise<boolean> {
+    if (!this.isCurrentRefreshTarget(target)) return false;
+    const workspace = this.getState().selectedWorkspace;
+    if (workspace?.path !== target.session.cwd) return false;
+    const expected = this.navigationSelection();
+    let loaded: SessionInfo[];
+    try {
+      loaded = await this.api.sessions(workspace.path, target.machineId);
+    } catch (error) {
+      console.warn("Could not confirm missing session against its workspace listing", error);
+      return false;
+    }
+    if (!this.isCurrentRefreshTarget(target) || loaded.some((session) => session.id === target.session.id)) return false;
+    this.setState({ sessions: this.mergePendingStartSessions(workspace.path, mergeCachedNewSessions(workspace.path, loaded, target.machineId), target.machineId) });
+    // Clear only the confirmed missing selection, never another conversation or
+    // its saved draft. The navigation owner updates the URL and closes the socket.
+    await this.clearSessionAfterNavigation(expected);
+    if (this.isCurrentRefreshTarget(target)) return false;
+    if (selectedMachineId(this.getState()) === target.machineId && this.getState().selectedWorkspace?.id === workspace.id
+      && this.getState().selectedSession === undefined) {
+      this.reportWorkspaceError(workspace, target.machineId, "The selected session no longer exists. Choose another session from the list.");
+    }
+    return true;
   }
 
   private async readSelectedSessionSnapshot(target: SelectedSessionRefreshTarget, key: string): Promise<void> {

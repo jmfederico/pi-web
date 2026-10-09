@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NetworkRequestError, HttpRequestError } from "../api/http";
 import { initialAppState } from "../appState";
+import { loadDraft, saveDraft } from "../promptDraftStorage";
 import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
 import { SessionController } from "./sessionController";
-import { defaultApi, deferred, EmitSocket, emptyPage, FakeSocket, oldSession, replacementSession, status, transcriptSnapshotFixture, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
+import { defaultApi, deferred, EmitSocket, emptyPage, FakeSocket, MemoryStorage, oldSession, replacementSession, sessionKey, status, transcriptSnapshotFixture, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
 
 const sessionScope = sessionBrowserErrorScope("local", oldSession.id, { cwd: oldSession.cwd, projectId: workspace.projectId, workspaceId: workspace.id });
 const workspaceScope = workspaceBrowserErrorScope("local", workspace.projectId, workspace.id);
@@ -18,8 +19,9 @@ function setup(overrides: Partial<typeof defaultApi> = {}) {
   const sessions = vi.fn<typeof defaultApi.sessions>(() => Promise.resolve([oldSession]));
   const api = { ...defaultApi, transcriptSnapshot: snapshot, sessions, thinkingLevels: () => Promise.resolve({ levels: [] }), ...overrides };
   const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
-  const controller = new SessionController(() => state, setState, () => undefined, undefined, { api, socket: new FakeSocket() });
-  return { controller, snapshot, sessions, getState: () => state, setState, errors: new BrowserErrorReporter(() => state, setState) };
+  const socket = new FakeSocket();
+  const controller = new SessionController(() => state, setState, () => undefined, undefined, { api, socket });
+  return { controller, snapshot, sessions, socket, getState: () => state, setState, errors: new BrowserErrorReporter(() => state, setState) };
 }
 
 beforeEach(() => { vi.useFakeTimers(); });
@@ -70,6 +72,45 @@ describe("silent session read recovery", () => {
     await h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
     expect(h.snapshot).toHaveBeenCalledOnce();
     expect(Object.values(h.getState().browserErrors)).toEqual([{ scope: sessionScope, message: "HttpRequestError: Session not found" }]);
+  });
+
+  it("clears a confirmed missing selection without switching conversations or deleting its draft", async () => {
+    const listed = vi.fn<typeof defaultApi.sessions>().mockResolvedValue([replacementSession]);
+    const h = setup({ sessions: listed });
+    const close = vi.spyOn(h.socket, "close");
+    vi.stubGlobal("localStorage", new MemoryStorage());
+    saveDraft(sessionKey(oldSession.id), "keep my unsent prompt");
+    h.snapshot.mockRejectedValue(new HttpRequestError("Session not found", 404));
+    await h.controller.refreshSelectedSession();
+    expect(listed).toHaveBeenCalledExactlyOnceWith(workspace.path, "local");
+    expect(h.getState().selectedSession).toBeUndefined();
+    expect(h.getState().sessions).toEqual([replacementSession]);
+    expect(Object.values(h.getState().browserErrors)).toEqual([{ scope: workspaceScope, message: "The selected session no longer exists. Choose another session from the list." }]);
+    expect(close).toHaveBeenCalledOnce();
+    expect(loadDraft(sessionKey(oldSession.id))).toBe("keep my unsent prompt");
+  });
+
+  it("does not clear a newer selection while confirming a missing session", async () => {
+    const list = deferred<SessionInfo[]>();
+    const h = setup({ sessions: () => list.promise });
+    h.snapshot.mockRejectedValue(new HttpRequestError("Session not found", 404));
+    const refresh = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+    await vi.advanceTimersByTimeAsync(0);
+    h.setState({ selectedSession: replacementSession });
+    list.resolve([replacementSession]);
+    await refresh;
+    expect(h.getState().selectedSession).toBe(replacementSession);
+    expect(h.getState().browserErrors).toEqual({});
+  });
+
+  it("keeps the original error and selection when the confirming list is unavailable", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const h = setup({ sessions: () => Promise.reject(networkFailure()) });
+    h.snapshot.mockRejectedValue(new HttpRequestError("Session not found", 404));
+    await h.controller.refreshSelectedSession();
+    expect(h.getState().selectedSession).toBe(oldSession);
+    expect(Object.values(h.getState().browserErrors)).toEqual([{ scope: sessionScope, message: "HttpRequestError: Session not found" }]);
+    expect(warning).toHaveBeenCalledOnce();
   });
 
   it("stops recovery when the selected session changes", async () => {
