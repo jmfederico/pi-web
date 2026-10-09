@@ -324,8 +324,8 @@ async function foldFileLines(file: FileHandle, fold: SummaryFoldState, chunkBuff
 function buildSummaryFromFold(fold: SummaryFoldState, filePath: string, mtime: Date): PiSessionListEntry | undefined {
   if (fold.rejected || fold.header === undefined) return undefined;
   const id = fold.header["id"];
-  // The SDK would list a header without a usable id; downstream lookups then
-  // call `.startsWith` on it and crash. Skip such files instead.
+  // The SDK would list a header without a usable id. Skip such files rather
+  // than exposing an invalid session identity to downstream consumers.
   if (typeof id !== "string" || id === "") return undefined;
 
   const headerCwd = fold.header["cwd"];

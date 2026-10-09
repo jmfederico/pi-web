@@ -164,6 +164,8 @@ interface PluginNavigationOptions {
 
 The defaults are `mode: "replace"` and `history: "push"`, preserving existing behavior. All destination fields are optional: `machineId`, `projectId`, `workspaceId`, `sessionId`, `view` (`navigation`, `chat`, or `workspace`), `tool` (a qualified contribution ID), and `query` (local tool-query keys).
 
+**Session IDs.** Browser URLs, plugin navigation, and PI WEB session APIs use exact, case-sensitive IDs. Pass the full `session.id` returned by the session catalog or creation response. Abbreviated IDs produce a missing-session destination instead of matching or expanding a prefix; update old shortened links and integrations to use full IDs. Short IDs shown in labels are display-only.
+
 **Complete destinations (`mode: "replace"`).** Omitted location, tool, and view fields use normal host restoration defaults rather than copying the current URL's session, tool, or contribution query. Those defaults can select a remembered session. Omitted `machineId` means the machine selected at invocation, except message-action contexts use their captured machine. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations. For a selected workspace:
 
 ```ts

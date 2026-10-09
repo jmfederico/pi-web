@@ -160,7 +160,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     const messagesPromise = service.messages(sessionRef(sessionId));
     await createStarted.promise;
-    const statusPromise = service.status(sessionRef("single-flight"));
+    const statusPromise = service.status(sessionRef(sessionId));
     await new Promise<void>((resolve) => setImmediate(resolve));
     const callsWhileOpening = createCalls;
     releaseCreate.resolve();
@@ -181,6 +181,40 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     expect(loserSubscribe).not.toHaveBeenCalled();
     expect(loserUnsubscribe).not.toHaveBeenCalled();
     expect(loser.calls.dispose).toBe(0);
+  });
+
+  it("rejects abbreviated ids after warming an active session without mutating its runtime", async () => {
+    const sessionId = "warmed-active-session";
+    const fake = fakeRuntime(sessionId, {
+      sessionManager: fakeSessionManager("/workspace", { getSessionId: () => sessionId }),
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      archiveStore: emptyArchiveStore(),
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord(sessionId)]),
+      heartbeatIntervalMs: 60_000,
+    });
+    try {
+      const exact = sessionRef(sessionId);
+      const abbreviated = sessionRef("warmed-active");
+      await expect(service.status(exact)).resolves.toMatchObject({ sessionId });
+      await expect(service.status(abbreviated)).rejects.toThrow("Session not found");
+      await expect(service.messages(abbreviated)).rejects.toThrow("Session not found");
+      await expect(service.prompt(abbreviated, "must not be delivered")).rejects.toThrow("Session not found");
+      await expect(service.archive(abbreviated)).rejects.toThrow("Session not found");
+      await expect(service.status(sessionRef(sessionId, "/other"))).rejects.toThrow("Session not found");
+      await service.abort(abbreviated);
+      await service.stop(abbreviated);
+      expect(fake.calls.prompt).toEqual([]);
+      expect(fake.calls.abort).toBe(0);
+      expect(fake.calls.dispose).toBe(0);
+      expect(service.activeCount()).toBe(1);
+      await expect(service.status(exact)).resolves.toMatchObject({ sessionId });
+    } finally {
+      await service.dispose();
+    }
   });
 
   it("reads externally appended transcript entries without replacing or aborting the idle runtime", async () => {
@@ -502,8 +536,6 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
    * its whole workspace: `getActive` routes prompt/shell/runCommand, so a
    * `list` call here would let an in-flight listing serialize unrelated sends.
    * The rejecting `list` fake fails loudly if that coupling ever comes back.
-   * Requested with an id prefix so the resolved full id, not the caller's
-   * prefix, is what the session is opened under.
    */
   it("opens an inactive session by direct id resolution without listing its workspace", async () => {
     const sessionId = "direct-resolve-session";
@@ -515,7 +547,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
     });
     const list = vi.fn(() => Promise.reject(new Error("opening one session must not list its workspace")));
     const resolveSessionFile = vi.fn((refCwd: string, refId: string) => Promise.resolve(
-      sessionId.startsWith(refId) ? { id: sessionId, cwd: refCwd, path: `/sessions/${sessionId}.jsonl` } : undefined,
+      sessionId === refId ? { id: sessionId, cwd: refCwd, path: `/sessions/${sessionId}.jsonl` } : undefined,
     ));
     const open = vi.fn(() => fakeSessionManager());
     const gateway: SessionGateway = {
@@ -535,23 +567,22 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       heartbeatIntervalMs: 60_000,
     });
 
-    const page = await service.messages(sessionRef(sessionId.slice(0, 6)));
+    await expect(service.messages(sessionRef(sessionId.slice(0, 6)))).rejects.toThrow("Session not found");
+    expect(open).not.toHaveBeenCalled();
+    const page = await service.messages(sessionRef(sessionId));
 
     expect(page.messages).toEqual([{ role: "user", content: "resolved directly" }]);
-    expect(resolveSessionFile).toHaveBeenCalledWith("/workspace", sessionId.slice(0, 6));
+    expect(resolveSessionFile).toHaveBeenCalledWith("/workspace", sessionId);
     expect(open).toHaveBeenCalledWith(`/sessions/${sessionId}.jsonl`);
     expect(list).not.toHaveBeenCalled();
     await service.dispose();
   });
 
   /**
-   * Charter-level invariant: an id-prefix ref must never act on a different,
-   * prefix-extended session. This runs through the real gateway so the whole
-   * open path is covered — the service wiring and the resolver's
-   * exact-before-prefix precedence — rather than a fake that could agree with
-   * a broken rule. The exact session's file is the *older* one on purpose:
-   * every ambiguity tie-break the resolver has (creation-time order) points at
-   * the extended session, so only the exact-id rule can produce this outcome.
+   * A full id must never act on a different, prefix-extended session. This
+   * runs through the real gateway so service wiring and header equality are
+   * covered together. The exact session's file is the older one on purpose:
+   * only the exact-id rule can select it over the newer extended session.
    */
   it("opens the exact session for a full id even when a newer prefix-extended session exists", async () => {
     const sessionId = "abc123";
@@ -654,7 +685,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
 
     const messagesPromise = service.messages(sessionRef(sessionId));
     await bindStarted.promise;
-    const statusPromise = service.status(sessionRef("retry-open"));
+    const statusPromise = service.status(sessionRef(sessionId));
     await new Promise<void>((resolve) => setImmediate(resolve));
     const callsWhileOpening = createCalls;
     const failedLookups = Promise.allSettled([messagesPromise, statusPromise]);
@@ -1442,7 +1473,7 @@ describe("PiSessionService lifecycle, listing, and reload", () => {
       modelRuntime: testModelRuntime,
       archiveStore: {
         list: () => Promise.resolve([]),
-        get: (sessionId) => Promise.resolve(sessionId === "archived" || "archived".startsWith(sessionId)
+        get: (sessionId) => Promise.resolve(sessionId === "archived"
           ? { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" }
           : undefined),
         archive: () => Promise.resolve({ sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z" }),

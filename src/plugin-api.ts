@@ -276,6 +276,7 @@ export interface PluginNavigationDestination {
   machineId?: string;
   projectId?: string;
   workspaceId?: string;
+  /** Full, exact session ID in the target workspace; prefixes are not resolved. */
   sessionId?: string;
   view?: "navigation" | "chat" | "workspace";
   tool?: QualifiedContributionId;
@@ -291,6 +292,7 @@ export interface PluginNavigationPatchDestination {
   machineId?: string | null;
   projectId?: string | null;
   workspaceId?: string | null;
+  /** Full, exact session ID in the target workspace; prefixes are not resolved. */
   sessionId?: string | null;
   view?: "navigation" | "chat" | "workspace" | null;
   tool?: QualifiedContributionId | null;

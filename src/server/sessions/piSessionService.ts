@@ -45,7 +45,7 @@ import { SessionActivityMarker } from "./sessionActivityMarker.js";
 import { projectSessionTree, type ProjectableSessionTreeNode } from "./sessionTreeProjection.js";
 import { messageHistoryTargetId } from "./messageHistoryTarget.js";
 import { SessionArchiveStore, type ArchivedSessionRecord, type ArchiveSessionInput } from "./sessionArchiveStore.js";
-import { findArchiveCandidateByIdOrPrefix, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
+import { findArchiveCandidateByExactId, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
 import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
@@ -417,9 +417,8 @@ export interface PiSessionManager {
 export interface PiSessionManagerGateway {
   list(cwd: string): Promise<PiSessionListEntry[]>;
   /**
-   * Locate a session file by id, with an exact header id taking priority over
-   * a prefix, without parsing message bodies or building a full workspace
-   * transcript listing.
+   * Locate a session file by full header id equality, without parsing message
+   * bodies or building a full workspace transcript listing.
    */
   resolveSessionFile(cwd: string, sessionId: string): Promise<ResolvedSessionFile | undefined>;
   /**
@@ -3270,7 +3269,7 @@ export class PiSessionService implements SessionRouteService {
   async archiveTree(ref: PiSessionRef): Promise<ClientArchiveSessionsResponse> {
     const session = await this.getOrOpen(ref);
     const catalog = await this.workspaceArchiveCandidates(session.sessionManager.getCwd());
-    const root = findArchiveCandidateByIdOrPrefix(catalog, session.sessionId) ?? archiveCandidateFromActiveSession(session, false);
+    const root = findArchiveCandidateByExactId(catalog, session.sessionId) ?? archiveCandidateFromActiveSession(session, false);
     const plan = planSessionArchiveTree(root, catalog);
     const busy = plan.targets.map((target) => target.activeSession).find((target) => target !== undefined && this.hasActiveWork(target));
     if (busy !== undefined) throw new Error(`Stop current session activity before archiving ${sessionDisplayName(busy)}`);
@@ -3792,23 +3791,13 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private activeForRef(ref: PiSessionRef): ActiveSession<PiSessionRuntime> | undefined {
-    const sessionId = ref.id;
-    const exact = this.active.get(sessionId);
-    if (exact !== undefined && refMatchesActiveSession(ref, exact)) return exact;
-    for (const [candidateId, active] of this.active.entries()) {
-      if (candidateId.startsWith(sessionId) && refMatchesActiveSession(ref, active)) return active;
-    }
-    return undefined;
+    const active = this.active.get(ref.id);
+    return active !== undefined && refMatchesActiveSession(ref, active) ? active : undefined;
   }
 
   private startupSessionForRef(ref: PiSessionRef): PiAgentSession | undefined {
-    const sessionId = ref.id;
-    const exact = this.startupSessions.get(sessionId);
-    if (exact !== undefined && refMatchesStartupSession(ref, exact)) return exact;
-    for (const [candidateId, session] of this.startupSessions.entries()) {
-      if (candidateId.startsWith(sessionId) && refMatchesStartupSession(ref, session)) return session;
-    }
-    return undefined;
+    const session = this.startupSessions.get(ref.id);
+    return session !== undefined && refMatchesStartupSession(ref, session) ? session : undefined;
   }
 
   /**
@@ -4836,15 +4825,15 @@ function bulkRefToSessionRef(ref: SessionBulkMutationRef): PiSessionRef {
 }
 
 function findArchivedRecordForBulkRef(records: readonly ArchivedSessionRecord[], ref: SessionBulkMutationRef): ArchivedSessionRecord | undefined {
-  return records.find((record) => record.cwd === ref.cwd && (record.sessionId === ref.id || record.sessionId.startsWith(ref.id)));
+  return records.find((record) => record.cwd === ref.cwd && record.sessionId === ref.id);
 }
 
 function findListedSessionForBulkRef(context: BulkSessionRefContext, ref: SessionBulkMutationRef): PiSessionListEntry | undefined {
-  return findSessionByIdOrPrefix(context.sessionsByCwd.get(ref.cwd) ?? [], ref.id);
+  return findSessionByExactId(context.sessionsByCwd.get(ref.cwd) ?? [], ref.id);
 }
 
-function findSessionByIdOrPrefix(sessions: readonly PiSessionListEntry[], sessionId: string): PiSessionListEntry | undefined {
-  return sessions.find((session) => session.id === sessionId) ?? sessions.find((session) => session.id.startsWith(sessionId));
+function findSessionByExactId(sessions: readonly PiSessionListEntry[], sessionId: string): PiSessionListEntry | undefined {
+  return sessions.find((session) => session.id === sessionId);
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

@@ -157,7 +157,7 @@ describe("SessionArchiveStore", () => {
     await expect(store.list()).resolves.toEqual([]);
   });
 
-  it("prefers exact persisted session IDs over prefix matches and canonicalizes stored cwd", async () => {
+  it("requires exact persisted session IDs and canonicalizes stored cwd", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-archive-prefix-"));
     tempRoots.push(root);
     const archiveFile = join(root, "archived-sessions.json");
@@ -194,14 +194,17 @@ describe("SessionArchiveStore", () => {
       cwd: resolve(rawCwd),
       firstMessage: "exact",
     });
-    await expect(store.get("abc1")).resolves.toMatchObject({
+    await expect(store.get("abc123")).resolves.toMatchObject({
       sessionId: "abc123",
       cwd: resolve(rawCwd),
       firstMessage: "prefix",
       name: "Prefix match",
       parentSessionPath: "/sessions/root.jsonl",
     });
-    await expect(store.isArchived("abc1")).resolves.toBe(true);
+    await expect(store.get("abc1")).resolves.toBeUndefined();
+    await expect(store.get("")).resolves.toBeUndefined();
+    await expect(store.isArchived("abc1")).resolves.toBe(false);
+    await expect(store.isArchived("abc123")).resolves.toBe(true);
     await expect(store.isArchived("missing")).resolves.toBe(false);
   });
 });

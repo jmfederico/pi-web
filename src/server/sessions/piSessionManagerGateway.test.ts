@@ -468,17 +468,20 @@ describe("gateway session-file resolution by id", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves an id prefix the same way a listing match would", async () => {
+  it("rejects an abbreviated id even when only one session matches its prefix", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
     const targetPath = await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_0199f3a2-prefix-session.jsonl", { id: "0199f3a2-prefix-session", cwd });
 
-    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "0199f3a2", readSessionHeaderSummary)).resolves.toEqual({ id: "0199f3a2-prefix-session", cwd, path: targetPath });
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "0199f3a2", readSessionHeaderSummary)).resolves.toBeUndefined();
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "", readSessionHeaderSummary)).resolves.toBeUndefined();
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "0199f3a2-prefix-session", readSessionHeaderSummary)).resolves.toEqual({ id: "0199f3a2-prefix-session", cwd, path: targetPath });
   });
 
   it("falls back to header reads when the file name does not embed the id", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
     const renamedPath = await writeNamedSessionFile(sharedSessionDir, "hand-renamed.jsonl", { id: "renamed-session", cwd });
 
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "renamed", readSessionHeaderSummary)).resolves.toBeUndefined();
     await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "renamed-session", readSessionHeaderSummary)).resolves.toEqual({ id: "renamed-session", cwd, path: renamedPath });
   });
 
@@ -500,15 +503,17 @@ describe("gateway session-file resolution by id", () => {
     await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "target-session", readSessionHeaderSummary)).resolves.toEqual({ id: "target-session", cwd, path: renamedPath });
   });
 
-  it("prefers an exact header id over a newer prefix match", async () => {
+  it("prefers an exact header id over a newer prefix-extended id", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
     await writeNamedSessionFile(sharedSessionDir, "2026-01-02T00-00-00-000Z_abc123-extended.jsonl", { id: "abc123-extended", cwd });
     const exactPath = await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_abc123.jsonl", { id: "abc123", cwd });
 
-    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "abc123", readSessionHeaderSummary)).resolves.toEqual({ id: "abc123", cwd, path: exactPath });
+    const readHeader = vi.fn(readSessionHeaderSummary);
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "abc123", readHeader)).resolves.toEqual({ id: "abc123", cwd, path: exactPath });
+    expect(readHeader).toHaveBeenCalledExactlyOnceWith(exactPath);
   });
 
-  it("prefers an exact header id in a renamed file over a prefix-matching filename candidate", async () => {
+  it("prefers a renamed exact session over an exact filename with an extended header id", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
     await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_target-session.jsonl", { id: "target-session-extended", cwd });
     const renamedPath = await writeNamedSessionFile(sharedSessionDir, "archived.jsonl", { id: "target-session", cwd });
@@ -516,25 +521,18 @@ describe("gateway session-file resolution by id", () => {
     await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "target-session", readSessionHeaderSummary)).resolves.toEqual({ id: "target-session", cwd, path: renamedPath });
   });
 
-  it("resolves ambiguous prefixes deterministically by newest embedded timestamp, then plain name order", async () => {
+  it("rejects ambiguous abbreviations regardless of filename timestamps or order", async () => {
     const sharedSessionDir = join(tempDir, "shared-sessions");
-    // Written newest-last on purpose: readdir order must not influence the outcome.
-    const newestPath = await writeNamedSessionFile(sharedSessionDir, "2026-01-02T00-00-00-000Z_abc-two.jsonl", { id: "abc-two", cwd });
+    await writeNamedSessionFile(sharedSessionDir, "2026-01-02T00-00-00-000Z_abc-two.jsonl", { id: "abc-two", cwd });
     await writeNamedSessionFile(sharedSessionDir, "2026-01-01T00-00-00-000Z_abc-one.jsonl", { id: "abc-one", cwd });
 
-    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "abc", readSessionHeaderSummary)).resolves.toEqual({ id: "abc-two", cwd, path: newestPath });
+    await expect(resolveSessionFileInDir(sharedSessionDir, cwd, "abc", readSessionHeaderSummary)).resolves.toBeUndefined();
 
-    // Same embedded timestamp: plain (non-locale) code-unit order decides, so
-    // the id starting with a lowercase letter sorts after the uppercase one
-    // and wins. The names must differ by more than case: case-insensitive
-    // filesystems (Windows CI) collapse case-only variants into one file. A
-    // locale-aware comparison would rank Z after a and flip the winner, so
-    // this still catches a drift away from code-unit order.
     const tiedDir = join(tempDir, "tied-sessions");
     await writeNamedSessionFile(tiedDir, "2026-01-03T00-00-00-000Z_abc-ZZZ.jsonl", { id: "abc-ZZZ", cwd });
-    const tiedWinnerPath = await writeNamedSessionFile(tiedDir, "2026-01-03T00-00-00-000Z_abc-aaa.jsonl", { id: "abc-aaa", cwd });
+    await writeNamedSessionFile(tiedDir, "2026-01-03T00-00-00-000Z_abc-aaa.jsonl", { id: "abc-aaa", cwd });
 
-    await expect(resolveSessionFileInDir(tiedDir, cwd, "abc", readSessionHeaderSummary)).resolves.toEqual({ id: "abc-aaa", cwd, path: tiedWinnerPath });
+    await expect(resolveSessionFileInDir(tiedDir, cwd, "abc", readSessionHeaderSummary)).resolves.toBeUndefined();
   });
 
   it("does not resolve sessions that belong to another cwd", async () => {

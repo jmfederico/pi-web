@@ -705,8 +705,8 @@ describe("session summary scanner multi-chunk folding with a small chunk seam", 
 describe("session summary scanner deliberate SDK divergences", () => {
   it("skips headers with an empty, missing, or non-string id, where the SDK lists a broken entry", async () => {
     // The SDK lists these sessions with whatever the header carries as id
-    // (undefined, "", or a number); downstream lookups then call .startsWith
-    // on it and crash. The scanner is deliberately stricter and skips them.
+    // (undefined, "", or a number). The scanner is deliberately stricter and
+    // skips invalid session identities before they reach downstream consumers.
     await writeSession("missing-id.jsonl", [
       JSON.stringify({ type: "session", version: 3, timestamp: "2026-01-01T00:00:00.000Z", cwd: WORKSPACE }),
       messageLine({ role: "user", content: textContent("hi") }),

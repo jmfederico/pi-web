@@ -548,19 +548,34 @@ describe("PiSessionService session_start dialog startup reachability", () => {
     });
   }
 
-  it("serves status for a session still parked on a session_start dialog", async () => {
-    const { service, store } = startupDialogService();
+  it("requires the full session id for status and dialog actions while startup is parked", async () => {
+    const { service, store, confirmAnswers, fake } = startupDialogService();
     const started = service.start("/workspace");
-    await parkOnStartupDialog(store);
+    try {
+      await parkOnStartupDialog(store);
+      const exact = sessionRef(ACTIVE_SESSION_ID);
+      const abbreviated = sessionRef("session");
+      const status = await service.status(exact);
 
-    const status = await service.status(sessionRef(ACTIVE_SESSION_ID));
-
-    expect(status.pendingDialogs).toEqual([
-      expect.objectContaining({ dialogId: "dialog-1", kind: "confirm", title: "Proceed at startup?", runScoped: false }),
-    ]);
-    await service.answerDialog(sessionRef(ACTIVE_SESSION_ID), "dialog-1", true);
-    await started;
-    await service.dispose();
+      expect(status.pendingDialogs).toEqual([
+        expect.objectContaining({ dialogId: "dialog-1", kind: "confirm", title: "Proceed at startup?", runScoped: false }),
+      ]);
+      await expect(service.status(abbreviated)).rejects.toThrow("Session not found");
+      await expect(service.messages(abbreviated)).rejects.toThrow("Session not found");
+      await expect(service.answerDialog(abbreviated, "dialog-1", true)).rejects.toThrow("Session not found");
+      await expect(service.cancelDialog(abbreviated, "dialog-1")).rejects.toThrow("Session not found");
+      await expect(service.status(sessionRef(ACTIVE_SESSION_ID, "/other"))).rejects.toThrow("Session not found");
+      await service.stop(abbreviated);
+      expect(confirmAnswers).toEqual([]);
+      expect(fake.calls.dispose).toBe(0);
+      expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toHaveLength(1);
+      await service.answerDialog(exact, "dialog-1", true);
+      await started;
+      expect(confirmAnswers).toEqual([true]);
+    } finally {
+      await service.dispose();
+      await Promise.allSettled([started]);
+    }
   });
 
   it("answers a session_start dialog mid-startup so creation can finish", async () => {

@@ -91,7 +91,7 @@ describe("PiSessionService media", () => {
     expect(hub.mediaIndex.get(ref, idOf(png))).toBeUndefined();
   });
 
-  it("isolates actual valid sessions copied with the same id across cwds, and reconstructs prefix requests", async () => {
+  it("isolates actual valid sessions copied with the same id across cwds and rejects abbreviated ids", async () => {
     const store = join(temp, "sessions");
     const cwdA = join(temp, "workspace-a");
     const cwdB = join(temp, "workspace-b");
@@ -138,9 +138,12 @@ describe("PiSessionService media", () => {
       expect(decode).toHaveBeenCalledOnce();
       hub.mediaIndex.clear();
       readEntries.mockClear();
-      const prefixResponse = await app.inject({ method: "GET", url: url({ ...refA, id: "copied" }) });
-      expect(prefixResponse.statusCode).toBe(200);
-      expect(prefixResponse.rawPayload).toEqual(Buffer.from(png, "base64"));
+      const abbreviatedResponse = await app.inject({ method: "GET", url: url({ ...refA, id: "copied" }) });
+      expect(abbreviatedResponse.statusCode).toBe(404);
+      expect(readEntries).not.toHaveBeenCalled();
+      const exactResponse = await app.inject({ method: "GET", url: url(refA) });
+      expect(exactResponse.statusCode).toBe(200);
+      expect(exactResponse.rawPayload).toEqual(Buffer.from(png, "base64"));
       expect(readEntries).toHaveBeenCalledExactlyOnceWith(pathA);
       expect(hub.mediaIndex.get(refB, idOf(png))).toBeUndefined();
       expect(open).not.toHaveBeenCalled();

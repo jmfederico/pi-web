@@ -246,6 +246,7 @@ prompt.setChip({
   history?: "push" | "replace";
 }</code></pre>
 <p>The defaults are <code>mode: "replace"</code> and <code>history: "push"</code>, preserving existing behavior. All destination fields are optional: <code>machineId</code>, <code>projectId</code>, <code>workspaceId</code>, <code>sessionId</code>, <code>view</code> (<code>navigation</code>, <code>chat</code>, or <code>workspace</code>), <code>tool</code> (a qualified contribution ID), and <code>query</code> (local tool-query keys).</p>
+<p><strong>Session IDs.</strong> Browser URLs, plugin navigation, and PI WEB session APIs use exact, case-sensitive IDs. Pass the full <code>session.id</code> returned by the session catalog or creation response. Abbreviated IDs produce a missing-session destination instead of matching or expanding a prefix; update old shortened links and integrations to use full IDs. Short IDs shown in labels are display-only.</p>
 <p><strong>Complete destinations (<code>mode: "replace"</code>).</strong> Omitted location, tool, and view fields use normal host restoration defaults rather than copying the current URL's session, tool, or contribution query. Those defaults can select a remembered session. Omitted <code>machineId</code> means the machine selected at invocation, except message-action contexts use their captured machine. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations. For a selected workspace:</p>
 <pre><code>await context.navigate({
   machineId: context.machine.id,

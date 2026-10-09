@@ -935,7 +935,7 @@ export class PiWebApp extends LitElement {
       && (this.state.selectedProject?.id !== options.requestedRoute.projectId
         || this.state.selectedWorkspace?.id !== options.requestedRoute.workspaceId);
     const requestedSessionUnavailable = options.requestedRoute?.sessionId !== undefined
-      && !sessionMatchesRouteTarget(this.state.selectedSession?.id, options.requestedRoute.sessionId);
+      && this.state.selectedSession?.id !== options.requestedRoute.sessionId;
     const unavailablePanel = options.unavailableToolRoute || options.unavailablePanelViewRoute
       || requestedToolUnavailable;
     // Invalid destinations belong to panel content, not the notification history.
@@ -1283,13 +1283,7 @@ export class PiWebApp extends LitElement {
     return (current.machineId ?? "local") === expected.machineId
       && current.projectId === expected.projectId
       && current.workspaceId === expected.workspaceId
-      // Restoration accepts abbreviated session IDs; guarded handoffs must
-      // recognize the same resolved identity without relaxing hierarchy checks.
-      && (isCreatingSessionId(expected.sessionId)
-        ? current.sessionId === expected.sessionId
-        : current.sessionId === undefined
-          ? expected.sessionId === undefined
-          : sessionMatchesRouteTarget(expected.sessionId, current.sessionId))
+      && current.sessionId === expected.sessionId
       && (selectionOnly || (current.tool === expected.tool && current.view === expected.view));
   }
 
@@ -3799,18 +3793,12 @@ function selectedChatIdentity(state: Pick<AppState, "selectedMachine" | "selecte
   return session === undefined ? undefined : unreadChatIdentity(selectedMachineId(state), session);
 }
 
-function sessionMatchesRouteTarget(selectedSessionId: string | undefined, requestedSessionId: string): boolean {
-  return selectedSessionId === requestedSessionId || selectedSessionId?.startsWith(requestedSessionId) === true;
-}
-
 function browserErrorContextForRoute(
   state: Pick<AppState, "selectedSession">,
   route: Pick<ParsedAppRoute, "machineId" | "projectId" | "workspaceId" | "sessionId">,
 ): ReturnType<typeof browserErrorContext> {
   const selectedSession = state.selectedSession;
-  const sessionId = route.sessionId !== undefined && sessionMatchesRouteTarget(selectedSession?.id, route.sessionId)
-    ? selectedSession?.id
-    : route.sessionId;
+  const sessionId = route.sessionId;
   return {
     machineId: route.machineId ?? "local",
     ...(route.projectId === undefined ? {} : { projectId: route.projectId }),

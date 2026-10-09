@@ -25,6 +25,7 @@ interface LocalAgentToolCallOutcome { id: string; result: unknown; isError: bool
 import { InMemoryCredentialStore, type Credential, type CredentialStore } from "@earendil-works/pi-ai";
 import type { GlobalSessionEvent, SessionNotificationSummaryEvent, SessionUiEvent } from "../../shared/apiTypes.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
+import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { PiAgentSession, PiSessionListEntry, PiSessionManager, PiSessionRuntime, PiSessionServiceDependencies, ResolvedSessionFile } from "./piSessionService.js";
 
 export class CapturingSessionEventHub extends SessionEventHub {
@@ -272,19 +273,17 @@ export function sessionGateway(records: ReturnType<typeof sessionRecord>[]): Ses
 
 /**
  * Build a gateway `resolveSessionFile` on top of a `list` implementation,
- * mirroring the real resolver's precedence: an exact id wins over a prefix
- * match wherever it appears. For test gateways whose `list` fake is the source
- * of truth, this keeps id resolution consistent with what the fake lists
- * without letting the fake disagree with the production ordering rule.
+ * mirroring the real resolver's full id equality and cwd isolation. For test
+ * gateways whose `list` fake is the source of truth, this keeps id resolution
+ * consistent with the production contract.
  */
 export function resolveSessionFileFromList(
   list: (cwd: string) => Promise<PiSessionListEntry[]>,
 ): (cwd: string, sessionId: string) => Promise<ResolvedSessionFile | undefined> {
   return async (cwd, sessionId) => {
     const records = await list(cwd);
-    const match = records.find((record) => record.id === sessionId)
-      ?? records.find((record) => record.id.startsWith(sessionId));
-    return match === undefined ? undefined : { id: match.id, cwd: match.cwd, path: match.path };
+    const match = records.find((record) => record.id === sessionId && record.cwd !== "" && cwdPathsEqual(record.cwd, cwd));
+    return match === undefined ? undefined : { id: match.id, cwd: canonicalizeStoredCwd(match.cwd), path: match.path };
   };
 }
 

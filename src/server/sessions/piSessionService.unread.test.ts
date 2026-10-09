@@ -353,7 +353,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       sessionManager: sessionGateway([sessionRecord("archive-me")]),
       archiveStore: {
         list: () => Promise.resolve([...archived.values()]),
-        get: (sessionId) => Promise.resolve([...archived.values()].find((record) => record.sessionId.startsWith(sessionId))),
+        get: (sessionId) => Promise.resolve(archived.get(sessionId)),
         archive: (input) => {
           const record = { sessionId: input.sessionId, cwd: input.cwd, archivedAt: "2026-07-20T00:00:00.000Z", archivePath: `/archive/${input.sessionId}.jsonl` };
           archived.set(input.sessionId, record);

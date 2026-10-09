@@ -57,7 +57,7 @@ export class SessionArchiveStore {
 
   async get(sessionId: string): Promise<ArchivedSessionRecord | undefined> {
     const sessions = (await this.read()).sessions;
-    return sessions.find((session) => session.sessionId === sessionId) ?? sessions.find((session) => session.sessionId.startsWith(sessionId));
+    return sessions.find((session) => session.sessionId === sessionId);
   }
 
   async archive(session: ArchiveSessionInput): Promise<ArchivedSessionRecord> {
