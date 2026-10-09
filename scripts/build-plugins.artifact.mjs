@@ -106,6 +106,12 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
+    // Check the materialized build output, not words in agent instructions.
+    for (const name of ["relay", "relay-runner"]) {
+      const canonical = await readFile(join(repoRoot, "skills", name, "SKILL.md"), "utf8");
+      const packaged = await readFile(join(builtPackagesRoot, "relays", "skills", name, "SKILL.md"), "utf8");
+      expect(packaged).toBe(canonical);
+    }
     expect(builtPackageFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
     expect(packagedFiles.filter((path) => path.startsWith("dist/pi-packages/")).sort()).toEqual(builtPackageFiles);
     const builtRelaysPackage = JSON.parse(await readFile(join(builtPackagesRoot, "relays", "package.json"), "utf8"));

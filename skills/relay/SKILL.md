@@ -1,94 +1,50 @@
 ---
 name: relay
-description: "Foundational, tool-agnostic Relay method for carrying long work across a chain of independent agent contexts, one bounded leg at a time. Use when a user asks what Relay is, invokes Relay directly, designs a Relay workflow or operational profile, or refers to an active Relay chain or packet. Do not load for generic multi-step plans, ordinary delegation, or unrelated session spawning."
+description: "Carry work across a chain of fresh agent contexts using a shared goal, compact baton, and durable record. Use when a user invokes Relay, discusses the Relay method, prepares a Relay, or continues an active Relay. Do not load for generic multi-step work or ordinary delegation."
 ---
 
 # Relay
 
-Relay is a way to carry a long or complex effort across a chain of independent agent contexts. Each runner completes one bounded **leg**, makes progress durable, and hands the work to one fresh successor. The chain continues until the finish line is reached or human intervention is needed.
+A Relay carries work across fresh agent contexts until the agreed goal is reached or an agent needs human help. Each context owns one useful slice, called a **leg**. There is no standing coordinator or fixed set of agent roles.
 
-The method follows the [Relay Principle](https://relayprinciple.ai/): do not recreate human management structures around agents by default. There is no standing coordinator, referee, role hierarchy, or “god-agent” supervising the chain. Each runner owns its leg, adapts the route within agreed bounds, and trusts the next runner to do the same.
+Follow the [Relay Principle](https://relayprinciple.ai/): give agents a destination and enough continuity to act, rather than recreating a management structure around them.
 
-Relay is safe because it combines distributed trust with **context containment**. A fresh runner receives compact durable state instead of inheriting an ever-growing conversation or defensively reconstructing the full history.
+## Finish line over plan
 
-## Core model
+Help the human express what they want built and how they will recognize it is done. Resolve material ambiguity before dispatch. An existing requirements document can supply the goal; reference it rather than rewriting it into a larger specification.
 
-- **Relay:** the complete chain and its stable destination.
-- **Runner:** the agent context responsible for one leg. It coordinates its own slice; it does not supervise later runners.
-- **Leg:** one context-contained, coherent unit of progress. Leg boundaries protect context quality, not organizational ownership.
-- **Packet:** durable state shared across otherwise independent contexts.
-- **Baton:** the packet's compact current-state view: where the Relay is now, what comes next, and the targeted context needed by the next runner.
-- **Handoff:** the final operational act that starts or designates at most one successor after current work is durable. A user-facing summary may follow, but no further work, durable-state mutation, tool use, or downstream steering.
-- **Intervention:** a visible stop when the destination cannot be pursued responsibly within the current agreement.
-- **Operational profile:** the tool- and workflow-specific policy that binds these concepts to a concrete environment.
+Keep the goal stable and the route adaptable. Each runner checks the finish line against the current work and chooses the next useful slice. Changing the goal requires human agreement; changing implementation or sequencing within scope does not.
 
-## Invariants
+## Scope over script
 
-A workflow keeps the spirit of Relay when these properties hold:
+Record the relay-specific boundaries, limitations, conditions, and clarifications needed to understand the request. Preserve technical requirements and any other details the human explicitly asks to include.
 
-1. **Stable destination, adaptive route.** The finish line and material bounds remain authoritative while runners adapt sequencing and implementation. Changing the destination requires the agreement authority defined by the Relay.
-2. **One bounded leg per context.** A runner does not keep accumulating unrelated work or execute several nominal legs in one context.
-3. **Durability before handoff.** Decisions, artifacts, current state, and blockers needed downstream are preserved outside transient conversation before a successor begins.
-4. **At most one successor.** A runner either hands off once at the end or stops. It does not fan out the chain or hand off while its own work remains in flight.
-5. **Fresh-context trust.** The successor is allowed to own its leg. If a runner feels it must watch and correct downstream work, the slice, packet, or intervention policy is not ready.
-6. **Bounded orientation.** A successor starts from the stable agreement and baton, then reads only targeted supporting context. Full-history reconstruction is exceptional, not routine.
-7. **Visible stopping.** Completion, blockers, and intervention are recorded clearly. Spawning a confused successor is worse than stopping cleanly.
-8. **No silent goal drift.** Current-state updates cannot redefine what the Relay is trying to achieve.
+Do not invent an implementation roadmap, speculative requirements, or a new software process. Project instructions, skills, and harness conventions remain where they belong; each runner discovers and follows what applies to its work. A Relay does not replace or weaken those rules.
 
-## Durable state by role
+## Handoff over handhold
 
-Relay needs durable state with three distinct authorities. An implementation may use files, records, messages, or another medium; the roles matter more than their names.
+A baton says **where we are**, not **how you must work**. Avoid suggesting or assigning the next slice: even a provisional suggestion can anchor the successor. Record remaining gaps and concrete dependencies instead, and trust the successor to inspect reality and choose its slice.
 
-### Stable agreement
+Choose a meaningful increment that fits one context, not the tiniest possible task. Investigation and related work can stay together. Leg boundaries protect context quality, not organizational ownership.
 
-Defines identity, goal and observable finish line, scope edges, explicit non-goals, and material assumptions or human decisions. It changes rarely. Clarification is normal; moving the finish line or an edge is an agreement change, not routine adaptation.
+Finish ongoing work and preserve the state before starting at most one fresh successor. Handoff is the final operational action; only a user-facing summary follows. Do not watch or steer the successor.
 
-Keep this destination-focused. Do not turn it into an implementation plan, technical design, quality checklist, risk inventory, or copy of project instructions. Those details anchor later runners to route assumptions and blur what requires human agreement.
+## Record over memory
 
-### Current baton
+Keep three kinds of durable information:
 
-Defines present position, the last completed and next leg identifiers, current or next task, targeted context pointers, blockers, and required progress updates. It stays compact. It carries position, not destination.
+- **Goal:** the agreed finish line and relay-specific scope. Current status cannot override it.
+- **Baton:** current position, completed work, what remains, relevant evidence and decisions, useful pointers, and any blocker.
+- **History:** concise entries recording each leg's result, decisions, artifacts, checks, and handoff or stop.
 
-### History
+Keep the baton compact. Use history for targeted lookup, not mandatory reconstruction. Inspect the actual work as needed; the record saves rediscovering prior decisions, not reading the project.
 
-Preserves concise append-only evidence of completed legs, decisions, artifacts, agreement changes, and stops. It supports targeted lookup and auditability; it is not the default orientation surface.
+## Signal over spin
 
-Separating these roles prevents recency from becoming authority. A newer baton cannot silently override the stable agreement, and a large history does not become mandatory context.
+Stop when the finish line is met, with evidence. Completion does not require finding another improvement.
 
-## Operational profiles
+Stop visibly when progress needs human input: record the blocker, what was tried, and the specific decision or help needed. If successive legs keep revisiting the same issue without new evidence or meaningful progress, surface that stall instead of spawning another attempt.
 
-This base skill is intentionally non-operational and tool agnostic. It does not choose:
+Optional cleanup, hypothetical risks, and a desire for perfection are not reasons to prolong the chain. Revisit a settled decision when facts change or concrete evidence shows it was wrong, not merely because a fresh agent has arrived.
 
-- how a successor context is created;
-- where or in what format durable state lives;
-- how large a leg should be or how tasks are selected;
-- whether work uses source control, worktrees, commits, tests, reviews, or delivery gates;
-- how intervention reaches a human; or
-- what project-specific quality standard applies.
-
-An operational profile supplies those bindings and decides where to keep its identity and any operational record. Each handoff makes the active profile visible to the fresh runner. A profile may be strongly opinionated without putting its mechanics into the destination agreement or turning its choices into the definition of Relay.
-
-Projects can layer any operational profile that fits their environment while preserving the invariants above.
-
-## Context containment
-
-A fresh runner normally needs only:
-
-1. the stable agreement;
-2. the current baton; and
-3. the specific supporting material those surfaces identify for the leg.
-
-A baton that routinely requires full-history or whole-artifact-tree reconstruction violates bounded orientation. A state gap that can be resolved only through broad archaeology or guessing about the destination is an intervention condition, not ordinary continuation.
-
-## Failure smells
-
-- **Coordinator creep:** a persistent supervisor plans, watches, or approves every leg.
-- **Role bureaucracy:** fixed agent roles or layer ownership replace fluid, outcome-driven slices without a real constraint requiring them.
-- **No stable finish line:** mutable current state is the only definition of done.
-- **Baton authority creep:** status quietly narrows or expands the agreement.
-- **Context leakage:** every runner reloads the full history or inherits an unbounded conversation.
-- **Eager or parallel handoff:** successors begin before the current leg is durable, or one runner fans out the chain.
-- **Oversized legs:** a runner continues beyond a coherent context-contained checkpoint.
-- **Silent stall:** work stops without durable blocker or intervention state.
-
-Operational details may vary widely. These failures matter because they undermine the principle, not because a particular tool or file convention was violated.
+Tools, storage, and session creation belong to the environment-specific runner skill, not the definition of Relay.
