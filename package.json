@@ -64,7 +64,6 @@
     "test": "vitest run --config vitest.config.ts",
     "check:artifacts": "vitest run --config vitest.artifacts.config.ts",
     "verify": "npm run typecheck && npm run lint && npm run knip && npm test",
-    "verify:staged": "node scripts/verify-staged.mjs",
     "start": "tsx src/server/index.ts",
     "start:sessiond": "node scripts/dev-sessiond.mjs",
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

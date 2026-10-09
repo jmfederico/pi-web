@@ -11,9 +11,9 @@ import { gitDiff as requestGitDiff, gitStatus as requestGitStatus } from "./git-
 // Isolate from any global/system git config and force a deterministic identity;
 // `protocol.file.allow` is required for `submodule add` from a local path.
 const GIT_FLAGS = ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "protocol.file.allow=always", "-c", "commit.gpgsign=false"];
-// Strip all GIT_* variables (e.g. GIT_DIR/GIT_INDEX_FILE, set by git hooks such
-// as this repo's pre-commit verify run) so fixture commands never pick up an
-// outer repository's environment, then pin the handful we rely on.
+// Strip all GIT_* variables inherited from enclosing Git commands or hooks
+// so fixture commands never pick up an outer repository's environment,
+// then pin the handful we rely on.
 const GIT_ENV = Object.fromEntries([
   ...Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
   ["GIT_CONFIG_GLOBAL", "/dev/null"],
