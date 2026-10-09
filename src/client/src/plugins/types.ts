@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { PluginProjects, PluginPromptEditor, PluginSelectionService } from "../../../plugin-api";
+import type { PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectionService } from "../../../plugin-api";
 import type { AppAction } from "../actions";
 import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
@@ -211,10 +211,10 @@ export interface PiWebUnstableRuntimeContext {
 
 export type { PluginPromptEditor } from "../../../plugin-api";
 
-export type { PluginNavigationDestination } from "../../../plugin-api";
+export type { PluginNavigate, PluginNavigationPatchDestination, PluginNavigationOptions } from "../../../plugin-api";
 
 export interface PluginRuntimeContext {
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   state: AppState;
   projects?: PluginProjects;
   prompt: PluginPromptEditor;
@@ -279,7 +279,7 @@ export interface WorkspacePanelNavigationV1 {
 }
 
 export interface WorkspacePanelContext extends WorkspaceContext {
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
   /** Contribution-scoped address-bar state for deep links and browser history. */
@@ -292,7 +292,7 @@ export interface ApplicationPanelContext {
   projects?: PluginProjects;
   workspace?: Workspace;
   terminal?: WorkspacePanelTerminal;
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   host: WorkspaceHost;
 }

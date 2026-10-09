@@ -1,4 +1,5 @@
 import type { QualifiedContributionId } from "./plugins/types";
+import { normalizeContributionQueryRecord, replaceContributionQueryParams, type ContributionQuerySnapshot } from "./namespacedQueryArgs";
 
 export type MainView = "navigation" | "chat" | "workspace";
 
@@ -74,7 +75,7 @@ export function routeMatchesWorkspaceIdentity(
     && route.workspaceId === identity.workspaceId;
 }
 
-export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean | undefined }): void {
+export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean | undefined; contributionQuery?: ContributionQuerySnapshot }): void {
   const url = new URL(window.location.href);
   url.searchParams.delete("machine");
   url.searchParams.delete("project");
@@ -88,6 +89,9 @@ export function writeRoute(route: ParsedAppRoute, options?: { replace?: boolean 
   if (route.sessionId !== undefined && route.sessionId !== "") url.searchParams.set("session", route.sessionId);
   if (route.tool !== undefined && route.tool !== "") url.searchParams.set("tool", route.tool);
   if (route.view !== undefined && route.view !== "") url.searchParams.set("view", route.view);
+  if (options?.contributionQuery !== undefined) {
+    replaceContributionQueryParams(url.searchParams, normalizeContributionQueryRecord(options.contributionQuery));
+  }
   const next = `${url.pathname}${url.search}${url.hash}`;
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   if (next === current) return;

@@ -240,7 +240,13 @@ prompt.setChip({
 <p><strong>Panel ID migration.</strong> <code>routeAliases</code> and <code>navigationAliases</code> have been removed from application and workspace panel contributions. Remove these options from plugins; declarations that still supply them fail registration. Update saved links to the current qualified contribution ID and its query namespace. Short tool names such as <code>files</code> and historical IDs such as <code>core:workspace.files</code> or <code>core:workspace.terminal</code> no longer select the bundled panels; use <code>pi-web.files:workspace.files</code> and <code>pi-web.terminal:workspace.terminal</code>. Remote plugins still use the host's source-to-runtime ID mapping; this is not an author-configurable alias mechanism. Action <code>shortcutAliases</code> are unchanged.</p>
 <p>The URL's <code>view</code> selects a responsive panel: <code>navigation</code>, <code>chat</code>, or <code>workspace</code>. The independent <code>tool</code> parameter selects an application or workspace tab by contribution ID. Opening a workspace tool sets <code>view=workspace</code> and <code>tool</code> to its ID; switching to chat keeps the selected tool. Contribution IDs are not accepted in <code>view</code>. Browser plugins use <code>selectMainView("workspace")</code> to show the workspace panel without changing its selected tab, or <code>selectWorkspaceTool(panelId)</code> to select and show a particular tool.</p>
 <p>Invalid values remain in the URL rather than triggering a redirect. An invalid <code>view</code> shows a warning and displays navigation on mobile; on two-column layouts, navigation remains alongside a valid requested tool or, otherwise, chat. Desktop keeps its normal columns. A valid workspace view with an invalid tool shows an unavailable-tab message inside the workspace panel, without selecting another tab or adding a duplicate warning. Omitted parameters use defaults and are not errors.</p>
-<p>Action, application-panel, and workspace-panel contexts expose <code>navigate(destination): Promise&lt;void&gt;</code> for complete destinations. For a selected workspace:</p>
+<p>Action, message-action, application-panel, workspace-panel contexts expose <code>navigate(destination, options?: PluginNavigationOptions): Promise&lt;void&gt;</code> to open a complete destination or patch the current URL:</p>
+<pre><code>interface PluginNavigationOptions {
+  mode?: "replace" | "patch";
+  history?: "push" | "replace";
+}</code></pre>
+<p>The defaults are <code>mode: "replace"</code> and <code>history: "push"</code>, preserving existing behavior. All destination fields are optional: <code>machineId</code>, <code>projectId</code>, <code>workspaceId</code>, <code>sessionId</code>, <code>view</code> (<code>navigation</code>, <code>chat</code>, or <code>workspace</code>), <code>tool</code> (a qualified contribution ID), and <code>query</code> (local tool-query keys).</p>
+<p><strong>Complete destinations (<code>mode: "replace"</code>).</strong> Omitted location, tool, and view fields use normal host restoration defaults rather than copying the current URL's session, tool, or contribution query. Those defaults can select a remembered session. Omitted <code>machineId</code> means the machine selected at invocation, except message-action contexts use their captured machine. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations. For a selected workspace:</p>
 <pre><code>await context.navigate({
   machineId: context.machine.id,
   projectId: context.workspace.projectId,
@@ -248,8 +254,38 @@ prompt.setChip({
   sessionId: sourceSessionId,
   view: "chat",
 });</code></pre>
-<p>All destination fields are optional: <code>machineId</code>, <code>projectId</code>, <code>workspaceId</code>, <code>sessionId</code>, <code>view</code> (<code>navigation</code>, <code>chat</code>, or <code>workspace</code>), and <code>tool</code> (a qualified contribution ID). Omitted <code>machineId</code> means the machine selected when called. This is not a route patch: omitted fields use normal host restoration defaults rather than copying the current route's session, tool, or contribution query. Those defaults can select a remembered session. Supply the project/workspace scope when opening a known session; the host does not search for IDs or create missing destinations.</p>
+<p><strong>Route patches (<code>mode: "patch"</code>).</strong> A patch starts from the current URL at invocation, not a potentially stale component-state snapshot. Omitted or <code>undefined</code> fields preserve their URL values; message-action contexts still default to their captured machine. Scope changes follow these rules:</p>
+<ul>
+<li>Changing machine clears inherited project, workspace, session, tool, and all contribution query.</li>
+<li>Changing project clears inherited workspace, session, and all contribution query.</li>
+<li>Changing workspace clears inherited session and all contribution query.</li>
+</ul>
+<p>Explicit child fields supplied in the destination win over these clearing rules. Tool and view are retained across project/workspace changes; a machine change clears the inherited tool but retains view. In patch mode only, <code>null</code> clears a route field; <code>machineId: null</code> resets to the local machine. Removing URL fields still invokes normal host restoration defaults: clearing <code>sessionId</code>, for example, is not a promise to deselect a remembered session.</p>
+<p>For TypeScript consumers, <code>PluginNavigationDestination</code> retains non-null fields. Use <code>PluginNavigationPatchDestination</code> for a patch containing <code>null</code>; the <code>navigate</code> overload requires explicit <code>{ mode: "patch" }</code> options for that type. This distinction does not change the runtime preservation, clearing, or restoration behavior described above.</p>
+<p><strong>Tool queries.</strong> Add <code>query</code> with the tool's <strong>local</strong> keys, for example <code>query: { item: "saved-item-id" }</code>. The host namespaces and encodes the values and exposes them through the target panel's <code>context.navigation.query</code>, including after browser history restoration. Values can be strings, numbers, booleans, or arrays of those values; existing panel-query limits apply. Invalid keys, values, or scope reject before navigation.</p>
+<p>In replace mode, a query requires explicit <code>tool</code>, <code>projectId</code>, and <code>workspaceId</code> and replaces <strong>all</strong> contribution query. In patch mode, the host validates the effective target tool/project/workspace after applying the route patch; these fields may be inherited from the URL. It merges only the supplied local keys into the target tool's namespace: omitted keys remain and <code>null</code> query values remove keys. Unrelated tools' query state is retained only within the same machine/project/workspace. A scope change discards the old contribution query before applying the supplied query.</p>
+<p><strong>Browser history.</strong> <code>history: "replace"</code> replaces the current history entry instead of pushing a new one. It is independent of mode: <code>mode: "replace"</code> controls destination semantics, not history. Either mode can push or replace history.</p>
+<p>For a URL with a project and workspace, open a tab and its saved context without changing the conversation, replacing the history entry:</p>
+<pre><code>await context.navigate({
+  tool: "example:workspace.review",
+  view: "workspace",
+  query: { item: savedItemId, filter: null },
+}, { mode: "patch", history: "replace" });</code></pre>
+<p>Open a session in the current URL's workspace, retaining its tool and contribution query:</p>
+<pre><code>await context.navigate({
+  sessionId: sourceSessionId,
+  view: "chat",
+}, { mode: "patch" });</code></pre>
+<p>Open a known session in another workspace with explicit scope, also suitable for a cross-machine target:</p>
+<pre><code>await context.navigate({
+  machineId: targetMachineId,
+  projectId: targetProjectId,
+  workspaceId: targetWorkspaceId,
+  sessionId: sourceSessionId,
+  view: "chat",
+}, { mode: "patch" });</code></pre>
 <p>The promise settles after host restoration, or normally when newer navigation supersedes it. Missing or unavailable destinations use the normal host UI and do not also reject the promise. Malformed argument types and invalid <code>view</code> values reject with <code>TypeError</code> before changing the URL or UI. Captain's Log uses this API for <strong>Open source session</strong> on translations that record a source session.</p>
+<p>Older hosts ignore the options argument and still treat the destination as a complete replacement; upgrade PI WEB before relying on patch behavior or history replacement. Hosts without destination-query support also ignore <code>query</code>; upgrade before relying on exact item selection.</p>
 <h3 id="message-actions">Message actions</h3>
 <p>Contribute <code>messageActions</code> to put a plugin-defined button beside a displayed transcript message. Each action has a plugin-local <code>id</code>, a <code>title</code>, an optional Lit <code>icon</code>, and a <code>run(context)</code> callback. The callback performs your own workflow; it is not a choice from a host operation catalog. PI WEB adds no confirmation. Fork, Go back, and Copy are core plugin contributions using these generic APIs; Fork and Go back retain their existing confirmations.</p>
 <pre><code class="language-ts">return {

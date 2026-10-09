@@ -146,6 +146,9 @@ export class SessionController {
   private readonly beginNavigationOperation: SessionControllerDependencies["beginNavigationOperation"];
   private readonly browserErrors: BrowserErrorReporter;
   private selectionSeq = 0;
+  // A pending join still owns its URL-derived token. Once it settles while
+  // current, its loaded state/socket can outlive changes to the URL spelling.
+  private selectedSessionJoinNavigation: NavigationFreshness | undefined;
   private readonly pendingTreeActions = new Set<{ machineId: string; sessionId: string }>();
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -205,12 +208,14 @@ export class SessionController {
   dispose() {
     this.disposed = true;
     this.selectionSeq += 1;
+    this.selectedSessionJoinNavigation = undefined;
     this.socket.close();
     this.clearPendingUpdates();
   }
 
   clearActiveSession() {
     this.selectionSeq += 1;
+    this.selectedSessionJoinNavigation = undefined;
     this.socket.close();
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;
@@ -292,6 +297,11 @@ export class SessionController {
     return selectPreferredSession(sessions, { targetSessionId, latestSessionId: this.sessionSelection.latestSessionId(this.workspaceSelectionKey(cwd)) });
   }
 
+  /** Reusing a selected row must not abandon a join retired by a newer URL. */
+  canReuseSelectedSession(): boolean {
+    return !this.disposed && navigationIsCurrent(this.selectedSessionJoinNavigation);
+  }
+
   async selectSession(session: SessionInfo, options?: SessionSelectionOptions) {
     if (this.disposed || !navigationIsCurrent(options?.navigation)) return;
     if (isClientPendingStartSessionInfo(session)) {
@@ -302,6 +312,7 @@ export class SessionController {
     const errorOwner = this.captureSessionErrorOwner(session);
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     const seq = ++this.selectionSeq;
+    this.selectedSessionJoinNavigation = options?.navigation;
     this.socket.close();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
@@ -375,10 +386,13 @@ export class SessionController {
       this.reportSessionError(session, machineId, error, errorOwner);
       if (options?.propagateRefreshError === true) throw error;
     } finally {
+      const navigationCurrent = navigationIsCurrent(options?.navigation);
+      if (seq === this.selectionSeq && navigationCurrent) this.selectedSessionJoinNavigation = undefined;
       // A newer URL selection can retire this join before its replacement has
-      // reached the controller. Release our socket in that gap, but
-      // never close a socket already owned by a newer controller selection.
-      if (socketConnected && !navigationIsCurrent(options?.navigation)
+      // reached the controller. Release our socket in that gap, but retain its
+      // stale token so restoration knows this selected row needs another join.
+      // Never close a socket already owned by a newer controller selection.
+      if (socketConnected && !navigationCurrent
         && this.isCurrentSessionSelection(session.id, machineId, seq)) {
         this.socket.close();
       }
@@ -1688,6 +1702,7 @@ export class SessionController {
   private selectClientPendingStartSession(session: ClientPendingStartSessionInfo, options?: { updateUrl?: boolean | undefined; activity?: SessionActivity | undefined; sessions?: SessionInfo[] | undefined }): void {
     this.sessionSelection.rememberSession({ ...session, cwd: this.workspaceSelectionKey(session.cwd) });
     this.selectionSeq += 1;
+    this.selectedSessionJoinNavigation = undefined;
     this.socket.close();
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;

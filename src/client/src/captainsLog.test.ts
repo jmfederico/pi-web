@@ -32,7 +32,7 @@ async function setup(requestHandler: (operation: string) => Promise<JsonValue> =
     return Promise.resolve({ ...channel, closed });
   });
   const unused = () => { throw new Error("Unrelated host API called"); };
-  const navigate = vi.fn<WorkspacePanelContext["navigate"]>(() => Promise.resolve());
+  const navigate = vi.fn<() => Promise<void>>(() => Promise.resolve());
   let context: WorkspacePanelContext = {
     navigate,
     machine: { id: "remote-a", name: "A", kind: "remote" },

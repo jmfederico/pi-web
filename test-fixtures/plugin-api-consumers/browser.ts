@@ -1,5 +1,15 @@
 import type {
+  ApplicationPanelContext,
   ApplicationPanelContribution,
+  ContributionQueryValue,
+  DisplayedMessageActionContext,
+  MessageActionContext,
+  PluginNavigate,
+  PluginNavigationDestination,
+  PluginNavigationPatchDestination,
+  PluginNavigationOptions,
+  PluginRuntimeContext,
+  QualifiedContributionId,
   ContentRenderingCapability,
   ContentRendererInput,
   JsonValue,
@@ -41,6 +51,64 @@ export function checkContentRendering(capability: ContentRenderingCapability, in
   capability.renderMarkdown({ ...markdown, filePath: "graph.md" });
   // @ts-expect-error Renderer input does not claim provenance.
   input.source;
+}
+
+// Old destination readers must not acquire nullable route fields or query values.
+export function readLegacyNavigationDestination(destination: PluginNavigationDestination): {
+  machineId: string | undefined;
+  projectId: string | undefined;
+  workspaceId: string | undefined;
+  sessionId: string | undefined;
+  view: "navigation" | "chat" | "workspace" | undefined;
+  tool: QualifiedContributionId | undefined;
+  query: Readonly<Record<string, ContributionQueryValue>> | undefined;
+} {
+  return {
+    machineId: destination.machineId,
+    projectId: destination.projectId,
+    workspaceId: destination.workspaceId,
+    sessionId: destination.sessionId,
+    view: destination.view,
+    tool: destination.tool,
+    query: destination.query,
+  };
+}
+
+export function checkPluginNavigation(
+  context: PluginRuntimeContext | MessageActionContext | DisplayedMessageActionContext | WorkspacePanelContext | ApplicationPanelContext,
+  destination: PluginNavigationDestination,
+  options: PluginNavigationOptions,
+): void {
+  const navigate: PluginNavigate = context.navigate;
+  const legacyNavigate: (destination: PluginNavigationDestination) => Promise<void> = navigate;
+  void legacyNavigate(destination);
+  void navigate(destination);
+  void navigate(destination, options);
+  void context.navigate(destination, { mode: "replace", history: "replace" });
+  void context.navigate(destination, { mode: "patch", history: "push" });
+
+  const patch: PluginNavigationPatchDestination = {
+    machineId: null, projectId: null, workspaceId: null, sessionId: null, view: null, tool: null,
+    query: { file: null, line: 7, tags: ["one", true] },
+  };
+  void context.navigate(patch, { mode: "patch" });
+  void context.navigate(patch, { mode: "patch", history: "replace" });
+  // @ts-expect-error Nullable patches cannot be read as legacy destinations.
+  readLegacyNavigationDestination(patch);
+  // @ts-expect-error Nullable destinations require explicit patch options.
+  void context.navigate(patch);
+  // @ts-expect-error History alone does not opt into patch mode.
+  void context.navigate(patch, { history: "replace" });
+  // @ts-expect-error Replace mode rejects nullable destinations.
+  void context.navigate(patch, { mode: "replace" });
+  // @ts-expect-error Options that might select replace do not authorize nullable fields.
+  void context.navigate(patch, options);
+  // @ts-expect-error Null query values also require patch mode.
+  void context.navigate({ query: { file: null } });
+  // @ts-expect-error A whole null query is not a patch destination.
+  void context.navigate({ query: null }, { mode: "patch" });
+  // @ts-expect-error The destination itself must remain an object.
+  void context.navigate(null, { mode: "patch" });
 }
 
 interface FixtureIdentityCapabilityV1 {

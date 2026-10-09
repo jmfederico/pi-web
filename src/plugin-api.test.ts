@@ -15,7 +15,16 @@ import type {
   PluginStartContext,
   PluginSelectedSession,
   PluginRuntimeState,
+  PluginNavigate,
+  PluginNavigationDestination,
+  PluginNavigationPatchDestination,
+  QualifiedContributionId,
+  PluginRuntimeContext,
+  ApplicationPanelContext,
   ApplicationPanelContribution,
+  MessageActionContext,
+  DisplayedMessageActionContext,
+  ContributionQueryValue,
   Workspace,
   PluginPeerChannel,
   PluginPeerChannelOptions,
@@ -36,6 +45,11 @@ import type {
   WriteWorkspaceFileOptions,
   WriteWorkspaceFileResponse,
 } from "@jmfederico/pi-web/plugin-api";
+import type {
+  ApplicationPanelContext as InternalApplicationPanelContext,
+  PluginRuntimeContext as InternalPluginRuntimeContext,
+  WorkspacePanelContext as InternalWorkspacePanelContext,
+} from "./client/src/plugins/types";
 
 type IfEqual<Left, Right, Then, Else = never> =
   (<Value>(value: Value) => Value extends Left ? 1 : 2) extends
@@ -84,6 +98,39 @@ describe("public browser plugin API", () => {
   it("exposes a minimal selected-session snapshot", () => {
     expectTypeOf<PluginRuntimeState["selectedSession"]>().toEqualTypeOf<PluginSelectedSession | undefined>();
     expectTypeOf<keyof PluginSelectedSession>().toEqualTypeOf<"id" | "cwd" | "name" | "metadata" | "archived" | "pending">();
+  });
+
+  it("preserves non-null legacy destinations and separates nullable patches", () => {
+    expectTypeOf<PluginNavigationDestination>().toEqualTypeOf<{
+      machineId?: string;
+      projectId?: string;
+      workspaceId?: string;
+      sessionId?: string;
+      view?: "navigation" | "chat" | "workspace";
+      tool?: QualifiedContributionId;
+      query?: Readonly<Record<string, ContributionQueryValue>>;
+    }>();
+    expectTypeOf<PluginNavigationPatchDestination>().toEqualTypeOf<{
+      machineId?: string | null;
+      projectId?: string | null;
+      workspaceId?: string | null;
+      sessionId?: string | null;
+      view?: "navigation" | "chat" | "workspace" | null;
+      tool?: QualifiedContributionId | null;
+      query?: Readonly<Record<string, ContributionQueryValue | null>>;
+    }>();
+    expectTypeOf<PluginNavigate>().toExtend<(destination: PluginNavigationDestination) => Promise<void>>();
+  });
+
+  it("shares the navigation overloads across public and internal contexts", () => {
+    expectTypeOf<PluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<WorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<ApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<MessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<DisplayedMessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalPluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalWorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
   });
 
   it("keeps host-owned activation and workspace snapshots readonly", () => {

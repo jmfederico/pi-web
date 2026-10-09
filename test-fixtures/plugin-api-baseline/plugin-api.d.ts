@@ -221,7 +221,7 @@ export interface PluginPromptEditor {
     /** Withdraw this plugin's chip from the captured conversation without notification. */
     removeChip?(id: string): void;
 }
-/** A complete navigation destination, not a patch of the current route. */
+/** A non-null destination: complete by default, or a current-URL patch with mode: "patch". */
 export interface PluginNavigationDestination {
     machineId?: string;
     projectId?: string;
@@ -229,10 +229,40 @@ export interface PluginNavigationDestination {
     sessionId?: string;
     view?: "navigation" | "chat" | "workspace";
     tool?: QualifiedContributionId;
+    /** Local query keys for tool. Requires a tool/project/workspace
+     *  (explicit in replace mode, optionally inherited in patch mode).
+     *  Replace mode replaces all contribution query state; patch mode merges only these keys. */
+    query?: Readonly<Record<string, ContributionQueryValue>>;
+}
+/** Current-URL patch, accepted only with mode: "patch". Undefined fields are preserved. */
+export interface PluginNavigationPatchDestination {
+    /** Null resets the machine to local; other null route fields remove that URL field. */
+    machineId?: string | null;
+    projectId?: string | null;
+    workspaceId?: string | null;
+    sessionId?: string | null;
+    view?: "navigation" | "chat" | "workspace" | null;
+    tool?: QualifiedContributionId | null;
+    /** Merge local keys into the effective tool/project/workspace query; null values remove keys. */
+    query?: Readonly<Record<string, ContributionQueryValue | null>>;
+}
+export interface PluginNavigationOptions {
+    /** Defaults to replace. Patch preserves omitted fields and clears inherited descendants
+     *  when their machine/project/workspace changes. Null route fields are valid only in patch mode. */
+    mode?: "replace" | "patch";
+    /** Browser history behavior, independent of mode. Defaults to push. */
+    history?: "push" | "replace";
+}
+/** Shared navigation callable; nullable destinations require explicit patch options. */
+export interface PluginNavigate {
+    (destination: PluginNavigationDestination, options?: PluginNavigationOptions): Promise<void>;
+    (destination: PluginNavigationPatchDestination, options: PluginNavigationOptions & {
+        mode: "patch";
+    }): Promise<void>;
 }
 export interface PluginRuntimeContext {
     /** Navigate using host restoration defaults. Route failures appear in the host UI. */
-    navigate: (destination: PluginNavigationDestination) => Promise<void>;
+    navigate: PluginNavigate;
     state: PluginRuntimeState;
     /** Read-only discovery on this context's machine. Omitted by older hosts. */
     projects?: PluginProjects;
@@ -277,7 +307,7 @@ export interface MessageActionAvailabilityContext {
 /** Created on invocation, with helpers scoped to the initiating machine/conversation. */
 export interface MessageActionContext extends MessageActionAvailabilityContext {
     readonly prompt: PluginPromptEditor;
-    readonly navigate: (destination: PluginNavigationDestination) => Promise<void>;
+    readonly navigate: PluginNavigate;
     readonly projects: PluginProjects;
     readonly workspace?: Workspace;
     readonly files?: WorkspaceFilesContextValue;
@@ -490,7 +520,7 @@ export interface WorkspacePanelNavigationV1 {
 }
 export interface WorkspacePanelContext extends WorkspaceContext {
     /** Navigate using host restoration defaults. Route failures appear in the host UI. */
-    navigate: (destination: PluginNavigationDestination) => Promise<void>;
+    navigate: PluginNavigate;
     prompt: PluginPromptEditor;
     terminal: WorkspacePanelTerminal;
     /** Contribution-scoped address-bar state for deep links and browser history. */
@@ -506,7 +536,7 @@ export interface ApplicationPanelContext {
     workspace?: Workspace;
     /** Workspace-bound terminal; present only with a selected workspace and an available Terminal provider. */
     terminal?: WorkspacePanelTerminal;
-    navigate: (destination: PluginNavigationDestination) => Promise<void>;
+    navigate: PluginNavigate;
     prompt: PluginPromptEditor;
     host: WorkspaceHost;
 }
