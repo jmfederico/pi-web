@@ -1,6 +1,7 @@
 import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
 import { RELAYS_ROOT } from "./relayDiscovery.js";
-import { defineRelaysPanelElement } from "./relaysPanelElement.js";
+import { relayIdentityFromMetadata } from "./relayIdentity.js";
+import { defineRelaysPanelElement, RELAY_SELECTION_QUERY_KEY } from "./relaysPanelElement.js";
 
 const plugin = {
   apiVersion: 4,
@@ -20,6 +21,34 @@ const plugin = {
             run: (context) => {
               if (context.state.selectedWorkspace === undefined) return;
               context.selectWorkspaceTool(`${runtimePluginId}:workspace.relays`);
+            },
+          },
+        ],
+        sessionLabels: [
+          {
+            id: "session.relay",
+            items: (context) => {
+              const identity = relayIdentityFromMetadata(context.session.metadata);
+              if (identity === undefined) return [];
+              return [{
+                type: "render",
+                render: () => html`
+                  <button
+                    type="button"
+                    style="border:0; padding:0; background:transparent; color:var(--pi-accent); font:inherit; text-align:start; overflow-wrap:anywhere; cursor:pointer"
+                    title=${identity.packetPath}
+                    aria-label=${`Open Relay ${identity.relayName}, leg ${identity.leg}`}
+                    @click=${() => context.navigate({
+                      machineId: context.machine.id,
+                      projectId: context.workspace.projectId,
+                      workspaceId: context.workspace.id,
+                      view: "workspace",
+                      tool: `${runtimePluginId}:workspace.relays`,
+                      query: { [RELAY_SELECTION_QUERY_KEY]: identity.packetPath },
+                    }, { mode: "patch" })}
+                  >relay</button>
+                `,
+              }];
             },
           },
         ],

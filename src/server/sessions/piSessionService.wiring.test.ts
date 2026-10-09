@@ -50,7 +50,7 @@ describe("PiSessionService builtin extension factory wiring", () => {
       await expect(service.start(directory)).rejects.toThrow("capture-only session services");
       expect(captureServices).toHaveBeenCalledTimes(1);
       const options = captureServices.mock.calls[0]?.[0].resourceLoaderOptions;
-      expect(options?.extensionFactories).toBe(builtinFactories);
+      expect(options?.extensionFactories).toEqual(expect.arrayContaining(builtinFactories));
       expect(options?.eventBus).toBeDefined();
       if (sections.length === 0) {
         expect(options?.appendSystemPromptOverride).toBeUndefined();

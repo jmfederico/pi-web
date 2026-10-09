@@ -122,6 +122,116 @@ describe("multiple relays", () => {
   });
 });
 
+describe("exact packet navigation", () => {
+  it("opens the linked relay instead of the most recently modified one", async () => {
+    const fake = twoRelays();
+    const panel = await mountPanel(linkedPanelContext(fake, `${RELAYS_ROOT}/older`));
+
+    expect(picker(panel)?.value).toBe(`${RELAYS_ROOT}/older`);
+    expect(documentText(panel)).toBe("older status");
+    expect(fake.readFile).not.toHaveBeenCalledWith(`${RELAYS_ROOT}/newer/status.md`);
+  });
+
+  it.each(["missing", "unavailable"])("opens a custom packet even when default discovery is %s, and preserves it on Refresh", async (rootState) => {
+    const fake = workspaceFilesFake();
+    if (rootState === "unavailable") fake.failWith(RELAYS_ROOT, new Error("discovery root unreadable"));
+    const packetPath = "custom packets/workflow & notes";
+    fake.addDirectory(packetPath, [{ name: "status.md", path: `${packetPath}/status.md`, type: "file" }]);
+    fake.addDocument(`${packetPath}/status.md`, "custom baton");
+    const context = linkedPanelContext(fake, packetPath);
+    const panel = await mountPanel(context);
+
+    expect(shadow(panel).querySelector(".relay-name")?.textContent).toBe("workflow & notes");
+    expect(documentText(panel)).toBe("custom baton");
+    refreshButton(panel).click();
+    await flushAsync();
+    expect(documentText(panel)).toBe("custom baton");
+    expect(fake.listFiles).toHaveBeenCalledWith(packetPath);
+    // A new mounted panel restores the same packet from the route.
+    const reopened = await mountPanel(context);
+    expect(documentText(reopened)).toBe("custom baton");
+  });
+
+  it("reports a missing exact target without substituting another relay", async () => {
+    const fake = twoRelays();
+    const panel = await mountPanel(linkedPanelContext(fake, `${RELAYS_ROOT}/gone`));
+
+    expect(picker(panel)?.value).toBe(`${RELAYS_ROOT}/gone`);
+    expect(viewerText(panel)).toContain("This relay no longer exists.");
+    expect(fake.readFile).not.toHaveBeenCalled();
+  });
+
+  it("surfaces failure reading the exact packet", async () => {
+    const fake = twoRelays();
+    fake.failWith("custom/blocked", new Error("permission denied"));
+    const panel = await mountPanel(linkedPanelContext(fake, "custom/blocked"));
+
+    expect(viewerText(panel)).toContain("Could not list this relay's documents.");
+    expect(viewerText(panel)).toContain("permission denied");
+    expect(fake.readFile).not.toHaveBeenCalled();
+  });
+
+  it.each(["../outside", "/absolute/packet", "custom/../packet", "custom\\packet", "custom/packet\n", ""])("rejects unsafe packet selection without filesystem access: %j", async (path) => {
+    const fake = twoRelays();
+    const panel = await mountPanel(linkedPanelContext(fake, path));
+
+    expect(viewerText(panel)).toContain("normalized workspace-relative packet directory");
+    refreshButton(panel).click();
+    await flushAsync();
+    expect(viewerText(panel)).toContain("normalized workspace-relative packet directory");
+    expect(fake.listFiles).not.toHaveBeenCalled();
+    expect(fake.readFile).not.toHaveBeenCalled();
+  });
+
+  it("adopts changed route selection in the same workspace and restores the default when cleared", async () => {
+    const fake = twoRelays();
+    const panel = await mountPanel(linkedPanelContext(fake, `${RELAYS_ROOT}/older`));
+    panel.context = linkedPanelContext(fake, `${RELAYS_ROOT}/newer`);
+    await flushAsync();
+    expect(documentText(panel)).toBe("newer status");
+
+    panel.context = linkedPanelContext(fake, `${RELAYS_ROOT}/older`);
+    await flushAsync();
+    expect(documentText(panel)).toBe("older status");
+    panel.context = linkedPanelContext(fake);
+    await flushAsync();
+    expect(documentText(panel)).toBe("newer status");
+  });
+
+  it("publishes picker selection and avoids a duplicate load when the host adopts it", async () => {
+    const fake = twoRelays();
+    const context = linkedPanelContext(fake, `${RELAYS_ROOT}/newer`);
+    const panel = await mountPanel(context);
+    const select = picker(panel);
+    if (select === null) throw new Error("relay picker missing");
+    fake.listFiles.mockClear();
+    select.value = `${RELAYS_ROOT}/older`;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    panel.context = linkedPanelContext(fake, `${RELAYS_ROOT}/older`);
+    await flushAsync();
+
+    expect(context.navigation.set).toHaveBeenCalledExactlyOnceWith("relay", `${RELAYS_ROOT}/older`);
+    expect(documentText(panel)).toBe("older status");
+    expect(fake.listFiles).toHaveBeenCalledExactlyOnceWith(`${RELAYS_ROOT}/older`);
+  });
+
+  it("does not overwrite a newer linked packet with a stale document response", async () => {
+    const fake = twoRelays();
+    const oldContent = await fake.readFile(`${RELAYS_ROOT}/older/status.md`);
+    let resolveOld: (value: FileContentResponse) => void = () => { throw new Error("pending read not initialized"); };
+    const pendingRead = new Promise<FileContentResponse>((resolve) => { resolveOld = resolve; });
+    fake.readFile.mockImplementationOnce(() => pendingRead);
+    const panel = await mountPanel(linkedPanelContext(fake, `${RELAYS_ROOT}/older`));
+    panel.context = linkedPanelContext(fake, `${RELAYS_ROOT}/newer`);
+    await flushAsync();
+    expect(documentText(panel)).toBe("newer status");
+
+    resolveOld(oldContent);
+    await flushAsync();
+    expect(documentText(panel)).toBe("newer status");
+  });
+});
+
 describe("document tabs", () => {
   it("orders tabs with anchor documents first and loads the clicked tab's document", async () => {
     const fake = workspaceFilesFake();
@@ -775,6 +885,30 @@ function panelContext(fake: WorkspaceFilesFake, workspaceId = "ws-1"): Workspace
     prompt: { insertText: () => undefined, getText: () => "", getSelection: () => null },
     terminal: { open: () => undefined, runCommand: () => Promise.reject(new Error("terminal not used")) },
   };
+}
+
+function linkedPanelContext(fake: WorkspaceFilesFake, relayPath?: string) {
+  return {
+    ...panelContext(fake),
+    navigation: {
+      version: 1, contributionId: "relay:workspace.relays",
+      query: relayPath === undefined ? {} : { relay: relayPath },
+      set: vi.fn(),
+    },
+  } satisfies WorkspacePanelContext;
+}
+
+function twoRelays(): WorkspaceFilesFake {
+  const fake = workspaceFilesFake();
+  fake.addDirectory(RELAYS_ROOT, [
+    relayDirectory("older", "2026-01-01T00:00:00.000Z"),
+    relayDirectory("newer", "2026-03-01T00:00:00.000Z"),
+  ]);
+  for (const name of ["older", "newer"]) {
+    fake.addDirectory(`${RELAYS_ROOT}/${name}`, [relayDocument(name, "status.md")]);
+    fake.addDocument(`${RELAYS_ROOT}/${name}/status.md`, `${name} status`);
+  }
+  return fake;
 }
 
 async function mountPanel(context?: WorkspacePanelContext): Promise<RelaysPanelTestElement> {

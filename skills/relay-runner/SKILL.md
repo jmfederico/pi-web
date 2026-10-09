@@ -9,7 +9,7 @@ This skill binds the `relay` method to Pi sessions and a small file packet. It s
 
 ## Packet
 
-Use `.pi-web/relays/<name>/` in the working checkout unless the user selects another location. Start with three files:
+Use `.pi-web/relays/<name>/` in the working checkout unless the user selects another location inside the target workspace. Start with three files:
 
 - **`charter.md` — goal.** The agreed outcome and recognizable finish line, relay-specific scope boundaries and clarifications, and any explicit human requirements. Reference an existing specification when useful. Do not add project rules, implementation plans, or generic quality or delivery procedures; include such details only when the human explicitly asks.
 - **`status.md` — baton.** State (`Draft — awaiting approval; not dispatched`, `Active`, `Complete`, or `Needs help`), last completed leg and next leg number, working location, current progress, remaining gaps to the goal, relevant checks, current review state, targeted pointers, and blockers. Include only what is useful now. Avoid suggesting the next slice; record remaining gaps and concrete dependencies instead.
@@ -21,7 +21,7 @@ Add **`decisions.md` only when useful**: a compact, living record of consequenti
 
 ## Preparation and dispatch
 
-The preparation prompt owns discussion and approval. Drafting is allowed before approval; `spawn_session` is not. After the human reviews the goal and boundaries, require an explicit **Approve and dispatch** response. If the approved goal, scope, or working target changes materially, obtain fresh approval.
+The preparation prompt owns discussion and approval. Drafting is allowed before approval; `dispatch_relay` is not. After the human reviews the goal and boundaries, require an explicit **Approve and dispatch** response. If the approved goal, scope, or working target changes materially, obtain fresh approval.
 
 Use the current checkout for `/relay` unless the user chooses another. For `/relay-worktree`, create a fresh branch and worktree after approval, following project conventions; use current HEAD as the starting point unless another base is agreed. Ask about a material target ambiguity rather than guessing. Move the draft packet into the target checkout before dispatch, update its location, and remove the stale drafting copy.
 
@@ -57,16 +57,18 @@ Mark `Needs help` when a decision, permission, environment problem, or lack of p
 
 Before continuing, check that concrete required work remains, including any pending final review; leave slice selection to the successor.
 
-For handoff, finish work and all packet writes first. Call `spawn_session` at most once, with the target checkout as `cwd`. Omit `model` and `thinkingLevel` to inherit them unless the human instructed otherwise; keep any relay-wide instruction in the packet. Use an independent session, not a tracked subsession, for the successor.
+For handoff, finish work and all packet writes first. The charter supplies the goal and saved `status.md` is the actual baton: save progress, remaining gaps, decisions, checks and blockers there, with targeted pointers to supporting records as needed. Do not put missing continuity into a separate handover prompt.
 
-Keep the successor prompt short, substituting actual paths and the next leg number:
+Call the dedicated `dispatch_relay` tool at most once with the saved directory as `packet`, the next leg identity as `leg`, and the target checkout as `cwd`. A relative `packet` resolves inside that `cwd`; custom packet locations must also stay inside the target workspace. Pass `leg` as a string: the next leg number written as `"2"`, or an explicitly chosen identifier of 1–32 letters, digits, dots, underscores or hyphens, starting with a letter or digit. Non-string values are rejected rather than converted. For example, substitute the actual paths and next leg:
 
-```text
-Continue Relay "<name>", leg <N>, in <checkout>.
-Load the `relay` and `relay-runner` skills.
-Read <packet>/charter.md and <packet>/status.md.
-Check the finish line against the current work and choose the next useful slice.
-Make progress and the record durable, then hand off once, complete, or signal that you need help.
+```json
+{
+  "packet": ".pi-web/relays/<name>",
+  "leg": "2",
+  "cwd": "/absolute/path/to/checkout"
+}
 ```
 
-`spawn_session` is the final operational action. After it returns, give only a brief handoff summary: no further tool use, packet writes, work, or downstream supervision. If dispatch fails, report the failure rather than claiming the next leg started.
+The tool validates the saved packet, generates the handover instructions, and records explicit Relay identity and a predictable session name. It accepts no free-form prompt and starts an independent session; do not substitute a generic session tool or tracked subsession. Omit `model` and `thinkingLevel` to inherit them unless the human instructed otherwise; keep any relay-wide instruction in the packet.
+
+`dispatch_relay` is the final operational action. After it returns, give only a brief handoff summary: no further tool use, packet writes, work, or downstream supervision. If the tool is unavailable or dispatch fails, report the failure rather than claiming the next leg started.

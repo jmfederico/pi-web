@@ -11,7 +11,7 @@ Draft `.pi-web/relays/<name>/charter.md`, `status.md`, and `log.md` in this chec
 
 Point the human to the draft, summarize the goal, boundaries, and proposed working location, and resolve material questions together through `ask_user`. Once the goal is understood, ask **Approve and dispatch**, **Revise**, or **Do not dispatch** against the final draft. Drafting and the initial request are not dispatch approval.
 
-On revision, update the draft and obtain approval. On refusal, record that it was not dispatched and stop. After explicit approval, create the worktree and move the packet there as described in the runner skill. Record approval, finalize the packet, and dispatch one fresh session in that worktree. After dispatch, provide only a brief summary.
+On revision, update the draft and obtain approval. On refusal, record that it was not dispatched and stop. After explicit approval, create the worktree and move the packet there as described in the runner skill. Record approval, mark status **Active**, seed leg 1, and finalize the packet with the actual baton saved in `status.md`. Call the dedicated `dispatch_relay` tool once with the moved directory as `packet`, `leg: "1"`, and the new worktree as `cwd`, following the runner skill's handoff mechanics. The tool generates the handover; do not supply a free-form prompt. Dispatch is the final operational action; afterward provide only a brief summary.
 
 <relay_task>
 $ARGUMENTS

@@ -49,7 +49,8 @@ import { findArchiveCandidateByExactId, planSessionArchiveTree, type SessionArch
 import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
-import { deterministicSessionName, fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
+import { fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
+import { createExtensionSessionDispatch } from "./extensionSessionDispatch.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 import { loadEffectiveProjectAttachmentsConfig } from "../workspaces/projectPiWebConfig.js";
@@ -1018,6 +1019,13 @@ function createDefaultRuntimeFactory(
     // resources skip resolution entirely and are trusted, as before.
     const eventBus = createEventBus();
     const builtinFactories = await getBuiltinExtensionFactories();
+    // Resolved before session_start. The bridge shares the same delegation
+    // policy as core tools, including tracked-child and global disablement.
+    let dispatchEnabled = false;
+    const sessionDispatch = createExtensionSessionDispatch(cwd, {
+      ...(spawn === undefined ? {} : { spawn }),
+      isEnabled: () => dispatchEnabled,
+    });
     const projectTrustRequiring = hasTrustRequiringProjectResources(cwd);
     const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: !projectTrustRequiring });
     // Pre-session-creation trust failures (`project_trust` handler errors)
@@ -1029,7 +1037,7 @@ function createDefaultRuntimeFactory(
       agentDir,
       modelRuntime,
       settingsManager,
-      resourceLoaderOptions: { ...resourceLoaderOptions, eventBus, extensionFactories: builtinFactories },
+      resourceLoaderOptions: { ...resourceLoaderOptions, eventBus, extensionFactories: [...builtinFactories, sessionDispatch] },
       ...(projectTrustRequiring
         ? {
             resourceLoaderReloadOptions: {
@@ -1054,6 +1062,7 @@ function createDefaultRuntimeFactory(
     services.diagnostics.push(...modelOptions.diagnostics);
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
+    dispatchEnabled = resolvedDelegationToolsEnabled;
     const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions, askUser);
     const result = await createAgentSessionFromServices({
       services,
@@ -4405,12 +4414,6 @@ export class PiSessionService implements SessionRouteService {
 
   private maybeGenerateSessionName(session: PiAgentSession, firstMessage: string): void {
     if (session.sessionName !== undefined || session.messages.length !== 0 || session.isStreaming || session.isCompacting) return;
-
-    const deterministicName = deterministicSessionName(firstMessage);
-    if (deterministicName !== undefined) {
-      this.applyGeneratedSessionName(session, deterministicName);
-      return;
-    }
 
     const model = session.model;
     if (model === undefined) return;

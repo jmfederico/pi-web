@@ -11,7 +11,7 @@ Draft `.pi-web/relays/<name>/charter.md`, `status.md`, and `log.md` under the ru
 
 Point the human to the draft, summarize the goal and boundaries, and resolve material questions together through `ask_user`. Once the goal is understood, ask **Approve and dispatch**, **Revise**, or **Do not dispatch** against the final draft. Drafting and the initial request are not dispatch approval.
 
-On revision, update the draft and obtain approval. On refusal, record that it was not dispatched and stop. After explicit approval, record it, finalize the packet, and dispatch one fresh session using the runner skill's handoff mechanics. After dispatch, provide only a brief summary.
+On revision, update the draft and obtain approval. On refusal, record that it was not dispatched and stop. After explicit approval, record it, mark status **Active**, seed leg 1, and finalize the packet with the actual baton saved in `status.md`. Call the dedicated `dispatch_relay` tool once with the saved directory as `packet`, `leg: "1"`, and the target checkout as `cwd`, following the runner skill's handoff mechanics. The tool generates the handover; do not supply a free-form prompt. Dispatch is the final operational action; afterward provide only a brief summary.
 
 <relay_task>
 $ARGUMENTS

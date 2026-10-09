@@ -93,6 +93,14 @@ Session snapshots can include optional `metadata`: JSON objects keyed by a packa
 
 Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
 
+### Dispatch a session from a Pi extension
+
+Trusted Pi extensions hosted by PI WEB can emit `pi-web:session-dispatch:v1` on their session-local `pi.events` bus. Pass `{ input, accept }`; the host synchronously calls `accept(promise)` with a promise for `{ sessionId, cwd, model? }`. If no callback runs before `emit()` returns, this host lacks the bridge: report that no dispatch occurred rather than waiting or retrying. Await the accepted promise to observe validation/startup failures. This in-process callback protocol is for extensions, not browser JSON messaging.
+
+`input` requires a non-empty `prompt` (at most 64 KiB of UTF-8). Optional fields are `cwd` (a workspace of the same registered project), `name` (a trimmed, non-empty display name of at most 60 characters with no control characters), `metadata` (namespaced public JSON objects, at most 16 KiB), `model` (exact `provider/model-id`), and `thinkingLevel`. No caller-supplied session identity or inherited model object is accepted. Omit model/thinking overrides to inherit from the dispatching session; set overrides only when instructed. Pi clamps valid thinking levels to the chosen model.
+
+The host validates and snapshots metadata, installs metadata and name before extensions, publication and the first prompt, and returns an independent session. Dispatch obeys the same global and tracked-child delegation gates as `spawn_session`; it is not a bypass. The model-visible `spawn_session` schema remains unchanged. Loading this host capability after an upgrade requires a manual session-daemon restart when safe; restarting interrupts active sessions and terminals.
+
 ### Add indicators to session-list rows
 
 Contribute `sessionLabels` to label individual conversations, including unselected and archived rows. Each contribution has a local `id`, optional `order` and `visible(context)`, and `items(context)`. Items support `{ type: "text", text, title? }`, `{ type: "link", text, href, title?, target? }`, and `{ type: "render", render }`, where `render()` returns a Lit template. Contributions are ordered by `order` then qualified ID, with the same machine availability and portable/machine-specific precedence as workspace labels.
@@ -382,9 +390,13 @@ Open the **Tasks** tab to run a command in a workspace terminal. Tasks can also 
 
 The shipped Relay package adds `/relay` and `/relay-worktree` to clarify a goal and its boundaries with you, then dispatch after explicit approval. Each fresh session chooses the next useful slice, records progress, and hands off until the finish line is reached or human help is needed. Project instructions and skills govern the work; the development route remains adaptive. The runner requires a fresh-context review of the whole result before completion, with at most three attempts total. Further attempts follow concrete corrections; unresolved blockers after the third stop the relay for human help. These are limits, not three mandatory reviews.
 
-The read-only **Relays** tab shows the goal (`charter.md`), current baton (`status.md`), and history (`log.md`) under `.pi-web/relays/`. An optional `decisions.md` keeps consequential decisions and their reasons outside the baton; revisions are recorded in the log. The tab does not start or edit a relay. `/relay` uses the current checkout by default; `/relay-worktree` prepares a fresh worktree.
+The package's `dispatch_relay` tool takes `packet` (saved directory), `leg` (a string identity such as `"2"` or `"R1-a"`; non-string values are rejected, not converted), and optional `cwd` (target workspace), `model` and `thinkingLevel` overrides. It validates non-empty UTF-8 `charter.md`, `status.md` and `log.md` files inside the target workspace (up to 256 KiB each), generates the handover instructions, and records explicit public Relay membership and a predictable session name. The charter supplies the goal; saved `status.md` is the actual baton. Save progress, gaps, decisions and blockers there before dispatch; no separate handover prompt is accepted. Dispatch is the final operational action. Packet validation is not proof of human approval; initial dispatch still requires your explicit approval.
 
-PI WEB installs Relay automatically for the active agent profile if it is not configured. Removing it through **Settings → Pi packages** is remembered; it will not be silently reinstalled. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab but leaves its agent resources available.
+The read-only **Relays** tab lists packets under `.pi-web/relays/` and shows the goal (`charter.md`), current baton (`status.md`), and history (`log.md`). An optional `decisions.md` keeps consequential decisions and their reasons outside the baton; revisions are recorded in the log. The tab does not start or edit a relay. `/relay` uses the current checkout by default; `/relay-worktree` prepares a fresh worktree.
+
+The Relay plugin also adds a clickable session-list row indicator from saved Relay metadata. It opens the exact packet in **Relays** on that row's machine and workspace, including user-chosen packet locations inside the workspace. It works without a live Pi connection. Older sessions without Relay metadata are not identified from titles or handover prose.
+
+PI WEB installs Relay automatically for the active agent profile if it is not configured. Removing it through **Settings → Pi packages** is remembered; it will not be silently reinstalled. Reinstall from **Available packages** if you change your mind. Disabling just the Relays plugin hides its tab and row indicators but leaves its agent resources available.
 
 ### Try Captain's Log
 

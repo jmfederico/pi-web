@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import relayPlugin from "../../../../pi-packages/relays/pi-web-plugin";
 import { FilesRuntime } from "../../../../pi-web-plugins/files/FilesRuntime";
 import { TerminalBrowserRuntime } from "../../../../pi-web-plugins/terminal/TerminalBrowserRuntime";
 import { TERMINAL_BROWSER_FACADE_CAPABILITY, TerminalFacade, type RequiredTerminalBrowserFacadeV1, type RequiredTerminalWorkspaceBindingV1 } from "../../../../pi-web-plugins/terminal/TerminalFacade";
@@ -1951,6 +1952,71 @@ describe("PiWebApp plugin host", () => {
     await context.navigate({ projectId: workspace.projectId, workspaceId: workspace.id, tool: "workflow:panel", query: { item: "exact" } }, { mode: "patch" });
     expect(navigate).toHaveBeenCalledWith({ projectId: workspace.projectId, workspaceId: workspace.id,
       tool: "workflow:panel", query: { item: "exact" } }, { mode: "patch" }, remoteMachine.id);
+    render(null, host);
+  });
+
+  it.each([
+    { machineId: "local", archived: false, omitSession: false },
+    { machineId: remoteMachine.id, archived: false, omitSession: false },
+    { machineId: "local", archived: true, omitSession: false },
+    { machineId: "local", archived: false, omitSession: true },
+  ])("opens a Relay label without resetting the current chat ($machineId, archived: $archived, omitted: $omitSession)", async ({ machineId, archived, omitSession }) => {
+    const selected = { ...runtimeRecoverySession(workspace), id: "conversation-12345", archived };
+    const sessionRoute = omitSession ? undefined : selected.id;
+    const params = new URLSearchParams({ project: project.id, workspace: workspace.id,
+      view: "chat", "files.workspace.files--file": "keep.ts" });
+    if (sessionRoute !== undefined) params.set("session", sessionRoute);
+    if (machineId !== "local") params.set("machine", machineId);
+    const browser = installBrowserWindow(`http://localhost/nested/pi/?${params}#anchor`);
+    const app = createDetachedApp();
+    const sessions = await installRuntimeRecoveryBoundaries(app, () => Promise.resolve([workspace]), selected);
+    if (machineId !== "local") await markPluginLoadingReady(app, [machineId]);
+    const selectedMachine = machineId === "local" ? undefined : remoteMachine;
+    const row: SessionInfo = { ...selected, id: "relay-row", archived: false, metadata: {
+      "@jmfederico/pi-relay": { version: 1, packetPath: "custom packets/workflow & notes", relayName: "workflow & notes", leg: "2" },
+    } };
+    const messages: ReturnType<typeof initialAppState>["messages"] = [{ role: "assistant", parts: [{ type: "text", text: "Keep this transcript" }] }];
+    setAppState(app, { ...initialAppState(), selectedMachine, projects: [project], selectedProject: project,
+      workspaces: [workspace], selectedWorkspace: workspace, sessions: [selected, row], selectedSession: selected,
+      messages, mainView: "chat", workspaceTool: TERMINAL_PANEL_ID });
+    // Match the external loader's public-to-internal callback boundary; the adapter
+    // supplies detached public state before invoking the real package contribution.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    await appPluginRegistry(app).register({ id: "relay", plugin: adaptPublicPlugin(relayPlugin as unknown as PiWebPlugin) });
+    const clearSession = vi.spyOn(sessions, "clearActiveSession");
+    const selectSession = vi.spyOn(sessions, "selectSession");
+    const workspaces: unknown = Reflect.get(app, "workspaces");
+    if (!(workspaces instanceof WorkspaceController)) throw new Error("Workspace controller unavailable");
+    const selectWorkspace = vi.spyOn(workspaces, "selectWorkspace");
+    const host = document.createElement("div");
+    document.body.append(host);
+    render(callAppMethod(app, "renderNavigationPanel"), host);
+    const navigation = host.querySelector("app-navigation-panel");
+    if (!(navigation instanceof AppNavigationPanel)) throw new Error("Navigation panel missing");
+    navigation.sessionsCollapsed = false;
+    await navigation.updateComplete;
+    const list = navigation.shadowRoot?.querySelector("session-list");
+    if (!(list instanceof SessionList)) throw new Error("Session list missing");
+    await list.updateComplete;
+    const button = list.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Open Relay workflow & notes, leg 2"]');
+    expect(button).not.toBeNull();
+    button?.click();
+    await vi.waitFor(() => { expect(appState(app).workspaceTool).toBe("relay:workspace.relays"); });
+
+    expect(appState(app).selectedSession).toBe(selected);
+    expect(appState(app).messages).toBe(messages);
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(selectSession).not.toHaveBeenCalled();
+    expect(selectWorkspace).not.toHaveBeenCalled();
+    expect(browser.url.pathname).toBe("/nested/pi/");
+    expect(browser.url.hash).toBe("#anchor");
+    expect(browser.url.searchParams.get("session")).toBe(sessionRoute ?? null);
+    expect(browser.url.searchParams.get("files.workspace.files--file")).toBe("keep.ts");
+    expect(browser.url.searchParams.get("relay.workspace.relays--relay")).toBe("custom packets/workflow & notes");
+    expect(browser.url.searchParams.get("view")).toBe("workspace");
+    expect(browser.pushed).toHaveLength(1);
+    expect(browser.replaced).toEqual([]);
+    expect(historyUrl(browser.pushed, 0).searchParams.get("relay.workspace.relays--relay")).toBe("custom packets/workflow & notes");
     render(null, host);
   });
 
