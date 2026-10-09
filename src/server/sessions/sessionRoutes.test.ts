@@ -61,6 +61,27 @@ afterEach(async () => {
 });
 
 describe("session routes", () => {
+  it.each(["messages", "status", "transcript-snapshot", "stream-snapshot", "notifications"] as const)("does not classify an unexpected %s failure as a missing session", async (endpoint) => {
+    const routeApp = Fastify({ logger: false });
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    const fail = () => Promise.reject(new Error("storage unavailable"));
+    if (endpoint === "messages") routeService.messages = fail;
+    else if (endpoint === "status") routeService.status = fail;
+    else if (endpoint === "transcript-snapshot") routeService.transcriptSnapshot = fail;
+    else if (endpoint === "stream-snapshot") routeService.streamSnapshot = fail;
+    else routeService.notificationInbox = () => { throw new Error("storage unavailable"); };
+    await routeApp.register(fastifyWebsocket);
+    registerSessionRoutes(routeApp, routeService, eventHub);
+    try {
+      const response = await routeApp.inject({ method: "GET", url: `/sessions/session-1/${endpoint}?cwd=${encodeURIComponent(resolve("/repo"))}` });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toMatchObject({ message: "storage unavailable" });
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
   it("returns notification catalog and selected-inbox snapshots with required cwd context", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);

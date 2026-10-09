@@ -1375,8 +1375,18 @@ export class PiSessionService implements SessionRouteService {
     return this.unreadStore.durableCatalogSnapshot();
   }
 
-  notificationInbox(ref: PiSessionRef): SessionNotificationInboxSnapshot {
-    return this.notificationStore.inboxSnapshot(ref.id, canonicalizeStoredCwd(ref.cwd));
+  async notificationInbox(ref: PiSessionRef): Promise<SessionNotificationInboxSnapshot> {
+    const cwd = canonicalizeStoredCwd(ref.cwd);
+    if (this.notificationStore.hasSession(ref.id)) return this.notificationStore.inboxSnapshot(ref.id, cwd);
+
+    // Notification state is ephemeral. A persisted session need not have an SDK
+    // runtime after a daemon restart; reading its inbox must not construct one.
+    if (await this.getArchived({ id: ref.id, cwd })) throw new Error("Session not found");
+    const match = await this.sessionManager.resolveSessionFile(cwd, ref.id);
+    if (match?.id !== ref.id || !cwdPathsEqual(match.cwd, cwd)) throw new Error("Session not found");
+    // A transcript join may have registered notifications while the header was
+    // being read. Prefer its live snapshot without replacing its generation.
+    return this.notificationStore.inboxSnapshot(ref.id, cwd, { allowMissing: true });
   }
 
   dismissNotification(

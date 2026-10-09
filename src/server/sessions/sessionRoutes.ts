@@ -130,10 +130,18 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
   });
 
   app.get<{ Params: { sessionId: string }; Querystring: SessionQuery }>(`${prefix}/sessions/:sessionId/notifications`, async (request, reply) => {
+    let ref: SessionRouteRef;
     try {
-      return await sessions.notificationInbox(notificationRefFromQuery(request.params.sessionId, request.query));
+      ref = notificationRefFromQuery(request.params.sessionId, request.query);
     } catch (error) {
-      return reply.code(notificationErrorStatus(error)).send({ error: errorMessage(error) });
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+    try {
+      return await sessions.notificationInbox(ref);
+    } catch (error) {
+      if (isSessionNotFoundError(error)) return reply.code(404).send({ error: errorMessage(error) });
+      if (errorMessage(error) === "Session cwd mismatch") return reply.code(400).send({ error: errorMessage(error) });
+      throw error;
     }
   });
 
@@ -172,7 +180,8 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       const messages = await sessions.messages(ref, page);
       return projectBrowserMessageResponse(messages, imageProjector(request.query, eventHub, ref));
     } catch (error) {
-      return reply.code(404).send({ error: errorMessage(error) });
+      if (isSessionNotFoundError(error)) return reply.code(404).send({ error: errorMessage(error) });
+      throw error;
     }
   });
 
@@ -202,7 +211,8 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     try {
       return await sessions.status(ref);
     } catch (error) {
-      return reply.code(404).send({ error: errorMessage(error) });
+      if (isSessionNotFoundError(error)) return reply.code(404).send({ error: errorMessage(error) });
+      throw error;
     }
   });
 
@@ -213,7 +223,8 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
       const snapshot = await sessions.transcriptSnapshot(ref, { ...optionalField("limit", optionalNumber(request.query.limit)) });
       return projectBrowserTranscriptSnapshot(snapshot, imageProjector(request.query, eventHub, ref));
     } catch (error) {
-      return reply.code(404).send({ error: errorMessage(error) });
+      if (isSessionNotFoundError(error)) return reply.code(404).send({ error: errorMessage(error) });
+      throw error;
     }
   });
 
@@ -223,7 +234,8 @@ export function registerSessionRoutes(app: FastifyInstance, sessions: SessionRou
     try {
       return projectBrowserStreamSnapshot(await sessions.streamSnapshot(ref), imageProjector(request.query, eventHub, ref));
     } catch (error) {
-      return reply.code(404).send({ error: errorMessage(error) });
+      if (isSessionNotFoundError(error)) return reply.code(404).send({ error: errorMessage(error) });
+      throw error;
     }
   });
 

@@ -679,7 +679,7 @@ describe("hosted ExtensionCommandContext actions with native Pi", () => {
     if (tree.type !== "tree") throw new Error("Committed fork tree is unavailable");
     expect(tree.tree.activePathIds).toContain(f.earlier);
     expect(tree.tree.nodes.map(({ id }) => id)).not.toContain(f.draft);
-    const inbox = f.service.notificationInbox(f.ref());
+    const inbox = (await f.service.notificationInbox(f.ref()));
     expect(inbox.summary).toMatchObject({ sessionId: currentId, retainedCount: 1, highestSeverity: "error" });
     expect(inbox.notifications).toEqual([expect.objectContaining({ message: "Post-fork workflow failed", severity: "error" })]);
     expect(f.service.notificationCatalog().sessions).toEqual([

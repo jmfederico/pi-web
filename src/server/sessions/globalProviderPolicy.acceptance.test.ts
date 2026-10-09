@@ -234,7 +234,7 @@ async function policyHarness(options: { runtime?: ModelRuntime; agentDir?: strin
 async function expectNoProviderMutationFeedback(service: PiSessionService, ref: PiSessionRef): Promise<void> {
   const status = await service.status(ref);
   expect(status.warnings ?? []).toEqual([]);
-  expect(service.notificationInbox(ref).notifications).toEqual([]);
+  expect((await service.notificationInbox(ref)).notifications).toEqual([]);
 }
 
 /** Parse the session-start marker file without type assertions. */
