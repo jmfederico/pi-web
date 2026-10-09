@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("Files plugin activation", () => {
-  it("registers the canonical panel, compatibility aliases, actions, and custom elements synchronously", () => {
+  it("registers the canonical panel, actions, and custom elements synchronously", () => {
     const runtime = new FilesRuntime();
     const result = activateFilesPlugin(activationContext(), runtime);
     const panel = result.contributions.workspacePanels?.[0];
@@ -25,8 +25,6 @@ describe("Files plugin activation", () => {
       id: "workspace.files",
       title: "Files",
       order: 10,
-      routeAliases: ["files", "core:workspace.files"],
-      navigationAliases: ["core:workspace.files"],
       invalidationResources: ["workspace.files"],
     });
     expect(actions.map((action) => ({ id: action.id, shortcut: action.shortcut, aliases: action.shortcutAliases }))).toEqual([

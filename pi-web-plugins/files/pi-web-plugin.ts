@@ -57,8 +57,6 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
         title: "Files",
         icon,
         order: 10,
-        routeAliases: ["files", "core:workspace.files"],
-        navigationAliases: ["core:workspace.files"],
         invalidationResources: ["workspace.files"],
         fileOpenQuery: (_workspaceContext, path) => ({ file: path }),
         onInvalidate: (workspaceContext, invalidation) => filesRuntime.invalidate(workspaceContext, invalidation),

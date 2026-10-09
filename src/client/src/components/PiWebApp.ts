@@ -1433,6 +1433,11 @@ export class PiWebApp extends LitElement {
     this.workspaceTerminal("core", workspace, machineId).open(options);
   }
 
+  private workspacePanelSourceQueryIds(contributionId: QualifiedContributionId): readonly QualifiedContributionId[] {
+    const sourceContributionId = this.plugins.getWorkspacePanels().find((panel) => panel.id === contributionId)?.sourceContributionId;
+    return sourceContributionId === undefined || sourceContributionId === contributionId ? [] : [sourceContributionId];
+  }
+
   private async navigateRuntimeWorkspaceContribution(
     machineId: string,
     workspace: Workspace,
@@ -1440,7 +1445,7 @@ export class PiWebApp extends LitElement {
     expected: NavigationUrlContext,
   ): Promise<void> {
     if (!this.navigationUrlContextMatchesUrl(expected)) return;
-    const aliases = navigation.navigationAliases ?? [];
+    const sourceQueryIds = this.workspacePanelSourceQueryIds(navigation.contributionId);
     const currentIdentity = this.selectedWorkspaceRouteIdentity();
     const targetIdentity: WorkspaceRouteIdentity = { machineId, projectId: workspace.projectId, workspaceId: workspace.id };
     const contributionQuery = patchContributionQueryRecord(
@@ -1448,7 +1453,7 @@ export class PiWebApp extends LitElement {
         ? this.currentContributionQueryForState()
         : {},
       navigation.contributionId,
-      aliases,
+      sourceQueryIds,
       navigation.query,
     );
     const destination: MachineNavigationSnapshot = {
@@ -2100,7 +2105,7 @@ export class PiWebApp extends LitElement {
       || request.projectId !== workspace.projectId || request.workspaceId !== workspace.id || request.root !== workspace.path) return;
     const navigation = this.plugins.resolveWorkspaceFileOpen(this.createWorkspacePanelContext(workspace), request.path);
     if (navigation === undefined) return;
-    const query = patchContributionQueryRecord(this.currentContributionQueryForState(), navigation.contributionId, navigation.navigationAliases ?? [], navigation.query);
+    const query = patchContributionQueryRecord(this.currentContributionQueryForState(), navigation.contributionId, this.workspacePanelSourceQueryIds(navigation.contributionId), navigation.query);
     event.preventDefault();
     this.publishWorkspaceTool(navigation.contributionId, query);
   };
@@ -2314,7 +2319,7 @@ export class PiWebApp extends LitElement {
     const createContext = (
       binding: WorkspacePluginBinding,
       contributionId?: QualifiedContributionId,
-      navigationAliases: readonly QualifiedContributionId[] = [],
+      sourceContributionId: QualifiedContributionId | undefined = contributionId,
     ): WorkspacePanelContext => {
       // Retained panel contexts may outlive the visible surface. Terminal and
       // navigation mutations use this token; workspace data refreshes do not.
@@ -2331,7 +2336,7 @@ export class PiWebApp extends LitElement {
         prompt: this.createPromptEditor(binding.registrationPluginId, machineId),
         terminal: this.workspaceTerminal(binding.registrationPluginId, workspace, machineId, navigation),
         ...(contributionId === undefined ? {} : {
-          navigation: this.createWorkspacePanelNavigation(workspace, machine, contributionId, navigationAliases, contributionQueryRestore, navigation),
+          navigation: this.createWorkspacePanelNavigation(workspace, machine, contributionId, sourceContributionId, contributionQueryRestore, navigation),
         }),
         host: this.createWorkspaceHost(),
       }, createContext);
@@ -2355,15 +2360,16 @@ export class PiWebApp extends LitElement {
     workspace: Workspace,
     machine: PluginMachine,
     contributionId: QualifiedContributionId,
-    navigationAliases: readonly QualifiedContributionId[],
+    sourceContributionId: QualifiedContributionId | undefined,
     contributionQueryRestore: WorkspaceContributionQueryRestore | undefined,
     navigation: NavigationFreshness,
   ): WorkspacePanelNavigationV1 {
+    const sourceQueryIds = sourceContributionId === undefined || sourceContributionId === contributionId ? [] : [sourceContributionId];
     const identity: WorkspaceRouteIdentity = { machineId: machine.id, projectId: workspace.projectId, workspaceId: workspace.id };
     const query = contributionQueryRestore !== undefined && sameWorkspaceRouteIdentity(identity, contributionQueryRestore.identity)
-      ? contributionQueryFromRecord(contributionQueryRestore.query, contributionId, navigationAliases)
+      ? contributionQueryFromRecord(contributionQueryRestore.query, contributionId, sourceQueryIds)
       : routeMatchesWorkspaceIdentity(readRoute(), identity)
-        ? readContributionQuery(contributionId, navigationAliases)
+        ? readContributionQuery(contributionId, sourceQueryIds)
         : Object.freeze({});
     let expectedQuery = query;
     return Object.freeze({
@@ -2377,9 +2383,9 @@ export class PiWebApp extends LitElement {
         if (selectedIdentity === undefined
           || !sameWorkspaceRouteIdentity(identity, selectedIdentity)
           || !routeMatchesWorkspaceIdentity(readRoute(), identity)
-          || !sameContributionQueryRecord(readContributionQuery(contributionId, navigationAliases), expectedQuery)) return false;
-        if (setContributionQueryKey(contributionId, navigationAliases, key, value, options)) {
-          expectedQuery = readContributionQuery(contributionId, navigationAliases);
+          || !sameContributionQueryRecord(readContributionQuery(contributionId, sourceQueryIds), expectedQuery)) return false;
+        if (setContributionQueryKey(contributionId, sourceQueryIds, key, value, options)) {
+          expectedQuery = readContributionQuery(contributionId, sourceQueryIds);
           this.rememberCurrentMachineNavigation();
           this.requestUpdate();
         }

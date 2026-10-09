@@ -26,7 +26,7 @@ it("resolves file-opening panels by availability, applicability, order and scope
   const base = createWorkspacePanelContext("remote");
   const scoped: WorkspacePanelContext = { ...base, navigation: { version: 1, contributionId: "viewer:files", query: {}, set: vi.fn() } };
   installWorkspacePanelScope(base, () => scoped);
-  expect(registry.resolveWorkspaceFileOpen(base, "a.txt")).toMatchObject({ contributionId: "viewer:files", query: { file: "a.txt" } });
+  expect(registry.resolveWorkspaceFileOpen(base, "a.txt")).toEqual({ contributionId: "viewer:files", sourceContributionId: "viewer:files", query: { file: "a.txt" } });
   expect(fileOpenQuery).toHaveBeenCalledExactlyOnceWith(scoped, "a.txt");
   expect(registry.resolveWorkspaceFileOpen(createWorkspacePanelContext("local"), "a.txt")).toBeUndefined();
   enabled = false;
@@ -123,7 +123,6 @@ describe("PluginRegistry", () => {
         workspacePanels: [{
           id: "workspace.panel",
           title: "Panel",
-          routeAliases: ["legacy:workspace.panel"],
           onInvalidate: panelInvalidate,
           render: panelRender,
         }],
@@ -140,7 +139,7 @@ describe("PluginRegistry", () => {
     const staleAction = registry.getActions(runtime)[0];
     const panel = registry.getWorkspacePanels()[0];
 
-    expect(registry.resolveWorkspacePanelRouteId("legacy:workspace.panel", "local")).toBe("ordinary:workspace.panel");
+    expect(registry.resolveWorkspacePanelRouteId("ordinary:workspace.panel", "local")).toBe("ordinary:workspace.panel");
     expect(registry.getWorkspaceLabelItems(labelContext)).toEqual([{ type: "text", text: "label" }]);
     expect(registry.getThemes()).toHaveLength(1);
     expect(registry.getThemePairs()).toHaveLength(1);
@@ -148,7 +147,7 @@ describe("PluginRegistry", () => {
     enabled = false;
     expect(registry.hasPlugin("ordinary")).toBe(true);
     expect(registry.getActions(runtime)).toEqual([]);
-    expect(registry.resolveWorkspacePanelRouteId("legacy:workspace.panel", "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("ordinary:workspace.panel", "local")).toBeUndefined();
     expect(panel?.visible?.(panelContext)).toBe(false);
     panel?.render(panelContext);
     await registry.invalidateWorkspacePanels(panelContext);
@@ -188,7 +187,6 @@ describe("PluginRegistry", () => {
             workspacePanels: [{
               id: "workspace.panel",
               title: "Panel",
-              routeAliases: ["portable-panel"],
               render: () => html`<p>Portable</p>`,
             }],
             workspaceLabels: [{ id: "label", items: () => [{ type: "text", text: "portable" }] }],
@@ -203,8 +201,8 @@ describe("PluginRegistry", () => {
 
     expect(staleRemoteAction?.id).toBe("portable:act");
     expect(registry.getActions(localRuntime)).toEqual([]);
-    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "remote-1")).toBe("portable:workspace.panel");
-    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("portable:workspace.panel", "remote-1")).toBe("portable:workspace.panel");
+    expect(registry.resolveWorkspacePanelRouteId("portable:workspace.panel", "local")).toBeUndefined();
     expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("remote-1"))).toEqual([{ type: "text", text: "portable" }]);
     expect(registry.getWorkspaceLabelItems(createWorkspaceLabelContext("local"))).toEqual([]);
     expect(registry.getThemes()).toHaveLength(1);
@@ -213,7 +211,7 @@ describe("PluginRegistry", () => {
     modes.set("remote-1", false);
     expect(registry.getActions(remoteRuntime)).toEqual([]);
     expect(registry.getActions(localRuntime)).toHaveLength(1);
-    expect(registry.resolveWorkspacePanelRouteId("portable-panel", "remote-1")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("portable:workspace.panel", "remote-1")).toBeUndefined();
     await staleRemoteAction?.run();
     expect(actionRun).not.toHaveBeenCalled();
     expect(registry.getThemes()).toHaveLength(1);
@@ -286,8 +284,9 @@ describe("PluginRegistry", () => {
     expect(registry.getActions(runtimeOwned.context)[0]?.enabled).toBe(false);
   });
 
-  it("resolves panel and shortcut migrations to the active machine-scoped contribution", async () => {
-    const registry = new PluginRegistry();
+  it("resolves current and source panel IDs without historical aliases and retains shortcut migrations", async () => {
+    let enabled = true;
+    const registry = new PluginRegistry({ isContributionEnabled: () => enabled });
     const plugin: PiWebPlugin = {
       apiVersion: 4,
       name: "VCS",
@@ -297,8 +296,6 @@ describe("PluginRegistry", () => {
           workspacePanels: [{
             id: "workspace.vcs",
             title: "VCS",
-            routeAliases: ["vcs", "core:workspace.vcs"],
-            navigationAliases: ["core:workspace.vcs"],
             render: () => html`<p>VCS</p>`,
           }],
         },
@@ -308,77 +305,155 @@ describe("PluginRegistry", () => {
     const remotePluginId = machineScopedPluginId("remote-1", "vcs");
     await registry.register({ id: remotePluginId, sourcePluginId: "vcs", machineId: "remote-1", plugin, machineSpecific: true });
 
-    expect(registry.resolveWorkspacePanelRouteId("core:workspace.vcs", "local")).toBe("vcs:workspace.vcs");
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "local")).toBe("vcs:workspace.vcs");
     expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBe(`${remotePluginId}:workspace.vcs`);
+    expect(registry.resolveWorkspacePanelRouteId(`${remotePluginId}:workspace.vcs`, "remote-1")).toBe(`${remotePluginId}:workspace.vcs`);
+    expect(registry.resolveWorkspacePanelRouteId(`${remotePluginId}:workspace.vcs`, "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId(`${remotePluginId}:workspace.vcs`, "remote-2")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-2")).toBeUndefined();
+    for (const machineId of ["local", "remote-1"]) {
+      for (const historicalId of ["vcs", "workspace.vcs", "core:workspace.vcs"]) {
+        expect(registry.resolveWorkspacePanelRouteId(historicalId, machineId)).toBeUndefined();
+      }
+    }
+    expect(registry.getActions(createContext({ selectedMachine: testMachine("local") }).context)[0]?.shortcutAliases)
+      .toEqual(["core:view.vcs"]);
     expect(registry.getActions(createContext({ selectedMachine: testMachine("remote-1") }).context)[0]?.shortcutAliases)
       .toEqual(["core:view.vcs", "vcs:view.vcs"]);
-    expect(registry.getWorkspacePanels().find((panel) => panel.id === "vcs:workspace.vcs")?.navigationAliases)
-      .toEqual(["core:workspace.vcs"]);
-    expect(registry.getWorkspacePanels().find((panel) => panel.id === `${remotePluginId}:workspace.vcs`)?.navigationAliases)
-      .toEqual(["core:workspace.vcs", "vcs:workspace.vcs"]);
+    expect(registry.getWorkspacePanels().map(({ id, sourceContributionId }) => ({ id, sourceContributionId })))
+      .toEqual([
+        { id: "vcs:workspace.vcs", sourceContributionId: "vcs:workspace.vcs" },
+        { id: `${remotePluginId}:workspace.vcs`, sourceContributionId: "vcs:workspace.vcs" },
+      ]);
+    for (const panel of registry.getWorkspacePanels()) {
+      expect(panel).not.toHaveProperty("routeAliases");
+      expect(panel).not.toHaveProperty("navigationAliases");
+    }
+
+    enabled = false;
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId(`${remotePluginId}:workspace.vcs`, "remote-1")).toBeUndefined();
+    enabled = true;
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBe(`${remotePluginId}:workspace.vcs`);
+    await registry.dispose();
+    expect(registry.resolveWorkspacePanelRouteId("vcs:workspace.vcs", "remote-1")).toBeUndefined();
   });
 
-  it("binds panel navigation to the qualified runtime contribution and validated aliases", async () => {
+  it.each([
+    { registrationPluginId: "example", sourcePluginId: undefined, machineId: "local" },
+    { registrationPluginId: machineScopedPluginId("remote-1", "example"), sourcePluginId: "example", machineId: "remote-1" },
+  ])("binds $machineId panel navigation to runtime and host-generated source IDs", async ({ registrationPluginId, sourcePluginId, machineId }) => {
     const registry = new PluginRegistry();
     let renderedNavigation: WorkspacePanelContext["navigation"];
+    const panel: WorkspacePanelContribution = {
+      id: "workspace.panel",
+      title: "Panel",
+      render: (context) => {
+        renderedNavigation = context.navigation;
+        return html`<p>Panel</p>`;
+      },
+    };
+    Reflect.set(panel, "sourceContributionId", "forged:workspace.panel");
+    Reflect.set(panel, "routeAliases", undefined);
+    Reflect.set(panel, "navigationAliases", undefined);
     await registry.register({
-      id: "example",
+      id: registrationPluginId,
+      ...(sourcePluginId === undefined ? {} : { sourcePluginId, machineId }),
       plugin: {
         apiVersion: 4,
         name: "Example",
-        activate: () => ({
-          contributions: {
-            workspacePanels: [{
-              id: "workspace.panel",
-              title: "Panel",
-              navigationAliases: ["legacy:workspace.panel"],
-              render: (context) => {
-                renderedNavigation = context.navigation;
-                return html`<p>Panel</p>`;
-              },
-            }],
-          },
-        }),
+        activate: () => ({ contributions: { workspacePanels: [panel] } }),
       },
     });
-    const base = createWorkspacePanelContext("local");
-    const context = installWorkspacePanelScope(base, (binding, contributionId, aliases) => ({
+    const base = createWorkspacePanelContext(machineId);
+    const set = vi.fn();
+    const scope = vi.fn((binding: WorkspacePluginBinding, contributionId: QualifiedContributionId, sourceContributionId: QualifiedContributionId): WorkspacePanelContext => ({
       ...base,
       navigation: {
         version: 1,
         contributionId,
-        query: { binding: binding.sourcePluginId, aliases },
-        set: vi.fn(),
+        query: { binding: binding.sourcePluginId, sourceContributionId },
+        set,
       },
     }));
+    const context = installWorkspacePanelScope(base, scope);
 
     registry.getWorkspacePanels()[0]?.render(context);
 
-    expect(renderedNavigation).toMatchObject({
+    expect(registry.getWorkspacePanels()[0]?.sourceContributionId).toBe("example:workspace.panel");
+    expect(scope).toHaveBeenCalledExactlyOnceWith(
+      { registrationPluginId, sourcePluginId: "example" },
+      `${registrationPluginId}:workspace.panel`,
+      "example:workspace.panel",
+    );
+    expect(renderedNavigation).toEqual({
       version: 1,
-      contributionId: "example:workspace.panel",
-      query: { binding: "example", aliases: ["legacy:workspace.panel"] },
+      contributionId: `${registrationPluginId}:workspace.panel`,
+      query: { binding: "example", sourceContributionId: "example:workspace.panel" },
+      set,
     });
+    expect(registry.resolveWorkspacePanelRouteId("forged:workspace.panel", machineId)).toBeUndefined();
+    await registry.dispose();
   });
 
-  it("rejects invalid panel navigation aliases transactionally", async () => {
+  it.each([
+    { field: "routeAliases", value: ["old-panel", "legacy:workspace.panel"] },
+    { field: "routeAliases", value: [] },
+    { field: "routeAliases", value: null },
+    { field: "navigationAliases", value: ["legacy:workspace.panel"] },
+    { field: "navigationAliases", value: ["not-qualified"] },
+    { field: "navigationAliases", value: [] },
+    { field: "navigationAliases", value: null },
+  ])("rejects removed workspace panel $field=$value transactionally and permits a clean retry", async ({ field, value }) => {
     const registry = new PluginRegistry();
     const panel: WorkspacePanelContribution = {
       id: "workspace.panel",
       title: "Panel",
       render: () => html`<p>Panel</p>`,
     };
-    Reflect.set(panel, "navigationAliases", ["not-qualified"]);
+    Reflect.set(panel, field, value);
+    const start = vi.fn();
+    const dispose = vi.fn();
     const plugin: PiWebPlugin = {
       apiVersion: 4,
-      name: "Invalid navigation",
-      activate: () => ({ contributions: { workspacePanels: [panel] } }),
+      name: "Removed aliases",
+      activate: () => ({
+        contributions: {
+          actions: [{ id: "action", title: "Action", run: () => undefined }],
+          applicationPanels: [{ id: "application.ready", title: "Ready", render: () => html`Ready` }],
+          workspacePanels: [{ id: "workspace.ready", title: "Ready", render: () => html`Ready` }, panel],
+        },
+        start,
+        dispose,
+      }),
     };
 
-    await expect(registry.register({ id: "invalid-navigation", plugin }))
-      .rejects.toThrow("Invalid workspace panel navigation alias for invalid-navigation:workspace.panel: not-qualified");
-    expect(registry.hasPlugin("invalid-navigation")).toBe(false);
+    const message = "Panel aliases were removed for removed-aliases:workspace.panel; remove routeAliases and navigationAliases and use the current contribution ID";
+    await expect(registry.register({ id: "removed-aliases", plugin })).rejects.toMatchObject({
+      phase: "validate",
+      message,
+      cause: { name: "BrowserPluginIncompatibleError", message },
+    });
+    expect(registry.hasPlugin("removed-aliases")).toBe(false);
+    expect(registry.getActions(createContext().context)).toEqual([]);
+    expect(registry.getApplicationPanels()).toEqual([]);
     expect(registry.getWorkspacePanels()).toEqual([]);
+    expect(registry.resolveWorkspacePanelRouteId("removed-aliases:workspace.ready", "local")).toBeUndefined();
+    expect(registry.resolveWorkspacePanelRouteId("removed-aliases:workspace.panel", "local")).toBeUndefined();
+    expect(registry.shouldLoadRemotePlugin("removed-aliases")).toBe(true);
+    expect(start).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+
+    Reflect.deleteProperty(panel, field);
+    await registry.register({ id: "removed-aliases", plugin });
+    expect(registry.hasPlugin("removed-aliases")).toBe(true);
+    expect(registry.getActions(createContext().context).map(({ id }) => id)).toEqual(["removed-aliases:action"]);
+    expect(registry.getApplicationPanels().map(({ id }) => id)).toEqual(["removed-aliases:application.ready"]);
+    expect(registry.getWorkspacePanels().map(({ id }) => id)).toEqual(["removed-aliases:workspace.panel", "removed-aliases:workspace.ready"]);
+    expect(registry.resolveWorkspacePanelRouteId("removed-aliases:workspace.panel", "local")).toBe("removed-aliases:workspace.panel");
+    expect(start).toHaveBeenCalledOnce();
+    await registry.dispose();
   });
 
   it("provides html and svg helpers to plugin activation and callbacks", async () => {

@@ -50,7 +50,6 @@ describe("bundled Git browser plugin", () => {
     const refresh = contributions.actions?.find((action) => action.id === "workspace.refresh-git");
 
     expect(contributions.actions?.map(({ id }) => id)).toEqual(["view.git", "workspace.refresh-git"]);
-    expect(panel.routeAliases).toEqual(["git", "core:workspace.git"]);
     expect(goToGit?.shortcut).toBe("mod+3");
     expect(goToGit?.shortcutAliases).toEqual(["core:view.git"]);
     expect(refresh?.shortcutAliases).toEqual(["core:workspace.refresh-git"]);

@@ -19,7 +19,7 @@ export interface WorkspaceRouteIdentity {
   workspaceId: string;
 }
 
-/** Route values after plugin-contributed workspace panel aliases are resolved. */
+/** Route values after host-owned source/runtime panel identities are resolved. */
 export interface AppRoute extends AppRouteLocation {
   tool: QualifiedContributionId | undefined;
   view: MainView | undefined;

@@ -3,7 +3,6 @@ import type { ContributionQueryValue, PluginCapability, PluginPeer, QualifiedCon
 
 export interface WorkspaceContributionNavigationV1 {
   readonly contributionId: QualifiedContributionId;
-  readonly navigationAliases?: readonly QualifiedContributionId[];
   readonly query: Readonly<Record<string, ContributionQueryValue | undefined | null>>;
 }
 

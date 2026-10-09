@@ -12,12 +12,11 @@ import type { ApplicationPanelContext, ApplicationPanelContribution, QualifiedAp
 const idPattern = /^[a-z][a-z0-9.-]*$/u;
 const localIdPattern = /^[a-z][a-z0-9.-]*$/u;
 const qualifiedContributionIdPattern = /^[a-z][a-z0-9.-]*:[a-z][a-z0-9.-]*$/u;
-const routeAliasPattern = /^[a-z][a-z0-9.-]*(?::[a-z][a-z0-9.-]*)?$/u;
 const pluginRuntimeScopes = new WeakMap<PluginRuntimeContext, (pluginId: string) => PluginRuntimeContext>();
 type WorkspacePanelScope = (
   binding: WorkspacePluginBinding,
   contributionId: QualifiedContributionId,
-  navigationAliases: readonly QualifiedContributionId[],
+  sourceContributionId: QualifiedContributionId,
 ) => WorkspacePanelContext;
 const workspacePanelScopes = new WeakMap<WorkspacePanelContext, WorkspacePanelScope>();
 const applicationPanelScopes = new WeakMap<ApplicationPanelContext, (pluginId: string) => ApplicationPanelContext>();
@@ -774,7 +773,7 @@ export class PluginRegistry {
     for (const panel of this.getWorkspacePanels()) {
       if (panel.visible?.(context) === false) continue;
       const query = panel.fileOpenQuery?.(context, path);
-      if (query !== undefined) return { contributionId: panel.id, navigationAliases: panel.navigationAliases, query };
+      if (query !== undefined) return { contributionId: panel.id, sourceContributionId: panel.sourceContributionId, query };
     }
     return undefined;
   }
@@ -783,9 +782,9 @@ export class PluginRegistry {
     const activePanels = [...this.workspacePanels, ...this.applicationPanels].filter((panel) => this.isContributionActive(panel.pluginId, panel.machineId, selectedMachineId, panel.sourcePluginId));
     const exact = activePanels.find((panel) => panel.id === value);
     if (exact !== undefined) return exact.id;
-    const aliases = activePanels.filter((panel) => panel.routeAliases?.includes(value) === true);
-    if (aliases.length === 1) return aliases[0]?.id;
-    if (aliases.length > 1) console.warn(`Ambiguous PI WEB workspace panel route: ${value}`);
+    const sourceMatches = activePanels.filter((panel) => panel.sourceContributionId === value);
+    if (sourceMatches.length === 1) return sourceMatches[0]?.id;
+    if (sourceMatches.length > 1) console.warn(`Ambiguous PI WEB workspace panel source identity: ${value}`);
     return undefined;
   }
 
@@ -871,11 +870,11 @@ export class PluginRegistry {
     contributionIds: Set<QualifiedContributionId>,
   ): QualifiedApplicationPanelContribution {
     const id = this.qualify(pluginId, panel.id, contributionIds);
-    const routeAliases = this.parseRouteAliases(id, panel.routeAliases, `${sourcePluginId ?? pluginId}:${panel.id}`);
+    this.rejectPanelAliases(panel, id);
+    const sourceContributionId: QualifiedContributionId = `${sourcePluginId ?? pluginId}:${panel.id}`;
     const scopedContext = (context: ApplicationPanelContext) => applicationPanelScopes.get(context)?.(pluginId) ?? context;
     return {
-      ...panel, id, pluginId, localId: panel.id,
-      ...(routeAliases.length === 0 ? {} : { routeAliases }),
+      ...panel, id, sourceContributionId, pluginId, localId: panel.id,
       ...(machineId === undefined ? {} : { machineId }),
       ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
       visible: (context) => this.isContributionActive(pluginId, machineId, context.machine.id, sourcePluginId)
@@ -903,18 +902,16 @@ export class PluginRegistry {
     const visible = panel.visible;
     const onInvalidate = panel.onInvalidate;
     const binding = workspacePluginBinding(pluginId, sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion);
-    const sourceId = `${sourcePluginId ?? pluginId}:${panel.id}`;
-    const routeAliases = this.parseRouteAliases(id, panel.routeAliases, sourceId);
-    const navigationAliases = this.parseNavigationAliases(id, panel.navigationAliases, sourceId);
+    this.rejectPanelAliases(panel, id);
+    const sourceContributionId: QualifiedContributionId = `${sourcePluginId ?? pluginId}:${panel.id}`;
     const invalidationResources = this.parseInvalidationResources(id, panel.invalidationResources);
-    const scopedContext = (context: WorkspacePanelContext) => workspacePanelContextFor(context, binding, id, navigationAliases);
+    const scopedContext = (context: WorkspacePanelContext) => workspacePanelContextFor(context, binding, id, sourceContributionId);
     return {
       ...panel,
       id,
       pluginId,
       localId: panel.id,
-      ...(routeAliases.length === 0 ? {} : { routeAliases }),
-      navigationAliases,
+      sourceContributionId,
       ...(panel.invalidationResources === undefined ? {} : { invalidationResources }),
       ...(machineId === undefined ? {} : { machineId }),
       ...(sourcePluginId === undefined ? {} : { sourcePluginId }),
@@ -1028,19 +1025,10 @@ export class PluginRegistry {
     return parsed.filter(isQualifiedContributionId);
   }
 
-  private parseRouteAliases(id: QualifiedContributionId, aliases: readonly string[] | undefined, sourceId: string): string[] {
-    const parsed = [...new Set([...(aliases ?? []), sourceId])].filter((alias) => alias !== id);
-    for (const alias of parsed) {
-      if (!routeAliasPattern.test(alias)) throw new Error(`Invalid workspace panel route alias for ${id}: ${alias}`);
+  private rejectPanelAliases(panel: ApplicationPanelContribution | WorkspacePanelContribution, id: QualifiedContributionId): void {
+    if (Reflect.get(panel, "routeAliases") !== undefined || Reflect.get(panel, "navigationAliases") !== undefined) {
+      throw new BrowserPluginIncompatibleError(`Panel aliases were removed for ${id}; remove routeAliases and navigationAliases and use the current contribution ID`);
     }
-    return parsed;
-  }
-
-  private parseNavigationAliases(id: QualifiedContributionId, aliases: readonly string[] | undefined, sourceId: string): QualifiedContributionId[] {
-    const parsed = [...new Set([...(aliases ?? []), sourceId])].filter((alias) => alias !== id);
-    const invalid = parsed.find((alias) => !isQualifiedContributionId(alias));
-    if (invalid !== undefined) throw new Error(`Invalid workspace panel navigation alias for ${id}: ${invalid}`);
-    return parsed.filter(isQualifiedContributionId);
   }
 
   private parseInvalidationResources(id: QualifiedContributionId, value: unknown): WorkspaceResource[] {
@@ -1099,9 +1087,9 @@ function workspacePanelContextFor(
   context: WorkspacePanelContext,
   binding: WorkspacePluginBinding,
   contributionId: QualifiedContributionId,
-  navigationAliases: readonly QualifiedContributionId[],
+  sourceContributionId: QualifiedContributionId,
 ): WorkspacePanelContext {
-  return workspacePanelScopes.get(context)?.(binding, contributionId, navigationAliases) ?? context;
+  return workspacePanelScopes.get(context)?.(binding, contributionId, sourceContributionId) ?? context;
 }
 
 function workspaceLabelContextFor(context: WorkspaceLabelContext, binding: WorkspacePluginBinding): WorkspaceLabelContext {

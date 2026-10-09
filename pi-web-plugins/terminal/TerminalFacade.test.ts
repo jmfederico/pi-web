@@ -60,7 +60,6 @@ describe("Terminal facade", () => {
     expect(request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     expect(navigateWorkspaceContribution).toHaveBeenCalledWith(workspace, {
       contributionId: "pi-web.terminal:workspace.terminal",
-      navigationAliases: ["core:workspace.terminal"],
       query: { terminal: "t1", start: undefined },
     });
     await expect(handle.completed).resolves.toEqual(succeededRun);
@@ -130,17 +129,14 @@ describe("Terminal facade", () => {
     expect(navigateWorkspaceContribution.mock.calls).toEqual([
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { start: "1" },
       }],
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { start: "2" },
       }],
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { terminal: "selected", start: undefined },
       }],
     ]);

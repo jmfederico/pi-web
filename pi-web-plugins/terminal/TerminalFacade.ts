@@ -18,7 +18,6 @@ type ClearTimer = (id: TimerId) => void;
 
 export interface WorkspaceContributionNavigationV1 {
   readonly contributionId: QualifiedContributionId;
-  readonly navigationAliases?: readonly QualifiedContributionId[];
   readonly query: Readonly<Record<string, ContributionQueryValue | undefined | null>>;
 }
 
@@ -67,7 +66,6 @@ export interface TerminalFacadeOptions {
 }
 
 const TERMINAL_PANEL_LOCAL_ID = "workspace.terminal";
-const TERMINAL_PANEL_NAVIGATION_ALIASES: readonly QualifiedContributionId[] = ["core:workspace.terminal"];
 
 export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
   readonly version = 1 as const;
@@ -117,7 +115,6 @@ export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
       : { terminal: terminalId, start: undefined };
     void binding.host.navigateWorkspaceContribution(binding.workspace, {
       contributionId,
-      navigationAliases: TERMINAL_PANEL_NAVIGATION_ALIASES,
       query,
     });
   }

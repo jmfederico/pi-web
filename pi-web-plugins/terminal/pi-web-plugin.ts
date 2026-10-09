@@ -56,8 +56,6 @@ export function activateTerminalPlugin(
         title: "Terminal",
         icon,
         order: 30,
-        routeAliases: ["core:workspace.terminal"],
-        navigationAliases: ["core:workspace.terminal"],
         badge: (workspaceContext: WorkspacePanelContext) => runtime.activeTerminalBadge(workspaceContext),
         onInvalidate: (workspaceContext: WorkspacePanelContext) => runtime.invalidate(workspaceContext),
         render: (workspaceContext: WorkspacePanelContext) => context.html`${staticHtml`<${panelTag} .context=${workspaceContext} .runtime=${runtime} .softKeysElementName=${softKeysElement}></${panelTag}>`}`,

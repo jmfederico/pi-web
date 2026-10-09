@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("Terminal browser plugin activation", () => {
-  it("registers its compatible panel/action identities, facade, and custom elements", () => {
+  it("registers its canonical panel/action identities, facade, and custom elements", () => {
     const result = activateTerminalPlugin(activationContext());
     const panel = result.contributions.workspacePanels?.[0];
     const action = result.contributions.actions?.[0];
@@ -29,8 +29,6 @@ describe("Terminal browser plugin activation", () => {
       id: "workspace.terminal",
       title: "Terminal",
       order: 30,
-      routeAliases: ["core:workspace.terminal"],
-      navigationAliases: ["core:workspace.terminal"],
     });
     expect(action).toMatchObject({
       id: "view.terminal",

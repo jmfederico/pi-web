@@ -1,4 +1,5 @@
 import type {
+  ApplicationPanelContribution,
   ContentRenderingCapability,
   ContentRendererInput,
   JsonValue,
@@ -10,8 +11,18 @@ import type {
   WorkspaceFilesCapabilityV1,
   WorkspaceFilesContextValue,
   WorkspacePanelContext,
+  WorkspacePanelContribution,
   WorkspacePanelFiles,
 } from "@jmfederico/pi-web/plugin-api";
+
+export function checkPanelContributionIds(application: ApplicationPanelContribution, workspace: WorkspacePanelContribution): void {
+  // @ts-expect-error Panel migration aliases are not public API.
+  application.routeAliases;
+  // @ts-expect-error Panel migration aliases are not public API.
+  workspace.routeAliases;
+  // @ts-expect-error Query migration aliases are not public API.
+  workspace.navigationAliases;
+}
 
 export function checkContentRendering(capability: ContentRenderingCapability, input: ContentRendererInput): void {
   const request = { machineId: "local", text: input.text };

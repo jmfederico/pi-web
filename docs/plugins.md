@@ -147,6 +147,9 @@ A workspace panel can opt in with `fileOpenQuery(context, path)`. This synchrono
 
 ### Panel and tab navigation
 
+**Panel ID migration.** `routeAliases` and `navigationAliases` have been removed from application and workspace panel contributions. Remove these options from plugins; declarations that still supply them fail registration. Update saved links to the current qualified contribution ID and its query namespace. Short tool names such as `files` and historical IDs such as `core:workspace.files` or `core:workspace.terminal` no longer select the bundled panels; use `pi-web.files:workspace.files` and `pi-web.terminal:workspace.terminal`. Remote plugins still use the host's source-to-runtime ID mapping; this is not an author-configurable alias mechanism. Action `shortcutAliases` are unchanged.
+
+
 The URL's `view` selects a responsive panel: `navigation`, `chat`, or `workspace`. The independent `tool` parameter selects an application or workspace tab by contribution ID. Opening a workspace tool sets `view=workspace` and `tool` to its ID; switching to chat keeps the selected tool. Contribution IDs are not accepted in `view`. Browser plugins use `selectMainView("workspace")` to show the workspace panel without changing its selected tab, or `selectWorkspaceTool(panelId)` to select and show a particular tool.
 
 Invalid values remain in the URL rather than triggering a redirect. An invalid `view` shows a warning and displays navigation on mobile; on two-column layouts, navigation remains alongside a valid requested tool or, otherwise, chat. Desktop keeps its normal columns. A valid workspace view with an invalid tool shows an unavailable-tab message inside the workspace panel, without selecting another tab or adding a duplicate warning. Omitted parameters use defaults and are not errors.

@@ -5,9 +5,9 @@ import { FilesRuntime } from "../../../../pi-web-plugins/files/FilesRuntime";
 import { TerminalBrowserRuntime } from "../../../../pi-web-plugins/terminal/TerminalBrowserRuntime";
 import { TERMINAL_BROWSER_FACADE_CAPABILITY, TerminalFacade, type RequiredTerminalBrowserFacadeV1, type RequiredTerminalWorkspaceBindingV1 } from "../../../../pi-web-plugins/terminal/TerminalFacade";
 import { InMemoryTerminalSelectionMemory } from "../../../../pi-web-plugins/terminal/terminalSelection";
-import type { WorkspaceFilesCapabilityV1, WorkspacePanelContext as PublicWorkspacePanelContext } from "../../../plugin-api";
+import type { QualifiedContributionId, WorkspaceFilesCapabilityV1, WorkspacePanelContext as PublicWorkspacePanelContext } from "../../../plugin-api";
 import type { Machine, Project, SessionInfo, TerminalCommandRun, Workspace } from "../api";
-import { machineScopedBundledPluginId } from "../../../shared/machinePluginIds";
+import { machineScopedBundledPluginId, machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { initialAppState } from "../appState";
 import { AppShellController } from "../appShell/appShellController";
 import { loadCachedNewSessions, markCachedNewSessionInfo, rememberCachedNewSession } from "../cachedNewSessions";
@@ -266,7 +266,7 @@ describe("PiWebApp plugin host", () => {
   });
 
   it("restores the requested tool when its plugin becomes available without replacing the URL", async () => {
-    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&view=workspace&tool=files");
+    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&view=workspace&tool=files%3Aworkspace.panel");
     const originalUrl = browser.url.href;
     const app = createDetachedApp();
     await markPluginLoadingReady(app);
@@ -275,7 +275,7 @@ describe("PiWebApp plugin host", () => {
       workspaces: [workspace], workspaceTool: TERMINAL_PANEL_ID,
     });
     await callAsyncAppMethod(app, "restoreRoute", false);
-    await expectWorkspaceContentError(app, "Workspace panel unavailable: files");
+    await expectWorkspaceContentError(app, "Workspace panel unavailable: files:workspace.panel");
 
     await appPluginRegistry(app).register({
       id: "files",
@@ -283,7 +283,7 @@ describe("PiWebApp plugin host", () => {
         apiVersion: 4,
         name: "Recovering Files",
         activate: () => ({ contributions: { workspacePanels: [{
-          id: "workspace.panel", title: "Files", routeAliases: ["files"],
+          id: "workspace.panel", title: "Files",
           render: () => html`<p>Recovered Files</p>`,
         }] } }),
       },
@@ -302,6 +302,29 @@ describe("PiWebApp plugin host", () => {
     expect(browser.pushed).toEqual([]);
     expect(browser.replaced).toEqual([]);
     render(null, host);
+  });
+
+  it.each(["files", "core:workspace.files", "core:workspace.terminal"])("keeps removed legacy tool %s unavailable even when current plugins are loaded", async (tool) => {
+    const browser = installBrowserWindow(`http://localhost/app?project=project-1&workspace=workspace-1&view=workspace&tool=${encodeURIComponent(tool)}&core.workspace.files--file=old.ts`);
+    const originalUrl = browser.url.href;
+    const app = createDetachedApp();
+    await markPluginLoadingReady(app);
+    await installTestTerminalComposition(app, "local");
+    setAppState(app, {
+      ...initialAppState(), selectedProject: project, selectedWorkspace: workspace,
+      workspaces: [workspace], workspaceTool: TERMINAL_PANEL_ID,
+    });
+    const readFile = vi.fn<WorkspaceFilesCapabilityV1["readFile"]>(() => Promise.reject(new Error("Legacy query must not open a file")));
+    await registerFilesRuntimePanel(app, new FilesRuntime(), testWorkspaceFiles({ readFile }), []);
+
+    await callAsyncAppMethod(app, "restoreRoute", false);
+    callAppMethod(app, "reconcileWorkspacePanelSelection");
+
+    await expectWorkspaceContentError(app, `Workspace panel unavailable: ${tool}`);
+    expect(readFile).not.toHaveBeenCalled();
+    expect(browser.url.href).toBe(originalUrl);
+    expect(browser.pushed).toEqual([]);
+    expect(browser.replaced).toEqual([]);
   });
 
   it("commits a workspace view destination before applying the rendered selection", async () => {
@@ -898,7 +921,6 @@ describe("PiWebApp plugin host", () => {
 
     await callAsyncAppMethod(app, "navigateRuntimeWorkspaceContribution", "local", nextWorkspace, {
       contributionId: TERMINAL_PANEL_ID,
-      navigationAliases: ["core:workspace.terminal"],
       query: { terminal: "terminal-next", start: undefined },
     }, {
       selection: { machineId: "local", projectId: previousProject.id, workspaceId: previousWorkspace.id, view: "chat" },
@@ -943,7 +965,6 @@ describe("PiWebApp plugin host", () => {
 
     const opening = callAsyncAppMethod(app, "navigateRuntimeWorkspaceContribution", "local", nextWorkspace, {
       contributionId: TERMINAL_PANEL_ID,
-      navigationAliases: ["core:workspace.terminal"],
       query: { terminal: "terminal-old", start: undefined },
     }, {
       selection: { machineId: "local", projectId: previousProject.id, workspaceId: previousWorkspace.id, view: "chat" },
@@ -1930,7 +1951,10 @@ describe("PiWebApp plugin host", () => {
   });
 
   it("binds panel navigation snapshots and writes to the selected machine/workspace only", async () => {
-    const browser = installBrowserWindow("http://localhost/app?machine=remote-1&project=project-1&workspace=workspace-1&browser-only.workspace.panel--file=canonical.ts&legacy.workspace.panel--file=legacy.ts&legacy.workspace.panel--mode=preview");
+    const runtimePluginId = machineScopedPluginId("remote-1", "browser-only");
+    const panelId: QualifiedContributionId = `${runtimePluginId}:workspace.panel`;
+    const queryKey = `${runtimePluginId}.workspace.panel--file`;
+    const browser = installBrowserWindow(`http://localhost/app?machine=remote-1&project=project-1&workspace=workspace-1&${queryKey}=canonical.ts&browser-only.workspace.panel--file=source.ts&browser-only.workspace.panel--mode=preview&legacy.workspace.panel--unrelated=ignored`);
     const app = createDetachedApp();
     setAppState(app, {
       ...initialAppState(),
@@ -1945,7 +1969,9 @@ describe("PiWebApp plugin host", () => {
     setVerifiedPluginMode(app, remoteMachine.id, "recovery-disabled");
     let navigation: WorkspacePanelNavigationV1 | undefined;
     await appPluginRegistry(app).register({
-      id: "browser-only",
+      id: runtimePluginId,
+      sourcePluginId: "browser-only",
+      machineId: "remote-1",
       plugin: {
         apiVersion: 4,
         name: "Browser only",
@@ -1954,7 +1980,6 @@ describe("PiWebApp plugin host", () => {
             workspacePanels: [{
               id: "workspace.panel",
               title: "Panel",
-              navigationAliases: ["legacy:workspace.panel"],
               render: (context) => {
                 navigation = context.navigation;
                 return html`<p>Panel</p>`;
@@ -1964,24 +1989,25 @@ describe("PiWebApp plugin host", () => {
         }),
       },
     });
-    const panel = appPluginRegistry(app).getWorkspacePanels().find(({ id }) => id === "browser-only:workspace.panel");
+    const panel = appPluginRegistry(app).getWorkspacePanels().find(({ id }) => id === panelId);
     const context = workspacePanelContextFromApp(app);
 
     panel?.render(context);
 
     expect(navigation).toMatchObject({
       version: 1,
-      contributionId: "browser-only:workspace.panel",
+      contributionId: panelId,
       query: { file: "canonical.ts", mode: "preview" },
     });
     const firstSnapshot = navigation;
     firstSnapshot?.set("file", "src/main.ts");
     expect(browser.pushed).toHaveLength(1);
-    expect(browser.url.searchParams.get("browser-only.workspace.panel--file")).toBe("src/main.ts");
-    expect(browser.url.searchParams.has("legacy.workspace.panel--file")).toBe(false);
+    expect(browser.url.searchParams.get(queryKey)).toBe("src/main.ts");
+    expect(browser.url.searchParams.has("browser-only.workspace.panel--file")).toBe(false);
+    expect(browser.url.searchParams.get("legacy.workspace.panel--unrelated")).toBe("ignored");
     expect(machineNavigationSnapshot(app, "remote-1")?.surface.contributionQuery).toMatchObject({
-      "browser-only.workspace.panel--file": "src/main.ts",
-      "legacy.workspace.panel--mode": "preview",
+      [queryKey]: "src/main.ts",
+      "browser-only.workspace.panel--mode": "preview",
     });
 
     browser.navigate("http://localhost/app?machine=remote-1&project=project-1&workspace=workspace-1&browser-only.workspace.panel--file=back.ts");
@@ -2105,7 +2131,7 @@ describe("PiWebApp plugin host", () => {
       workspace,
       { id: "local", name: "local", kind: "local" },
       TERMINAL_PANEL_ID,
-      ["core:workspace.terminal"],
+      TERMINAL_PANEL_ID,
       undefined,
       freshness,
     );
@@ -2158,8 +2184,8 @@ describe("PiWebApp plugin host", () => {
     expect(invalidated).toHaveBeenCalledOnce();
   });
 
-  it("restores Files legacy routes and query-only history through the real runtime invalidation path", async () => {
-    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&tool=files&view=workspace&core.workspace.files--file=legacy.ts&core.workspace.files--mode=preview");
+  it("restores Files current routes and query-only history through the real runtime invalidation path", async () => {
+    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&tool=files%3Aworkspace.files&view=workspace&files.workspace.files--file=initial.ts&files.workspace.files--mode=preview&core.workspace.files--file=ignored.ts");
     const app = createDetachedApp();
     setAppState(app, {
       ...initialAppState(),
@@ -2188,9 +2214,9 @@ describe("PiWebApp plugin host", () => {
     await registerFilesRuntimePanel(app, runtime, files, contexts);
 
     await callAsyncAppMethod(app, "restoreRoute", false);
-    const legacyContext = contexts[0];
-    if (legacyContext === undefined) throw new Error("Files did not receive the legacy route context");
-    await vi.waitFor(() => { expect(runtime.snapshot(legacyContext).selectedFileContent?.content).toBe("loaded:legacy.ts"); });
+    const initialContext = contexts[0];
+    if (initialContext === undefined) throw new Error("Files did not receive the current route context");
+    await vi.waitFor(() => { expect(runtime.snapshot(initialContext).selectedFileContent?.content).toBe("loaded:initial.ts"); });
 
     expect(appState(app)).toMatchObject({
       workspaceTool: "files:workspace.files",
@@ -2199,10 +2225,10 @@ describe("PiWebApp plugin host", () => {
     expect(contexts[0]?.navigation).toMatchObject({
       version: 1,
       contributionId: "files:workspace.files",
-      query: { file: "legacy.ts", mode: "preview" },
+      query: { file: "initial.ts", mode: "preview" },
     });
 
-    browser.navigate("http://localhost/app?project=project-1&workspace=workspace-1&tool=files&view=workspace&files.workspace.files--file=back.ts");
+    browser.navigate("http://localhost/app?project=project-1&workspace=workspace-1&tool=files%3Aworkspace.files&view=workspace&files.workspace.files--file=back.ts");
     callAppMethod(app, "onPopState");
     await vi.waitFor(() => { expect(contexts).toHaveLength(2); });
     const backContext = contexts[1];
@@ -2215,11 +2241,11 @@ describe("PiWebApp plugin host", () => {
       contributionId: "files:workspace.files",
       query: { file: "back.ts" },
     });
-    expect(readFile.mock.calls.map(([path]) => path)).toEqual(["legacy.ts", "back.ts"]);
+    expect(readFile.mock.calls.map(([path]) => path)).toEqual(["initial.ts", "back.ts"]);
   });
 
   it("restores Terminal query-only history through its real runtime invalidation", async () => {
-    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&tool=core%3Aworkspace.terminal&view=workspace&core.workspace.terminal--terminal=terminal-1");
+    const browser = installBrowserWindow("http://localhost/app?project=project-1&workspace=workspace-1&tool=pi-web.terminal%3Aworkspace.terminal&view=workspace&pi-web.terminal.workspace.terminal--terminal=terminal-1&core.workspace.terminal--terminal=ignored-terminal");
     const app = createDetachedApp();
     setAppState(app, {
       ...initialAppState(),
@@ -2249,8 +2275,6 @@ describe("PiWebApp plugin host", () => {
             workspacePanels: [{
               id: "workspace.terminal",
               title: "Terminal",
-              routeAliases: ["core:workspace.terminal"],
-              navigationAliases: ["core:workspace.terminal"],
               onInvalidate: (context) => {
                 const runtimeContext: PublicWorkspacePanelContext = {
                   navigate: context.navigate,
@@ -2302,7 +2326,7 @@ describe("PiWebApp plugin host", () => {
     const projectB: Project = { id: "project-b", name: "Project B", path: "/repo-b", createdAt: "now" };
     const workspaceA: Workspace = { id: "workspace-a", projectId: projectA.id, path: "/repo-a", label: "A", isMain: true, effectiveConfig: {} };
     const workspaceB: Workspace = { id: "workspace-b", projectId: projectB.id, path: "/repo-b", label: "B", isMain: true, effectiveConfig: {} };
-    const browser = installBrowserWindow("http://localhost/app?project=project-a&workspace=workspace-a&tool=files%3Aworkspace.files&view=workspace&core.workspace.files--file=a.ts&core.workspace.files--mode=raw");
+    const browser = installBrowserWindow("http://localhost/app?project=project-a&workspace=workspace-a&tool=files%3Aworkspace.files&view=workspace&files.workspace.files--file=a.ts&files.workspace.files--mode=raw");
     const app = createDetachedApp();
     if (!Reflect.set(app, "schedulePiWebStatusRefresh", () => undefined)) throw new Error("Could not stub deferred status refresh");
     setAppState(app, {
@@ -2402,7 +2426,7 @@ describe("PiWebApp plugin host", () => {
     expect(contextA.navigation?.query).toEqual({ file: "a.ts", mode: "raw" });
     expect(browser.url.searchParams.has("machine")).toBe(false);
     expect(browser.url.searchParams.get("project")).toBe(projectA.id);
-    expect(browser.url.searchParams.get("core.workspace.files--file")).toBe("a.ts");
+    expect(browser.url.searchParams.get("files.workspace.files--file")).toBe("a.ts");
     resolveRead(1);
     await toA;
 
@@ -2413,15 +2437,15 @@ describe("PiWebApp plugin host", () => {
     });
     expect(readFile.mock.calls.map(([path]) => path)).toEqual(["b.ts", "a.ts"]);
     expect(browser.url.searchParams.has("machine")).toBe(false);
-    expect(browser.url.searchParams.get("core.workspace.files--file")).toBe("a.ts");
-    expect(browser.url.searchParams.get("core.workspace.files--mode")).toBe("raw");
-    expect(browser.url.searchParams.has("files.workspace.files--file")).toBe(false);
+    expect(browser.url.searchParams.get("files.workspace.files--file")).toBe("a.ts");
+    expect(browser.url.searchParams.get("files.workspace.files--mode")).toBe("raw");
+    expect(browser.url.searchParams.has("core.workspace.files--file")).toBe(false);
     expect(browser.pushed).toHaveLength(2);
     expect(browser.replaced).toHaveLength(2);
     expect(historyUrl(browser.replaced, 0).searchParams.get("files.workspace.files--file")).toBe("b.ts");
     expect(historyUrl(browser.replaced, 0).searchParams.has("core.workspace.files--file")).toBe(false);
-    expect(historyUrl(browser.replaced, 1).searchParams.get("core.workspace.files--file")).toBe("a.ts");
-    expect(historyUrl(browser.replaced, 1).searchParams.has("files.workspace.files--file")).toBe(false);
+    expect(historyUrl(browser.replaced, 1).searchParams.get("files.workspace.files--file")).toBe("a.ts");
+    expect(historyUrl(browser.replaced, 1).searchParams.has("core.workspace.files--file")).toBe(false);
   });
 
   it("preserves the origin history entry when remembered Files is unavailable", async () => {
@@ -3263,7 +3287,6 @@ describe("PiWebApp plugin host", () => {
     })) throw new Error("Could not stub Terminal workspace restoration");
     const opening = callAsyncAppMethod(app, "navigateRuntimeWorkspaceContribution", "local", workspace, {
       contributionId: TERMINAL_PANEL_ID,
-      navigationAliases: ["core:workspace.terminal"],
       query: { terminal: "terminal-from-command", start: undefined },
     }, {
       selection: { machineId: "local", projectId: project.id, workspaceId: otherWorkspace.id, tool: "core:workspace.terminal", view: "workspace" },
@@ -4112,8 +4135,6 @@ async function registerFilesRuntimePanel(
           workspacePanels: [{
             id: "workspace.files",
             title: "Files",
-            routeAliases: ["files", "core:workspace.files"],
-            navigationAliases: ["core:workspace.files"],
             invalidationResources: ["workspace.files"],
             onInvalidate: (context, invalidation) => {
               const runtimeContext: PublicWorkspacePanelContext = {
@@ -4305,8 +4326,6 @@ function requiredTerminalPlugin(facade: RequiredTerminalBrowserFacadeV1 = testTe
           id: "workspace.terminal",
           title: "Terminal",
           order: 30,
-          routeAliases: ["core:workspace.terminal"],
-          navigationAliases: ["core:workspace.terminal"],
           render: () => html`<p>Terminal</p>`,
         }],
         actions: [{

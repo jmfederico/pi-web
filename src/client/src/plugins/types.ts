@@ -302,7 +302,6 @@ export interface ApplicationPanelContribution {
   title: string;
   icon?: TemplateResult;
   order?: number;
-  routeAliases?: string[];
   visible?: (context: ApplicationPanelContext) => boolean;
   badge?: (context: ApplicationPanelContext) => string | number | TemplateResult | undefined;
   render: (context: ApplicationPanelContext) => TemplateResult;
@@ -310,6 +309,8 @@ export interface ApplicationPanelContribution {
 
 export interface QualifiedApplicationPanelContribution extends ApplicationPanelContribution {
   id: QualifiedContributionId;
+  /** Host-generated portable identity; never an author-defined migration alias. */
+  sourceContributionId: QualifiedContributionId;
   pluginId: PluginId;
   localId: LocalContributionId;
   machineId?: string;
@@ -330,10 +331,6 @@ export interface WorkspacePanelContribution {
   title: string;
   icon?: WorkspacePanelIcon;
   order?: number;
-  /** Former URL tool/view values that should resolve to this panel. */
-  routeAliases?: string[];
-  /** Former qualified contribution ids whose namespaced query keys remain readable. */
-  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
   /** Return a deep-link query to open a workspace-relative file, or undefined if unsupported. */
   fileOpenQuery?: (context: WorkspacePanelContext, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
@@ -345,6 +342,8 @@ export interface WorkspacePanelContribution {
 
 export interface QualifiedWorkspacePanelContribution extends WorkspacePanelContribution {
   id: QualifiedContributionId;
+  /** Host-generated portable identity; never an author-defined migration alias. */
+  sourceContributionId: QualifiedContributionId;
   pluginId: PluginId;
   localId: LocalContributionId;
   machineId?: string;

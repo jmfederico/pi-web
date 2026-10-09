@@ -15,6 +15,7 @@ import type {
   PluginStartContext,
   PluginSelectedSession,
   PluginRuntimeState,
+  ApplicationPanelContribution,
   Workspace,
   PluginPeerChannel,
   PluginPeerChannelOptions,
@@ -156,12 +157,12 @@ describe("public browser plugin API", () => {
 
   it("adds optional versioned panel navigation without changing browser API v2 compatibility", () => {
     type NavigationIsOptional = IsOptional<WorkspacePanelContext, "navigation">;
-    type NavigationAliasesAreOptional = IsOptional<WorkspacePanelContribution, "navigationAliases">;
     expectTypeOf<WorkspacePanelNavigationV1["version"]>().toEqualTypeOf<1>();
     expectTypeOf<ReadonlyKeys<Pick<WorkspacePanelNavigationV1, "version" | "contributionId" | "query">>>()
       .toEqualTypeOf<"version" | "contributionId" | "query">();
     expectTypeOf<NavigationIsOptional>().toEqualTypeOf<true>();
-    expectTypeOf<NavigationAliasesAreOptional>().toEqualTypeOf<true>();
+    expectTypeOf<Extract<keyof WorkspacePanelContribution, "routeAliases" | "navigationAliases">>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<keyof ApplicationPanelContribution, "routeAliases" | "navigationAliases">>().toEqualTypeOf<never>();
   });
 
   it("keeps invalidation snapshots readonly and one-argument v2 callbacks assignable", () => {

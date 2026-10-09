@@ -32,16 +32,13 @@ function installWindow(href: string): { pushed: string[]; replaced: string[] } {
   return { pushed, replaced };
 }
 
-const routeAliases: Record<string, AppRoute["tool"]> = {
-  files: "files:workspace.files",
-  "core:workspace.files": "files:workspace.files",
-  git: "git:workspace.git",
-  "core:workspace.git": "git:workspace.git",
+const currentPanels: Record<string, AppRoute["tool"]> = {
+  "files:workspace.files": "files:workspace.files",
   "git:workspace.git": "git:workspace.git",
 };
 
 function resolveWorkspacePanel(value: string): AppRoute["tool"] {
-  return routeAliases[value];
+  return currentPanels[value];
 }
 
 describe("route helpers", () => {
@@ -58,7 +55,7 @@ describe("route helpers", () => {
     });
   });
 
-  it("ignores unsupported aliases while retaining qualified ids for retryable plugin loads", () => {
+  it("ignores short tool names while retaining qualified ids for retryable plugin loads", () => {
     installWindow("http://localhost/app?tool=terminal&view=settings");
     expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({ tool: undefined, view: undefined });
 
@@ -69,12 +66,12 @@ describe("route helpers", () => {
     });
   });
 
-  it("keeps legacy tool values for plugin resolution but rejects contribution-valued views", () => {
+  it("retains raw legacy values for unavailable-route diagnostics without resolving them", () => {
     installWindow("http://localhost/app?tool=git&view=core%3Aworkspace.git");
 
     expect(readRoute()).toMatchObject({ tool: "git", view: "core:workspace.git" });
     expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({
-      tool: "git:workspace.git",
+      tool: undefined,
       view: undefined,
     });
   });
@@ -102,7 +99,7 @@ describe("route helpers", () => {
   });
 
   it.each(["files", "git", "core:workspace.git", "git:workspace.git", "retryable:workspace.panel", "settings", "", "Workspace"])("rejects invalid view %j without changing the tool", (view) => {
-    installWindow(`http://localhost/app?tool=files&view=${encodeURIComponent(view)}`);
+    installWindow(`http://localhost/app?tool=files%3Aworkspace.files&view=${encodeURIComponent(view)}`);
     // Raw values survive parsing for warnings; only resolved state is structural.
     expect(readRoute().view).toBe(view === "" ? undefined : view);
     expect(resolveAppRoute(readRoute(), resolveWorkspacePanel)).toMatchObject({
