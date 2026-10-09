@@ -86,6 +86,12 @@ export default {
 
 The returned unsubscribe function is idempotent and can be called as soon as observation is no longer needed. The host also stops subscriptions when the plugin lifetime ends, including failed activation/start rollback; retaining the service cannot start a new subscription after that point. A throwing or rejected subscriber is logged with its plugin identity without blocking other subscribers. For rendering alone, use the panel's fresh `state` instead of subscribing. `selection` is optional on older hosts; update PI WEB when the service is needed.
 
+### Read public session metadata
+
+Session snapshots can include optional `metadata`: JSON objects keyed by a package/plugin namespace, for example `metadata["example.workflow"]`. This is explicitly browser-public data saved with the conversation, available in listings and after reopening without a live Pi messaging connection. Snapshots are detached from host state. Missing metadata means no public data is available; it is not inferred from the title or conversation text.
+
+Only deliberately published session metadata is exposed, not arbitrary Pi custom entries. Keep secrets and private extension state out of it. Namespaces organize data rather than enforce ownership or authorization, and plugins must validate their own schema and render values as untrusted input. Browser API v4 remains unchanged; older hosts omit the field.
+
 ### Discover projects on the context's machine
 
 Action, application-panel, and workspace contexts supply read-only `projects` access directly. `listProjects()` returns registered projects with `id`, `name`, and `path`; `suggestDirectories(query)` returns directory suggestions with `path`, using the same path-search rules as the host's Add Project picker. Discovery works without a selected project or workspace. Call these asynchronous methods from an action, event handler, or component that owns loading and error display, not from the synchronous panel render itself.

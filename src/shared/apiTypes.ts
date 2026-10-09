@@ -613,6 +613,8 @@ export interface SessionInfo extends SessionRef {
   path: string;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
+  /** Explicitly public, namespaced session data; never arbitrary Pi custom entries. */
+  metadata?: import("./pluginApiTypes.js").SessionUiMetadata;
   name?: string;
   created: string;
   modified: string;

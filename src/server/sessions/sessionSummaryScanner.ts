@@ -4,6 +4,8 @@ import type { Stats } from "node:fs";
 import { join, sep } from "node:path";
 import { isRecord, tryParseEntry } from "./sessionFileFormat.js";
 import type { PiSessionListEntry } from "./piSessionService.js";
+import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
+import { sessionUiMetadataFromEntry } from "./sessionMetadata.js";
 
 /*
  * LISTING CONTRACT
@@ -32,7 +34,8 @@ import type { PiSessionListEntry } from "./piSessionService.js";
  * Per-line work is minimal: lines are classified from their leading
  * `{"type":"..."` bytes without ever decoding them, and lines are only turned
  * into strings and JSON-parsed when they matter — the header, `session_info`
- * lines (rare, one per rename), and message lines until the first user text
+ * lines (rare, one per rename), custom entries for explicitly public metadata,
+ * and message lines until the first user text
  * message has been found. Message bodies after that point (which hold the huge
  * tool results and assistant replies) are neither decoded nor parsed.
  */
@@ -57,6 +60,7 @@ const TAB = 0x09;
 /** The entry types the byte fast path recognizes, as raw bytes: type names are never decoded. */
 const MESSAGE_TYPE_BYTES = Buffer.from("message");
 const SESSION_INFO_TYPE_BYTES = Buffer.from("session_info");
+const CUSTOM_TYPE_BYTES = Buffer.from("custom");
 
 /** Same bound the SDK uses for its concurrent session-info builds. */
 const MAX_CONCURRENT_SESSION_SUMMARY_SCANS = 10;
@@ -207,6 +211,7 @@ interface SummaryFoldState {
   messageCount: number;
   firstMessageText: string | undefined;
   name: string | undefined;
+  metadata?: SessionUiMetadata;
 }
 
 function createEmptyFold(): SummaryFoldState {
@@ -338,6 +343,7 @@ function buildSummaryFromFold(fold: SummaryFoldState, filePath: string, mtime: D
     // entries (cleanup listing) still carry the field.
     allMessagesText: "",
     ...(fold.name === undefined ? {} : { name: fold.name }),
+    ...(fold.metadata === undefined ? {} : { metadata: fold.metadata }),
     ...(typeof parentSessionPath === "string" ? { parentSessionPath } : {}),
   };
 }
@@ -362,6 +368,11 @@ function processLineBytes(data: Buffer, start: number, end: number, state: Summa
   if (entryType === "session_info") {
     const entry = tryParseEntry(data.toString("utf8", start, end));
     if (entry !== undefined) state.name = sessionInfoName(entry);
+    return;
+  }
+  if (entryType === "custom") {
+    const metadata = sessionUiMetadataFromEntry(tryParseEntry(data.toString("utf8", start, end)));
+    if (metadata !== undefined) state.metadata = metadata;
     return;
   }
   if (entryType === "message") {
@@ -390,7 +401,10 @@ function processLineBytes(data: Buffer, start: number, end: number, state: Summa
   const entry = tryParseEntry(data.toString("utf8", start, end));
   if (entry === undefined) return;
   if (entry["type"] === "session_info") state.name = sessionInfoName(entry);
-  else if (entry["type"] === "message") {
+  else if (entry["type"] === "custom") {
+    const metadata = sessionUiMetadataFromEntry(entry);
+    if (metadata !== undefined) state.metadata = metadata;
+  } else if (entry["type"] === "message") {
     state.messageCount += 1;
     if (state.firstMessageText === undefined) {
       const userText = firstUserMessageText(entry);
@@ -405,12 +419,12 @@ function processLineBytes(data: Buffer, start: number, end: number, state: Summa
  * them first would mask each byte's high bit — `Buffer.toString("ascii")`
  * turns bytes like `ed e5 f3 f3 e1 e7 e5` into "message" — fabricating
  * matches for corrupt input. Returns "other" when the line carries the
- * SDK-style prefix but not a known type (only message/session_info matter
+ * SDK-style prefix but not a known type (only message/session_info/custom matter
  * for the summary, so such lines need no parse), or undefined when the line
  * does not carry the prefix (or the type is unreasonably long), leaving
  * classification to the parse fallback.
  */
-function classifyLineType(data: Buffer, start: number, end: number): "message" | "session_info" | "other" | undefined {
+function classifyLineType(data: Buffer, start: number, end: number): "message" | "session_info" | "custom" | "other" | undefined {
   const prefixLength = ENTRY_TYPE_PREFIX.length;
   if (end - start < prefixLength + 1) return undefined;
   for (let i = 0; i < prefixLength; i += 1) {
@@ -421,6 +435,7 @@ function classifyLineType(data: Buffer, start: number, end: number): "message" |
   if (closeAt === -1 || closeAt > searchLimit) return undefined;
   if (sameBytes(data, start + prefixLength, closeAt, MESSAGE_TYPE_BYTES)) return "message";
   if (sameBytes(data, start + prefixLength, closeAt, SESSION_INFO_TYPE_BYTES)) return "session_info";
+  if (sameBytes(data, start + prefixLength, closeAt, CUSTOM_TYPE_BYTES)) return "custom";
   return "other";
 }
 

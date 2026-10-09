@@ -49,7 +49,7 @@ import { findArchiveCandidateByIdOrPrefix, planSessionArchiveTree, type SessionA
 import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
-import { deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
+import { deterministicSessionName, fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 import { loadEffectiveProjectAttachmentsConfig } from "../workspaces/projectPiWebConfig.js";
@@ -94,6 +94,8 @@ import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from ".
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
 import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS } from "../../config.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
+import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
+import { readSessionUiMetadata, requireSessionUiMetadata, SESSION_UI_METADATA_CUSTOM_TYPE } from "./sessionMetadata.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView } from "./subsessionTranscript.js";
 import { annotateAssistantThinkingLevel, historyMessagesFromEntries } from "./transcriptMessages.js";
@@ -287,6 +289,10 @@ type SessionCreationProvenance = "tracked-subsession" | "host-one-shot";
 
 interface StartSessionOptions {
   parentSession?: string;
+  /** Public metadata is initialized on the manager before extensions start. */
+  metadata?: SessionUiMetadata;
+  /** Explicit display name installed before runtime startup and publication. */
+  name?: string;
   initialModel?: AgentModel;
   /**
    * Thinking level for the brand new session; omit to resolve from settings
@@ -339,6 +345,7 @@ export interface PiSessionListEntry {
   messageCount: number;
   firstMessage: string;
   allMessagesText: string;
+  metadata?: SessionUiMetadata;
   name?: string;
   parentSessionPath?: string;
 }
@@ -404,6 +411,7 @@ export interface PiSessionManager {
   resetLeaf(): void;
   getHeader?(): { parentSession?: string; timestamp?: string } | null | undefined;
   appendCustomEntry?(customType: string, data?: unknown): string;
+  appendSessionInfo?(name: string): string;
 }
 
 export interface PiSessionManagerGateway {
@@ -1568,8 +1576,19 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async startSession(cwd: string, options: InternalStartSessionOptions): Promise<ClientSession> {
+    const metadata = options.metadata === undefined ? undefined : requireSessionUiMetadata(options.metadata);
+    const name = options.name === undefined ? undefined : requireInitialSessionName(options.name);
+    const manager = this.sessionManager.create(cwd, options.parentSession === undefined ? undefined : { parentSession: options.parentSession });
+    if (metadata !== undefined) {
+      if (manager.appendCustomEntry === undefined) throw new Error("Session manager does not support UI metadata initialization");
+      manager.appendCustomEntry(SESSION_UI_METADATA_CUSTOM_TYPE, { version: 1, metadata });
+    }
+    if (name !== undefined) {
+      if (manager.appendSessionInfo === undefined) throw new Error("Session manager does not support initial naming");
+      manager.appendSessionInfo(name);
+    }
     const active = await this.create(
-      this.sessionManager.create(cwd, options.parentSession === undefined ? undefined : { parentSession: options.parentSession }),
+      manager,
       cwd,
       {
         startupIntent: "create",
@@ -1614,6 +1633,8 @@ export class PiSessionService implements SessionRouteService {
       ? input.model
       : await this.resolveSpawnModel({ id: input.spawningSessionId, cwd: input.spawningCwd }, input.modelSpec);
     const created = await this.start(decision.cwd, {
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+      ...(input.name === undefined ? {} : { name: input.name }),
       ...(model === undefined ? {} : { initialModel: model }),
       ...(input.thinkingLevel === undefined ? {} : { initialThinkingLevel: input.thinkingLevel }),
     });
@@ -4870,9 +4891,14 @@ function notificationIdentityForSession(session: PiAgentSession): { sessionId: s
   };
 }
 
+function metadataFromActiveSession(session: PiAgentSession): SessionUiMetadata | undefined {
+  return readSessionUiMetadata(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch());
+}
+
 function clientSessionFromActiveSession(session: PiAgentSession): ClientSession {
   const header = session.sessionManager.getHeader?.();
   const created = header?.timestamp ?? new Date().toISOString();
+  const metadata = metadataFromActiveSession(session);
   return {
     id: session.sessionId,
     path: session.sessionFile ?? "",
@@ -4882,6 +4908,7 @@ function clientSessionFromActiveSession(session: PiAgentSession): ClientSession 
     modified: created,
     messageCount: session.messages.length,
     firstMessage: "",
+    ...(metadata === undefined ? {} : { metadata }),
     ...(session.sessionName === undefined ? {} : { name: session.sessionName }),
     ...(header?.parentSession === undefined ? {} : { parentSessionPath: header.parentSession }),
   };
@@ -4893,6 +4920,7 @@ function clientSessionFromListEntry(session: PiSessionListEntry): ClientSession 
     path: session.path,
     cwd: session.cwd,
     persisted: true,
+    ...(session.metadata === undefined ? {} : { metadata: requireSessionUiMetadata(session.metadata) }),
     ...(session.name === undefined ? {} : { name: session.name }),
     created: session.created.toISOString(),
     modified: session.modified.toISOString(),
@@ -4911,6 +4939,7 @@ function archiveInputFromListEntry(session: PiSessionListEntry): ArchiveSessionI
     modified: session.modified.toISOString(),
     messageCount: session.messageCount,
     firstMessage: session.firstMessage,
+    ...(session.metadata === undefined ? {} : { metadata: session.metadata }),
     ...(session.name === undefined ? {} : { name: session.name }),
     ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
   };
@@ -4920,6 +4949,7 @@ function archiveInputFromActiveSession(session: PiAgentSession): ArchiveSessionI
   const sessionFile = session.sessionFile;
   if (sessionFile === undefined || sessionFile === "") throw new Error("Session is not persisted");
   const parentSessionPath = session.sessionManager.getHeader?.()?.parentSession;
+  const metadata = metadataFromActiveSession(session);
   return {
     sessionId: session.sessionId,
     cwd: session.sessionManager.getCwd(),
@@ -4928,6 +4958,7 @@ function archiveInputFromActiveSession(session: PiAgentSession): ArchiveSessionI
     modified: new Date().toISOString(),
     messageCount: session.messages.length,
     firstMessage: "",
+    ...(metadata === undefined ? {} : { metadata }),
     ...(session.sessionName === undefined ? {} : { name: session.sessionName }),
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
   };
@@ -4994,11 +5025,13 @@ function clientSessionFromArchivedRecord(record: ArchivedSessionRecord, fallback
   const firstMessage = record.firstMessage ?? fallback?.firstMessage;
   if (path === undefined || created === undefined || modified === undefined || messageCount === undefined || firstMessage === undefined) return undefined;
   const name = record.name ?? fallback?.name;
+  const metadata = record.metadata ?? fallback?.metadata;
   const parentSessionPath = record.parentSessionPath ?? fallback?.parentSessionPath;
   return {
     id: record.sessionId,
     path,
     cwd: record.cwd,
+    ...(metadata === undefined ? {} : { metadata: requireSessionUiMetadata(metadata) }),
     ...(name === undefined ? {} : { name }),
     created,
     modified,

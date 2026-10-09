@@ -1,6 +1,19 @@
-import type { PluginRuntimeState, PluginSelectionSnapshot } from "../../../plugin-api";
+import type { PluginRuntimeState, PluginSelectedSession, PluginSelectionSnapshot } from "../../../plugin-api";
 import type { AppState } from "../appState";
+import type { SessionInfo } from "../api";
 import type { PiWebPlugin } from "./types";
+
+/** The public row/selection projection never exposes private session paths or message text. */
+export function publicPluginSession(session: SessionInfo): PluginSelectedSession {
+  return {
+    id: session.id,
+    cwd: session.cwd,
+    ...(session.name === undefined ? {} : { name: session.name }),
+    ...(session.metadata === undefined ? {} : { metadata: structuredClone(session.metadata) }),
+    archived: session.archived === true,
+    pending: "clientPendingStart" in session && session.clientPendingStart === true,
+  };
+}
 
 /** Copy only documented selection; plugins never receive the selected SessionInfo object. */
 export function publicPluginSelection(state: AppState): PluginSelectionSnapshot {
@@ -16,13 +29,7 @@ export function publicPluginSelection(state: AppState): PluginSelectionSnapshot 
       ...(workspace.provider === undefined ? {} : { provider: workspace.provider }),
       ...(workspace.removal === undefined ? {} : { removal: workspace.removal }),
     } }),
-    ...(session === undefined ? {} : { selectedSession: {
-      id: session.id,
-      cwd: session.cwd,
-      ...(session.name === undefined ? {} : { name: session.name }),
-      archived: session.archived === true,
-      pending: "clientPendingStart" in session && session.clientPendingStart === true,
-    } }),
+    ...(session === undefined ? {} : { selectedSession: publicPluginSession(session) }),
   };
 }
 

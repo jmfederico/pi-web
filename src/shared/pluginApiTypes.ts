@@ -8,6 +8,9 @@ export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
+/** Explicitly browser-public session data, keyed by owning package/plugin namespace. */
+export type SessionUiMetadata = Readonly<Record<string, JsonObject>>;
+
 /**
  * Typed token for one exact host/plugin capability version. The provider id
  * and package-local id together with the version form the stable capability

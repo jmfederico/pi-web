@@ -1,7 +1,7 @@
 import { html, svg } from "lit";
 import { expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
-import { adaptPublicPlugin, publicPluginState } from "./publicContext";
+import { adaptPublicPlugin, publicPluginSession, publicPluginState } from "./publicContext";
 import type { WorkspacePanelContext } from "./types";
 
 const session = {
@@ -22,6 +22,31 @@ it("projects only documented session fields and does not share the internal sess
   const archived = { ...session, archived: true, clientPendingStart: false };
   expect(publicPluginState({ ...state, selectedSession: archived }).selectedSession)
     .toMatchObject({ archived: true, pending: false });
+});
+
+it("exposes detached public session metadata without sharing nested values with host state", () => {
+  const metadata = { "example.workflow": { identity: { leg: 2 }, flags: [true] } };
+  const state = { ...initialAppState(), selectedSession: { ...session, metadata } };
+  const projected = publicPluginState(state).selectedSession;
+  expect(projected?.metadata).toEqual(metadata);
+  if (projected?.metadata === undefined) throw new Error("Expected public metadata");
+  expect(projected.metadata).not.toBe(metadata);
+  expect(projected.metadata["example.workflow"]).not.toBe(metadata["example.workflow"]);
+  Reflect.set(projected.metadata["example.workflow"] ?? {}, "identity", { leg: 99 });
+  expect(metadata["example.workflow"].identity.leg).toBe(2);
+  expect(publicPluginState({ ...initialAppState(), selectedSession: session }).selectedSession).not.toHaveProperty("metadata");
+});
+
+it("projects an unselected row independently of the selected conversation", () => {
+  const row = { ...session, id: "other-row", archived: true, clientPendingStart: false,
+    metadata: { workflow: { nested: { leg: 3 } } } };
+  const snapshot = publicPluginSession(row);
+  expect(snapshot).toEqual({ id: "other-row", cwd: "/workspace", name: "Conversation", archived: true, pending: false,
+    metadata: row.metadata });
+  expect(snapshot).not.toHaveProperty("path");
+  expect(snapshot).not.toHaveProperty("firstMessage");
+  Reflect.set(snapshot.metadata?.["workflow"] ?? {}, "nested", { leg: 100 });
+  expect(row.metadata.workflow.nested.leg).toBe(3);
 });
 
 it("preserves lifecycle callback receivers while adapting contributions", async () => {

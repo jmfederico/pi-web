@@ -2,7 +2,7 @@ import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { describe, expect, it } from "vitest";
-import { cleanSessionName, deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
+import { cleanSessionName, deterministicSessionName, fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
 
 function fakeModel(): Model<Api> {
   return { id: "fake-model", name: "Fake Model", api: "anthropic-messages", provider: "anthropic", baseUrl: "https://example.test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
@@ -43,6 +43,14 @@ function streamThatErrors(): StreamFn {
 }
 
 describe("sessionNameGenerator", () => {
+
+  it("preserves explicit extension names", () => {
+    expect(requireInitialSessionName("A workflow leg 2")).toBe("A workflow leg 2");
+  });
+
+  it.each([undefined, null, "", " ", " padded", "padded ", "two\nlines", "control\0character", "a".repeat(61)])("rejects invalid initial names (%j)", (value) => {
+    expect(() => requireInitialSessionName(value)).toThrow("Initial session name");
+  });
   it("generates a session name by calling the injected streamFn", async () => {
     const calls: unknown[] = [];
     const stream = streamThatCompletes('Title: "Fix the bug"');

@@ -4,6 +4,8 @@ import { access, copyFile, mkdir, readFile, rename, unlink, writeFile } from "no
 import { basename, dirname, join } from "node:path";
 import { piWebDataDir } from "../../config.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
+import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
+import { requireSessionUiMetadata } from "./sessionMetadata.js";
 
 export interface ArchiveSessionInput {
   sessionId: string;
@@ -13,6 +15,7 @@ export interface ArchiveSessionInput {
   modified: string;
   messageCount: number;
   firstMessage: string;
+  metadata?: SessionUiMetadata;
   name?: string;
   parentSessionPath?: string;
 }
@@ -27,6 +30,7 @@ export interface ArchivedSessionRecord {
   modified?: string;
   messageCount?: number;
   firstMessage?: string;
+  metadata?: SessionUiMetadata;
   name?: string;
   parentSessionPath?: string;
 }
@@ -187,6 +191,7 @@ function archiveRecordFromInput(session: ArchiveSessionInput, archive: { archive
     modified: session.modified,
     messageCount: session.messageCount,
     firstMessage: session.firstMessage,
+    ...(session.metadata === undefined ? {} : { metadata: requireSessionUiMetadata(session.metadata) }),
     ...(session.name === undefined ? {} : { name: session.name }),
     ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
   };
@@ -251,6 +256,7 @@ function parseArchivedSessionRecord(value: unknown): ArchivedSessionRecord {
   const firstMessage = optionalString(value, "firstMessage");
   const name = optionalString(value, "name");
   const parentSessionPath = optionalString(value, "parentSessionPath");
+  const metadata = value["metadata"] === undefined ? undefined : requireSessionUiMetadata(value["metadata"]);
   return {
     sessionId,
     cwd: canonicalCwd,
@@ -261,6 +267,7 @@ function parseArchivedSessionRecord(value: unknown): ArchivedSessionRecord {
     ...(modified === undefined ? {} : { modified }),
     ...(messageCount === undefined ? {} : { messageCount }),
     ...(firstMessage === undefined ? {} : { firstMessage }),
+    ...(metadata === undefined ? {} : { metadata }),
     ...(name === undefined ? {} : { name }),
     ...(parentSessionPath === undefined ? {} : { parentSessionPath }),
   };

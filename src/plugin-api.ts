@@ -22,6 +22,7 @@ export type {
   PiWebVersionResponse,
   PluginCapability,
   PluginCapabilityProvision,
+  SessionUiMetadata,
   TerminalCommandRun,
   TerminalCommandRunHandle,
   TerminalCommandRunStatus,
@@ -200,6 +201,8 @@ export interface PluginSelectedSession {
   /** Workspace working directory. */
   cwd: string;
   name?: string;
+  /** Detached, explicitly UI-safe data by package/plugin namespace. Absent on older hosts. */
+  metadata?: import("./shared/pluginApiTypes.js").SessionUiMetadata;
   archived: boolean;
   /** True while the browser is waiting for session creation to finish. */
   pending: boolean;

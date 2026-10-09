@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiSessionListEntry } from "./piSessionService.js";
 import { rewriteHeaderWithoutParentSession } from "./sessionFileRewrite.testSupport.js";
 import { SessionSummaryScanner } from "./sessionSummaryScanner.js";
+import { SESSION_UI_METADATA_CUSTOM_TYPE } from "./sessionMetadata.js";
 
 // Route node:fs/promises through a plain copy of the real module: Node's
 // builtin namespaces are frozen, so vi.spyOn cannot redefine their exports
@@ -102,6 +103,29 @@ describe("session summary scanner parity with the SDK listing", () => {
     const sessions = await coldListing(sessionDir);
 
     expect(sessions.map((session) => session.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+});
+
+describe("session summary scanner public metadata", () => {
+  it("keeps only explicit metadata across fast-path and foreign-format entries, memo reuse and chunk folding", async () => {
+    const publicEntry = (leg: number) => ({ type: "custom", customType: SESSION_UI_METADATA_CUSTOM_TYPE,
+      data: { version: 1, metadata: { example: { leg } } } });
+    const path = await writeSession("metadata.jsonl", [
+      headerLine({ id: "metadata", cwd: WORKSPACE }),
+      JSON.stringify(publicEntry(1)),
+      messageLine({ role: "user", content: textContent("first") }),
+      JSON.stringify({ type: "custom", customType: "private", data: { secret: "not public" } }),
+      // Reordered keys and whitespace use the parse fallback rather than the byte classifier.
+      `  ${JSON.stringify({ id: "foreign", ...publicEntry(2) })}`,
+      JSON.stringify({ ...publicEntry(3), data: { version: 99, metadata: { example: { leg: 3 } } } }),
+      '{"type":"custom","customType":"pi-web.session-ui-metadata","data":',
+    ]);
+    const scanner = new SessionSummaryScanner({ chunkBytes: 17 });
+    for (let i = 0; i < 2; i++) {
+      expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([{ metadata: { example: { leg: 2 } }, messageCount: 1 }]);
+    }
+    await appendFile(path, `${JSON.stringify(publicEntry(4))}\n`);
+    expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([{ metadata: { example: { leg: 4 } } }]);
   });
 });
 

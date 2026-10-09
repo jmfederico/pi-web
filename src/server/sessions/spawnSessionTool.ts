@@ -2,6 +2,7 @@
 // Keep this out of extensions; see docs/development-checks.md#server-only-typebox.
 import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
+import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
 import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export interface SpawnSessionResult {
@@ -20,6 +21,10 @@ export interface SpawnSessionInvocation {
   spawningSessionId: string;
   prompt: string;
   cwd: string | undefined;
+  /** Host/extension-supplied UI-safe state, installed before startup and the first prompt. */
+  metadata?: SessionUiMetadata;
+  /** Host/extension-supplied display name, installed before extensions and publication. */
+  name?: string;
   /** Current model from the dispatching session, used as the spawned session's default. */
   model?: SpawnSessionModel;
   /** Strict `provider/model-id` requested by the dispatcher; overrides {@link model} when set. */

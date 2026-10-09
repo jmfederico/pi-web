@@ -265,9 +265,17 @@ function requireWorkspaceEffectiveConfig(value: unknown): WorkspaceEffectiveConf
   });
 }
 
+function parseSessionUiMetadata(value: unknown): NonNullable<SessionInfo["metadata"]> {
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid session metadata field");
+  return Object.freeze(Object.fromEntries(
+    Object.entries(value).map(([namespace, data]) => [namespace, parseJsonObject(data, "session metadata namespace")]),
+  ));
+}
+
 export function parseSessionInfo(value: unknown): SessionInfo {
   const record = requireRecord(value);
   const name = optionalString(record, "name");
+  const metadata = record["metadata"] === undefined ? undefined : parseSessionUiMetadata(record["metadata"]);
   const persisted = parseOptionalBoolean(record["persisted"], "persisted");
   const parentSessionPath = optionalString(record, "parentSessionPath");
   const archivedAt = optionalString(record, "archivedAt");
@@ -277,6 +285,7 @@ export function parseSessionInfo(value: unknown): SessionInfo {
     cwd: requireString(record, "cwd"),
     ...(persisted === undefined ? {} : { persisted }),
     ...(name === undefined ? {} : { name }),
+    ...(metadata === undefined ? {} : { metadata }),
     created: requireString(record, "created"),
     modified: requireString(record, "modified"),
     messageCount: requireNumber(record, "messageCount"),

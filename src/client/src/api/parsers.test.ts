@@ -571,6 +571,50 @@ describe("API parsers", () => {
     expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", persisted: "yes", created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected optional boolean field: persisted");
   });
 
+  describe("session UI metadata", () => {
+    const session = {
+      id: "s1", path: "/sessions/s1.jsonl", cwd: "/repo", name: "Relay X leg 3",
+      created: "now", modified: "now", messageCount: 13, firstMessage: "Continue Relay X",
+    };
+    const metadata = {
+      "@jmfederico/pi-relay": { version: 1, packetPath: ".pi-web/relays/X", relayName: "X", leg: "3" },
+      workflow: { labels: ["review", null, true, 2], nested: { complete: false } },
+    };
+
+    it("preserves a detached namespaced JSON snapshot for session-list plugins", () => {
+      const parsed = parseSessionInfo({ ...session, metadata });
+      expect(parsed).toEqual({ ...session, metadata });
+      expect(parsed.metadata).not.toBe(metadata);
+      expect(parsed.metadata?.["workflow"]).not.toBe(metadata.workflow);
+      expect(parsed.metadata?.["workflow"]?.["labels"]).not.toBe(metadata.workflow.labels);
+      expect(parsed.metadata?.["workflow"]?.["nested"]).not.toBe(metadata.workflow.nested);
+    });
+
+    it("supports older responses without metadata and explicit empty snapshots", () => {
+      expect(parseSessionInfo(session)).not.toHaveProperty("metadata");
+      expect(parseSessionInfo({ ...session, metadata: {} }).metadata).toEqual({});
+    });
+
+    it.each([parseSessionStreamEvent, parseRealtimeStreamEvent])("preserves metadata on session.created events (%#)", (parse) => {
+      expect(parse({ type: "session.created", session: { ...session, metadata } })).toEqual({
+        type: "session.created", session: { ...session, metadata },
+      });
+    });
+
+    it.each([
+      { label: "null", value: null },
+      { label: "array", value: [] },
+      { label: "string", value: "metadata" },
+      { label: "null namespace", value: { workflow: null } },
+      { label: "array namespace", value: { workflow: [] } },
+      { label: "primitive namespace", value: { workflow: "private" } },
+      { label: "non-JSON value", value: { workflow: { value: undefined } } },
+      { label: "non-finite number", value: { workflow: { value: Number.NaN } } },
+    ])("rejects malformed metadata instead of passing it to plugins: $label", ({ value }) => {
+      expect(() => parseSessionInfo({ ...session, metadata: value })).toThrow("Invalid session metadata");
+    });
+  });
+
   it("parses the model catalog with enabled state and natural catalog positions", () => {
     expect(parseSessionModelCatalogResponse({
       models: [

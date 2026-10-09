@@ -182,8 +182,8 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
   async listAll(): Promise<PiSessionListEntry[]> {
     const envSessionDir = this.resolver.globalEnvSessionDir();
     const [defaultSessions, envSessions] = await Promise.all([
-      listSessionsInDefaultPiStore(this.resolver.defaultSessionsRoot()),
-      envSessionDir === undefined ? Promise.resolve([]) : listSessionsInDir(envSessionDir),
+      listSessionsInDefaultPiStore(this.resolver.defaultSessionsRoot(), this.summaryScanner),
+      envSessionDir === undefined ? Promise.resolve([]) : listSessionsInDir(envSessionDir, this.summaryScanner),
     ]);
     return uniqueSessionsByPath([...defaultSessions, ...envSessions]);
   }
@@ -295,17 +295,23 @@ function deriveTranscriptBranch(entries: readonly Record<string, unknown>[]): Re
   return branch.reverse();
 }
 
-export async function listSessionsInDir(sessionDir: string): Promise<PiSessionListEntry[]> {
+export async function listSessionsInDir(sessionDir: string, scanner = new SessionSummaryScanner()): Promise<PiSessionListEntry[]> {
   // listAll(sessionDir) lists without the SDK's internal cwd filter, which would
   // otherwise compare against this process's cwd and drop other projects' sessions.
   // Cwd filtering is applied explicitly by filterSessionsForCwd where needed.
   // Session file headers are written by external tools (Pi CLI, SDK consumers),
   // so their cwd is canonicalized here before it enters pi-web.
-  const sessions = await SessionManager.listAll(sessionDir);
-  return sessions.map((session) => ({ ...session, cwd: canonicalizeStoredCwd(session.cwd) }));
+  const [sessions, summaries] = await Promise.all([SessionManager.listAll(sessionDir), scanner.scanSessionSummariesInDir(sessionDir)]);
+  // Keep SDK cleanup dates/counts, while carrying public identity into archive
+  // indexes even when cleanup, rather than a workspace listing, initiates it.
+  const metadataByPath = new Map(summaries.map((summary) => [summary.path, summary.metadata]));
+  return sessions.map((session) => {
+    const metadata = metadataByPath.get(session.path);
+    return { ...session, cwd: canonicalizeStoredCwd(session.cwd), ...(metadata === undefined ? {} : { metadata }) };
+  });
 }
 
-export async function listSessionsInDefaultPiStore(storeRoot: string): Promise<PiSessionListEntry[]> {
+export async function listSessionsInDefaultPiStore(storeRoot: string, scanner = new SessionSummaryScanner()): Promise<PiSessionListEntry[]> {
   let entries: Dirent[];
   try {
     entries = await readdir(storeRoot, { withFileTypes: true });
@@ -314,7 +320,7 @@ export async function listSessionsInDefaultPiStore(storeRoot: string): Promise<P
   }
 
   const sessionDirs = entries.filter((entry) => entry.isDirectory()).map((entry) => join(storeRoot, entry.name));
-  const sessions = (await Promise.all(sessionDirs.map((dir) => listSessionsInDir(dir)))).flat();
+  const sessions = (await Promise.all(sessionDirs.map((dir) => listSessionsInDir(dir, scanner)))).flat();
   return sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
