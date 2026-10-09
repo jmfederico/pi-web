@@ -158,11 +158,13 @@ npm run dev:web
 npm run dev:client
 ```
 
-Validate changes with:
+For full validation:
 
 ```bash
 npm run verify
 ```
+
+Use [scoped development checks](docs/development-checks.md) for fast local feedback; CI runs the full validation and delivery checks.
 
 ## Security model
 
