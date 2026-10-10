@@ -32,6 +32,7 @@
   "files": [
     "dist",
     "!dist/**/*.testSupport.*",
+    "!dist/pi-packages/relays/prompts",
     "install.sh",
     "README.md",
     "LICENSE",
