@@ -6,5 +6,6 @@
  * without importing the heavy node-pty module.
  */
 export function isBunRuntime(): boolean {
-  return typeof process !== "undefined" && process.versions?.["bun"] !== undefined;
+  if (typeof process === "undefined") return false;
+  return "bun" in process.versions;
 }

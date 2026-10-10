@@ -6,6 +6,7 @@ export function projectTranscriptMarkdown<T>(
   transformers: readonly MarkdownTransformer[],
   onError: (error: unknown, transformerIndex: number) => void,
 ): T {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return projectUnknownTranscriptMarkdown(message, transformers, onError) as T;
 }
 
