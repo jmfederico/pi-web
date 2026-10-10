@@ -29,6 +29,13 @@ export interface InstalledNativeServiceDefinition {
 export interface InstalledNativeServiceContext {
   shell: NativeServiceShell;
   environment: Readonly<Record<string, string>>;
+  /** Start commands of the installed units, so doctor can recognise pre-launcher definitions. */
+  commands: readonly InstalledNativeServiceCommand[];
+}
+
+export interface InstalledNativeServiceCommand {
+  id: NativeServiceId;
+  shellCommand: string;
 }
 
 export type ManagedNativeServiceConfigSelection =
@@ -48,6 +55,12 @@ export type NativeServiceDoctorTarget =
       kind: "prospective-production";
       input: ProductionNativeServicePlanInput;
       reason: string;
+      /**
+       * Start commands already installed for these services, when they could be read. Doctor uses
+       * them to tell the user that an existing unit will keep running until `pi-web install`
+       * refreshes it — upgrading the package never rewrites an installed unit.
+       */
+      installedCommands?: readonly InstalledNativeServiceCommand[];
     }
   | {
       kind: "inspection-failure";
@@ -58,6 +71,8 @@ interface NativeServiceDoctorScope {
   kind: "installed-development" | "prospective-production";
   reason: string | null;
   shell: NativeServiceShell;
+  /** See NativeServiceDoctorTarget's `installedCommands`; empty when nothing is installed. */
+  installedCommands: readonly InstalledNativeServiceCommand[];
 }
 
 export type NativeServiceDoctorResult =
@@ -166,6 +181,7 @@ export function inspectInstalledProductionServiceContext(
     value: {
       shell: parsed.value[0]?.shell ?? impossibleMissingDefinition(),
       environment: parsed.value[0]?.environment ?? impossibleMissingDefinition(),
+      commands: parsed.value.map((definition) => ({ id: definition.id, shellCommand: definition.shellCommand })),
     },
   };
 }
@@ -208,8 +224,13 @@ export async function runNativeServiceDoctor(
   if (target.kind === "inspection-failure") return target;
 
   const scope: NativeServiceDoctorScope = target.kind === "installed-development"
-    ? { kind: target.kind, reason: null, shell: target.input.shell }
-    : { kind: target.kind, reason: target.reason, shell: target.input.shell };
+    ? { kind: target.kind, reason: null, shell: target.input.shell, installedCommands: [] }
+    : {
+        kind: target.kind,
+        reason: target.reason,
+        shell: target.input.shell,
+        installedCommands: target.installedCommands ?? [],
+      };
   let plan: NativeServicePlan;
   if (target.kind === "installed-development") {
     plan = createDevelopmentNativeServicePlan(target.input);
@@ -248,11 +269,11 @@ export function formatNativeServiceDoctorResult(result: NativeServiceDoctorResul
       if (failure.kind === "probe-infrastructure") {
         infrastructure = true;
         lines.push(`✗ Native service probe infrastructure failure (${failure.reason}): ${failure.message}`);
-      } else if (failure.kind === "entrypoint-inspection-failure") {
+      } else if (failure.kind === "launcher-inspection-failure") {
         infrastructure = true;
-        lines.push(`✗ Could not inspect bundled ${failure.serviceId} entrypoint ${failure.entrypointPath}: ${failure.message}`);
+        lines.push(`✗ Could not inspect bundled ${failure.serviceId} launcher ${failure.launcherPath}: ${failure.message}`);
       } else {
-        lines.push(`✗ ${failure.namedCommand} is unavailable to the native service manager, and bundled entrypoint ${failure.bundledEntrypointPath} is missing.`);
+        lines.push(`✗ ${failure.namedCommand} is unavailable to the native service manager, and bundled launcher ${failure.bundledLauncherPath} is missing.`);
         if (failure.namedCommandFailure !== null) lines.push(`  ${failure.namedCommandFailure}`);
       }
     }
@@ -273,6 +294,8 @@ export function formatNativeServiceDoctorResult(result: NativeServiceDoctorResul
   for (const service of configuredOverrides) {
     lines.push(`! ${service.description} uses a configured command override; doctor does not execute arbitrary configured commands.`);
   }
+  lines.push(...bundledLauncherNotes(result.plan));
+  lines.push(...preLauncherAdvice(result.plan, result.scope.installedCommands));
   if (result.validation.ok) {
     lines.push("✓ All verifiable native-service plan requirements are satisfied in the service-manager context.");
     return {
@@ -314,6 +337,47 @@ export function formatNativeServiceDoctorResult(result: NativeServiceDoctorResul
 function scopeHeading(scope: NativeServiceDoctorScope): string {
   if (scope.kind === "installed-development") return "Installed development native-service plan:";
   return `Prospective production native-service plan (${scope.reason ?? "installed strategy is unknown"}):`;
+}
+
+/**
+ * Which file each production unit will actually exec when PI WEB did not take the named command.
+ * The named command can exist in the service PATH and still belong to another installation, so
+ * this is the only place the chosen launcher becomes visible (SPEC §6 F3).
+ */
+function bundledLauncherNotes(plan: NativeServicePlan): string[] {
+  const notes: string[] = [];
+  for (const service of plan.services) {
+    if (service.strategy.kind !== "bundled-entrypoint") continue;
+    const reason = service.strategy.namedCommandFailure === null
+      ? ""
+      : `: ${service.strategy.namedCommandFailure}`;
+    notes.push(`- ${service.description} runs the bundled launcher ${service.strategy.command}${reason}`);
+  }
+  return notes;
+}
+
+/**
+ * Advisory for installed units that were written before PI WEB shipped runtime launchers: they
+ * exec an interpreter path resolved at install time, so they keep using it — and can fail to start
+ * when that runtime moves (fnm/nvm version switches move `node`) — until `pi-web install` rewrites
+ * them. A configured command override is the user's own choice and is never flagged here; doctor
+ * already says something about those above.
+ */
+function preLauncherAdvice(plan: NativeServicePlan, installedCommands: readonly InstalledNativeServiceCommand[]): string[] {
+  const byId = new Map(installedCommands.map((command) => [command.id, command.shellCommand]));
+  const advice: string[] = [];
+  for (const service of plan.services) {
+    if (service.strategy.kind === "configured-override") continue;
+    const shellCommand = byId.get(service.id);
+    if (shellCommand === undefined || !startsInstalledUnitOnAnInterpreter(shellCommand)) continue;
+    advice.push(`! ${service.description} runs a definition that predates the runtime launcher (${shellCommand}); re-run \`pi-web install\` to pick the runtime at start instead.`);
+  }
+  return advice;
+}
+
+/** Matches `exec node …` / `exec /usr/bin/env bun …`, the shape written before bundled launchers. */
+function startsInstalledUnitOnAnInterpreter(shellCommand: string): boolean {
+  return /^exec\s+(?:\/usr\/bin\/env\s+)?(?:node|bun)(?:\s|$)/u.test(shellCommand);
 }
 
 function parseConsistentDefinitions(

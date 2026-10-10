@@ -14,7 +14,7 @@ import {
 
 const KNOWN_PACKAGE_ID = "@jmfederico/pi-relay";
 const PACKAGE_ROOT = "/pi-web";
-const KNOWN_PACKAGES = [{ id: KNOWN_PACKAGE_ID, label: "Relays", description: "Relay method prompts and skill.", shippedPathSegments: ["dist", "pi-packages", "relays"] }];
+const KNOWN_PACKAGES = [{ id: KNOWN_PACKAGE_ID, label: "Relays", description: "Relay method prompts and skill.", shippedPathSegments: ["relays-autoinstall"] }];
 
 function fakePackageProvider(packages: ConfiguredPiPackage[] = [], getInstalledPath: PiPackageProvider["getInstalledPath"] = () => undefined): PiPackageProvider {
   return { listPackages: () => packages, getInstalledPath };
@@ -55,7 +55,7 @@ describe("reconcileAutoInstallablePiPackages", () => {
       logger,
     });
 
-    expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
+    expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "relays-autoinstall"));
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({ packageId: KNOWN_PACKAGE_ID, profileDir: "/agent" }),
       expect.any(String),
@@ -205,7 +205,7 @@ describe("reconcileAutoInstallablePiPackages", () => {
         packageRoot: PACKAGE_ROOT,
       });
 
-      expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
+      expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "relays-autoinstall"));
     });
 
     it("does not install through the production defaults once the isolated dismissal store recorded a dismissal", async () => {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import { RELAY_METADATA_NAMESPACE, relayIdentityFromMetadata, relaySessionName }
 let cwd: string;
 let packet: string;
 beforeEach(async () => {
-  cwd = await mkdtemp(join(tmpdir(), "pi-web-relay-dispatch-"));
+  cwd = await realpath(await mkdtemp(join(tmpdir(), "pi-web-relay-dispatch-")));
   packet = join(cwd, ".pi-web", "relays", "workflow");
   await mkdir(packet, { recursive: true });
   await Promise.all(["charter.md", "status.md", "log.md"].map((file) => writeFile(join(packet, file), `# ${file}\nSaved packet content`)));

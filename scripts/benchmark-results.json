@@ -1,0 +1,82 @@
+{
+  "bun": {
+    "ws_latency": {
+      "mean": 1.615,
+      "p50": 1.043,
+      "p95": 6.437,
+      "p99": 10.629,
+      "min": 0.647,
+      "max": 10.629,
+      "samples": 30
+    },
+    "ws_throughput": {
+      "sent": 335094,
+      "client_rate_per_s": 334728,
+      "server_received": 335094,
+      "server_rate_per_s": 334728
+    },
+    "terminal": {
+      "create": "0.957",
+      "write": "0.009",
+      "kill": "0.032"
+    },
+    "http": {
+      "mean": 1.037,
+      "p50": 0.471,
+      "p95": 2.398,
+      "p99": 13.249,
+      "min": 0.301,
+      "max": 13.249,
+      "samples": 30
+    },
+    "channel_open": {
+      "mean": 2.139,
+      "p50": 1.117,
+      "p95": 3.271,
+      "p99": 25.467,
+      "min": 0.664,
+      "max": 25.467,
+      "samples": 30
+    }
+  },
+  "node": {
+    "ws_latency": {
+      "mean": 3.255,
+      "p50": 2.658,
+      "p95": 3.988,
+      "p99": 19.733,
+      "min": 1.944,
+      "max": 19.733,
+      "samples": 30
+    },
+    "ws_throughput": {
+      "sent": 62611,
+      "client_rate_per_s": 62607,
+      "server_received": 62611,
+      "server_rate_per_s": 62607
+    },
+    "terminal": {
+      "create": "2.250",
+      "write": "0.118",
+      "kill": "0.035"
+    },
+    "http": {
+      "mean": 5.994,
+      "p50": 2.707,
+      "p95": 4.953,
+      "p99": 95.744,
+      "min": 1.313,
+      "max": 95.744,
+      "samples": 30
+    },
+    "channel_open": {
+      "mean": 3.062,
+      "p50": 1.923,
+      "p95": 5.018,
+      "p99": 29.062,
+      "min": 0.993,
+      "max": 29.062,
+      "samples": 30
+    }
+  }
+}

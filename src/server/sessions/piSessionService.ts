@@ -2426,7 +2426,7 @@ export class PiSessionService implements SessionRouteService {
     );
   }
 
-  private browserTranscriptMessage(session: PiAgentSession, message: unknown): unknown {
+  private browserTranscriptMessage<T>(session: PiAgentSession, message: T): T {
     return projectTranscriptMarkdown(message, session.extensionRunner.getMarkdownTransformers(), (error, transformerIndex) => {
       this.logger.info({ err: error, sessionId: session.sessionId, transformerIndex }, "Transcript Markdown transformer failed");
     });
@@ -2753,7 +2753,7 @@ export class PiSessionService implements SessionRouteService {
     const echoes = this.pendingPromptEchoes.get(session) ?? [];
     const userCount = historyMessagesFromEntries(session.sessionManager.getBranch()).filter((message) => isRecord(message) && message["role"] === "user").length;
     const echo = behavior === undefined && echoUserMessage
-      ? { userIndex: Math.max(userCount, ...echoes.map((pending) => pending.userIndex + 1)), message: userMessage(text, images) }
+      ? { userIndex: Math.max(userCount, ...echoes.map((pending) => pending.userIndex + 1)), message: this.browserTranscriptMessage(session, userMessage(text, images)) }
       : undefined;
     if (echo !== undefined) {
       // SDK input hooks may await before appending the user message. Keep the
@@ -4311,6 +4311,12 @@ export class PiSessionService implements SessionRouteService {
       }
     }
     const unsubscribe = session.subscribe((event) => {
+      const clientEvent = toClientEvent(event, session.thinkingLevel);
+      if ((clientEvent.type === "message.end" || clientEvent.type === "message.append") && clientEvent.message !== undefined) {
+        clientEvent.message = this.browserTranscriptMessage(session, clientEvent.message);
+      }
+      this.events.publish(session.sessionId, clientEvent, { id: session.sessionId, cwd: session.sessionManager.getCwd() });
+      this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
       const message = getProperty(event, "message");
       if ((eventType === "message_start" || eventType === "message_update") && getString(message, "role") === "assistant") {
@@ -4322,12 +4328,6 @@ export class PiSessionService implements SessionRouteService {
       } else if (eventType === "message_start" || eventType === "message_end" || eventType === "agent_end") {
         this.publishedAssistantPartials.delete(session);
       }
-      const clientEvent = toClientEvent(event, session.thinkingLevel);
-      if ((clientEvent.type === "message.end" || clientEvent.type === "message.append") && clientEvent.message !== undefined) {
-        clientEvent.message = this.browserTranscriptMessage(session, clientEvent.message);
-      }
-      this.events.publish(session.sessionId, clientEvent, { id: session.sessionId, cwd: session.sessionManager.getCwd() });
-      this.publishActivityForEvent(session, event);
       // Queued messages can reach the model after an ask opened, even though
       // there was no ask to dismiss when the user originally submitted them.
       if (eventType === "message_start" && isRecord(event) && getString(event["message"], "role") === "user") {

@@ -19,7 +19,10 @@ export interface KnownAutoInstallablePiPackage {
    * Path segments, relative to the running `@jmfederico/pi-web` package root
    * (see `defaultPluginRoots`/`bundledPluginRoot` in `piWebPluginCatalog.ts`
    * for the equivalent resolution), to this package's shipped local
-   * directory. Used as the install source when auto-installing it.
+   * directory used only for auto-installing agent prompts. This package
+   * excludes the npm `files` manifest and exists solely so the relay prompts
+   * (`/relay`, `/relay-worktree`) are installed without colliding against
+   * the shipped PI WEB package that also contains them.
    */
   shippedPathSegments: readonly string[];
 }
@@ -29,7 +32,7 @@ export const KNOWN_AUTO_INSTALLABLE_PI_PACKAGES: readonly KnownAutoInstallablePi
     id: "@jmfederico/pi-relay",
     label: "Relays",
     description: "Tool-agnostic Relay method, opinionated runner profile, and human-gated preparation prompts for independent Pi session chains.",
-    shippedPathSegments: ["dist", "pi-packages", "relays"],
+    shippedPathSegments: ["relays-autoinstall"],
   },
 ];
 
