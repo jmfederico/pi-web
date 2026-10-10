@@ -173,7 +173,14 @@ export function selectedNotificationView(inbox: SelectedSessionNotificationInbox
   if (inbox?.status !== "fresh" || inbox.daemonInstanceId === undefined || inbox.summary === undefined) return undefined;
   const pendingDismissedIds = new Set(inbox.optimisticDismissedIds);
   const through = inbox.optimisticDismissAllThrough;
-  const notifications = inbox.notifications.filter((notification) => !pendingDismissedIds.has(notification.id) && (through === undefined || notification.order > through.order));
+  // The inbox keeps newest-first and depends on it: `newestOrder` reads index 0 as
+  // the watermark. The view is what the chat renders, so it must read in transcript
+  // order - oldest first, newest last - otherwise the cards appear in reverse
+  // chronological order inside the flow. Focus recovery indexes this array too, so
+  // "next" is the card below (newer) and the fallback is the card above (older).
+  const notifications = inbox.notifications
+    .filter((notification) => !pendingDismissedIds.has(notification.id) && (through === undefined || notification.order > through.order))
+    .reverse();
   let discardedCount = effectiveDiscardedCount(inbox.summary.discardedCount, inbox.dismissThrough.overflowWatermark, through?.overflowWatermark);
   if (notifications.length === 0 && pendingDismissedIds.size > 0) discardedCount = 0;
   return {
@@ -192,6 +199,25 @@ export function selectedNotificationView(inbox: SelectedSessionNotificationInbox
   };
 }
 
+/**
+ * The summary that sits next to the notification box label: the per-severity
+ * counts, then how many older notifications the server already evicted. The
+ * eviction count stays visible because 100 notifications per session is a real
+ * cap and a silently dropped one is the failure this surface exists to avoid.
+ */
+export function notificationBoxBreakdown(inbox: Pick<SelectedSessionNotificationView, "notifications" | "discardedCount">): string {
+  const order: readonly SessionNotificationSeverity[] = ["error", "warning", "info"];
+  const counts = new Map<SessionNotificationSeverity, number>();
+  for (const notification of inbox.notifications) {
+    counts.set(notification.severity, (counts.get(notification.severity) ?? 0) + 1);
+  }
+  const parts = order
+    .filter((severity) => (counts.get(severity) ?? 0) > 0)
+    .map((severity) => `${String(counts.get(severity))} ${severity}`);
+  if (inbox.discardedCount > 0) parts.push(`${String(inbox.discardedCount)} older not shown`);
+  return parts.join(" · ");
+}
+
 export function notificationSeverityLabel(severity: SessionNotificationSeverity): "Info" | "Warning" | "Error" {
   if (severity === "error") return "Error";
   if (severity === "warning") return "Warning";
@@ -206,48 +232,8 @@ export function notificationInboxTotalCount(inbox: Pick<SelectedSessionNotificat
   return inbox.retainedCount + inbox.discardedCount;
 }
 
-export function notificationTrayHeading(inbox: Pick<SelectedSessionNotificationView, "retainedCount" | "discardedCount">): string {
-  return `Notifications (${String(notificationInboxTotalCount(inbox))})`;
-}
-
-export function notificationDismissLabel(notification: Pick<SessionNotification, "message" | "severity">): string {
-  const message = notification.message.replace(/\s+/gu, " ").trim();
-  if (message === "") return `Dismiss ${notificationSeverityLabel(notification.severity).toLowerCase()} notification`;
-  const maxCharacters = 80;
-  const characters = Array.from(message);
-  const summary = characters.length <= maxCharacters ? message : `${characters.slice(0, maxCharacters - 1).join("").trimEnd()}…`;
-  return `Dismiss notification: ${summary}`;
-}
-
-export type NotificationFocusTarget = { kind: "notification"; notificationId: string } | { kind: "header" };
-
-export function notificationFocusTargetAfterDismiss(notifications: readonly SessionNotification[], notificationId: string): NotificationFocusTarget {
-  const index = notifications.findIndex((notification) => notification.id === notificationId);
-  if (index === -1) return { kind: "header" };
-  const next = notifications[index + 1];
-  if (next !== undefined) return { kind: "notification", notificationId: next.id };
-  const previous = notifications[index - 1];
-  return previous === undefined ? { kind: "header" } : { kind: "notification", notificationId: previous.id };
-}
-
 export function notificationTargetKey(target: SessionNotificationTarget): string {
   return JSON.stringify([target.machineId, target.cwd, target.sessionId]);
-}
-
-export function notificationTrayIsCollapsed(collapsedTargetKeys: ReadonlySet<string>, target: SessionNotificationTarget): boolean {
-  return collapsedTargetKeys.has(notificationTargetKey(target));
-}
-
-export function setNotificationTrayCollapsed(collapsedTargetKeys: ReadonlySet<string>, target: SessionNotificationTarget, collapsed: boolean): ReadonlySet<string> {
-  const next = new Set(collapsedTargetKeys);
-  const key = notificationTargetKey(target);
-  if (collapsed) next.add(key);
-  else next.delete(key);
-  return next;
-}
-
-export function notificationInboxOverflowLabel(discardedCount: number): string {
-  return `${String(discardedCount)} older ${discardedCount === 1 ? "notification" : "notifications"} not shown.`;
 }
 
 export function notificationMessageTruncationLabel(notification: Pick<SessionNotification, "truncated">): string | undefined {

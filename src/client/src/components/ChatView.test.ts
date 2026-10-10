@@ -1,11 +1,7 @@
 import type { TemplateResult } from "lit";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
-import {
-  notificationTargetKey,
-  notificationTrayIsCollapsed,
-  type SelectedSessionNotificationView,
-} from "../sessionNotifications";
+import type { SelectedSessionNotificationView } from "../sessionNotifications";
 import type { ChatLine } from "./shared";
 import {
   ChatView,
@@ -19,7 +15,7 @@ import {
   chatQueuedSectionShowsClearAction,
   chatSessionWarningRows,
 } from "./ChatView";
-import { templateEventHandlerAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
+import { findOptionalTemplateEventHandlerAfterMarker, templateEventHandlerAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 
 describe("chatQueuedMessageSections", () => {
   it("labels client-side pending-start sends separately from server queued messages", () => {
@@ -165,81 +161,109 @@ describe("ChatView session-warning dismiss wiring", () => {
   });
 });
 
-describe("ChatView notification tray wiring", () => {
-  // Escape hatch: these cases verify only the tray buttons' Lit callback wiring.
-  // Content and identity decisions use pure seams; Vitest has no shadow-DOM
-  // harness, so stable semantic class markers keep handler extraction narrow.
-  // A minimal render-root fake verifies the resulting focus move without
-  // recreating a browser DOM harness.
-  it("wires individual dismissal and recovers header focus after the final row", () => {
-    const view = withNotificationInbox(new ChatView());
-    const onDismissNotification = vi.fn();
-    const headerFocus = installNotificationFocusRoot(view);
-    view.onDismissNotification = onDismissNotification;
-
-    const rendered = renderNotificationTray(view);
-    if (rendered === null) throw new Error("expected a notification tray");
-    templateEventHandlerAfterMarker(rendered, "notification-row-dismiss")(new Event("click"));
-    view.notificationInbox = emptyNotificationInbox(requireNotificationInbox(view));
-
-    expect(renderNotificationTray(view)).not.toBeNull();
-    focusPendingNotificationTarget(view);
-    expect(onDismissNotification).toHaveBeenCalledExactlyOnceWith("daemon-a:1");
-    expect(headerFocus).toHaveBeenCalledOnce();
+describe("ChatView notification wiring", () => {
+  beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
   });
 
-  it("wires clear-all and recovers header focus while the emptied tray is retained", () => {
-    const view = withNotificationInbox(new ChatView());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Escape hatch: these cases verify only the notification box's Lit callback
+  // wiring. Content and identity decisions use pure seams; Vitest has no
+  // shadow-DOM harness, so stable semantic class markers keep handler extraction
+  // narrow. A minimal render-root fake verifies the resulting focus move without
+  // recreating a browser DOM harness.
+  it("wires individual dismissal and recovers focus to the adjacent notification row", () => {
+    const view = openNotificationBox(withNotificationInbox(new ChatView()));
+    const onDismissNotification = vi.fn();
+    const cardFocus = installNotificationFocusRoot(view);
+    view.onDismissNotification = onDismissNotification;
+
+    const rendered = renderSessionNotifications(view);
+    if (rendered === null) throw new Error("expected session notifications");
+    templateEventHandlerAfterMarker(rendered, "notification-dismiss")(new Event("click"));
+    expect(onDismissNotification).toHaveBeenCalledWith("daemon-a:1");
+
+    const previousInbox = requireNotificationInbox(view);
+    const remainingNotification = previousInbox.notifications[1];
+    if (remainingNotification === undefined) throw new Error("expected remaining notification");
+    view.notificationInbox = {
+      ...previousInbox,
+      notifications: [remainingNotification],
+      retainedCount: 1,
+    };
+    dispatchChatViewUpdated(view, new Map([["notificationInbox", previousInbox]]));
+    expect(cardFocus).toHaveBeenCalledOnce();
+
+    // Dismissing the final row empties the box, which stays at zero: focus moves
+    // to its header rather than being dropped
+    cardFocus.mockClear();
+    const renderedRemaining = renderSessionNotifications(view);
+    if (renderedRemaining === null) throw new Error("expected session notifications");
+    templateEventHandlerAfterMarker(renderedRemaining, "notification-dismiss")(new Event("click"));
+    expect(onDismissNotification).toHaveBeenCalledWith("daemon-a:2");
+
+    const lastInbox = requireNotificationInbox(view);
+    view.notificationInbox = emptyNotificationInbox(lastInbox);
+    dispatchChatViewUpdated(view, new Map([["notificationInbox", lastInbox]]));
+    expect(cardFocus).toHaveBeenCalledOnce();
+  });
+
+  it("clears every notification from the box header", () => {
+    const view = openNotificationBox(withNotificationInbox(new ChatView()));
     const onDismissAllNotifications = vi.fn();
-    const headerFocus = installNotificationFocusRoot(view);
     view.onDismissAllNotifications = onDismissAllNotifications;
 
-    const rendered = renderNotificationTray(view);
-    if (rendered === null) throw new Error("expected a notification tray");
+    const rendered = renderSessionNotifications(view);
+    if (rendered === null) throw new Error("expected session notifications");
     templateEventHandlerAfterMarker(rendered, "notification-clear")(new Event("click"));
+
+    expect(onDismissAllNotifications).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the box once it has appeared, so a emptied one does not vanish", () => {
+    const view = openNotificationBox(withNotificationInbox(new ChatView()));
+
     view.notificationInbox = emptyNotificationInbox(requireNotificationInbox(view));
 
-    expect(renderNotificationTray(view)).not.toBeNull();
-    focusPendingNotificationTarget(view);
-    expect(onDismissAllNotifications).toHaveBeenCalledOnce();
-    expect(headerFocus).toHaveBeenCalledOnce();
+    expect(renderSessionNotifications(view)).not.toBeNull();
   });
 
   it("does not move pending dismissal focus into another exact chat", () => {
-    const view = withNotificationInbox(new ChatView());
-    const headerFocus = installNotificationFocusRoot(view);
-    view.onDismissAllNotifications = vi.fn();
+    const view = openNotificationBox(withNotificationInbox(new ChatView()));
+    const cardFocus = installNotificationFocusRoot(view);
+    view.onDismissNotification = vi.fn();
 
-    const rendered = renderNotificationTray(view);
-    if (rendered === null) throw new Error("expected a notification tray");
-    templateEventHandlerAfterMarker(rendered, "notification-clear")(new Event("click"));
-    view.notificationInbox = { ...requireNotificationInbox(view), machineId: "remote" };
-    focusPendingNotificationTarget(view);
+    const rendered = renderSessionNotifications(view);
+    if (rendered === null) throw new Error("expected session notifications");
+    templateEventHandlerAfterMarker(rendered, "notification-dismiss")(new Event("click"));
 
-    expect(headerFocus).not.toHaveBeenCalled();
+    const previousInbox = requireNotificationInbox(view);
+    view.notificationInbox = { ...previousInbox, machineId: "remote" };
+    dispatchChatViewUpdated(view, new Map([["notificationInbox", previousInbox]]));
+
+    expect(cardFocus).not.toHaveBeenCalled();
   });
 
-  it("keeps a collapsed tray closed for new arrivals and isolates matching session ids by exact chat", () => {
+  it("opens and closes the box from its header, and only renders rows while open", () => {
     const view = withNotificationInbox(new ChatView());
-    const inbox = requireNotificationInbox(view);
-    const rendered = renderNotificationTray(view);
-    if (rendered === null) throw new Error("expected a notification tray");
+    if (!Reflect.set(view, "notificationBoxVisible", true)) throw new Error("Could not show the notification box");
 
-    templateEventHandlerAfterMarker(rendered, "notification-toggle")(new Event("click"));
+    const closed = renderSessionNotifications(view);
+    if (closed === null) throw new Error("expected session notifications");
+    expect(findOptionalTemplateEventHandlerAfterMarker(closed, "notification-dismiss")).toBeUndefined();
 
-    const collapsedTargetKeys: unknown = Reflect.get(view, "collapsedNotificationTargetKeys");
-    if (!(collapsedTargetKeys instanceof Set)) throw new Error("Expected collapsed notification target keys");
-    const firstNotification = inbox.notifications[0];
-    if (firstNotification === undefined) throw new Error("expected a retained notification");
-    const newArrival = {
-      ...inbox,
-      notifications: [{ ...firstNotification, id: "daemon-a:2", order: 2 }, ...inbox.notifications],
-      retainedCount: 2,
-    };
-    expect(notificationTrayIsCollapsed(collapsedTargetKeys, newArrival)).toBe(true);
-    expect(notificationTrayIsCollapsed(collapsedTargetKeys, { ...newArrival, cwd: "/other" })).toBe(false);
-    expect(notificationTrayIsCollapsed(collapsedTargetKeys, { ...newArrival, machineId: "remote" })).toBe(false);
-    expect(collapsedTargetKeys.has(notificationTargetKey(inbox))).toBe(true);
+    templateEventHandlerAfterMarker(closed, 'data-notification-focus="head"')(new Event("click"));
+    expect(Reflect.get(view, "notificationBoxOpen")).toBe(true);
+
+    const opened = renderSessionNotifications(view);
+    if (opened === null) throw new Error("expected session notifications");
+    expect(templateEventHandlerAfterMarker(opened, "notification-dismiss")).toBeDefined();
+
+    templateEventHandlerAfterMarker(opened, 'data-notification-focus="head"')(new Event("click"));
+    expect(Reflect.get(view, "notificationBoxOpen")).toBe(false);
   });
 });
 
@@ -345,8 +369,7 @@ type RenderQueuedMessages = (this: ChatView) => TemplateResult;
 type RenderMessageGroup = (this: ChatView, messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean) => TemplateResult;
 type RenderMessageGroupBody = (this: ChatView, messages: ChatLine[], startIndex: number) => TemplateResult;
 type RenderWarnings = (this: ChatView) => TemplateResult | null;
-type RenderNotificationTray = (this: ChatView) => TemplateResult | null;
-type FocusPendingNotificationTarget = (this: ChatView) => void;
+type RenderSessionNotifications = (this: ChatView) => TemplateResult | null;
 type TemplateEventHandler = (event: Event) => void;
 
 function renderQueuedMessages(view: ChatView): TemplateResult {
@@ -367,16 +390,22 @@ function renderWarnings(view: ChatView): TemplateResult | null {
   return method.call(view);
 }
 
-function renderNotificationTray(view: ChatView): TemplateResult | null {
-  const method: unknown = Reflect.get(view, "renderNotificationTray");
-  if (!isRenderNotificationTray(method)) throw new Error("ChatView.renderNotificationTray is not callable");
+function openNotificationBox(view: ChatView): ChatView {
+  if (!Reflect.set(view, "notificationBoxVisible", true)) throw new Error("Could not show the notification box");
+  if (!Reflect.set(view, "notificationBoxOpen", true)) throw new Error("Could not open the notification box");
+  return view;
+}
+
+function renderSessionNotifications(view: ChatView): TemplateResult | null {
+  const method: unknown = Reflect.get(view, "renderSessionNotifications");
+  if (!isRenderSessionNotifications(method)) throw new Error("ChatView.renderSessionNotifications is not callable");
   return method.call(view);
 }
 
-function focusPendingNotificationTarget(view: ChatView): void {
-  const method: unknown = Reflect.get(view, "focusPendingNotificationTarget");
-  if (!isFocusPendingNotificationTarget(method)) throw new Error("ChatView.focusPendingNotificationTarget is not callable");
-  method.call(view);
+function dispatchChatViewUpdated(view: ChatView, changed: Map<string, unknown>): void {
+  const method: unknown = Reflect.get(view, "updated");
+  if (typeof method !== "function") throw new Error("ChatView.updated is not callable");
+  method.call(view, changed);
 }
 
 function observeGroupBodyRenders(view: ChatView): GroupBodyRenderCall[] {
@@ -407,11 +436,7 @@ function isRenderWarnings(value: unknown): value is RenderWarnings {
   return typeof value === "function";
 }
 
-function isRenderNotificationTray(value: unknown): value is RenderNotificationTray {
-  return typeof value === "function";
-}
-
-function isFocusPendingNotificationTarget(value: unknown): value is FocusPendingNotificationTarget {
+function isRenderSessionNotifications(value: unknown): value is RenderSessionNotifications {
   return typeof value === "function";
 }
 
@@ -450,18 +475,28 @@ function withNotificationInbox(view: ChatView): ChatView {
     sessionId: "session-1",
     cwd: "/repo",
     daemonInstanceId: "daemon-a",
-    notifications: [{
-      id: "daemon-a:1",
-      message: "plain <strong>text</strong>\nsecond line",
-      truncated: false,
-      severity: "warning",
-      receivedAt: "2026-07-18T00:00:00.000Z",
-      order: 1,
-    }],
-    retainedCount: 1,
+    notifications: [
+      {
+        id: "daemon-a:1",
+        message: "plain <strong>text</strong>\nsecond line",
+        truncated: false,
+        severity: "warning",
+        receivedAt: "2026-07-18T00:00:00.000Z",
+        order: 1,
+      },
+      {
+        id: "daemon-a:2",
+        message: "second notification",
+        truncated: false,
+        severity: "info",
+        receivedAt: "2026-07-18T00:01:00.000Z",
+        order: 2,
+      },
+    ],
+    retainedCount: 2,
     discardedCount: 0,
     highestSeverity: "warning",
-    dismissThrough: { order: 1, overflowWatermark: 0 },
+    dismissThrough: { order: 2, overflowWatermark: 0 },
     pendingDismissedIds: new Set(),
     dismissAllPending: false,
     announcements: [],
@@ -490,13 +525,13 @@ function emptyNotificationInbox(inbox: SelectedSessionNotificationView): Selecte
 }
 
 function installNotificationFocusRoot(view: ChatView): ReturnType<typeof vi.fn> {
-  const headerFocus = vi.fn();
+  const cardFocus = vi.fn();
   const renderRoot = {
-    querySelector: (selector: string) => selector === "[data-notification-focus='header']" ? { focus: headerFocus } : null,
+    querySelector: (selector: string) => selector.includes(".notification-dismiss") || selector.includes("notification-focus") ? { focus: cardFocus } : null,
     querySelectorAll: () => [],
   };
   if (!Reflect.set(view, "renderRoot", renderRoot)) throw new Error("Could not install notification focus root");
-  return headerFocus;
+  return cardFocus;
 }
 
 function warningStatus(warnings: SessionWarning[]): SessionStatus {

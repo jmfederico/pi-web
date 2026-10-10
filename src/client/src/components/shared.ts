@@ -335,45 +335,51 @@ export const chatStyles = css`
   .session-warning-dismiss { position: absolute; top: 6px; right: 6px; display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-muted); font: 15px/1 system-ui, sans-serif; cursor: pointer; }
   .session-warning-dismiss:hover, .session-warning-dismiss:focus-visible { color: var(--pi-text-bright); border-color: var(--pi-accent); background: var(--pi-bg-overlay); }
   .session-warning-dismiss:focus-visible { outline: 1px solid var(--pi-border); outline-offset: 2px; }
-  .notification-tray { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--pi-bg-overlay); }
-  .notification-tray.collapsed { flex: 0 0 auto; }
-  .notification-header { position: sticky; top: 0; z-index: 2; flex: 0 0 auto; min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 8px; box-sizing: border-box; min-height: 40px; padding: 4px 10px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg-overlay); }
-  .notification-tray.collapsed .notification-header { border-bottom: 0; }
-  .notification-header:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -3px; }
-  .notification-heading { min-width: 0; flex: 1 1 auto; overflow: hidden; color: var(--pi-text-bright); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-  .notification-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; }
-  .notification-control, .notification-row-dismiss { box-sizing: border-box; min-height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--pi-muted); cursor: pointer; }
-  .notification-control { padding: 0 7px; font: 12px system-ui, sans-serif; white-space: nowrap; }
-  .notification-toggle { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; }
-  .notification-control:hover, .notification-control:focus-visible, .notification-row-dismiss:hover, .notification-row-dismiss:focus-visible { background: var(--pi-selection-bg); color: var(--pi-text-bright); }
-  .notification-control:focus-visible, .notification-row-dismiss:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
-  .notification-control:disabled, .notification-row-dismiss:disabled { opacity: .5; background: transparent; cursor: default; }
-  .notification-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-  .notification-disclosure-icon.expanded { transform: rotate(90deg); }
-  .notification-close-icon { width: 16px; height: 16px; }
-  .notification-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; box-sizing: border-box; padding: 0 10px 5px; }
-  .notification-list[hidden] { display: none; }
-  .notification-overflow { margin: 0; padding: 7px 2px; border-bottom: 1px solid var(--pi-border-muted); color: var(--pi-muted); font-size: 11px; overflow-wrap: anywhere; }
-  .notification-row { position: relative; min-width: 0; display: grid; gap: 4px; box-sizing: border-box; padding: 9px 38px 9px 2px; border-bottom: 1px solid var(--pi-border-muted); color: var(--pi-text); }
+  /* Session notifications render as ONE collapsible box at the transcript tail,
+     mirroring the event-group: a neutral container, so a burst of coloured rows
+     cannot outshout the conversation, with the counts and the worst severity on
+     its header. The box must not clip, or the sticky header below cannot stick. */
+  .notification-group { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); color: var(--pi-muted); }
+  .notification-group-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 9px; background: var(--pi-bg); color: var(--pi-muted); cursor: pointer; }
+  .notification-group-head:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -3px; }
+  .notification-group-head.expanded { position: sticky; top: var(--pi-chat-sticky-top); z-index: 3; border-bottom: 1px solid var(--pi-border-muted); border-radius: 9px 9px 0 0; }
+  .notification-group-head .label { font-weight: 700; }
+  /* The header carries the worst severity inside, so a collapsed error is never silent. */
+  .notification-group.has-warning .notification-group-head .label { color: var(--pi-warning); }
+  .notification-group.has-error .notification-group-head .label { color: var(--pi-danger); }
+  .notification-group-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .notification-clear { flex: 0 0 auto; margin-left: auto; padding: 3px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--pi-muted); font: 12px system-ui, sans-serif; white-space: nowrap; cursor: pointer; }
+  .notification-clear:hover, .notification-clear:focus-visible { background: var(--pi-selection-bg); color: var(--pi-text-bright); }
+  .notification-clear:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
+  .notification-clear:disabled { opacity: .5; background: transparent; cursor: default; }
+  .notification-empty { margin: 0; padding: 9px 0; color: var(--pi-muted); font-size: 12px; }
+  .notification-disclosure { flex: 0 0 auto; color: var(--pi-muted); transition: transform .14s ease; }
+  .notification-group-head.expanded .notification-disclosure { transform: rotate(90deg); }
+  .notification-disclosure svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .notification-group-body { padding: 0 12px 6px; }
+  /* Slim rows, hairline separated, no per-row envelope: severity is carried by
+     the colour of its label only. */
+  .notification-row { position: relative; min-width: 0; box-sizing: border-box; padding: 9px 30px 9px 0; border-top: 1px solid var(--pi-border-muted); color: var(--pi-text); }
+  .notification-row:first-child { border-top: 0; }
   .notification-row:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
   .notification-metadata { min-width: 0; display: flex; align-items: baseline; gap: 5px; color: var(--pi-muted); font-size: 11px; }
-  .notification-severity { color: var(--pi-muted); font-size: inherit; font-weight: 600; }
+  .notification-severity { font-size: inherit; font-weight: 600; color: var(--pi-muted); }
+  /* Info reads as accent, as the approved mock shows; warning and error override it. */
+  .notification-row.info .notification-severity { color: var(--pi-accent); }
   .notification-row.warning .notification-severity { color: var(--pi-warning); }
   .notification-row.error .notification-severity { color: var(--pi-danger); }
   .notification-message { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; unicode-bidi: plaintext; }
   .notification-truncated { margin: 0; color: var(--pi-muted); font-size: 11px; overflow-wrap: anywhere; }
-  .notification-row-dismiss { position: absolute; top: 5px; right: 0; display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; }
+  .notification-dismiss { position: absolute; top: 5px; right: 0; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--pi-dim); cursor: pointer; transition: color .12s ease, background .12s ease; }
+  .notification-dismiss:hover, .notification-dismiss:focus-visible { background: var(--pi-surface-hover); color: var(--pi-text-bright); }
+  .notification-dismiss:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
+  .notification-dismiss:disabled { opacity: .5; background: transparent; cursor: default; }
+  .notification-dismiss svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  @media (pointer: coarse) {
+    .notification-dismiss { width: 32px; height: 32px; }
+  }
   .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; clip-path: inset(50%) !important; white-space: nowrap !important; border: 0 !important; }
   .notification-live span { display: block; }
-  @media (pointer: coarse) {
-    .notification-control, .notification-row-dismiss { min-height: 34px; }
-    .notification-toggle, .notification-row-dismiss { width: 34px; height: 34px; }
-    .notification-row { padding-right: 40px; }
-  }
-  @media (max-width: 520px) {
-    .notification-header { gap: 4px; padding-inline: 8px; }
-    .notification-list { padding-inline: 8px; }
-  }
   .chat { --pi-chat-sticky-top: -26px; flex: 1 1 auto; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 26px 16px 16px; box-sizing: border-box; }
   .scroll-marker { display: block; height: 0; overflow: hidden; pointer-events: none; }
   .activity-dock { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 6px; width: 240px; max-width: calc(100% - 32px); min-width: 0; box-sizing: border-box; border: 1px solid var(--pi-border); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--pi-bg-overlay); color: var(--pi-muted); padding: 3px 10px; font-size: 11px; line-height: 16px; pointer-events: none; backdrop-filter: blur(6px); }
@@ -382,7 +388,7 @@ export const chatStyles = css`
   .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .45; flex: 0 0 auto; }
   .activity-dock.active .dot { width: 6px; height: 6px; animation: pulse 1s ease-in-out infinite; opacity: 1; }
   .msg { max-width: 100%; min-width: 0; box-sizing: border-box; margin: 0 0 14px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); overflow: visible; }
-  .chat > .msg:last-child, .chat > .session-activity:last-child { margin-bottom: 0; }
+  .chat > .msg:last-child, .chat > .session-activity:last-child, .chat > .notification-group:last-child { margin-bottom: 0; }
   .msg.assistant, .msg.tool-image-output { background: var(--pi-surface); }
   .msg.user { border-color: var(--pi-accent-border); background: var(--pi-selection-bg); }
   .msg.tool { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); color: var(--pi-warning); }

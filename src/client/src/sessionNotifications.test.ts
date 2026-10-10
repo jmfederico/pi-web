@@ -9,16 +9,10 @@ import {
   applySelectedNotificationEvent,
   installSelectedNotificationSnapshot,
   notificationAnnouncementLabel,
-  notificationDismissLabel,
-  notificationFocusTargetAfterDismiss,
-  notificationInboxOverflowLabel,
+  notificationBoxBreakdown,
   notificationInboxTotalCount,
   notificationMessageTruncationLabel,
-  notificationTargetKey,
-  notificationTrayHeading,
-  notificationTrayIsCollapsed,
   selectedNotificationView,
-  setNotificationTrayCollapsed,
   type SessionNotificationAnnouncement,
   type SessionNotificationTarget,
 } from "./sessionNotifications";
@@ -72,6 +66,32 @@ function addedEvent(entry: SessionNotification, inboxRevision: number, catalogRe
 }
 
 describe("selected notification projection", () => {
+  it("summarises the box header by severity and keeps the evicted count visible", () => {
+    const view = selectedNotificationView(installSelectedNotificationSnapshot(undefined, target, snapshot([
+      notification(3, "error"),
+      notification(2, "warning"),
+      notification(1, "info"),
+    ])));
+    if (view === undefined) throw new Error("expected a view");
+
+    expect(notificationBoxBreakdown(view)).toBe("1 error · 1 warning · 1 info");
+
+    // The 100-per-session cap is a real, unsolicited loss: keep it declared.
+    expect(notificationBoxBreakdown({ ...view, discardedCount: 4 }))
+      .toBe("1 error · 1 warning · 1 info · 4 older not shown");
+  });
+
+  it("keeps the inbox newest-first while the view reads oldest-first for the transcript", () => {
+    // The wire snapshot is newest-first and the inbox depends on that ordering.
+    // The chat renders the view inside the transcript, where reading order is
+    // oldest-first, so the projection reverses it. Losing this silently inverts
+    // the cards in the flow, so pin both sides here.
+    const inbox = installSelectedNotificationSnapshot(undefined, target, snapshot([notification(2), notification(1)]));
+
+    expect(inbox.notifications.map((entry) => entry.order)).toEqual([2, 1]);
+    expect(selectedNotificationView(inbox)?.notifications.map((entry) => entry.order)).toEqual([1, 2]);
+  });
+
   it("joins a snapshot with newer buffered events without duplicate cards or replay announcements", () => {
     let inbox = installSelectedNotificationSnapshot(undefined, target, snapshot());
 
@@ -151,47 +171,22 @@ describe("selected notification projection", () => {
 });
 
 describe("notification presentation helpers", () => {
-  it("chooses next, previous, then header focus targets", () => {
-    const notifications = [notification(3), notification(2), notification(1)];
-
-    expect(notificationFocusTargetAfterDismiss(notifications, "daemon-a:2")).toEqual({ kind: "notification", notificationId: "daemon-a:1" });
-    expect(notificationFocusTargetAfterDismiss(notifications, "daemon-a:1")).toEqual({ kind: "notification", notificationId: "daemon-a:2" });
-    expect(notificationFocusTargetAfterDismiss([notification(1)], "daemon-a:1")).toEqual({ kind: "header" });
-  });
-
-  it("retains collapse state by exact machine, cwd, and session identity", () => {
-    const collapsed = setNotificationTrayCollapsed(new Set(), target, true);
-
-    expect(notificationTrayIsCollapsed(collapsed, target)).toBe(true);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, machineId: "remote" })).toBe(false);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, cwd: "/other" })).toBe(false);
-    expect(notificationTrayIsCollapsed(collapsed, { ...target, sessionId: "session-2" })).toBe(false);
-    expect(notificationTargetKey(target)).not.toBe(notificationTargetKey({ ...target, cwd: "/repo|session-1" }));
-    expect(notificationTrayIsCollapsed(setNotificationTrayCollapsed(collapsed, target, false), target)).toBe(false);
-  });
-
-  it("derives compact tray copy and a count that includes older unseen notifications", () => {
+  it("derives a count that includes older unseen notifications and message truncation labels", () => {
     const counts = { retainedCount: 2, discardedCount: 23 };
 
     expect(notificationInboxTotalCount(counts)).toBe(25);
-    expect(notificationTrayHeading(counts)).toBe("Notifications (25)");
-    expect(notificationInboxOverflowLabel(1)).toBe("1 older notification not shown.");
-    expect(notificationInboxOverflowLabel(23)).toBe("23 older notifications not shown.");
     expect(notificationMessageTruncationLabel({ truncated: true })).toBe("Message truncated at 8 KiB.");
     expect(notificationMessageTruncationLabel({ truncated: false })).toBeUndefined();
   });
 
-  it("keeps live announcements concise and dismiss labels meaningful", () => {
+  it("keeps live announcements concise", () => {
     const announcement: SessionNotificationAnnouncement = {
       id: "daemon-a:2:daemon-a:2",
       severity: "error",
       message: "An arbitrarily long extension message that should not be read by the assertive live region",
     };
-    const longNotification = notification(2, "warning", `  Build failed\n${"x".repeat(100)}`);
 
     expect(notificationAnnouncementLabel(announcement)).toBe("Error notification received.");
-    expect(notificationDismissLabel(longNotification)).toMatch(/^Dismiss notification: Build failed x+…$/u);
-    expect(notificationDismissLabel({ message: "   ", severity: "warning" })).toBe("Dismiss warning notification");
   });
 });
 

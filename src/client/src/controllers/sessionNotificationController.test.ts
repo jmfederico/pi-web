@@ -122,9 +122,10 @@ describe("SessionNotificationController selected inbox ownership", () => {
     pendingInbox.resolve(inboxSnapshot([entry(1)], { inboxRevision: 1, catalogRevision: 1 }));
     await refresh;
 
+    // The view is ordered for the transcript (oldest first); the inbox stays newest-first.
     expect(selectedNotificationView(harness.state.selectedNotificationInbox)?.notifications.map((notification) => notification.id)).toEqual([
-      "daemon-a:2",
       "daemon-a:1",
+      "daemon-a:2",
     ]);
     expect(selectedNotificationView(harness.state.selectedNotificationInbox)?.announcements).toMatchObject([
       { severity: "warning", message: "notice 2" },
@@ -161,8 +162,8 @@ describe("SessionNotificationController selected inbox ownership", () => {
 
     await vi.waitFor(() => { expect(notificationInbox).toHaveBeenCalledTimes(2); });
     expect(selectedNotificationView(harness.state.selectedNotificationInbox)?.notifications.map((notification) => notification.id)).toEqual([
-      "daemon-a:3",
       "daemon-a:1",
+      "daemon-a:3",
     ]);
   });
 
