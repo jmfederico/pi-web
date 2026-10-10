@@ -27,6 +27,7 @@
   ],
   "ignoreBinaries": ["mkfifo", "ps"],
   "ignoreDependencies": [
+    "node-pty",
     "pi-mcp-adapter",
     "pi-subagents",
     "version",
