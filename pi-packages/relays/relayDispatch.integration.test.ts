@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
@@ -19,7 +19,7 @@ describe("Relay extension in Pi", () => {
     { hostAvailable: false, leg: "R1-a", validLeg: true },
     ...[0, 1, 1.5, true, false, null].map((leg) => ({ hostAvailable: true, leg, validLeg: false })),
   ])("validates raw leg $leg before dispatch (host available=$hostAvailable)", async ({ hostAvailable, leg, validLeg }) => {
-    const cwd = await mkdtemp(join(tmpdir(), "pi-web-relay-extension-"));
+    const cwd = await realpath(await mkdtemp(join(tmpdir(), "pi-web-relay-extension-")));
     const packet = join(cwd, ".pi-web", "relays", "native");
     await mkdir(packet, { recursive: true });
     await Promise.all(["charter.md", "status.md", "log.md"].map((file) => writeFile(join(packet, file), "Saved packet")));
