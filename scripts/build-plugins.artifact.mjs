@@ -102,7 +102,6 @@ describe("plugin delivery artifacts", () => {
     const builtPackageFiles = (await recursiveFiles(builtPackagesRoot)).map((path) => `dist/pi-packages/${path}`).sort();
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
-<<<<<<< HEAD
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
     // Check the materialized build output, not words in agent instructions.

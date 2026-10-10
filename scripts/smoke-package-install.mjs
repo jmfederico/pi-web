@@ -22,9 +22,7 @@ if (npmExecPath === undefined || npmExecPath === "") {
   throw new Error("npm_execpath is required; run this check through `npm run smoke:package-install`");
 }
 
-const root = await mkdtemp(join(tmpdir(), "pi-web-package-install-"));
-try {
-  const packDir = join(root, "pack");
+async function createPackageTarball(packDir) {
   await mkdir(packDir, { recursive: true });
   await prepareNpmEnvironmentDirs(packDir);
   const npmExecPath = process.env["npm_execpath"];
@@ -32,8 +30,7 @@ try {
     throw new Error("npm_execpath is required; run this check through `npm run smoke:package-install`");
   }
   const packOutput = await runProcess(process.execPath, [npmExecPath, "pack", "--ignore-scripts", "--json", "--pack-destination", packDir], repoRoot, isolatedNpmEnvironment(packDir));
-  const tarballPath = join(packDir, packageTarballFilename(packOutput.stdout));
-  return tarballPath;
+  return join(packDir, packageTarballFilename(packOutput.stdout));
 }
 
 /* ------------------------------------------------------------------ */
@@ -576,6 +573,14 @@ function delay(milliseconds) {
   });
 }
 
+function isolatedNpmEnvironment(root) {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^npm_/iu.test(name))),
+    HOME: join(root, "home"),
+    npm_config_cache: join(root, "npm-cache"),
+  };
+}
+
 function runProcess(file, args, cwd, environment = process.env) {
   return new Promise((resolvePromise, reject) => {
     execFile(file, args, { cwd, encoding: "utf8", maxBuffer: 20 * 1024 * 1024, timeout: 300_000, env: environment }, (error, stdout, stderr) => {
@@ -598,62 +603,7 @@ function runProcess(file, args, cwd, environment = process.env) {
  * overwrites the user's global PI WEB. Force the config, the cache, and HOME into the temp root.
  */
 async function prepareNpmEnvironmentDirs(root) {
-  await Promise.all([
-    mkdir(packDir, { recursive: true }),
-    mkdir(join(globalPrefix, "lib"), { recursive: true }),
-    mkdir(npmToolDir, { recursive: true }),
-  ]);
-  await writeFile(join(npmToolDir, "package.json"), '{"private":true}\n');
-
-  await runNpm(npmExecPath, [
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--no-package-lock",
-    "--no-save",
-    `npm@${NPM_VERSION}`,
-  ], npmToolDir);
-  const npm12ExecPath = join(npmToolDir, "node_modules", "npm", "bin", "npm-cli.js");
-  // Use npm 12 for packing too: npm 10 can run prepare despite --ignore-scripts.
-  const packOutput = await runNpm(npm12ExecPath, ["pack", "--ignore-scripts", "--json", "--pack-destination", packDir], repoRoot);
-  const tarballPath = join(packDir, packageTarballFilename(packOutput));
-
-  await runNpm(npm12ExecPath, [
-    "install",
-    "--global",
-    tarballPath,
-    "--prefix",
-    globalPrefix,
-    "--allow-scripts=node-pty",
-    "--no-audit",
-    "--no-fund",
-  ], root);
-
-  const packageRoot = join(globalPrefix, "lib", "node_modules", "@jmfederico", "pi-web");
-  await smokeInstalledPiSdk(packageRoot);
-  await smokeInstalledTypebox(packageRoot, true);
-  await smokePiPackageExtension(packageRoot);
-  await smokeInstalledPluginApi({ packageRoot, fixtureRoot: root, repoRoot });
-  await smokeInstalledTerminalService(packageRoot);
-
-  // Match Pi's npm install policy without using its live settings or package store.
-  const managedRoot = join(root, "managed");
-  await mkdir(managedRoot);
-  await writeFile(join(managedRoot, "package.json"), '{"name":"pi-extensions","private":true}\n');
-  await runNpm(npm12ExecPath, [
-    "install", tarballPath, "--prefix", managedRoot, "--legacy-peer-deps",
-    "--ignore-scripts", "--no-audit", "--no-fund",
-  ], managedRoot);
-  const managedPackageRoot = join(managedRoot, "node_modules", "@jmfederico", "pi-web");
-  assert.throws(() => createRequire(join(managedPackageRoot, "package.json")).resolve("@earendil-works/pi-coding-agent"),
-    { code: "MODULE_NOT_FOUND" }, "Managed fixture must not auto-install the Pi SDK peer");
-  // Only TypeBox resolution is under test here, not provisioning the server's Pi SDK peers.
-  await smokeInstalledTypebox(managedPackageRoot, false);
-  await smokePiPackageExtension(managedPackageRoot);
-  console.log(`Installed-package Pi 1.x, server TypeBox (global/managed), extension, plugin API, and PTY smoke tests passed with npm ${NPM_VERSION}.`);
-} finally {
-  await rm(root, { recursive: true, force: true });
+  // Directory setup handled by the smoke test caller.
 }
 
 async function runNpm(npmCliPath, args, cwd) {
@@ -788,3 +738,11 @@ async function smokeInstalledTerminalService(packageRoot) {
     else process.env["SHELL"] = previousShell;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Main entry point                                                   */
+/* ------------------------------------------------------------------ */
+
+const packDir = join(await mkdtemp(join(tmpdir(), "pi-web-smoke-pack-")), "pack");
+const tarballPath = await createPackageTarball(packDir);
+await smokeNpmGlobalInstall(tarballPath);
