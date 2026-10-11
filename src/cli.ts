@@ -5,7 +5,18 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultPiWebConfigPath, defaultPiWebDataDir, examplePiWebConfig } from "./config.js";
+import { defaultPiWebConfigPath, defaultPiWebDataDir, effectivePiWebConfig, examplePiWebConfig, piWebDataDir } from "./config.js";
+import {
+  assertWindowsTaskMutationAllowed,
+  performWindowsTaskAction,
+  readWindowsTaskStatus,
+  runWindowsTaskScript,
+  windowsTaskInstallScript,
+  windowsTaskLogsScript,
+  windowsTaskPlan,
+  type WindowsTaskAction,
+  type WindowsTaskPlan,
+} from "./nativeServices/windowsTasks.js";
 import { piWebDockerCommand, type PiWebDockerMode } from "./docker/piWebDockerCommandPlan.js";
 import { ownEnvironmentValue } from "./environment.js";
 import { runPiWebUpdate } from "./piWebUpdate.js";
@@ -124,6 +135,7 @@ function platformLabel(): string {
   return process.platform;
 }
 
+/** POSIX login-shell backends. Windows uses the separate Task Scheduler adapter. */
 export function serviceBackendForPlatform(platform: NodeJS.Platform): ServiceBackend | undefined {
   if (platform === "linux") return { kind: "systemd", label: "systemd user services" };
   if (platform === "darwin") return { kind: "launchd", label: "LaunchAgents" };
@@ -1357,6 +1369,97 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+async function windowsTasksReady(plan: WindowsTaskPlan): Promise<boolean> {
+  if (!await probeRunningComponentReady("web", { configEnv: plan.environment })) return false;
+  try {
+    const response = await fetch(`${plan.environment["PI_WEB_SESSIOND_URL"] ?? ""}/health`, { signal: AbortSignal.timeout(2000) });
+    const health: unknown = await response.json();
+    return response.ok && isRecord(health) && health["ok"] === true
+      && isRecord(health["version"]) && health["version"]["component"] === "sessiond";
+  } catch {
+    return false;
+  }
+}
+
+async function windowsLifecycle(action: WindowsTaskAction): Promise<void> {
+  await performWindowsTaskAction(action, {
+    environment: process.env,
+    readStatus: readWindowsTaskStatus,
+    runScript: runWindowsTaskScript,
+    ready: windowsTasksReady,
+    now: Date.now,
+    sleep: () => new Promise((resolveWait) => { setTimeout(resolveWait, 500); }),
+  });
+}
+
+async function installWindowsTasks(args: string[]): Promise<void> {
+  assertWindowsTaskMutationAllowed("install", process.env);
+  const options = parseInstallOptions(args);
+  if (options.mode === "dev") throw new Error("Windows autostart supports built production entrypoints only. Build the checkout and run node dist/cli.js install without --dev.");
+  if (options.host.trim() === "" || !/^\d+$/u.test(options.port) || Number(options.port) < 1 || Number(options.port) > 65535) {
+    throw new Error("Install requires a nonempty host and a port between 1 and 65535.");
+  }
+  const configPath = resolve(options.config ?? process.env["PI_WEB_CONFIG"] ?? defaultPiWebConfigPath());
+  const plan = windowsTaskPlan({
+    node: process.execPath,
+    packageRoot: packageRootPath(),
+    home: homedir(),
+    configPath,
+    dataDirectory: piWebDataDir(),
+    environment: process.env,
+  });
+  for (const path of [plan.node, plan.powershell, ...Object.values(plan.entrypoints)]) {
+    if (!regularFileExists(path)) throw new Error(`Missing Windows service executable: ${path}. Install the published package or build this checkout first.`);
+  }
+  const loadedConfig = effectivePiWebConfig({ env: plan.environment });
+  const webPort = loadedConfig.exists ? loadedConfig.config.port ?? 8504 : Number(options.port);
+  if (webPort === Number(plan.environment["PI_WEB_SESSIOND_PORT"])) {
+    throw new Error("The web port and PI_WEB_SESSIOND_PORT must be different.");
+  }
+  if (!printNodePtyNativeModuleCheck()) throw new Error("Install preflight failed: repair node-pty before installing tasks.");
+  if (readWindowsTaskStatus().length > 0) throw new Error("PI WEB tasks already exist. Run pi-web uninstall before reinstalling; this interrupts active sessions.");
+  const script = windowsTaskInstallScript(plan);
+  await writeInitialConfig(options, configPath);
+  runWindowsTaskScript(script);
+  await windowsLifecycle("start");
+  console.log("PI WEB Windows tasks are installed and ready. They start hidden at sign-in and stop at sign-out (not a pre-login Windows service).");
+  console.log(`Config: ${configPath}\nLogs: ${plan.logDirectory}\nWeb port: ${String(webPort)}`);
+  console.log("Use pi-web status, logs, start, stop, restart, or uninstall. Uninstall preserves config and data.");
+}
+
+export async function windowsServiceCommand(command: string, args: string[], dependencies = {
+  readStatus: readWindowsTaskStatus,
+  printVersion: printPiWebVersionReport,
+}): Promise<void> {
+  if (command === "install") { await installWindowsTasks(args); return; }
+  const versionOptions = command === "version" ? parseVersionOptions(args) : {};
+  if (command !== "version" && args.length > 0) throw new Error(`Unexpected arguments for pi-web ${command}: ${args.join(" ")}`);
+  if (command === "start" || command === "stop" || command === "restart" || command === "uninstall") {
+    await windowsLifecycle(command);
+    console.log(command === "uninstall" ? "PI WEB Windows tasks removed; config, logs, and data were kept." : `PI WEB Windows tasks: ${command} completed.`);
+    return;
+  }
+  const tasks = dependencies.readStatus();
+  const plan = tasks[0]?.plan;
+  if (command === "version") {
+    const report = await dependencies.printVersion({ ...versionOptions, ...(plan === undefined ? {} : { configEnv: plan.environment }) });
+    if (report.release?.status === "error") process.exitCode = 1;
+    return;
+  }
+  if (plan === undefined) throw new Error("PI WEB Windows tasks are not installed. Run pi-web install from an external Windows terminal.");
+  if (command === "logs") { console.log(runWindowsTaskScript(windowsTaskLogsScript(plan))); return; }
+  console.log("Backend: Windows Task Scheduler (current user, at sign-in)");
+  for (const task of tasks) console.log(`${task.id}: ${task.state} (last task result: ${String(task.lastResult)})`);
+  const running = tasks.length === 2 && tasks.every((task) => task.state === "Running");
+  if (command === "doctor") {
+    const nativeOk = printNodePtyNativeModuleCheck();
+    const ready = await windowsTasksReady(plan);
+    console.log(`Config: ${plan.environment["PI_WEB_CONFIG"] ?? ""}\nLogs: ${plan.logDirectory}`);
+    console.log(ready ? "Web and session daemon health endpoints are ready." : "Web or session daemon health endpoint is not ready. Check pi-web logs.");
+    if (!nativeOk || !ready || !running) process.exitCode = 1;
+  } else if (!running) process.exitCode = 1;
+}
+
 function help(): void {
   console.log(`PI WEB
 
@@ -1374,14 +1477,19 @@ Recommended install:
   npm install -g @jmfederico/pi-web --allow-scripts=node-pty
   pi-web install
 
-Development service install from a checkout:
+Windows: sign-in autostart via Task Scheduler (production builds only).
+  Run service commands from an external terminal. Stop/restart/uninstall interrupt sessions.
+
+Development service install from a checkout (Linux/macOS):
   pi-web install --dev
 `);
 }
 
 async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
-  if (command === "install") await install(args);
+  if (process.platform === "win32" && ["install", "uninstall", "start", "stop", "restart", "status", "logs", "doctor", "version"].includes(command)) {
+    await windowsServiceCommand(command, args);
+  } else if (command === "install") await install(args);
   else if (command === "uninstall") await uninstall();
   else if (command === "update") await runPiWebUpdate(args);
   else if (command === "start" || command === "restart" || command === "doctor" || command === "version") {

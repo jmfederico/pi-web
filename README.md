@@ -69,7 +69,7 @@ pi-web uninstall
 <!-- Keep README guidance concise. Put install variants, troubleshooting,
 configuration, and operational details in docs/, then link from here. -->
 
-For more install options, including one-line install, Pi package install, WSL/manual usage, and remote access, see the [installation guide](https://pi-web.dev/install).
+For more install options, including [native Windows sign-in autostart](https://pi-web.dev/install#windows), one-line install, Pi package install, WSL/manual usage, and remote access, see the [installation guide](https://pi-web.dev/install).
 
 ## Core model
 

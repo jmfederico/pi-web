@@ -16,11 +16,14 @@ import {
   runReadinessCliCommand,
   serviceBackendForPlatform,
   sessionDaemonRestartPlan,
+  windowsServiceCommand,
   type ReadinessCliCommandDependencies,
 } from "./cli.js";
 import { piWebConfigPath } from "./config.js";
 import type { InstalledNativeServiceDefinition } from "./nativeServices/serviceDoctor.js";
 import type { NativeServiceId } from "./nativeServices/servicePlan.js";
+import { windowsTaskPlan, type WindowsTaskStatus } from "./nativeServices/windowsTasks.js";
+import type { PiWebVersionReport, PiWebVersionReportOptions } from "./piWebVersionReport.js";
 
 const originalShell = process.env["SHELL"];
 const originalPiWebConfig = process.env["PI_WEB_CONFIG"];
@@ -46,6 +49,54 @@ describe("version arguments", () => {
 
   it.each([["--unknown"], ["--check", "extra"], ["--check", "--check"]])("rejects invalid arguments %j", (...args) => {
     expect(() => parseVersionOptions(args)).toThrow("Usage: pi-web version [--check]");
+  });
+});
+
+describe("Windows version command", () => {
+  function dependencies(installed = false) {
+    const plan = windowsTaskPlan({
+      node: "C:\\node\\node.exe", packageRoot: "C:\\pi-web", home: "C:\\home",
+      configPath: "C:\\home\\config.json", dataDirectory: "C:\\home\\data", environment: {},
+    });
+    const tasks: WindowsTaskStatus[] = installed ? [{ id: "web", state: "Ready", lastResult: 0, plan }] : [];
+    return {
+      readStatus: vi.fn(() => tasks),
+      printVersion: vi.fn<(options?: PiWebVersionReportOptions) => Promise<PiWebVersionReport>>(() => Promise.resolve({})),
+    };
+  }
+
+  it.each([false, true])("forwards --check and installed config (installed=%s)", async (installed) => {
+    const deps = dependencies(installed);
+    await windowsServiceCommand("version", ["--check"], deps);
+    expect(deps.printVersion).toHaveBeenCalledExactlyOnceWith({
+      check: true,
+      ...(installed ? { configEnv: deps.readStatus()[0]?.plan.environment } : {}),
+    });
+  });
+
+  it("keeps ordinary version reporting local", async () => {
+    const deps = dependencies();
+    await windowsServiceCommand("version", [], deps);
+    expect(deps.printVersion).toHaveBeenCalledExactlyOnceWith({});
+  });
+
+  it.each(["version", "start", "stop", "restart", "uninstall", "status", "logs", "doctor"])("rejects invalid %s arguments before touching tasks", async (command) => {
+    const deps = dependencies();
+    await expect(windowsServiceCommand(command, ["--unknown"], deps)).rejects.toThrow(command === "version" ? "Usage: pi-web version [--check]" : "Unexpected arguments");
+    expect(deps.readStatus).not.toHaveBeenCalled();
+    expect(deps.printVersion).not.toHaveBeenCalled();
+  });
+
+  it("reports release lookup failures with a failing exit code", async () => {
+    const exitCode = process.exitCode;
+    try {
+      const deps = dependencies();
+      deps.printVersion.mockResolvedValue({ release: { status: "error", error: "registry unavailable" } });
+      await windowsServiceCommand("version", ["--check"], deps);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = exitCode;
+    }
   });
 });
 
