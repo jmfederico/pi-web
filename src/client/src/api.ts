@@ -1,4 +1,6 @@
-export { api, configApi, filesApi, machinesApi, machineStatusApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, SessionTreeForkUnavailableError, sessionsApi, trustApi, workspacesApi } from "./api/clients";
+export { api, configApi, filesApi, machinesApi, machineStatusApi, mcpApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, SessionTreeForkUnavailableError, sessionsApi, trustApi, workspacesApi } from "./api/clients";
+export type { McpWorkspaceTarget } from "./api/clients";
+export type { McpCheckResponse, McpConfigScope, McpConnectionInfo, McpServerInfo, McpServersResponse } from "../../shared/apiTypes";
 export {
   openPairedPluginBackendChannel,
   pairedPluginBackendChannelPath,

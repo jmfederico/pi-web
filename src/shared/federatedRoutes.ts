@@ -37,7 +37,17 @@ export interface FederatedHttpRouteSpec {
   propagateCancellation?: boolean;
 }
 
+export const MCP_HTTP_ROUTES = [
+  { method: "GET", path: "/mcp" },
+  { method: "PUT", path: "/mcp/servers/:name" },
+  { method: "POST", path: "/mcp/check", timeoutMs: 100_000, responseBodyLimit: 2 * 1024 * 1024, propagateCancellation: true },
+  { method: "GET", path: "/projects/:projectId/workspaces/:workspaceId/mcp" },
+  { method: "PUT", path: "/projects/:projectId/workspaces/:workspaceId/mcp/servers/:name" },
+  { method: "POST", path: "/projects/:projectId/workspaces/:workspaceId/mcp/check", timeoutMs: 100_000, responseBodyLimit: 2 * 1024 * 1024, propagateCancellation: true },
+] as const satisfies readonly FederatedHttpRouteSpec[];
+
 export const FEDERATED_HTTP_ROUTES = [
+  ...MCP_HTTP_ROUTES,
   { method: "GET", path: "/pi-web/status" },
   { method: "GET", path: "/config" },
   { method: "PUT", path: "/config" },

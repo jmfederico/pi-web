@@ -40,6 +40,7 @@ describe("settings route helpers", () => {
     expect(parseSettingsSection("packages")).toBe("packages");
     expect(parseSettingsSection("pi-packages")).toBe("packages");
     expect(parseSettingsSection("plugins")).toBe("plugins");
+    expect(parseSettingsSection("mcp")).toBe("mcp");
     expect(parseSettingsSection("shortcuts")).toBe("shortcuts");
     expect(parseSettingsSection("keyboard")).toBe("shortcuts");
     expect(parseSettingsSection("unknown")).toBeUndefined();
@@ -57,6 +58,14 @@ describe("settings route helpers", () => {
     writeSettingsSection("general");
 
     expect(pushed).toEqual(["http://localhost/app?project=p1&settings=general#bottom"]);
+  });
+
+  it("preserves nested deployment and target fields in MCP deep links", () => {
+    const { pushed } = installWindow("https://pi.example.test/team/pi/?machine=remote&project=p1&workspace=w1#bottom");
+
+    writeSettingsSection("mcp");
+
+    expect(pushed).toEqual(["https://pi.example.test/team/pi/?machine=remote&project=p1&workspace=w1&settings=mcp#bottom"]);
   });
 
   it("removes settings deep links with replace when closing", () => {

@@ -17,6 +17,7 @@ describe("settings-dialog general settings machine targeting", () => {
     expect(activeSettingsPanelTag("sessiond")).toBe("settings-sessiond-panel");
     expect(activeSettingsPanelTag("packages")).toBe("settings-packages-panel");
     expect(activeSettingsPanelTag("plugins")).toBe("settings-plugins-panel");
+    expect(activeSettingsPanelTag("mcp")).toBe("settings-mcp-panel");
     expect(activeSettingsPanelTag("shortcuts")).toBe("settings-shortcuts-panel");
   });
 
