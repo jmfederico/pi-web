@@ -18,7 +18,6 @@ export const PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const SESSION_TREE_FORK_PROXY_TIMEOUT_MS = 5 * 60_000;
 export const WORKSPACE_FILE_FEDERATION_TIMEOUT_MS = 30_000;
-export { PROJECT_GIT_CLONE_TIMEOUT_MS } from "./projectCloneProtocol.js";
 // Accommodates the bounded 1,000-entry tree and escaped paths/content while
 // keeping every workspace-file JSON hop finite after response headers.
 export const WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES = 32 * 1024 * 1024;

@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,31 @@ afterEach(async () => {
 });
 
 describe("ProjectService.cloneFromGit", () => {
+  it("rejects a concurrent clone to the same destination", async () => {
+    let signalCloneStarted: (() => void) | undefined;
+    let finishClone: (() => void) | undefined;
+    const cloneStarted = new Promise<void>((resolve) => { signalCloneStarted = resolve; });
+    const cloneCanFinish = new Promise<void>((resolve) => { finishClone = resolve; });
+    vi.mocked(cloneGitRepository).mockImplementation(async (_url, stagingPath) => {
+      await mkdir(stagingPath);
+      signalCloneStarted?.();
+      await cloneCanFinish;
+    });
+    const input = {
+      repositoryUrl: "https://git.example.com/team/project.git",
+      destinationPath: join(tempDir, "project"),
+    };
+    const firstClone = projectService.cloneFromGit(input);
+    await cloneStarted;
+
+    await expect(projectService.cloneFromGit(input)).rejects.toThrow("A Git clone is already in progress for this destination");
+    expect(cloneGitRepository).toHaveBeenCalledOnce();
+
+    finishClone?.();
+    const project = await firstClone;
+    expect(project.path).toBe(await realpath(input.destinationPath));
+  });
+
   it("rejects an existing destination without changing it", async () => {
     const destination = join(tempDir, "existing-project");
     await mkdir(destination);

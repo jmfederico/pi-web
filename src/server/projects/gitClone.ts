@@ -13,8 +13,7 @@ export function validateGitRepositoryUrl(value: string): string {
   const repositoryUrl = value.trim();
   if (repositoryUrl === "" || repositoryUrl.length > 2_048) throw new Error("Enter a valid Git repository URL");
 
-  // Git's extended transport syntax and Windows drive paths can resemble SCP
-  // URLs to a permissive host:path matcher.
+  // Reject Git extended transport syntax and Windows drive paths explicitly.
   if (repositoryUrl.startsWith("ext::") || /^[A-Za-z]:[\\/]/u.test(repositoryUrl)) {
     throw new Error("Use an HTTPS or SSH Git repository URL");
   }
@@ -38,25 +37,47 @@ export function validateGitRepositoryUrl(value: string): string {
 
 /** Run Git without a shell and prevent interactive credential prompts from hanging the web request. */
 export async function cloneGitRepository(repositoryUrl: string, destination: string, signal?: AbortSignal): Promise<void> {
-  const configuredSshCommand = process.env["GIT_SSH_COMMAND"]?.trim();
   try {
+    const environment = await createGitCloneEnvironment(process.env, signal);
     await execFileAsync("git", ["clone", "--", repositoryUrl, destination], {
       encoding: "utf8",
       maxBuffer: 4 * 1024 * 1024,
       timeout: PROJECT_GIT_CLONE_TIMEOUT_MS,
       ...(signal === undefined ? {} : { signal }),
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: "0",
-        GCM_INTERACTIVE: "never",
-        GIT_SSH_COMMAND: configuredSshCommand === undefined || configuredSshCommand === "" ? "ssh -o BatchMode=yes" : configuredSshCommand,
-      },
+      env: environment,
     });
   } catch (error: unknown) {
     if (signal?.aborted === true) throw new Error("Git clone was cancelled", { cause: error });
     const message = gitCloneErrorMessage(error);
     throw new Error(message === "" ? "Git clone failed" : `Git clone failed: ${message}`, { cause: error });
   }
+}
+
+/** Apply SSH batch mode only when Git and the environment have no SSH command configured. */
+export async function createGitCloneEnvironment(environment: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<NodeJS.ProcessEnv> {
+  const cloneEnvironment: NodeJS.ProcessEnv = {
+    ...environment,
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+  };
+  if (cloneEnvironment["GIT_SSH_COMMAND"] !== undefined || cloneEnvironment["GIT_SSH"] !== undefined) return cloneEnvironment;
+
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "core.sshCommand"], {
+      encoding: "utf8",
+      ...(signal === undefined ? {} : { signal }),
+      env: cloneEnvironment,
+    });
+    if (stdout.trim() === "") cloneEnvironment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes";
+  } catch (error: unknown) {
+    if (!isErrorWithExitCode(error, 1)) throw error;
+    cloneEnvironment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes";
+  }
+  return cloneEnvironment;
+}
+
+function isErrorWithExitCode(error: unknown, exitCode: number): boolean {
+  return error instanceof Error && "code" in error && error.code === exitCode;
 }
 
 export function gitCloneErrorMessage(error: unknown): string {
