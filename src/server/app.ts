@@ -34,6 +34,7 @@ import {
   type ActiveAgentProfileProvider,
 } from "./activeAgentProfileProvider.js";
 import { MachineService } from "./machines/machineService.js";
+import { requestCancellation } from "./requestCancellation.js";
 import { registerMachineRoutes } from "./machines/machineRoutes.js";
 import { registerMachineProxyRoutes } from "./machines/machineProxyRoutes.js";
 import { registerPluginBackendChannelProxyRoutes } from "./plugins/pluginBackendChannelProxyRoutes.js";
@@ -72,6 +73,17 @@ function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectServi
       return await projects.add(request.body);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  app.post<{ Body: { repositoryUrl: string; destinationPath: string } }>(`${prefix}/projects/clone`, async (request, reply) => {
+    const cancellation = requestCancellation(request, reply);
+    try {
+      return await projects.cloneFromGit(request.body, cancellation.signal);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      cancellation.dispose();
     }
   });
 

@@ -15,12 +15,14 @@ export interface ProjectTrustChoice {
 
 export interface ProjectControllerDependencies {
   api?: Pick<typeof defaultApi, "projects" | "addProject" | "closeProject" | "workspaces" | "setWorkspaceTrust">;
+  cloneProject?: typeof defaultApi.cloneProject;
   navigateToProject?: (project: Project | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   captureNavigation?: () => NavigationSelection;
 }
 
 export class ProjectController {
   private readonly api: NonNullable<ProjectControllerDependencies["api"]>;
+  private readonly cloneProjectRequest: typeof defaultApi.cloneProject;
   private readonly navigateToProject: ProjectControllerDependencies["navigateToProject"];
   private readonly captureNavigation: ProjectControllerDependencies["captureNavigation"];
   private readonly browserErrors: BrowserErrorReporter;
@@ -32,6 +34,7 @@ export class ProjectController {
     deps: ProjectControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
+    this.cloneProjectRequest = deps.cloneProject ?? defaultApi.cloneProject;
     this.navigateToProject = deps.navigateToProject;
     this.captureNavigation = deps.captureNavigation;
     this.browserErrors = new BrowserErrorReporter(getState, setState);
@@ -64,6 +67,25 @@ export class ProjectController {
       this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
       return;
     }
+    await this.finishAddingProject(project, machineId, expected, trustChoice);
+  }
+
+  async cloneProject(repositoryUrl: string, destinationPath: string, trustChoice?: ProjectTrustChoice, signal?: AbortSignal) {
+    if (repositoryUrl.trim() === "" || destinationPath.trim() === "") return;
+    const machineId = selectedMachineId(this.getState());
+    const expected = navigationSelection(this.getState(), this.captureNavigation);
+    let project: Project;
+    try {
+      project = await this.cloneProjectRequest(repositoryUrl.trim(), destinationPath.trim(), machineId, signal);
+    } catch (error) {
+      if (signal?.aborted === true) return;
+      this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
+      throw error;
+    }
+    await this.finishAddingProject(project, machineId, expected, trustChoice);
+  }
+
+  private async finishAddingProject(project: Project, machineId: string, expected: NavigationSelection, trustChoice?: ProjectTrustChoice): Promise<void> {
     try {
       if (selectedMachineId(this.getState()) === machineId) {
         const projects = this.getState().projects;
