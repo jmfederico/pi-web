@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, trustApi } from "../api";
 import type { ProjectTrustChoice } from "../controllers/projectController";
-import { ProjectDialog } from "./ProjectDialog";
+import { projectCloneDestination, ProjectDialog, suggestedProjectFolderName, type ProjectCloneSubmission } from "./ProjectDialog";
 import { deepActiveElement, pressKey, requiredElement, settleRenderedDialog } from "./modalSurfaceTestSupport";
 
 afterEach(() => {
@@ -44,6 +44,57 @@ describe("project-dialog modal surface", () => {
     pressKey(input, "Enter");
 
     expect(onSubmit).toHaveBeenCalledWith("/work/new-project", true, { trusted: false, changed: false });
+  });
+
+  it("submits a Git clone on Enter and derives the destination folder", async () => {
+    const onClone = vi.fn<(submission: ProjectCloneSubmission) => void>();
+    const dialog = await mountDialog({ onClone });
+    await selectGitMode(dialog);
+    const url = requiredElement(dialog.shadowRoot?.querySelector<HTMLInputElement>('input[type="url"]'), "Git repository URL input");
+    url.value = "git@git.example.com:team/project.git";
+    url.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await settleRenderedDialog(dialog);
+
+    pressKey(url, "Enter");
+
+    expect(onClone).toHaveBeenCalledOnce();
+    expect(onClone.mock.calls[0]?.[0]).toMatchObject({
+      repositoryUrl: "git@git.example.com:team/project.git",
+      destinationPath: "~/projs/project",
+      trust: { trusted: false, changed: false },
+    });
+    expect(onClone.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("aborts an in-flight Git clone when cancelled", async () => {
+    let resolveClone: (() => void) | undefined;
+    let submission: ProjectCloneSubmission | undefined;
+    const onClone = vi.fn((value: ProjectCloneSubmission) => {
+      submission = value;
+      return new Promise<void>((resolve) => { resolveClone = resolve; });
+    });
+    const dialog = await mountDialog({ onClone });
+    await selectGitMode(dialog);
+    const url = requiredElement(dialog.shadowRoot?.querySelector<HTMLInputElement>('input[type="url"]'), "Git repository URL input");
+    url.value = "https://git.example.com/team/project.git";
+    url.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await settleRenderedDialog(dialog);
+    requiredElement(findButton(dialog, "Clone project"), "Clone project button").click();
+    await settleRenderedDialog(dialog);
+
+    requiredElement(findButton(dialog, "Cancel clone"), "Cancel clone button").click();
+
+    expect(submission?.signal.aborted).toBe(true);
+    resolveClone?.();
+    await settleRenderedDialog(dialog);
+  });
+
+  it("derives safe folder names and clone destinations", () => {
+    expect(suggestedProjectFolderName("https://git.example.com/team/My%20Project.git")).toBe("My Project");
+    expect(suggestedProjectFolderName("git@git.example.com:team/project.git")).toBe("project");
+    expect(projectCloneDestination("~/projs/", "project")).toBe("~/projs/project");
+    expect(projectCloneDestination("/", "project")).toBe("/project");
+    expect(projectCloneDestination("~/projs", "../outside")).toBe("");
   });
 
   it("disables the trust choice until a path is entered", async () => {
@@ -150,6 +201,7 @@ describe("project-dialog modal surface", () => {
 
 interface ProjectDialogProps {
   onSubmit?: (path: string, create: boolean, trust: ProjectTrustChoice | undefined) => void;
+  onClone?: (submission: ProjectCloneSubmission) => void | Promise<void>;
   onCancel?: () => void;
 }
 
@@ -158,10 +210,21 @@ async function mountDialog(props: ProjectDialogProps = {}): Promise<ProjectDialo
   vi.spyOn(trustApi, "projectTrust").mockResolvedValue({ path: "", decision: null, trusted: false });
   const dialog = new ProjectDialog();
   if (props.onSubmit !== undefined) dialog.onSubmit = props.onSubmit;
+  if (props.onClone !== undefined) dialog.onClone = props.onClone;
   if (props.onCancel !== undefined) dialog.onCancel = props.onCancel;
   document.body.append(dialog);
   await settleRenderedDialog(dialog);
   return dialog;
+}
+
+async function selectGitMode(dialog: ProjectDialog): Promise<void> {
+  requiredElement(findButton(dialog, "Clone from Git"), "Clone from Git mode button").click();
+  await settleRenderedDialog(dialog);
+}
+
+function findButton(dialog: ProjectDialog, label: string): HTMLButtonElement | null | undefined {
+  return [...(dialog.shadowRoot?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((button) => button.textContent.trim() === label);
 }
 
 /** Waits until the trust read for the current path has resolved and rendered. */

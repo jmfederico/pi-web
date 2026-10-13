@@ -260,7 +260,7 @@ export class ProjectDialog extends LitElement {
     const cloneDestination = projectCloneDestination(this.cloneParent, this.cloneFolderName);
     return html`
       <modal-surface
-        .onClose=${() => this.cancel()}
+        .onClose=${() => { this.cancel(); }}
         .initialFocus=${"input"}
         .label=${"Add project"}
         .busy=${this.cloning}
@@ -288,7 +288,7 @@ export class ProjectDialog extends LitElement {
             </label>
             <label>
               Parent folder
-              <input class="directory-input" .value=${this.cloneParent} @input=${(event: InputEvent) => { this.setCloneParent((event.target as HTMLInputElement).value); }} placeholder="~/projs" />
+              <input class="directory-input" .value=${this.cloneParent} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.setCloneParent(event.target.value); }} placeholder="~/projs" />
             </label>
             <label>
               Project folder name
@@ -349,7 +349,7 @@ export class ProjectDialog extends LitElement {
   `;
 }
 
-function suggestedProjectFolderName(repositoryUrl: string): string {
+export function suggestedProjectFolderName(repositoryUrl: string): string {
   const withoutTrailingSlash = repositoryUrl.trim().replace(/[\\/]+$/u, "").split(/[?#]/u, 1)[0] ?? "";
   const leaf = withoutTrailingSlash.slice(Math.max(withoutTrailingSlash.lastIndexOf("/"), withoutTrailingSlash.lastIndexOf(":")) + 1);
   let decoded = leaf;
@@ -362,7 +362,7 @@ function suggestedProjectFolderName(repositoryUrl: string): string {
   return name === "." || name === ".." || /[\\/\0]/u.test(name) ? "" : name;
 }
 
-function projectCloneDestination(parentPath: string, folderName: string): string {
+export function projectCloneDestination(parentPath: string, folderName: string): string {
   const trimmedParent = parentPath.trim();
   const parent = trimmedParent === "/" || /^[A-Za-z]:\\?$/u.test(trimmedParent) ? trimmedParent.replace(/\\$/u, "") : trimmedParent.replace(/[\\/]+$/u, "");
   const name = folderName.trim();

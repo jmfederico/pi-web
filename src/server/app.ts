@@ -76,12 +76,12 @@ function registerLocalProjectRoutes(app: FastifyInstance, projects: ProjectServi
     }
   });
 
-  app.post<{ Body: { repositoryUrl: string; destinationPath: string } }>(`${prefix}/projects/clone`, async (request, reply) => {
+  app.post<{ Body: { repositoryUrl?: unknown; destinationPath?: unknown } | null | undefined }>(`${prefix}/projects/clone`, async (request, reply) => {
     const cancellation = requestCancellation(request, reply);
     try {
       return await projects.cloneFromGit(request.body, cancellation.signal);
     } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return await reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     } finally {
       cancellation.dispose();
     }

@@ -79,7 +79,6 @@ export class ProjectController {
       project = await this.cloneProjectRequest(repositoryUrl.trim(), destinationPath.trim(), machineId, signal);
     } catch (error) {
       if (signal?.aborted === true) return;
-      this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
       throw error;
     }
     await this.finishAddingProject(project, machineId, expected, trustChoice);

@@ -61,6 +61,17 @@ describe("buildApp project routes", () => {
     expect(closeResponse.json()).toEqual({ error: "Project not found" });
   });
 
+  it("maps invalid Git clone requests to the project route's 400 response", async () => {
+    const response = await appTestContext.app.inject({
+      method: "POST",
+      url: "/api/projects/clone",
+      payload: { repositoryUrl: "file:///tmp/project", destinationPath: join(appTestContext.tempDir, "clone") },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "Use an HTTPS or SSH Git repository URL" });
+  });
+
   it("lists a non-git project as a single workspace", async () => {
     const addResponse = await appTestContext.app.inject({
       method: "POST",
