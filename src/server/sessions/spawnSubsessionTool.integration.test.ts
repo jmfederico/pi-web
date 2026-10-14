@@ -1,9 +1,10 @@
 import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { runAgentLoop, type AgentEvent, type AgentMessage, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
-import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionToolContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { describe, expect, it, vi } from "vitest";
+import { fakeExtensionToolContext } from "./extensionToolContext.testSupport.js";
 import { createSubsessionToolDefinitions, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 
 const model: Model<Api> = {
@@ -19,17 +20,14 @@ const model: Model<Api> = {
   maxTokens: 100,
 };
 
-function extensionContext(): ExtensionContext {
-  const sessionManager = {
+function extensionContext(): ExtensionToolContext {
+  return fakeExtensionToolContext({
     getSessionId: () => "parent-1",
     getSessionFile: () => "/sessions/parent-1.jsonl",
-  };
-  // The wrapped yield definition only reads the two session-manager methods above.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- minimal integration boundary for a Pi tool definition.
-  return { sessionManager } as unknown as ExtensionContext;
+  });
 }
 
-function wrapDefinition(definition: ToolDefinition, ctx: ExtensionContext): AgentTool {
+function wrapDefinition(definition: ToolDefinition, ctx: ExtensionToolContext): AgentTool {
   return {
     name: definition.name,
     label: definition.label,
@@ -115,7 +113,6 @@ async function runYieldBatch(subsessions: SubsessionSummary[], includeSentinel =
   const messages = await runAgentLoop(
     [{ role: "user", content: "join now", timestamp: 0 }],
     {
-      systemPrompt: "",
       messages: [],
       tools: [wrapDefinition(yieldDefinition, extensionContext()), sentinelTool],
     },

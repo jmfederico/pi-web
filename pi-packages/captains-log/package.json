@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@jmfederico/pi-web": "^1.202609.0",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^1.2.0",
     "@types/node": "^24.13.3",
     "typescript": "^6.0.3",
     "vite": "^8.1.4"

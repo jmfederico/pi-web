@@ -7,7 +7,7 @@ x-pi-web-dev-build: &pi-web-dev-build
     OPENSUSE_IMAGE: ${PI_WEB_OPENSUSE_IMAGE:-opensuse/tumbleweed}
     NODEJS_MAJOR: ${PI_WEB_NODEJS_MAJOR:-22}
     NODEJS_REPO: ${PI_WEB_NODEJS_REPO:-auto}
-    PI_WEB_NPM_REGISTRY: ${PI_WEB_NPM_REGISTRY:-}
+    PI_WEB_NPM_REGISTRY: ${PI_WEB_NPM_REGISTRY:-https://mirrors.cloud.tencent.com/npm/}
     PI_WEB_EXTRA_ZYPPER_PACKAGES: ${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
     PI_WEB_UID: ${PI_WEB_UID:-1000}
     PI_WEB_GID: ${PI_WEB_GID:-1000}
@@ -31,6 +31,7 @@ x-pi-web-dev-environment: &pi-web-dev-environment
   PI_WEB_DOCKER_HELPER_IMAGE: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
   NPM_CONFIG_UPDATE_NOTIFIER: "false"
   NPM_CONFIG_CACHE: /data/npm-cache
+  NPM_CONFIG_REGISTRY: ${PI_WEB_NPM_REGISTRY:-https://mirrors.cloud.tencent.com/npm/}
 
 # Same user-owned container environment file as runtime mode: both modes read it
 # from the shared persistent data directory.

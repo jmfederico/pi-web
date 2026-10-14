@@ -12,6 +12,7 @@ export default function companion(pi: ExtensionAPI): void {
     context = undefined;
   });
   pi.on("before_agent_start", (event) => {
+    if ("messageType" in event && event.messageType !== "user") return;
     if (!active) return;
     if (!active.started && event.prompt === active.prompt) {
       active.started = true;

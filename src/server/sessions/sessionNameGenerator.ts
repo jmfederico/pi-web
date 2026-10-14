@@ -1,3 +1,4 @@
+import * as piAi from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 
@@ -14,16 +15,22 @@ export function deterministicSessionName(firstMessage: unknown): string | undefi
 }
 
 export async function generateShortSessionName<TApi extends Api>(streamFn: StreamFn, model: Model<TApi>, firstMessage: string): Promise<string | undefined> {
+  const context = {
+    systemPrompt: "Generate a concise title for a coding-agent chat session. Return only the title, with no quotes or punctuation wrapper.",
+    messages: [{
+      role: "user" as const,
+      content: `Create a 2-6 word title for this request:\n\n${truncateInput(firstMessage)}`,
+      timestamp: Date.now(),
+    }],
+  };
+  // Pi 1.2 normalizes raw contexts into branded transcript contexts. Older Pi
+  // versions accept the raw context directly, so keep that runtime fallback.
+  const transcriptContext = typeof piAi.normalizeContext === "function"
+    ? piAi.normalizeContext(context)
+    : context;
   const stream = await streamFn(
     model,
-    {
-      systemPrompt: "Generate a concise title for a coding-agent chat session. Return only the title, with no quotes or punctuation wrapper.",
-      messages: [{
-        role: "user",
-        content: `Create a 2-6 word title for this request:\n\n${truncateInput(firstMessage)}`,
-        timestamp: Date.now(),
-      }],
-    },
+    transcriptContext as Parameters<StreamFn>[1],
     {
       maxTokens: 24,
       reasoning: "minimal",
