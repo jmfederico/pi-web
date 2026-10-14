@@ -7,7 +7,7 @@ import { MANUAL_CHAT_BEHAVIORS } from "../chatBehaviors.testSupport";
 import { groupStorageKey } from "../chatDisclosure";
 import { chatScrollScopeKey, chatScrollStorageKey } from "../chatScrollPosition";
 import { transcriptViewFromHistory } from "../chatTranscriptStore";
-import { ChatView } from "./ChatView";
+import { ChatView, CHAT_CHROME_VISIBILITY_EVENT, type ChatChromeVisibilityDetail } from "./ChatView";
 import { controlledChatViewport } from "./chatScroll.testSupport";
 import type { ChatLine } from "./shared";
 import type { TranscriptImage } from "./TranscriptImage";
@@ -42,6 +42,9 @@ async function mount(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS) {
   view.messageTotal = messages.length; view.messages = messages;
   document.body.append(view); await view.updateComplete;
   return view;
+}
+function isChromeVisibilityEvent(event: Event): event is CustomEvent<ChatChromeVisibilityDetail> {
+  return "detail" in event;
 }
 function required(root: ParentNode, selector: string): HTMLElement {
   const node = root.querySelector<HTMLElement>(selector);
@@ -289,6 +292,26 @@ describe("composable normal chat", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]?.open).toBe(true);
     expect(entries[1]?.open).toBe(false);
+  });
+
+  it("reveals a hidden chrome when the host pins it for a view a scroll cannot restore", async () => {
+    const view = await mount();
+    const viewport = scrollingViewport(view, 900);
+    const events: ChatChromeVisibilityDetail[] = [];
+    view.addEventListener(CHAT_CHROME_VISIBILITY_EVENT, (event) => { if (isChromeVisibilityEvent(event)) events.push(event.detail); });
+    // The first scroll sample restores the session baseline instead of toggling.
+    viewport.move(900);
+    viewport.move(1500);
+    expect(events.at(-1)).toEqual({ hidden: true });
+
+    view.chromePinned = true;
+    await view.updateComplete;
+    expect(events.at(-1)).toEqual({ hidden: false });
+
+    // The pinned chrome is the only route back to the view that pinned it, so
+    // further scrolling must not slide it away again.
+    viewport.move(2000);
+    expect(events.at(-1)).toEqual({ hidden: false });
   });
 
   it.each([true, false])("follows native group and nested lazy toggles (remember choices: %s)", async (rememberDisclosures) => {

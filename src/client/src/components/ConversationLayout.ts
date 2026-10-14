@@ -61,6 +61,10 @@ export class ConversationLayout extends LitElement {
   @property({ attribute: false }) questionActions: QuestionActions | undefined;
   @property({ attribute: false }) onChatMode: (() => void) | undefined;
   @state() private chatMode = false;
+  /** Float the composer and status chrome over the transcript instead of stacking below it. */
+  @property({ type: Boolean, attribute: "chrome-floating" }) chromeFloating = false;
+  /** Slide the floating bottom chrome out of the way. */
+  @property({ type: Boolean, attribute: "chrome-hidden" }) chromeHidden = false;
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (!changed.has("questionActions")) return;
@@ -82,22 +86,24 @@ export class ConversationLayout extends LitElement {
     const answering = this.questionActions !== undefined && !this.chatMode;
     return html`
       <div class="transcript"><slot></slot></div>
-      <div class="composer-boundary">
-        ${this.questionActions === undefined ? nothing : html`
-          <div class="question-mode">
-            <span role="status">${askUserMessages.t(this.chatMode ? "pending" : "answerMode")}</span>
-            <button type="button" class="ui-button ui-button--compact" @click=${() => { void this.switchMode(); }}>
-              ${askUserMessages.t(this.chatMode ? "backToAnswers" : "chatInstead")}
-            </button>
-          </div>
-        `}
-        <div class="question-actions" ?hidden=${!answering}>${this.questionActions?.content ?? nothing}</div>
-        <div class="chat-composer" ?hidden=${answering} ?inert=${answering}><slot name="composer"></slot></div>
-        <div class=${this.visualEffects ? "activity-region" : "activity-region plain"} aria-live="polite">${activity === undefined ? nothing : html`
-          <div class="activity-dock"><span class="dot"></span><span class="activity-text">${activity}</span></div>
-        `}</div>
+      <div class=${this.chromeFloating ? "bottom-chrome floating" : "bottom-chrome"}>
+        <div class="composer-boundary">
+          ${this.questionActions === undefined ? nothing : html`
+            <div class="question-mode">
+              <span role="status">${askUserMessages.t(this.chatMode ? "pending" : "answerMode")}</span>
+              <button type="button" class="ui-button ui-button--compact" @click=${() => { void this.switchMode(); }}>
+                ${askUserMessages.t(this.chatMode ? "backToAnswers" : "chatInstead")}
+              </button>
+            </div>
+          `}
+          <div class="question-actions" ?hidden=${!answering}>${this.questionActions?.content ?? nothing}</div>
+          <div class="chat-composer" ?hidden=${answering} ?inert=${answering}><slot name="composer"></slot></div>
+          <div class=${this.visualEffects ? "activity-region" : "activity-region plain"} aria-live="polite">${activity === undefined ? nothing : html`
+            <div class="activity-dock"><span class="dot"></span><span class="activity-text">${activity}</span></div>
+          `}</div>
+        </div>
+        <slot name="status"></slot>
       </div>
-      <slot name="status"></slot>
     `;
   }
 

@@ -32,7 +32,7 @@ export function renderSessionWarnings(rows: readonly ChatSessionWarningRow[], on
   return html`
     <aside class="session-warnings" role="alert" aria-live="polite">
       ${rows.map((row) => html`
-        <div class=${`${row.severityClass} ui-transcript-surface`} data-notice-id=${row.id ?? nothing}>
+        <div class=${row.severityClass} data-notice-id=${row.id ?? nothing}>
           <div class="session-warning-head">
             ${renderSessionWarningIcon(row.severity, "session-warning-icon")}
             ${row.source === undefined ? null : html`<span class="session-warning-source" dir="auto">${row.source}</span>`}
