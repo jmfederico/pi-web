@@ -4,6 +4,9 @@ import { render } from "lit";
 import { ChatView } from "./ChatView";
 import { localization } from "../localization/browser";
 import { chatChromeMessages as messages } from "../chatChromeMessages";
+import definitions from "./chatChrome.messages";
+import { parseSessionStatus } from "../api/parsers";
+import { chatSessionWarningRows, renderSessionWarnings } from "./chat/SessionWarnings";
 
 vi.mock("../clipboard", () => ({ writeClipboardText: vi.fn().mockResolvedValue(false) }));
 let release: (() => void) | undefined;
@@ -71,6 +74,7 @@ it("keeps queue controls, raw content and externally rendered navigation live wi
   view.pendingDialogs = view.pendingDialogs.slice(0, 2); await view.updateComplete;
   expect(root.querySelector(".queued-dialogs")?.textContent).toBe(messages.t("queuedDialogs", { count: 1 }));
   required(root.querySelector<HTMLButtonElement>(".queued-clear-button")).click(); expect(view.onClearServerQueue).toHaveBeenCalledOnce();
+
 });
 
 it("localizes runtime fallback but preserves diagnostic reasons, queue disablement and recall action identity", async () => {

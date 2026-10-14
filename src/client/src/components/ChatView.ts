@@ -41,6 +41,24 @@ import "./TranscriptRendererHost";
 import { transcriptImageSource } from "./TranscriptImage";
 import type { ImageOpenDetail } from "./ImagePresentation";
 
+/** Minimum scroll distance (px) before the chat reverses the app-chrome visibility. */
+const CHAT_CHROME_HIDE_SCROLL_DELTA = 6;
+
+/** Name of the event ChatView dispatches when the app chrome should hide/reveal. */
+export const CHAT_CHROME_VISIBILITY_EVENT = "chat-chrome-visibility";
+
+/** Detail payload for the {@link CHAT_CHROME_VISIBILITY_EVENT} event. */
+export interface ChatChromeVisibilityDetail {
+  /** Whether the input area and header should slide out of the way. */
+  hidden: boolean;
+}
+
+
+
+
+
+
+
 export type ChatImagePart = Extract<ChatPart, { type: "image" }>;
 
 /** Derive the `<img>` source URL and alt text for a rendered image part. */
@@ -160,6 +178,14 @@ export class ChatView extends LitElement {
   @property({ type: Boolean }) queuedMessageActionPending = false;
   @state() private queuedCopyFailed = false;
   @property({ attribute: false }) onLoadMore?: () => void;
+  /** Height (px) of the floating top chrome; the transcript keeps it revealed while this close to the start. */
+  @property({ type: Number }) chromeTopInset = 0;
+  /**
+   * Keeps the chrome revealed while the host's only route back to a collapsed
+   * panel -- the tab strip and its panel controls -- lives in the floating top
+   * chrome, so scrolling must not slide it away.
+   */
+  @property({ type: Boolean }) chromePinned = false;
   @property({ attribute: false }) behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS;
   /**
    * Start every event group collapsed, including the growing live group. The
@@ -208,7 +234,16 @@ export class ChatView extends LitElement {
     this.scrollFlows.onContentLayoutChanging(event.detail);
   };
   private readonly onContentLayoutChanged = () => { this.scrollFlows.onViewportResize(); };
-  private readonly handleScroll = () => { this.scrollFlows.onScroll(); };
+  private readonly handleScroll = () => {
+    this.scrollFlows.onScroll();
+    this.updateChromeVisibilityFromScroll();
+  };
+  /** Last scroll position the chrome visibility was evaluated against. */
+  private lastChromeScrollTop = 0;
+  /** One-shot guard that drops the scroll sample produced by a programmatic scroll. */
+  private suppressChromeScroll = false;
+  /** Whether the header and composer are currently slid out of the way. */
+  private chromeHidden = false;
   // Native details toggles do not bubble; capture layout changes independently
   // of the listener that remembers a group's disclosure choice.
   private readonly handleDisclosureToggle = {
@@ -217,6 +252,15 @@ export class ChatView extends LitElement {
       if (event.target instanceof HTMLDetailsElement) this.scrollFlows.onContentLayoutChanged();
     },
   };
+  // Native `toggle` events do not cross shadow roots, so an expandable block
+  // rendered inside a nested component (a tool card's argument/diff disclosure,
+  // a rendered-markdown disclosure) changes the transcript height without that
+  // event reaching this element. Watch the transcript's blocks for resize so
+  // follow-scroll recalculates its height whenever any of them expands.
+  private readonly transcriptLayoutObserver: ResizeObserver | undefined = typeof ResizeObserver === "undefined"
+    ? undefined
+    : new ResizeObserver(() => { this.scrollFlows.onContentLayoutChanged(); });
+  private transcriptLayoutChildren: Element[] = [];
   private readonly handleWheel = (event: WheelEvent) => {
     if (event.deltaY !== 0) this.scrollFlows.onInteraction();
     if (event.deltaY < 0) this.scrollFlows.onUpIntent();
@@ -265,6 +309,7 @@ export class ChatView extends LitElement {
   private readonly handleClearServerQueue = (): void => {
     this.onClearServerQueue?.();
   };
+
   override connectedCallback(): void {
     super.connectedCallback();
     window.addEventListener("resize", this.onViewportResize);
@@ -274,6 +319,8 @@ export class ChatView extends LitElement {
 
   override disconnectedCallback(): void {
     this.scrollFlows.dispose();
+    this.transcriptLayoutObserver?.disconnect();
+    this.transcriptLayoutChildren = [];
     this.messageActionController.reset();
     window.removeEventListener("resize", this.onViewportResize);
     window.removeEventListener("pagehide", this.onPageHide);
@@ -281,9 +328,17 @@ export class ChatView extends LitElement {
     super.disconnectedCallback();
   }
 
+  protected override firstUpdated(): void {
+    this.lastChromeScrollTop = this.chat?.scrollTop ?? 0;
+  }
+
   private prepareSessionUiState(): void {
     if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId, this.machineId);
     this.loadMoreRequested = false;
+    // A new session starts with the chrome revealed; also reset the scroll
+    // baseline so the first scroll of the next session is not read as a jump.
+    this.setChromeHidden(false);
+    this.lastChromeScrollTop = this.chat?.scrollTop ?? 0;
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -307,17 +362,24 @@ export class ChatView extends LitElement {
       this.scrollFlows.configure();
       if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId, this.machineId);
     }
+    // Pinning reveals the chrome once. Unpinning leaves it where the transcript
+    // last put it, so expanding a panel does not immediately slide the bar away.
+    if (changed.has("chromePinned") && this.chromePinned) this.setChromeHidden(false);
   }
 
   protected override update(changed: Map<string, unknown>): void {
     const previousStart = changed.get("messageStart");
     const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
     const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
+    const prepend = typeof previousStart === "number" && this.messageStart < previousStart;
+    // History prepends and session restores write scrollTop programmatically.
+    // Swallow that scroll sample so the chrome only follows the user's gesture.
+    if (prepend || changed.has("sessionId") || changed.has("machineId")) this.suppressChromeScroll = true;
     this.scrollFlows.beforeRender({
       sessionChanged: changed.has("sessionId") || changed.has("machineId"),
       previousScopeKey: typeof previousSessionId === "string" && typeof previousMachineId === "string"
         ? chatScrollScopeKey(previousMachineId, previousSessionId) : undefined,
-      prepend: typeof previousStart === "number" && this.messageStart < previousStart,
+      prepend,
     });
     super.update(changed);
   }
@@ -338,6 +400,7 @@ export class ChatView extends LitElement {
       this.navigationLocalizationChanged = false;
       this.onNavigationChange?.(this.renderNavigation());
     }
+    this.observeTranscriptLayout();
   }
 
   private readonly renderKeys = new ChatRenderKeys();
@@ -631,6 +694,49 @@ export class ChatView extends LitElement {
     return changed.has("messages") || changed.has("transcriptRenderers") || changed.has("historyReady") || changed.has("messageEnd") || changed.has("messageTotal") || changed.has("onSubmitAsk") || changed.has("pendingDialogs") || changed.has("closedDialogs");
   }
 
+  private updateChromeVisibilityFromScroll(): void {
+    const chat = this.chat;
+    if (!chat) return;
+    if (this.suppressChromeScroll) {
+      this.suppressChromeScroll = false;
+      this.lastChromeScrollTop = chat.scrollTop;
+      return;
+    }
+    // Reveal the app chrome whenever the transcript is pinned to an end: the
+    // live tail (composer reachable) or the start within the floating top
+    // chrome's height, so its reserved padding never shows as a blank strip.
+    if (this.isChatAtBottom() || chat.scrollTop <= this.chromeTopInset) {
+      this.lastChromeScrollTop = chat.scrollTop;
+      this.setChromeHidden(false);
+      return;
+    }
+    const delta = chat.scrollTop - this.lastChromeScrollTop;
+    this.lastChromeScrollTop = chat.scrollTop;
+    // Sliding the chrome away is a direction toggle, not a scroll-linked value:
+    // the CSS transition animates it and no per-frame style work is needed.
+    if (delta >= CHAT_CHROME_HIDE_SCROLL_DELTA) this.setChromeHidden(true);
+    else if (delta <= -CHAT_CHROME_HIDE_SCROLL_DELTA) this.setChromeHidden(false);
+  }
+
+  private setChromeHidden(hidden: boolean): void {
+    // A pinned chrome never follows the transcript: while a panel is collapsed it
+    // is the only route back to that panel and to the other tool tabs.
+    const next = hidden && !this.chromePinned;
+    if (this.chromeHidden === next) return;
+    this.chromeHidden = next;
+    this.dispatchEvent(new CustomEvent<ChatChromeVisibilityDetail>(CHAT_CHROME_VISIBILITY_EVENT, {
+      detail: { hidden: next },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  private isChatAtBottom(): boolean {
+    const chat = this.chat;
+    if (chat === undefined) return false;
+    return chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 2;
+  }
+
   private requestLoadMore(): void {
     if (this.loadMoreRequested || !this.hasMore || this.loadingMore || this.onLoadMore === undefined) return;
     this.loadMoreRequested = true;
@@ -665,6 +771,21 @@ export class ChatView extends LitElement {
 
   private scrollAnchorElements(): HTMLElement[] {
     return Array.from(this.renderRoot.querySelectorAll<HTMLElement>("[data-scroll-anchor-id]"));
+  }
+
+  /** Track the transcript's top-level blocks so a block that grows (for example a
+   *  disclosure expanded inside a nested shadow root) triggers the same layout
+   *  recalculation a native toggle in this shadow tree would. */
+  private observeTranscriptLayout(): void {
+    const observer = this.transcriptLayoutObserver;
+    const container = this.chat;
+    if (observer === undefined || container === undefined) return;
+    const children = [...container.children];
+    const observed = this.transcriptLayoutChildren;
+    if (children.length === observed.length && children.every((child, index) => child === observed[index])) return;
+    for (const child of observed) observer.unobserve(child);
+    for (const child of children) observer.observe(child);
+    this.transcriptLayoutChildren = children;
   }
 
   private groupDisclosureKey(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean): string {

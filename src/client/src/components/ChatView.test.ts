@@ -2,12 +2,15 @@ import { localization } from "../localization/browser";
 import { describe, expect, it } from "vitest";
 import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
 import {
+  ChatView,
   chatEventAnchorKey,
   chatGroupAnchorKey,
   chatMessageAnchorKey,
   chatMessageMetadataLabel,
   chatQueuedMessageSections,
   chatQueuedSectionShowsClearAction,
+  CHAT_CHROME_VISIBILITY_EVENT,
+  type ChatChromeVisibilityDetail,
 } from "./ChatView";
 import { chatSessionWarningRows } from "./chat/SessionWarnings";
 import type { ChatLine } from "./shared";
@@ -44,6 +47,162 @@ describe("chatQueuedSectionShowsClearAction", () => {
     expect(chatQueuedSectionShowsClearAction(clientSection, true)).toBe(false);
   });
 });
+
+describe("ChatView chrome scroll reporting", () => {
+  interface FakeChatMetrics {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  }
+
+  /** Install a fake `.chat` scroller. `@query` defines `chat` as a getter-only
+   *  accessor, so we shadow it with an own data property instead of assigning. */
+  function installFakeChat(view: ChatView, metrics: FakeChatMetrics): void {
+    Object.defineProperty(view, "chat", { value: metrics, configurable: true, writable: true });
+  }
+
+  function setChromeField(view: ChatView, name: string, value: unknown): void {
+    Object.defineProperty(view, name, { value, configurable: true, writable: true });
+  }
+
+  function chromeField(view: ChatView, name: string): unknown {
+    return Object.getOwnPropertyDescriptor(view, name)?.value;
+  }
+
+  function callChromeMethod(view: ChatView, name: string): void {
+    let target: object | null = view;
+    while (target !== null) {
+      const value: unknown = Object.getOwnPropertyDescriptor(target, name)?.value;
+      if (typeof value === "function") {
+        value.call(view);
+        return;
+      }
+      target = Reflect.getPrototypeOf(target);
+    }
+    throw new Error(`ChatView.${name} is not callable`);
+  }
+
+  function isChromeVisibilityEvent(event: Event): event is CustomEvent<ChatChromeVisibilityDetail> {
+    return "detail" in event;
+  }
+
+  function captureChromeVisibility(view: ChatView): CustomEvent<ChatChromeVisibilityDetail>[] {
+    const events: CustomEvent<ChatChromeVisibilityDetail>[] = [];
+    view.addEventListener(CHAT_CHROME_VISIBILITY_EVENT, (event) => { if (isChromeVisibilityEvent(event)) events.push(event); });
+    return events;
+  }
+
+  it("reveals the chrome when scrolling up past the threshold", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 500, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 520);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event?.detail).toEqual({ hidden: false });
+    expect(event?.bubbles).toBe(true);
+    expect(event?.composed).toBe(true);
+  });
+
+  it("hides the chrome when scrolling down past the threshold", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: true });
+  });
+
+  it("keeps a pinned chrome revealed while scrolling down", () => {
+    const view = new ChatView();
+    view.chromePinned = true;
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toEqual([]);
+    expect(chromeField(view, "chromeHidden")).toBe(false);
+  });
+
+  it("hides the chrome again once the host unpins it", () => {
+    const view = new ChatView();
+    view.chromePinned = true;
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    view.chromePinned = false;
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: true });
+  });
+
+  it("always reveals the chrome when pinned to the bottom", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 1000);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: false });
+  });
+
+  it("reveals the chrome within the floating top bar's height of the start", () => {
+    const view = new ChatView();
+    view.chromeTopInset = 80;
+    installFakeChat(view, { scrollTop: 40, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 0);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: false });
+  });
+
+  it("does not toggle the chrome for sub-threshold scrolls", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 505, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(0);
+  });
+
+  it("drops the scroll sample produced by a programmatic scroll", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 100);
+    setChromeField(view, "suppressChromeScroll", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(0);
+    expect(chromeField(view, "lastChromeScrollTop")).toBe(900);
+  });
+});
+
 
 describe("chatSessionWarningRows", () => {
   // Test warning-row shaping directly rather than depending on template markup.

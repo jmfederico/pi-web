@@ -1,5 +1,7 @@
+  /* Transcript headers share one park offset and one effects switch, so a message card,
+     an ask-user card and a group summary all follow the floating chrome. See chatStyles.ts. */
   .ui-transcript-card-header {
-    position: sticky;
+    position: var(--pi-chat-sticky-header-position, sticky);
     top: var(--pi-chat-sticky-top, 0px);
     z-index: 6;
     display: flex;

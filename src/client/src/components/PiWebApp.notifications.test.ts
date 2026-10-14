@@ -81,7 +81,9 @@ it("renders browser and server events in the shell without a selected conversati
   const container = host();
   const area = await areaFor(app, container, true);
   expect(container.querySelector("conversation-layout")).toBeNull();
-  expect(area.parentElement?.tagName).toBe("MAIN");
+  // The area lives in the shell's auto-hiding top chrome, which sits inside main.
+  expect(area.closest("main")).not.toBeNull();
+  expect(area.closest(".top-chrome")).not.toBeNull();
   expect(items(area).map(({ source, severity }) => [source, severity])).toEqual([["browser", "error"], ["server", "info"], ["server", "warning"]]);
   expect(area.renderRoot.textContent).toContain("Browser failure");
   expect(area.renderRoot.textContent).toContain("Server info");
