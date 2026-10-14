@@ -7,6 +7,7 @@ import {
 } from "./pluginBackendProtocol.js";
 import { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
 import { MAX_INLINE_PREVIEW_BYTES } from "./workspaceFiles.js";
+import { PROJECT_GIT_CLONE_TIMEOUT_MS } from "./projectCloneProtocol.js";
 
 export { PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS } from "./pluginBackendProtocol.js";
 export { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
@@ -48,6 +49,7 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/pi-packages/update", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
   { method: "GET", path: "/projects" },
   { method: "POST", path: "/projects" },
+  { method: "POST", path: "/projects/clone", timeoutMs: PROJECT_GIT_CLONE_TIMEOUT_MS, propagateCancellation: true },
   { method: "DELETE", path: "/projects/:projectId" },
   { method: "GET", path: "/project-directories" },
   { method: "GET", path: "/projects/:projectId/workspaces" },

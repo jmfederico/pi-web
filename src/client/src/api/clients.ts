@@ -160,6 +160,11 @@ export const noticesApi = {
 export const projectsApi = {
   projects: (machineId = "local") => request(`${machinePrefix(machineId)}/projects`, arrayOf(parseProject)),
   addProject: (path: string, name?: string, create?: boolean, machineId = "local") => request(`${machinePrefix(machineId)}/projects`, parseProject, { method: "POST", body: JSON.stringify({ path, name, create }) }),
+  cloneProject: (repositoryUrl: string, destinationPath: string, machineId = "local", signal?: AbortSignal) => request(`${machinePrefix(machineId)}/projects/clone`, parseProject, {
+    method: "POST",
+    body: JSON.stringify({ repositoryUrl, destinationPath }),
+    ...(signal === undefined ? {} : { signal }),
+  }),
   closeProject: (projectId: string, machineId = "local") => request(`${machinePrefix(machineId)}/projects/${encodeURIComponent(projectId)}`, parseClosed, { method: "DELETE" }),
   projectDirectories: (query: string, machineId = "local") => request(`${machinePrefix(machineId)}/project-directories?q=${encodeURIComponent(query)}`, arrayOf(parseFileSuggestion)),
 };
