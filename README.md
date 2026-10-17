@@ -33,7 +33,7 @@ pi-web update
 pi-web uninstall
 ```
 
-For installation variants, Docker, and remote access, see the [installation guide](https://pi-web.dev/install).
+For installation variants, [Windows supervised user tasks](https://pi-web.dev/install#windows), Docker, and remote access, see the [installation guide](https://pi-web.dev/install).
 
 ## Core model
 
