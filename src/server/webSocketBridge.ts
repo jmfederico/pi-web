@@ -362,11 +362,15 @@ async function propagatePluginChannelClose(
  * `@fastify/websocket` owns one ws server for unrelated routes, so its public
  * maxPayload option cannot express this route's smaller protocol bound. Update
  * the ws receiver before route listeners run, then tighten it after the larger
- * first open frame. Keep this compatibility seam isolated and fail loudly if a
- * future ws version changes the receiver shape.
+ * first open frame. When a future ws version changes the receiver shape this
+ * still fails loudly, but transports without ws internals at all — Bun's native
+ * server sockets behind `@fastify/websocket` (`BunWebSocketMocked`) — are
+ * skipped instead: they have no receiver to tighten, and the bounded frame
+ * decoders on every message enforce the same byte ceilings anyway.
  */
 export function setPluginBackendChannelSocketPayloadLimit(socket: WebSocket, maxPayload: number): void {
   const receiver: unknown = Reflect.get(socket, "_receiver");
+  if (receiver === undefined) return;
   if (typeof receiver !== "object" || receiver === null || typeof Reflect.get(receiver, "_maxPayload") !== "number") {
     throw new Error("Plugin backend channel transport cannot apply its payload limit");
   }

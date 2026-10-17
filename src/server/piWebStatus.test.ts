@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { piWebRuntimeKind } from "../shared/piWebRuntime.js";
 import { VERSION as PI_CODING_AGENT_VERSION } from "@earendil-works/pi-coding-agent";
 import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
@@ -49,6 +50,47 @@ describe("PI WEB status", () => {
     expect(status.components.web.component).toBe("web");
     expect(status.components.sessiond.runtimeVersion).toBe("1.202605.7");
     expect(status).not.toHaveProperty("release");
+  });
+
+  // ACCEPTANCE A6: the version report says which runtime each component process runs on, so a
+  // bun-vs-node problem is diagnosable without guessing. A daemon that predates the field stays
+  // silent rather than inheriting the web process's answer, which would be a lie.
+  it("reports the runtime of each component process", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.web.runtime).toBe(piWebRuntimeKind());
+    expect(status.components.sessiond.runtime).toBe("bun");
+    expect(runtime.components.web.runtime).toBe(piWebRuntimeKind());
+    expect(runtime.components.sessiond.runtime).toBe("bun");
+  });
+
+  // The daemon answers for itself, so the report has to name itself: a payload that claims to be
+  // the web component must never fill the sessiond slot with a runtime this process never saw.
+  it("rejects a session daemon runtime report that describes another component", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), component: "web", runtime: "bun" });
+
+    const [status, runtime] = await Promise.all([
+      getPiWebVersionStatus(daemon),
+      getPiWebRuntime(daemon),
+    ]);
+
+    expect(status.components.sessiond.available).toBe(false);
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
+    expect(runtime.components.sessiond.available).toBe(false);
+    expect(runtime.components.sessiond).not.toHaveProperty("runtime");
+    expect(status.components.web.runtime).toBe(piWebRuntimeKind());
+  });
+
+  it("omits the session daemon runtime when the daemon does not report one", async () => {
+    const status = await getPiWebVersionStatus(daemonWithRuntime(runningSessiondRuntime()));
+
+    expect(status.components.web.runtime).toBe(piWebRuntimeKind());
+    expect(status.components.sessiond).not.toHaveProperty("runtime");
   });
 
   it("reports the loaded Pi version for each component, preferring the daemon report", async () => {

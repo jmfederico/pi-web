@@ -6,7 +6,7 @@
 // lives in pi-web-plugin.ts.
 
 import type { TemplateResult } from "lit";
-import type { ApplicationPanelContext, HtmlTemplateTag, MachineKind, PiWebComponentStatus, PiWebInstallationInfo, PiWebReleaseStatus, PiWebStatusResponse, PluginMachine, PluginRuntimeContext, Workspace } from "@jmfederico/pi-web/plugin-api";
+import type { ApplicationPanelContext, HtmlTemplateTag, MachineKind, PiWebComponentStatus, PiWebInstallationInfo, PiWebReleaseStatus, PiWebRuntime, PiWebStatusResponse, PluginMachine, PluginRuntimeContext, Workspace } from "@jmfederico/pi-web/plugin-api";
 
 export type ComponentHealth = "current" | "restart needed" | "unavailable";
 
@@ -48,12 +48,79 @@ export function releaseSummary(release: PiWebReleaseStatus): string {
   return "Up to date";
 }
 
+const RUNTIME_LABELS: Record<PiWebRuntime, string> = { bun: "Bun", node: "Node.js" };
+
+/**
+ * Runtime name and engine version as one label (e.g. "Bun 1.4.2"). A component
+ * that predates runtime reporting reads "runtime unknown" rather than inheriting
+ * a runtime from the component that happens to be reporting.
+ */
+export function runtimeLabel(component: PiWebComponentStatus): string {
+  if (component.runtime === undefined) return "runtime unknown";
+  const name = RUNTIME_LABELS[component.runtime];
+  return component.runtimeEngine === undefined || component.runtimeEngine === "" ? name : `${name} ${component.runtimeEngine}`;
+}
+
+// Order matters: Edge, Chrome, and Safari all present as compatible engines, so
+// the most specific token must win before the generic one it impersonates.
+const BROWSER_SIGNATURES: readonly { readonly token: string; readonly name: string; readonly versionAfter: string }[] = [
+  { token: "Edg/", name: "Edge", versionAfter: "Edg/" },
+  { token: "OPR/", name: "Opera", versionAfter: "OPR/" },
+  { token: "Firefox/", name: "Firefox", versionAfter: "Firefox/" },
+  { token: "Chrome/", name: "Chrome", versionAfter: "Chrome/" },
+  { token: "Version/", name: "Safari", versionAfter: "Version/" },
+];
+
+/** Browser name and version from a user agent, or a stable unknown label. */
+export function browserRuntimeLabel(userAgent: string | undefined): string {
+  if (userAgent === undefined || userAgent === "") return "unknown browser";
+  for (const signature of BROWSER_SIGNATURES) {
+    const index = userAgent.indexOf(signature.token);
+    if (index === -1) continue;
+    const version = userAgent.slice(index + signature.versionAfter.length).split(/[\s;)]/u)[0];
+    if (version === undefined || version === "") continue;
+    // Chromium pads its version with build numbers (142.0.7444.60); the first
+    // three parts identify the build without the noise. Others stay complete.
+    const trimmed = version.split(".").slice(0, 3).join(".");
+    if (trimmed === "") continue;
+    return `${signature.name} ${trimmed}`;
+  }
+  return "unknown browser";
+}
+
+/**
+ * Anonymize a user's system paths for pasting into a bug report: the home
+ * directory becomes `~` and the username is masked everywhere else. Both rules
+ * only match whole path segments, so a user named `alice` rewrites
+ * `/srv/alice/checkout` but never `/srv/alicia` or `/home/alicealice`.
+ */
+export function redactUserPaths(text: string, home: string | undefined): string {
+  if (home === undefined || home === "") return text;
+  const trimmedHome = home.replace(/[/\\]+$/u, "");
+  if (trimmedHome === "") return text;
+  const username = trimmedHome.split(/[/\\]/u).pop();
+
+  // The home directory is collapsed first, matched on a path boundary so a
+  // longer sibling such as `/home/alicealice` is left alone.
+  const escapedHome = trimmedHome.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const homeBoundary = /^[/\\]/u.test(trimmedHome) ? "(^|[\\s:])" : "(^|[\\s:\\\\/])";
+  let redacted = text.replace(new RegExp(`${homeBoundary}${escapedHome}(?=$|[/\\\\])`, "gu"), "$1~");
+
+  // Whatever username remains elsewhere is masked whole-segment, so
+  // `/srv/alice/x` becomes `/srv/<user>/x` while `/srv/alicia/x` survives.
+  if (username === undefined || username === "" || username.length < 2) return redacted;
+  const escapedUser = username.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  redacted = redacted.replace(new RegExp(`(^|[\\\\/])${escapedUser}(?=$|[\\\\/])`, "gu"), "$1<user>");
+  return redacted;
+}
+
 /** One-line component summary used by the panel rows and the clipboard diagnostics. */
 export function componentDetails(component: PiWebComponentStatus): string {
   const parts = [
     `running ${formatVersion(component.runtimeVersion)}`,
     `installed ${formatVersion(component.installedVersion)}`,
     `pi ${formatVersion(component.piVersion)}`,
+    runtimeLabel(component),
     componentHealth(component),
     installationLabel(component.installation),
   ];
@@ -80,10 +147,17 @@ export interface DiagnosticsInput {
   status: PiWebStatusResponse | undefined;
   machine?: PluginMachine | undefined;
   workspace?: Workspace | undefined;
+  /** Browser user agent, so a UI report says which browser it came from. */
+  userAgent?: string | undefined;
+  /**
+   * User home directory. When supplied, the copied block anonymizes it to `~`
+   * and masks the username elsewhere, so a report never leaks a system account.
+   */
+  home?: string | undefined;
 }
 
 /** Plain-text status block suitable for pasting into a bug report. */
-export function diagnosticsSummary({ status, machine, workspace }: DiagnosticsInput): string {
+export function diagnosticsSummary({ status, machine, workspace, userAgent, home }: DiagnosticsInput): string {
   const lines: string[] = ["PI WEB diagnostics"];
   if (status === undefined) {
     lines.push("Status: unavailable");
@@ -95,13 +169,16 @@ export function diagnosticsSummary({ status, machine, workspace }: DiagnosticsIn
     lines.push(`Release: ${releaseSummary(status.release)}${checked}`);
     lines.push(`Status generated: ${status.generatedAt}`);
   }
+  const browser = browserRuntimeLabel(userAgent);
+  if (browser !== "unknown browser") lines.push(`Browser: ${browser}`);
   if (machine !== undefined) lines.push(`Machine: ${machine.name} (${machineKindLabel(machine.kind)})`);
   if (workspace === undefined) {
     lines.push("Workspace: none selected");
   } else {
     lines.push(`Workspace: ${workspace.label} — ${workspace.path} (${workspaceFlags(workspace).join(", ")})`);
   }
-  return lines.join("\n");
+  const redacted = redactUserPaths(lines.join("\n"), home);
+  return redacted;
 }
 
 /** Action body: copy the diagnostics summary for the current runtime context. */
@@ -110,8 +187,22 @@ export async function copyDiagnostics(context: PluginRuntimeContext): Promise<vo
     status: context.state.piWebStatus,
     machine: context.state.selectedMachine,
     workspace: context.state.selectedWorkspace,
+    userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+    home: homeDirectory(context.state.selectedWorkspace?.path),
   });
   await navigator.clipboard.writeText(summary);
+}
+
+/**
+ * Infer the user's home directory from the paths the browser already holds.
+ * Browser plugins never receive server environment variables, and the path
+ * prefix (`/home/<user>`, `/Users/<user>`, `/root`) is enough to anonymize a
+ * report without a round trip to the host.
+ */
+function homeDirectory(workspacePath: string | undefined): string | undefined {
+  if (workspacePath === undefined) return undefined;
+  const match = /^(\/home\/[^/]+|\/Users\/[^/]+|\/root)(?=\/|$)/u.exec(workspacePath);
+  return match?.[1];
 }
 
 function renderComponent(html: HtmlTemplateTag, component: PiWebComponentStatus): TemplateResult {
@@ -120,6 +211,7 @@ function renderComponent(html: HtmlTemplateTag, component: PiWebComponentStatus)
     <div class="info-component">
       <strong>${component.label}</strong>
       <span class=${health === "current" ? "info-health-ok" : "info-health-attention"}>${health}</span>
+      <small>Runtime: ${runtimeLabel(component)}</small>
       <small>${componentDetails(component)}</small>
     </div>
   `;
@@ -140,6 +232,10 @@ function renderStatusSection(html: HtmlTemplateTag, status: PiWebStatusResponse 
   return html`
     <section>
       <strong>PI WEB</strong>
+      <div class="info-row">
+        <span>Runtime</span>
+        <span>${runtimeLabel(web)}</span>
+      </div>
       <div class="info-row">
         <span>Version</span>
         <span>${formatVersion(web.runtimeVersion)}</span>

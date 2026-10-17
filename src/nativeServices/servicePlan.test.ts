@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createDevelopmentNativeServicePlan,
+  nativeServicePrerequisiteNeedsPathAdvice,
   planValidationProbeRequests,
   resolveProductionNativeServicePlan,
   type NativeServiceAuthoritativeProbe,
@@ -26,12 +27,12 @@ function productionInput(): ProductionNativeServicePlanInput {
       sessiond: {
         configuredCommand: undefined,
         namedCommand: "pi-web-sessiond",
-        bundledEntrypointPath: "/package/dist/server/sessiond.js",
+        bundledLauncherPath: "/package/dist/bin/pi-web-sessiond.sh",
       },
       web: {
         configuredCommand: undefined,
         namedCommand: "pi-web-server",
-        bundledEntrypointPath: "/package/dist/server/index.js",
+        bundledLauncherPath: "/package/dist/bin/pi-web-server.sh",
       },
     },
   };
@@ -76,8 +77,18 @@ describe("production native service planning", () => {
         environment: { PI_WEB_CONFIG: "/home/user/.config/pi-web/config.json" },
         workingDirectory: null,
         prerequisites: [
-          expect.objectContaining({ id: "sessiond.command.pi-web-sessiond", kind: "command-available", command: "pi-web-sessiond" }),
-          expect.objectContaining({ id: "web.command.pi-web-server", kind: "command-available", command: "pi-web-server" }),
+          expect.objectContaining({
+            id: "sessiond.command.pi-web-sessiond",
+            kind: "command-available",
+            command: "pi-web-sessiond",
+            identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+          }),
+          expect.objectContaining({
+            id: "web.command.pi-web-server",
+            kind: "command-available",
+            command: "pi-web-server",
+            identicalTo: "/package/dist/bin/pi-web-server.sh",
+          }),
         ],
       },
     ]);
@@ -99,8 +110,13 @@ describe("production native service planning", () => {
           after: [],
           wants: [],
           prerequisites: [
-            { id: "sessiond.command.pi-web-sessiond", kind: "command-available", command: "pi-web-sessiond" },
-            { id: "sessiond.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
+            {
+              id: "sessiond.command.pi-web-sessiond",
+              kind: "command-available",
+              command: "pi-web-sessiond",
+              identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+            },
+            { id: "sessiond.runtime", kind: "runtime", command: "pi-web-sessiond" },
           ],
         },
         {
@@ -110,8 +126,13 @@ describe("production native service planning", () => {
           after: ["sessiond"],
           wants: ["sessiond"],
           prerequisites: [
-            { id: "web.command.pi-web-server", kind: "command-available", command: "pi-web-server" },
-            { id: "web.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
+            {
+              id: "web.command.pi-web-server",
+              kind: "command-available",
+              command: "pi-web-server",
+              identicalTo: "/package/dist/bin/pi-web-server.sh",
+            },
+            { id: "web.runtime", kind: "runtime", command: "pi-web-server" },
           ],
         },
       ],
@@ -125,12 +146,80 @@ describe("production native service planning", () => {
         workingDirectory: null,
         prerequisites: [
           { id: "sessiond.command.pi-web-sessiond" },
-          { id: "sessiond.node" },
+          { id: "sessiond.runtime" },
           { id: "web.command.pi-web-server" },
-          { id: "web.node" },
+          { id: "web.runtime" },
         ],
       },
     ]);
+  });
+
+  // A probe must never have side effects. The named command can belong to a different PI WEB
+  // release than the running code — before the launchers shipped, `pi-web-sessiond` was the
+  // JavaScript entrypoint, which ignores `--print-runtime` and starts a real session daemon
+  // (observed directly while verifying the §8 matrix). So the named command is only selected when
+  // it is byte-identical to the launcher this package ships, and otherwise the plan execs the
+  // bundled launcher path, which is guaranteed to be ours.
+  it("rejects a named command that is not the launcher shipped by this package", async () => {
+    const input = productionInput();
+    const probe: NativeServiceAuthoritativeProbe = {
+      run: (request) => Promise.resolve({
+        kind: "completed",
+        outcomes: request.prerequisites.map((prerequisite) => ({
+          prerequisiteId: prerequisite.id,
+          status: prerequisite.kind === "command-available" ? "unsatisfied" as const : "satisfied" as const,
+          detail: prerequisite.kind === "command-available" ? "resolved to a different file" : null,
+        })),
+      }),
+    };
+
+    const resolution = await resolveProductionNativeServicePlan(input, { probe, fileExists: () => true });
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) throw new Error(JSON.stringify(resolution.failures));
+    expect(resolution.plan.services.map((service) => service.strategy)).toEqual([
+      {
+        kind: "bundled-entrypoint",
+        command: "/package/dist/bin/pi-web-sessiond.sh",
+        namedCommand: "pi-web-sessiond",
+        namedCommandFailure: "resolved to a different file",
+      },
+      {
+        kind: "bundled-entrypoint",
+        command: "/package/dist/bin/pi-web-server.sh",
+        namedCommand: "pi-web-server",
+        namedCommandFailure: "resolved to a different file",
+      },
+    ]);
+    // The bundled launcher is judged without any identity comparison — it is the compared file.
+    expect(resolution.plan.services[0]?.prerequisites).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "command-available" })]),
+    );
+  });
+
+  // PATH advice would be wrong here: the command is in PATH, it just is not our launcher.
+  it("does not recommend PATH changes for a launcher identity mismatch", () => {
+    const prerequisite = {
+      id: "sessiond.command.pi-web-sessiond",
+      kind: "command-available" as const,
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named command is the bundled launcher",
+    };
+
+    expect(nativeServicePrerequisiteNeedsPathAdvice(prerequisite)).toBe(false);
+    expect(nativeServicePrerequisiteNeedsPathAdvice({
+      id: "sessiond.command.npm",
+      kind: "command-available",
+      command: "npm",
+      description: "npm is available",
+    })).toBe(true);
+    expect(nativeServicePrerequisiteNeedsPathAdvice({
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "launcher selects a runtime",
+    })).toBe(true);
   });
 
   it("preserves configured overrides verbatim and never probes or executes them", async () => {
@@ -174,9 +263,9 @@ describe("production native service planning", () => {
     }]);
   });
 
-  it("falls back per service to bundled entrypoints when named commands are unavailable", async () => {
+  it("falls back per service to the bundled runtime launcher when named commands are unavailable", async () => {
     const input = productionInput();
-    input.executables.sessiond.bundledEntrypointPath = "/package with space/sessiond's entry.js";
+    input.executables.sessiond.bundledLauncherPath = "/package with space/pi-web-sessiond's.sh";
     const fileExists = vi.fn<(path: string) => boolean>(() => true);
 
     const resolution = await resolveProductionNativeServicePlan(input, {
@@ -188,18 +277,51 @@ describe("production native service planning", () => {
     expect(resolution.ok).toBe(true);
     if (!resolution.ok) throw new Error(JSON.stringify(resolution.failures));
     expect(resolution.plan.services[0]).toMatchObject({
-      shellCommand: "exec node '/package with space/sessiond'\\''s entry.js'",
+      shellCommand: "exec '/package with space/pi-web-sessiond'\\''s.sh'",
       strategy: {
         kind: "bundled-entrypoint",
-        command: "node",
+        command: "/package with space/pi-web-sessiond's.sh",
         namedCommand: "pi-web-sessiond",
         namedCommandFailure: "command not found",
       },
       prerequisites: [
-        { id: "sessiond.node", kind: "node-version", command: "node", minimumVersion: "22.19.0" },
-        { id: "sessiond.entrypoint", kind: "readable-file", path: "/package with space/sessiond's entry.js" },
+        { id: "sessiond.runtime", kind: "runtime", command: "/package with space/pi-web-sessiond's.sh" },
+        { id: "sessiond.entrypoint", kind: "readable-file", path: "/package with space/pi-web-sessiond's.sh" },
       ],
     });
+    // The service execs the launcher, never an interpreter chosen at install time: PI_WEB_RUNTIME
+    // stays decidable at start, in the unit itself (SPEC D2/D3).
+    expect(resolution.plan.services[0]?.shellCommand).not.toContain("node ");
+    expect(resolution.plan.services[1]).toMatchObject({
+      shellCommand: "exec '/package/dist/bin/pi-web-server.sh'",
+      prerequisites: [
+        { id: "web.runtime", kind: "runtime", command: "/package/dist/bin/pi-web-server.sh" },
+        { id: "web.entrypoint", kind: "readable-file", path: "/package/dist/bin/pi-web-server.sh" },
+      ],
+    });
+  });
+
+  // SPEC D3: the launcher is the single source of truth for runtime selection and version
+  // floors, so a production plan must not carry a node-version requirement of its own. A
+  // bun-only machine has to pass preflight in both strategy branches.
+  it("carries no node-version requirement in any production strategy", async () => {
+    const named = await resolveProductionNativeServicePlan(productionInput(), {
+      probe: completedProbe("satisfied"),
+      fileExists: () => true,
+    });
+    expect(named.ok).toBe(true);
+    const bundled = await resolveProductionNativeServicePlan(productionInput(), {
+      probe: completedProbe("unsatisfied", "command not found"),
+      fileExists: () => true,
+    });
+    expect(bundled.ok).toBe(true);
+
+    for (const resolution of [named, bundled]) {
+      if (!resolution.ok) throw new Error(JSON.stringify(resolution.failures));
+      const kinds = resolution.plan.services.flatMap((service) => service.prerequisites.map((prerequisite) => prerequisite.kind));
+      expect(kinds).not.toContain("node-version");
+      expect(kinds).toContain("runtime");
+    }
   });
 
   it("mixes configured, named, and bundled decisions without unrelated checks", async () => {
@@ -241,14 +363,14 @@ describe("production native service planning", () => {
           serviceId: "sessiond",
           namedCommand: "pi-web-sessiond",
           namedCommandFailure: "not found in service PATH",
-          bundledEntrypointPath: "/package/dist/server/sessiond.js",
+          bundledLauncherPath: "/package/dist/bin/pi-web-sessiond.sh",
         },
         {
           kind: "executable-unavailable",
           serviceId: "web",
           namedCommand: "pi-web-server",
           namedCommandFailure: "not found in service PATH",
-          bundledEntrypointPath: "/package/dist/server/index.js",
+          bundledLauncherPath: "/package/dist/bin/pi-web-server.sh",
         },
       ],
     });

@@ -104,8 +104,6 @@ describe("plugin delivery artifacts", () => {
     const builtPackageFiles = (await recursiveFiles(builtPackagesRoot)).map((path) => `dist/pi-packages/${path}`).sort();
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/package.json");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/pi-web-plugin.js");
-    expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay.md");
-    expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
     expect(builtPackageFiles).toEqual(expect.arrayContaining([

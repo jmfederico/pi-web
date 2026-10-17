@@ -12,6 +12,7 @@ import {
   createBufferedSender,
   installPluginBackendChannelWebSocketPayloadLimit,
   markPluginBackendChannelUpgradeRequest,
+  setPluginBackendChannelSocketPayloadLimit,
 } from "./webSocketBridge.js";
 
 const servers = new Set<WebSocketServer>();
@@ -104,6 +105,42 @@ describe("plugin backend channel upgrade payload limit", () => {
       .toEqual(unrelatedPaths.map(() => defaultMaxPayload));
   });
 });
+
+describe("setPluginBackendChannelSocketPayloadLimit", () => {
+  it("tightens npm ws receivers, skips receivers-less transports, and still fails on receiver drift", async () => {
+    const { bridgeSocket } = await createSocketPair();
+    const originalReceiver = reflectObject(bridgeSocket, "_receiver");
+    const originalMaxPayload = reflectValue(originalReceiver, "_maxPayload");
+
+    setPluginBackendChannelSocketPayloadLimit(bridgeSocket, PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES);
+    expect(Reflect.get(originalReceiver, "_maxPayload")).toBe(PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES);
+
+    Reflect.set(bridgeSocket, "_receiver", undefined);
+    expect(() => {
+      setPluginBackendChannelSocketPayloadLimit(bridgeSocket, PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES);
+    }).not.toThrow();
+
+    for (const drifted of [{}, { _maxPayload: "8388608" }]) {
+      Reflect.set(bridgeSocket, "_receiver", drifted);
+      expect(() => {
+        setPluginBackendChannelSocketPayloadLimit(bridgeSocket, PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES);
+      }).toThrow("Plugin backend channel transport cannot apply its payload limit");
+    }
+
+    Reflect.set(bridgeSocket, "_receiver", originalReceiver);
+    Reflect.set(originalReceiver, "_maxPayload", originalMaxPayload);
+  });
+});
+
+function reflectObject(target: object, key: string): object {
+  const value: unknown = Reflect.get(target, key);
+  if (typeof value !== "object" || value === null) throw new Error(`Expected ${key} to be an object`);
+  return value;
+}
+
+function reflectValue(target: object, key: string): unknown {
+  return Reflect.get(target, key);
+}
 
 describe("bounded plugin backend channel bridge", () => {
   it("forwards opaque bounded UTF-8 text without interpreting envelope semantics", async () => {

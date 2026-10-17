@@ -190,7 +190,14 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
         ...(activeAgentProfile.status === "available" ? { activeAgentProfile: activeAgentProfile.profile } : {}),
       });
     },
-    { onError: (error) => { app.log.warn({ err: error }, "failed to refresh PI WEB status cache"); } },
+    {
+      onError: (error) => { app.log.warn({ err: error }, "failed to refresh PI WEB status cache"); },
+      // A session daemon that is still starting reports `available: false`. That is a
+      // transient state, not an authoritative one: caching it would advertise the daemon
+      // as unavailable for the whole TTL after it became reachable. Serve it once and
+      // retry on the next read instead.
+      isCacheable: (status) => status.components.sessiond.available,
+    },
   );
   const machines = deps.machines ?? new MachineService(undefined, {
     localRuntime: () => getPiWebRuntime(sessionDaemon),

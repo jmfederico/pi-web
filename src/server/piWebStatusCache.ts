@@ -6,6 +6,13 @@ export interface PiWebStatusCacheOptions {
   ttlMs?: number;
   now?: () => number;
   onError?: (error: unknown) => void;
+  /**
+   * Reports whether a loaded status is authoritative enough to serve for the
+   * whole TTL. Transient states, such as a session daemon that has not finished
+   * starting, return false so the next read retries instead of freezing a stale
+   * "unavailable" component for the full TTL.
+   */
+  isCacheable?: (status: PiWebStatusResponse) => boolean;
 }
 
 export interface PiWebStatusCacheLoadOptions {
@@ -25,6 +32,7 @@ export interface PiWebStatusCache {
 export function createPiWebStatusCache(load: (options: PiWebStatusCacheLoadOptions) => Promise<PiWebStatusResponse>, options: PiWebStatusCacheOptions = {}): PiWebStatusCache {
   const ttlMs = options.ttlMs ?? DEFAULT_PI_WEB_STATUS_CACHE_TTL_MS;
   const now = options.now ?? Date.now;
+  const isCacheable = options.isCacheable ?? (() => true);
   let cached: { status: PiWebStatusResponse; expiresAt: number } | undefined;
   let pending: { promise: Promise<PiWebStatusResponse>; force: boolean; sequence: number } | undefined;
   let loadSequence = 0;
@@ -37,7 +45,7 @@ export function createPiWebStatusCache(load: (options: PiWebStatusCacheLoadOptio
     const promise = Promise.resolve()
       .then(() => load({ force }))
       .then((status) => {
-        if (sequence === loadSequence) cached = { status, expiresAt: now() + ttlMs };
+        if (sequence === loadSequence && isCacheable(status)) cached = { status, expiresAt: now() + ttlMs };
         return status;
       })
       .finally(() => {

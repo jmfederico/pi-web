@@ -46,3 +46,16 @@ jobs:
       - name: Smoke test npm 12 global package install (main/manual)
         if: runner.os == 'Linux' && github.event_name != 'pull_request'
         run: npm run smoke:package-install
+      # recent enough to provide Bun.Terminal, which the smoke asserts on.
+      - name: Setup Bun
+        if: runner.os == 'Linux'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Smoke test bun global package install
+        if: runner.os == 'Linux'
+        run: npm run smoke:bun-install
+
+      - name: Check npm package contents
+        run: npm run pack:dry

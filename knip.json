@@ -26,5 +26,9 @@
     "pi-packages/**/*.ts"
   ],
   "ignoreBinaries": ["mkfifo"],
+  "ignoreDependencies": [
+    "node-pty",
+    "pi-subagents"
+  ],
   "ignoreExportsUsedInFile": true
 }

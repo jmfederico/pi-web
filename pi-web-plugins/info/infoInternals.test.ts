@@ -36,8 +36,12 @@ describe("releaseSummary", () => {
 });
 
 describe("componentDetails", () => {
-  it("combines versions, health, and installation into one line", () => {
-    expect(componentDetails(componentStatus())).toBe("running 1.0.0 · installed 1.0.0 · pi 0.84.1 · current · global npm package · /usr/lib/node_modules");
+  it("combines versions, runtime, health, and installation into one line", () => {
+    expect(componentDetails(componentStatus())).toBe("running 1.0.0 · installed 1.0.0 · pi 0.84.1 · Node.js v24.19.0 · current · global npm package · /usr/lib/node_modules");
+  });
+
+  it("reports the runtime even when the component does not report one", () => {
+    expect(componentDetails(componentStatusWithoutRuntime())).toContain("runtime unknown");
   });
 
   it("reports the Pi version as unknown when the component does not report one", () => {
@@ -74,8 +78,8 @@ describe("diagnosticsSummary", () => {
     expect(summary).toBe([
       "PI WEB diagnostics",
       "Package: @jmfederico/pi-web",
-      "Web/UI: running 1.0.0 · installed 1.0.1 · pi 0.84.1 · restart needed · global npm package · /usr/lib/node_modules",
-      "Session daemon: running 1.0.0 · installed 1.0.0 · pi 0.84.1 · current · local checkout · /srv/dev/pi-web",
+      "Web/UI: running 1.0.0 · installed 1.0.1 · pi 0.84.1 · Bun 1.4.2 · restart needed · global npm package · /usr/lib/node_modules",
+      "Session daemon: running 1.0.0 · installed 1.0.0 · pi 0.84.1 · Node.js v24.19.0 · current · local checkout · /srv/dev/pi-web",
       "Release: Update available: 1.1.0 (checked 2025-01-02T03:04:05Z)",
       "Status generated: 2025-01-02T03:04:06Z",
       "Machine: devbox (local machine)",
@@ -91,6 +95,23 @@ describe("diagnosticsSummary", () => {
       "Status: unavailable",
       "Workspace: none selected",
     ].join("\n"));
+  });
+
+  it("adds the browser when a user agent is known", () => {
+    const summary = diagnosticsSummary({ status: statusResponse(), userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.60 Safari/537.36" });
+
+    expect(summary).toContain("Browser: Chrome 142.0.7444");
+  });
+
+  it("omits the browser line when the user agent is unknown", () => {
+    expect(diagnosticsSummary({ status: statusResponse(), userAgent: "" })).not.toContain("Browser:");
+  });
+
+  it("anonymizes the home directory and username when a home directory is supplied", () => {
+    const summary = diagnosticsSummary({ status: statusResponse(), workspace: workspaceFixture({ path: "/home/alice/dev/pi-web" }), home: "/home/alice" });
+
+    expect(summary).toContain("Workspace: pi-web — ~/dev/pi-web");
+    expect(summary).not.toContain("alice");
   });
 });
 
@@ -132,6 +153,8 @@ function componentStatus(patch: Partial<PiWebComponentStatus> = {}): PiWebCompon
     runtimeVersion: "1.0.0",
     installedVersion: "1.0.0",
     piVersion: "0.84.1",
+    runtime: "node",
+    runtimeEngine: "v24.19.0",
     stale: false,
     available: true,
     installation: { kind: "npm-global", path: "/usr/lib/node_modules" },
@@ -143,6 +166,14 @@ function componentStatus(patch: Partial<PiWebComponentStatus> = {}): PiWebCompon
 function componentStatusWithoutPi(patch: Partial<PiWebComponentStatus> = {}): PiWebComponentStatus {
   const component = componentStatus(patch);
   delete component.piVersion;
+  return component;
+}
+
+/** Component status from a host that predates runtime reporting. */
+function componentStatusWithoutRuntime(): PiWebComponentStatus {
+  const component = componentStatus();
+  delete component.runtime;
+  delete component.runtimeEngine;
   return component;
 }
 
@@ -160,8 +191,8 @@ function statusResponse(): PiWebStatusResponse {
     packageName: "@jmfederico/pi-web",
     generatedAt: "2025-01-02T03:04:06Z",
     components: {
-      web: componentStatus({ installedVersion: "1.0.1", stale: true }),
-      sessiond: componentStatus({ component: "sessiond", label: "Session daemon", installation: { kind: "local", path: "/srv/dev/pi-web" } }),
+      web: componentStatus({ installedVersion: "1.0.1", stale: true, runtime: "bun", runtimeEngine: "1.4.2" }),
+      sessiond: componentStatus({ component: "sessiond", label: "Session daemon", installation: { kind: "local", path: "/srv/dev/pi-web" }, runtime: "node", runtimeEngine: "v24.19.0" }),
     },
     release: release({ updateAvailable: true, latestVersion: "1.1.0" }),
     commands: {},

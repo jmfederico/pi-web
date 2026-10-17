@@ -39,6 +39,33 @@ describe("Info plugin copy-diagnostics action", () => {
     expect(summary).toContain("Machine: devbox (local machine)");
     expect(summary).toContain("Workspace: pi-web — /srv/dev/pi-web (provider: git, main workspace)");
   });
+
+  it("includes the browser and anonymizes a home-directory workspace", async () => {
+    const writeText = vi.fn((text: string) => { void text; return Promise.resolve(); });
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.7444.60 Safari/537.36",
+      clipboard: { writeText },
+    });
+    const action = findCopyDiagnosticsAction();
+    const context = runtimeContext({
+      state: {
+        selectedWorkspace: {
+          id: "ws-1",
+          projectId: "proj-1",
+          path: "/home/alice/dev/pi-web",
+          label: "pi-web",
+          isMain: true,
+        },
+      },
+    });
+
+    await action.run(context);
+
+    const summary = writeText.mock.calls[0]?.[0];
+    expect(summary).toContain("Browser: Chrome 142.0.7444");
+    expect(summary).toContain("Workspace: pi-web — ~/dev/pi-web");
+    expect(summary).not.toContain("alice");
+  });
 });
 
 function findCopyDiagnosticsAction() {

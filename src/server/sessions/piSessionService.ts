@@ -2572,7 +2572,7 @@ export class PiSessionService implements SessionRouteService {
     );
   }
 
-  private browserTranscriptMessage(session: PiAgentSession, message: unknown): unknown {
+  private browserTranscriptMessage<T>(session: PiAgentSession, message: T): T {
     return projectTranscriptMarkdown(message, session.extensionRunner.getMarkdownTransformers(), (error, transformerIndex) => {
       this.logger.info({ err: error, sessionId: session.sessionId, transformerIndex }, "Transcript Markdown transformer failed");
     });
@@ -2897,7 +2897,7 @@ export class PiSessionService implements SessionRouteService {
     const echoes = this.pendingPromptEchoes.get(session) ?? [];
     const userCount = historyMessagesFromEntries(session.sessionManager.getBranch()).filter((message) => isRecord(message) && message["role"] === "user").length;
     const echo = behavior === undefined && echoUserMessage
-      ? { userIndex: Math.max(userCount, ...echoes.map((pending) => pending.userIndex + 1)), message: userMessage(text, images) }
+      ? { userIndex: Math.max(userCount, ...echoes.map((pending) => pending.userIndex + 1)), message: this.browserTranscriptMessage(session, userMessage(text, images)) }
       : undefined;
     if (echo !== undefined) {
       // SDK input hooks may await before appending the user message. Keep the
@@ -4548,6 +4548,12 @@ export class PiSessionService implements SessionRouteService {
     this.restoreSubsessionReceipts(session);
     this.reconcileRuntimeMessageCount(session);
     const unsubscribe = session.subscribe((event) => {
+      const clientEvent = toClientEvent(event, session.thinkingLevel);
+      if ((clientEvent.type === "message.end" || clientEvent.type === "message.append") && clientEvent.message !== undefined) {
+        clientEvent.message = this.browserTranscriptMessage(session, clientEvent.message);
+      }
+      this.events.publish(session.sessionId, clientEvent, { id: session.sessionId, cwd: session.sessionManager.getCwd() });
+      this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
       const message = getProperty(event, "message");
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
@@ -4598,6 +4604,7 @@ export class PiSessionService implements SessionRouteService {
       this.events.publish(session.sessionId, clientEvent, { id: session.sessionId, cwd: session.sessionManager.getCwd() });
       if ((eventType === "message_end" && getString(message, "role") === "assistant") || eventType === "agent_end") {
         this.assistantStreamIds.delete(session);
+      }
       }
       this.publishActivityForEvent(session, event);
       if (eventType === "message_start" && getString(message, "role") === "user") this.suggestedInputs.delete(session.sessionId);

@@ -27,12 +27,24 @@ export function parsePiWebRuntimeResponse(value: unknown): PiWebRuntimeResponse 
   return { packageName, generatedAt, components: { web, sessiond }, capabilities };
 }
 
+/**
+ * Parses the session daemon's own `/runtime` report. The component field has to say `sessiond`:
+ * this is the only runtime value the web process may show for the daemon, and accepting a payload
+ * that describes something else would let the daemon slot carry a runtime nobody measured.
+ */
+export function parseSessiondRuntimeComponent(value: unknown): PiWebRuntimeComponent | undefined {
+  const component = parsePiWebRuntimeComponent(value);
+  return component?.component === "sessiond" ? component : undefined;
+}
+
 export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponent | undefined {
   if (!isRecord(value)) return undefined;
   const component = value["component"];
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
+  const runtimeEngine = value["runtimeEngine"];
   const piVersion = value["piVersion"];
+  const runtime = value["runtime"];
   const available = value["available"];
   const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
   const activeAgentProfileValue = value["activeAgentProfile"];
@@ -46,7 +58,9 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
     component,
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
+    ...(typeof runtimeEngine === "string" ? { runtimeEngine } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
+    ...(runtime === "bun" || runtime === "node" ? { runtime } : {}),
     available,
     capabilities,
     ...(activeAgentProfile === undefined ? {} : { activeAgentProfile }),
@@ -83,8 +97,10 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
   const component = value["component"];
   const label = value["label"];
   const runtimeVersion = value["runtimeVersion"];
+  const runtimeEngine = value["runtimeEngine"];
   const installedVersion = value["installedVersion"];
   const piVersion = value["piVersion"];
+  const runtime = value["runtime"];
   const stale = value["stale"];
   const available = value["available"];
   const error = value["error"];
@@ -95,8 +111,12 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
     component,
     label,
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
+    ...(typeof runtimeEngine === "string" ? { runtimeEngine } : {}),
     ...(typeof installedVersion === "string" ? { installedVersion } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
+    // An unknown value is dropped rather than guessed: reporting a runtime the component never
+    // stated is worse than saying nothing.
+    ...(runtime === "bun" || runtime === "node" ? { runtime } : {}),
     stale,
     available,
     ...(installation === undefined ? {} : { installation }),
