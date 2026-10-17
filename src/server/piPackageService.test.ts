@@ -1,8 +1,10 @@
+import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiPackageInfo } from "../shared/apiTypes.js";
 import { type ActiveAgentProfileProvider } from "./activeAgentProfileProvider.js";
-import { ActiveProfilePiPackageService, DefaultPiPackageService, type PiPackageManagerPort, type PiPackageService } from "./piPackageService.js";
+import { ActiveProfilePiPackageService, DefaultPiPackageService, type PiPackageManagerPort, type PiPackageService, type PiPackageSourceCanonicalizer } from "./piPackageService.js";
 
 function fakeManager(packages: PiPackageInfo[] = []) {
   const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => packages);
@@ -11,6 +13,18 @@ function fakeManager(packages: PiPackageInfo[] = []) {
   const update = vi.fn<PiPackageManagerPort["update"]>(() => Promise.resolve());
   const manager: PiPackageManagerPort = { listConfiguredPackages, installAndPersist, removeAndPersist, update };
   return { manager, listConfiguredPackages, installAndPersist, removeAndPersist, update };
+}
+
+/**
+ * Deterministic canonicalizer for tests: a configured package's own
+ * `installedPath` is its canonical identity, falling back to the source when
+ * no installed path is known. Exercises duplicate detection without touching
+ * a real filesystem or depending on symlink support.
+ */
+function fakeCanonicalizer(): PiPackageSourceCanonicalizer {
+  return {
+    canonicalIdentity: (pkg) => Promise.resolve(pkg.installedPath ?? pkg.source),
+  };
 }
 
 function deferred<T = void>() {
@@ -232,6 +246,38 @@ describe("ActiveProfilePiPackageService", () => {
   });
 });
 
+describe("DefaultPiPackageService duplicate detection with the real canonicalizer", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "pi-web-pi-packages-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("collapses a package reached through a symlinked source into a single entry", async () => {
+    const installed = join(root, "dist", "pi-packages", "relays");
+    const linked = join(root, "node_modules", "pi-relay");
+    await mkdir(installed, { recursive: true });
+    await mkdir(join(root, "node_modules"), { recursive: true });
+    await symlink(installed, linked, "dir");
+
+    const fake = fakeManager([
+      { source: installed, scope: "user", filtered: false, installedPath: installed },
+      { source: linked, scope: "user", filtered: false, installedPath: linked },
+    ]);
+    const dropped = vi.fn();
+    const service = new DefaultPiPackageService(fake.manager, undefined, { onDuplicateDropped: dropped });
+
+    await expect(service.list()).resolves.toEqual({
+      packages: [{ source: installed, scope: "user", filtered: false, installedPath: installed }],
+    });
+    expect(dropped).toHaveBeenCalledWith({ source: linked, scope: "user", keptSource: installed });
+  });
+});
+
 describe("DefaultPiPackageService", () => {
   it("lists configured Pi packages with source, scope, filtered status, and installed path", async () => {
     const fake = fakeManager([
@@ -246,6 +292,92 @@ describe("DefaultPiPackageService", () => {
         { source: "../project-tools", scope: "project", filtered: true },
       ],
     });
+  });
+
+  it("collapses two configured sources that resolve to the same installed package into one entry", async () => {
+    const fake = fakeManager([
+      { source: "/home/test/projects/pi-web/dist/pi-packages/relays", scope: "user", filtered: false, installedPath: "/home/test/projects/pi-web/dist/pi-packages/relays" },
+      { source: "/home/test/.bun/install/global/node_modules/@jmfederico/pi-web/dist/pi-packages/relays", scope: "user", filtered: false, installedPath: "/home/test/projects/pi-web/dist/pi-packages/relays" },
+    ]);
+    const dropped = vi.fn();
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer(), { onDuplicateDropped: dropped });
+
+    await expect(service.list()).resolves.toEqual({
+      packages: [
+        { source: "/home/test/projects/pi-web/dist/pi-packages/relays", scope: "user", filtered: false, installedPath: "/home/test/projects/pi-web/dist/pi-packages/relays" },
+      ],
+    });
+    expect(dropped).toHaveBeenCalledWith({
+      source: "/home/test/.bun/install/global/node_modules/@jmfederico/pi-web/dist/pi-packages/relays",
+      scope: "user",
+      keptSource: "/home/test/projects/pi-web/dist/pi-packages/relays",
+    });
+  });
+
+  it("keeps the first configured entry when the same package resolves through three sources", async () => {
+    const identity = "/opt/pi-packages/relays";
+    const fake = fakeManager([
+      { source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: identity },
+      { source: "/opt/pi-packages/relays-link", scope: "user", filtered: false, installedPath: identity },
+      { source: "/opt/pi-packages/relays-copy", scope: "project", filtered: true, installedPath: identity },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer());
+
+    await expect(service.list()).resolves.toEqual({
+      packages: [{ source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: identity }],
+    });
+  });
+
+  it("keeps distinct packages that share a scope and source shape", async () => {
+    const fake = fakeManager([
+      { source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: "/opt/pi-packages/relays" },
+      { source: "/opt/pi-packages/workflows", scope: "user", filtered: false, installedPath: "/opt/pi-packages/workflows" },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer());
+
+    await expect(service.list()).resolves.toEqual({
+      packages: [
+        { source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: "/opt/pi-packages/relays" },
+        { source: "/opt/pi-packages/workflows", scope: "user", filtered: false, installedPath: "/opt/pi-packages/workflows" },
+      ],
+    });
+  });
+
+  it("collapses duplicates without an installed path by falling back to the configured source", async () => {
+    const fake = fakeManager([
+      { source: "npm:@acme/tools", scope: "user", filtered: false },
+      { source: "npm:@acme/tools", scope: "user", filtered: false },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer());
+
+    await expect(service.list()).resolves.toEqual({ packages: [{ source: "npm:@acme/tools", scope: "user", filtered: false }] });
+  });
+
+  it("does not collapse the same source configured at different scopes", async () => {
+    const fake = fakeManager([
+      { source: "../project-tools", scope: "user", filtered: false, installedPath: "/home/test/user/project-tools" },
+      { source: "../project-tools", scope: "project", filtered: false, installedPath: "/home/test/project/project-tools" },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer());
+
+    await expect(service.list()).resolves.toEqual({
+      packages: [
+        { source: "../project-tools", scope: "user", filtered: false, installedPath: "/home/test/user/project-tools" },
+        { source: "../project-tools", scope: "project", filtered: false, installedPath: "/home/test/project/project-tools" },
+      ],
+    });
+  });
+
+  it("deduplicates the package list returned by a mutation response", async () => {
+    const fake = fakeManager([
+      { source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: "/opt/pi-packages/relays" },
+      { source: "/opt/pi-packages/relays-link", scope: "user", filtered: false, installedPath: "/opt/pi-packages/relays" },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer());
+
+    const response = await service.install("npm:@acme/tools");
+
+    expect(response.packages).toEqual([{ source: "/opt/pi-packages/relays", scope: "user", filtered: false, installedPath: "/opt/pi-packages/relays" }]);
   });
 
   it("installs through the default Pi package-manager behavior without a local option", async () => {

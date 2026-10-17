@@ -203,7 +203,7 @@ async function createSessionDaemonRuntime() {
   void reconcileAutoInstallablePiPackages({
     profileDir: activeAgentProfile.dir,
     packageProvider: new DefaultPiPackageProvider(process.cwd(), activeAgentProfile.dir),
-    installer: createDefaultPiPackageService(process.cwd(), activeAgentProfile.dir),
+    installer: createDefaultPiPackageService(process.cwd(), activeAgentProfile.dir, app.log),
     dismissalChecker: new PiPackageDismissalStore(piPackageDismissalStorePath(daemonEnvironment)),
     logger: app.log,
   }).catch((error: unknown) => {
