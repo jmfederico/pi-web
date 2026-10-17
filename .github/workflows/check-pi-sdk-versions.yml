@@ -1,0 +1,120 @@
+name: PI SDK Version Check
+
+on:
+  schedule:
+    # Check every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      check-mode:
+        description: "Check mode"
+        required: false
+        default: "report"
+        type: choice
+        options:
+          - report
+          - fail
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-pi-sdk-versions:
+    name: Check PI SDK versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Check PI SDK versions (report)
+        id: check-report
+        run: |
+          set -euo pipefail
+          node scripts/check-pi-sdk-versions.mjs --report 2>&1 || true
+
+      - name: Check PI SDK versions (CI JSON)
+        run: |
+          set -euo pipefail
+          node scripts/check-pi-sdk-versions.mjs
+
+      - name: Create/update issue on breaking change
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = `## PI SDK version check detected updates
+
+            The weekly PI SDK version check found one or more version bumps that
+            may require manual review.
+
+            <details><summary>Check output</summary>
+
+            \`\`\`
+            The version check script identified one or more updates.
+            See the Actions tab for the full report.
+            \`\`\`
+
+            </details>
+
+            ### What happened before (0.85.0)
+
+            The \`@earendil-works/pi-coding-agent@0.85.0\` release shipped a barrel
+            that statically imported \`@earendil-works/pi-server\`, an undeclared
+            dependency. The package could not be loaded at all, breaking every
+            \`npm install\` of PI WEB that resolved it.
+
+            The fix was to exclude 0.85.0 from the peer dependency range
+            (\`>=0.84.0 <0.85.0 || >=0.85.1\`) and add an integrity test so future
+            packaging defects fail fast.
+
+            ### Guard rails in place
+
+            1. **peerDependencyRange** in package.json excludes known-bad versions.
+            2. **piSdkIntegrity.test.ts** tests that the SDK barrel loads and
+               exports the surface PI WEB depends on — structural defects fail
+               immediately rather than corrupting sessions silently.
+            3. **This workflow** runs weekly to notify maintainers that a new
+               version is available so the changelog can be reviewed *before*
+               it arrives via a dependency update.
+
+            ### Next steps
+
+            1. Review the changelog / release notes for the affected packages.
+            2. Check if the new versions affect PI WEB (API changes, new
+               dependencies, etc.).
+            3. Update package.json dependencies and run \`npm test\` to verify.
+            4. Update the peerDependency range if the exclusion list has changed.`;
+
+            const title = "PI SDK version check: updates available";
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "sdk-monitor",
+            });
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: body,
+              });
+              console.log("Updated existing issue #" + existing.data[0].number);
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ["sdk-monitor", "dependencies"],
+              });
+            }
