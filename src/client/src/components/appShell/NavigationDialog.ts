@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { uiDialogStyles, uiSelectionStyles } from "../ui/dialogStyles";
@@ -9,6 +10,11 @@ import "../ModalSurface";
 
 @customElement("navigation-dialog")
 export class NavigationDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
   // Layout/search visibility must not narrow implicit-all pin edits.
   @property({ attribute: false }) pinUniverse?: readonly string[];
@@ -128,6 +134,7 @@ export class NavigationDialog extends LitElement {
   };
 
   static override styles = [uiDialogStyles, uiSelectionStyles, uiToolbarStyles, css`
+    @layer pi-web-base {
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     footer { justify-content: space-between; flex-wrap: wrap; }
     h2 { align-self: stretch; padding: 12px 16px 4px; }
@@ -136,5 +143,6 @@ export class NavigationDialog extends LitElement {
     .destination-button { overflow-wrap: anywhere; font-weight: 600; }
     .pin-button[aria-pressed="true"] svg { color: var(--pi-accent); }
     .mobile-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
+    }
   `];
 }

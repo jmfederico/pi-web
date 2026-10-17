@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -24,6 +25,11 @@ interface WorkspaceTrustState {
 
 @customElement("workspace-list")
 export class WorkspaceList extends LitElement implements KeyboardNavigableSection {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) workspaces: Workspace[] = [];
   @property({ attribute: false }) selected?: Workspace;
   /** Machine the listed workspaces belong to; targets the trust API. */

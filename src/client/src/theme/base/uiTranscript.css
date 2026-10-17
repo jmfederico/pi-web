@@ -1,0 +1,23 @@
+  .ui-transcript-surface { box-sizing: border-box; border: 0; border-radius: 0; background: var(--ui-transcript-bg, transparent); }
+  /* Activity has a persistent edge as well as a tone, so grouping survives weak colour reproduction. */
+  .ui-transcript-activity {
+    --ui-activity-tone: var(--pi-muted);
+    --ui-transcript-bg: color-mix(in srgb, var(--ui-activity-tone) 6%, var(--pi-bg));
+    --ui-transcript-heading-bg: color-mix(in srgb, var(--ui-activity-tone) 18%, var(--pi-bg));
+    border-inline-start: var(--ui-activity-edge-width, 3px) solid var(--ui-activity-tone);
+    border-block-start: var(--ui-activity-separator-width, 0px) solid color-mix(in srgb, var(--ui-activity-tone) 35%, var(--ui-transcript-heading-bg));
+  }
+  .ui-transcript-tool { --ui-activity-tone: var(--pi-tool, color-mix(in srgb, #238c86 70%, var(--pi-text) 30%)); }
+  .ui-transcript-activity > .ui-transcript-heading { box-sizing: border-box; min-height: 32px; padding: 6px 12px; background: var(--ui-transcript-heading-bg); color: var(--pi-text); line-height: 20px; }
+  .ui-transcript-activity > summary.ui-transcript-heading:hover { background: color-mix(in srgb, var(--ui-activity-tone) 26%, var(--pi-bg)); }
+  .ui-transcript-disclosure { box-sizing: border-box; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 6px 12px; line-height: 20px; border: 0; border-radius: 0; background: var(--ui-transcript-heading-bg, transparent); cursor: pointer; list-style: none; }
+  .ui-transcript-disclosure::-webkit-details-marker { display: none; }
+  /* Empty generated markers preserve the native summary name and avoid font-dependent glyphs. */
+  .ui-transcript-disclosure::before { content: ""; flex: 0 0 auto; width: 0; height: 0; border-block: 4px solid transparent; border-inline-start: 5px solid currentColor; border-inline-end: 3px solid transparent; }
+  details[open] > .ui-transcript-disclosure::before { border-block-start: 5px solid currentColor; border-block-end: 3px solid transparent; border-inline: 4px solid transparent; }
+  .ui-transcript-disclosure:hover { background: var(--pi-surface-hover); }
+  .ui-transcript-disclosure:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+  .ui-transcript-activity .ui-transcript-disclosure:focus-visible { outline-color: var(--pi-text); }
+  @media (pointer: coarse) {
+    .ui-transcript-disclosure, .ui-transcript-activity > .ui-transcript-heading { min-height: 44px; padding-block: 12px; }
+  }

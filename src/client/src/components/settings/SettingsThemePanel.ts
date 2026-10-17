@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { QualifiedThemeContribution } from "../../plugins/types";
@@ -8,6 +9,11 @@ import { uiSettingsStyles } from "../ui/settingsStyles";
 
 @customElement("settings-theme-panel")
 export class SettingsThemePanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) themes: readonly QualifiedThemeContribution[] = [];
   @property({ attribute: false }) preference: ThemePreference = DEFAULT_THEME_PREFERENCE;
   @property({ attribute: false }) defaultPreference: ThemePreference = DEFAULT_THEME_PREFERENCE;

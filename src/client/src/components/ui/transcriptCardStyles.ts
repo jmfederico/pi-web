@@ -1,23 +1,2 @@
-import { css } from "lit";
-
-/** Form/record header chrome; consumers retain heading typography and disclosure state. */
-export const uiTranscriptCardStyles = css`
-  .ui-transcript-card-header {
-    position: sticky;
-    top: var(--pi-chat-sticky-top, 0px);
-    z-index: 6;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    background: var(--pi-surface);
-  }
-  .ui-transcript-card-header:not(.ui-transcript-disclosure) {
-    min-height: 22px;
-    padding: var(--ui-transcript-card-header-padding, 8px 16px 7px);
-  }
-  .ui-transcript-card-header > h2 { min-width: 0; margin-inline-end: auto; }
-  .ui-transcript-card-status { flex: 0 1 auto; color: var(--pi-muted); font-size: 11px; text-align: end; }
-  .ui-transcript-card-status--success { color: var(--pi-success); }
-  .ui-transcript-card-status--warning { color: var(--pi-warning); }
-`;
+// Shared presentation is owned by the base theme.
+export { uiTranscriptCardStyles } from "../../theme/base/transcriptCardStyles";

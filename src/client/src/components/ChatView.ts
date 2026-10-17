@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, nothing, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -103,6 +104,11 @@ function chatMessageModelLabel(message: ChatLine): string | undefined {
 
 @customElement("chat-view")
 export class ChatView extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) messages: ChatLine[] = [];
   @property() sessionId = "";
   @property({ attribute: false }) onNavigationChange?: (controls: TemplateResult) => void;

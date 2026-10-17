@@ -15,6 +15,31 @@ afterEach(() => {
 });
 
 describe("Files panel component boundary", () => {
+  it("passes stylesheet integration through viewer and raw-code roots and releases the whole subtree", async () => {
+    const context = createContext({
+      files: createFiles({ readFile: (path) => Promise.resolve(fileResponse(path)) }),
+      navigation: createNavigation({ file: "a.ts", mode: "raw" }),
+    });
+    const panel = await mountPanel(context);
+    const roots = new Set<ShadowRoot>();
+    panel.stylesheetIntegration = {
+      registerRoot: (root) => {
+        roots.add(root);
+        return () => { roots.delete(root); };
+      },
+      createController: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
+    };
+    await vi.waitFor(() => { expect(roots.size).toBe(3); });
+    const viewer = requiredElement(panel.shadowRoot?.querySelector("pi-web-files-viewer"), "viewer");
+    const code = requiredElement(viewer.shadowRoot?.querySelector("pi-web-files-code-viewer"), "raw code");
+    expect(roots).toEqual(new Set([panel.shadowRoot, viewer.shadowRoot, code.shadowRoot]));
+    panel.remove();
+    expect(roots.size).toBe(0);
+    document.body.append(panel);
+    await vi.waitFor(() => { expect(roots.size).toBe(3); });
+  });
+
   it("adopts host styles as text without replacing file rows", async () => {
     const context = createContext({ files: createFiles({ listFiles: () => Promise.resolve(treeResponse("", [{ name: "README.md", path: "README.md", type: "file" }])) }) });
     const panel = await mountPanel(context);

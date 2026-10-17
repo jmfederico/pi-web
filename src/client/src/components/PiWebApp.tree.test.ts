@@ -1,9 +1,10 @@
+// @vitest-environment happy-dom
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeSnapshot, SessionTreeSummaryChoice } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { SessionController } from "../controllers/sessionController";
-// This node-environment test uses the shared, type-guarded template inspection
+// This unmounted state harness uses the shared, type-guarded template inspection
 // escape hatch only to verify PiWebApp's navigator callback boundary.
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";

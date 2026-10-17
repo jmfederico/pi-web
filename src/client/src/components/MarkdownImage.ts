@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ImageDimensions } from "../../../shared/sessionMedia";
@@ -10,6 +11,11 @@ const shownImageMemory = new TransientChoiceMemory<true>();
 /** An outside-workspace URL stays inert until the user chooses to load it. */
 @customElement("pi-web-markdown-image")
 export class MarkdownImage extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: "preview-url" }) previewUrl = "";
   @property() path = "";
   @property() description = "";

@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionRef } from "../../../shared/apiTypes";
@@ -16,6 +17,11 @@ export function transcriptImageSource(part: ChatImagePart, session?: SessionRef,
 
 @customElement("pi-web-transcript-image")
 export class TranscriptImage extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) imagePart: ChatImagePart | undefined;
   @property({ attribute: false }) session: SessionRef | undefined;
   @property() machineId = "local";

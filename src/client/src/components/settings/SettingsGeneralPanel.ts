@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, DEFAULT_WORKSPACE_UPLOADS_FOLDER, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues } from "../../api";
@@ -24,6 +25,11 @@ function generalDescription(targetLabel: string): TemplateResult {
 
 @customElement("settings-general-panel")
 export class SettingsGeneralPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
   @property({ attribute: false }) machineConfigResponse: PiWebConfigResponse | undefined;
   @property({ type: Boolean }) loading = false;
@@ -317,16 +323,17 @@ export class SettingsGeneralPanel extends LitElement {
   }
 
   static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, css`
+    @layer pi-web-base {
     :host { display: block; }
     h3, p { margin: 0; }
     h3 { font-size: 13px; line-height: 1.3; }
     p { color: var(--pi-muted); line-height: 1.45; }
     .loading-card { color: var(--pi-muted); }
     .config-path-card span, .field-heading, dt { color: var(--pi-muted); font-size: 12px; font-weight: 600; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .config-path-card small, .field small { color: var(--pi-muted); }
     .field-heading { display: flex; align-items: center; gap: 8px; }
-    textarea { resize: vertical; min-height: 94px; --ui-input-font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    textarea { resize: vertical; min-height: 94px; --ui-input-font-family: var(--pi-control-monospace-font-family, var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)); }
     textarea:disabled { opacity: .55; }
     .override-badge { border: 1px solid var(--pi-warning-border); border-radius: 999px; color: var(--pi-warning); background: var(--pi-warning-surface); padding: 2px 7px; font-size: 11px; font-weight: 600; text-transform: none; }
     .effective-card dl { display: grid; gap: 8px; margin: 0; }
@@ -337,6 +344,7 @@ export class SettingsGeneralPanel extends LitElement {
 
     @media (max-width: 760px) {
       .effective-card dl > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+    }
     }
   `];
 }

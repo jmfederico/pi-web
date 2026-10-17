@@ -1,4 +1,4 @@
-import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, ThemeToken } from "./plugins/types";
+import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution } from "./plugins/types";
 
 import type { PiWebThemePreference } from "../../shared/apiTypes";
 import { parseThemePreference } from "../../shared/themePreference";
@@ -24,44 +24,6 @@ export const CLASSIC_THEME_ID: QualifiedContributionId = "themes:classic";
 export const DEFAULT_THEME_ID: QualifiedContributionId = "themes:pi-web-dark";
 export const DEFAULT_THEME_PREFERENCE: ThemePreference = { themeId: DEFAULT_THEME_ID, auto: true };
 export const THEME_STORAGE_KEY = "pi-web-app-theme";
-
-export const THEME_TOKENS: ThemeToken[] = [
-  "--pi-bg",
-  "--pi-surface",
-  "--pi-surface-hover",
-  "--pi-terminal-bg",
-  "--pi-terminal-text",
-  "--pi-border",
-  "--pi-border-muted",
-  "--pi-text",
-  "--pi-text-secondary",
-  "--pi-text-bright",
-  "--pi-muted",
-  "--pi-dim",
-  "--pi-accent",
-  "--pi-accent-border",
-  "--pi-selection-bg",
-  "--pi-success",
-  "--pi-success-border",
-  "--pi-success-bg",
-  "--pi-success-surface",
-  "--pi-success-ring",
-  "--pi-warning",
-  "--pi-warning-border",
-  "--pi-warning-surface",
-  "--pi-danger",
-  "--pi-purple",
-  "--pi-purple-border",
-  "--pi-purple-surface",
-  "--pi-overlay",
-  "--pi-shadow-soft",
-  "--pi-shadow",
-  "--pi-shadow-strong",
-  "--pi-bg-overlay-soft",
-  "--pi-bg-overlay",
-  "--pi-success-bg-overlay",
-  "--pi-terminal-selection",
-];
 
 export function readStoredThemePreference(): ThemePreference | undefined {
   try {
@@ -92,15 +54,11 @@ export function effectiveThemePreference(local: ThemePreference | undefined, con
   return local ?? configuredDefault ?? DEFAULT_THEME_PREFERENCE;
 }
 
+// Palette declarations are owned by the selected theme's contributed stylesheets.
 export function applyPiWebTheme(theme: QualifiedThemeContribution): void {
   const root = document.documentElement;
   root.dataset["piWebTheme"] = theme.id;
   root.style.colorScheme = theme.colorScheme;
-  for (const token of THEME_TOKENS) {
-    const value = theme.tokens[token];
-    if (typeof value === "string" && value !== "") root.style.setProperty(token, value);
-    else root.style.removeProperty(token);
-  }
 }
 
 export function resolveThemePreference(options: ResolveThemePreferenceOptions): ThemePreferenceResolution {

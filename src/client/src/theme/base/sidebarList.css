@@ -1,0 +1,26 @@
+  section > h2.ui-toolbar { background: var(--pi-surface); border-bottom-color: var(--pi-border); box-shadow: none; }
+  .list-body > .subheading:not(.ui-toolbar) { padding-inline: 10px; }
+  .action-row {
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--pi-border-muted);
+  }
+  .action-row:last-child { border-bottom: 0; }
+  .action-main { padding: 10px 10px 10px calc(19px + var(--depth, 0) * 16px); }
+  .action-main, .workspace-row .action-main {
+    border-color: transparent;
+    border-radius: 0;
+    background: transparent;
+  }
+  .action-row.selected { background: var(--pi-selection-bg); box-shadow: inset 3px 0 0 var(--pi-accent); }
+  .action-row.selected .action-main {
+    border-color: transparent;
+    background: transparent;
+  }
+  .action-row:not(.selected):hover { background: var(--pi-surface-hover); }
+  .action-row:not(.selected):hover .action-main { background: transparent; }
+  .action-row:focus-visible {
+    outline: 2px solid var(--pi-accent);
+    outline-offset: -2px;
+    border-radius: 0;
+  }

@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth } from "../api";
@@ -11,6 +12,11 @@ import { sidebarListStyles } from "./sidebarListStyles";
 
 @customElement("machine-list")
 export class MachineList extends LitElement implements KeyboardNavigableSection {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selected?: Machine;
   @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};

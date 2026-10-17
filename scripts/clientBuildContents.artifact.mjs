@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -6,6 +6,20 @@ import { describe, expect, it } from "vitest";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("production client build contents", () => {
+  it("emits built-in theme palettes as separately loadable CSS files", async () => {
+    const assetsDir = join(repoRoot, "dist/client/assets");
+    const files = await readdir(assetsDir);
+    const entry = files.find((file) => /^index-.*\.js$/.test(file));
+    expect(entry).toBeDefined();
+    const code = await readFile(join(assetsDir, entry), "utf8");
+    for (const id of ["classic", "pi-web-dark", "pi-web-light"]) {
+      const palettes = files.filter((file) => file.startsWith(`${id}-`) && file.endsWith(".css"));
+      expect(palettes).toHaveLength(1);
+      expect(code).toContain(palettes[0]);
+      expect(await readFile(join(assetsDir, palettes[0]), "utf8")).toContain("--pi-bg:");
+    }
+  });
+
   it("emits deployment-relative HTML and PWA URLs", async () => {
     const outDir = join(repoRoot, "dist/client");
     const html = await readFile(join(outDir, "index.html"), "utf8");

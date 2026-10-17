@@ -2,7 +2,7 @@
 
 Use shared primitives for new controls. Migrate existing controls as their surfaces are updated; a feature change does not require a whole-app restyle.
 
-Control primitives live in `src/client/src/components/ui/controlStyles.ts`; related files in that directory provide dialog, file-list, and transcript patterns. They style native elements rather than wrapping them in custom elements, so browser focus, disabled state, form behavior, labels, and existing event handlers remain intact.
+Default presentation and layout live in `src/client/src/theme/base/`, in the `pi-web-base` cascade layer. `src/client/src/components/ui/controlStyles.ts` and related style modules are internal import bridges to that base theme. Themes can extend these defaults with contributed CSS; see [theme architecture](theme-architecture.md) for ownership and the current migration boundary. Related modules provide dialog, file-list, and transcript patterns. They style native elements rather than wrapping them in custom elements, so browser focus, disabled state, form behavior, labels, and existing event handlers remain intact.
 
 ## Available primitives
 
@@ -56,7 +56,7 @@ A popup item uses both `ui-button` and `ui-menu-item` on its native button. A ch
 
 ## Sidebar list surfaces
 
-`sidebarListStyles` is the shared treatment for navigation lists. Grey section headers provide hierarchy above dark, continuous rows. Keep rows full-width and gapless; do not introduce inset card surfaces or visual gutters. Selected, hover, and keyboard-focus states remain on the entire row.
+`sidebarListStyles` is the shared treatment for navigation lists. Grey section headers provide hierarchy above dark, continuous rows. Keep rows full-width and gapless; do not introduce inset card surfaces or visual gutters. Selected, hover, and keyboard-focus states remain on the entire row. Collapsed navigation sections keep the heading's 1px separator and omit the outer section border so adjacent borders do not double the line thickness.
 
 ## Dialog patterns
 
@@ -72,7 +72,7 @@ Selection lists use `ui-selection-list`; each native choice button uses `ui-butt
 
 Form content uses `ui-dialog-body ui-form-body`. Labels use `ui-form-field`, text inputs use `ui-input`, and checkbox labels use `ui-checkbox-field`. A native form that wraps the complete dialog uses `ui-form`. Its footer uses `ui-dialog-footer`, with native `ui-button` actions and `ui-button--primary` for the submit action. Interior action groups can use `ui-form-actions`. Labels, validation messages, input types, submit behavior, and callbacks remain local.
 
-Keep only content-specific rules in each dialog. Existing dimension differences can use the internal composition properties `--ui-dialog-width`, `--ui-dialog-max-height`, `--ui-dialog-top`, and `--ui-dialog-z`; do not copy the common backdrop or header styles. These primitives do not introduce custom stylesheet loading or a new theming API.
+Keep only content-specific rules in each dialog. Existing dimension differences can use the internal composition properties `--ui-dialog-width`, `--ui-dialog-max-height`, `--ui-dialog-top`, and `--ui-dialog-z`; do not copy the common backdrop or header styles. These primitives use the base theme; selected themes can override their presentation through the existing contributed stylesheet mechanism.
 
 ## Settings and configuration groups
 
@@ -82,7 +82,7 @@ Settings actions use `ui-button--action` to distinguish them from flat navigatio
 
 Sections own their internal padding and a bottom separator. Do not surround them with inset cards or exterior gaps. Paths and effective values can use a neutral background without another outline. Labels stay sentence case. Keep domain-specific layouts, validation, draft state, and save callbacks in the consumer.
 
-`SettingsPanelFrame` composes the section heading, refresh action, notices, and slotted content for settings panels. `uiNoticeStyles` in the same style module provides `ui-notice` with error, success, warning, and info tones. Consumers retain the appropriate live-region role and message content; styling does not announce a message by itself. These internal patterns are not yet part of the public plugin UI styles capability.
+`SettingsPanelFrame` composes the section heading, refresh action, notices, and slotted content for settings panels. `uiNoticeStyles` from `ui/noticeStyles.ts` provides `ui-notice` with error, success, warning, and info tones. Consumers retain the appropriate live-region role and message content; styling does not announce a message by itself. These internal patterns are not yet part of the public plugin UI styles capability.
 
 ## Transcript hierarchy
 
@@ -128,6 +128,6 @@ The chat consumer owns these layout classes and message separators; `uiTranscrip
 
 The current consumers are navigation headings, session selection controls, navigation dropdowns, the chat composer's model/thinking/send/stop toolbar, main navigation tabs, the common selection/form dialogs, Settings, and chat transcript sections and controls. More specialized surfaces, such as session cleanup, are not yet migrated.
 
-The internal style exports also supply the host-owned [UI styles capabilities](plugins.md#host-provided-ui-styles). External plugins request v1 and apply its CSS inside their shadow root; they must not deep-import these client modules or bundle a copy of their styling. Relay, Files, and Git use v1 for buttons, selects, toolbars, tabs, and compact file/tree rows. Menus, forms, dialogs, and transcript patterns are not part of the public contract.
+The base theme's internal style exports also supply the host-owned [UI styles capabilities](plugins.md#host-provided-ui-styles). External plugins request v1 and apply its CSS inside their shadow root; they must not deep-import these client modules or bundle a copy of their styling. Relay, Files, and Git use v1 for buttons, selects, toolbars, tabs, and compact file/tree rows. Menus, forms, dialogs, and transcript patterns are not part of the public contract.
 
 Keep the documented v1 classes, markup patterns, and supported states compatible when improving their appearance. Breaking contract changes need a new capability version rather than silently changing existing plugins. Extra selectors in the generated stylesheet do not become supported APIs just because they are present.

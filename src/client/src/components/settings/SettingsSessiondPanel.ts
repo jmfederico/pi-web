@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
@@ -13,6 +14,11 @@ import { askUserConfigPatch, spawnSessionsConfigPatch, subsessionsConfigPatch } 
 
 @customElement("settings-sessiond-panel")
 export class SettingsSessiondPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
   @property({ type: Boolean }) loading = false;
   @property({ type: Boolean }) saving = false;
@@ -260,7 +266,7 @@ export class SettingsSessiondPanel extends LitElement {
     h3 { margin: 0; font-size: 13px; line-height: 1.3; }
     .loading-card { color: var(--pi-muted); }
     .config-path-card span, dt { color: var(--pi-muted); font-size: 12px; font-weight: 600; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .field small, .effective-card small { color: var(--pi-muted); line-height: 1.45; }
     .naming-model { justify-content: space-between; text-align: start; gap: 12px; }
     #session-naming-model-value { min-width: 0; overflow-wrap: anywhere; }

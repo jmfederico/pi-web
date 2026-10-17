@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html } from "lit";
 import type { ChatContentRendering } from "../formatting/contentRendering";
 import { customElement, property } from "lit/decorators.js";
@@ -12,6 +13,11 @@ import { codeBlockFrameStyles } from "./codeBlockFrameStyles";
 
 @customElement("formatted-text")
 export class FormattedText extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() text = "";
   @property() intentKey: string | undefined;
   @property({ type: Boolean }) imagesEnabled = true;

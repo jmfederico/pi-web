@@ -20,7 +20,7 @@ afterEach(() => {
 describe("host UI styles capability", () => {
   it("requires host v1 and passes start-resolved CSS to the panel", () => {
     expect(plugin.apiVersion).toBe(4);
-    const capability = plugin.requires[0];
+    const capability = plugin.requires.find(({ id }) => id === "ui-styles");
     if (capability === undefined) throw new Error("Relay UI styles requirement missing");
     expect(capability).toMatchObject({ pluginId: "pi-web", id: "ui-styles", version: 1 });
     const cssText = ".ui-button { color: rebeccapurple; }";
@@ -28,10 +28,10 @@ describe("host UI styles capability", () => {
     const requests: PluginCapability[] = [];
     const resolve = <Value,>(requested: PluginCapability<Value>): Value => {
       requests.push(requested);
-      return requested.parse({ cssText });
+      return requested.parse({ cssText, registerRoot: vi.fn(() => vi.fn()), createController: vi.fn(), subscribe: vi.fn(() => vi.fn()) });
     };
     result.start({ capabilities: { resolve }, signal: new AbortController().signal });
-    expect(requests).toEqual([capability]);
+    expect(requests.map(({ id }) => id)).toEqual(["ui-styles", "stylesheet-integration"]);
 
     const context: WorkspacePanelContext = {
       ...rowContext(undefined),
@@ -48,7 +48,7 @@ describe("host UI styles capability", () => {
   });
 
   it.each([undefined, null, {}, { cssText: 42 }])("rejects an invalid host style value: %j", (value) => {
-    const capability = plugin.requires[0];
+    const capability = plugin.requires.find(({ id }) => id === "ui-styles");
     if (capability === undefined) throw new Error("Relay UI styles requirement missing");
     expect(() => capability.parse(value)).toThrow("UI styles capability v1 requires cssText");
   });

@@ -1,18 +1,2 @@
-import { css } from "lit";
-
-/** Native fields and form structure, independent of modal or transcript placement. */
-export const uiFormStyles = css`
-  .ui-form { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .ui-form-body { display: grid; align-content: start; gap: 12px; }
-  .ui-form-field { display: grid; gap: 6px; min-width: 0; color: var(--pi-muted); }
-  .ui-input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text); padding: 10px 12px; font: var(--pi-control-font-size, 16px)/1.4 var(--ui-input-font-family, var(--pi-control-font-family, system-ui, sans-serif)); }
-  .ui-input:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
-  .ui-input[aria-invalid="true"] { border-color: var(--pi-danger); }
-  .ui-checkbox-field { box-sizing: border-box; display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--pi-text); cursor: pointer; }
-  .ui-checkbox-field input { flex: 0 0 auto; margin: 0; accent-color: var(--pi-accent); }
-  .ui-checkbox-field:has(input:focus-visible) { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
-  .ui-form-error { border: 1px solid var(--pi-danger); border-radius: 6px; background: color-mix(in srgb, var(--pi-danger) 10%, transparent); color: var(--pi-danger); padding: 10px 12px; line-height: 1.4; overflow-wrap: anywhere; }
-  @media (pointer: coarse) {
-    .ui-checkbox-field { min-height: 44px; }
-  }
-`;
+// Shared presentation is owned by the base theme.
+export { uiFormStyles } from "../../theme/base/formStyles";

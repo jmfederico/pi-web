@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { writeClipboardText } from "../clipboard";
@@ -14,6 +15,11 @@ interface ToolTarget {
 
 @customElement("tool-execution-view")
 export class ToolExecutionView extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) execution: ToolExecutionPart | undefined;
   @state() private showFullDiff = false;
   @state() private copied = false;
@@ -139,7 +145,7 @@ export class ToolExecutionView extends LitElement {
     .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
     .status-icon { flex: 0 0 auto; color: var(--pi-muted); }
     strong { flex: 0 0 auto; color: var(--pi-text); }
-    .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-text); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+    .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-text); font: 13px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); direction: ltr; text-align: left; unicode-bidi: isolate; }
     .summary { color: var(--pi-text-secondary); }
     .tool-meta { flex: 0 0 auto; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 8px; color: var(--pi-text-secondary); font-size: 12px; }
     .diff-stats { display: inline-flex; gap: 3px; }
@@ -148,22 +154,22 @@ export class ToolExecutionView extends LitElement {
     .status-label { color: var(--pi-text-secondary); }
     .notice { margin: 0; padding: 8px 12px; color: var(--pi-warning); }
     .muted { margin: 0; color: var(--pi-muted); }
-    .error-text { margin: 0; color: var(--pi-danger); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .error-text { margin: 0; color: var(--pi-danger); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .text-body { min-width: 0; }
     .text-body[open], .diff-details[open] { padding-bottom: 12px; }
     .text-body > summary { color: var(--pi-muted); }
     .detail-target, .detail-result { display: grid; gap: 4px; margin: 8px 12px 0; min-width: 0; }
     .detail-label { color: var(--pi-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-    .text-body pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--pi-text); }
+    .text-body pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); color: var(--pi-text); }
     .detail-result pre { box-sizing: border-box; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; border: 1px solid var(--pi-border-muted); border-radius: 0; background: var(--pi-bg); padding: 8px; white-space: pre; overflow-wrap: normal; direction: ltr; text-align: left; unicode-bidi: isolate; }
-    .detail-target-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pi-text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
+    .detail-target-value { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--pi-text-secondary); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); direction: ltr; text-align: left; unicode-bidi: isolate; }
     .diff-details { min-width: 0; max-width: 100%; }
     .diff-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--pi-muted); }
     .diff-details > summary span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .diff-details > summary small { flex: 0 0 auto; color: var(--pi-dim); }
     .diff-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; margin-top: 8px; color: var(--pi-muted); font-size: 12px; padding-inline: 12px; }
     .diff-toolbar span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .diff { box-sizing: border-box; width: calc(100% - 24px); max-width: 100%; min-width: 0; margin: 0 12px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border: 1px solid var(--pi-border-muted); border-radius: 0; background: var(--pi-bg); padding: 8px 0; color: var(--pi-muted); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+    .diff { box-sizing: border-box; width: calc(100% - 24px); max-width: 100%; min-width: 0; margin: 0 12px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border: 1px solid var(--pi-border-muted); border-radius: 0; background: var(--pi-bg); padding: 8px 0; color: var(--pi-muted); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); line-height: 1.45; }
     .diff-content { display: block; width: max-content; min-width: 100%; }
     .diff span { display: block; min-height: 1.45em; padding: 0 8px; white-space: pre; }
     .diff .context { color: var(--pi-muted); }

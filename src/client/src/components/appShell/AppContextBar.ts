@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Machine, Project, SessionInfo, Workspace } from "../../api";
@@ -8,6 +9,11 @@ import type { NavigationSection } from "../../appShell/navigationState";
 
 @customElement("app-context-bar")
 export class AppContextBar extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) machine?: Machine;
   /** PWA display mode: surfaces the machine location identity in the breadcrumb. */

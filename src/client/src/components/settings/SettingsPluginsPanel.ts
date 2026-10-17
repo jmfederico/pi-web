@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
@@ -13,6 +14,11 @@ export type SettingsPluginRow = PiWebPluginInfo & { configOnly: boolean; editabl
 
 @customElement("settings-plugins-panel")
 export class SettingsPluginsPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) pluginsResponse: PiWebPluginsResponse | undefined;
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
   @property({ type: Boolean }) loading = false;
@@ -203,7 +209,7 @@ export class SettingsPluginsPanel extends LitElement {
   static override styles = [uiFormStyles, uiSettingsStyles, css`
     :host { display: block; }
     .loading-card, .plugin-note { color: var(--pi-muted); }
-    code { color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .plugin-card { align-items: center; }
     .plugin-card.disabled { opacity: .8; }
     .plugin-main { flex: 1 1 280px; min-width: 0; display: grid; gap: 5px; }

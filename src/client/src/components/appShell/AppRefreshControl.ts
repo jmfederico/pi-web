@@ -1,8 +1,14 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-refresh-control")
 export class AppRefreshControl extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) onReload?: () => void;
 
   override render() {

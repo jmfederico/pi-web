@@ -1,8 +1,9 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 import { uiButtonStyles } from "../ui/controlStyles";
-import { uiNoticeStyles } from "../ui/settingsStyles";
+import { uiNoticeStyles } from "../ui/noticeStyles";
 
 export const SETTINGS_NOTICE_TONES = ["error", "success", "warning", "info"] as const;
 export type SettingsNoticeTone = (typeof SETTINGS_NOTICE_TONES)[number];
@@ -36,6 +37,11 @@ export function settingsNoticeTone(notice: SettingsNotice): SettingsNoticeTone {
 
 @customElement("settings-panel-frame")
 export class SettingsPanelFrame extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() heading = "";
   @property({ attribute: false }) description: SettingsNoticeContent = "";
   @property() actionLabel = "";
@@ -106,7 +112,7 @@ export class SettingsPanelFrame extends LitElement {
     .notice-stack { display: grid; gap: 1px; }
     .notice-title { display: block; margin-bottom: 4px; color: inherit; }
     .notice-content { min-width: 0; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .content { display: grid; gap: 0; min-width: 0; }
     .content ::slotted(*) { min-width: 0; }
 

@@ -17,6 +17,7 @@ import type { ContentRendererInput } from "../../../plugin-api";
 import { corePlugin } from "../plugins/core";
 import type { WorkspacePanelContext } from "../plugins/types";
 import { PiWebApp } from "./PiWebApp";
+import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
 import { ChatView } from "./ChatView";
 import type { ActionPalette } from "./ActionPalette";
 import { FormattedText } from "./FormattedText";
@@ -47,7 +48,7 @@ const unexpectedRequest = vi.fn(() => Promise.reject(new Error("Rendering tests 
 beforeEach(() => {
   unexpectedRequest.mockClear();
   window.history.replaceState(null, "", "/");
-  vi.stubGlobal("fetch", unexpectedRequest);
+  vi.stubGlobal("fetch", themeStylesheetFetch(unexpectedRequest));
   // Scroll scheduling is not under test; happy-dom supplies no layout metrics.
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => undefined);

@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -26,6 +27,11 @@ interface PendingNotificationFocus {
 
 @customElement("session-notification-tray")
 export class SessionNotificationTray extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() sessionId = "";
   @property({ attribute: false }) notificationInbox?: SelectedSessionNotificationView;
   @property({ attribute: false }) onDismissNotification?: (notificationId: string) => void;

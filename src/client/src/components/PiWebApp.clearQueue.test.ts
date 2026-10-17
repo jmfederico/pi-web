@@ -1,10 +1,11 @@
+// @vitest-environment happy-dom
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionInfo, SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import { SessionController } from "../controllers/sessionController";
 // Template inspection here is the escape hatch for verifying the Clear-queue
-// callback wiring in a node environment (no DOM harness). See
+// callback wiring in the existing unmounted state harness. See
 // templateInspection.testSupport for the proportionality rationale.
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";

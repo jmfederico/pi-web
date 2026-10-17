@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
 import type { ImageOpenDetail } from "./ImagePresentation";
@@ -7,6 +8,11 @@ import { uiButtonStyles, uiToolbarStyles } from "./ui/controlStyles";
 /** Native image preview; callers own source selection and gallery membership. */
 @customElement("pi-web-image-gallery-dialog")
 export class ImageGalleryDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @query("dialog") private dialog?: HTMLDialogElement;
   @state() private gallery: { images: readonly ImageOpenDetail[]; index: number } | undefined;
   private swipe: { pointerId: number; x: number; y: number } | undefined;

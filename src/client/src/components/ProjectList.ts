@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -12,6 +13,11 @@ import { sidebarListStyles } from "./sidebarListStyles";
 
 @customElement("project-list")
 export class ProjectList extends LitElement implements KeyboardNavigableSection {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selected?: Project;
   /** Status tree of the machine these projects belong to; absent means no indicators. */

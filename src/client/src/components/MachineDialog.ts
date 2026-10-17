@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import "./ModalSurface";
@@ -11,6 +12,11 @@ export interface MachineDialogSubmit {
 
 @customElement("machine-dialog")
 export class MachineDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) onSubmit?: (input: MachineDialogSubmit) => void | Promise<void>;
   @property({ attribute: false }) onCancel?: () => void;
   @property() error = "";
@@ -126,7 +132,7 @@ export class MachineDialog extends LitElement {
   }
 
   static override styles = [uiDialogStyles, uiFormStyles, css`
-    :host { --ui-dialog-width: 560px; --ui-input-font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    :host { --ui-dialog-width: 560px; --ui-input-font-family: var(--pi-control-monospace-font-family, var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)); }
     .hint { color: var(--pi-muted); }
     .intro { margin: 4px 0 0; line-height: 1.4; }
     .optional { color: var(--pi-muted); font-weight: 400; }

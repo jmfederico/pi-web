@@ -1,6 +1,8 @@
 import { html, svg } from "lit";
 import { createPluginCatalog } from "./catalog";
 import { uiStylesCapability, uiStylesCapabilityToken } from "./uiStyles";
+import { stylesheetIntegrationCapability, stylesheetIntegrationCapabilityToken } from "./styles";
+import type { QualifiedStylesheetContribution, StylesheetContribution } from "./types";
 import { createPluginBackend } from "./pluginPeer";
 import type { ContentRenderRequest, DisplayedMessageActionAvailabilityContext, DisplayedMessageActionContext, MessageActionAvailabilityContext, MessageActionContext, MessageActionResult, PluginSelectionSnapshot } from "../../../plugin-api";
 import { availableDisplayedMessageActions, availableMessageActions, type RegisteredMessageAction } from "./messageActions";
@@ -83,6 +85,7 @@ interface NormalizedPluginDeclaration {
 }
 
 interface PreparedPluginContributions {
+  readonly stylesheets: readonly QualifiedStylesheetContribution[];
   readonly contentRenderers: readonly RegisteredContentRenderer[];
   readonly ids: ReadonlySet<QualifiedContributionId>;
   readonly actions: readonly RegisteredPluginAction[];
@@ -213,6 +216,7 @@ export class PluginRegistry {
   private readonly applicationPanels: QualifiedApplicationPanelContribution[] = [];
   private readonly workspaceLabels: QualifiedWorkspaceLabelContribution[] = [];
   private readonly sessionLabels: QualifiedSessionLabelContribution[] = [];
+  private readonly stylesheets: QualifiedStylesheetContribution[] = [];
   private readonly themes: QualifiedThemeContribution[] = [];
   private readonly themePairs: QualifiedThemePairContribution[] = [];
   private readonly pluginIds = new Set<string>();
@@ -241,6 +245,7 @@ export class PluginRegistry {
     for (const provision of snapshotCapabilityProvisions([
       { capability: contentRenderingCapabilityToken, value: this.contentRendering },
       { capability: uiStylesCapabilityToken, value: uiStylesCapability },
+      { capability: stylesheetIntegrationCapabilityToken, value: stylesheetIntegrationCapability },
       ...(options.hostCapabilities ?? []),
     ], undefined, "Browser host capability provisions")) {
       const internal = internalCapabilityProvision(provision);
@@ -315,6 +320,7 @@ export class PluginRegistry {
     this.applicationPanels.splice(0);
     this.workspaceLabels.splice(0);
     this.sessionLabels.splice(0);
+    this.stylesheets.splice(0);
     this.themes.splice(0);
     this.themePairs.splice(0);
     this.contributionIds.clear();
@@ -530,13 +536,18 @@ export class PluginRegistry {
     const workspacePanels = (contributions.workspacePanels ?? []).map((panel) => this.qualifyWorkspacePanel(runtimePluginId, panel, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const workspaceLabels = (contributions.workspaceLabels ?? []).map((contribution) => this.qualifyWorkspaceLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
     const sessionLabels = (contributions.sessionLabels ?? []).map((contribution) => this.qualifySessionLabelContribution(runtimePluginId, contribution, registration.machineId, registration.sourcePluginId, backendRevision, pairedRequestVersion, pairedChannelVersion, contributionIds));
+    const stylesheets = (contributions.stylesheets ?? []).map((style) => ({
+      ...this.qualifyStylesheet(runtimePluginId, style, contributionIds),
+      ...(registration.machineId === undefined ? {} : { machineId: registration.machineId }),
+      ...(registration.sourcePluginId === undefined ? {} : { sourcePluginId: registration.sourcePluginId }),
+    }));
     const themes = registration.machineId === undefined
       ? (contributions.themes ?? []).map((theme) => this.qualifyTheme(runtimePluginId, theme, contributionIds))
       : [];
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, contentRenderers, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, themes, themePairs });
+    return Object.freeze({ ids: contributionIds, contentRenderers, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, stylesheets, themes, themePairs });
   }
 
   private dependencyFailure(
@@ -647,6 +658,7 @@ export class PluginRegistry {
     this.applicationPanels.push(...staged.contributions.applicationPanels);
     this.workspaceLabels.push(...staged.contributions.workspaceLabels);
     this.sessionLabels.push(...staged.contributions.sessionLabels);
+    this.stylesheets.push(...staged.contributions.stylesheets);
     this.themes.push(...staged.contributions.themes);
     this.themePairs.push(...staged.contributions.themePairs);
     this.activeCapabilitiesByRegistration.set(staged.registration.id, new Map(staged.provisions.map((provision) => [provision.key, provision])));
@@ -860,6 +872,10 @@ export class PluginRegistry {
     }));
   }
 
+  getStylesheets(selectedMachineId: string): QualifiedStylesheetContribution[] {
+    return this.stylesheets.filter((style) => this.isContributionActive(style.pluginId, style.machineId, selectedMachineId, style.sourcePluginId));
+  }
+
   getThemes(): QualifiedThemeContribution[] {
     return this.themes
       .filter((theme) => this.isContributionEnabled(theme.pluginId, undefined))
@@ -1052,9 +1068,20 @@ export class PluginRegistry {
     };
   }
 
+  private qualifyStylesheet(pluginId: string, style: StylesheetContribution, contributionIds: Set<QualifiedContributionId>): QualifiedStylesheetContribution {
+    const id = this.qualify(pluginId, style.id, contributionIds);
+    if (typeof style.url !== "string") throw new Error(`Stylesheet ${id} requires a file URL`);
+    const url = new URL(style.url);
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Stylesheet ${id} requires an HTTP(S) file URL`);
+    if (style.order !== undefined && !Number.isFinite(style.order)) throw new Error(`Stylesheet ${id} order must be finite`);
+    return Object.freeze({ id, pluginId, url: url.href, ...(style.order === undefined ? {} : { order: style.order }) });
+  }
+
   private qualifyTheme(pluginId: string, theme: ThemeContribution, contributionIds: Set<QualifiedContributionId>): QualifiedThemeContribution {
     const id = this.qualify(pluginId, theme.id, contributionIds);
-    return { ...theme, id, pluginId, localId: theme.id };
+    const stylesheetIds = new Set<QualifiedContributionId>();
+    const stylesheets = theme.stylesheets?.map((style) => this.qualifyStylesheet(`${pluginId}:${theme.id}`, style, stylesheetIds));
+    return { ...theme, id, pluginId, localId: theme.id, ...(stylesheets === undefined ? {} : { stylesheets }) };
   }
 
   private qualifyThemePair(pluginId: string, pair: ThemePairContribution, contributionIds: Set<QualifiedContributionId>): QualifiedThemePairContribution {
@@ -1631,7 +1658,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "themes", "themePairs", "contentRenderers", "messageActions"];
+const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "stylesheets", "themes", "themePairs", "contentRenderers", "messageActions"];
 
 function isPluginContributions(value: unknown): value is PluginContributions {
   if (!isRecord(value)) return false;

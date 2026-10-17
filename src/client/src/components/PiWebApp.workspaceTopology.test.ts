@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, type Project } from "../api";
 import { navigationOrderPort } from "../api/navigationOrder";

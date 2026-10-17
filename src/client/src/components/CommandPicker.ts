@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { CommandOption } from "../api";
@@ -9,6 +10,11 @@ import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
 
 @customElement("command-picker")
 export class CommandPicker extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() override title = "Select";
   @property({ type: Boolean }) searchable = false;
   @property({ attribute: false }) options: CommandOption[] = [];

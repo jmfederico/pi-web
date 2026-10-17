@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -112,6 +113,11 @@ interface ModelPickerRow {
  */
 @customElement("model-picker")
 export class ModelPicker extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() override title = "Select Model";
   /** Enabled-mode rows: the session's pickable models, pre-labeled by the host. */
   @property({ attribute: false }) options: CommandOption[] = [];

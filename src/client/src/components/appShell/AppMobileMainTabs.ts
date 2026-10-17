@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { QualifiedContributionId } from "../../plugins/types";
@@ -21,6 +22,11 @@ export interface AppMobileMainTab {
 
 @customElement("app-mobile-main-tabs")
 export class AppMobileMainTabs extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
   @property({ attribute: false }) leadingControl: TemplateResult | null = null;
   @property({ attribute: false }) trailingControl: TemplateResult | null = null;

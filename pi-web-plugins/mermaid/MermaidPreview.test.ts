@@ -27,7 +27,10 @@ async function preview(input: ContentRendererInput, loadEngine?: () => Promise<s
 describe("Mermaid isolation and lifecycle", () => {
   it("requires renderer support rather than silently loading on older API v4 hosts", async () => {
     const { default: plugin } = await import("./pi-web-plugin");
-    expect(plugin.requires).toEqual([expect.objectContaining({ pluginId: "pi-web", id: "content-rendering", version: 1 })]);
+    expect(plugin.requires).toEqual(expect.arrayContaining([
+      expect.objectContaining({ pluginId: "pi-web", id: "content-rendering", version: 1 }),
+      expect.objectContaining({ pluginId: "pi-web", id: "stylesheet-integration", version: 1 }),
+    ]));
   });
 
   it("embeds only trusted engine code under a no-network policy and escapes script terminators", () => {

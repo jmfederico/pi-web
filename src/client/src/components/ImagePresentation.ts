@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
@@ -12,6 +13,11 @@ export interface ImageOpenDetail {
 /** The owner authorizes sources; the browser owns image loading and failure display. */
 @customElement("pi-web-image-presentation")
 export class ImagePresentation extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) source: string | undefined;
   @property({ type: Boolean, reflect: true }) thumbnail = false;
   @property({ attribute: false }) dimensions: ImageDimensions | undefined;
@@ -74,6 +80,7 @@ export class ImagePresentation extends LitElement {
   }
 
   static override styles = [uiButtonStyles, css`
+    @layer pi-web-base {
     :host { display: block; max-width: 100%; min-width: 0; }
     .frame { max-width: 100%; }
     button { font: inherit; color: inherit; }
@@ -91,5 +98,6 @@ export class ImagePresentation extends LitElement {
     :host([thumbnail]) .image-button:hover { background: var(--pi-surface-hover); }
     :host([thumbnail]) .placeholder code { display: none; }
     :host([thumbnail]) img { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+    }
   `];
 }

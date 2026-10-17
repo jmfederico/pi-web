@@ -3,6 +3,7 @@ import { markdown, deleteMarkupBackward, insertNewlineContinueMarkup } from "@co
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
 import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view";
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
@@ -42,6 +43,11 @@ type PromptSendHandler = ((...args: PromptSendArgs) => void | Promise<void>) | (
 
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ type: Boolean }) disabled = false;
   @property({ attribute: false }) shortcuts: ShortcutPreferenceConfig = {};
   @property() defaultStreamingBehavior: "steer" | "followUp" = "steer";

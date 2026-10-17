@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { clampPanelWidth, panelResizeConstraints, panelWidthFromDrag, panelWidthFromKeyboard, type PanelResizeConstraints, type ResizablePanelSide } from "../../appShell/panelResizeController";
@@ -18,6 +19,11 @@ const TAP_MOVE_TOLERANCE_PX = 4;
 
 @customElement("app-panel-edge-control")
 export class AppPanelEdgeControl extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ reflect: true }) side: PanelEdgeSide = "navigation";
   @property({ type: Boolean }) resizable = false;
   @property({ type: Number }) panelWidth?: number;

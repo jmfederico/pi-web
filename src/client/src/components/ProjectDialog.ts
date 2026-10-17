@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, trustApi, type FileSuggestion } from "../api";
@@ -17,6 +18,11 @@ interface ProjectTrustState {
 
 @customElement("project-dialog")
 export class ProjectDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) onSubmit?: (path: string, create: boolean, trust: ProjectTrustChoice | undefined) => void;
   @property({ attribute: false }) onCancel?: () => void;
   @property() machineId = "local";
@@ -212,9 +218,9 @@ export class ProjectDialog extends LitElement {
   }
 
   static override styles = [uiDialogStyles, uiFormStyles, uiSelectionStyles, css`
-    :host { --ui-dialog-max-height: 700px; --ui-input-font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    :host { --ui-dialog-max-height: 700px; --ui-input-font-family: var(--pi-control-monospace-font-family, var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)); }
     .suggestions { min-height: 90px; max-height: 320px; }
-    .suggestions button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .suggestions button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .hint { padding: 12px; color: var(--pi-muted); }
     .trust-error { color: var(--pi-danger, #c0392b); }
     .trust-hint, .machine-hint { color: var(--pi-muted); line-height: 1.3; }

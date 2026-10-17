@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -44,6 +45,11 @@ interface AgentAttention {
 
 @customElement("session-list")
 export class SessionList extends LitElement implements KeyboardNavigableSection {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) sessions: SessionInfo[] = [];
   @property({ attribute: false }) pinnedRootIds: string[] = [];
   @property({ attribute: false }) onPin?: (session: SessionInfo) => void;
@@ -800,7 +806,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .action-row.has-agent-subsessions { margin-bottom: 0; border-bottom: 0; }
     .action-row.has-agent-subsessions .action-main { padding-bottom: 6px; }
     /* Secondary desktop disclosures stay compact; indentation remains inside the click target. */
-    .agent-subsession-toggle { position: relative; display: flex; align-items: center; gap: 6px; box-sizing: border-box; width: 100%; min-height: 28px; margin: 0; padding: 4px 16px 4px calc(35px + var(--agent-offset, 0px) + var(--depth, 0) * 16px); border: 0; border-radius: 0; background: transparent; font: 12px/20px system-ui, sans-serif; text-align: left; color: var(--pi-muted); overflow: hidden; }
+    .agent-subsession-toggle { position: relative; display: flex; align-items: center; gap: 6px; box-sizing: border-box; width: 100%; min-height: 28px; margin: 0; padding: 4px 16px 4px calc(35px + var(--agent-offset, 0px) + var(--depth, 0) * 16px); border: 0; border-radius: 0; background: transparent; font: 12px/20px var(--pi-font, system-ui, sans-serif); text-align: left; color: var(--pi-muted); overflow: hidden; }
     .agent-subsession-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-subsession-toggle::before { content: ""; position: absolute; top: 0; bottom: 50%; left: calc(19px + var(--agent-offset, 0px) + var(--depth, 0) * 16px); width: 10px; border-left: 1px solid var(--pi-border-muted); border-bottom: 1px solid var(--pi-border-muted); pointer-events: none; }
     .agent-subsession-toggle .action-activity { pointer-events: none; }

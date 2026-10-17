@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
@@ -39,6 +40,11 @@ interface DisplayedRecordAnswer {
  */
 @customElement("ask-user-card")
 export class AskUserCard extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) ask?: AskUserRequest;
   @property({ type: Boolean }) open = false;
   @property({ attribute: false }) outcomes: readonly AskUserOutcome[] = [];
@@ -444,7 +450,7 @@ export class AskUserCard extends LitElement {
       width: 100%;
       margin: 0 0 14px;
       color: var(--pi-text);
-      font: 14px system-ui, sans-serif;
+      font: 14px var(--pi-font, system-ui, sans-serif);
       container-type: inline-size;
     }
     .card {

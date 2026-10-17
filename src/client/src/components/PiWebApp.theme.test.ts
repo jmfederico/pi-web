@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, configApi, piPackagesApi, pluginsApi, type PiWebConfigValues } from "../api";
 import { THEME_STORAGE_KEY } from "../theme";
 import { PiWebApp } from "./PiWebApp";
+import { themeStylesheetFetch } from "./themeStylesheetFetch.testSupport";
 import { SettingsDialog } from "./SettingsDialog";
 import { configResponse, pluginsResponse } from "./SettingsDialog.testSupport";
 import { SettingsThemePanel } from "./settings/SettingsThemePanel";
@@ -23,8 +24,7 @@ const unexpectedRequest = vi.fn(() => Promise.reject(new Error("Theme tests must
 
 beforeEach(() => {
   unexpectedRequest.mockClear();
-  vi.stubGlobal("fetch", unexpectedRequest);
-  vi.spyOn(window, "fetch").mockImplementation(unexpectedRequest);
+  vi.stubGlobal("fetch", themeStylesheetFetch(unexpectedRequest));
   config = { defaultTheme: { themeId: "themes:pi-web-light", auto: false } };
   window.history.replaceState(null, "", "/?settings=general");
   vi.spyOn(configApi, "config").mockImplementation((machineId) => Promise.resolve(configResponse(machineId === undefined ? config : {})));
@@ -32,6 +32,7 @@ beforeEach(() => {
     config = saved;
     return Promise.resolve(configResponse(saved));
   });
+  vi.spyOn(configApi, "namingModels").mockResolvedValue({ models: [] });
   vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([]));
   vi.spyOn(piPackagesApi, "packages").mockResolvedValue({ packages: [] });
   vi.spyOn(api, "runtime").mockResolvedValue({ machineId: "local", ok: true, checkedAt: "now", capabilities: [] });

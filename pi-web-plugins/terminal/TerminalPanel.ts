@@ -5,7 +5,7 @@ import { styleMap, type StyleInfo } from "lit/directives/style-map.js";
 import { Terminal, type ITerminalOptions, type ITheme } from "@xterm/xterm";
 import { FitAddon, type ITerminalDimensions } from "@xterm/addon-fit";
 import xtermStyles from "@xterm/xterm/css/xterm.css?inline";
-import type { PluginPeerChannel, PluginPeerChannelClose, TerminalCommandRun, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, PluginPeerChannel, PluginPeerChannelClose, TerminalCommandRun, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { writeClipboardText } from "./clipboard";
 import { selectFallbackTerminal, selectPreferredTerminal } from "./terminalSelection";
 import { TerminalPeerClient, terminalChannelFailureMessage, terminalInputFrames, type TerminalClientFrame, type TerminalInfo, type TerminalServerFrame, type TerminalSize } from "./terminalProtocol";
@@ -42,6 +42,32 @@ interface TerminalReplayInputSuppression {
 }
 
 export class TerminalPanel extends LitElement {
+  private integration: StylesheetIntegrationCapabilityV1 | undefined;
+  private releaseStyles: (() => void) | undefined;
+
+  @property({ attribute: false })
+  get stylesheetIntegration(): StylesheetIntegrationCapabilityV1 | undefined { return this.integration; }
+  set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+    if (value === this.integration) return;
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
+    this.integration = value;
+    this.connectStylesheetIntegration();
+  }
+
+  private connectStylesheetIntegration(): void {
+    if (!this.isConnected || !(this.renderRoot instanceof ShadowRoot) || this.integration === undefined || this.releaseStyles !== undefined) return;
+    const releaseRoot = this.integration.registerRoot(this.renderRoot);
+    const unsubscribe = this.integration.subscribe(() => { this.applyTerminalTheme(); });
+    this.releaseStyles = () => {
+      unsubscribe();
+      releaseRoot();
+    };
+    // Subscription does not deliver an initial notification; registration may
+    // already have adopted a new palette while a terminal view exists.
+    this.applyTerminalTheme();
+  }
+
   @property({ attribute: false }) context: WorkspacePanelContext | undefined;
   @property({ attribute: false }) runtime: TerminalBrowserRuntime | undefined;
   @property({ attribute: false }) softKeysElementName = "pi-web-terminal-soft-keys-pi-web-terminal";
@@ -80,7 +106,6 @@ export class TerminalPanel extends LitElement {
   private terminalNavigationGeneration = 0;
   private resizeObserver: ResizeObserver | undefined;
   private intersectionObserver: IntersectionObserver | undefined;
-  private themeObserver: MutationObserver | undefined;
   private replayInputSuppression: TerminalReplayInputSuppression | undefined;
   private observedRuntime: TerminalBrowserRuntime | undefined;
   private observedWorkspaceScope: string | undefined;
@@ -100,10 +125,9 @@ export class TerminalPanel extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.connectStylesheetIntegration();
     this.syncDefaultSoftKeysEnvironment();
     this.softKeysDefaultEnvironmentMedia?.addEventListener("change", this.onSoftKeysDefaultEnvironmentChange);
-    this.themeObserver = new MutationObserver(() => { this.applyTerminalTheme(); });
-    this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
   }
 
   override firstUpdated(): void {
@@ -120,8 +144,6 @@ export class TerminalPanel extends LitElement {
   override disconnectedCallback(): void {
     this.intersectionObserver?.disconnect();
     this.intersectionObserver = undefined;
-    this.themeObserver?.disconnect();
-    this.themeObserver = undefined;
     this.softKeysDefaultEnvironmentMedia?.removeEventListener("change", this.onSoftKeysDefaultEnvironmentChange);
     this.workspaceGeneration += 1;
     this.cancelWorkspaceRequests();
@@ -129,6 +151,8 @@ export class TerminalPanel extends LitElement {
     this.continuingTerminalIds = [];
     this.updateCommandRunPolling(false);
     this.disposeTerminalView();
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
     super.disconnectedCallback();
   }
 
@@ -1033,6 +1057,7 @@ export class TerminalPanel extends LitElement {
     const softKeysTag = unsafeStatic(this.softKeysElementName);
     return staticHtml`
       <${softKeysTag}
+        .stylesheetIntegration=${this.stylesheetIntegration}
         class="terminal-soft-keys"
         .modes=${this.terminal?.modes}
         .refocusOnClick=${!this.defaultSoftKeysEnvironment}
@@ -1072,7 +1097,7 @@ export class TerminalPanel extends LitElement {
     :host { flex: 1 1 auto; min-height: 0; display: flex; }
     .terminal-shell { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--pi-terminal-bg); }
     .terminal-tabs { flex: 0 0 auto; display: flex; align-items: stretch; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); overflow: auto; }
-    .terminal-tabs > button { box-sizing: border-box; flex: 0 0 auto; min-width: 32px; height: 32px; gap: 0; padding: 0 10px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); font: 12px/16px system-ui, sans-serif; }
+    .terminal-tabs > button { box-sizing: border-box; flex: 0 0 auto; min-width: 32px; height: 32px; gap: 0; padding: 0 10px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); font: 12px/16px var(--pi-font, system-ui, sans-serif); }
     .terminal-tabs > button:has(small) { padding: 0; }
     .terminal-tabs > button > span { padding: 0 10px; }
     .terminal-tabs > button > small { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; min-width: 32px; }
@@ -1105,24 +1130,24 @@ export class TerminalPanel extends LitElement {
     .command-run-notice.succeeded { border-color: var(--pi-success-border); }
     .command-run-notice.failed { border-color: var(--pi-danger); }
     .command-run-notice p { margin: 3px 0; color: var(--pi-muted); }
-    .command-run-notice code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .command-run-notice kbd { border: 1px solid var(--pi-border); border-radius: 4px; background: var(--pi-bg); padding: 0 4px; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .command-run-notice code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text-secondary); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    .command-run-notice kbd { border: 1px solid var(--pi-border); border-radius: 4px; background: var(--pi-bg); padding: 0 4px; font: 11px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .command-run-notice button { justify-self: end; max-width: none; }
     .terminal-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--pi-terminal-bg); }
     .terminal-host { position: absolute; inset: 0; padding: 6px; box-sizing: border-box; overflow: hidden; }
     .terminal-host.copying { visibility: hidden; pointer-events: none; }
     .terminal-copy-view { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; background: var(--pi-terminal-bg); color: var(--pi-terminal-text); }
-    .terminal-copy-toolbar { box-sizing: border-box; flex: 0 0 auto; display: flex; align-items: center; gap: 0; min-width: 0; min-height: 32px; padding: 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); color: var(--pi-muted); font: 12px system-ui, sans-serif; }
+    .terminal-copy-toolbar { box-sizing: border-box; flex: 0 0 auto; display: flex; align-items: center; gap: 0; min-width: 0; min-height: 32px; padding: 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); color: var(--pi-muted); font: 12px var(--pi-font, system-ui, sans-serif); }
     .terminal-copy-toolbar > span { min-width: 0; padding-inline: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .terminal-copy-toolbar small { margin-left: auto; padding-inline: 8px; white-space: nowrap; color: var(--pi-dim); }
-    .terminal-copy-toolbar button { box-sizing: border-box; align-self: stretch; flex: 0 0 auto; width: auto; min-height: 32px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); padding: 6px 9px; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .terminal-copy-toolbar button { box-sizing: border-box; align-self: stretch; flex: 0 0 auto; width: auto; min-height: 32px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); padding: 6px 9px; font: 12px/20px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .terminal-copy-toolbar button:hover { background: var(--pi-surface); color: var(--pi-text); }
     .terminal-copy-toolbar button:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: -3px; }
     @media (pointer: coarse) {
       .terminal-copy-toolbar button { min-width: 44px; min-height: 44px; }
     }
     .terminal-copy-layers { flex: 1 1 auto; min-height: 0; display: grid; overflow: hidden; background: var(--pi-terminal-bg); }
-    /* xterm renders the configured 13px terminal font in 17px-high cells. */
+    /* Match xterm's configured font, not theme code fonts, to keep copy selection aligned with its cells. */
     .terminal-copy-content, .terminal-copy-selector { grid-area: 1 / 1; box-sizing: border-box; min-width: 0; min-height: 0; width: 100%; height: 100%; margin: 0; padding: 6px; border: 0; border-radius: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 17px; letter-spacing: normal; font-variant-ligatures: none; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
     .terminal-copy-content { overflow: auto; pointer-events: none; background: var(--pi-terminal-bg); color: var(--pi-terminal-text); -webkit-user-select: none; user-select: none; }
     .terminal-copy-selector { z-index: 1; overflow: auto; resize: none; outline: none; appearance: none; background: transparent; color: transparent; caret-color: var(--pi-accent); -webkit-text-fill-color: transparent; cursor: text; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; touch-action: auto; }

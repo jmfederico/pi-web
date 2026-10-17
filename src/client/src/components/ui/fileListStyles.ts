@@ -1,12 +1,2 @@
-import { css } from "lit";
-
-/** Compact native file rows shared by independent Files and Git panels. */
-export const uiFileListStyles = css`
-  .ui-file-list { min-height: 0; overflow: auto; padding: 0; }
-  .ui-file-row.ui-button { box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 32px; min-height: 32px; margin: 0; padding: 6px 10px 6px calc(10px + var(--depth, 0) * 16px); border: 0; border-radius: 0; background: transparent; color: var(--pi-text); font: 13px/20px system-ui, sans-serif; text-align: left; }
-  .ui-file-row:hover:not(:disabled) { background: var(--pi-surface-hover); }
-  .ui-file-row:is(.selected, [aria-current="page"]), .ui-file-row:is(.selected, [aria-current="page"]):hover:not(:disabled) { background: var(--pi-selection-bg); color: var(--pi-text); }
-  .ui-file-leading { display: flex; align-items: center; justify-content: center; width: 16px; min-width: 0; color: var(--pi-muted); }
-  .ui-file-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ui-file-meta { justify-self: end; color: var(--pi-muted); font-size: 12px; white-space: nowrap; }
-`;
+// Shared presentation is owned by the base theme.
+export { uiFileListStyles } from "../../theme/base/fileListStyles";

@@ -6,8 +6,7 @@ import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { machineScopedPluginId } from "../../../shared/machinePluginIds";
 import { corePlugin } from "./core";
 import { PluginRegistry, installWorkspaceLabelScope, installWorkspacePanelScope } from "./registry";
-import { themePackPlugin } from "./themes";
-import type { PiWebPlugin, PluginActivationResult, PluginCapability, PluginRuntimeContext, QualifiedContributionId, ThemeTokens, WorkspaceFiles, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
+import type { PiWebPlugin, PluginActivationResult, PluginCapability, PluginRuntimeContext, QualifiedContributionId, WorkspaceFiles, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelContribution, WorkspacePluginBinding } from "./types";
 import { createPluginPeer } from "./pluginPeer";
 import { adaptPublicPlugin, publicPluginState } from "./publicContext";
 import type { PluginBackendRequestTarget } from "../api/pluginBackends";
@@ -264,7 +263,7 @@ describe("PluginRegistry", () => {
           render: panelRender,
         }],
         workspaceLabels: [{ id: "label", items: labelItems }],
-        themes: [{ id: "light", name: "Light", colorScheme: "light", tokens: testThemeTokens() }],
+        themes: [{ id: "light", name: "Light", colorScheme: "light" }],
         themePairs: [{ id: "pair", name: "Pair", light: "light", dark: "light" }],
       },
     }));
@@ -327,7 +326,7 @@ describe("PluginRegistry", () => {
               render: () => html`<p>Portable</p>`,
             }],
             workspaceLabels: [{ id: "label", items: () => [{ type: "text", text: "portable" }] }],
-            themes: [{ id: "theme", name: "Portable", colorScheme: "light", tokens: testThemeTokens() }],
+            themes: [{ id: "theme", name: "Portable", colorScheme: "light" }],
           },
         }),
       },
@@ -1525,20 +1524,6 @@ describe("PluginRegistry", () => {
     expect(new Set(shortcuts.map(([, shortcut]) => shortcut)).size).toBe(shortcuts.length);
   });
 
-  it("collects built-in PI WEB themes from an in-app plugin", async () => {
-    const registry = new PluginRegistry();
-    await registry.register({ id: "themes", plugin: themePackPlugin });
-
-    expect(registry.getThemes().map((theme) => ({ id: theme.id, colorScheme: theme.colorScheme }))).toEqual([
-      { id: "themes:pi-web-dark", colorScheme: "dark" },
-      { id: "themes:pi-web-light", colorScheme: "light" },
-      { id: "themes:classic", colorScheme: "dark" },
-    ]);
-    expect(registry.getThemePairs().map((pair) => ({ id: pair.id, light: pair.light, dark: pair.dark }))).toEqual([
-      { id: "themes:pi-web", light: "themes:pi-web-light", dark: "themes:pi-web-dark" },
-    ]);
-  });
-
   it("collects theme contributions in contribution order", async () => {
     const registry = new PluginRegistry();
     await registry.register({
@@ -1549,8 +1534,8 @@ describe("PluginRegistry", () => {
         activate: () => ({
           contributions: {
             themes: [
-              { id: "last", name: "Last", order: 20, colorScheme: "dark", tokens: testThemeTokens() },
-              { id: "first", name: "First", order: 10, colorScheme: "light", tokens: testThemeTokens() },
+              { id: "last", name: "Last", order: 20, colorScheme: "dark" },
+              { id: "first", name: "First", order: 10, colorScheme: "light" },
             ],
             themePairs: [
               { id: "pair", name: "Pair", light: "first", dark: "last" },
@@ -1644,7 +1629,7 @@ describe("PluginRegistry", () => {
             actions: [{ id: "do-thing", title: "Do Thing", run: () => undefined }],
             workspacePanels: [{ id: "workspace.tools", title: "Tools", render: () => html`<p>Tools</p>` }],
             workspaceLabels: [{ id: "badge", items: () => [{ type: "text", text: "remote" }] }],
-            themes: [{ id: "remote-theme", name: "Remote Theme", colorScheme: "dark", tokens: testThemeTokens() }],
+            themes: [{ id: "remote-theme", name: "Remote Theme", colorScheme: "dark" }],
           },
         }),
       },
@@ -2084,45 +2069,5 @@ function lifecyclePlugin(
     name,
     ...(requires === undefined ? {} : { requires }),
     activate: () => ({ contributions: {}, ...activation }),
-  };
-}
-
-function testThemeTokens(): ThemeTokens {
-  return {
-    "--pi-bg": "#000000",
-    "--pi-surface": "#000000",
-    "--pi-surface-hover": "#000000",
-    "--pi-terminal-bg": "#000000",
-    "--pi-terminal-text": "#000000",
-    "--pi-border": "#000000",
-    "--pi-border-muted": "#000000",
-    "--pi-text": "#000000",
-    "--pi-text-secondary": "#000000",
-    "--pi-text-bright": "#000000",
-    "--pi-muted": "#000000",
-    "--pi-dim": "#000000",
-    "--pi-accent": "#000000",
-    "--pi-accent-border": "#000000",
-    "--pi-selection-bg": "#000000",
-    "--pi-success": "#000000",
-    "--pi-success-border": "#000000",
-    "--pi-success-bg": "#000000",
-    "--pi-success-surface": "#000000",
-    "--pi-success-ring": "#000000",
-    "--pi-warning": "#000000",
-    "--pi-warning-border": "#000000",
-    "--pi-warning-surface": "#000000",
-    "--pi-danger": "#000000",
-    "--pi-purple": "#000000",
-    "--pi-purple-border": "#000000",
-    "--pi-purple-surface": "#000000",
-    "--pi-overlay": "#000000",
-    "--pi-shadow-soft": "#000000",
-    "--pi-shadow": "#000000",
-    "--pi-shadow-strong": "#000000",
-    "--pi-bg-overlay-soft": "#000000",
-    "--pi-bg-overlay": "#000000",
-    "--pi-success-bg-overlay": "#000000",
-    "--pi-terminal-selection": "#000000",
   };
 }

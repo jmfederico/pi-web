@@ -65,7 +65,7 @@ function button(panel: Element, selector: string): HTMLButtonElement {
 
 describe("Workspace Tasks host UI styles", () => {
   it("requires v1, validates its payload, and adopts start-resolved CSS through the rendered panel", () => {
-    const requirement = required(plugin.requires[0]);
+    const requirement = required(plugin.requires.find(({ id }) => id === "ui-styles"));
     expect(requirement).toMatchObject({ pluginId: "pi-web", id: "ui-styles", version: 1 });
     for (const value of [null, undefined, {}, { cssText: 42 }]) {
       expect(() => requirement.parse(value)).toThrow("requires UI styles capability v1");
@@ -75,10 +75,11 @@ describe("Workspace Tasks host UI styles", () => {
     instance.start({ signal: new AbortController().signal, capabilities: {
       resolve<Value>(token: PluginCapability<Value>): Value {
         requests(token);
-        return token.parse({ cssText: ".ui-button { color: red; }" });
+        return token.parse({ cssText: ".ui-button { color: red; }", registerRoot: vi.fn(() => vi.fn()), createController: vi.fn(), subscribe: vi.fn(() => vi.fn()) });
       },
     } });
-    expect(requests).toHaveBeenCalledExactlyOnceWith(requirement);
+    expect(requests).toHaveBeenCalledWith(requirement);
+    expect(requests).toHaveBeenCalledTimes(2);
     const container = document.createElement("div");
     document.body.append(container);
     render(required(instance.contributions.workspacePanels[0]).render(workspaceContext()), container);

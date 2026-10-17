@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import type { Machine, MachineHealth, Project, SessionActivity, SessionInfo, SessionStatus, Workspace } from "../../api";
@@ -20,6 +21,11 @@ export type NavigationFocusTarget = NavigationSection | "chat";
 
 @customElement("app-navigation-panel")
 export class AppNavigationPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selectedMachine?: Machine;
   /** PWA display mode: surfaces the single-machine identity in the header. */
@@ -303,10 +309,11 @@ export class AppNavigationPanel extends LitElement {
        section distributes its space to every remaining section, not just the
        session list. Collapsed sections keep only their heading height. */
     machine-list, project-list, workspace-list, session-list { flex: 1 1 0px; min-height: 0; overflow: hidden; border-bottom: 1px solid var(--pi-border-muted); }
+    /* A collapsed heading already owns its separator; do not add a second line. */
     machine-list[collapsed],
     project-list[collapsed],
     workspace-list[collapsed],
-    session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; }
+    session-list[collapsed] { flex: 0 0 auto; min-height: auto; overflow: hidden; border-bottom: 0; }
   `];
 }
 

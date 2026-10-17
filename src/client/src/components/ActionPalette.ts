@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { AppAction } from "../actions";
@@ -9,6 +10,11 @@ import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
 
 @customElement("action-palette")
 export class ActionPalette extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) onRun?: (action: AppAction) => void;
   @property({ attribute: false }) onCancel?: () => void;
@@ -107,7 +113,7 @@ export class ActionPalette extends LitElement {
     .description { flex: 1 1 24ch; min-width: 0; font: inherit; }
     .disabled-reason { color: var(--pi-warning); }
     .group { flex: 0 1 auto; min-width: 0; max-width: 100%; margin: 0 0 0 auto; text-align: right; font-size: 12px; }
-    kbd { flex: 0 1 auto; max-width: 100%; margin-inline-start: auto; align-self: center; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-muted); padding: 2px 6px; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: normal; }
+    kbd { flex: 0 1 auto; max-width: 100%; margin-inline-start: auto; align-self: center; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-surface); color: var(--pi-muted); padding: 2px 6px; font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); white-space: normal; }
   `];
 }
 

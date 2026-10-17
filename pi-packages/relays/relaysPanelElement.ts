@@ -1,4 +1,4 @@
-import type { WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { isMarkdownDocumentPath, renderRelayDocumentHtml } from "./markdownDocument.js";
 import { isRelayPacketPath } from "./relayIdentity.js";
 import {
@@ -50,6 +50,26 @@ interface RelaySelection {
  * horizontal scroll position and keyboard focus survive document switches.
  */
 class PiWebRelaysPanel extends HTMLElement {
+  private integration: StylesheetIntegrationCapabilityV1 | undefined;
+  private releaseStyles: (() => void) | undefined;
+
+  set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+    if (value === this.integration) return;
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
+    this.integration = value;
+    if (this.isConnected) this.releaseStyles = value?.registerRoot(this.root);
+  }
+
+  connectedCallback(): void {
+    this.releaseStyles ??= this.integration?.registerRoot(this.root);
+  }
+
+  disconnectedCallback(): void {
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
+  }
+
   private contextValue: WorkspacePanelContext | undefined;
   private listing: RelaysListing | undefined;
   private selectedRelayPath: string | undefined;

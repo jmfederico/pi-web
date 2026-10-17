@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
@@ -19,6 +20,11 @@ function renderShortcutsDescription(): TemplateResult {
 
 @customElement("settings-shortcuts-panel")
 export class SettingsShortcutsPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
   @property({ type: Boolean }) loading = false;
@@ -345,7 +351,7 @@ export class SettingsShortcutsPanel extends LitElement {
     h3, p { margin: 0; }
     p { color: var(--pi-muted); line-height: 1.45; }
     .config-path-card span { color: var(--pi-muted); font-size: 12px; font-weight: 600; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .shortcut-group { margin: 0; }
     .shortcut-group:has(.shortcut-list) { padding: 0; gap: 0; }
     .shortcut-group:has(.shortcut-list) > .ui-settings-heading { padding: 16px; background: var(--pi-surface); }
@@ -356,7 +362,7 @@ export class SettingsShortcutsPanel extends LitElement {
     .shortcut-main { min-width: 0; display: grid; gap: 4px; }
     .shortcut-main strong, .shortcut-main small { overflow-wrap: anywhere; }
     .shortcut-main small { color: var(--pi-muted); }
-    .shortcut-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .shortcut-id { font-family: var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .shortcut-editor { min-width: 0; display: grid; gap: 8px; }
     .shortcut-status { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     .shortcut-status small { color: var(--pi-muted); font-size: 11px; }
@@ -364,8 +370,8 @@ export class SettingsShortcutsPanel extends LitElement {
     .shortcut-status small.disabled { color: var(--pi-warning); }
     .shortcut-status small.conflict.shadowing { color: var(--pi-accent); }
     .shortcut-status small.conflict.shadowed { color: var(--pi-warning); }
-    .shortcut-input { --ui-input-font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
-    kbd { border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text-secondary); padding: 3px 7px; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
+    .shortcut-input { --ui-input-font-family: var(--pi-control-monospace-font-family, var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)); }
+    kbd { border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text-secondary); padding: 3px 7px; font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); white-space: nowrap; }
     .unassigned { color: var(--pi-muted); font-size: 12px; }
     .recording-hint { color: var(--pi-accent); font-size: 12px; }
 

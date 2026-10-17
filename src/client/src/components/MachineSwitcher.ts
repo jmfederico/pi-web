@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth, MachineStatus } from "../api";
@@ -11,6 +12,11 @@ import { uiButtonStyles, uiMenuStyles } from "./ui/controlStyles";
 
 @customElement("machine-switcher")
 export class MachineSwitcher extends LitElement implements KeyboardNavigableSection {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selected?: Machine;
   /** PWA display mode: the single-machine identity bubble only shows there. */

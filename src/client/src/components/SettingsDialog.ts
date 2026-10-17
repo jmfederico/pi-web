@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { cache } from "lit/directives/cache.js";
@@ -25,6 +26,11 @@ import { mergeSelectedMachineSessiondConfig } from "./settings/settingsSessiondC
 
 @customElement("settings-dialog")
 export class SettingsDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) themes: readonly QualifiedThemeContribution[] = [];
@@ -778,7 +784,8 @@ export class SettingsDialog extends LitElement {
   }
 
   static override styles = [uiDialogStyles, uiSelectionStyles, css`
-    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    @layer pi-web-base {
+    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-backdrop-padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); --modal-surface-width: min(980px, 100%); --modal-surface-max-height: min(760px, 100%); --modal-surface-min-height: min(620px, 100%); --modal-surface-radius: 14px; }
     .settings-machine { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--pi-border); }
     .settings-machine label { font-size: 12px; font-weight: 700; }
@@ -813,6 +820,7 @@ export class SettingsDialog extends LitElement {
       .settings-nav button { flex: 0 0 auto; width: auto; white-space: nowrap; border-inline-end: 1px solid var(--pi-border-muted); }
       .settings-nav small { display: none; }
       .settings-content { padding-bottom: env(safe-area-inset-bottom); }
+    }
     }
   `];
 }

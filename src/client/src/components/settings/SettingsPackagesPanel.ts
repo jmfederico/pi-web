@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { PiPackageInfo, PiPackageInstallableSuggestion, PiPackageScope, PiPackagesResponse } from "../../api";
@@ -10,6 +11,11 @@ import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFiltere
 
 @customElement("settings-packages-panel")
 export class SettingsPackagesPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) packagesResponse: PiPackagesResponse | undefined;
   @property({ type: Boolean }) loading = false;
   @property({ attribute: false }) operation: PiPackageOperationState | undefined;
@@ -238,7 +244,7 @@ export class SettingsPackagesPanel extends LitElement {
     .package-card, .known-package-card { align-items: center; }
     .package-card.filtered { opacity: .82; }
     .package-main strong, .package-main small { overflow-wrap: anywhere; }
-    code { color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    code { color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
 
     @media (max-width: 760px) {
       .install-row { grid-template-columns: minmax(0, 1fr); }

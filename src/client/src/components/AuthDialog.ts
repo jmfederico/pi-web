@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { AuthDialogState } from "../appState";
@@ -22,6 +23,11 @@ interface AuthDialogOption {
 
 @customElement("auth-dialog")
 export class AuthDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) state?: AuthDialogState;
   @property({ attribute: false }) onChooseMethod?: (authType: "oauth" | "api_key") => void;
   @property({ attribute: false }) onSelectProvider?: (providerId: string, authType: "oauth" | "api_key") => void;

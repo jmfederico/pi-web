@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { ContentRendererContribution } from "../../../plugin-api";
@@ -18,6 +19,11 @@ function isTemplateResult(value: unknown): value is TemplateResult {
 /** Owns source access independently of the plugin's rendering success. */
 @customElement("pi-web-content-renderer")
 export class ContentRendererHost extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   // Chat-private source controls; public plugin consumers retain legacy defaults.
   @property({ attribute: false }) codeBlocks: CodeBlockSourcePolicy | undefined;
   @property({ type: Boolean, reflect: true, attribute: "external-controls" }) externalControls = false;
@@ -197,9 +203,9 @@ export class ContentRendererHost extends LitElement {
     #content > .plain-code-block { padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
     #content > pre.source-wrap { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
     #content > .plain-code-block.source-scroll { overflow: auto; white-space: pre; overflow-wrap: normal; }
-    code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { font: 13px/1.5 var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .preview { overflow: auto; padding: 12px; }
-    p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 system-ui, sans-serif; }
+    p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 var(--pi-font, system-ui, sans-serif); }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   `];
 }

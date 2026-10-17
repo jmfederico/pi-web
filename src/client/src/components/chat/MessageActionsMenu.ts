@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement } from "lit";
 import { customElement, query } from "lit/decorators.js";
 import { uiButtonStyles } from "../ui/controlStyles";
@@ -5,6 +6,11 @@ import { uiButtonStyles } from "../ui/controlStyles";
 /** Expands parent-owned actions to the left without changing transcript layout. */
 @customElement("pi-message-actions-menu")
 export class MessageActionsMenu extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @query("button") private trigger!: HTMLButtonElement;
   @query("[popover]") private panel!: HTMLDivElement;
 

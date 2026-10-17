@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 
-import type { JsonValue, PluginPeerChannelOptions, PluginPeer, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
-import { Terminal } from "@xterm/xterm";
+import type { JsonValue, PluginPeerChannelOptions, PluginPeer, StylesheetIntegrationCapabilityV1, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
+import { Terminal, type ITerminalOptions } from "@xterm/xterm";
+import * as xterm from "@xterm/xterm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
 import { TerminalPanel, filterTerminalInput } from "./TerminalPanel";
@@ -14,12 +15,22 @@ afterEach(() => {
   localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Terminal panel lifecycle", () => {
   it("renders the registered pi-web.terminal soft-key element from its default path", async () => {
     defineTerminalCustomElements();
     const panel = createTerminalPanel();
+    const roots = new Set<ShadowRoot>();
+    panel.stylesheetIntegration = {
+      registerRoot: (root) => {
+        roots.add(root);
+        return () => { roots.delete(root); };
+      },
+      createController: vi.fn(),
+      subscribe: () => () => undefined,
+    };
     document.body.append(panel);
     await panel.updateComplete;
 
@@ -31,6 +42,82 @@ describe("Terminal panel lifecycle", () => {
     expect(panel.shadowRoot?.querySelector(TERMINAL_SOFT_KEYS_ELEMENT)?.localName)
       .toBe(TERMINAL_SOFT_KEYS_ELEMENT);
     expect(panel.shadowRoot?.querySelector("pi-web-terminal-soft-keys-terminal")).toBeNull();
+    const keys = panel.shadowRoot?.querySelector(TERMINAL_SOFT_KEYS_ELEMENT);
+    expect(roots).toEqual(new Set([panel.shadowRoot, keys?.shadowRoot]));
+    panel.remove();
+    expect(roots.size).toBe(0);
+    document.body.append(panel);
+    // Reconnect re-applies the saved/default soft-key preference.
+    Reflect.set(panel, "softKeysEnabled", true);
+    await panel.updateComplete;
+    expect(roots.size).toBe(2);
+  });
+
+  it("refreshes the external terminal palette after stylesheet notifications without document theme mutations", async () => {
+    const terminals = fakeTerminalBoundary();
+    const styles = stylesheetFixture("#102030");
+    await mountPalettePanel(styles.capability);
+    const terminal = terminals[0];
+    expect(terminal?.options.theme).toMatchObject({ background: "#102030", foreground: "#abcdef", cursor: "#123456", selectionBackground: "#654321" });
+
+    styles.adoptPalette("#405060");
+
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    expect(styles.listeners.size).toBe(1);
+  });
+
+  it("handles delayed stylesheet injection, replacement, removal, disconnect, and reconnect", async () => {
+    const terminals = fakeTerminalBoundary();
+    const panel = await mountPalettePanel();
+    const terminal = terminals[0];
+    const first = stylesheetFixture("#102030");
+    panel.stylesheetIntegration = first.capability;
+    expect(terminal?.options.theme?.background).toBe("#102030");
+    expect(first.listeners.size).toBe(1);
+    panel.stylesheetIntegration = first.capability;
+    expect(first.capability.subscribe).toHaveBeenCalledOnce();
+
+    const replacement = stylesheetFixture("#405060");
+    panel.stylesheetIntegration = replacement.capability;
+    expect(first.unsubscribe).toHaveBeenCalledOnce();
+    expect(first.roots.size).toBe(0);
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    panel.style.setProperty("--pi-terminal-bg", "#778899");
+    first.notify();
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    replacement.notify();
+    expect(terminal?.options.theme?.background).toBe("#778899");
+
+    panel.stylesheetIntegration = undefined;
+    expect(replacement.unsubscribe).toHaveBeenCalledOnce();
+    expect(replacement.roots.size).toBe(0);
+    panel.style.setProperty("--pi-terminal-bg", "#aabbcc");
+    replacement.notify();
+    expect(terminal?.options.theme?.background).toBe("#778899");
+
+    panel.stylesheetIntegration = replacement.capability;
+    panel.remove();
+    expect(replacement.unsubscribe).toHaveBeenCalledTimes(2);
+    expect(replacement.listeners.size).toBe(0);
+    expect(replacement.roots.size).toBe(0);
+    expect(terminal?.dispose).toHaveBeenCalledOnce();
+    replacement.adoptPalette("#ddeeff");
+    expect(terminal?.options.theme?.background).toBe("#405060");
+
+    panel.stylesheetIntegration = first.capability;
+    expect(first.capability.subscribe).toHaveBeenCalledOnce();
+    first.adoptPalette("#112233");
+    document.body.append(panel);
+    await panel.updateComplete;
+    expect(first.listeners.size).toBe(1);
+    expect(first.roots).toEqual(new Set([panel.shadowRoot]));
+    expect(terminals).toHaveLength(2);
+    expect(terminals[1]?.options.theme?.background).toBe("#112233");
+    first.adoptPalette("#445566");
+    expect(terminals[1]?.options.theme?.background).toBe("#445566");
+    panel.remove();
+    expect(first.unsubscribe).toHaveBeenCalledTimes(2);
+    expect(first.listeners.size).toBe(0);
   });
 
   it("closes the peer channel and cancels retries, requests, observers, timers, and Xterm on disconnect", () => {
@@ -951,6 +1038,79 @@ describe("Terminal panel lifecycle", () => {
     expect(filterTerminalInput("npm test\r")).toBe("npm test\r");
   });
 });
+
+// Replace only Xterm's external rendering boundary; panel setup and updates use
+// its public properties, peer protocol, and connected custom-element lifecycle.
+function fakeTerminalBoundary() {
+  const terminals: { options: ITerminalOptions; dispose: ReturnType<typeof vi.fn> }[] = [];
+  class FakeTerminal {
+    options: ITerminalOptions;
+    dispose = vi.fn();
+    loadAddon = vi.fn();
+    open = vi.fn();
+    onData = vi.fn();
+    focus = vi.fn();
+    constructor(options: ITerminalOptions = {}) {
+      this.options = options;
+      terminals.push(this);
+    }
+  }
+  // The renderer fake deliberately implements only the Xterm boundary used here.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  vi.spyOn(xterm, "Terminal").mockImplementation(FakeTerminal as unknown as typeof Terminal);
+  vi.stubGlobal("IntersectionObserver", undefined);
+  return terminals;
+}
+
+async function mountPalettePanel(integration?: StylesheetIntegrationCapabilityV1): Promise<TerminalPanel> {
+  const panel = createTerminalPanel();
+  panel.stylesheetIntegration = integration;
+  panel.context = terminalContext({
+    peer: terminalPeer(vi.fn((operation: string) => Promise.resolve(operation === "terminal.list" ? [terminalInfo("palette-shell")] : []))),
+  });
+  panel.runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+  document.body.append(panel);
+  // Let the public list response and its subsequent Lit updates settle.
+  await vi.waitFor(() => { expect(panel.shadowRoot?.querySelector(".terminal-tabs button.selected")?.textContent).toContain("palette-shell"); });
+  await panel.updateComplete;
+  return panel;
+}
+
+function stylesheetFixture(initialBackground: string) {
+  const roots = new Set<ShadowRoot>();
+  const listeners = new Set<() => void>();
+  let background = initialBackground;
+  const applyPalette = (root: ShadowRoot) => {
+    const host = root.host;
+    if (!(host instanceof HTMLElement)) throw new Error("Expected HTML stylesheet host");
+    host.style.setProperty("--pi-terminal-bg", background);
+    host.style.setProperty("--pi-terminal-text", "#abcdef");
+    host.style.setProperty("--pi-accent", "#123456");
+    host.style.setProperty("--pi-terminal-selection", "#654321");
+  };
+  const unsubscribe = vi.fn();
+  const capability: StylesheetIntegrationCapabilityV1 = {
+    registerRoot: (root) => {
+      roots.add(root);
+      applyPalette(root);
+      return () => { roots.delete(root); };
+    },
+    createController: vi.fn(),
+    subscribe: vi.fn((listener: () => void) => {
+      listeners.add(listener);
+      return () => { unsubscribe(); listeners.delete(listener); };
+    }),
+  };
+  const notify = () => { for (const listener of listeners) listener(); };
+  return {
+    capability, roots, listeners, unsubscribe, notify,
+    adoptPalette: (nextBackground: string) => {
+      background = nextBackground;
+      for (const root of roots) applyPalette(root);
+      notify();
+    },
+  };
+}
 
 function isInputFrame(value: unknown): value is { type: "input"; data: string } {
   return typeof value === "object" && value !== null && Reflect.get(value, "type") === "input" && typeof Reflect.get(value, "data") === "string";

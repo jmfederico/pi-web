@@ -21,10 +21,10 @@ describe("Files plugin activation", () => {
     await result.start?.({ signal: new AbortController().signal, capabilities: {
       resolve<Value>(token: PluginCapability<Value>): Value {
         requests.push(token.id);
-        return token.parse({ cssText, listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown: vi.fn() });
+        return token.parse({ cssText, listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown: vi.fn(), registerRoot: vi.fn(() => vi.fn()), createController: vi.fn(), subscribe: vi.fn(() => vi.fn()) });
       },
     } });
-    expect(requests).toEqual(["content-rendering", "ui-styles"]);
+    expect(requests).toEqual(["content-rendering", "ui-styles", "stylesheet-integration"]);
     const panel = result.contributions.workspacePanels?.[0]?.render(createWorkspaceContext());
     expect(panel?.values).toContain(cssText);
     const requirement = plugin.requires.find(({ id }) => id === "ui-styles");
