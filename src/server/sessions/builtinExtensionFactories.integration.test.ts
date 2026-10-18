@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, createEventBus } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
 import { createSubsessionToolDefinitions } from "./spawnSubsessionTool.js";
@@ -13,9 +13,11 @@ import { createTestModelRuntime, testModel } from "./piSessionService.testSuppor
 // and a fake model transport. No live daemon, user MCP servers, or paid API.
 describe("builtin extension factories load through DefaultResourceLoader", () => {
   let directory: string;
+  afterEach(() => vi.unstubAllEnvs());
 
   it("loads mcp, codemode, and tool-search builtins when factories are provided", async () => {
     directory = await mkdtemp(join(tmpdir(), "pi-web-builtin-integration-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", directory);
     try {
       // Create an empty mcp.json so MCP servers don't try to connect to the network.
       await writeFile(join(directory, "mcp.json"), JSON.stringify({ mcpServers: {} }), "utf-8");
@@ -53,6 +55,7 @@ describe("builtin extension factories load through DefaultResourceLoader", () =>
 
   it.each(["noExtensions", "settings"])("respects builtin disablement through %s", async (disablement) => {
     directory = await mkdtemp(join(tmpdir(), "pi-web-builtin-empty-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", directory);
     try {
       const loader = new DefaultResourceLoader({
         cwd: directory,
@@ -81,6 +84,7 @@ describe("builtin extension factories load through DefaultResourceLoader", () =>
 
   it("executes codemode-only nested reads without exposing run-ending tools to scripts", async () => {
     directory = await mkdtemp(join(tmpdir(), "pi-web-codemode-integration-"));
+    vi.stubEnv("PI_CODING_AGENT_DIR", directory);
     const errors: unknown[] = [];
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
     try {

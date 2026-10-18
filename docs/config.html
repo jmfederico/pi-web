@@ -87,6 +87,7 @@
 <a href="#ui-settings">UI &amp; defaults</a>
 <a href="#file-settings">Files &amp; uploads</a>
 <a href="#session-tools">Session daemon</a>
+<a href="#web-search">Web search</a>
 <a href="#plugin-config">Plugins</a>
 <a href="#network">Networking</a>
 <a href="#storage">Storage</a>
@@ -96,6 +97,15 @@
 </nav>
 <div class="doc-content reference-content">
 <div class="reference-legend" id="keys"><p class="reference-scroll-hint">On narrow screens, scroll each table sideways to see all columns.</p><p><strong>Scope:</strong> “Machine” means the selected machine in Fleet. “Gateway” means the machine serving your browser. “Project” means all workspaces in that repository.</p><p><strong>Restart:</strong> “Sessiond” means the session daemon. Restarting it can interrupt active sessions. A web/API restart or browser reload is not a substitute.</p></div>
+
+<section id="web-search"><h2>Web search in fresh Pi profiles</h2>
+<p>Fresh profiles get free web search and page fetching through <a href="https://docs.parallel.ai/integrations/mcp/search-mcp">Parallel Search MCP</a>, with no account or API key. Anonymous search uses Fast mode. The default connects on the first agent prompt. Ask the agent to search the web or read a URL; Pi's <code>tool_search</code> discovers <code>mcp__pi_web_default_search__web_search</code> and <code>mcp__pi_web_default_search__web_fetch</code> before calling them. Search queries and fetched URLs are sent to Parallel when those tools run. Free-tier usage limits apply, and each request has a 30-second timeout.</p>
+<p>The default applies only when the active Pi agent directory has neither <code>mcp.json</code> nor <code>mcp-auth.json</code>, the workspace has no <code>.pi/mcp.json</code>, and no extension has registered an MCP server. If an extension registers another server during the session, PI WEB withdraws its own default and leaves the explicit server in place. Existing files, including empty, invalid, unreadable, or disabled configurations, never trigger a fallback. PI WEB does not write or replace MCP settings or credentials. An untrusted workspace file suppresses the default too; Pi still decides whether to load it.</p>
+<p>To opt out persistently, create <code>mcp.json</code> in the active Pi agent directory (<code>~/.pi/agent</code> by default, or <code>PI_CODING_AGENT_DIR</code>) containing:</p>
+<pre><code>{ "mcpServers": {} }</code></pre>
+<p>Keep an existing file and edit it instead of replacing it. You can also disable the MCP built-in with <code>"extensions": ["-builtin:mcp"]</code> in Pi settings. Built-in replacements, tool permissions, and cancellation continue to apply. <code>/mcp</code> reports status; disabling an extension-registered server there lasts for the current session only. Saved configuration changes apply to new sessions or idle sessions after <code>/reload</code>.</p>
+<p>Loading this update requires a manual session-daemon restart, which can interrupt active sessions. A browser reload or web/API restart does not load session-runtime changes. See the <a href="config.md#web-search-in-fresh-pi-profiles">Markdown reference</a>.</p>
+</section>
 
 <section id="files"><h2>Config files & precedence</h2>
 <div class="table-scroll" role="region" aria-label="Choose the configuration location" tabindex="0">

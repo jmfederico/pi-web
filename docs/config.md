@@ -35,6 +35,22 @@ Open the model or thinking-level selector and click a row’s star under **New s
 
 Defaults are saved in Pi’s global `settings.json` on the selected session’s machine (`~/.pi/agent/settings.json` by default), using `defaultProvider`, `defaultModel`, and `defaultThinkingLevel`. They apply to new sessions without restarting. Project `.pi/settings.json` overrides, explicit startup choices, and per-model thinking settings still take precedence. A default model must be enabled; otherwise startup falls back to the first enabled model. Resumed sessions keep their saved model and thinking level.
 
+## Web search in fresh Pi profiles
+
+Fresh profiles get free web search and page fetching through [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp), with no account or API key. Anonymous search uses Fast mode. The default connects on the first agent prompt. Ask the agent to search the web or read a URL; Pi's `tool_search` discovers `mcp__pi_web_default_search__web_search` and `mcp__pi_web_default_search__web_fetch` before calling them. Search queries and fetched URLs are sent to Parallel when those tools run. The service has free-tier usage limits, and each request has a 30-second timeout.
+
+The default applies only when the active Pi agent directory has neither `mcp.json` nor `mcp-auth.json`, the workspace has no `.pi/mcp.json`, and no extension has registered an MCP server. If an extension registers another server during the session, PI WEB withdraws its own default and leaves the explicit server in place. Existing files, including empty or disabled configurations, keep their behavior. Invalid or unreadable configuration never triggers a fallback. PI WEB does not write or replace your MCP settings or credentials. A workspace file also suppresses the default when the project is untrusted; Pi still decides whether to load that file.
+
+To opt out persistently, create `mcp.json` in the active Pi agent directory (`~/.pi/agent` by default, or `PI_CODING_AGENT_DIR`) with:
+
+```json
+{ "mcpServers": {} }
+```
+
+Keep an existing file and edit it instead of replacing it. You can also disable the MCP built-in using `"extensions": ["-builtin:mcp"]` in Pi settings. Existing built-in replacements, tool permissions, and cancellation continue to apply. `/mcp` reports connection status; disabling an extension-registered server there applies to the current session only. Saved configuration changes apply to new sessions or idle sessions after `/reload`.
+
+Loading this PI WEB update requires a manual session-daemon restart, which can interrupt active sessions. A browser reload or web/API restart does not load session-runtime changes.
+
 ## Reverse-proxy deployment paths
 
 The deployment path is not a PI WEB config-file key or environment setting. The published client is portable: one build works at `/` and at canonical trailing-slash prefixes such as `/ai/` or `/test/ai/`.

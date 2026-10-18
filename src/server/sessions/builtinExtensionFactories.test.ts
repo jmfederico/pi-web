@@ -34,8 +34,12 @@ describe("getBuiltinExtensionFactories", () => {
     const { factories, exports } = builtinCreators();
     const getFactories = await loadFactories(exports);
 
-    expect(await getFactories()).toEqual([
-      { name: "mcp", factory: factories.mcp, builtin: true, replaceable: true },
+    const result = await getFactories();
+    expect(result[0]).toMatchObject({ name: "mcp", builtin: true, replaceable: true });
+    const mcp = result[0];
+    if (typeof mcp !== "object") throw new Error("Expected a named MCP extension");
+    expect(typeof mcp.factory).toBe("function");
+    expect(result.slice(1)).toEqual([
       { name: "codemode", factory: factories.codemode, builtin: true, replaceable: true },
       { name: "tool-search", factory: factories.toolSearch, builtin: true, replaceable: true },
     ]);
