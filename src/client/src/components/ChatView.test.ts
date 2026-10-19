@@ -1,6 +1,6 @@
 import type { TemplateResult } from "lit";
 import { describe, expect, it, vi } from "vitest";
-import type { QueuedSessionMessage, SessionStatus, SessionWarning } from "../api";
+import type { QueuedSessionMessage, SessionStatus } from "../api";
 import {
   ChatView,
   chatEventAnchorKey,
@@ -11,9 +11,10 @@ import {
   chatMessageMetadataLabel,
   chatQueuedMessageSections,
   chatQueuedSectionShowsClearAction,
-  chatSessionWarningRows,
+  CHAT_CHROME_VISIBILITY_EVENT,
+  type ChatChromeVisibilityDetail,
 } from "./ChatView";
-import { templateEventHandlerAfterMarker, templateEventHandlerNearMarker } from "../templateInspection.testSupport";
+import { templateEventHandlerNearMarker } from "../templateInspection.testSupport";
 import type { ChatLine } from "./shared";
 
 describe("chatQueuedMessageSections", () => {
@@ -77,88 +78,163 @@ describe("ChatView queued-message clear wiring", () => {
   });
 });
 
-describe("chatSessionWarningRows", () => {
-  // Warning-row content (severity class, message, path, source, dismiss
-  // capability, ordering) is derived by a pure exported seam rather than scraped
-  // from rendered `TemplateResult` markup, per the testing-guide rule that
-  // TemplateResult inspection is not for general content assertions.
-  it("derives one severity-tagged row per warning with optional path and source", () => {
-    const rows = chatSessionWarningRows(warningStatus([
-      { severity: "error", message: "skill failed to load", source: "skill", path: "/skills/a.md" },
-      { severity: "warning", message: "subscription auth is active" },
-      { severity: "info", message: "heads up", source: "runtime" },
-    ]));
 
-    expect(rows).toEqual([
-      { severity: "error", severityClass: "session-warning error", message: "skill failed to load", source: "skill", path: "/skills/a.md", dismissId: undefined },
-      { severity: "warning", severityClass: "session-warning warning", message: "subscription auth is active", source: undefined, path: undefined, dismissId: undefined },
-      { severity: "info", severityClass: "session-warning info", message: "heads up", source: "runtime", path: undefined, dismissId: undefined },
-    ]);
-  });
 
-  it("exposes a dismiss id only for warnings carrying a dismiss capability", () => {
-    const rows = chatSessionWarningRows(warningStatus([
-      { severity: "error", message: "skill failed to load", source: "skill" },
-      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
-    ]));
+describe("ChatView chrome scroll reporting", () => {
+  interface FakeChatMetrics {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+  }
 
-    expect(rows.map((row) => row.dismissId)).toEqual([undefined, "anthropicExtraUsage"]);
-  });
+  /** Install a fake `.chat` scroller. `@query` defines `chat` as a getter-only
+   *  accessor, so we shadow it with an own data property instead of assigning. */
+  function installFakeChat(view: ChatView, metrics: FakeChatMetrics): void {
+    Object.defineProperty(view, "chat", { value: metrics, configurable: true, writable: true });
+  }
 
-  it("derives no rows when there are no warnings or status is unset", () => {
-    expect(chatSessionWarningRows(warningStatus([]))).toEqual([]);
-    expect(chatSessionWarningRows(undefined)).toEqual([]);
-  });
-});
+  function setChromeField(view: ChatView, name: string, value: unknown): void {
+    Object.defineProperty(view, name, { value, configurable: true, writable: true });
+  }
 
-describe("ChatView session-warning dismiss wiring", () => {
-  // Escape hatch: this case verifies the dismiss button's Lit event wiring,
-  // whose observable effect is invoking onDismissWarning with the warning's
-  // dismiss id. No DOM environment is available, so handler extraction anchored
-  // to the stable `session-warning-dismiss` class marker is proportionate.
-  it("invokes onDismissWarning with the warning's dismiss id", () => {
+  function chromeField(view: ChatView, name: string): unknown {
+    return Object.getOwnPropertyDescriptor(view, name)?.value;
+  }
+
+  function callChromeMethod(view: ChatView, name: string): void {
+    let target: object | null = view;
+    while (target !== null) {
+      const value: unknown = Object.getOwnPropertyDescriptor(target, name)?.value;
+      if (typeof value === "function") {
+        value.call(view);
+        return;
+      }
+      target = Reflect.getPrototypeOf(target);
+    }
+    throw new Error(`ChatView.${name} is not callable`);
+  }
+
+  function isChromeVisibilityEvent(event: Event): event is CustomEvent<ChatChromeVisibilityDetail> {
+    return "detail" in event;
+  }
+
+  function captureChromeVisibility(view: ChatView): CustomEvent<ChatChromeVisibilityDetail>[] {
+    const events: CustomEvent<ChatChromeVisibilityDetail>[] = [];
+    view.addEventListener(CHAT_CHROME_VISIBILITY_EVENT, (event) => { if (isChromeVisibilityEvent(event)) events.push(event); });
+    return events;
+  }
+
+  it("reveals the chrome when scrolling up past the threshold", () => {
     const view = new ChatView();
-    const onDismissWarning = vi.fn();
-    view.onDismissWarning = onDismissWarning;
-    view.status = warningStatus([
-      { severity: "warning", message: "subscription auth is active", source: "anthropic", dismiss: { id: "anthropicExtraUsage" } },
-    ]);
+    installFakeChat(view, { scrollTop: 500, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 520);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
 
-    const rendered = renderWarnings(view);
-    if (rendered === null) throw new Error("expected a warnings banner");
-    templateEventHandlerAfterMarker(rendered, "session-warning-dismiss")(new Event("click"));
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
 
-    expect(onDismissWarning).toHaveBeenCalledExactlyOnceWith("anthropicExtraUsage");
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event?.detail).toEqual({ hidden: false });
+    expect(event?.bubbles).toBe(true);
+    expect(event?.composed).toBe(true);
   });
 
-  // Escape hatch: this verifies the minimise chevron's Lit callback wiring in
-  // the node test environment, anchored to its stable semantic class marker.
-  // The chevron is wired to the unified onToggleWarnings (toggle ≡ collapse in
-  // the expanded state), so this also proves the single visibility mutation.
-  it("invokes onToggleWarnings from the visible warning area", () => {
-    const view = withStatus(new ChatView(), warningStatus([
-      { severity: "warning", message: "subscription auth is active" },
-    ]));
-    const onToggleWarnings = vi.fn();
-    view.onToggleWarnings = onToggleWarnings;
+  it("hides the chrome when scrolling down past the threshold", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
 
-    const rendered = renderWarnings(view);
-    if (rendered === null) throw new Error("expected a warnings banner");
-    templateEventHandlerAfterMarker(rendered, "session-warnings-collapse")(new Event("click"));
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
 
-    expect(onToggleWarnings).toHaveBeenCalledOnce();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: true });
   });
 
-  it("removes the warning area while presentation is collapsed or there are no warnings", () => {
-    const view = withStatus(new ChatView(), warningStatus([
-      { severity: "warning", message: "subscription auth is active" },
-    ]));
-    view.warningsVisible = false;
+  it("keeps a pinned chrome revealed while scrolling down", () => {
+    const view = new ChatView();
+    view.chromePinned = true;
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
 
-    expect(renderWarnings(view)).toBeNull();
-    expect(renderWarnings(withStatus(new ChatView(), warningStatus([])))).toBeNull();
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toEqual([]);
+    expect(chromeField(view, "chromeHidden")).toBe(false);
+  });
+
+  it("hides the chrome again once the host unpins it", () => {
+    const view = new ChatView();
+    view.chromePinned = true;
+    installFakeChat(view, { scrollTop: 520, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    view.chromePinned = false;
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: true });
+  });
+
+  it("always reveals the chrome when pinned to the bottom", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 1000);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: false });
+  });
+
+  it("reveals the chrome within the floating top bar's height of the start", () => {
+    const view = new ChatView();
+    view.chromeTopInset = 80;
+    installFakeChat(view, { scrollTop: 40, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 0);
+    setChromeField(view, "chromeHidden", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.detail).toEqual({ hidden: false });
+  });
+
+  it("does not toggle the chrome for sub-threshold scrolls", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 505, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 500);
+    setChromeField(view, "chromeHidden", false);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(0);
+  });
+
+  it("drops the scroll sample produced by a programmatic scroll", () => {
+    const view = new ChatView();
+    installFakeChat(view, { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 });
+    setChromeField(view, "lastChromeScrollTop", 100);
+    setChromeField(view, "suppressChromeScroll", true);
+    const events = captureChromeVisibility(view);
+
+    callChromeMethod(view, "updateChromeVisibilityFromScroll");
+
+    expect(events).toHaveLength(0);
+    expect(chromeField(view, "lastChromeScrollTop")).toBe(900);
   });
 });
+
 
 describe("chatMessageMetadataLabel", () => {
   it("uses one full date and model label without a model prefix", () => {
@@ -215,7 +291,6 @@ describe("chat event-group content seams", () => {
 });
 
 type RenderQueuedMessages = (this: ChatView) => TemplateResult;
-type RenderWarnings = (this: ChatView) => TemplateResult | null;
 
 function renderQueuedMessages(view: ChatView): TemplateResult {
   const method: unknown = Reflect.get(view, "renderQueuedMessages");
@@ -223,35 +298,13 @@ function renderQueuedMessages(view: ChatView): TemplateResult {
   return method.call(view);
 }
 
-function renderWarnings(view: ChatView): TemplateResult | null {
-  const method: unknown = Reflect.get(view, "renderWarnings");
-  if (!isRenderWarnings(method)) throw new Error("ChatView.renderWarnings is not callable");
-  return method.call(view);
-}
-
 function isRenderQueuedMessages(value: unknown): value is RenderQueuedMessages {
-  return typeof value === "function";
-}
-
-function isRenderWarnings(value: unknown): value is RenderWarnings {
   return typeof value === "function";
 }
 
 function requireSection(section: ReturnType<typeof chatQueuedMessageSections>[number] | undefined): ReturnType<typeof chatQueuedMessageSections>[number] {
   if (section === undefined) throw new Error("expected a queued-message section");
   return section;
-}
-
-function withStatus(view: ChatView, status: SessionStatus): ChatView {
-  view.status = status;
-  return view;
-}
-
-function warningStatus(warnings: SessionWarning[]): SessionStatus {
-  return {
-    ...queuedStatus([]),
-    ...(warnings.length === 0 ? {} : { warnings }),
-  };
 }
 
 function queuedStatus(queuedMessages: QueuedSessionMessage[]): SessionStatus {
