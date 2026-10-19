@@ -53,8 +53,10 @@ describe("Relay extension in Pi", () => {
       expect(tool?.parameters).toHaveProperty("properties.leg.type", "string");
       expect(tool?.parameters).not.toHaveProperty("properties.prompt");
       let turn = 0;
+      let providerSchema: unknown;
       session.agent.streamFunction = (_model, context) => {
-        expect(getCurrentTools(context.messages).map((item) => item.name)).toContain("dispatch_relay");
+        const providerTool = getCurrentTools(context.messages).find((item) => item.name === "dispatch_relay");
+        providerSchema = JSON.parse(JSON.stringify(providerTool?.parameters));
         const first = ++turn === 1;
         const message: AssistantMessage = {
           role: "assistant", api: "anthropic-messages", provider: "anthropic", model: testModel().id,
@@ -68,6 +70,11 @@ describe("Relay extension in Pi", () => {
         return stream;
       };
       await session.prompt("Dispatch the approved Relay");
+      expect(providerSchema).toMatchObject({ properties: { thinkingLevel: {
+        type: "string",
+        enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      } } });
+      expect(providerSchema).toHaveProperty("required", ["packet", "leg"]);
       const result = session.messages.find((message) => message.role === "toolResult");
       expect(result).toMatchObject({ toolName: "dispatch_relay", isError: !hostAvailable || !validLeg });
       if (hostAvailable && validLeg) {

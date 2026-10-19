@@ -164,6 +164,17 @@ describe("createSubsessionToolDefinitions", () => {
     expect(JSON.stringify(spawnTool.parameters)).not.toContain("anthropic/claude-sonnet-4-5");
   });
 
+  it("serializes optional thinking levels as an explicitly typed string enum for providers", () => {
+    const { spawn: tool } = tools({});
+    const schema: unknown = JSON.parse(JSON.stringify(tool.parameters));
+
+    expect(schema).toMatchObject({ properties: { thinkingLevel: {
+      type: "string",
+      enum: [...KNOWN_THINKING_LEVELS],
+    } } });
+    expect(schema).toHaveProperty("required", ["prompt"]);
+  });
+
   it.each(KNOWN_THINKING_LEVELS)("spawn_subsession overrides inherited thinking with %s without changing the parent", async (thinkingLevel) => {
     const spawn = vi.fn(() => Promise.resolve({ sessionId: "child", cwd: "/repos/a" }));
     const { spawn: tool } = tools({ spawn });

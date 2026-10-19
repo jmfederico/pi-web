@@ -75,6 +75,17 @@ describe("createSpawnSessionToolDefinition", () => {
     expect(JSON.stringify(tool.parameters)).not.toContain("anthropic/claude-sonnet-4-5");
   });
 
+  it("serializes optional thinking levels as an explicitly typed string enum for providers", () => {
+    const tool = createSpawnSessionToolDefinition("/repos/a", { spawn: vi.fn() });
+    const schema: unknown = JSON.parse(JSON.stringify(tool.parameters));
+
+    expect(schema).toMatchObject({ properties: { thinkingLevel: {
+      type: "string",
+      enum: [...KNOWN_THINKING_LEVELS],
+    } } });
+    expect(schema).toHaveProperty("required", ["prompt"]);
+  });
+
   it.each(KNOWN_THINKING_LEVELS)("overrides inherited thinking with %s without changing the parent", async (thinkingLevel) => {
     const spawn = vi.fn(() => Promise.resolve({ sessionId: "new", cwd: "/repos/a" }));
     const tool = createSpawnSessionToolDefinition("/repos/a", { spawn });

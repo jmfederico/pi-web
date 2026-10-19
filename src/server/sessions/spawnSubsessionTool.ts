@@ -91,6 +91,7 @@ export interface SubsessionToolDeps {
 
 const SpawnSubsessionParams = Type.Object({
   thinkingLevel: Type.Optional(Type.Enum(KNOWN_THINKING_LEVELS, {
+    type: "string",
     description: "Thinking level override for the child session. Set this field only when instructed to use a specific thinking level or to choose an appropriate one. Otherwise omit it to inherit this session's thinking level. An unknown value is rejected; valid levels are clamped to the selected model's capabilities.",
   })),
   prompt: Type.String({

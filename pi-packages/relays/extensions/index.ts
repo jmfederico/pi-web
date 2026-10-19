@@ -12,6 +12,7 @@ const DispatchParams = Type.Object({
   cwd: Type.Optional(Type.String({ description: "Target workspace of the same registered project. Omit to use this session's workspace." })),
   model: Type.Optional(Type.String({ description: 'Exact provider/model-id override. Set only when instructed to select a specific model or choose an appropriate one; otherwise omit to inherit.' })),
   thinkingLevel: Type.Optional(Type.Enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"], {
+    type: "string",
     description: "Thinking-level override. Set only when instructed to select a level or choose an appropriate one; otherwise omit to inherit. Pi clamps valid levels to the selected model.",
   })),
 }, { additionalProperties: false });
