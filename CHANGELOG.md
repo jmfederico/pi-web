@@ -1,5 +1,11 @@
 # @jmfederico/pi-web
 
+## 1.202610.4
+
+### Patch Changes
+
+- 8f5ca72: Fix Moonshot-compatible providers rejecting the first request because session-spawning and Relay dispatch tools omit the string type from their thinking-level options.
+
 ## 1.202610.3
 
 ### Patch Changes
