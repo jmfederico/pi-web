@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,7 +24,13 @@ interface FakeDocker {
 }
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "pi-web-docker-test-"));
+  // macOS exposes /var as a symlink to /private/var. Shell commands resolve
+  // temporary working directories to their physical path, so keep fixtures
+  // canonical to match the runtime's path comparisons and generated output.
+  // Keep socket fixtures under the short /tmp path to stay within macOS's
+  // Unix-domain socket path limit.
+  const tempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
+  tempDir = await realpath(await mkdtemp(join(tempRoot, "pwt-")));
 });
 
 afterEach(async () => {

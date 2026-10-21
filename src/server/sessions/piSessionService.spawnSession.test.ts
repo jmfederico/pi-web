@@ -30,6 +30,7 @@ describe("PiSessionService", () => {
 
       expect(result).toEqual({ sessionId: "spawned-1", cwd: "/workspace-feature" });
       expect(fake.calls.prompt).toEqual([{ text: "continue the plan", options: undefined }]);
+      expect(log).toContainEqual({ details: { sessionId: "spawned-1" }, message: "Session naming returned no title; using the first-message fallback" });
       const spawnLog = log.filter(({ message }) => message === "spawn_session started a new session");
       expect(spawnLog).toEqual([{ details: { spawningCwd: "/workspace", sessionId: "spawned-1", cwd: "/workspace-feature", promptLength: 17 }, message: "spawn_session started a new session" }]);
       await service.dispose();

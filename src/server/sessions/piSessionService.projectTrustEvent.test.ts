@@ -155,7 +155,7 @@ describe("resolveWebProjectTrusted", () => {
   it("lets an extension decision beat a saved decision, mirroring the SDK order", async () => {
     const cwd = await trustRequiringCwd();
     const agent = await agentDir("always");
-    await writeFile(join(agent, "trust.json"), `${JSON.stringify({ [cwd]: true })}\n`);
+    new ProjectTrustStore(agent).set(cwd, true);
 
     await expect(
       resolve({ cwd, agentDirPath: agent, extensionsResult: extensionSet(trustExtension("/ext/a.js", () => ({ trusted: "no" }))) }),
@@ -180,7 +180,7 @@ describe("resolveWebProjectTrusted", () => {
   it("falls back to the saved decision when the event is undecided", async () => {
     const cwd = await trustRequiringCwd();
     const agent = await agentDir("never");
-    await writeFile(join(agent, "trust.json"), `${JSON.stringify({ [cwd]: true })}\n`);
+    new ProjectTrustStore(agent).set(cwd, true);
 
     await expect(
       resolve({ cwd, agentDirPath: agent, extensionsResult: extensionSet(trustExtension("/ext/a.js", () => ({ trusted: "undecided" }))) }),

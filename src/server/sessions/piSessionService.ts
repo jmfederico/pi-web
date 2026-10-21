@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
@@ -43,6 +43,7 @@ import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { McpAuthFlowService } from "./mcpAuthFlowService.js";
 import type { SessionMedia } from "./sessionMediaIndex.js";
 import { pageMessagesAtSafeBoundary } from "./messagePaging.js";
+import { pageHostedSessionHistory } from "./sessionHistoryPageReader.js";
 import { clientSessionFirstMessagePreview } from "./clientSessionPreview.js";
 import type { SessionEventHub } from "../realtime/sessionEventHub.js";
 import { BUILTIN_COMMANDS } from "./builtinCommands.js";
@@ -54,6 +55,7 @@ import { SessionArchiveStore, type ArchivedSessionRecord, type ArchiveSessionInp
 import { findArchiveCandidateByExactId, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
 import type { ActiveSession } from "./sessionRuntimeStore.js";
 import type { PluginSessionSnapshot } from "../../shared/pluginCatalogTypes.js";
+import type { PluginSessionActivityV1Snapshot } from "../../shared/pluginSessionActivityTypes.js";
 import type { PiWebHostPiSessionConnection } from "../../server-plugin-api.js";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
 import { fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
@@ -400,6 +402,7 @@ export interface PiSessionManager {
   getSessionId(): string;
   getSessionFile(): string | undefined;
   getBranch(): unknown[];
+  getEntry?(id: string): object | undefined;
   getEntries?(): readonly unknown[];
   getTree?(): readonly ProjectableSessionTreeNode[];
   getLeafId(): string | null;
@@ -417,6 +420,8 @@ export interface PiSessionManagerGateway {
    * bodies or building a full workspace transcript listing.
    */
   resolveSessionFile(cwd: string, sessionId: string): Promise<ResolvedSessionFile | undefined>;
+  /** Read one cold transcript page without retaining all message bodies in memory. */
+  readMessagePage?(path: string, page?: { before?: number; limit?: number; allowPartialTurn?: boolean; maxMessages?: number; maxBytes?: number }, signal?: AbortSignal): Promise<ClientMessagePage | undefined>;
   /**
    * Drop any cached listing summary for a session file that was rewritten in
    * place (detach clears the header while keeping the inode): file identity
@@ -433,6 +438,8 @@ export interface PiSessionManagerGateway {
   readBranch?(path: string): Promise<unknown[] | undefined>;
   /** Read all branches, sharing the read-only parsed snapshot with readBranch. */
   readEntries?(path: string): Promise<readonly unknown[] | undefined>;
+  /** Reuse a stable, already-open runtime snapshot for its first idle read. */
+  readBranchFromOpenedSession?(path: string, manager: PiSessionManager): Promise<unknown[] | undefined>;
   create(cwd: string, options?: { parentSession?: string }): PiSessionManager;
   /**
    * Cross-project listing of Pi's session stores (the default store plus any
@@ -1578,16 +1585,117 @@ export class PiSessionService implements SessionRouteService {
       const row = clientSessionFromArchivedRecord(record, entriesById.get(record.sessionId));
       if (row !== undefined) rows.set(row.id, row);
     }
+    const sessionIdsByPath = new Map([...rows.values()].map((row) => [resolve(row.path), row.id]));
     return [...rows.values()].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified)).map((row) => {
       const runtime = runtimes.get(row.id);
+      const parentSessionId = row.parentSessionPath === undefined ? undefined : sessionIdsByPath.get(resolve(row.parentSessionPath));
       return Object.freeze({
         id: row.id,
         cwd: row.cwd,
         ...(row.name === undefined ? {} : { name: row.name }),
         ...(row.metadata === undefined ? {} : { metadata: structuredClone(row.metadata) }),
         archived: row.archived === true,
+        ...(parentSessionId === undefined ? {} : { parentSessionId }),
+        ...(row.archivedAt === undefined ? {} : { archivedAt: row.archivedAt }),
         runtime: runtime === undefined ? "not-hosted" : this.hasActiveWork(runtime) ? "busy" : "idle",
       } satisfies PluginSessionSnapshot);
+    });
+  }
+
+  /** Read activity from catalog state and an already hosted runtime; never opens a cold runtime. */
+  async inspectSessionActivity(cwd: string, sessionId: string, signal?: AbortSignal): Promise<PluginSessionActivityV1Snapshot> {
+    signal?.throwIfAborted();
+    const rows = await this.listCatalogSessions(cwd, signal);
+    const matches = rows.filter((row) => row.id === sessionId);
+    if (matches.length !== 1) throw new Error(matches.length === 0 ? "Session not found" : "Session id is ambiguous in the selected workspace");
+    const sessionSnapshot = matches.at(0);
+    if (sessionSnapshot === undefined) throw new Error("Session not found");
+    const ref = { id: sessionId, cwd };
+    const runtime = this.activeForRef(ref)?.runtime.session;
+    const startup = runtime === undefined ? this.startupSessionForRef(ref) : undefined;
+    const hosted = runtime ?? startup;
+    const archived = sessionSnapshot.archived;
+    const lifecycle = archived ? "archived" : startup === undefined ? "active" : "starting";
+    const relatedRows: PluginSessionActivityV1Snapshot["relatedExecutions"]["executions"][number][] = [];
+    let truncated = false;
+    let childrenTotalCount = 0;
+    let relatedWorking = 0;
+    const archive = archived ? await this.getArchived(ref) : undefined;
+    const file = archive?.archivePath ?? (await this.sessionManager.resolveSessionFile(cwd, sessionId))?.path
+      ?? (hosted === undefined ? undefined : hosted.sessionFile);
+    if (file !== undefined) {
+      // Activity reads verify persisted links without registering them in the
+      // runtime lifecycle. Registration also changes durable unread state.
+      const children = await this.inspectPersistedSubsessionsForParent(sessionId, file, hosted?.sessionManager);
+      const projected = projectSessionActivitySubsessions(sessionId, cwd, children);
+      relatedRows.push(...projected.executions);
+      truncated = projected.truncated;
+      childrenTotalCount = projected.totalCount;
+      relatedWorking = projected.workingCount;
+    }
+    signal?.throwIfAborted();
+
+    let status: PluginSessionActivityV1Snapshot["status"];
+    let activity: PluginSessionActivityV1Snapshot["activity"];
+    if (hosted === undefined) {
+      const history = await this.inspectionMessages(ref, { limit: 1 }, signal);
+      status = {
+        persisted: file !== undefined,
+        isStreaming: null,
+        isCompacting: null,
+        isBashRunning: null,
+        pendingMessageCount: null,
+        messageCount: history.total,
+        queueState: { available: false, reason: "runtime_not_loaded" },
+        telemetry: { available: false, reason: "runtime_not_loaded" },
+      };
+      // A cold runtime cannot prove the parent session is idle. Persisted,
+      // verified running children are positive evidence; otherwise report unknown.
+      activity = !archived && relatedWorking > 0 ? "working" : "unknown";
+    } else {
+      const activeExecution = !archived && (this.treeNavigations.has(hosted)
+        || this.isSessionEntryMutationActive(hosted)
+        || this.isTreeExclusiveOperationActive(hosted)
+        || hosted.isStreaming || hosted.isCompacting || hosted.isBashRunning);
+      const steeringCount = hosted.getSteeringMessages().length;
+      const followUpCount = hosted.getFollowUpMessages().length;
+      const compactionFollowUpCount = this.compactionQueuedMessages(sessionId).length;
+      const stats = hosted.getSessionStats();
+      const contextUsage = hosted.getContextUsage();
+      const pendingMessageCount = this.pendingMessageCount(hosted);
+      status = {
+        persisted: sessionFileExists(hosted.sessionFile),
+        isStreaming: hosted.isStreaming,
+        isCompacting: hosted.isCompacting,
+        isBashRunning: hosted.isBashRunning,
+        pendingMessageCount,
+        messageCount: transcriptMessageCount(hosted.sessionManager.getBranch()),
+        queueState: { available: true, steeringCount, followUpCount, compactionFollowUpCount },
+        telemetry: {
+          available: true,
+          tokens: stats.tokens,
+          cost: stats.cost,
+          ...(contextUsage === undefined ? {} : { contextUsage }),
+        },
+      };
+      activity = archived ? "idle" : activeExecution || relatedWorking > 0 ? "working"
+        : pendingMessageCount > 0 ? "waiting" : "idle";
+    }
+    signal?.throwIfAborted();
+    return Object.freeze({
+      session: sessionSnapshot,
+      lifecycle,
+      runtimeLoaded: hosted !== undefined,
+      activity,
+      status,
+      relatedExecutions: {
+        supportedKinds: ["subsession"] as const,
+        unsupportedKinds: ["background-agent", "terminal", "process"] as const,
+        truncated,
+        executions: relatedRows,
+        workingCount: relatedWorking,
+        totalCount: childrenTotalCount,
+      },
     });
   }
 
@@ -2104,6 +2212,44 @@ export class PiSessionService implements SessionRouteService {
     return Promise.all(authorizedChildIds.map(async (childId) => ({ sessionId: childId, ...(await this.subsessionSummaryFields(childId)) })));
   }
 
+  private async inspectPersistedSubsessionsForParent(
+    parentSessionId: string,
+    parentSessionFile: string,
+    knownManager?: PiSessionManager,
+  ): Promise<SubsessionSummary[]> {
+    if ((await readSessionHeaderSummary(parentSessionFile))?.id !== parentSessionId) return [];
+    const linksByChild = new Map<string, TrackedSubsessionLink>();
+    for (const link of this.subsessionLinks.values()) {
+      if (link.parentSessionId === parentSessionId && trackedLinkParentFileMatches(link, parentSessionFile)) {
+        linksByChild.set(link.childSessionId, link);
+      }
+    }
+    // Opening a cold Pi SessionManager may migrate and rewrite legacy JSONL.
+    // Hosted managers are already live; cold and archived transcripts must use
+    // the gateway's read-only parser instead.
+    const entries = knownManager === undefined
+      ? await this.sessionManager.readEntries?.(parentSessionFile)
+      : knownManager.getEntries?.() ?? knownManager.getBranch();
+    if (entries === undefined) return [];
+    for (const entry of entries) {
+      const persisted = parsePersistedParentSubsessionLink(entry);
+      if (persisted?.spawnedBySessionId !== parentSessionId) continue;
+      const verified = await this.verifiedSubsessionLinkFromParentLink(parentSessionId, parentSessionFile, persisted);
+      if (verified !== undefined) linksByChild.set(verified.childSessionId, verified);
+    }
+    return Promise.all([...linksByChild.values()].map(async (link) => {
+      const header = link.childSessionFile === undefined ? undefined : await readSessionHeaderSummary(link.childSessionFile);
+      const validHeader = header?.id === link.childSessionId
+        && header.parentSession !== undefined && sessionPathsEqual(header.parentSession, parentSessionFile);
+      const active = this.activeChildForSubsessionLink(link);
+      return {
+        sessionId: link.childSessionId,
+        cwd: active?.runtime.cwd ?? nonEmptyString(link.cwd) ?? (validHeader ? nonEmptyString(header.cwd) : undefined) ?? "",
+        status: active !== undefined ? this.subsessionStatus(active.runtime.session) : validHeader ? "idle" : "unknown",
+      };
+    }));
+  }
+
   /** Collect ready answers before deciding whether the parent needs to wait. */
   async joinSubsessions(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult> {
     const subsessions = await this.listSubsessions(parentSessionId, parentSessionFile);
@@ -2610,6 +2756,52 @@ export class PiSessionService implements SessionRouteService {
     const session = await this.getOrOpen(ref);
     const result = pageMessagesAtSafeBoundary(historyMessagesFromEntries(await this.readableSessionBranch(ref, session)), page);
     return { ...result, messages: result.messages.map((message) => this.browserTranscriptMessage(session, message)) };
+  }
+
+  /** Read durable history without opening a cold runtime or changing archive state. */
+  async inspectionMessages(ref: PiSessionRef, page?: { before?: number; limit?: number; allowPartialTurn?: boolean }, signal?: AbortSignal): Promise<ClientMessagePage> {
+    signal?.throwIfAborted();
+    const boundedPage = { limit: 100, ...page, maxMessages: 500, maxBytes: 8 * 1024 * 1024 };
+    const hosted = this.activeForRef(ref)?.runtime.session ?? this.startupSessionForRef(ref);
+    if (hosted !== undefined) {
+      if (!this.hasActiveWork(hosted) && !this.unpersistedTreeBranchLeaves.has(hosted) && hosted.sessionManager.getEntry !== undefined) {
+        const manager = hosted.sessionManager;
+        const result = pageHostedSessionHistory({ getLeafId: () => manager.getLeafId(), getEntry: (id) => manager.getEntry?.(id) }, boundedPage, signal);
+        const messages = result.messages.map((message) => projectBrowserMessage(this.browserTranscriptMessage(hosted, message)));
+        assertInspectionPageBudget(messages, boundedPage.maxBytes);
+        signal?.throwIfAborted();
+        return { ...result, messages };
+      }
+      const branch = this.hasActiveWork(hosted) ? hosted.sessionManager.getBranch() : await this.readableSessionBranch(ref, hosted);
+      signal?.throwIfAborted();
+      const result = pageMessagesAtSafeBoundary(historyMessagesFromEntries(branch), boundedPage);
+      const messages = result.messages.map((message) => projectBrowserMessage(this.browserTranscriptMessage(hosted, message)));
+      assertInspectionPageBudget(messages, boundedPage.maxBytes);
+      signal?.throwIfAborted();
+      return { ...result, messages };
+    }
+
+    const archived = await this.getArchived(ref);
+    const resolved = archived?.archivePath === undefined
+      ? await this.sessionManager.resolveSessionFile(ref.cwd, ref.id)
+      : undefined;
+    const path = archived?.archivePath ?? resolved?.path;
+    if (path === undefined || (resolved !== undefined && resolved.id !== ref.id)) throw new Error("Session not found");
+    const paged = await this.sessionManager.readMessagePage?.(path, boundedPage, signal);
+    if (paged !== undefined) {
+      const messages = paged.messages.map((message) => projectBrowserMessage(message));
+      assertInspectionPageBudget(messages, boundedPage.maxBytes);
+      signal?.throwIfAborted();
+      return { ...paged, messages };
+    }
+    signal?.throwIfAborted();
+    const entries = await this.sessionManager.readEntries?.(path);
+    signal?.throwIfAborted();
+    if (entries === undefined) throw new Error("Session transcript is unavailable");
+    const result = pageMessagesAtSafeBoundary(historyMessagesFromEntries(entries), boundedPage);
+    const messages = result.messages.map((message) => projectBrowserMessage(message));
+    assertInspectionPageBudget(messages, boundedPage.maxBytes);
+    return { ...result, messages };
   }
 
   async media(ref: PiSessionRef, mediaId: string): Promise<SessionMedia | undefined> {
@@ -4014,7 +4206,9 @@ export class PiSessionService implements SessionRouteService {
     if (this.hasActiveWork(session)) return session.sessionManager.getBranch();
     const path = sessionFile ?? resolvedPath;
     if (path === undefined) return session.sessionManager.getBranch();
-    const snapshot = await this.sessionManager.readBranch(path);
+    let snapshot = await this.sessionManager.readBranchFromOpenedSession?.(path, session.sessionManager);
+    if (this.hasActiveWork(session)) return session.sessionManager.getBranch();
+    snapshot ??= await this.sessionManager.readBranch(path);
     // No snapshot exists when the transcript file is absent (a session known
     // by path but never persisted, or externally removed): the runtime branch
     // is the only readable branch then.
@@ -5248,6 +5442,37 @@ export class PiSessionService implements SessionRouteService {
   }
 }
 
+export function projectSessionActivitySubsessions(
+  parentSessionId: string,
+  cwd: string,
+  children: readonly SubsessionSummary[],
+): {
+  executions: PluginSessionActivityV1Snapshot["relatedExecutions"]["executions"];
+  totalCount: number;
+  workingCount: number;
+  truncated: boolean;
+} {
+  const matching = children.filter((child) => isAbsolute(child.cwd) && isAbsolute(cwd) && cwdPathsEqual(child.cwd, cwd));
+  const executions = matching.slice(0, 100).map((child) => {
+    const status: PluginSessionActivityV1Snapshot["relatedExecutions"]["executions"][number]["status"] = child.status === "error" ? "failed" : child.status;
+    return {
+      id: `subsession:${child.sessionId}`,
+      kind: "subsession" as const,
+      parentSessionId,
+      sessionId: child.sessionId,
+      status,
+      canStop: status === "working",
+      canOpenSession: true as const,
+    };
+  });
+  return {
+    executions,
+    totalCount: matching.length,
+    workingCount: matching.filter((child) => child.status === "working").length,
+    truncated: matching.length > executions.length || matching.length !== children.length,
+  };
+}
+
 function previewResponseFromPlan(plan: SessionCleanupPlan): ClientSessionCleanupPreviewResponse {
   return {
     generatedAt: plan.generatedAt,
@@ -5959,6 +6184,15 @@ function stringifyToolResult(result: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function assertInspectionPageBudget(messages: readonly unknown[], maxBytes: number): void {
+  let size = 0;
+  for (const message of messages) {
+    if (message === undefined) continue;
+    size += Buffer.byteLength(JSON.stringify(message));
+    if (size > maxBytes) throw new Error(`Session history page exceeds ${String(maxBytes)} bytes; request a smaller or partial page`);
+  }
 }
 
 function getProperty(value: unknown, key: string): unknown {

@@ -9,6 +9,8 @@ const publicApiDeclarationPaths = [
   "server-plugin-api.d.ts",
   "shared/pluginApiTypes.d.ts",
   "shared/pluginCatalogTypes.d.ts",
+  "shared/pluginSessionHistoryTypes.d.ts",
+  "shared/pluginSessionActivityTypes.d.ts",
 ];
 const expectedPackageDeclarationPaths = [
   ...publicApiDeclarationPaths.map((path) => `dist/${path}`),
@@ -78,18 +80,22 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
       "dist/shared/pluginCatalogTypes.d.ts",
+      "dist/shared/pluginSessionHistoryTypes.d.ts",
+      "dist/shared/pluginSessionActivityTypes.d.ts",
     ]);
     assertStrictPluginConsumer("session-bridge browser/backend", [
       join(consumerRoot, "session-bridge", "src", "browser", "index.ts"),
       join(consumerRoot, "session-bridge", "src", "server.ts"),
     ], mode, packageRoot, repoRoot, [
-      "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/shared/pluginApiTypes.d.ts", "dist/shared/pluginCatalogTypes.d.ts",
+      "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/shared/pluginApiTypes.d.ts", "dist/shared/pluginCatalogTypes.d.ts", "dist/shared/pluginSessionHistoryTypes.d.ts", "dist/shared/pluginSessionActivityTypes.d.ts",
     ], ["node"]);
     assertStrictPluginConsumer("dual-entry example", dualEntryPaths, mode, packageRoot, repoRoot, [
       "dist/plugin-api.d.ts",
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
       "dist/shared/pluginCatalogTypes.d.ts",
+      "dist/shared/pluginSessionHistoryTypes.d.ts",
+      "dist/shared/pluginSessionActivityTypes.d.ts",
     ], ["node"]);
   }
 }
@@ -162,8 +168,10 @@ async function assertServerRuntimeApi(consumerRoot) {
       PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY,
       PI_WEB_HOST_WORKSPACES_CAPABILITY,
       PI_WEB_HOST_CATALOG_CAPABILITY,
+      PI_WEB_HOST_PI_SESSION_HISTORY_CAPABILITY,
+      PI_WEB_HOST_PI_SESSION_ACTIVITY_CAPABILITY,
     } from "@jmfederico/pi-web/server-plugin-api";
-    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY];
+    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_PI_SESSION_HISTORY_CAPABILITY, PI_WEB_HOST_PI_SESSION_ACTIVITY_CAPABILITY];
   `, "utf8");
   const serverApi = await import(pathToFileURL(fixturePath).href);
   if (typeof serverApi.createCompanionBackend !== "function") throw new Error("Installed companion backend helper is missing");
@@ -171,11 +179,21 @@ async function assertServerRuntimeApi(consumerRoot) {
   if (serverApi.createCompanionBackend({ emit: (_channel, query) => query.accept(() => backend) }, "fixture.server") !== backend) {
     throw new Error("Installed companion helper did not return the hosted v5 backend");
   }
-  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability] = serverApi.default;
+  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability, sessionHistoryCapability, sessionActivityCapability] = serverApi.default;
+  if (!Object.isFrozen(sessionActivityCapability) || sessionActivityCapability?.pluginId !== "pi-web.host"
+    || sessionActivityCapability?.id !== "pi-session-activity" || sessionActivityCapability?.version !== 1
+    || typeof sessionActivityCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/pi-session-activity v1 token");
+  }
   if (!Object.isFrozen(catalogCapability) || catalogCapability?.pluginId !== "pi-web.host"
     || catalogCapability?.id !== "catalog" || catalogCapability?.version !== 1
     || typeof catalogCapability?.parse !== "function") {
     throw new Error("Installed server plugin API does not expose the exact pi-web.host/catalog v1 token");
+  }
+  if (!Object.isFrozen(sessionHistoryCapability) || sessionHistoryCapability?.pluginId !== "pi-web.host"
+    || sessionHistoryCapability?.id !== "session-history" || sessionHistoryCapability?.version !== 1
+    || typeof sessionHistoryCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/session-history v1 token");
   }
   if (!Object.isFrozen(sessionEventsCapability) || sessionEventsCapability?.pluginId !== "pi-web.host"
     || sessionEventsCapability?.id !== "pi-session-events" || sessionEventsCapability?.version !== 1

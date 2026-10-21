@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -120,7 +120,7 @@ describe("path-driven trust lookup (add-project dialog)", () => {
     const response = await app.inject({ method: "GET", url: `/api/projects/trust?path=${encodeURIComponent(projectDir)}` });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: projectDir, decision: true, trusted: true });
+    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: await realpath(projectDir), decision: true, trusted: true });
   });
 
   it("keeps an explicit untrusted decision distinct from unset", async () => {
@@ -128,7 +128,7 @@ describe("path-driven trust lookup (add-project dialog)", () => {
 
     const response = await app.inject({ method: "GET", url: `/api/projects/trust?path=${encodeURIComponent(projectDir)}` });
 
-    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: projectDir, decision: false, trusted: false });
+    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: await realpath(projectDir), decision: false, trusted: false });
   });
 
   it("resolves the entered path to its canonical form before reading the store", async () => {
@@ -140,7 +140,7 @@ describe("path-driven trust lookup (add-project dialog)", () => {
     const response = await app.inject({ method: "GET", url: `/api/projects/trust?path=${encodeURIComponent(link)}` });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: projectDir, decision: true, trusted: true });
+    expect(response.json<WorkspaceTrustResponse>()).toEqual({ path: await realpath(projectDir), decision: true, trusted: true });
   });
 
   it("reports the unset default for a path that does not exist yet", async () => {

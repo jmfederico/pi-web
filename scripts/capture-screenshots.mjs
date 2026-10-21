@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -61,14 +60,14 @@ async function main() {
   console.log(`Temporary workspace: ${tempRoot}`);
   await cloneDemoProject(demoProject);
   await removeLegacyDemoMedia(demoProject);
+  const demoProjectPath = await realpath(demoProject);
 
   const projectId = "pi-web-demo";
-  const workspaceId = createWorkspaceId(projectId, demoProject);
   await writeJson(projectsFile, {
-    projects: [{ id: projectId, name: "pi-web", path: demoProject, createdAt: new Date().toISOString() }],
+    projects: [{ id: projectId, name: "pi-web", path: demoProjectPath, createdAt: new Date().toISOString() }],
   });
   await writeJson(configPath, { host: "127.0.0.1", allowedHosts: true });
-  await writeDemoSession(sessionDir, demoProject);
+  await writeDemoSession(sessionDir, demoProjectPath);
 
   const apiPort = await getFreePort();
   const clientPort = await getFreePort();
@@ -98,6 +97,11 @@ async function main() {
   await waitForFile(socketPath, 10_000);
   startChild("api", tsxBin, ["src/server/index.ts"], { env, cwd: REPO_ROOT, logsDir });
   await waitForHttp(`http://127.0.0.1:${apiPort}/api/projects`, 15_000);
+  const workspacesResponse = await fetch(`http://127.0.0.1:${apiPort}/api/projects/${encodeURIComponent(projectId)}/workspaces`);
+  if (!workspacesResponse.ok) throw new Error(`Unable to list demo workspaces: HTTP ${workspacesResponse.status}`);
+  const workspaceResolution = await workspacesResponse.json();
+  const demoWorkspace = workspaceResolution.workspaces?.find((workspace) => workspace.path === demoProjectPath);
+  if (typeof demoWorkspace?.id !== "string") throw new Error("The isolated PI WEB project did not expose its demo directory as a workspace.");
   startChild("vite", viteBin, ["--host", "127.0.0.1", "--port", String(clientPort), "--strictPort", "true"], { env, cwd: REPO_ROOT, logsDir });
   await waitForHttp(`http://127.0.0.1:${clientPort}/`, 30_000);
 
@@ -113,7 +117,7 @@ async function main() {
 
     const appUrl = new URL(`http://127.0.0.1:${clientPort}/`);
     appUrl.searchParams.set("project", projectId);
-    appUrl.searchParams.set("workspace", workspaceId);
+    appUrl.searchParams.set("workspace", demoWorkspace.id);
     appUrl.searchParams.set("session", SESSION_ID);
     appUrl.searchParams.set("view", "chat");
 
@@ -152,9 +156,14 @@ async function captureDesktop(cdp, appUrl, outputPath) {
   await setViewport(cdp, VIEWPORTS.desktop);
   await navigate(cdp, appUrl.href, 15_000);
   await waitForApp(cdp);
-  await selectPreviewImage(cdp);
-  await sleep(500);
   await capturePng(cdp, outputPath);
+  try {
+    await selectPreviewImage(cdp);
+    await sleep(500);
+    await capturePng(cdp, outputPath);
+  } catch (error) {
+    console.warn(`Unable to prepare the optional workspace image-preview screenshot: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function captureDefaultApp(cdp, appUrl, viewport, outputPath) {
@@ -539,10 +548,6 @@ class CDP {
       for (const listener of this.listeners.get(message.method) ?? []) listener(message.params ?? {});
     }
   }
-}
-
-function createWorkspaceId(projectId, path) {
-  return createHash("sha1").update(`${projectId}:${path}`).digest("hex").slice(0, 12);
 }
 
 async function writeJson(path, value) {

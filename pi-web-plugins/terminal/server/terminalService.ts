@@ -1,9 +1,14 @@
+import { chmodSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import * as pty from "node-pty";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
 
 const MAX_REPLAY_BUFFER = 200_000;
+
+ensureDarwinSpawnHelperExecutable();
 
 export type TerminalCommandRunStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -417,6 +422,32 @@ export function interactiveShellArgs(shell: string): string[] {
 
 function terminalEnvironment(): NodeJS.ProcessEnv {
   return { ...process.env, TERM: "xterm-256color", PI_WEB_TERMINAL: "1" };
+}
+
+function ensureDarwinSpawnHelperExecutable(): void {
+  if (process.platform !== "darwin") return;
+  let packageEntry: string | undefined;
+  for (const require of [
+    createRequire(import.meta.url),
+    createRequire(join(process.cwd(), "package.json")),
+  ]) {
+    try {
+      packageEntry = require.resolve("node-pty");
+      break;
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "MODULE_NOT_FOUND")) throw error;
+    }
+  }
+  if (packageEntry === undefined) return;
+  const packageRoot = dirname(dirname(packageEntry));
+  const helperPath = join(packageRoot, "prebuilds", `darwin-${process.arch}`, "spawn-helper");
+
+  try {
+    const mode = statSync(helperPath).mode & 0o777;
+    if ((mode & 0o111) === 0) chmodSync(helperPath, mode | 0o111);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
 }
 
 function commandRunShellScript(command: string): string {

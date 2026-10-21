@@ -26,6 +26,9 @@
  */
 export const DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT = 16;
 
+/** Maximum on-disk transcript size retained by the daemon snapshot cache. */
+export const DEFAULT_TRANSCRIPT_BRANCH_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+
 /** Construction options for {@link TranscriptBranchCache}. */
 export interface TranscriptBranchCacheOptions {
   /**
@@ -34,6 +37,8 @@ export interface TranscriptBranchCacheOptions {
    * exercise eviction directly.
    */
   readonly limit?: number;
+  /** Maximum combined transcript file bytes retained by the cache. */
+  readonly maxBytes?: number;
 }
 
 /**
@@ -50,8 +55,10 @@ export interface TranscriptBranchSnapshot {
   readonly identity: string;
   /** File size in bytes at parse time; appended bytes start at this offset. */
   readonly size: number;
+  /** SHA-256 proof of the parsed prefix; append reuse is disabled when absent. */
+  readonly prefixSha256?: string;
   /** Every parsed transcript entry in file order — what the branch is derived from and what an append tail extends. */
-  readonly entries: readonly Record<string, unknown>[];
+  readonly entries: readonly unknown[];
   /** The active-branch projection served to snapshot readers. */
   readonly branch: unknown[];
 }
@@ -64,10 +71,13 @@ export interface TranscriptBranchSnapshot {
  */
 export class TranscriptBranchCache {
   private readonly limit: number;
+  private readonly maxBytes: number;
   private readonly snapshots = new Map<string, TranscriptBranchSnapshot>();
+  private totalBytes = 0;
 
   constructor(options: TranscriptBranchCacheOptions = {}) {
     this.limit = options.limit ?? DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT;
+    this.maxBytes = options.maxBytes ?? DEFAULT_TRANSCRIPT_BRANCH_CACHE_MAX_BYTES;
   }
 
   /**
@@ -98,13 +108,23 @@ export class TranscriptBranchCache {
 
   /** Memoize `snapshot` for `path`, evicting the least recently used entry at the bound. */
   set(path: string, snapshot: TranscriptBranchSnapshot): void {
-    this.snapshots.delete(path);
+    this.delete(path);
+    // A single oversized transcript should not displace the useful hot set.
+    if (snapshot.size > this.maxBytes) return;
     this.snapshots.set(path, snapshot);
-    // One set adds at most one entry, so a single eviction restores the bound.
-    if (this.snapshots.size > this.limit) {
+    this.totalBytes += snapshot.size;
+    while (this.snapshots.size > this.limit || this.totalBytes > this.maxBytes) {
       const oldest = this.snapshots.keys().next();
-      if (oldest.done !== true) this.snapshots.delete(oldest.value);
+      if (oldest.done === true) break;
+      this.delete(oldest.value);
     }
+  }
+
+  private delete(path: string): void {
+    const existing = this.snapshots.get(path);
+    if (existing === undefined) return;
+    this.snapshots.delete(path);
+    this.totalBytes -= existing.size;
   }
 
   private refresh(path: string, snapshot: TranscriptBranchSnapshot): void {

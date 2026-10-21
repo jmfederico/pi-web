@@ -2,6 +2,8 @@ import {
   createCompanionBackend,
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_CATALOG_CAPABILITY,
+  PI_WEB_HOST_PI_SESSION_HISTORY_CAPABILITY,
+  PI_WEB_HOST_PI_SESSION_ACTIVITY_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "@jmfederico/pi-web/server-plugin-api";
 import type {
@@ -99,13 +101,17 @@ export default plugin;
 export const pluginV5: PiWebServerPlugin = {
   apiVersion: 5,
   name: "V5 server consumer",
-  requires: [PI_WEB_HOST_CATALOG_CAPABILITY],
+  requires: [PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_PI_SESSION_HISTORY_CAPABILITY, PI_WEB_HOST_PI_SESSION_ACTIVITY_CAPABILITY],
   activate(context) {
     const version: 5 = context.apiVersion;
     return {
       async start({ capabilities, signal }) {
         const catalog = capabilities.resolve(PI_WEB_HOST_CATALOG_CAPABILITY);
+        const history = capabilities.resolve(PI_WEB_HOST_PI_SESSION_HISTORY_CAPABILITY);
+        const activity = capabilities.resolve(PI_WEB_HOST_PI_SESSION_ACTIVITY_CAPABILITY);
         context.logger.info(`Catalog v${String(version)}`, { count: (await catalog.projects.list({ signal })).length });
+        await history.readMessages({ projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" }, { limit: 10 }, { signal });
+        await activity.inspect({ projectId: "fixture-project", workspaceId: "fixture-workspace", sessionId: "fixture-session" }, { signal });
       },
       peer: {
         request({ scope, operation, input }) {

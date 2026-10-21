@@ -21,6 +21,19 @@ describe("catalog public contract", () => {
     expect(Object.isFrozen(catalog.projects)).toBe(true);
   });
 
+  it("preserves safe session relationship and archive metadata while stripping internal paths", async () => {
+    const source = provider();
+    source.sessions.get = () => Promise.resolve({
+      id: "s", cwd: "/repo", archived: true, archivedAt: "2026-10-17T12:00:00.000Z", transcript: "private transcript",
+      parentSessionId: "parent", runtime: "not-hosted", path: "/private/session.jsonl", parentSessionPath: "/private/parent.jsonl",
+    });
+    const catalog = PI_WEB_HOST_CATALOG_CAPABILITY.parse(source);
+    const row = await catalog.sessions.get({ projectId: "p", workspaceId: "w", sessionId: "s" });
+    expect(row).toMatchObject({ archived: true, archivedAt: "2026-10-17T12:00:00.000Z", parentSessionId: "parent" });
+    expect(row).not.toHaveProperty("path");
+    expect(row).not.toHaveProperty("parentSessionPath");
+  });
+
   it("validates function groups, selections, returned identities and runtime values", async () => {
     expect(() => PI_WEB_HOST_CATALOG_CAPABILITY.parse({ ...provider(), version: 2 })).toThrow("Invalid");
     expect(() => PI_WEB_HOST_CATALOG_CAPABILITY.parse({ ...provider(), sessions: { list: () => [] } })).toThrow("Invalid");
@@ -32,4 +45,5 @@ describe("catalog public contract", () => {
     await expect(catalog.sessions.get({ projectId: "p", workspaceId: "w", sessionId: "s" })).rejects.toThrow("Invalid");
     await expect(Reflect.apply(catalog.workspaces.get, undefined, [{ projectId: "p", workspaceId: "w", path: "/injected" }])).rejects.toThrow("Invalid");
   });
+
 });

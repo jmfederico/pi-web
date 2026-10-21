@@ -10,7 +10,10 @@ const workspace = { id: "w1", projectId: project.id, path: repositoryPath, label
 describe("browser plugin catalog routes", () => {
   it("lists/resolves core objects using host authority and excludes private session data", async () => {
     const app = Fastify();
-    const sessions = { listCatalogSessions: vi.fn(() => Promise.resolve([{ id: "s1", cwd: repositoryPath, archived: false, runtime: "not-hosted" as const, path: "/private", firstMessage: "private" }])) };
+    const sessions = {
+      listCatalogSessions: vi.fn(() => Promise.resolve([{ id: "s1", cwd: repositoryPath, archived: false, runtime: "not-hosted" as const, path: "/private", firstMessage: "private" }])),
+      inspectionMessages: vi.fn(() => Promise.resolve({ messages: [], start: 0, total: 0 })),
+    };
     registerPluginCatalogRoutes(app, {
       projects: { list: () => Promise.resolve([project]), requireProject: () => Promise.resolve(project) },
       workspaces: { resolve: () => Promise.resolve({ projectId: project.id, status: "provider" as const, diagnostics: [], workspaces: [workspace] }) },

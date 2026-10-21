@@ -101,8 +101,20 @@ describe("TranscriptBranchCache", () => {
     expect(cache.get("/sessions/s5.jsonl", "sig")?.branch).toEqual([5]);
     expect(cache.get(`/sessions/s${String(DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT + 4)}.jsonl`, "sig")?.branch).toEqual([DEFAULT_TRANSCRIPT_BRANCH_CACHE_LIMIT + 4]);
   });
+
+  it("evicts by combined transcript bytes and skips one oversized snapshot", () => {
+    const cache = new TranscriptBranchCache({ limit: 10, maxBytes: 10 });
+    cache.set("a", snapshotOf("sig", ["a"], 6));
+    cache.set("b", snapshotOf("sig", ["b"], 5));
+    expect(cache.get("a", "sig")).toBeUndefined();
+    expect(cache.get("b", "sig")).toBeDefined();
+
+    cache.set("large", snapshotOf("sig", ["large"], 11));
+    expect(cache.get("large", "sig")).toBeUndefined();
+    expect(cache.get("b", "sig")).toBeDefined();
+  });
 });
 
-function snapshotOf(signature: string, branch: unknown[]): TranscriptBranchSnapshot {
-  return { signature, identity: "1:1", size: 1, entries: [], branch };
+function snapshotOf(signature: string, branch: unknown[], size = 1): TranscriptBranchSnapshot {
+  return { signature, identity: "1:1", size, entries: [], branch };
 }

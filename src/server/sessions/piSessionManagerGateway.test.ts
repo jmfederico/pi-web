@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -204,6 +204,46 @@ describe("Pi session manager gateway", () => {
     await expect(gateway.readBranch(path)).resolves.toHaveLength(2);
   });
 
+  it("reuses a stable SDK open only for an explicit idle-history read, then extends it after an external append", async () => {
+    const store = join(tempDir, "opened-snapshot-sessions");
+    const path = await writeNamedSessionFile(store, "opened.jsonl", { id: "opened-session", cwd });
+    const firstEntry = {
+      type: "message",
+      id: "opened-first",
+      parentId: null,
+      timestamp: "2026-01-01T00:01:00.000Z",
+      message: { role: "user", content: [{ type: "text", text: "first" }] },
+    };
+    await appendFile(path, `${JSON.stringify(firstEntry)}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: store }));
+    if (gateway.readBranch === undefined || gateway.readEntries === undefined) throw new Error("Expected transcript snapshot readers");
+
+    const manager = gateway.open(path);
+    const runtimeBranch = manager.getBranch();
+    const runtimeEntries = manager.getEntries?.();
+    const ordinaryBranch = await gateway.readBranch(path);
+    expect(ordinaryBranch?.[0]).not.toBe(runtimeBranch[0]);
+
+    const openedBranch = await gateway.readBranchFromOpenedSession?.(path, manager);
+    const openedEntries = await gateway.readEntries(path);
+
+    expect(openedBranch?.[0]).toBe(runtimeBranch[0]);
+    expect(openedEntries?.[0]).toBe(runtimeEntries?.[0]);
+
+    const secondEntry = {
+      type: "message",
+      id: "opened-second",
+      parentId: "opened-first",
+      timestamp: "2026-01-01T00:02:00.000Z",
+      message: { role: "assistant", content: [{ type: "text", text: "second" }] },
+    };
+    await appendFile(path, `${JSON.stringify(secondEntry)}\n`, "utf8");
+
+    const appendedBranch = await gateway.readBranch(path);
+    expect(branchIds(appendedBranch)).toEqual(["opened-first", "opened-second"]);
+    expect(appendedBranch?.[0]).toBe(runtimeBranch[0]);
+  });
+
   it("reads all branches for media from the same memoized, append-aware, read-only snapshot", async () => {
     const store = join(tempDir, "all-entries");
     const path = await writeNamedSessionFile(store, "media.jsonl", { id: "media-session", cwd });
@@ -224,6 +264,28 @@ describe("Pi session manager gateway", () => {
     expect(appended).toHaveLength(4);
     expect(appended?.[0]).toBe(entries?.[0]);
     expect(await gateway.readBranch(path)).toEqual([appended?.[0], appended?.[1], appended?.[3]]);
+  });
+
+  it("streams a bounded active-branch page without changing the transcript file", async () => {
+    const store = join(tempDir, "paged-history");
+    const path = await writeNamedSessionFile(store, "paged.jsonl", { id: "paged-session", cwd });
+    await appendFile(path, [
+      snapshotMessage("u1", "root", "first"),
+      JSON.stringify({ type: "message", id: "a1", parentId: "u1", message: { role: "assistant", content: "answer" } }),
+      snapshotMessage("u2", "u1", "abandoned"),
+      JSON.stringify({ type: "message", id: "u2a", parentId: "u2", message: { role: "assistant", content: "ignored" } }),
+      snapshotMessage("u3", "a1", "active"),
+    ].join("\n") + "\n");
+    const before = await readFile(path);
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: store }));
+    if (gateway.readMessagePage === undefined) throw new Error("Expected streamed transcript page reader");
+
+    await expect(gateway.readMessagePage(path, { limit: 1 })).resolves.toEqual({
+      messages: [{ role: "user", content: [{ type: "text", text: "active" }], entryId: "u3" }],
+      start: 2,
+      total: 3,
+    });
+    await expect(readFile(path)).resolves.toEqual(before);
   });
 
   it("serves repeated snapshots of an unchanged file from the memo", async () => {
@@ -316,6 +378,27 @@ describe("Pi session manager gateway", () => {
 
     expect(branchIds(second)).toEqual(["m1"]);
     // A full re-read mints fresh objects even where content is unchanged.
+    expect(second?.[0]).not.toBe(first?.[0]);
+  });
+
+  it("re-reads the whole transcript when an in-place rewrite grows past the cached size", async () => {
+    const sharedSessionDir = join(tempDir, "rewritten-larger-snapshots");
+    const path = await writeNamedSessionFile(sharedSessionDir, "rewritten-larger.jsonl", { id: "rewritten-larger-session", cwd });
+    const header = `${JSON.stringify({ type: "session", version: 3, id: "rewritten-larger-session", timestamp: "2026-01-01T00:00:00.000Z", cwd })}\n`;
+    await writeFile(path, `${header}${snapshotMessage("old", "root", "old")}\n`, "utf8");
+    const gateway = createPiSessionManagerGateway(piProfileOptions({ PI_CODING_AGENT_SESSION_DIR: sharedSessionDir }));
+    if (gateway.readBranch === undefined) throw new Error("Expected transcript snapshot reader");
+    const first = await gateway.readBranch(path);
+    const originalStat = await stat(path);
+    const rewritten = `${header}${snapshotMessage("new", "root", "new")}\n${snapshotMessage("newer", "new", "after")}\n`;
+    expect(Buffer.byteLength(rewritten)).toBeGreaterThan(originalStat.size);
+
+    await writeFile(path, rewritten, "utf8");
+    const rewrittenStat = await stat(path);
+    expect(rewrittenStat.ino).toBe(originalStat.ino);
+    const second = await gateway.readBranch(path);
+
+    expect(branchIds(second)).toEqual(["new", "newer"]);
     expect(second?.[0]).not.toBe(first?.[0]);
   });
 

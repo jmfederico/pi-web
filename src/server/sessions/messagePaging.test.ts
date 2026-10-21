@@ -39,4 +39,11 @@ describe("message paging", () => {
     const messages = [user("prompt"), thinking("plan"), assistantText("answer")];
     expect(expandStartToSafeBoundary(messages, 2)).toBe(0);
   });
+
+  it("applies hard message caps only when the caller explicitly requests them", () => {
+    const messages = Array.from({ length: 502 }, (_, index) => ({ role: index === 0 ? "user" : "assistant", index }));
+    expect(pageMessagesAtSafeBoundary(messages, { limit: 1 })).toMatchObject({ start: 0, total: 502 });
+    expect(() => pageMessagesAtSafeBoundary(messages, { limit: 1, maxMessages: 500 })).toThrow("request a partial turn");
+    expect(pageMessagesAtSafeBoundary(messages, { limit: 1, allowPartialTurn: true, maxMessages: 500 })).toMatchObject({ start: 501, total: 502, messages: [{ index: 501 }] });
+  });
 });

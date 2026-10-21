@@ -20,14 +20,16 @@ function fixture() {
     return Promise.resolve(project);
   }) };
   const workspaces = { resolve: vi.fn(() => Promise.resolve({ projectId: project.id, status: "provider" as const, diagnostics: [], workspaces: rows })) };
-  const sessions = { listCatalogSessions: vi.fn((cwd: string, signal?: AbortSignal): Promise<readonly PluginSessionSnapshot[]> => {
-    signal?.throwIfAborted();
-    return Promise.resolve([
-    { id: "cold", cwd, archived: true, runtime: "not-hosted", metadata },
-    { id: "idle", cwd: repositoryPath, archived: false, runtime: "idle" },
-    { id: "busy", cwd: repositoryPath, archived: false, runtime: "busy", name: "Working" },
-  ]);
-  }) };
+  const sessions = {
+    listCatalogSessions: vi.fn((cwd: string, signal?: AbortSignal): Promise<readonly PluginSessionSnapshot[]> => {
+      signal?.throwIfAborted();
+      return Promise.resolve([
+        { id: "cold", cwd, archived: true, runtime: "not-hosted", metadata },
+        { id: "idle", cwd: repositoryPath, archived: false, runtime: "idle" },
+        { id: "busy", cwd: repositoryPath, archived: false, runtime: "busy", name: "Working" },
+      ]);
+    }),
+  };
   const lifetime = new AbortController();
   const instance = createServerPluginCatalogCapabilityFactory({ projects, workspaces, sessions }).create({
     pluginId: "consumer", packageRoot: "/plugins/consumer", lifetimeSignal: lifetime.signal,
@@ -58,6 +60,16 @@ describe("server plugin catalog capability", () => {
     expect(Object.isFrozen(workspaces[0]?.provider?.metadata)).toBe(true);
     expect(Object.keys(f.catalog.sessions)).toEqual(["list", "get"]);
     expect(f.sessions.listCatalogSessions).toHaveBeenCalledWith(repositoryPath, expect.any(AbortSignal));
+  });
+
+  it("fails closed when a workspace contains duplicate session IDs", async () => {
+    const f = fixture();
+    f.sessions.listCatalogSessions.mockResolvedValue([
+      { id: "duplicate", cwd: repositoryPath, archived: false, runtime: "not-hosted", name: "First file" },
+      { id: "duplicate", cwd: repositoryPath, archived: true, runtime: "not-hosted", name: "Second file" },
+    ]);
+
+    await expect(f.catalog.sessions.get({ ...selection, sessionId: "duplicate" })).rejects.toThrow("session is ambiguous");
   });
 
   it("re-resolves authority and rejects stale workspaces, missing projects and sessions", async () => {

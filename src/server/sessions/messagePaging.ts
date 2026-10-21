@@ -4,6 +4,9 @@ const MAX_LIMIT = 500;
 export interface MessagePageRequest {
   before?: number;
   limit?: number;
+  allowPartialTurn?: boolean;
+  maxMessages?: number;
+  maxBytes?: number;
 }
 
 export interface MessagePageResult<T> {
@@ -18,7 +21,10 @@ export function pageMessagesAtSafeBoundary<T>(messages: T[], page?: MessagePageR
   const before = clampInteger(page.before ?? total, 0, total);
   const limit = clampInteger(page.limit ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
   const requestedStart = Math.max(0, before - limit);
-  const start = expandStartToSafeBoundary(messages, requestedStart);
+  const start = page.allowPartialTurn === true ? requestedStart : expandStartToSafeBoundary(messages, requestedStart);
+  if (page.maxMessages !== undefined && before - start > page.maxMessages) {
+    throw new Error(`Session history turn exceeds the ${String(page.maxMessages)} message page limit; request a partial turn to inspect it`);
+  }
   return { messages: messages.slice(start, before), start, total };
 }
 

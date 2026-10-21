@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { createPiSessionManagerGateway } from "./piSessionManagerGateway.js";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, createTestModelRuntime } from "./piSessionService.testSupport.js";
@@ -41,7 +42,7 @@ async function agentDir(options: { defaultProjectTrust?: "always" | "never" | "a
     await writeFile(join(dir, "settings.json"), `${JSON.stringify({ defaultProjectTrust: options.defaultProjectTrust })}\n`);
   }
   if (options.savedDecision !== undefined) {
-    await writeFile(join(dir, "trust.json"), `${JSON.stringify({ [options.savedDecision.path]: options.savedDecision.trusted })}\n`);
+    new ProjectTrustStore(dir).set(options.savedDecision.path, options.savedDecision.trusted);
   }
   return dir;
 }
@@ -161,8 +162,7 @@ describe("project trust event acceptance", () => {
     expect(commands).toContain("project-probe");
 
     // `remember` persists the decision to the agent dir's trust.json.
-    const trustJson: unknown = JSON.parse(await readFile(join(dir, "trust.json"), "utf8"));
-    expect(trustJson).toEqual({ [cwd]: true });
+    expect(new ProjectTrustStore(dir).get(cwd)).toBe(true);
   });
 
   it("lets a user extension refuse trust even with defaultProjectTrust always", async () => {

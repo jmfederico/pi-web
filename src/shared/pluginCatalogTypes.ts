@@ -20,6 +20,10 @@ export interface PluginSessionSnapshot {
   readonly name?: string;
   readonly metadata?: SessionUiMetadata;
   readonly archived: boolean;
+  /** Stable ID of a parent session in the same authorized workspace, when present. */
+  readonly parentSessionId?: string;
+  /** PI WEB archive timestamp, when this session is archived. */
+  readonly archivedAt?: string;
   readonly runtime: "not-hosted" | "idle" | "busy";
 }
 export interface PluginWorkspaceSelection {
@@ -139,10 +143,14 @@ function snapshotSession(value: unknown): PluginSessionSnapshot {
     metadata = Object.freeze(Object.fromEntries(Object.entries(record(row["metadata"])).map(([key, data]) => [key, jsonObject(data)])));
   }
   if (row["name"] !== undefined && typeof row["name"] !== "string") throw invalid();
+  if (row["parentSessionId"] !== undefined && typeof row["parentSessionId"] !== "string") throw invalid();
+  if (row["archivedAt"] !== undefined && typeof row["archivedAt"] !== "string") throw invalid();
   return Object.freeze({
     id: text(row["id"]), cwd: text(row["cwd"]), archived: row["archived"], runtime,
     ...(row["name"] === undefined ? {} : { name: row["name"] }),
     ...(metadata === undefined ? {} : { metadata }),
+    ...(row["parentSessionId"] === undefined ? {} : { parentSessionId: text(row["parentSessionId"]) }),
+    ...(row["archivedAt"] === undefined ? {} : { archivedAt: text(row["archivedAt"]) }),
   });
 }
 function snapshotSelection(value: unknown): PluginWorkspaceSelection;

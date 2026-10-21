@@ -1,16 +1,19 @@
-import type { Dirent, Stats } from "node:fs";
+import { statSync, type Dirent, type Stats } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { AGENT_SESSION_DIR_ENV_KEYS } from "../../config.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import { isNodeErrorWithCode } from "../workspaces/pathSafety.js";
 import { readSessionHeaderSummary, type SessionHeaderReader } from "./sessionFileHeader.js";
-import { tryParseEntry } from "./sessionFileFormat.js";
+import { isRecord, tryParseEntry } from "./sessionFileFormat.js";
 import { SessionSummaryScanner } from "./sessionSummaryScanner.js";
 import { TranscriptBranchCache, type TranscriptBranchSnapshot } from "./transcriptBranchCache.js";
+import type { ClientMessagePage } from "../types.js";
 import type { PiSessionListEntry, PiSessionManager, PiSessionManagerGateway, ResolvedSessionFile } from "./piSessionService.js";
+import { readSessionHistoryPage } from "./sessionHistoryPageReader.js";
 
 type SessionDirSource = "env" | "settings" | "pi-default";
 
@@ -86,6 +89,13 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
   // Snapshots keep their parsed entries so a file that grew by append only is
   // extended from the appended bytes instead of re-parsed whole.
   private readonly transcriptBranches = new TranscriptBranchCache();
+  // Opening a session is common for one-off metadata reads. Keep only a weak
+  // signature association here; parsed entries enter the daemon cache only
+  // when an idle-history consumer explicitly asks to reuse that open runtime.
+  private readonly openedSessionSignatures = new WeakMap<PiSessionManager, string>();
+  // Avoid hashing an unchanged transcript on every history poll after its
+  // opened SDK snapshot has been checked once. Weak keys follow session life.
+  private readonly seededSessionSignatures = new WeakMap<PiSessionManager, string>();
   // In-flight snapshot reads, deduplicated per path. Each entry removes itself
   // when its read settles, so this map only ever holds genuinely concurrent
   // reads and needs no bound of its own.
@@ -127,8 +137,56 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
     return (await this.readTranscriptSnapshot(path))?.branch;
   }
 
+  async readBranchFromOpenedSession(path: string, manager: PiSessionManager): Promise<unknown[] | undefined> {
+    const cachePath = resolve(path);
+    if (manager.getSessionFile() === undefined || resolve(manager.getSessionFile() ?? "") !== cachePath) return undefined;
+    const openedSignature = this.openedSessionSignatures.get(manager);
+    if (openedSignature === undefined) return undefined;
+    const before = await statIfPresent(cachePath);
+    if (before === undefined || transcriptFileSignature(before) !== openedSignature) return undefined;
+    if (this.seededSessionSignatures.get(manager) === openedSignature) {
+      return this.transcriptBranches.get(cachePath, openedSignature)?.branch ?? manager.getBranch();
+    }
+    const entries = manager.getEntries?.();
+    if (entries === undefined) return undefined;
+    const digest = await hashTranscriptPrefix(cachePath, before.size, openedSignature);
+    if (digest === undefined) return undefined;
+    const branch = manager.getBranch();
+    const after = await statIfPresent(cachePath);
+    if (after === undefined || transcriptFileSignature(after) !== openedSignature) return undefined;
+    this.transcriptBranches.set(cachePath, {
+      signature: openedSignature,
+      identity: transcriptFileIdentity(after),
+      size: after.size,
+      prefixSha256: digest.fileSha256,
+      entries,
+      branch,
+    });
+    this.seededSessionSignatures.set(manager, openedSignature);
+    return branch;
+  }
+
   async readEntries(path: string): Promise<readonly unknown[] | undefined> {
     return (await this.readTranscriptSnapshot(path))?.entries;
+  }
+
+  async readMessagePage(path: string, page?: import("./messagePaging.js").MessagePageRequest, signal?: AbortSignal): Promise<ClientMessagePage | undefined> {
+    const before = await statIfPresent(path);
+    if (before === undefined) return undefined;
+    const file = await open(path, "r");
+    try {
+      const opened = await file.stat();
+      if (transcriptFileSignature(opened) !== transcriptFileSignature(before)) throw new Error("Session transcript changed during history read");
+      const result = await readSessionHistoryPage(file, page, signal);
+      const after = await file.stat();
+      const current = await statIfPresent(path);
+      if (current === undefined || transcriptFileSignature(after) !== transcriptFileSignature(before) || transcriptFileSignature(current) !== transcriptFileSignature(before)) {
+        throw new Error("Session transcript changed during history read");
+      }
+      return result;
+    } finally {
+      await file.close();
+    }
   }
 
   private async readTranscriptSnapshot(path: string): Promise<TranscriptBranchSnapshot | undefined> {
@@ -142,9 +200,9 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
     if (cached !== undefined) return cached;
     const pending = this.pendingTranscriptBranches.get(path);
     if (pending !== undefined) return pending;
-    const read = this.readSnapshot(path, file, signature)
+    const read = this.readStableSnapshot(path, file)
       .then((snapshot) => {
-        this.transcriptBranches.set(path, snapshot);
+        if (snapshot !== undefined) this.transcriptBranches.set(path, snapshot);
         return snapshot;
       })
       .catch((error: unknown) => {
@@ -155,6 +213,23 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
       .finally(() => { this.pendingTranscriptBranches.delete(path); });
     this.pendingTranscriptBranches.set(path, read);
     return read;
+  }
+
+  /** Retry once from a fresh stat when Pi appends or rewrites during a read. */
+  private async readStableSnapshot(path: string, initialFile: Stats): Promise<TranscriptBranchSnapshot | undefined> {
+    let file = initialFile;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const signature = transcriptFileSignature(file);
+      try {
+        return await this.readSnapshot(path, file, signature);
+      } catch (error: unknown) {
+        if (!(error instanceof TranscriptChangedDuringSnapshotReadError) || attempt === 1) throw error;
+        const current = await statIfPresent(path);
+        if (current === undefined) return undefined;
+        file = current;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -168,15 +243,22 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
     const previous = this.transcriptBranches.getLatest(path);
     // A zero-size cached prefix has no boundary byte to verify against, but a
     // full re-read of a file that was empty one poll ago is trivial anyway.
-    if (previous?.identity === identity && previous.size > 0 && previous.size < file.size) {
-      const appended = await readAppendedEntries(path, previous.size, file.size, identity);
-      if (appended !== undefined) {
+    if (previous?.identity === identity && previous.prefixSha256 !== undefined && previous.size > 0 && previous.size < file.size) {
+      const digest = await hashTranscriptPrefix(path, previous.size, signature);
+      const appended = digest?.prefixSha256 === previous.prefixSha256
+        ? await readAppendedEntries(path, previous.size, file.size, identity, signature)
+        : undefined;
+      if (appended !== undefined && digest !== undefined) {
         const entries = [...previous.entries, ...appended];
-        return { signature, identity, size: file.size, entries, branch: deriveTranscriptBranch(entries) };
+        return { signature, identity, size: file.size, prefixSha256: digest.fileSha256, entries, branch: deriveTranscriptBranch(entries) };
       }
     }
-    const entries = parseTranscriptEntries(await readFile(path, "utf8"));
-    return { signature, identity, size: file.size, entries, branch: deriveTranscriptBranch(entries) };
+    const content = await readFile(path, "utf8");
+    const current = await statIfPresent(path);
+    if (current === undefined || transcriptFileSignature(current) !== signature) throw new TranscriptChangedDuringSnapshotReadError();
+    const entries = parseTranscriptEntries(content);
+    const prefixSha256 = createHash("sha256").update(content, "utf8").digest("hex");
+    return { signature, identity, size: file.size, prefixSha256, entries, branch: deriveTranscriptBranch(entries) };
   }
 
   async listAll(): Promise<PiSessionListEntry[]> {
@@ -189,7 +271,38 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
   }
 
   open(path: string): PiSessionManager {
-    return SessionManager.open(path, dirname(path));
+    // A cold SDK open already parsed the transcript. Remember only its file
+    // signature; the entries are memoized lazily if an idle-history consumer
+    // requests reuse, so temporary metadata opens do not extend transcript life.
+    const cachePath = resolve(path);
+    const before = statSyncIfPresent(cachePath);
+    const manager = SessionManager.open(path, dirname(path));
+    const after = statSyncIfPresent(cachePath);
+    if (
+      before !== undefined
+      && after !== undefined
+      && transcriptFileSignature(before) === transcriptFileSignature(after)
+    ) {
+      this.openedSessionSignatures.set(manager, transcriptFileSignature(after));
+    }
+    return manager;
+  }
+}
+
+class TranscriptChangedDuringSnapshotReadError extends Error {
+  constructor() {
+    super("Session transcript changed during snapshot read");
+    this.name = "TranscriptChangedDuringSnapshotReadError";
+  }
+}
+
+/** Stat a transcript synchronously around the SDK's synchronous open. */
+function statSyncIfPresent(path: string): Stats | undefined {
+  try {
+    return statSync(path);
+  } catch (error: unknown) {
+    if (isNodeErrorWithCode(error, "ENOENT")) return undefined;
+    throw error;
   }
 }
 
@@ -209,7 +322,7 @@ function transcriptFileIdentity(file: Stats): string {
 }
 /** The signature a memoized snapshot is validated against: identity, size, and mtime. */
 function transcriptFileSignature(file: Stats): string {
-  return `${transcriptFileIdentity(file)}:${String(file.size)}:${String(file.mtimeMs)}`;
+  return `${transcriptFileIdentity(file)}:${String(file.size)}:${String(file.mtimeMs)}:${String(file.ctimeMs)}`;
 }
 
 /**
@@ -224,11 +337,11 @@ function transcriptFileSignature(file: Stats): string {
  * full-read behavior, and a final line still being written simply fails to
  * parse until the next poll completes it.
  */
-async function readAppendedEntries(path: string, offset: number, size: number, identity: string): Promise<Record<string, unknown>[] | undefined> {
+async function readAppendedEntries(path: string, offset: number, size: number, identity: string, signature: string): Promise<Record<string, unknown>[] | undefined> {
   const handle = await open(path, "r");
   try {
     const current = await handle.stat();
-    if (transcriptFileIdentity(current) !== identity) return undefined;
+    if (transcriptFileIdentity(current) !== identity || transcriptFileSignature(current) !== signature) return undefined;
     // Read the byte before the offset along with the appended bytes: it must
     // end a line, proving the cached prefix still ends on a line boundary in
     // the file's current content (i.e. this really is a pure append).
@@ -252,7 +365,47 @@ async function readAppendedEntries(path: string, offset: number, size: number, i
       }
       firstLine = false;
     }
+    const after = await handle.stat();
+    const currentPath = await statIfPresent(path);
+    if (
+      transcriptFileSignature(after) !== signature
+      || currentPath === undefined
+      || transcriptFileSignature(currentPath) !== signature
+    ) return undefined;
     return appended;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Stream-hash a transcript and prove its existing prefix before append reuse. */
+async function hashTranscriptPrefix(path: string, prefixSize: number, signature: string): Promise<{ prefixSha256: string; fileSha256: string } | undefined> {
+  const handle = await open(path, "r");
+  try {
+    const before = await handle.stat();
+    if (transcriptFileSignature(before) !== signature || prefixSize > before.size) return undefined;
+    const prefixHash = createHash("sha256");
+    const fileHash = createHash("sha256");
+    const buffer = Buffer.alloc(64 * 1024);
+    let position = 0;
+    while (position < before.size) {
+      const length = Math.min(buffer.length, before.size - position);
+      const { bytesRead } = await handle.read(buffer, 0, length, position);
+      if (bytesRead !== length) return undefined;
+      const chunk = buffer.subarray(0, bytesRead);
+      fileHash.update(chunk);
+      const prefixLength = Math.max(0, Math.min(bytesRead, prefixSize - position));
+      if (prefixLength > 0) prefixHash.update(chunk.subarray(0, prefixLength));
+      position += bytesRead;
+    }
+    const after = await handle.stat();
+    const current = await statIfPresent(path);
+    if (
+      transcriptFileSignature(after) !== signature
+      || current === undefined
+      || transcriptFileSignature(current) !== signature
+    ) return undefined;
+    return { prefixSha256: prefixHash.digest("hex"), fileSha256: fileHash.digest("hex") };
   } finally {
     await handle.close();
   }
@@ -273,10 +426,12 @@ function parseTranscriptEntries(content: string): Record<string, unknown>[] {
  * effects: the walk from the last id-bearing entry through `parentId` links,
  * oldest first. Cheap enough to re-run over merged entries after an append.
  */
-function deriveTranscriptBranch(entries: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+function deriveTranscriptBranch(entries: readonly unknown[]): Record<string, unknown>[] {
   const byId = new Map<string, Record<string, unknown>>();
   let leafId: string | undefined;
-  for (const entry of entries) {
+  for (const value of entries) {
+    if (!isRecord(value)) continue;
+    const entry = value;
     const id = entry["id"];
     if (typeof id !== "string") continue;
     byId.set(id, entry);
