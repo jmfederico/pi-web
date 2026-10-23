@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { ModelRuntime, ProjectTrustStore, SessionManager } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, ProjectTrustStore, SessionManager } from "../../piSdk.js";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, sessionGateway } from "./piSessionService.testSupport.js";

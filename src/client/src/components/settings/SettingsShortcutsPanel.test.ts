@@ -24,8 +24,8 @@ describe("settings-shortcuts-panel layout", () => {
 
     const frame = frameRoot(panel);
     expect(frame.querySelector("h2")?.textContent).toBe("Keyboard shortcuts");
-    expect(frame.querySelector(".description")?.textContent).toContain("Edit app shortcuts by action.");
-    expect(frame.querySelector("code")?.textContent).toBe("mod+k");
+    expect(frame.querySelector(".description")?.textContent).toContain("Type or record a shortcut, then save each action.");
+    expect(frame.querySelector("code")?.textContent).toBe("mod");
     expect([...frame.querySelectorAll(".notice")].map((notice) => ({
       role: notice.getAttribute("role"),
       text: notice.textContent.trim(),
@@ -33,12 +33,13 @@ describe("settings-shortcuts-panel layout", () => {
       { role: "alert", text: "Failed to load shortcut settings." },
       { role: "status", text: "Shortcut settings saved." },
     ]);
-    button(frame, "Reload").click();
+    button(frame, "Refresh shortcuts").click();
     expect(panel.onReload).toHaveBeenCalledOnce();
     expect(panel.renderRoot.querySelector(".config-path-card")?.textContent).toContain("/tmp/pi-web/config.json");
-    expect(panel.renderRoot.querySelector("h3")?.textContent).toBe("Chat composer");
+    expect([...panel.renderRoot.querySelectorAll("h3")].map((heading) => heading.textContent)).toContain("Chat composer");
     expect(row(panel, COMPOSER_SEND_DESKTOP).textContent).toContain("Send message — desktop");
     expect(row(panel, COMPOSER_SEND_MOBILE).textContent).toContain("Send message — touch or narrow screen");
+    expect(panel.renderRoot.textContent).toContain("Touch or narrow screen applies when the primary pointer is coarse or the viewport is at most 760px wide. Desktop applies otherwise.");
     expect(panel.renderRoot.querySelectorAll("article")).toHaveLength(2);
     expect(panel.renderRoot.querySelector('input[type="radio"]')).toBeNull();
     expect(panel.renderRoot.textContent).not.toContain("No actions registered.");
@@ -50,10 +51,29 @@ describe("settings-shortcuts-panel layout", () => {
     await mount(panel);
 
     expect(frameRoot(panel).querySelector("h2")?.textContent).toBe("Keyboard shortcuts");
-    expect(button(frameRoot(panel), "Reload").disabled).toBe(true);
+    expect(button(frameRoot(panel), "Refresh shortcuts").disabled).toBe(true);
     expect(panel.renderRoot.querySelector(".loading-card")?.textContent).toBe("Loading shortcuts…");
     expect(panel.renderRoot.querySelector(".config-path-card")).toBeNull();
     expect(panel.renderRoot.querySelector(".prompt-enter-card")).toBeNull();
+  });
+});
+
+describe("settings-shortcuts-panel send behavior", () => {
+  it("defaults to steer and saves either behavior without dropping other config", async () => {
+    const onSave = vi.fn<SaveHandler>();
+    const panel = await panelWithShortcuts({ shortcuts: { "core:other": "mod+o" } }, onSave);
+    const select = panel.renderRoot.querySelector<HTMLSelectElement>('select[aria-label="Send while agent is running"]');
+    if (select === null) throw new Error("Missing send behavior setting");
+    expect(select.value).toBe("steer");
+    select.value = "followUp";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:other": "mod+o" }, defaultStreamingBehavior: "followUp" });
+    panel.configResponse = configResponse({ defaultStreamingBehavior: "followUp" });
+    await settle(panel);
+    expect(select.value).toBe("followUp");
+    select.value = "steer";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(onSave).toHaveBeenLastCalledWith({ defaultStreamingBehavior: "steer" });
   });
 });
 
@@ -70,18 +90,18 @@ describe("settings-shortcuts-panel shortcut row actions", () => {
 
     panel.configResponse = configResponse({ shortcuts: { "core:open-palette": "mod+shift+p", "core:other": "mod+o" } });
     await settle(panel);
-    await clickRow(panel, "core:open-palette", "None");
+    await clickRow(panel, "core:open-palette", "Disable shortcut");
     expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
 
     panel.configResponse = configResponse({ shortcuts: { "core:open-palette": null, "core:other": "mod+o" } });
     await settle(panel);
     expect(row(panel, "core:open-palette").textContent).toContain("Disabled");
-    await clickRow(panel, "core:open-palette", "Reset");
+    await clickRow(panel, "core:open-palette", "Restore default");
     expect(onSave).toHaveBeenLastCalledWith({ shortcuts: { "core:other": "mod+o" } });
     expect(onSave).toHaveBeenCalledTimes(3);
   });
 
-  it.each(["Save", "None", "Reset"] as const)("migrates former action ids when using %s", async (operation) => {
+  it.each(["Save", "Disable shortcut", "Restore default"] as const)("migrates former action ids when using %s", async (operation) => {
     const onSave = vi.fn<SaveHandler>();
     const action = shortcutAction({ id: "git:view.git", shortcutAliases: ["core:view.git"], shortcut: "mod+3" });
     const panel = await panelWithShortcuts({ shortcuts: { "core:view.git": "mod+8", "core:other": "mod+o" } }, onSave, action);
@@ -95,9 +115,140 @@ describe("settings-shortcuts-panel shortcut row actions", () => {
     expect(onSave).toHaveBeenCalledExactlyOnceWith({
       shortcuts: {
         "core:other": "mod+o",
-        ...(operation === "Reset" ? {} : { "git:view.git": operation === "None" ? null : "mod+9" }),
+        ...(operation === "Restore default" ? {} : { "git:view.git": operation === "Disable shortcut" ? null : "mod+9" }),
       },
     });
+  });
+});
+
+describe("settings-shortcuts-panel draft preservation", () => {
+  it("preserves multiple drafts through recording, one-row save acknowledgement, and refresh", async () => {
+    const onSave = vi.fn<SaveHandler>();
+    const panel = await panelWithShortcuts({ shortcuts: {} }, onSave);
+    await editShortcut(panel, COMPOSER_SEND_DESKTOP, "mod+enter");
+    await editShortcut(panel, "core:open-palette", "mod+p");
+    await clickRow(panel, COMPOSER_SEND_MOBILE, "Record");
+    pressKey("Enter", { shiftKey: true });
+    await settle(panel);
+    expect(input(panel, COMPOSER_SEND_DESKTOP).value).toBe("mod+enter");
+    expect(input(panel, "core:open-palette").value).toBe("mod+p");
+    await clickRow(panel, "core:open-palette", "Save");
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ shortcuts: { "core:open-palette": "mod+p" } });
+    expect(row(panel, "core:open-palette").textContent).toContain("Unsaved");
+    panel.configResponse = configResponse(onSave.mock.lastCall?.[0] ?? {});
+    await settle(panel);
+    expect(row(panel, "core:open-palette").textContent).not.toContain("Unsaved");
+    expect(button(row(panel, "core:open-palette"), "Save").disabled).toBe(true);
+    expect(input(panel, COMPOSER_SEND_DESKTOP).value).toBe("mod+enter");
+    expect(input(panel, COMPOSER_SEND_MOBILE).value).toBe("shift+enter");
+
+    panel.onReload = vi.fn(() => {
+      panel.configResponse = configResponse({ shortcuts: { "core:open-palette": "mod+o" } });
+    });
+    await settle(panel);
+    button(frameRoot(panel), "Refresh shortcuts").click();
+    await settle(panel);
+    expect(panel.onReload).toHaveBeenCalledOnce();
+    expect(input(panel, "core:open-palette").value).toBe("mod+o");
+    for (const actionId of [COMPOSER_SEND_DESKTOP, COMPOSER_SEND_MOBILE]) {
+      expect(row(panel, actionId).textContent).toContain("Unsaved");
+      expect(button(row(panel, actionId), "Save").disabled).toBe(false);
+    }
+    expect(input(panel, COMPOSER_SEND_DESKTOP).value).toBe("mod+enter");
+    expect(input(panel, COMPOSER_SEND_MOBILE).value).toBe("shift+enter");
+  });
+
+  it("retains failed saves when the owner handles the error or the callback rejects", async () => {
+    const panel = await panelWithShortcuts({}, vi.fn(() => { panel.error = "Save failed. Try again."; }));
+    await editShortcut(panel, "core:open-palette", "mod+p");
+    await editShortcut(panel, COMPOSER_SEND_DESKTOP, "mod+enter");
+    await clickRow(panel, "core:open-palette", "Save");
+    panel.configResponse = configResponse({ shortcuts: { "core:open-palette": "mod+o" } });
+    await settle(panel);
+    expect(input(panel, "core:open-palette").value).toBe("mod+p");
+    expect(row(panel, "core:open-palette").textContent).toContain("Unsaved");
+    expect(frameRoot(panel).querySelector('[role="alert"]')?.textContent).toContain("Save failed");
+    panel.onSave = vi.fn().mockRejectedValue(new Error("Connection lost"));
+    await clickRow(panel, "core:open-palette", "Save");
+    expect(frameRoot(panel).querySelector('[role="alert"]')?.textContent).toContain("Could not save shortcut. Connection lost");
+    expect(input(panel, "core:open-palette").value).toBe("mod+p");
+    expect(input(panel, COMPOSER_SEND_DESKTOP).value).toBe("mod+enter");
+  });
+
+  it.each(["Disable shortcut", "Restore default"])("clears only the acknowledged row draft after %s", async (operation) => {
+    const onSave = vi.fn<SaveHandler>();
+    const panel = await panelWithShortcuts({ shortcuts: { "core:open-palette": "mod+o" } }, onSave);
+    await editShortcut(panel, "core:open-palette", "mod+p");
+    await editShortcut(panel, COMPOSER_SEND_DESKTOP, "mod+enter");
+    await clickRow(panel, "core:open-palette", operation);
+    panel.configResponse = configResponse(onSave.mock.lastCall?.[0] ?? {});
+    await settle(panel);
+    expect(input(panel, "core:open-palette").value).toBe(operation === "Disable shortcut" ? "" : "mod+k");
+    expect(row(panel, "core:open-palette").textContent).not.toContain("Unsaved");
+    expect(input(panel, COMPOSER_SEND_DESKTOP).value).toBe("mod+enter");
+  });
+
+  it("does not erase a newer draft when an earlier save is acknowledged", async () => {
+    const onSave = vi.fn<SaveHandler>();
+    const panel = await panelWithShortcuts({}, onSave);
+    await editShortcut(panel, "core:open-palette", "mod+p");
+    await clickRow(panel, "core:open-palette", "Save");
+    await editShortcut(panel, "core:open-palette", "mod+o");
+    panel.configResponse = configResponse(onSave.mock.lastCall?.[0] ?? {});
+    await settle(panel);
+    expect(input(panel, "core:open-palette").value).toBe("mod+o");
+    expect(row(panel, "core:open-palette").textContent).toContain("Unsaved");
+  });
+});
+
+describe("settings-shortcuts-panel accessibility", () => {
+  it("names row controls by action and describes recording and conflicts clearly", async () => {
+    const panel = await panelWithShortcuts({}, vi.fn());
+    const actionId = "core:open-palette";
+    expect(input(panel, actionId).getAttribute("aria-label")).toBe("Shortcut for Open palette");
+    for (const [text, name] of [
+      ["Save", "Save shortcut for Open palette"],
+      ["Record", "Record shortcut for Open palette"],
+      ["Disable shortcut", "Disable shortcut for Open palette"],
+      ["Restore default", "Restore default shortcut for Open palette"],
+    ] as const) expect(button(row(panel, actionId), text).getAttribute("aria-label")).toBe(name);
+    expect(frameRoot(panel).querySelector(".description")?.textContent).toContain("⌘ on Mac or Ctrl elsewhere");
+    const details = panel.renderRoot.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.querySelector("summary")?.textContent).toBe("Shortcut details");
+    expect(details?.textContent).toContain("Shorter shortcuts block longer sequences");
+    await clickRow(panel, actionId, "Record");
+    const hint = row(panel, actionId).querySelector(".recording-hint");
+    expect(hint?.getAttribute("role")).toBe("status");
+    expect(hint?.id).toBe(input(panel, actionId).getAttribute("aria-describedby"));
+    expect(hint?.textContent).toContain("Recording shortcut: press a key combination or sequence");
+    expect(button(row(panel, actionId), "Cancel recording").getAttribute("aria-label")).toBe("Cancel recording for Open palette");
+    await clickRow(panel, actionId, "Cancel recording");
+    panel.actions = [shortcutAction(), shortcutAction({ id: "core:other", title: "Other action", shortcut: "mod+p" })];
+    await settle(panel);
+    await editShortcut(panel, actionId, "mod+p");
+    expect(row(panel, actionId).querySelector(".conflict")?.textContent).toContain("Conflict: takes priority over 1 action: Other action");
+    expect(row(panel, "core:other").querySelector(".conflict")?.textContent).toContain("Conflict: inactive; used by Open palette");
+  });
+
+  it("disables editing when config is unavailable while allowing refresh", async () => {
+    const panel = new SettingsShortcutsPanel();
+    panel.onSave = vi.fn();
+    panel.onReload = vi.fn();
+    await mount(panel);
+    expect(panel.renderRoot.textContent).toContain("Shortcut settings are unavailable. Refresh shortcuts to try again.");
+    for (const control of panel.renderRoot.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>("input, button, select")) {
+      expect(control.disabled).toBe(true);
+      if (control instanceof HTMLButtonElement) control.click();
+    }
+    expect(panel.onSave).not.toHaveBeenCalled();
+    expect(button(frameRoot(panel), "Refresh shortcuts").disabled).toBe(false);
+    button(frameRoot(panel), "Refresh shortcuts").click();
+    expect(panel.onReload).toHaveBeenCalledOnce();
+    panel.configResponse = configResponse({});
+    panel.loading = true;
+    await settle(panel);
+    expect(input(panel, COMPOSER_SEND_DESKTOP).disabled).toBe(true);
   });
 });
 

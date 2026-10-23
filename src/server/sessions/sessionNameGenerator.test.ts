@@ -1,8 +1,9 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { describe, expect, it } from "vitest";
-import { cleanSessionName, deterministicSessionName, fallbackSessionName, generateShortSessionName } from "./sessionNameGenerator.js";
+import { describe, expect, it, vi } from "vitest";
+import { cleanSessionName, fallbackSessionName, generateShortSessionName, requireInitialSessionName } from "./sessionNameGenerator.js";
+import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
 
 function fakeModel(): Model<Api> {
   return { id: "fake-model", name: "Fake Model", api: "anthropic-messages", provider: "anthropic", baseUrl: "https://example.test", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1000, maxTokens: 100 };
@@ -62,6 +63,47 @@ describe("sessionNameGenerator", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it.each([false, true])("keeps the default budget at 24 tokens (reasoning: %s)", async (reasoning) => {
+    const streamFn: StreamFn = (model, context, options) => {
+      expect(options?.maxTokens).toBe(24);
+      expect(options?.reasoning).toBe("minimal");
+      return streamThatCompletes("A short title")(model, context, options);
+    };
+    await generateShortSessionName(streamFn, { ...fakeModel(), reasoning }, "A request");
+  });
+
+  it("passes an explicit token budget to the model", async () => {
+    const streamFn: StreamFn = (model, context, options) => {
+      expect(options?.maxTokens).toBe(2048);
+      return streamThatCompletes("A short title")(model, context, options);
+    };
+    await generateShortSessionName(streamFn, fakeModel(), "A request", { maxTokens: 2048 });
+  });
+
+  it.each(KNOWN_THINKING_LEVELS)("passes naming thinking level %s independently of the token budget", async (level) => {
+    const streamFn: StreamFn = (model, context, options) => {
+      expect(options?.reasoning).toBe(level === "off" ? undefined : level);
+      expect(options?.maxTokens).toBe(24);
+      return streamThatCompletes("A short title")(model, context, options);
+    };
+    expect(await generateShortSessionName(streamFn, fakeModel(), "A request", { thinkingLevel: level })).toBe("A short title");
+  });
+
+  it.each([undefined, 90_000])("uses the total request timeout %s, defaulting to 10 seconds", async (timeoutMs) => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    const streamFn: StreamFn = (model, context, options) => {
+      expect(options?.signal).toBe(controller.signal);
+      return streamThatCompletes("A short title")(model, context, options);
+    };
+    try {
+      await generateShortSessionName(streamFn, fakeModel(), "A request", timeoutMs === undefined ? {} : { timeoutMs });
+      expect(timeout).toHaveBeenCalledWith(timeoutMs ?? 10_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("returns undefined when the stream reports an error", async () => {
     const streamFn = streamThatErrors();
 
@@ -74,31 +116,12 @@ describe("sessionNameGenerator", () => {
     expect(cleanSessionName('Title: "Fix Session Naming."\nextra')).toBe("Fix Session Naming");
   });
 
-  it("builds deterministic names for relay handoff prompts", () => {
-    expect(deterministicSessionName('Relay "handoff-check" leg 2 begins now.\n\nYou are the next runner.'))
-      .toBe("Relay handoff-check leg 2");
+  it("preserves explicit extension names", () => {
+    expect(requireInitialSessionName("A workflow leg 2")).toBe("A workflow leg 2");
   });
 
-  it.each([".", ""])("accepts same-line context after a relay handoff with punctuation %j", (punctuation) => {
-    expect(deterministicSessionName(`Relay "victorialogs-only" leg 1 begins now${punctuation} The human explicitly approved and authorized dispatch against the revised final packet.\n\nWork under the Relay method.`))
-      .toBe("Relay victorialogs-only leg 1");
-  });
-
-  it.each(["R1a", "G-D1-L09", "phase-2", "R1-a"])("supports structured relay leg identifiers (%s)", (legIdentifier) => {
-    expect(deterministicSessionName(`Relay "handoff-check" leg ${legIdentifier} begins now.`))
-      .toBe(`Relay handoff-check leg ${legIdentifier}`);
-  });
-
-  it("preserves the relay leg when truncating deterministic relay names", () => {
-    expect(deterministicSessionName('Relay "very-long-relay-name-that-would-otherwise-push-the-leg-number-out-of-view" leg 42 begins now.'))
-      .toBe("Relay very-long-relay-name-that-would-otherwise-push leg 42");
-  });
-
-  it.each([
-    'You are continuing Relay "handoff-check" under the Relay method.',
-    'Relay "handoff-check" leg 2 begins nowadays.',
-  ])("does not build deterministic names for non-canonical relay prompts (%s)", (prompt) => {
-    expect(deterministicSessionName(prompt)).toBeUndefined();
+  it.each([undefined, null, "", " ", " padded", "padded ", "two\nlines", "control\0character", "a".repeat(61)])("rejects invalid initial names (%j)", (value) => {
+    expect(() => requireInitialSessionName(value)).toThrow("Initial session name");
   });
 
   it("builds a concise fallback from the first request", () => {

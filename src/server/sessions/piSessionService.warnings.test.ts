@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { type AgentSessionRuntimeDiagnostic, type ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import { type AgentSessionRuntimeDiagnostic, type ResourceDiagnostic } from "../../piSdk.js";
 import { anthropicSubscriptionWarning, collectRuntimeWarnings, dismissSessionWarning, type RuntimeWarningSources } from "./piSessionService.js";
 import { testModel } from "./piSessionService.testSupport.js";
 import type { PiAgentSession } from "./piSessionService.js";

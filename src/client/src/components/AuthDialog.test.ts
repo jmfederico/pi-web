@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthDialogState } from "../appState";
@@ -55,6 +57,82 @@ describe("isBrowserRemoteOAuthMachine", () => {
     expect(isBrowserRemoteOAuthMachine("local", "localhost")).toBe(false);
     expect(isBrowserRemoteOAuthMachine("local", "127.0.0.1")).toBe(false);
     expect(isBrowserRemoteOAuthMachine("local", "::1")).toBe(false);
+  });
+});
+
+describe("provider authentication entry points", () => {
+  it.each([
+    { step: "method", machineId: "local" },
+    { step: "logout", machineId: "local", providers: [] },
+  ] satisfies AuthDialogState[])("keeps the $step dialog separate from MCP actions", async (state) => {
+    const dialog = await mountDialog(state);
+    expect(dialog.shadowRoot?.textContent).not.toContain("MCP");
+  });
+});
+
+describe("unified MCP authentication dialog", () => {
+  it("keeps the authorization link and redirect input together in the modal", async () => {
+    const onOAuthRespond = vi.fn();
+    const dialog = await mountDialog(oauthState({ target: "mcp", auth: { url: "https://auth.example/authorize" }, prompt: { requestId: "redirect", message: "Paste the redirected URL", promptType: "text" } }), { onOAuthRespond });
+    expect(dialogSection(dialog).getAttribute("aria-label")).toBe("MCP authentication");
+    expect(oauthAuthorizationLink(dialog).getAttribute("href")).toBe("https://auth.example/authorize");
+    expect(promptInput(dialog).getAttribute("type")).toBe("text");
+    expect(dialog.shadowRoot?.textContent).toContain("Paste the redirected URL");
+    expect(dialog.shadowRoot?.textContent).toContain("copy the full URL");
+    oauthActionButton(dialog, "Submit").click();
+    expect(onOAuthRespond).toHaveBeenCalledOnce();
+  });
+
+  it("uses shared selection controls and prevents repeat submissions while a response is pending", async () => {
+    const onOAuthRespond = vi.fn();
+    const dialog = await mountDialog(oauthState({ target: "mcp", select: oauthSelect("server", "alpha") }), { onOAuthRespond });
+    requiredElement(oauthSelectButtons(dialog)[0], "MCP server choice").click();
+    expect(onOAuthRespond).toHaveBeenCalledWith("server");
+    dialog.state = { ...oauthState({ target: "mcp", select: oauthSelect("server", "alpha") }), responding: true };
+    await settleDialog(dialog);
+    expect(requiredElement(oauthSelectButtons(dialog)[0], "pending server choice").disabled).toBe(true);
+    expect(oauthActionButton(dialog, "Cancel")).toBeDefined();
+  });
+
+  it("retains Pi's terminal messages without assuming command completion means signed in", async () => {
+    const dialog = await mountDialog(oauthState({ target: "mcp", status: "complete", auth: { url: "https://auth.example/authorize" }, progress: ["No enabled MCP server uses OAuth."] }));
+    expect(dialog.shadowRoot?.textContent).toContain("Operation finished");
+    expect(dialog.shadowRoot?.textContent).toContain("No enabled MCP server uses OAuth.");
+    expect(dialog.shadowRoot?.textContent).not.toContain("Login complete");
+    expect(dialog.shadowRoot?.querySelector(".form a")).toBeNull();
+    expect(oauthActionButton(dialog, "Close")).toBeDefined();
+  });
+
+  it("explains cancellation races and lets the user close without claiming Pi has stopped", async () => {
+    const onCancel = vi.fn();
+    const onOAuthCancel = vi.fn();
+    const dialog = await mountDialog(oauthState({ target: "mcp", cancelRequested: true, prompt: { requestId: "redirect", message: "Paste URL", promptType: "manual_code" } }), { onCancel, onOAuthCancel });
+    expect(dialog.shadowRoot?.textContent).toContain("Waiting for Pi to finish");
+    expect(dialog.shadowRoot?.textContent).toContain("Credentials may have been saved");
+    expect(dialog.shadowRoot?.querySelector("input")).toBeNull();
+    oauthActionButton(dialog, "Close").click();
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onOAuthCancel).not.toHaveBeenCalled();
+  });
+
+  it("names the selected server and explains credential reuse without forcing browser authentication", async () => {
+    const dialog = await mountDialog(oauthState({ target: "mcp", mcpMode: "login", providerName: "Budgeter", status: "complete", progress: ["Signed in to MCP server Budgeter."] }));
+    expect(dialogSection(dialog).getAttribute("aria-label")).toBe("MCP login: Budgeter");
+    expect(dialog.shadowRoot?.textContent).toContain("No browser authorization was requested");
+    expect(dialog.shadowRoot?.textContent).toContain("may have reused existing credentials");
+    expect(dialog.shadowRoot?.querySelector("a")).toBeNull();
+    dialog.state = oauthState({ target: "mcp", mcpMode: "logout", providerName: "Budgeter" });
+    await settleDialog(dialog);
+    expect(dialogSection(dialog).getAttribute("aria-label")).toBe("MCP logout: Budgeter");
+    expect(dialog.shadowRoot?.textContent).toContain("does not disable the server or revoke access");
+  });
+
+  it("renders startup failures inside the same modal", async () => {
+    const onCancel = vi.fn();
+    const dialog = await mountDialog({ step: "starting", machineId: "local", title: "Sign in to an MCP server", error: "MCP extension is disabled" }, { onCancel });
+    expect(dialog.shadowRoot?.querySelector("[role=alert]")?.textContent).toContain("MCP extension is disabled");
+    requiredElement(dialog.shadowRoot?.querySelector<HTMLButtonElement>(".ui-form-actions button"), "Close action").click();
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 });
 
@@ -397,6 +475,24 @@ describe("auth-dialog provider search", () => {
 });
 
 describe("auth-dialog OAuth prompt keys", () => {
+  it("associates the OAuth prompt label with its input and forwards edits", async () => {
+    const onOAuthInput = vi.fn<(value: string) => void>();
+    const dialog = await mountDialog(
+      oauthState({ prompt: { requestId: "req-1", message: "Enter the code", promptType: "text" } }),
+      { onOAuthInput },
+    );
+    const input = promptInput(dialog);
+    const label = requiredElement(dialog.shadowRoot?.querySelector("label"), "OAuth prompt label");
+
+    expect(label.htmlFor).toBe(input.id);
+    expect(label.control).toBe(input);
+    expect(label.textContent.trim()).toBe("Enter the code");
+    input.value = "authorization-code";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+
+    expect(onOAuthInput).toHaveBeenCalledWith("authorization-code");
+  });
+
   it("submits the OAuth prompt with Enter", async () => {
     const onOAuthRespond = vi.fn<(value?: string) => void>();
     const dialog = await mountDialog(oauthState({ prompt: { requestId: "req-1", message: "Enter the code", promptType: "text" } }), { onOAuthRespond });
@@ -474,7 +570,7 @@ function dialogSurface(dialog: AuthDialog): ModalSurface {
 }
 
 function dialogSection(dialog: AuthDialog): HTMLElement {
-  return requiredElement(dialogSurface(dialog).shadowRoot?.querySelector("section[role='dialog']"), "auth-dialog dialog section");
+  return requiredElement(dialogSurface(dialog).shadowRoot?.querySelector("dialog[role='dialog']"), "auth-dialog dialog section");
 }
 
 function promptInput(dialog: AuthDialog): HTMLInputElement {

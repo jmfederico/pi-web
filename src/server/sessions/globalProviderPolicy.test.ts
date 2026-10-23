@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Provider } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "../../piSdk.js";
 import {
   bootstrapAndFreezeGlobalExtensionProviders,
   type GlobalProviderBootstrapLogger,

@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,6 +14,7 @@ const DEFAULT_OUTPUT_DIR = join(REPO_ROOT, "docs", "assets");
 const SESSION_ID = "019ef4c0-0000-7000-8000-000000000001";
 const DEMO_FILE = "docs/assets/pi-web-dev-screenshot.png";
 const DEFAULT_SITE_URL = "https://pi-web.dev/";
+const SCREENSHOT_THEMES = ["pi-web-dark", "pi-web-light", "paper", "graphite"];
 const VIEWPORTS = {
   desktop: { width: 1440, height: 900, mobile: false },
   tablet: { width: 1024, height: 768, mobile: false },
@@ -42,6 +43,8 @@ process.once("SIGTERM", () => {
 });
 
 async function main() {
+  const pillow = spawnSync("python3", ["-c", "from PIL import Image"], { encoding: "utf8" });
+  if (pillow.status !== 0) fail("Screenshot capture requires Python 3 and Pillow (python3 -m pip install Pillow).");
   const logsDir = join(tempRoot, "logs");
   const dataDir = join(tempRoot, "pi-web-data");
   const configPath = join(tempRoot, "config.json");
@@ -117,17 +120,28 @@ async function main() {
     appUrl.searchParams.set("session", SESSION_ID);
     appUrl.searchParams.set("view", "chat");
 
-    await captureDesktop(cdp, appUrl, join(outputDir, "pi-web-desktop.png"));
-    await captureDefaultApp(cdp, appUrl, VIEWPORTS.tablet, join(outputDir, "pi-web-tablet.png"));
-    await captureDefaultApp(cdp, appUrl, VIEWPORTS.mobile, join(outputDir, "pi-web-mobile.png"));
+    for (const [device, viewport] of Object.entries(VIEWPORTS)) {
+      const legacyPath = join(outputDir, `pi-web-${device}.png`);
+      if (device === "desktop") await captureDesktop(cdp, appUrl, legacyPath);
+      else await captureDefaultApp(cdp, appUrl, viewport, legacyPath);
+      // Prepare each device's scene once so only its theme changes between captures.
+      for (const theme of SCREENSHOT_THEMES) {
+        await selectTheme(cdp, theme);
+        await capturePng(cdp, join(outputDir, `pi-web-${device}-${theme}.png`));
+      }
+    }
   } finally {
     cdp.close();
     chrome.kill("SIGTERM");
   }
 
-  console.log(`Wrote ${join(outputDir, "pi-web-desktop.png")}`);
-  console.log(`Wrote ${join(outputDir, "pi-web-tablet.png")}`);
-  console.log(`Wrote ${join(outputDir, "pi-web-mobile.png")}`);
+  for (const device of Object.keys(VIEWPORTS)) {
+    const animationPath = join(outputDir, device === "desktop" ? "pi-web-themes.gif" : `pi-web-${device}-themes.gif`);
+    createThemeAnimation(device, animationPath);
+    console.log(`Wrote ${animationPath}`);
+    for (const theme of SCREENSHOT_THEMES) console.log(`Wrote ${join(outputDir, `pi-web-${device}-${theme}.png`)}`);
+    console.log(`Wrote ${join(outputDir, `pi-web-${device}.png`)}`);
+  }
   if (keepTemp) console.log(`Kept temporary workspace: ${tempRoot}`);
 }
 
@@ -153,6 +167,7 @@ async function captureDesktop(cdp, appUrl, outputPath) {
   await navigate(cdp, appUrl.href, 15_000);
   await waitForApp(cdp);
   await selectPreviewImage(cdp);
+  await selectTheme(cdp, "pi-web-dark");
   await sleep(500);
   await capturePng(cdp, outputPath);
 }
@@ -161,8 +176,41 @@ async function captureDefaultApp(cdp, appUrl, viewport, outputPath) {
   await setViewport(cdp, viewport);
   await navigate(cdp, appUrl.href, 15_000);
   await waitForApp(cdp);
-  await sleep(700);
+  await selectTheme(cdp, "pi-web-dark");
   await capturePng(cdp, outputPath);
+}
+
+async function selectTheme(cdp, theme) {
+  const css = await readFile(join(REPO_ROOT, "src/client/src/plugins/themes", `${theme}.css`), "utf8");
+  const background = css.match(/--pi-bg:\s*([^;]+);/)?.[1]?.trim();
+  if (background === undefined) throw new Error(`Theme ${theme} has no background token`);
+  await evaluate(cdp, `(async () => {
+    const app = document.querySelector("pi-web-app");
+    const themeId = ${JSON.stringify(`themes:${theme}`)};
+    if (typeof app?.pickTheme !== "function") throw new Error("Theme selection is unavailable");
+    app.pickTheme({ themeId, auto: false });
+    await app.updateComplete;
+    // Theme sheets are fetched asynchronously and applied to multiple shadow roots.
+    const deadline = Date.now() + 10000;
+    while (getComputedStyle(document.documentElement).getPropertyValue("--pi-bg").trim() !== ${JSON.stringify(background)} || app.activeThemeId !== themeId) {
+      if (Date.now() > deadline) throw new Error("Timed out applying " + themeId);
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await document.fonts.ready;
+  })()`);
+  await sleep(700);
+}
+
+function createThemeAnimation(device, outputPath) {
+  const result = spawnSync("python3", ["-c", `
+import sys
+from PIL import Image
+frames = [Image.open(path).convert("RGB") for path in sys.argv[2:]]
+frames[0].save(sys.argv[1], save_all=True, append_images=frames[1:], duration=3000, loop=0, disposal=2)
+`, outputPath, ...SCREENSHOT_THEMES.map(theme => join(outputDir, `pi-web-${device}-${theme}.png`))], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`Unable to generate the ${device} animation. Install Python 3 and Pillow (python3 -m pip install Pillow). ${result.error?.message ?? result.stderr}`);
+  }
 }
 
 async function selectPreviewImage(cdp) {
@@ -170,28 +218,37 @@ async function selectPreviewImage(cdp) {
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const app = document.querySelector("pi-web-app");
     if (!app) throw new Error("pi-web-app not found");
-    if (typeof app.openWorkspaceTool !== "function" || app.files === undefined) {
-      throw new Error("PI WEB app internals needed for deterministic screenshot setup were not available");
+    const pluginDeadline = Date.now() + 15000;
+    let filesTool;
+    while (!(filesTool = app.plugins.getWorkspacePanels().find(panel => panel.id.endsWith(":workspace.files")))) {
+      if (Date.now() > pluginDeadline) throw new Error("Timed out waiting for Files plugin activation");
+      await sleep(100);
     }
-    app.openWorkspaceTool("core:workspace.files");
+    if (typeof app.openWorkspaceTool !== "function") throw new Error("Workspace tool selection is unavailable");
+    const queryDeep = (root, selector) => {
+      const match = root.querySelector(selector);
+      if (match) return match;
+      for (const element of root.querySelectorAll("*")) {
+        const nested = element.shadowRoot && queryDeep(element.shadowRoot, selector);
+        if (nested) return nested;
+      }
+    };
+    app.openWorkspaceTool(filesTool.id);
     await app.updateComplete;
-    await sleep(900);
-    await app.files.refreshFiles();
-    await app.updateComplete;
-    if (app.state?.expandedDirs?.["docs"] === undefined) await app.files.expandDir("docs");
-    await app.updateComplete;
-    if (app.state?.expandedDirs?.["docs/assets"] === undefined) await app.files.expandDir("docs/assets");
-    await app.updateComplete;
-    await app.files.selectFile(${JSON.stringify(DEMO_FILE)});
-    await app.updateComplete;
-
-    const panel = app.shadowRoot?.querySelector("workspace-panel");
-    const root = panel?.shadowRoot;
-    await panel?.updateComplete;
-    const start = Date.now();
-    while (Date.now() - start < 8000) {
-      const image = root?.querySelector(".image-preview img");
-      if (root?.textContent.includes(${JSON.stringify(DEMO_FILE)}) && image instanceof HTMLImageElement && image.complete) return true;
+    const deadline = Date.now() + 10000;
+    let panel;
+    while (!(panel = queryDeep(app.shadowRoot, "pi-web-files-panel"))?.runtime || !panel.context) {
+      if (Date.now() > deadline) throw new Error("Timed out waiting for Files plugin");
+      await sleep(100);
+    }
+    await panel.runtime.refreshFiles(panel.context);
+    await panel.runtime.expandDir(panel.context, "docs");
+    await panel.runtime.expandDir(panel.context, "docs/assets");
+    await panel.runtime.selectFile(panel.context, ${JSON.stringify(DEMO_FILE)});
+    await panel.updateComplete;
+    while (Date.now() < deadline) {
+      const image = queryDeep(panel.shadowRoot, ".image-preview img");
+      if (image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0) return true;
       await sleep(100);
     }
     throw new Error("Timed out waiting for image preview");
@@ -570,7 +627,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
-      console.log(`Usage: node scripts/capture-screenshots.mjs [--output-dir docs/assets] [--site-url https://pi-web.dev/] [--keep-temp] [--chrome-bin /path/to/chrome]\n\nCaptures desktop, tablet, and mobile PI WEB screenshots from an isolated temporary instance.`);
+      console.log(`Usage: node scripts/capture-screenshots.mjs [--output-dir docs/assets] [--site-url https://pi-web.dev/] [--keep-temp] [--chrome-bin /path/to/chrome]\n\nCaptures desktop, tablet, and mobile scenes each in PI WEB Dark, PI WEB Light, Paper, and Graphite, plus legacy dark screenshots and a hard-cut GIF for each device (3 seconds per theme). Requires Chromium, Python 3, and Pillow. Uses an isolated temporary instance.`);
       process.exit(0);
     }
     if (arg === "--keep-temp") {

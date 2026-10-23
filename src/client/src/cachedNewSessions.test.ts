@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionInfo } from "./api";
-import { forgetCachedNewSession, isCachedNewSessionInfo, loadCachedNewSessions, mergeCachedNewSessions, rememberCachedNewSession } from "./cachedNewSessions";
+import { forgetCachedNewSession, isCachedNewSessionInfo, loadCachedNewSessions, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "./cachedNewSessions";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -64,6 +64,15 @@ describe("cached new sessions", () => {
     expect(mergedWithServerSession.map((session) => session.id)).toEqual(["session-1"]);
     expect(isCachedNewSessionInfo(mergedWithServerSession[0])).toBe(false);
     expect(loadCachedNewSessions(storage).map((session) => session.id)).toEqual(["other"]);
+  });
+
+  it("preserves positive provenance through cache reload and marker stripping, but defers to server rows", () => {
+    const storage = new MemoryStorage();
+    rememberCachedNewSession({ ...baseSession, agentSubsession: true }, "local", storage);
+    const cached = loadCachedNewSessions(storage)[0];
+    expect(cached?.agentSubsession).toBe(true);
+    expect(stripCachedNewSessionMarker(cached ?? baseSession).agentSubsession).toBe(true);
+    expect(mergeCachedNewSessions("/repo", [baseSession], "local", storage)[0]).not.toHaveProperty("agentSubsession");
   });
 
   it("forgets cached sessions", () => {

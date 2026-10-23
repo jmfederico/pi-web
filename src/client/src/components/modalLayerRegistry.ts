@@ -1,13 +1,6 @@
 interface RenderedModalLayer {
-  /** Connected element whose composed subtree owns this modal's focus. */
-  element: HTMLElement;
-  /** Element that establishes this custom layer's z-index and paint order. */
-  paintElement?: HTMLElement;
-  /**
-   * Native modal dialogs render in the browser's top layer above custom
-   * overlays and hold modality from `showModal()` until `close()`.
-   */
-  nativeTopLayer?: boolean;
+  /** Native dialog whose composed subtree owns this modal's interaction. */
+  element: HTMLDialogElement;
   /** Apply this layer's viable focus target when it becomes visually topmost. */
   focus: () => void;
   /** Keep layer-specific accessibility state in sync with visual ownership. */
@@ -28,6 +21,72 @@ interface RegisteredModalLayer {
 
 const registeredModalLayers = new Set<RegisteredModalLayer>();
 let modalLayerOrder = 0;
+const nativeLayers = new WeakMap<HTMLDialogElement, RegisteredModalLayer>();
+const modalListeners = new Set<(ownerDocument: Document) => void>();
+
+/** Subscribe while a transient surface needs proactive modality updates. */
+export function subscribeModalChanges(listener: (ownerDocument: Document) => void): () => void {
+  modalListeners.add(listener);
+  return () => { modalListeners.delete(listener); };
+}
+
+/** The actual interaction owner, including framework-neutral plugin dialogs. */
+export function activeModalElement(ownerDocument: Document): HTMLElement | undefined {
+  return topModalLayer(ownerDocument)?.layer.element;
+}
+
+/** Prefer :modal so an ordinary dialog.show() does not acquire modality. */
+function isNativeModal(dialog: HTMLDialogElement): boolean {
+  if (!dialog.open || !dialog.isConnected) return false;
+  try { return dialog.matches(":modal"); }
+  catch {
+    // Older engines cannot distinguish show() from showModal(); fail closed.
+    return true;
+  }
+}
+
+const observedRoots = new WeakSet<Document | ShadowRoot>();
+
+/** beforetoggle does not cross shadow boundaries; watch each discovered root. */
+export function observeModalRoot(root: Document | ShadowRoot): void {
+  if (observedRoots.has(root)) return;
+  observedRoots.add(root);
+  root.addEventListener("beforetoggle", (event) => {
+    const dialog = event.target;
+    if (!(dialog instanceof HTMLDialogElement)) return;
+    if ("newState" in event && event.newState === "open") {
+      nativeLayers.set(dialog, {
+        layer: { element: dialog, focus: () => { dialog.focus(); } },
+        order: ++modalLayerOrder,
+        restorationPath: [],
+      });
+    }
+    // showModal has not established :modal during beforetoggle. Wait until the
+    // native operation finishes, rather than mistaking dialog.show() for it.
+    queueMicrotask(() => { notifyModalLayers(dialog.ownerDocument); });
+  }, true);
+}
+
+function nativeModalLayers(root: Document | ShadowRoot): RegisteredModalLayer[] {
+  observeModalRoot(root);
+  const layers: RegisteredModalLayer[] = [];
+  for (const element of root.querySelectorAll("*")) {
+    if (element instanceof HTMLDialogElement) {
+      if (isNativeModal(element)) {
+        let layer = nativeLayers.get(element);
+        if (layer === undefined) {
+          layer = { layer: { element, focus: () => { element.focus(); } }, order: ++modalLayerOrder, restorationPath: [] };
+          nativeLayers.set(element, layer);
+        }
+        layers.push(layer);
+      } else {
+        nativeLayers.delete(element);
+      }
+    }
+    if (element.shadowRoot !== null) layers.push(...nativeModalLayers(element.shadowRoot));
+  }
+  return layers;
+}
 
 /**
  * Register a rendered modal layer with the document-wide modality and focus
@@ -36,6 +95,8 @@ let modalLayerOrder = 0;
  */
 export function registerRenderedModal(layer: RenderedModalLayer): RenderedModalRegistration {
   const ownerDocument = layer.element.ownerDocument;
+  // Observe already-active native dialogs before assigning this layer's order.
+  nativeModalLayers(ownerDocument);
   const previous = deepActiveElement(ownerDocument);
   const lowerLayer = previous instanceof HTMLElement ? containingModalLayer(ownerDocument, previous) : undefined;
   const registered: RegisteredModalLayer = {
@@ -65,24 +126,10 @@ export function registerRenderedModal(layer: RenderedModalLayer): RenderedModalR
   };
 }
 
-/**
- * True while a registered app layer or an open native dialog in any composed
- * subtree owns interaction. Browser plugins cannot import the private modal
- * registry, so native `<dialog>.showModal()` is the public, framework-neutral
- * modality boundary. Treating every open native dialog conservatively avoids
- * missing that boundary in DOM implementations without `:modal` support.
- */
+/** True while a rendered app layer or native modal owns interaction. */
 export function hasRenderedModal(ownerDocument: Document | undefined): boolean {
   return ownerDocument !== undefined
-    && (topModalLayer(ownerDocument) !== undefined || hasComposedOpenDialog(ownerDocument));
-}
-
-function hasComposedOpenDialog(root: Document | ShadowRoot): boolean {
-  if (root.querySelector("dialog[open]") !== null) return true;
-  for (const element of root.querySelectorAll("*")) {
-    if (element.shadowRoot !== null && hasComposedOpenDialog(element.shadowRoot)) return true;
-  }
-  return false;
+    && topModalLayer(ownerDocument) !== undefined;
 }
 
 function restoreAfterModalClose(registered: RegisteredModalLayer): void {
@@ -109,69 +156,29 @@ function notifyModalLayers(ownerDocument: Document): void {
   for (const registered of [...registeredModalLayers]) {
     if (registered.layer.element.ownerDocument === ownerDocument) registered.layer.onTopChange?.(registered === top);
   }
+  for (const listener of modalListeners) listener(ownerDocument);
 }
 
 function topModalLayer(ownerDocument: Document): RegisteredModalLayer | undefined {
   let top: RegisteredModalLayer | undefined;
-  for (const registered of registeredModalLayers) {
-    if (!isRenderedModalLayer(ownerDocument, registered)) continue;
-    if (top === undefined || compareModalPaintOrder(registered, top) > 0) top = registered;
+  for (const native of nativeModalLayers(ownerDocument)) {
+    const registered = [...registeredModalLayers].find((entry) => entry.layer.element === native.layer.element);
+    const candidate = registered ?? native;
+    candidate.order = native.order;
+    if (top === undefined || candidate.order > top.order) top = candidate;
   }
   return top;
-}
-
-/**
- * A registered layer owns modality only while it is actually rendered. A view
- * switch or responsive CSS can hide a still-connected custom layer - the
- * workspace upload review disappears with its panel when the main view leaves
- * the workspace - and a hidden layer that kept counting would suppress global
- * shortcuts, prompt focus, and unread acknowledgement with nothing on screen to
- * dismiss and no obvious recovery.
- *
- * Native top-layer dialogs are exempt: their modality belongs to the browser
- * from `showModal()` until `close()`, and hosts must register before that call
- * to capture the pre-modal focus target, while the dialog is still hidden as an
- * unopened `dialog` element.
- */
-function isRenderedModalLayer(ownerDocument: Document, registered: RegisteredModalLayer): boolean {
-  const { element, nativeTopLayer } = registered.layer;
-  if (!element.isConnected || element.ownerDocument !== ownerDocument) return false;
-  return nativeTopLayer === true || !isHiddenOrInertInComposedTree(element);
 }
 
 function containingModalLayer(ownerDocument: Document, node: Element): RegisteredModalLayer | undefined {
   let top: RegisteredModalLayer | undefined;
   for (const registered of registeredModalLayers) {
-    if (!isRenderedModalLayer(ownerDocument, registered)
+    if (registered.layer.element.ownerDocument !== ownerDocument || !isNativeModal(registered.layer.element)
       || !composedContains(registered.layer.element, node)) continue;
-    if (top === undefined || compareModalPaintOrder(registered, top) > 0) top = registered;
+    registered.order = nativeLayers.get(registered.layer.element)?.order ?? registered.order;
+    if (top === undefined || registered.order > top.order) top = registered;
   }
   return top;
-}
-
-/** Compare native top-layer ownership, then custom z-index and paint order. */
-function compareModalPaintOrder(left: RegisteredModalLayer, right: RegisteredModalLayer): number {
-  const nativeLayerDifference = Number(left.layer.nativeTopLayer === true) - Number(right.layer.nativeTopLayer === true);
-  if (nativeLayerDifference !== 0) return nativeLayerDifference;
-
-  const leftPaintElement = left.layer.paintElement ?? left.layer.element;
-  const rightPaintElement = right.layer.paintElement ?? right.layer.element;
-  const layerDifference = modalLayerZIndex(leftPaintElement) - modalLayerZIndex(rightPaintElement);
-  if (layerDifference !== 0) return layerDifference;
-  if (leftPaintElement !== rightPaintElement) {
-    const position = leftPaintElement.compareDocumentPosition(rightPaintElement);
-    if ((position & Node.DOCUMENT_POSITION_DISCONNECTED) === 0) {
-      if ((position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) return -1;
-      if ((position & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return 1;
-    }
-  }
-  return left.order - right.order;
-}
-
-function modalLayerZIndex(element: HTMLElement): number {
-  const value = element.ownerDocument.defaultView?.getComputedStyle(element).zIndex ?? "";
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function focusModalLayer(registered: RegisteredModalLayer): boolean {
@@ -235,18 +242,12 @@ function composedParentElement(element: Element): Element | null {
 
 /** Whether `node` is contained in `host` across open shadow boundaries. */
 export function composedContains(host: Element, node: Element): boolean {
-  let current: Node = node;
-  for (;;) {
+  let current: Element | null = node;
+  while (current !== null) {
     if (current === host) return true;
-    // happy-dom reports missing or bogus parents (undefined, or even the node
-    // itself) at shadow boundaries, so guard the plain DOM climb carefully.
-    const parent: Node | null = current.parentNode;
-    if (parent != null && parent !== current) {
-      current = parent;
-      continue;
-    }
-    const root = current instanceof ShadowRoot ? current : current.getRootNode();
-    if (!(root instanceof ShadowRoot)) return false;
-    current = root.host;
+    const parent = composedParentElement(current);
+    if (parent === current) return false;
+    current = parent;
   }
+  return false;
 }

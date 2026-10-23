@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppAction } from "../actions";
@@ -31,6 +33,39 @@ describe("filterActionPaletteActions", () => {
 });
 
 describe("action-palette modal surface", () => {
+  it.each([undefined, "", "Open the workspace files."])("preserves searchable group metadata with description %j", async (description) => {
+    const onRun = vi.fn<(action: AppAction) => void>();
+    const item = action("files", "Open Files", { group: "Workspace", shortcut: "Ctrl+K", ...(description === undefined ? {} : { description }) });
+    const palette = await mountPalette({ actions: [item], onRun });
+    const input = searchInput(palette);
+    input.value = "Workspace";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await settleRenderedDialog(palette);
+
+    const button = requiredElement(actionButtons(palette)[0], "matching action");
+    expect(button.textContent).toContain("Open Files");
+    expect(button.querySelectorAll(".group")).toHaveLength(1);
+    expect(button.querySelector(".group")?.textContent).toBe("Workspace");
+    expect(button.querySelector("kbd")?.textContent).toContain("K");
+    if (description !== undefined && description !== "") expect(button.textContent).toContain(description);
+    requiredElement(button.querySelector<HTMLElement>(".group"), "action group").click();
+    expect(onRun).toHaveBeenCalledExactlyOnceWith(item);
+  });
+
+  it("retains disabled explanations alongside description and group metadata", async () => {
+    const onRun = vi.fn<(action: AppAction) => void>();
+    const palette = await mountPalette({ onRun, actions: [action("cleanup", "Clean Up Sessions", {
+      description: "Remove old sessions.", group: "Sessions", enabled: false, disabledReason: "Select a machine that supports cleanup.",
+    })] });
+    const button = requiredElement(actionButtons(palette)[0], "disabled action");
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain("Remove old sessions.");
+    expect(button.textContent).toContain("Sessions");
+    expect(button.textContent).toContain("Select a machine that supports cleanup.");
+    button.click();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+
   it("focuses the search input when opened", async () => {
     const palette = await mountPalette();
 

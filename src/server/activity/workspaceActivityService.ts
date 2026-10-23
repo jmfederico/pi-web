@@ -82,8 +82,12 @@ export class WorkspaceActivityService {
     this.notifyCwd(previousCwd);
   }
 
-  snapshot(): { workspaces: ActiveWorkspaceActivity[] } {
-    return { workspaces: this.activeCwds().map((cwd) => this.summaryForCwd(cwd)) };
+  snapshot(): { workspaces: ActiveWorkspaceActivity[]; sessions: { sessionId: string; cwd: string }[] } {
+    return {
+      workspaces: this.activeCwds().map((cwd) => this.summaryForCwd(cwd)),
+      sessions: [...this.sessions].flatMap(([sessionId, record]) =>
+        isSessionActive(record.status, record.activity) ? [{ sessionId, cwd: record.cwd }] : []),
+    };
   }
 
   private pruneIdleSession(sessionId: string): void {

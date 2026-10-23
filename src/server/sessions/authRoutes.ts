@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { AuthService } from "./authService.js";
 
 export function registerAuthRoutes(app: FastifyInstance, auth: AuthService, prefix = ""): void {
+  app.get(`${prefix}/models`, () => auth.availableModels());
+
   app.get<{ Querystring: { mode?: "login" | "logout"; authType?: "oauth" | "api_key" } }>(`${prefix}/auth/providers`, async (request, reply) => {
     try {
       return await auth.authProviders(request.query.mode ?? "login", request.query.authType);

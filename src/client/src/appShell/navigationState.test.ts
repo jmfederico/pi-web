@@ -16,6 +16,15 @@ describe("navigationState", () => {
     expect(expandedNavigationSection("none", state)).toBeUndefined();
   });
 
+  it("keeps sessions expanded when a pending workspace section resolves to a folder", () => {
+    const state = { selectedProject: {}, selectedWorkspace: {}, workspaceSelectionVisible: false };
+    expect(expandedNavigationSection("workspaces", state)).toBe("sessions");
+    expect(defaultNavigationSection({ ...state, selectedWorkspace: undefined })).toBe("sessions");
+    expect(isNavigationSectionCollapsed("sessions", { isMobileLayout: true, expanded: "workspaces", state })).toBe(false);
+    expect(expandedNavigationSection("projects", state)).toBe("projects");
+    expect(expandedNavigationSection("none", state)).toBeUndefined();
+  });
+
   it("uses the mobile accordion state on mobile layouts", () => {
     const state = { selectedProject: {}, selectedWorkspace: {} };
 

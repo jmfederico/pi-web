@@ -24,6 +24,17 @@ afterEach(() => {
 });
 
 describe("browser plugin backend helper", () => {
+  it("routes v5 machine/project calls and sends an explicit matching scope", async () => {
+    const fetchMock = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>(() => Promise.resolve(new Response("null", { status: 200 })));
+    vi.stubGlobal("fetch", fetchMock);
+    const machineTarget: PluginBackendRequestTarget = { pluginId: target.pluginId, backendRevision: target.backendRevision, machineId: "local", scope: "machine" };
+    const projectTarget: PluginBackendRequestTarget = { ...machineTarget, scope: "project", projectId: "p/a" };
+    expect(pairedPluginBackendRequestPath(machineTarget, "list")).toBe("api/paired-plugin-backends/board.tools/list");
+    expect(pairedPluginBackendRequestPath(projectTarget, "list")).toBe("api/paired-plugin-backends/board.tools/projects/p%2Fa/list");
+    await requestPairedPluginBackend(projectTarget, "list", null);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ revision: "server-r1", input: null, scope: "project", projectId: "p/a" }));
+    expect(() => pairedPluginBackendRequestPath({ ...projectTarget, scope: "machine" }, "list")).toThrow("scope");
+  });
   it("builds package-paired routes with encoded dynamic segments", () => {
     expect(pairedPluginBackendRequestPath({ ...target, machineId: "local" }, "cards.summary")).toBe(
       "api/paired-plugin-backends/board.tools/projects/project%20%2F%20one/workspaces/workspace%20%231/cards.summary",

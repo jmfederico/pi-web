@@ -1,21 +1,37 @@
+import type { StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import type { Extension } from "@codemirror/state";
 import type { EditorView as CodeMirrorEditorView } from "@codemirror/view";
 import { css, html, LitElement } from "lit";
 import { property, query } from "lit/decorators.js";
 import { loadFilesViewerDependencies, type FilesViewerDependencies } from "./viewerLoader";
 
-/** Synchronously registered shell that initializes CodeMirror only when raw code is shown. */
+/** Read-only Raw source. Syntax highlighting belongs to a selectable renderer. */
 export class FilesCodeViewer extends LitElement {
+  private integration: StylesheetIntegrationCapabilityV1 | undefined;
+  private releaseStyles: (() => void) | undefined;
+
+  @property({ attribute: false })
+  get stylesheetIntegration(): StylesheetIntegrationCapabilityV1 | undefined { return this.integration; }
+  set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+    if (value === this.integration) return;
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
+    this.integration = value;
+    if (this.isConnected && this.renderRoot instanceof ShadowRoot) this.releaseStyles = value?.registerRoot(this.renderRoot);
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback();
+    if (this.renderRoot instanceof ShadowRoot) this.releaseStyles ??= this.integration?.registerRoot(this.renderRoot);
+    if (this.hasUpdated) void this.recreateEditor();
+  }
+
   @property() content = "";
   @property() language: string | undefined;
   @query(".host") private editorHost?: HTMLDivElement;
 
   private view: CodeMirrorEditorView | undefined;
   private recreateGeneration = 0;
-
-  override firstUpdated(): void {
-    void this.recreateEditor();
-  }
 
   override updated(changed: Map<string, unknown>): void {
     if (changed.has("content") || changed.has("language")) void this.recreateEditor();
@@ -25,6 +41,8 @@ export class FilesCodeViewer extends LitElement {
     this.recreateGeneration += 1;
     this.view?.destroy();
     this.view = undefined;
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
     super.disconnectedCallback();
   }
 
@@ -44,13 +62,11 @@ export class FilesCodeViewer extends LitElement {
         extensions: [
           dependencies.lineNumbers(),
           dependencies.keymap.of(dependencies.defaultKeymap),
-          dependencies.syntaxHighlighting(dependencies.defaultHighlightStyle, { fallback: true }),
           dependencies.EditorState.readOnly.of(true),
           dependencies.EditorView.editable.of(false),
           dependencies.EditorView.lineWrapping,
           viewerTheme(dependencies),
           ...bidiTextExtensions(dependencies, this.language),
-          ...languageExtensions(dependencies, this.language),
         ],
       }),
     });
@@ -71,7 +87,7 @@ function viewerTheme(dependencies: FilesViewerDependencies): Extension {
       fontSize: "12px",
     },
     ".cm-scroller": {
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      fontFamily: "var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)",
       lineHeight: "1.45",
     },
     ".cm-gutters": {
@@ -95,21 +111,4 @@ function bidiTextExtensions(dependencies: FilesViewerDependencies, language: str
       ".cm-line": { unicodeBidi: "plaintext" },
     }),
   ];
-}
-
-function languageExtensions(dependencies: FilesViewerDependencies, language: string | undefined): Extension[] {
-  switch (language) {
-    case undefined: return [];
-    case "typescript": return [dependencies.javascriptLanguage({ typescript: true })];
-    case "javascript": return [dependencies.javascriptLanguage()];
-    case "json": return [dependencies.jsonLanguage()];
-    case "markdown": return [dependencies.markdownLanguage()];
-    case "css": return [dependencies.cssLanguage()];
-    case "html": return [dependencies.htmlLanguage()];
-    case "python": return [dependencies.pythonLanguage()];
-    case "rust": return [dependencies.rustLanguage()];
-    case "go": return [dependencies.goLanguage()];
-    case "diff": return [dependencies.StreamLanguage.define(dependencies.diffLanguage)];
-    default: return [];
-  }
 }

@@ -8,6 +8,7 @@ export interface RequiredTerminalCommandFailureNotice {
 }
 
 export interface RunTerminalCommandOptions {
+  scope?: "workspace";
   projectId: string;
   workspaceId: string;
   cwd: string;
@@ -87,13 +88,15 @@ export function unavailableRequiredTerminalService(): RequiredTerminalService {
 function requireCommandRun(value: unknown): TerminalCommandRun {
   if (!isRecord(value)) throw invalidCommandRun();
   const status = value["status"];
+  const scope = value["scope"];
+  if ((scope !== undefined && scope !== "workspace") || typeof value["projectId"] !== "string" || typeof value["workspaceId"] !== "string") {
+    throw invalidCommandRun();
+  }
   const exitCode = optionalFiniteNumber(value["exitCode"]);
   const startedAt = optionalString(value["startedAt"]);
   const completedAt = optionalString(value["completedAt"]);
   if (typeof value["id"] !== "string"
     || typeof value["origin"] !== "string"
-    || typeof value["projectId"] !== "string"
-    || typeof value["workspaceId"] !== "string"
     || typeof value["terminalId"] !== "string"
     || typeof value["title"] !== "string"
     || typeof value["command"] !== "string"
@@ -108,8 +111,7 @@ function requireCommandRun(value: unknown): TerminalCommandRun {
   return {
     id: value["id"],
     origin: value["origin"],
-    projectId: value["projectId"],
-    workspaceId: value["workspaceId"],
+    ...workspaceIdentity(value),
     terminalId: value["terminalId"],
     title: value["title"],
     command: value["command"],
@@ -120,6 +122,13 @@ function requireCommandRun(value: unknown): TerminalCommandRun {
     ...(completedAt === undefined ? {} : { completedAt }),
     metadata: { ...value["metadata"] },
   };
+}
+
+function workspaceIdentity(value: Record<string, unknown>): { scope?: "workspace"; projectId: string; workspaceId: string } {
+  const projectId = value["projectId"];
+  const workspaceId = value["workspaceId"];
+  if (typeof projectId !== "string" || typeof workspaceId !== "string") throw invalidCommandRun();
+  return { ...(value["scope"] === "workspace" ? { scope: "workspace" as const } : {}), projectId, workspaceId };
 }
 
 const invalidOptionalField = Symbol("invalid optional Terminal field");

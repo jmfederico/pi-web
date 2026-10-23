@@ -39,7 +39,13 @@ export class MachineStatusController {
   /** Fetch the current snapshot for explicit refresh paths. Rejects on failure. */
   refresh(machineId: string): Promise<void> {
     return this.refreshes.request(machineId, async () => {
-      this.apply(machineId, await this.api.machineStatus(machineId));
+      const beforeRead = this.getState().machineStatusSnapshots[machineId];
+      const snapshot = await this.api.machineStatus(machineId);
+      const current = this.getState().machineStatusSnapshots[machineId];
+      // A socket may join a new daemon while this HTTP read is in flight.
+      // Revision numbers cannot order different epochs; the intervening join wins.
+      if (current !== beforeRead && current !== undefined && current.epochId !== snapshot.epochId) return;
+      this.apply(machineId, snapshot);
     });
   }
 

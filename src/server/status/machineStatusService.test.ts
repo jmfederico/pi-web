@@ -109,6 +109,45 @@ describe("MachineStatusService", () => {
     expect(published.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
   });
 
+  it("publishes when one child finishes while another session keeps the same cwd working", async () => {
+    const sessions = [{ sessionId: "child-1", cwd: "/repo" }, { sessionId: "child-2", cwd: "/repo" }];
+    const { service, published } = statusService({
+      activity: [{ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false }],
+      sessions,
+      topology: { "/repo": { projectId: "project-1", workspaceId: "workspace-1" } },
+    });
+    await service.refresh();
+    const first = service.snapshot();
+    expect(first.sessions).toEqual({ "child-1": { [WORKING]: true }, "child-2": { [WORKING]: true } });
+
+    sessions.shift();
+    await service.refresh();
+    await service.refresh();
+
+    expect(service.snapshot().sessions).toEqual({ "child-2": { [WORKING]: true } });
+    expect(service.snapshot().workspaces).toEqual(first.workspaces);
+    expect(service.snapshot().machine).toEqual(first.machine);
+    expect(published.map((snapshot) => snapshot.revision)).toEqual([1, 2]);
+  });
+
+  it("always exposes a complete session map and merges working with catalog unread flags", async () => {
+    const sessions = [{ sessionId: "unread-0", cwd: "/repo" }];
+    const unread = ["/repo", "/scratch"];
+    const { service } = statusService({ sessions, unread });
+    expect(service.snapshot().sessions).toEqual({});
+
+    await service.refresh();
+
+    expect(service.snapshot().sessions).toEqual({
+      "unread-0": { [WORKING]: true, [UNREAD]: true },
+      "unread-1": { [UNREAD]: true },
+    });
+    sessions.length = 0;
+    unread.length = 0;
+    await service.refresh();
+    expect(service.snapshot().sessions).toEqual({});
+  });
+
   it("keeps one epoch and a monotonic revision across publications", async () => {
     const unread: string[] = [];
     const { service, published } = statusService({ unread });
@@ -171,6 +210,7 @@ describe("MachineStatusService", () => {
 
 interface StatusServiceScenario {
   activity?: readonly ActiveCwdActivity[];
+  sessions?: readonly { sessionId: string; cwd: string }[];
   unread?: readonly string[];
   topology?: Record<string, CwdAttribution>;
 }
@@ -196,11 +236,11 @@ function statusService(scenario: StatusServiceScenario = {}) {
   ));
 
   const service = new MachineStatusService({
-    activity: { snapshot: () => ({ workspaces: [...activity] }) },
+    activity: { snapshot: () => ({ workspaces: [...activity], sessions: [...(scenario.sessions ?? [])] }) },
     unread: {
       catalogSnapshot: () => {
         if (failUnreadRead) throw new Error("unread store unavailable");
-        return { sessions: unread.map((cwd) => ({ cwd })) };
+        return { sessions: unread.map((cwd, index) => ({ sessionId: `unread-${String(index)}`, cwd })) };
       },
     },
     attribution: { attribute },

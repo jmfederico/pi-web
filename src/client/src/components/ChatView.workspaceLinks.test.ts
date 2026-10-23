@@ -1,6 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
+import { settleDeferredContent, useDeferredContent } from "../formatting/deferredContent.testSupport";
+
+useDeferredContent();
 import type { FormattedText } from "./FormattedText";
 
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); });
@@ -19,6 +22,10 @@ it("passes workspace context to queued, text, thinking, skill and tool-result Ma
   ] }];
   document.body.append(view);
   await view.updateComplete;
+  const group = view.renderRoot.querySelector<HTMLDetailsElement>(".event-group");
+  if (group === null) throw new Error("Missing activity group");
+  group.open = true; group.dispatchEvent(new Event("toggle"));
+  await view.updateComplete;
   for (const details of view.renderRoot.querySelectorAll<HTMLDetailsElement>("details")) {
     details.open = true;
     details.dispatchEvent(new Event("toggle"));
@@ -28,7 +35,7 @@ it("passes workspace context to queued, text, thinking, skill and tool-result Ma
   async function hrefs() {
     const formatted = [...view.renderRoot.querySelectorAll<FormattedText>("formatted-text")];
     expect(formatted).toHaveLength(5);
-    await Promise.all(formatted.map((element) => element.updateComplete));
+    await settleDeferredContent(view);
     return formatted.map((element) => element.renderRoot.querySelector("a")?.getAttribute("href"));
   }
 

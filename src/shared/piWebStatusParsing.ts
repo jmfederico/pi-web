@@ -1,4 +1,5 @@
 import type { PiWebComponentStatus, PiWebDeprecatedAgentInput, PiWebInstallationInfo, PiWebRuntimeComponent, PiWebRuntimeResponse, PiWebVersionResponse } from "./apiTypes.js";
+import { parsePiWebRuntimeIdentity } from "./piWebRuntime.js";
 import { parseActiveAgentProfileDescriptor } from "./activeAgentProfile.js";
 import { parseKnownPiWebCapabilities } from "./capabilities.js";
 
@@ -37,6 +38,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
   const capabilities = parseKnownPiWebCapabilities(value["capabilities"]);
   const activeAgentProfileValue = value["activeAgentProfile"];
   const activeAgentProfile = activeAgentProfileValue === undefined ? undefined : parseActiveAgentProfileDescriptor(activeAgentProfileValue);
+  const runtime = parsePiWebRuntimeIdentity(value["runtime"]);
   const deprecatedAgentInputs = parseDeprecatedAgentInputs(value["deprecatedAgentInputs"]);
   const error = value["error"];
   if (component !== "web" && component !== "sessiond") return undefined;
@@ -48,6 +50,7 @@ export function parsePiWebRuntimeComponent(value: unknown): PiWebRuntimeComponen
     ...(typeof runtimeVersion === "string" ? { runtimeVersion } : {}),
     ...(typeof piVersion === "string" ? { piVersion } : {}),
     available,
+    ...(runtime === undefined ? {} : { runtime }),
     capabilities,
     ...(activeAgentProfile === undefined ? {} : { activeAgentProfile }),
     ...(deprecatedAgentInputs === undefined ? {} : { deprecatedAgentInputs }),
@@ -89,6 +92,7 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
   const available = value["available"];
   const error = value["error"];
   const installation = parsePiWebInstallationInfo(value["installation"]);
+  const runtime = parsePiWebRuntimeIdentity(value["runtime"]);
   if (component !== "web" && component !== "sessiond") return undefined;
   if (typeof label !== "string" || label === "" || typeof stale !== "boolean" || typeof available !== "boolean") return undefined;
   return {
@@ -99,6 +103,7 @@ export function parsePiWebComponentStatus(value: unknown): PiWebComponentStatus 
     ...(typeof piVersion === "string" ? { piVersion } : {}),
     stale,
     available,
+    ...(runtime === undefined ? {} : { runtime }),
     ...(installation === undefined ? {} : { installation }),
     ...(typeof error === "string" ? { error } : {}),
   };

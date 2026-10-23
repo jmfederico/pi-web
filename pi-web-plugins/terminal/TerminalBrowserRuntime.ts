@@ -1,5 +1,7 @@
-import type { WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
-import { SessionStorageTerminalSelectionMemory, terminalSelectionScope, type TerminalSelectionMemory } from "./terminalSelection";
+import { terminalBindings, type TerminalContext } from "./TerminalContext";
+import type { AnyTerminalCommandRun } from "@jmfederico/pi-web/plugin-api";
+import { SessionStorageTerminalSelectionMemory, type TerminalSelectionMemory } from "./terminalSelection";
+import { TerminalSelectionController, terminalContextScope, selectionMemoryScope } from "./TerminalSelectionController";
 import { TerminalPeerClient, type TerminalInfo } from "./terminalProtocol";
 
 const ACTIVE_TERMINAL_REFRESH_MS = 1_000;
@@ -24,16 +26,17 @@ interface WorkspaceRuntimeState {
 export class TerminalBrowserRuntime {
   private readonly workspaces = new Map<string, WorkspaceRuntimeState>();
   private disposed = false;
-  private badgeTarget: { state: WorkspaceRuntimeState; context: WorkspacePanelContext; url: string | undefined } | undefined;
+  readonly selectionController: TerminalSelectionController;
+  private badgeTarget: { state: WorkspaceRuntimeState; context: TerminalContext; url: string | undefined } | undefined;
 
   constructor(
     readonly selection: TerminalSelectionMemory = new SessionStorageTerminalSelectionMemory(),
     private readonly now: () => number = () => Date.now(),
     private readonly setTimer: SetTimer = (handler, timeout) => globalThis.setTimeout(handler, timeout),
     private readonly clearTimer: ClearTimer = (timer) => { globalThis.clearTimeout(timer); },
-  ) {}
+  ) { this.selectionController = new TerminalSelectionController(selection); }
 
-  activeTerminalBadge(context: WorkspacePanelContext): number | string | undefined {
+  activeTerminalBadge(context: TerminalContext): number | string | undefined {
     if (this.disposed) return undefined;
     const state = this.workspaceState(context);
     if (this.badgeTarget?.state !== state) this.resetBadgePolling();
@@ -50,7 +53,7 @@ export class TerminalBrowserRuntime {
     return state.activeCount === undefined || state.activeCount === 0 ? undefined : state.activeCount;
   }
 
-  async invalidate(context: WorkspacePanelContext): Promise<void> {
+  async invalidate(context: TerminalContext): Promise<void> {
     this.requireActive();
     const state = this.workspaceState(context);
     state.refreshedAt = 0;
@@ -64,14 +67,12 @@ export class TerminalBrowserRuntime {
     }
   }
 
-  async refresh(context: WorkspacePanelContext): Promise<void> {
+  async refresh(context: TerminalContext): Promise<void> {
     this.requireActive();
-    const peer = context.peer;
-    if (peer === undefined) throw new Error("Required Terminal peer is unavailable");
     const state = this.workspaceState(context);
     if (state.refresh !== undefined) return state.refresh;
     const controller = new AbortController();
-    const refresh = new TerminalPeerClient(peer).list(controller.signal).then((terminals) => {
+    const refresh = this.listTerminals(context, controller.signal).then((terminals) => {
       this.updateTerminals(context, terminals);
     }).catch((error: unknown) => {
       if (this.disposed || controller.signal.aborted) throw error;
@@ -92,7 +93,17 @@ export class TerminalBrowserRuntime {
     return refresh;
   }
 
-  updateTerminals(context: WorkspacePanelContext, terminals: readonly TerminalInfo[]): void {
+  async listTerminals(context: TerminalContext, signal?: AbortSignal): Promise<TerminalInfo[]> {
+    const bindings = terminalBindings(context);
+    if (bindings.length === 0) throw new Error("Required Terminal peer is unavailable");
+    return (await Promise.all(bindings.map((binding) => new TerminalPeerClient(binding).list(signal)))).flat();
+  }
+
+  async listCommandRuns(context: TerminalContext, signal?: AbortSignal): Promise<AnyTerminalCommandRun[]> {
+    return (await Promise.all(terminalBindings(context).map((binding) => new TerminalPeerClient(binding).listCommandRuns({}, signal)))).flat();
+  }
+
+  updateTerminals(context: TerminalContext, terminals: readonly TerminalInfo[]): void {
     if (this.disposed) return;
     const state = this.workspaceState(context);
     const activeCount = terminals.reduce((count, terminal) => count + (terminal.exited ? 0 : 1), 0);
@@ -105,43 +116,20 @@ export class TerminalBrowserRuntime {
     if (changed) state.requestRender();
   }
 
-  workspaceScope(context: WorkspacePanelContext): string {
-    return JSON.stringify([context.machine.id, context.workspace.projectId, context.workspace.id, context.workspace.path]);
+  workspaceScope(context: TerminalContext): string { return terminalContextScope(context); }
+  selectionScope(context: TerminalContext): string { return selectionMemoryScope(context); }
+  routedTerminalId(context: TerminalContext): string | undefined { return this.selectionController.routed(context); }
+  requestMaintenanceTerminal(machineId: string, terminalId: string): void {
+    this.requireActive();
+    this.selectionController.requestMaintenanceTerminal(machineId, terminalId);
   }
-
-  selectionScope(context: WorkspacePanelContext): string {
-    // Preserve the legacy persisted-selection key while keeping live browser
-    // state and channel ownership scoped by authoritative workspace identity.
-    return terminalSelectionScope(context.machine.id, context.workspace.path);
+  selectedTerminalId(context: TerminalContext): string | undefined { return this.selectionController.requested(context); }
+  autoStartRequest(context: TerminalContext): string | undefined { return this.selectionController.autoStartRequest(context); }
+  selectTerminal(context: TerminalContext, terminalId: string | undefined, options?: { replace?: boolean | undefined; scope?: "maintenance" | "workspace" | undefined }): boolean {
+    return this.selectionController.select(context, terminalId, options);
   }
-
-  routedTerminalId(context: WorkspacePanelContext): string | undefined {
-    return navigationValue(context, "terminal");
-  }
-
-  selectedTerminalId(context: WorkspacePanelContext): string | undefined {
-    return this.routedTerminalId(context) ?? this.selection.latestTerminalId(this.selectionScope(context));
-  }
-
-  autoStartRequest(context: WorkspacePanelContext): string | undefined {
-    return navigationValue(context, "start");
-  }
-
-  selectTerminal(context: WorkspacePanelContext, terminalId: string | undefined, options?: { replace?: boolean | undefined }): boolean {
-    // WorkspacePanelNavigationV1 is void-returning for portable plugins. The
-    // PI WEB host returns false internally when a retained context is stale;
-    // legacy/third-party undefined results remain accepted.
-    const navigationResult: unknown = context.navigation?.set("terminal", terminalId, options);
-    if (navigationResult === false) return false;
-    const scope = this.selectionScope(context);
-    if (terminalId === undefined) this.selection.forgetWorkspace(scope);
-    else this.selection.rememberTerminal(scope, terminalId);
-    context.host.requestRender();
-    return true;
-  }
-
   forgetTerminal(terminalId: string): void {
-    if (!this.disposed) this.selection.forgetTerminal(terminalId);
+    if (!this.disposed) this.selectionController.forgetTerminal(terminalId);
   }
 
   dispose(): void {
@@ -153,6 +141,7 @@ export class TerminalBrowserRuntime {
       state.refreshController = undefined;
     }
     this.workspaces.clear();
+    this.selectionController.dispose();
   }
 
   // Changing the badge target stops polling, not the activation's lifetime.
@@ -169,7 +158,7 @@ export class TerminalBrowserRuntime {
     if (this.disposed) throw new DOMException("Terminal browser runtime disposed", "AbortError");
   }
 
-  private workspaceState(context: WorkspacePanelContext): WorkspaceRuntimeState {
+  private workspaceState(context: TerminalContext): WorkspaceRuntimeState {
     const key = this.workspaceScope(context);
     const existing = this.workspaces.get(key);
     if (existing !== undefined) {
@@ -222,10 +211,4 @@ export class TerminalBrowserRuntime {
 
 function browserUrl(): string | undefined {
   return typeof window === "undefined" ? undefined : window.location.href;
-}
-
-function navigationValue(context: WorkspacePanelContext, key: string): string | undefined {
-  const value = context.navigation?.query[key];
-  const first = typeof value === "string" ? value : value?.[0];
-  return first === undefined || first === "" ? undefined : first;
 }

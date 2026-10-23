@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
 import type { SessionNotificationInboxEvent } from "../../../shared/apiTypes";
 import { SessionController, type SessionNotificationSessionBridge } from "./sessionController";
@@ -33,6 +33,7 @@ function inboxEvent(): SessionNotificationInboxEvent {
 }
 
 describe("SessionController notification event boundary", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
   it("refetches the bounded notification snapshot when the selected socket first opens", async () => {
     const socket = new EmitSocket();
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession] };
@@ -66,7 +67,7 @@ describe("SessionController notification event boundary", () => {
     expect(refreshSelectedSession).toHaveBeenLastCalledWith(oldSession, "local");
   });
 
-  it("shows the selected transcript before a slow notification refresh settles", async () => {
+  it("completes selection and signals readiness before a slow notification refresh settles", async () => {
     const socket = new EmitSocket();
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
     let finishNotifications: (() => void) | undefined;
@@ -76,27 +77,32 @@ describe("SessionController notification event boundary", () => {
       refreshSelectedSession: vi.fn(() => new Promise<void>((resolve) => { finishNotifications = resolve; })),
       applyInboxEvent: vi.fn(),
     };
+    const ready = vi.fn();
+    const updateUrl = vi.fn();
     const page = { messages: [{ role: "user", content: [{ type: "text", text: "hello from history" }] }], start: 0, total: 1 };
     const controller = new SessionController(
       () => state,
       (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
+      updateUrl,
       undefined,
       {
         socket,
         notifications: bridge,
+        onSelectedSessionReady: ready,
         api: {
           ...defaultApi,
           transcriptSnapshot: vi.fn(() => Promise.resolve({ page, status: status(oldSession.id), seq: 0, partial: null })),
+          thinkingLevels: () => Promise.resolve({ levels: [] }),
         },
       },
     );
 
     let selected = false;
-    const selecting = controller.selectSession(oldSession, { updateUrl: false }).then(() => { selected = true; });
-    await vi.waitFor(() => { expect(state.messages).toHaveLength(1); });
+    const selecting = controller.selectSession(oldSession).then(() => { selected = true; });
+    await vi.waitFor(() => { expect(selected).toBe(true); });
+    expect(ready).toHaveBeenCalledExactlyOnceWith({ machineId: "local", session: oldSession });
     expect(state.messages[0]?.parts).toEqual([{ type: "text", text: "hello from history" }]);
-    expect(selected).toBe(false);
+    expect(updateUrl).toHaveBeenCalledOnce();
     socket.emit({ type: "assistant.delta", text: "live response", seq: 1 });
     runPendingAnimationFrames();
     expect(state.messages[1]?.parts).toEqual([{ type: "text", text: "live response" }]);
@@ -151,11 +157,13 @@ describe("SessionController notification event boundary", () => {
       expect(state.messages[1]?.parts).toEqual([{ type: "text", text: "first new output" }]);
       expect(Object.values(state.browserErrors)).toEqual([]);
 
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
       if (outcome === "reject") notifications.reject(new Error("notifications unavailable"));
       else notifications.resolve(undefined);
       await Promise.all([selecting, refreshing]);
       if (outcome === "reject") {
-        expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: notifications unavailable");
+        await vi.waitFor(() => { expect(warn).toHaveBeenCalledWith("Selected session notification refresh failed", expect.any(Error)); });
+        expect(Object.values(state.browserErrors)).toEqual([]);
       }
     } finally {
       notifications.resolve(undefined);

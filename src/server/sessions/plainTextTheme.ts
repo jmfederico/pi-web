@@ -1,4 +1,4 @@
-import { Theme } from "@earendil-works/pi-coding-agent";
+import { Theme } from "../../piSdk.js";
 
 type ThemeConstructorParameters = ConstructorParameters<typeof Theme>;
 

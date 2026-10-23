@@ -48,7 +48,7 @@ describe("PiSessionService media", () => {
     const page = await service.messages(ref);
     expect(page.messages).toEqual([{ ...message, entryId: "selected" }]); // Service/Pi history stays inline.
     const projected = projectBrowserMessageResponse(page, (block) => hub.mediaIndex.reference(ref, block));
-    expect(projected.messages).toEqual([{ ...message, entryId: "selected", content: [{ type: "image", mediaId: idOf(png), mimeType: "image/png", byteSize: Buffer.from(png, "base64").byteLength }] }]);
+    expect(projected.messages).toEqual([{ ...message, entryId: "selected", content: [{ type: "image", mediaId: idOf(png), mimeType: "image/png", byteSize: Buffer.from(png, "base64").byteLength, width: 1, height: 1 }] }]);
     expect(await service.media(ref, idOf(png))).toEqual({ data: Buffer.from(png, "base64"), mimeType: "image/png" });
     expect(await service.media(ref, idOf(other.data))).toEqual({ data: Buffer.from(other.data, "base64"), mimeType: "image/png" });
     expect(hub.mediaIndex.get(ref, idOf(png))).toBeUndefined();
@@ -83,7 +83,7 @@ describe("PiSessionService media", () => {
     fake.session.isStreaming = true;
     fake.emit({ type: "message_start", message: partial });
     const snapshot = projectBrowserTranscriptSnapshot(await service.transcriptSnapshot(ref), (block) => hub.mediaIndex.reference(ref, block));
-    expect(snapshot.partial).toMatchObject({ content: [{ type: "image", mediaId: idOf(png) }, { type: "thinking", thinking: "working" }] });
+    expect(snapshot.partial).toMatchObject({ content: [{ type: "image", mediaId: idOf(png), width: 1, height: 1 }, { type: "thinking", thinking: "working" }] });
     expect(JSON.stringify(snapshot)).not.toContain(png);
     expect(JSON.stringify(snapshot)).not.toContain("secret");
     expect(partial.content).toEqual([image(), { type: "thinking", thinking: "working", thinkingSignature: "secret" }]);
@@ -91,7 +91,7 @@ describe("PiSessionService media", () => {
     expect(hub.mediaIndex.get(ref, idOf(png))).toBeUndefined();
   });
 
-  it("isolates actual valid sessions copied with the same id across cwds, and reconstructs prefix requests", async () => {
+  it("isolates actual valid sessions copied with the same id across cwds and rejects abbreviated ids", async () => {
     const store = join(temp, "sessions");
     const cwdA = join(temp, "workspace-a");
     const cwdB = join(temp, "workspace-b");
@@ -138,9 +138,12 @@ describe("PiSessionService media", () => {
       expect(decode).toHaveBeenCalledOnce();
       hub.mediaIndex.clear();
       readEntries.mockClear();
-      const prefixResponse = await app.inject({ method: "GET", url: url({ ...refA, id: "copied" }) });
-      expect(prefixResponse.statusCode).toBe(200);
-      expect(prefixResponse.rawPayload).toEqual(Buffer.from(png, "base64"));
+      const abbreviatedResponse = await app.inject({ method: "GET", url: url({ ...refA, id: "copied" }) });
+      expect(abbreviatedResponse.statusCode).toBe(404);
+      expect(readEntries).not.toHaveBeenCalled();
+      const exactResponse = await app.inject({ method: "GET", url: url(refA) });
+      expect(exactResponse.statusCode).toBe(200);
+      expect(exactResponse.rawPayload).toEqual(Buffer.from(png, "base64"));
       expect(readEntries).toHaveBeenCalledExactlyOnceWith(pathA);
       expect(hub.mediaIndex.get(refB, idOf(png))).toBeUndefined();
       expect(open).not.toHaveBeenCalled();

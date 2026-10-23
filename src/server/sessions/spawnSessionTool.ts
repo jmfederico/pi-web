@@ -2,7 +2,8 @@
 // Keep this out of extensions; see docs/development-checks.md#server-only-typebox.
 import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
-import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
+import { defineTool, type ExtensionContext } from "../../piSdk.js";
 
 export interface SpawnSessionResult {
   sessionId: string;
@@ -20,6 +21,10 @@ export interface SpawnSessionInvocation {
   spawningSessionId: string;
   prompt: string;
   cwd: string | undefined;
+  /** Host/extension-supplied UI-safe state, installed before startup and the first prompt. */
+  metadata?: SessionUiMetadata;
+  /** Host/extension-supplied display name, installed before extensions and publication. */
+  name?: string;
   /** Current model from the dispatching session, used as the spawned session's default. */
   model?: SpawnSessionModel;
   /** Strict `provider/model-id` requested by the dispatcher; overrides {@link model} when set. */
@@ -36,6 +41,7 @@ type SpawnSessionToolDetails = SpawnSessionResult;
 
 const SpawnSessionParams = Type.Object({
   thinkingLevel: Type.Optional(Type.Enum(KNOWN_THINKING_LEVELS, {
+    type: "string",
     description: "Thinking level override for the new session. Set this field only when instructed to use a specific thinking level or to choose an appropriate one. Otherwise omit it to inherit this session's thinking level. An unknown value is rejected; valid levels are clamped to the selected model's capabilities.",
   })),
   prompt: Type.String({

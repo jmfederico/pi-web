@@ -1,7 +1,7 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { formatDimensionNote, resizeImage } from "@earendil-works/pi-coding-agent";
+import { formatDimensionNote, resizeImage } from "../../piSdk.js";
 import { DEFAULT_ATTACHMENT_FOLDER } from "../../config.js";
 import type { PromptAttachment, PromptImageAttachment, SavedPromptAttachment } from "../../shared/apiTypes.js";
 import { extensionForImageMimeType } from "../../shared/promptAttachments.js";

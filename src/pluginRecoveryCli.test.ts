@@ -109,6 +109,8 @@ describe("plugin recovery CLI", () => {
       "--restart",
     ], {
       cwd: process.cwd(),
+      // Real Node/tsx startup can exceed five seconds on loaded Windows runners.
+      timeout: 20_000,
       env: {
         ...process.env,
         PI_WEB_DATA_DIR: join(tempDir, "data"),
@@ -126,7 +128,7 @@ describe("plugin recovery CLI", () => {
       serverPlugins: { safeStart: "future-level" },
       plugins: { poison: { enabled: false } },
     });
-  });
+  }, 30_000);
 
   it("optionally performs an automatic restart after the durable config write", () => {
     const lines: string[] = [];

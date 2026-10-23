@@ -338,7 +338,9 @@ describe("PiWebPluginService", () => {
     });
     const service = new PiWebPluginService({ catalog, runtimeProvider: activeRuntimeProvider(catalog) });
 
-    await expect(service.manifest()).resolves.toMatchObject({ plugins: [{ id: "dual-assets" }] });
+    const module = (await service.manifest()).plugins[0]?.module;
+    const activeRevision = new URL(module ?? "", "http://pi-web.local").searchParams.get("v");
+    if (activeRevision === null) throw new Error("Expected active browser revision");
     await expect(service.readAsset("dual-assets", "chunk.js")).resolves.toBeDefined();
 
     await writeFile(chunkPath, "export const value = 'desired-update';");
@@ -346,6 +348,11 @@ describe("PiWebPluginService", () => {
     await expect(service.manifest()).resolves.toEqual({ lifecycleVersion: 2, terminalMode: "recovery-disabled", plugins: [] });
     const pinnedChunk = await service.readAsset("dual-assets", "chunk.js");
     expect(pinnedChunk?.content.toString("utf8")).toBe("export const value = 'active';");
+    const desiredRevision = (await catalog.snapshot()).plugins[0]?.browserModule?.revision;
+    if (desiredRevision === undefined) throw new Error("Expected desired browser revision");
+    expect(desiredRevision).not.toBe(activeRevision);
+    await expect(service.readAsset("dual-assets", "browser.js", desiredRevision)).resolves.toBeUndefined();
+    await expect(service.readAsset("dual-assets", "browser.js", activeRevision)).resolves.toBeDefined();
   });
 
   it("withholds server-backed browser modules and reports an incompatible sessiond protocol", async () => {
@@ -439,6 +446,54 @@ describe("PiWebPluginService", () => {
     expect(pinned?.content.toString("utf8")).toBe("export default {};");
     await expect(service.manifest()).resolves.toMatchObject({ plugins: [{ id: "changing" }] });
     await expect(service.readAsset("changing", "browser.js", revision)).resolves.toBeUndefined();
+  });
+
+  it("refreshes browser-only artifacts for a newly advertised entry revision without a manifest reload", async () => {
+    const pluginDir = join(tempDir, "plugins", "refreshing");
+    await writePlugin(pluginDir, {
+      packageJson: { piWeb: { plugins: [{ id: "refreshing", browserRoot: ".", module: "browser.js" }] } },
+      files: {
+        "browser.js": "export default { version: 1 };",
+        "chunk.js": "export const value = 1;",
+      },
+    });
+    const service = new PiWebPluginService({ roots: [{ path: join(tempDir, "plugins"), source: "test", scope: "local" }], packageProvider: false });
+    const oldModule = (await service.manifest()).plugins[0]?.module;
+    const oldRevision = new URL(oldModule ?? "", "http://pi-web.local").searchParams.get("v");
+    if (oldRevision === null) throw new Error("Expected browser manifest revision");
+
+    await writeFile(join(pluginDir, "browser.js"), "export default { version: 2 };");
+    await writeFile(join(pluginDir, "chunk.js"), "export const value = 2;");
+    const newModule = (await service.plugins()).plugins.find(({ id }) => id === "refreshing")?.module;
+    const newRevision = new URL(newModule ?? "", "http://pi-web.local").searchParams.get("v");
+    if (newRevision === null) throw new Error("Expected browser catalog revision");
+    expect(newRevision).not.toBe(oldRevision);
+
+    const pinned = await service.readAsset("refreshing", "browser.js");
+    expect(pinned?.content.toString("utf8")).toBe("export default { version: 1 };");
+    const refreshed = await service.readAsset("refreshing", "browser.js", newRevision);
+    expect(refreshed?.content.toString("utf8")).toBe("export default { version: 2 };");
+    const chunk = await service.readAsset("refreshing", "chunk.js");
+    expect(chunk?.content.toString("utf8")).toBe("export const value = 2;");
+    await expect(service.readAsset("refreshing", "browser.js", oldRevision)).resolves.toBeUndefined();
+    await expect(service.readAsset("refreshing", "browser.js", "sha256:nonexistent")).resolves.toBeUndefined();
+
+    await writeFile(join(pluginDir, "package.json"), JSON.stringify({
+      piWeb: { plugins: [{ id: "refreshing", browserRoot: ".", module: "renamed.js" }] },
+    }));
+    await rm(join(pluginDir, "browser.js"));
+    await writeFile(join(pluginDir, "renamed.js"), "export default { version: 3 };");
+    const renamedModule = (await service.plugins()).plugins.find(({ id }) => id === "refreshing")?.module;
+    const renamedRevision = new URL(renamedModule ?? "", "http://pi-web.local").searchParams.get("v");
+    if (renamedRevision === null) throw new Error("Expected renamed browser revision");
+    const renamed = await service.readAsset("refreshing", "renamed.js", renamedRevision);
+    expect(renamed?.content.toString("utf8")).toBe("export default { version: 3 };");
+    await expect(service.readAsset("refreshing", "browser.js", renamedRevision)).resolves.toBeUndefined();
+    await expect(service.readAsset("refreshing", "renamed.js", newRevision)).resolves.toBeUndefined();
+    await expect(service.readAsset("refreshing", "chunk.js", newRevision)).resolves.toBeUndefined();
+
+    await rm(pluginDir, { recursive: true });
+    await expect(service.readAsset("refreshing", "renamed.js", "sha256:missing")).resolves.toBeUndefined();
   });
 
   it("binds equal-revision artifact reuse to browser-root and module identity", async () => {

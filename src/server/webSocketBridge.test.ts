@@ -8,6 +8,7 @@ import {
 import {
   bridgePluginBackendChannelSockets,
   bridgeSockets,
+  closePluginBackendChannelWebSocket,
   createBoundedTextWebSocketSender,
   createBufferedSender,
   installPluginBackendChannelWebSocketPayloadLimit,
@@ -55,6 +56,23 @@ describe("bridgeSockets", () => {
     const clientClosed = nextClose(errorCaseClientSide.peerSocket);
     errorCaseUpstreamSide.bridgeSocket.emit("error", new Error("upstream failed"));
     await clientClosed;
+  });
+});
+
+describe("plugin backend channel teardown", () => {
+  it.each([false, true])("tolerates repeated late transport errors after close (already closed: %s)", async (alreadyClosed) => {
+    const pair = await createSocketPair();
+    if (alreadyClosed) {
+      const closed = nextClose(pair.bridgeSocket);
+      pair.peerSocket.close();
+      await closed;
+    }
+    await closePluginBackendChannelWebSocket(pair.bridgeSocket, 1000, "done");
+    expect(() => { pair.bridgeSocket.emit("error", new Error("late native transport error")); }).not.toThrow();
+    const listeners = pair.bridgeSocket.listenerCount("error");
+    await closePluginBackendChannelWebSocket(pair.bridgeSocket, 1000, "done");
+    expect(pair.bridgeSocket.listenerCount("error")).toBe(listeners);
+    expect(() => { pair.bridgeSocket.emit("error", new Error("another late error")); }).not.toThrow();
   });
 });
 

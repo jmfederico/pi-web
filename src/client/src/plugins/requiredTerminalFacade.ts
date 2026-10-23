@@ -1,9 +1,8 @@
-import type { TerminalCommandRun, TerminalCommandRunStatus, Workspace } from "../api";
-import type { ContributionQueryValue, PluginCapability, PluginPeer, QualifiedContributionId, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "./types";
+import type { AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, TerminalCommandRunStatus, Workspace } from "../api";
+import type { MaintenanceTerminal, ContributionQueryValue, PluginCapability, PluginPeer, QualifiedContributionId, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "./types";
 
 export interface WorkspaceContributionNavigationV1 {
   readonly contributionId: QualifiedContributionId;
-  readonly navigationAliases?: readonly QualifiedContributionId[];
   readonly query: Readonly<Record<string, ContributionQueryValue | undefined | null>>;
 }
 
@@ -17,6 +16,14 @@ export interface RequiredTerminalWorkspaceBindingV1 {
   readonly workspace: Workspace;
   readonly peer: PluginPeer;
   readonly host: RequiredTerminalFacadeHostV1;
+}
+
+export interface RequiredTerminalMaintenanceBindingV1 {
+  readonly origin: string;
+  readonly machineId: string;
+  readonly registrationPluginId: string;
+  readonly peer: PluginPeer;
+  readonly host: { navigateApplicationContribution(contributionId: QualifiedContributionId): boolean };
 }
 
 export interface RequiredTerminalCommandRunQueryV1 {
@@ -33,6 +40,7 @@ export interface RequiredTerminalCommandRunQueryV1 {
 export interface RequiredTerminalBrowserFacadeV1 {
   readonly version: 1;
   createWorkspaceTerminal(binding: RequiredTerminalWorkspaceBindingV1): WorkspacePanelTerminal;
+  createMaintenanceTerminal?(binding: RequiredTerminalMaintenanceBindingV1): MaintenanceTerminal;
   listCommandRuns(query: RequiredTerminalCommandRunQueryV1): Promise<TerminalCommandRun[]>;
   parseCommandRun(value: unknown): TerminalCommandRun;
 }
@@ -59,6 +67,7 @@ export function snapshotRequiredTerminalBrowserFacade(value: unknown): RequiredT
     throw new Error("Required Terminal browser entry did not provide facade v1");
   }
   const createWorkspaceTerminal = value["createWorkspaceTerminal"];
+  const createMaintenanceTerminal = value["createMaintenanceTerminal"];
   const listCommandRuns = value["listCommandRuns"];
   const parseCommandRun = value["parseCommandRun"];
   if (typeof createWorkspaceTerminal !== "function" || typeof listCommandRuns !== "function" || typeof parseCommandRun !== "function") {
@@ -76,9 +85,22 @@ export function snapshotRequiredTerminalBrowserFacade(value: unknown): RequiredT
       }
       return Object.freeze({
         open: (options?: { terminalId?: string | undefined }) => { Reflect.apply(open, terminal, [options]); },
-        runCommand: (input: WorkspaceTerminalCommandInput) => Promise.resolve(Reflect.apply(runCommand, terminal, [input])).then(requireTerminalCommandRunHandle),
+        runCommand: (input: WorkspaceTerminalCommandInput) => Promise.resolve(Reflect.apply(runCommand, terminal, [input])).then((handle) => requireTerminalCommandRunHandle(handle, requireTerminalCommandRun)),
       });
     },
+    ...(typeof createMaintenanceTerminal !== "function" ? {} : {
+      createMaintenanceTerminal(binding: RequiredTerminalMaintenanceBindingV1): MaintenanceTerminal {
+        const terminal: unknown = Reflect.apply(createMaintenanceTerminal, value, [binding]);
+        if (!isRecord(terminal)) throw new Error("Required Terminal browser facade returned an invalid maintenance terminal");
+        const open = terminal["open"];
+        const runCommand = terminal["runCommand"];
+        if (typeof open !== "function" || typeof runCommand !== "function") throw new Error("Required Terminal browser facade returned an invalid maintenance terminal");
+        return Object.freeze({
+          open: (options?: { terminalId?: string | undefined }) => { Reflect.apply(open, terminal, [options]); },
+          runCommand: (input: WorkspaceTerminalCommandInput) => Promise.resolve(Reflect.apply(runCommand, terminal, [input])).then((handle) => requireTerminalCommandRunHandle(handle, requireMaintenanceCommandRun)),
+        });
+      },
+    }),
     async listCommandRuns(query) {
       const result: unknown = await Reflect.apply(listCommandRuns, value, [query]);
       if (!Array.isArray(result)) throw new Error("Required Terminal browser facade returned an invalid command-run list");
@@ -99,17 +121,29 @@ export function requiredTerminalUnavailableError(machineId: string): RequiredTer
   );
 }
 
-function requireTerminalCommandRunHandle(value: unknown) {
+function requireTerminalCommandRunHandle<Run extends AnyTerminalCommandRun>(value: unknown, mapRun: (value: unknown) => Run) {
   if (!isRecord(value) || !(value["completed"] instanceof Promise)) {
     throw new Error("Required Terminal browser facade returned an invalid command-run handle");
   }
   return Object.freeze({
-    run: requireTerminalCommandRun(value["run"]),
-    completed: value["completed"].then(requireTerminalCommandRun),
+    run: mapRun(value["run"]),
+    completed: value["completed"].then(mapRun),
   });
 }
 
 function requireTerminalCommandRun(value: unknown): TerminalCommandRun {
+  const run = requireAnyCommandRun(value);
+  if (run.scope === "maintenance") throw invalidCommandRun();
+  return run;
+}
+
+function requireMaintenanceCommandRun(value: unknown): MaintenanceTerminalCommandRun {
+  const run = requireAnyCommandRun(value);
+  if (run.scope !== "maintenance") throw invalidCommandRun();
+  return run;
+}
+
+function requireAnyCommandRun(value: unknown): AnyTerminalCommandRun {
   if (!isRecord(value)) throw invalidCommandRun();
   const status = value["status"];
   const exitCode = optionalFiniteNumber(value["exitCode"]);
@@ -117,8 +151,6 @@ function requireTerminalCommandRun(value: unknown): TerminalCommandRun {
   const completedAt = optionalString(value["completedAt"]);
   if (typeof value["id"] !== "string"
     || typeof value["origin"] !== "string"
-    || typeof value["projectId"] !== "string"
-    || typeof value["workspaceId"] !== "string"
     || typeof value["terminalId"] !== "string"
     || typeof value["title"] !== "string"
     || typeof value["command"] !== "string"
@@ -130,11 +162,13 @@ function requireTerminalCommandRun(value: unknown): TerminalCommandRun {
     || !isStringRecord(value["metadata"])) {
     throw invalidCommandRun();
   }
+  const scope = value["scope"] === "maintenance"
+    ? maintenanceRunScope(value)
+    : workspaceRunScope(value);
   return {
+    ...scope,
     id: value["id"],
     origin: value["origin"],
-    projectId: value["projectId"],
-    workspaceId: value["workspaceId"],
     terminalId: value["terminalId"],
     title: value["title"],
     command: value["command"],
@@ -145,6 +179,17 @@ function requireTerminalCommandRun(value: unknown): TerminalCommandRun {
     ...(completedAt === undefined ? {} : { completedAt }),
     metadata: { ...value["metadata"] },
   };
+}
+
+function maintenanceRunScope(value: Record<string, unknown>): { scope: "maintenance" } {
+  if (value["projectId"] !== undefined || value["workspaceId"] !== undefined) throw invalidCommandRun();
+  return { scope: "maintenance" };
+}
+
+function workspaceRunScope(value: Record<string, unknown>): { projectId: string; workspaceId: string } {
+  if ((value["scope"] !== undefined && value["scope"] !== "workspace")
+    || typeof value["projectId"] !== "string" || typeof value["workspaceId"] !== "string") throw invalidCommandRun();
+  return { projectId: value["projectId"], workspaceId: value["workspaceId"] };
 }
 
 const invalidOptionalField = Symbol("invalid optional Terminal field");

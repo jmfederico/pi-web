@@ -93,16 +93,9 @@ export function terminalSelectionScope(machineId: string, workspacePath: string)
   return `${machineId}:${workspacePath}`;
 }
 
-export function selectPreferredTerminal(terminals: readonly TerminalInfo[], options?: { targetTerminalId?: string | undefined; latestTerminalId?: string | undefined }): TerminalInfo | undefined {
-  const targetTerminalId = options?.targetTerminalId;
-  if (targetTerminalId !== undefined && targetTerminalId !== "") return terminals.find((terminal) => terminal.id === targetTerminalId);
-
-  const latestTerminalId = options?.latestTerminalId;
-  if (latestTerminalId !== undefined && latestTerminalId !== "") {
-    return terminals.find((terminal) => terminal.id === latestTerminalId) ?? terminals.find((terminal) => !terminal.exited) ?? terminals[0];
-  }
-
-  return terminals.find((terminal) => !terminal.exited) ?? terminals[0];
+/** Separate from legacy machine:path workspace keys, without a synthetic path. */
+export function maintenanceTerminalSelectionScope(machineId: string): string {
+  return JSON.stringify(["maintenance", machineId]);
 }
 
 export function selectFallbackTerminal(terminals: readonly TerminalInfo[]): TerminalInfo | undefined {

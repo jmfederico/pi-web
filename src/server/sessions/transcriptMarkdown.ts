@@ -1,4 +1,4 @@
-import type { MarkdownTransformer, MarkdownTransformContext } from "@earendil-works/pi-coding-agent";
+import type { MarkdownTransformer, MarkdownTransformContext } from "../../piSdk.js";
 
 /** Browser-only projection: never replace canonical content or pass this result back to Pi. */
 export function projectTranscriptMarkdown(

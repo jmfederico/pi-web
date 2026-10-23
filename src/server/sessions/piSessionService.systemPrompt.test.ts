@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader } from "../../piSdk.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { piWebResourceLoaderOptions } from "./piSessionService.js";
 

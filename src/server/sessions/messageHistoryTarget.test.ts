@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes.js";
 import { messageHistoryTargetId } from "./messageHistoryTarget.js";
 
 function assistant(id = "assistant", content: unknown = [{ type: "text", text: "Test message — A table" }]) {
@@ -66,6 +67,36 @@ describe("messageHistoryTargetId", () => {
       { type: "toolCall", id: "call", name: "bash", arguments: { command: "printf test" } },
     ]), result("result", "call"), laterAssistant];
     expect(messageHistoryTargetId(branch, "combined")).toBe("result");
+  });
+
+  it("retains a question result without its previous answers or subsequent tool-only work", () => {
+    const question = { id: "question", type: "message", message: {
+      role: "toolResult", toolName: "ask_user", isError: false, details: { ask: { askId: "ask-1" } },
+    } };
+    const branch = [user, question,
+      { id: "answer", type: "custom_message", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, display: true },
+      assistant("technical", [{ type: "toolCall", id: "call", name: "read" }]),
+      result("result", "call"), laterAssistant];
+    expect(messageHistoryTargetId(branch, "question")).toBe("question");
+    expect(messageHistoryTargetId([user, question], "question")).toBe("question");
+  });
+
+  it.each([false, true])("retains the question but not its answer when selecting its agent message (combined: %s)", (combined) => {
+    const call = { type: "toolCall", id: "ask-call", name: "ask_user", arguments: { questions: [] } };
+    const question = { id: "question", type: "message", message: {
+      role: "toolResult", toolName: "ask_user", isError: false, details: { ask: { askId: "ask-1" } },
+    } };
+    const answer = { id: "answer", type: "custom_message", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, display: true };
+    const branch = [user,
+      assistant("agent", [{ type: "text", text: "Which option?" }, ...(combined ? [call] : [])]),
+      ...(combined ? [] : [assistant("ask-call", [call])]),
+      question, answer, laterAssistant,
+    ];
+    expect(messageHistoryTargetId(branch, "agent")).toBe("question");
+    expect(messageHistoryTargetId(branch, "question")).toBe("question");
+    // A later checkpoint keeps the answer in its preceding branch history.
+    const target = messageHistoryTargetId(branch, "later");
+    expect(branch.slice(0, branch.findIndex((entry) => entry.id === target) + 1)).toContain(answer);
   });
 
   it("preserves user-message editor semantics instead of including subsequent history", () => {

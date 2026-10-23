@@ -40,6 +40,15 @@ jobs:
       - name: Smoke test npm 12 global package install
         run: npm run smoke:package-install
 
+      - name: Smoke test Bun without Node
+        run: |
+          docker run --rm --init --user root -v "$PWD:/code:ro" -w /code \
+            -e PI_WEB_SMOKE_PREFERENCE=auto -e PI_WEB_SMOKE_NODE_ABSENT=1 \
+            oven/bun:1.4.3 bash -lc '
+              apt-get update && apt-get install -y --no-install-recommends git ca-certificates &&
+              bun scripts/smoke-bun-install.mjs
+            '
+
       - name: Publish
         # Verify/build already ran above; publish the exact artifacts checked here.
         run: npm publish --access public --provenance --ignore-scripts

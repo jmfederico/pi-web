@@ -53,6 +53,17 @@ describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (
 });
 
 describe("machine-scoped session proxy routes", () => {
+  it.each(["/api", "/api/machines/local"])("forwards machine-global models through %s without a session", async (prefix) => {
+    const selection = { models: [{ provider: "provider", id: "chat-model", name: "Chat Model", contextWindow: 32000, reasoning: false }] };
+    daemon.respondWith({ statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify(selection) });
+
+    const response = await app.inject({ method: "GET", url: `${prefix}/models` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(selection);
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/models", body: undefined }]);
+  });
+
   it("strips the machine prefix before forwarding session requests", async () => {
     const response = await app.inject({ method: "GET", url: "/api/machines/local/sessions?cwd=/repo" });
 

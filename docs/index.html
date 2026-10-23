@@ -67,7 +67,7 @@
             <a href="machines">Fleet</a>
             <a href="install">Install</a>
             <a href="config">Config</a>
-            <a href="plugins">Plugins</a>
+            <a href="community-plugins">Plugins</a>
             <a href="faq">FAQ</a>
           </div>
           <div class="nav-actions">
@@ -151,45 +151,48 @@
             <div class="demo-caption">
               <div class="demo-caption-copy">
                 <strong>Workspaces, sessions, transcripts, files — one Pi web UI on every screen.</strong>
-                <span>Bring your own repositories. Swipe through the screenshots or click one to enlarge.</span>
+                <span>Choose a screen size, switch screenshot colors, or open the image to enlarge.</span>
               </div>
-              <div class="demo-controls" data-demo-controls hidden role="group" aria-label="Screenshot gallery controls">
-                <button class="demo-control" type="button" data-demo-prev aria-label="Previous screenshot">‹</button>
-                <div class="demo-dots" role="group" aria-label="Choose screenshot">
-                  <button class="demo-dot" type="button" data-demo-dot="0" aria-label="Show desktop screenshot" aria-current="true"></button>
-                  <button class="demo-dot" type="button" data-demo-dot="1" aria-label="Show tablet screenshot" aria-current="false"></button>
-                  <button class="demo-dot" type="button" data-demo-dot="2" aria-label="Show mobile screenshot" aria-current="false"></button>
+              <div class="demo-controls" data-demo-controls hidden role="group" aria-label="Screenshot controls">
+                <div class="demo-devices" role="group" aria-label="Screenshot screen size">
+                  <button class="demo-control demo-device" type="button" data-demo-device="desktop" aria-label="Desktop" title="Desktop" aria-pressed="true">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="9" rx="1" /><path d="M8 11.5v3M5 14.5h6" /></svg>
+                  </button>
+                  <button class="demo-control demo-device" type="button" data-demo-device="tablet" aria-label="Tablet" title="Tablet" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="1.5" width="10" height="13" rx="1.5" /><path d="M7 12h2" /></svg>
+                  </button>
+                  <button class="demo-control demo-device" type="button" data-demo-device="mobile" aria-label="Mobile" title="Mobile" aria-pressed="false">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5" /><path d="M7 12h2" /></svg>
+                  </button>
                 </div>
-                <button class="demo-control" type="button" data-demo-next aria-label="Next screenshot">›</button>
+                <button class="demo-control demo-rotation" type="button" data-demo-rotation data-paused="false" aria-label="Pause rotation" title="Pause rotation">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><path class="demo-pause-icon" d="M5 3v10M11 3v10" /><path class="demo-play-icon" d="m5 3 8 5-8 5Z" /></svg>
+                </button>
+                <button class="demo-control" type="button" data-demo-colors aria-label="Show light screenshots" title="Show light screenshots">
+                  <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5a5.5 5.5 0 0 1 0 11Z" fill="currentColor" stroke="none" /></svg>
+                </button>
+                <button class="demo-control" type="button" data-demo-prev aria-label="Previous theme">‹</button>
+                <div class="demo-dots" role="group" aria-label="Choose screenshot theme">
+                  <button class="demo-dot" type="button" data-demo-dot="pi-web-dark" data-demo-scheme="dark" data-demo-theme="PI WEB Dark" aria-label="Show PI WEB Dark theme" aria-current="true"></button>
+                  <button class="demo-dot" type="button" data-demo-dot="pi-web-light" data-demo-scheme="light" data-demo-theme="PI WEB Light" aria-label="Show PI WEB Light theme" aria-current="false"></button>
+                  <button class="demo-dot" type="button" data-demo-dot="paper" data-demo-scheme="light" data-demo-theme="Paper" aria-label="Show Paper theme" aria-current="false"></button>
+                  <button class="demo-dot" type="button" data-demo-dot="graphite" data-demo-scheme="dark" data-demo-theme="Graphite" aria-label="Show Graphite theme" aria-current="false"></button>
+                </div>
+                <button class="demo-control" type="button" data-demo-next aria-label="Next theme">›</button>
               </div>
             </div>
-            <div class="demo-gallery" data-demo-gallery tabindex="0" aria-label="PI WEB screenshots">
-              <figure class="demo-shot demo-shot-desktop" data-demo-slide>
+            <div class="demo-gallery" data-demo-gallery aria-live="off">
+              <figure class="demo-shot">
                 <div class="demo-shot-media">
-                  <button class="demo-lightbox-trigger" type="button" data-demo-lightbox-trigger aria-label="Open desktop screenshot preview">
+                  <button class="demo-lightbox-trigger" type="button" data-demo-lightbox-trigger aria-label="Open screenshot preview" disabled>
                     <img
-                      src="assets/pi-web-desktop.png"
-                      alt="PI WEB desktop screenshot showing an agent-created pi-web.dev screenshot selected in the file preview"
+                      src="assets/pi-web-desktop-pi-web-dark.png"
+                      width="1440" height="900"
+                      alt="PI WEB desktop workspace in PI WEB Dark theme, with chat beside a file preview"
                     />
                   </button>
                 </div>
-                <figcaption><strong>Desktop</strong><span>Chat beside workspace file preview.</span></figcaption>
-              </figure>
-              <figure class="demo-shot" data-demo-slide>
-                <div class="demo-shot-media">
-                  <button class="demo-lightbox-trigger" type="button" data-demo-lightbox-trigger aria-label="Open tablet screenshot preview">
-                    <img src="assets/pi-web-tablet.png" alt="PI WEB tablet screenshot" />
-                  </button>
-                </div>
-                <figcaption><strong>Tablet</strong><span>The same live session on a wider touch screen.</span></figcaption>
-              </figure>
-              <figure class="demo-shot demo-shot-mobile" data-demo-slide>
-                <div class="demo-shot-media">
-                  <button class="demo-lightbox-trigger" type="button" data-demo-lightbox-trigger aria-label="Open mobile screenshot preview">
-                    <img src="assets/pi-web-mobile.png" alt="PI WEB mobile chat screenshot" />
-                  </button>
-                </div>
-                <figcaption><strong>Mobile</strong><span>Readable chat controls when you are away from the desk.</span></figcaption>
+                <figcaption><strong data-demo-theme-caption>PI WEB Dark</strong><span data-demo-device-caption>Desktop — Chat beside workspace file preview.</span></figcaption>
               </figure>
             </div>
             <dialog class="demo-lightbox" data-demo-lightbox aria-label="Screenshot preview">
@@ -359,10 +362,11 @@
           <article class="doc-card">
             <h3>Make it your own</h3>
             <p>
-              Add trusted plugins for custom panels, tools, and workspace workflows without rebuilding PI WEB.
-              Manage plugins on each machine, or ask your agent to build one for your workflow.
+              Build workflows around Pi and your sessions with custom web tools and backend processes.
+              Install a plugin or ask your agent to build one.
             </p>
-            <a href="plugins#possibilities">Explore plugins →</a>
+            <a href="community-plugins">Find community plugins →</a>
+            <a href="plugins">Read the plugin guide →</a>
           </article>
           <article class="doc-card">
             <h3>Node or tools not found?</h3>
@@ -384,7 +388,7 @@
           <a href="machines">Fleet</a>
           <a href="install">Install</a>
           <a href="config">Config</a>
-          <a href="plugins">Plugins</a>
+          <a href="community-plugins">Plugins</a>
           <a href="faq">FAQ</a>
           <a href="https://www.npmjs.com/package/@jmfederico/pi-web">npm</a>
           <span class="version-switcher" role="group" aria-label="Documentation version">

@@ -8,6 +8,9 @@ import { PluginRegistry } from "../plugins/registry";
 import type { ChatLine } from "./shared";
 import type { FormattedText } from "./FormattedText";
 import { ChatView } from "./ChatView";
+import { settleDeferredContent, useDeferredContent } from "../formatting/deferredContent.testSupport";
+
+useDeferredContent();
 
 const base = {
   machine: { id: "local", name: "Local", kind: "local" },
@@ -76,10 +79,8 @@ async function settle(view: ChatView) {
 }
 
 describe("plugin-defined transcript message actions", () => {
-  it.each([
-    ["Clone session from this message", "fork", "Are you sure you want to fork this session?"],
-    ["Go back to this message", "goBack", "Are you sure you want to go back to this message?"],
-  ] as const)("preserves core confirmation for %s through the public callback", async (label, action, copy) => {
+  it("preserves core confirmation for cloning through the public callback", async () => {
+    const label = "Clone session from this message";
     const { view, context } = await mount();
     expect(buttons(view).map((button) => button.getAttribute("aria-label"))).toEqual([
       "Clone session from this message", "Go back to this message", "Copy user message",
@@ -88,13 +89,66 @@ describe("plugin-defined transcript message actions", () => {
     vi.stubGlobal("confirm", confirm);
     button(view, label).click();
     await settle(view);
-    expect(confirm).toHaveBeenCalledWith(copy);
-    expect(context.history[action]).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith("Are you sure you want to fork this session?");
+    expect(context.history.fork).not.toHaveBeenCalled();
     await vi.waitFor(() => { expect(button(view, label).disabled).toBe(false); });
     confirm.mockReturnValue(true);
     button(view, label).click();
     await settle(view);
-    await vi.waitFor(() => { expect(context.history[action]).toHaveBeenCalledOnce(); });
+    await vi.waitFor(() => { expect(context.history.fork).toHaveBeenCalledOnce(); });
+  });
+
+  it.each([false, true])("offers existing history actions on question requests (answered: %s), targeting the tool result", async (answered) => {
+    const { view } = await mount();
+    const question = { id: "q", question: "Choose?", options: [] };
+    const ask = { askId: "ask", askedAt: "2026-07-20T10:00:00.000Z", questions: [question] };
+    view.messages = normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: { questions: ask.questions } }] },
+      { role: "toolResult", toolName: "ask_user", toolCallId: "ask-call", entryId: "question-result",
+        content: "Questions posted", details: { ask }, isError: false },
+    ]);
+    if (answered) view.messages = [...view.messages, { role: "user", entryId: "answer-record", parts: [{ type: "askUserRecord", outcome: {
+      askId: ask.askId, askedAt: ask.askedAt, closedAt: "2026-07-20T10:01:00.000Z", reason: "submitted",
+      questions: [{ question, answered: true, values: [], otherText: "Custom answer" }],
+      answeredCount: 1, unansweredIds: [], summary: "Answered",
+    } }] }];
+    view.historyReady = true;
+    view.onSubmitAsk = vi.fn();
+    const onAction = vi.fn().mockResolvedValue(undefined);
+    view.onMessageAction = onAction;
+    await settle(view);
+
+    const card = view.renderRoot.querySelector("ask-user-card");
+    expect(card?.classList.contains(answered ? "closed-question-card" : "open-question-card")).toBe(true);
+    expect(card?.closest(".event-group")).toBeNull();
+    expect(buttons(view).map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Clone session from this message", "Go back to this message",
+    ]);
+    expect(card?.parentElement?.querySelectorAll(".msg-action")).toHaveLength(2);
+    button(view, "Go back to this message").click();
+    await settle(view);
+    button(view, "Clone session from this message").click();
+    await settle(view);
+    const expected = { ...base, message: { entryId: "question-result", role: "tool", text: "", isQuestion: true } };
+    expect(onAction.mock.calls).toEqual([[expected, "core:message.back"], [expected, "core:message.fork"]]);
+
+    view.messages = view.messages.map((message) => {
+      const entryless = { ...message };
+      delete entryless.entryId;
+      return entryless;
+    });
+    await settle(view);
+    expect(buttons(view)).toEqual([]);
+  });
+
+  it("delegates go-back to the browser helper without a blanket confirmation", async () => {
+    const { view, context } = await mount();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    button(view, "Go back to this message").click();
+    await settle(view);
+    expect(context.history.goBack).toHaveBeenCalledOnce();
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("runs arbitrary plugin workflows without a host confirmation and filters availability per message", async () => {
@@ -123,6 +177,11 @@ describe("plugin-defined transcript message actions", () => {
     view.messageStart = 20;
     view.messages = [{ role: "assistant", entryId: "skill-entry", parts: [{ type: "skillRead", name: "example", path: "/skills/example/SKILL.md" }] }];
     view.onMessageAction = vi.fn(() => Promise.resolve());
+    await settle(view);
+    const group = view.renderRoot.querySelector<HTMLDetailsElement>(".event-group");
+    if (group === null) throw new Error("Missing skill group");
+    expect(buttons(view)).toHaveLength(0);
+    group.open = true; group.dispatchEvent(new Event("toggle"));
     await settle(view);
     expect(buttons(view).map((button) => button.title)).toEqual(["Inspect skill"]);
     button(view, "Inspect skill").click();
@@ -156,7 +215,7 @@ describe("plugin-defined transcript message actions", () => {
       if (element === null) throw new Error("Missing slice text");
       return element;
     });
-    await Promise.all(formatted.map((element) => element.updateComplete));
+    await settleDeferredContent(view);
     expect(formatted.map((element) => element.renderRoot.textContent)).toEqual([
       expect.stringContaining("Considering user testing messages"), expect.stringContaining("Test message 8/10"),
     ]);
@@ -184,6 +243,39 @@ describe("plugin-defined transcript message actions", () => {
     expect(onHistory).toHaveBeenCalledExactlyOnceWith({
       ...base, message: { entryId: "assistant-8", role: "assistant", text: "Test message 8/10" },
     }, fork.id);
+  });
+
+  it("targets the real entry and anchor when an event group spans invisible conversation entries", async () => {
+    const { view } = await mount([{ id: "inspect", title: "Inspect entry", run: () => undefined }]);
+    const onEntry = vi.fn(() => Promise.resolve());
+    view.onMessageAction = onEntry;
+    view.messageStart = 20;
+    view.messages = [
+      { role: "assistant", entryId: "first", parts: [{ type: "thinking", text: "First thought" }] },
+      { role: "tool", entryId: "boundary", parts: [{ type: "toolResultBoundary", toolCallId: "earlier" }] },
+      { role: "assistant", entryId: "empty", parts: [{ type: "empty" }] },
+      { role: "assistant", entryId: "last", parts: [{ type: "thinking", text: "Last thought" }] },
+    ];
+    await settle(view);
+    const groups = view.renderRoot.querySelectorAll("details.event-group");
+    expect(groups).toHaveLength(1);
+    const group = groups[0];
+    if (!(group instanceof HTMLDetailsElement)) throw new Error("Missing activity group");
+    group.open = true; group.dispatchEvent(new Event("toggle"));
+    await settle(view);
+    const sections = Array.from(group.querySelectorAll<HTMLElement>("section.group-msg"));
+    expect(sections.map((section) => section.dataset["index"])).toEqual(["20", "23"]);
+    expect(sections.map((section) => section.dataset["scrollAnchorId"])).toEqual([
+      'e:["first","assistant","message"]',
+      'e:["last","assistant","message"]',
+    ]);
+    const action = sections[1]?.querySelector<HTMLButtonElement>('button[title="Inspect entry"]');
+    if (action === null || action === undefined) throw new Error("Missing last entry action");
+    action.click();
+    await settle(view);
+    expect(onEntry).toHaveBeenCalledExactlyOnceWith({
+      ...base, message: { entryId: "last", role: "assistant", text: "" },
+    }, "custom:inspect");
   });
 
   it("offers only opted-in display actions without a durable entry", async () => {

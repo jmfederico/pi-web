@@ -13,7 +13,7 @@ export default function companion(pi: ExtensionAPI): void {
   });
   pi.on("before_agent_start", (event) => {
     if (!active) return;
-    if (!active.started && event.prompt === active.prompt) {
+    if (!active.started && "prompt" in event && event.prompt === active.prompt) {
       active.started = true;
       if (event.prompt === PIRATE_INTRO) pi.appendEntry(PIRATE_MARKER, {});
       reply(active.requestId, { status: "running" });

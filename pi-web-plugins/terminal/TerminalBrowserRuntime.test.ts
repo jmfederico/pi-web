@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue, PluginPeer, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { TerminalContext, WorkspaceTerminalBinding } from "./TerminalContext";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
-import { InMemoryTerminalSelectionMemory } from "./terminalSelection";
+import { InMemoryTerminalSelectionMemory, SessionStorageTerminalSelectionMemory, maintenanceTerminalSelectionScope } from "./terminalSelection";
 
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => {
@@ -11,6 +12,91 @@ afterEach(() => {
 });
 
 describe("Terminal browser runtime", () => {
+  it("isolates maintenance identity and selection from workspaces and other machines", () => {
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    const workspace = workspaceContext("remote-1", vi.fn());
+    const maintenance = { machine: workspace.machine, host: workspace.host };
+    const otherMachine = { ...maintenance, machine: { ...maintenance.machine, id: "remote-2" } };
+    runtime.selectTerminal(workspace, "workspace-shell");
+    runtime.selectTerminal(maintenance, "maintenance-shell");
+    expect(runtime.workspaceScope(maintenance)).not.toBe(runtime.workspaceScope(workspace));
+    expect(runtime.selectedTerminalId(maintenance)).toBe("maintenance-shell");
+    expect(runtime.selectedTerminalId(workspace)).toBe("workspace-shell");
+    expect(runtime.selectedTerminalId(otherMachine)).toBeUndefined();
+    expect(runtime.routedTerminalId(maintenance)).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("restores remembered maintenance selection from session storage", () => {
+    const entries = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value); },
+      removeItem: (key: string) => { entries.delete(key); },
+    };
+    const runtime = new TerminalBrowserRuntime(new SessionStorageTerminalSelectionMemory(storage));
+    const workspace = workspaceContext("remote-1", vi.fn());
+    const maintenance = { machine: workspace.machine, host: workspace.host };
+    new SessionStorageTerminalSelectionMemory(storage).rememberTerminal(maintenanceTerminalSelectionScope("remote-1"), "command-terminal");
+    expect(runtime.selectedTerminalId(maintenance)).toBe("command-terminal");
+    runtime.dispose();
+  });
+
+  it("lists and counts workspace plus maintenance terminals without mixing peers", async () => {
+    const workspaceRequest = vi.fn((): Promise<JsonValue> => Promise.resolve([
+      { id: "workspace", scope: "workspace", projectId: "project-1", workspaceId: "workspace-1", cwd: "/repo", name: "Shell", createdAt: "now", exited: false },
+    ]));
+    const maintenanceRequest = vi.fn((): Promise<JsonValue> => Promise.resolve([
+      { id: "maintenance", scope: "maintenance", cwd: "/maintenance", name: "Update", createdAt: "now", exited: false },
+    ]));
+    const context = { ...workspaceContext("remote-1", workspaceRequest), maintenance: { scope: "maintenance" as const, peer: { request: maintenanceRequest } } };
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    expect((await runtime.listTerminals(context)).map(({ id, scope }) => [id, scope])).toEqual([
+      ["workspace", "workspace"], ["maintenance", "maintenance"],
+    ]);
+    await runtime.refresh(context);
+    expect(runtime.activeTerminalBadge(context)).toBe(2);
+    const machineContext = { machine: context.machine, host: context.host, maintenance: context.maintenance };
+    expect((await runtime.listTerminals(machineContext)).map(({ id }) => id)).toEqual(["maintenance"]);
+    expect(workspaceRequest).toHaveBeenCalledTimes(2);
+    runtime.dispose();
+  });
+
+  it("keeps a selected maintenance terminal across workspace switches until a workspace selection wins", () => {
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    const workspace = workspaceContext("remote-1", vi.fn());
+    const first = { ...workspace, maintenance: { scope: "maintenance" as const, peer: { request: vi.fn() } } };
+    runtime.selectTerminal(first, "maintenance", { scope: "maintenance" });
+    const second = { ...first, workspace: { ...first.workspace, workspace: { ...first.workspace.workspace, id: "other", path: "/other" } } };
+    expect(runtime.selectedTerminalId(second)).toBe("maintenance");
+    runtime.selectTerminal(second, "workspace", { scope: "workspace" });
+    expect(runtime.selectedTerminalId(second)).toBe("workspace");
+    expect(runtime.selectedTerminalId({ ...second, machine: { ...second.machine, id: "other-machine" } })).toBeUndefined();
+    runtime.dispose();
+  });
+
+  it("prioritizes an explicit facade maintenance open over a routed workspace selection until accepted", () => {
+    const selection = new InMemoryTerminalSelectionMemory();
+    const runtime = new TerminalBrowserRuntime(selection);
+    const workspace = workspaceContext("remote-1", vi.fn());
+    const context = { ...workspace, maintenance: { scope: "maintenance" as const, peer: { request: vi.fn() } }, workspace: { ...workspace.workspace, navigation: { version: 1 as const, contributionId: "terminal", query: { terminal: "workspace" }, set: vi.fn() } } };
+    runtime.requestMaintenanceTerminal(context.machine.id, "maintenance");
+    expect(runtime.selectedTerminalId(context)).toBe("maintenance");
+    expect(runtime.selectedTerminalId(context)).toBe("maintenance");
+    runtime.selectTerminal(context, "maintenance", { scope: "maintenance" });
+    expect(runtime.selectedTerminalId(context)).toBe("maintenance");
+    runtime.dispose();
+  });
+
+  it("rejects a maintenance item returned through workspace authority", async () => {
+    const context = workspaceContext("remote-1", vi.fn((): Promise<JsonValue> => Promise.resolve([
+      { id: "maintenance", scope: "maintenance", cwd: "/maintenance", name: "Update", createdAt: "now", exited: false },
+    ])));
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    await expect(runtime.listTerminals(context)).rejects.toThrow("scope does not match workspace binding");
+    runtime.dispose();
+  });
+
   it("owns active-count refresh and badge state for each machine workspace", async () => {
     let now = 1_000;
     const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => Promise.resolve(operation === "terminal.list" ? [
@@ -279,9 +365,9 @@ describe("Terminal browser runtime", () => {
     const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
     const first = workspaceContext("local", vi.fn());
     const originalSecond = workspaceContext("local", vi.fn());
-    const second: WorkspacePanelContext = {
+    const second: TerminalContext = {
       ...originalSecond,
-      workspace: { ...originalSecond.workspace, id: "workspace-2", projectId: "project-2" },
+      workspace: { ...originalSecond.workspace, workspace: { ...originalSecond.workspace.workspace, id: "workspace-2", projectId: "project-2" } },
     };
 
     expect(runtime.selectionScope(first)).toBe(runtime.selectionScope(second));
@@ -291,9 +377,9 @@ describe("Terminal browser runtime", () => {
   it("changes authoritative runtime scope when a workspace keeps its id but moves path", () => {
     const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
     const first = workspaceContext("local", vi.fn());
-    const moved: WorkspacePanelContext = {
+    const moved: TerminalContext = {
       ...first,
-      workspace: { ...first.workspace, path: "/repo-moved" },
+      workspace: { ...first.workspace, workspace: { ...first.workspace.workspace, path: "/repo-moved" } },
     };
 
     expect(runtime.workspaceScope(first)).not.toBe(runtime.workspaceScope(moved));
@@ -327,7 +413,7 @@ describe("Terminal browser runtime", () => {
   it("fails closed when the required peer is absent", async () => {
     const runtime = new TerminalBrowserRuntime();
     const context = workspaceContext("local", vi.fn());
-    Reflect.deleteProperty(context, "peer");
+    Reflect.deleteProperty(context, "workspace");
 
     await expect(runtime.refresh(context)).rejects.toThrow("Required Terminal peer is unavailable");
   });
@@ -337,21 +423,20 @@ function workspaceContext(
   machineId: string,
   request: NonNullable<PluginPeer["request"]>,
   navigation: Partial<NonNullable<WorkspacePanelContext["navigation"]>> = {},
-): WorkspacePanelContext {
+): TerminalContext & { workspace: WorkspaceTerminalBinding } {
   return {
-    navigate: () => Promise.resolve(),
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
-    workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
-    files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    peer: { request },
     host: { requestRender: vi.fn() },
-    prompt: { insertText: vi.fn(), getText: vi.fn(() => ""), getSelection: vi.fn(() => null) },
-    terminal: { open: vi.fn(), runCommand: vi.fn() },
-    navigation: {
-      version: 1,
-      contributionId: "pi-web.terminal:workspace.terminal",
-      query: navigation.query ?? {},
-      set: navigation.set ?? vi.fn(),
+    workspace: {
+      scope: "workspace",
+      workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
+      peer: { request },
+      navigation: {
+        version: 1,
+        contributionId: "pi-web.terminal:workspace.terminal",
+        query: navigation.query ?? {},
+        set: navigation.set ?? vi.fn(),
+      },
     },
   };
 }

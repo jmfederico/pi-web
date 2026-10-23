@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../../../shared/apiTypes";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, SESSION_TREE_FORK_PROXY_TIMEOUT_MS, PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS, SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS, WORKSPACE_FILE_FEDERATION_TIMEOUT_MS, WORKSPACE_FILE_JSON_RESPONSE_BODY_MAX_BYTES, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS, type FederatedHttpRouteSpec } from "../../../shared/federatedRoutes";
 import { MAX_INLINE_PREVIEW_BYTES } from "../../../shared/workspaceFiles";
-import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
+import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS, PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS, PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES, PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES } from "../../../shared/pluginBackendProtocol";
 import { configApi, filesApi, machineStatusApi, noticesApi, piPackagesApi, piWebApi, pluginsApi, projectsApi, sessionsApi, trustApi, workspacesApi } from "./clients";
 import { globalSessionEvents, realtimeEvents, sessionEvents } from "./sockets";
 import { requestPairedPluginBackend } from "./pluginBackends";
@@ -130,12 +130,12 @@ describe("federated route contract", () => {
       responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
       propagateCancellation: true,
     };
-    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual([
-      { ...boundedRequest, path: PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH },
-    ]);
-    expect(FEDERATED_WEBSOCKET_ROUTES.filter((path) => path.includes("plugin-backends"))).toEqual([
-      PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
-    ]);
+    expect(FEDERATED_HTTP_ROUTES.filter((route) => route.path.includes("plugin-backends"))).toEqual(
+      PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS.map((path) => ({ ...boundedRequest, path })),
+    );
+    expect(FEDERATED_WEBSOCKET_ROUTES.filter((path) => path.includes("plugin-backends"))).toEqual(
+      [...PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS],
+    );
   });
 
   it("allowlists only workspace trust reads and writes without adding a trust WebSocket", () => {
@@ -153,6 +153,7 @@ describe("federated route contract", () => {
       { method: "GET", path: "/sessions/:sessionId/models/catalog" },
       { method: "POST", path: "/sessions/:sessionId/models/enabled" },
       { method: "POST", path: "/sessions/:sessionId/models/scope" },
+      { method: "GET", path: "/models" },
     ]);
     expect(FEDERATED_WEBSOCKET_ROUTES.some((path) => path.includes("models"))).toBe(false);
   });
@@ -165,6 +166,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(piWebApi.piWebStatus(machineId)),
       ignoreParseFailure(piWebApi.checkForUpdates(machineId)),
       ignoreParseFailure(configApi.config(machineId)),
+      ignoreParseFailure(configApi.namingModels(machineId)),
       ignoreParseFailure(configApi.saveConfig({ spawnSessions: true }, machineId)),
       ignoreParseFailure(pluginsApi.plugins(machineId)),
       ignoreParseFailure(piPackagesApi.packages(machineId)),
@@ -203,6 +205,7 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.streamSnapshot(session, machineId)),
       ignoreParseFailure(sessionsApi.transcriptSnapshot(session, { limit: 20 }, machineId)),
       ignoreParseFailure(sessionsApi.clearQueue(session, machineId)),
+      ignoreParseFailure(sessionsApi.mutateQueuedMessage(session, { action: "remove", index: 0, expectedQueue: [{ kind: "steer", text: "adjust" }] }, machineId)),
       ignoreParseFailure(sessionsApi.dismissWarning(session, "anthropicExtraUsage", machineId)),
       ignoreParseFailure(sessionsApi.submitAsk(session, "ask 1", { answers: [{ id: "q1", values: ["pg"] }] }, machineId)),
       ignoreParseFailure(sessionsApi.cancelAsk(session, "ask 1", machineId)),
@@ -235,6 +238,11 @@ describe("federated route contract", () => {
       ignoreParseFailure(sessionsApi.authProviders({ mode: "login", authType: "oauth", machineId })),
       ignoreParseFailure(sessionsApi.startInteractiveApiKeyLogin("amazon-bedrock", machineId)),
       ignoreParseFailure(sessionsApi.logoutProvider("openai", machineId)),
+      ignoreParseFailure(sessionsApi.mcpAuthServers(session, machineId)),
+      ignoreParseFailure(sessionsApi.startMcpAuth(session, "login", machineId, "Budgeter")),
+      ignoreParseFailure(sessionsApi.mcpAuthFlow("flow 1", machineId)),
+      ignoreParseFailure(sessionsApi.respondMcpAuthFlow("flow 1", "req 1", "code", machineId)),
+      ignoreParseFailure(sessionsApi.cancelMcpAuthFlow("flow 1", machineId)),
       ignoreParseFailure(sessionsApi.startOAuthLogin("openai", machineId)),
       ignoreParseFailure(sessionsApi.oauthFlow("flow 1", machineId)),
       ignoreParseFailure(sessionsApi.respondOAuthFlow("flow 1", "req 1", "code", machineId)),

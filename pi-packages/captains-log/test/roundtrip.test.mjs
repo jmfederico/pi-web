@@ -19,7 +19,7 @@ test('correlated native roundtrip distinguishes receipt, running and final settl
     on: (name, handler) => hooks.set(name, handler),
     events: { on: (name, fn) => bus.on(name, fn), emit: (name, data) => bus.emit(name, data) },
     appendEntry(customType, data) { entries.push({ type: 'custom', customType, data }); }, setSessionName() {},
-    sendUserMessage(prompt) { sent.push(prompt); hooks.get('before_agent_start')({ prompt }); },
+    sendUserMessage(prompt) { sent.push(prompt); hooks.get('before_agent_start')({ messageType: 'user', prompt }); },
   };
   companion(pi);
   const context = { isIdle: () => true, hasPendingMessages: () => false, sessionManager: { getEntries: () => entries } };
@@ -57,6 +57,34 @@ test('correlated native roundtrip distinguishes receipt, running and final settl
   }
   assert.equal(sent.filter((prompt) => prompt === PIRATE_INTRO).length, 1);
   assert.equal(entries.filter((entry) => entry.customType === PIRATE_MARKER).length, 1);
+});
+
+test('custom-message runs cannot start or silently interfere with a translation', async () => {
+  const bus = new EventEmitter();
+  const hooks = new Map();
+  companion({
+    on: (name, handler) => hooks.set(name, handler),
+    events: { on: (name, fn) => bus.on(name, fn), emit: (name, data) => bus.emit(name, data) },
+    appendEntry() {}, setSessionName() {},
+    sendUserMessage(prompt) { hooks.get('before_agent_start')({ messageType: 'user', prompt }); },
+  });
+  const customStart = { messageType: 'custom', message: { role: 'custom', customType: 'notice', content: 'Notice' } };
+  hooks.get('before_agent_start')(customStart);
+  hooks.get('session_start')({}, {
+    isIdle: () => true, hasPendingMessages: () => false,
+    sessionManager: { getEntries: () => [{ type: 'custom', customType: PIRATE_MARKER }] },
+  });
+  const signal = new AbortController().signal;
+  const result = collectReply({
+    signal,
+    on(name, fn) { bus.on(name, fn); return () => bus.off(name, fn); },
+    emit(name, data) { bus.emit(name, data); },
+  }, id, 'Translate me', signal, () => {});
+  hooks.get('before_agent_start')(customStart);
+  hooks.get('message_end')({ message: { role: 'assistant', content: [{ type: 'text', text: 'Unrelated answer' }], stopReason: 'stop' } });
+  hooks.get('agent_settled')();
+  await assert.rejects(result, /Another prompt interfered/);
+  assert.equal(bus.listenerCount(CAPTAIN_REPLY), 0);
 });
 
 test('source reads only completed assistant text on the active branch without side effects', async () => {

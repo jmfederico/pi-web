@@ -47,7 +47,7 @@ export class SessionStorageSessionSelectionMemory implements SessionSelectionMem
 
 export function selectPreferredSession(sessions: SessionInfo[], options?: { targetSessionId?: string | undefined; latestSessionId?: string | undefined }): SessionInfo | undefined {
   const targetSessionId = options?.targetSessionId;
-  if (targetSessionId !== undefined && targetSessionId !== "") return sessionByIdOrPrefix(sessions, targetSessionId);
+  if (targetSessionId !== undefined && targetSessionId !== "") return sessions.find((session) => session.id === targetSessionId);
 
   const latestSessionId = options?.latestSessionId;
   if (latestSessionId !== undefined && latestSessionId !== "") return sessions.find((session) => session.id === latestSessionId) ?? sessions.find((session) => session.archived !== true);
@@ -58,10 +58,6 @@ export function selectPreferredSession(sessions: SessionInfo[], options?: { targ
 export function shouldDeselectAfterArchivedCollapse(sessions: SessionInfo[], selectedSession: SessionInfo | undefined): boolean {
   if (selectedSession?.archived !== true) return false;
   return !sessions.some((session) => session.archived !== true);
-}
-
-function sessionByIdOrPrefix(sessions: SessionInfo[], sessionId: string): SessionInfo | undefined {
-  return sessions.find((session) => session.id === sessionId || session.id.startsWith(sessionId));
 }
 
 export type ArchiveSelectionChange =

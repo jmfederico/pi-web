@@ -1,7 +1,7 @@
 import type { TemplateResult } from "lit";
-import type { PluginProjects, PluginPromptEditor, PluginSelectionService } from "../../../plugin-api";
+import type { PluginBackend, PluginCatalog, PluginNavigate, PluginProjects, PluginPromptEditor, PluginSelectedSession, PluginSelectionService } from "../../../plugin-api";
 import type { AppAction } from "../actions";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, Machine, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, MaintenanceTerminalCommandRun, TerminalCommandRunHandle, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, Workspace } from "../api";
 import type { PluginCapability, PluginCapabilityProvision } from "../../../shared/pluginApiTypes";
 import type { AppState } from "../appState";
 import type { SettingsSection } from "../settingsRoute";
@@ -40,14 +40,14 @@ export interface WorkspacePluginBinding {
 type MaybePromise<T> = T | Promise<T>;
 
 export interface PiWebPlugin {
-  apiVersion: 4;
+  apiVersion: 4 | 5;
   name: string;
   requires?: readonly PluginCapability[];
-  activate: (context: PluginActivationContext) => MaybePromise<PluginActivationResult>;
+  activate(context: PluginActivationContext): MaybePromise<PluginActivationResult>;
 }
 
 export interface PluginActivationContext {
-  readonly apiVersion: 4;
+  readonly apiVersion: 4 | 5;
   /** Stable package/source identity, including on federated machines. */
   readonly pluginId: PluginId;
   /** Host-unique identity for qualified contribution references in this runtime. */
@@ -77,13 +77,25 @@ export interface PluginActivationResult {
   dispose?(signal: AbortSignal): MaybePromise<void>;
 }
 
+export type StylesheetContribution = import("../../../plugin-api").StylesheetContribution;
+
+export interface QualifiedStylesheetContribution extends StylesheetContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  machineId?: string;
+  sourcePluginId?: PluginId;
+}
+
 export interface PluginContributions {
-  contentRenderers?: import("../../../plugin-api").ContentRendererContribution[];
+  stylesheets?: StylesheetContribution[];
+  contentRenderers?: import("../../../plugin-api").ContentRendererContributionV5[];
+  syntaxHighlighters?: import("../../../plugin-api").SyntaxHighlighterContribution[];
   messageActions?: import("../../../plugin-api").MessageActionContribution[];
   actions?: PluginAction[];
   applicationPanels?: ApplicationPanelContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  sessionLabels?: SessionLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
 }
@@ -184,6 +196,8 @@ export interface WorkspaceHost {
 }
 
 export interface WorkspaceContext {
+  catalog?: PluginCatalog;
+  backend?: PluginBackend;
   machine: PluginMachine;
   workspace: Workspace;
   state: AppState;
@@ -205,16 +219,24 @@ export interface WorkspacePanelTerminal {
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
 }
 
+export interface MaintenanceTerminal {
+  open(options?: { terminalId?: string | undefined }): void;
+  runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle<MaintenanceTerminalCommandRun>>;
+}
+
 export interface PiWebUnstableRuntimeContext {
   openSettings?: (section?: SettingsSection) => void;
+  openMcpAuth?: (mode: "login" | "logout") => void | Promise<void>;
 }
 
 export type { PluginPromptEditor } from "../../../plugin-api";
 
-export type { PluginNavigationDestination } from "../../../plugin-api";
+export type { PluginNavigate, PluginNavigationPatchDestination, PluginNavigationOptions } from "../../../plugin-api";
 
 export interface PluginRuntimeContext {
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  catalog?: PluginCatalog;
+  backend?: PluginBackend;
+  navigate: PluginNavigate;
   state: AppState;
   projects?: PluginProjects;
   prompt: PluginPromptEditor;
@@ -279,7 +301,7 @@ export interface WorkspacePanelNavigationV1 {
 }
 
 export interface WorkspacePanelContext extends WorkspaceContext {
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
   /** Contribution-scoped address-bar state for deep links and browser history. */
@@ -287,12 +309,18 @@ export interface WorkspacePanelContext extends WorkspaceContext {
 }
 
 export interface ApplicationPanelContext {
+  catalog?: PluginCatalog;
+  backend?: PluginBackend;
   machine: PluginMachine;
   state: AppState;
   projects?: PluginProjects;
   workspace?: Workspace;
   terminal?: WorkspacePanelTerminal;
-  navigate: (destination: import("../../../plugin-api").PluginNavigationDestination) => Promise<void>;
+  /** Runs on this machine in PI WEB's maintenance directory, independent of workspace selection. */
+  maintenanceTerminal?: MaintenanceTerminal;
+  /** Contribution-scoped workspace queries; present only when a workspace is selected. */
+  navigation?: WorkspacePanelNavigationV1;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   host: WorkspaceHost;
 }
@@ -302,14 +330,16 @@ export interface ApplicationPanelContribution {
   title: string;
   icon?: TemplateResult;
   order?: number;
-  routeAliases?: string[];
   visible?: (context: ApplicationPanelContext) => boolean;
   badge?: (context: ApplicationPanelContext) => string | number | TemplateResult | undefined;
+  onInvalidate?: (context: ApplicationPanelContext) => void | Promise<void>;
   render: (context: ApplicationPanelContext) => TemplateResult;
 }
 
 export interface QualifiedApplicationPanelContribution extends ApplicationPanelContribution {
   id: QualifiedContributionId;
+  /** Host-generated portable identity; never an author-defined migration alias. */
+  sourceContributionId: QualifiedContributionId;
   pluginId: PluginId;
   localId: LocalContributionId;
   machineId?: string;
@@ -330,10 +360,6 @@ export interface WorkspacePanelContribution {
   title: string;
   icon?: WorkspacePanelIcon;
   order?: number;
-  /** Former URL tool/view values that should resolve to this panel. */
-  routeAliases?: string[];
-  /** Former qualified contribution ids whose namespaced query keys remain readable. */
-  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
   /** Return a deep-link query to open a workspace-relative file, or undefined if unsupported. */
   fileOpenQuery?: (context: WorkspacePanelContext, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
@@ -345,6 +371,8 @@ export interface WorkspacePanelContribution {
 
 export interface QualifiedWorkspacePanelContribution extends WorkspacePanelContribution {
   id: QualifiedContributionId;
+  /** Host-generated portable identity; never an author-defined migration alias. */
+  sourceContributionId: QualifiedContributionId;
   pluginId: PluginId;
   localId: LocalContributionId;
   machineId?: string;
@@ -387,46 +415,28 @@ export interface WorkspaceLabelContribution {
   items: (context: WorkspaceLabelContext) => WorkspaceLabelItem[];
 }
 
+export interface SessionLabelContext extends WorkspaceContext {
+  session: Readonly<PluginSelectedSession>;
+  navigate: PluginNavigate;
+}
+
+export type { SessionLabelItem } from "../../../plugin-api";
+
+export interface SessionLabelContribution {
+  id: LocalContributionId;
+  order?: number;
+  visible?: (context: SessionLabelContext) => boolean;
+  items: (context: SessionLabelContext) => import("../../../plugin-api").SessionLabelItem[];
+}
+
+export interface QualifiedSessionLabelContribution extends SessionLabelContribution {
+  id: QualifiedContributionId;
+  pluginId: PluginId;
+  localId: LocalContributionId;
+  machineId?: string;
+}
+
 export type ThemeColorScheme = "dark" | "light";
-
-export type ThemeToken =
-  | "--pi-bg"
-  | "--pi-surface"
-  | "--pi-surface-hover"
-  | "--pi-terminal-bg"
-  | "--pi-terminal-text"
-  | "--pi-border"
-  | "--pi-border-muted"
-  | "--pi-text"
-  | "--pi-text-secondary"
-  | "--pi-text-bright"
-  | "--pi-muted"
-  | "--pi-dim"
-  | "--pi-accent"
-  | "--pi-accent-border"
-  | "--pi-selection-bg"
-  | "--pi-success"
-  | "--pi-success-border"
-  | "--pi-success-bg"
-  | "--pi-success-surface"
-  | "--pi-success-ring"
-  | "--pi-warning"
-  | "--pi-warning-border"
-  | "--pi-warning-surface"
-  | "--pi-danger"
-  | "--pi-purple"
-  | "--pi-purple-border"
-  | "--pi-purple-surface"
-  | "--pi-overlay"
-  | "--pi-shadow-soft"
-  | "--pi-shadow"
-  | "--pi-shadow-strong"
-  | "--pi-bg-overlay-soft"
-  | "--pi-bg-overlay"
-  | "--pi-success-bg-overlay"
-  | "--pi-terminal-selection";
-
-export type ThemeTokens = Record<ThemeToken, string>;
 
 export interface ThemeContribution {
   id: LocalContributionId;
@@ -434,7 +444,9 @@ export interface ThemeContribution {
   description?: string;
   order?: number;
   colorScheme: ThemeColorScheme;
-  tokens: ThemeTokens;
+  stylesheets?: StylesheetContribution[];
+  /** Compatibility-only palettes from v4 plugins. */
+  tokens?: import("../../../plugin-api").ThemeTokens;
 }
 
 export interface ThemePairContribution {

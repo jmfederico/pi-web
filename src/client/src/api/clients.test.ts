@@ -48,6 +48,31 @@ afterEach(() => {
 });
 
 describe("machine-scoped runtime API", () => {
+  it("starts and controls a scoped MCP auth flow with encoded identifiers", async () => {
+    const flow = { flowId: "flow /1", target: "mcp", providerId: "mcp", providerName: "MCP server", status: "running", progress: [] };
+    const fetchMock = stubSequenceFetch(Array.from({ length: 4 }, () => jsonResponse(flow)));
+    const session = { id: "session /1", cwd: "/repo" };
+    await sessionsApi.startMcpAuth(session, "login", "remote a", "Budgeter");
+    await sessionsApi.mcpAuthFlow(flow.flowId, "remote a");
+    await sessionsApi.respondMcpAuthFlow(flow.flowId, "request-1", "http://localhost/callback?code=abc", "remote a");
+    await sessionsApi.cancelMcpAuthFlow(flow.flowId, "remote a");
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://pi.example.test/api/machines/remote%20a/sessions/session%20%2F1/mcp/auth",
+      "https://pi.example.test/api/machines/remote%20a/auth/mcp/flow%20%2F1",
+      "https://pi.example.test/api/machines/remote%20a/auth/mcp/flow%20%2F1/respond",
+      "https://pi.example.test/api/machines/remote%20a/auth/mcp/flow%20%2F1/cancel",
+    ]);
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 0)[1]))).toEqual({ cwd: "/repo", mode: "login", serverName: "Budgeter" });
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 2)[1]))).toEqual({ requestId: "request-1", value: "http://localhost/callback?code=abc" });
+  });
+
+  it("lists MCP authentication candidates for the exact session and machine", async () => {
+    const response = { servers: [{ name: "Budgeter", description: "connected" }] };
+    const fetchMock = stubJsonFetch(response);
+    await expect(sessionsApi.mcpAuthServers({ id: "session /1", cwd: "/work repo" }, "remote a")).resolves.toEqual(response);
+    expect(fetchCall(fetchMock, 0)[0]).toBe("https://pi.example.test/api/machines/remote%20a/sessions/session%20%2F1/mcp/auth/servers?cwd=%2Fwork+repo");
+  });
+
   it("reads scoped notices and dismisses them through the selected machine route", async () => {
     const snapshot = {
       daemonInstanceId: "daemon-a",
@@ -120,6 +145,21 @@ describe("machine-scoped runtime API", () => {
 });
 
 describe("settings config and plugin APIs", () => {
+  it("loads naming models through the selected machine under the application base", async () => {
+    vi.stubEnv("BASE_URL", "./");
+    vi.stubGlobal("document", { baseURI: "https://pi.example.test/nested/" });
+    const response = { models: [{ provider: "provider", id: "naming", name: "Naming" }] };
+    const fetchMock = stubSequenceFetch([jsonResponse(response), jsonResponse({ models: [] })]);
+
+    await expect(configApi.namingModels("remote /a")).resolves.toEqual(response);
+    await expect(configApi.namingModels()).resolves.toEqual({ models: [] });
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://pi.example.test/nested/api/machines/remote%20%2Fa/models",
+      "https://pi.example.test/nested/api/machines/local/models",
+    ]);
+  });
+
   it("preserves gateway config and plugin routes by default", async () => {
     const fetchMock = stubSequenceFetch([
       jsonResponse(piWebConfigResponse({ host: "127.0.0.1" })),
@@ -335,6 +375,33 @@ describe("session API compatibility", () => {
     expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/queue/clear");
     expect(init?.method).toBe("POST");
     expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo with spaces" });
+  });
+
+  it("serializes queue mutations with their expected snapshot on encoded machine routes", async () => {
+    const fetchMock = stubJsonFetch({ sessionId: "s /?", isStreaming: true, isCompacting: false, isBashRunning: false, pendingMessageCount: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 });
+    const mutation = { action: "toggle" as const, index: 0, expectedQueue: [{ kind: "steer" as const, text: "adjust" }] };
+    await sessionsApi.mutateQueuedMessage({ id: "s /?", cwd: "/repo with spaces" }, mutation, "remote /?");
+    const [url, init] = fetchCall(fetchMock, 0);
+    expect(url).toBe("https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/queue/message");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(requestBody(init))).toEqual({ cwd: "/repo with spaces", ...mutation });
+  });
+
+  it("submits question answers and skips through encoded machine routes with ordinary status responses", async () => {
+    const wireStatus = { sessionId: "s /?", isStreaming: true, isCompacting: false, isBashRunning: false, pendingMessageCount: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }, cost: 0 };
+    const fetchMock = stubSequenceFetch([jsonResponse(wireStatus), jsonResponse(wireStatus)]);
+    const ref = { id: "s /?", cwd: "/repo with spaces" };
+    const answers = [{ id: "q1", values: ["pg"] }];
+
+    await expect(sessionsApi.submitAsk(ref, "ask 1", { answers }, "remote /?")).resolves.toMatchObject(wireStatus);
+    await expect(sessionsApi.cancelAsk(ref, "ask 1", "remote /?")).resolves.toMatchObject(wireStatus);
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/ask/submit",
+      "https://pi.example.test/api/machines/remote%20%2F%3F/sessions/s%20%2F%3F/ask/cancel",
+    ]);
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 0)[1]))).toEqual({ cwd: ref.cwd, askId: "ask 1", answers });
+    expect(JSON.parse(requestBody(fetchCall(fetchMock, 1)[1]))).toEqual({ cwd: ref.cwd, askId: "ask 1" });
   });
 
   it("answers and cancels extension dialogs through encoded machine routes", async () => {

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "../../piSdk.js";
 import type { CommandOption, OAuthFlowState } from "../../shared/apiTypes.js";
 
 /** The single runtime capability this service drives — narrowed for testable DI. */

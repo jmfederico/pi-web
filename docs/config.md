@@ -2,7 +2,7 @@
 
 PI WEB configuration covers the machine-local and project-local settings you usually need: the web/API bind address, trusted development-host settings, UI preferences, desired plugin enablement/settings, server-plugin recovery, file-explorer path access, manual upload defaults, upload limits, the Pi agent state directory, and session-daemon tools.
 
-Use this reference for detailed configuration and operational behavior. For scannable settings tables with defaults, scopes, and restart requirements, see <https://pi-web.dev/config>.
+Settings below describe available choices, scope, limitations, and restart requirements. An HTML version is available at <https://pi-web.dev/config>.
 
 ## Config files
 
@@ -25,8 +25,8 @@ Pi package settings are separate from PI WEB config. They live in Pi's package-m
 | Override the path for one command | Supply a nonempty `PI_WEB_CONFIG` when invoking that command. This does not rewrite service definitions. |
 | Change the managed service config path | Run `pi-web install --config /path/to/config.json` to regenerate both web/API and sessiond service definitions. |
 | Upgrade from an installation that set the path only for the web service | Rerun that same install command so both services use the same config. |
-| systemd cannot verify the loaded service environment | The command fails rather than guesses if manager state is stale, the loaded fragment differs, or a PI WEB-managed environment value cannot be verified. Managed `Environment=` values (currently `PI_WEB_CONFIG`) must match the installed definition; unrelated variables are ignored. Drop-ins that leave managed values unchanged are allowed. |
-| systemd uses `EnvironmentFile=` | Accepted with a nonfatal warning. File contents are not included in systemctl's `Environment` property and PI WEB does not inspect them, so config overrides in those files cannot be verified. |
+| systemd cannot verify the loaded service config | The command stops. Reinstall services with the intended config path and reload the service manager before retrying. |
+| systemd uses `EnvironmentFile=` | Accepted with a warning; config-path overrides in that file cannot be verified. |
 | launchd has an old config path or a label loaded from another plist | `start` and `doctor` fail. `restart` reloads installed plists and can repair stale loaded state. |
 
 ## Startup model and thinking defaults
@@ -68,21 +68,29 @@ defaults → global config file → environment overrides
 
 Supported project-local settings are then applied for that project's workspaces. For upload and prompt-attachment defaults, `<project>/.pi-web/config.json` overrides the global value.
 
-Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
+Environment overrides include `PI_WEB_HOST`, `PI_WEB_PORT` / `PORT`, `PI_WEB_ALLOWED_HOSTS`, `PI_WEB_MAX_UPLOAD_BYTES`, `PI_WEB_SESSION_ARCHIVE_DIR`, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_WEB_SPAWN_SESSIONS`, `PI_WEB_SUBSESSIONS`, `PI_WEB_ASK_USER`, and `PI_WEB_ENVIRONMENT_FACTS`.
 
 Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
 - `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
+- `sessionNaming`: saved model, token budget, thinking level, and timeout apply to the next naming request without a restart. Existing names and in-progress naming requests are unchanged.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
 - `uploads.defaultFolder`: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.
 - `attachments.defaultFolder`: applies to new prompt-attachment saves after config/workspace refresh.
-- `plugins`: browser-only changes apply after a browser-tab reload. Any enablement, settings, package-source, or package-revision change affecting a `serverModule` requires a manual session-daemon restart, then a browser reload for its paired UI.
+- `plugins`: browser-only changes need a tab reload. Server-backed enablement, settings, or package changes require a manual session-daemon restart, then a tab reload. See [Project plugin settings](#project-plugin-settings).
 - `serverPlugins.safeStart`: persistent offline recovery state applied before server-plugin discovery/import on the next sessiond start; use the `pi-web plugins safe-start ...` CLI rather than hand-editing it.
-- Pi package install/remove/update: not a PI WEB config key; after a mutation, type `/reload` in each idle PI WEB session on the target machine to refresh ordinary Pi resources such as extensions, skills, prompt templates, themes, and context/system prompt files. For a PI WEB package with `serverModule`, manually restart `pi-web-sessiond.service`, then reload the browser. If a global Pi extension adds or removes a model provider, or changes a provider's connection settings, the same manual sessiond restart is required; `/reload` cannot change either startup snapshot. A known Pi model provider refreshing only its own model list is applied without a restart. See [Pi extension provider baseline](#pi-extension-provider-baseline).
-- `shortcuts`: saved settings apply in the browser after config refresh/save.
+- Pi package changes: use `/reload` in each idle session for ordinary extensions, skills, templates, and themes. Packages containing server plugins require a manual session-daemon restart and browser reload. Global provider registration or connection changes also require a daemon restart; model-list-only updates do not. See [Pi extension provider baseline](#pi-extension-provider-baseline).
+- `shortcuts` / `defaultStreamingBehavior`: saved settings apply in the browser after config refresh/save; no service restart.
 - `defaultTheme`: applies after settings save or browser config refresh when the browser has no local theme override; no service restart.
+
+### Streaming send default
+
+In **Settings → Keyboard shortcuts → Send while agent is running**, choose **Steer** (the default) to deliver input before the next model call, or **Follow-up** to queue it until the current response finishes. This changes only the keyboard shortcut, not the chat buttons. During compaction, messages queue as follow-ups.
+
+The global gateway key is `defaultStreamingBehavior`: `steer` or `followUp`. It is not project-local and needs no service restart.
 
 ## Global config example
 
@@ -91,6 +99,7 @@ Process restarts depend on the key:
   "host": "127.0.0.1",
   "port": 8504,
   "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true },
+  "defaultStreamingBehavior": "steer",
   "pathAccess": {
     "allowedPaths": ["~/SDKs", "/opt/reference"]
   },
@@ -101,6 +110,9 @@ Process restarts depend on the key:
     "defaultFolder": ".pi-web/attachments"
   },
   "maxUploadBytes": 67108864,
+  "sessionArchive": {
+    "directory": "/srv/pi-web/archives"
+  },
   "spawnSessions": true,
   "subsessions": true,
   "askUser": true,
@@ -140,50 +152,23 @@ Project-local `pathAccess.allowedPaths` entries are merged after the global list
 
 Project-local `uploads.defaultFolder` overrides the global upload destination for workspaces in that project, and project-local `attachments.defaultFolder` overrides the global prompt-attachment destination the same way. These defaults also apply when accessing the project through Fleet.
 
-Plugins may own separate project files, such as `.pi-web/tasks.json` for the built-in Workspace Tasks plugin.
+Project-local `plugins.<id>.settings` supplies overrides for server plugins that support project settings, including Git. Only settings are allowed here: `plugins.<id>.enabled` is not supported; plugin enablement stays global. See [Project plugin settings](#project-plugin-settings) for merge and restart rules.
+
+Plugins may also own separate project files, such as `.pi-web/tasks.json` for the built-in Workspace Tasks plugin.
 
 PI WEB also honors one optional project hook; see [Worktree pre-remove hook](#worktree-pre-remove-hook).
 
 ## Worktree pre-remove hook
 
-Before PI WEB removes a workspace — for Git projects, a secondary worktree — it gives the repository one chance to tear down project-owned infrastructure tied to that workspace. To use the hook, provide an executable script at:
+Use an executable `.pi-web/hooks/worktree-pre-remove` script to stop containers or release workspace resources before removal. Place it relative to the workspace where the removal command runs—normally the project's main workspace.
 
-```text
-.pi-web/hooks/worktree-pre-remove
-```
-
-relative to the workspace where the deletion command runs. PI WEB runs the deletion command from the project's main workspace when it exists, so commit the hook there and it follows the repository.
-
-When the hook is present and executable, PI WEB dispatches the hook and the removal as one composed terminal command:
-
-```sh
-'<hook path>' '<workspace path>' && <workspace removal command>
-```
-
-For Git projects the removal command is `git worktree remove '<worktree path>'`.
-
-Contract:
-
-- **Arguments:** exactly one — the absolute path of the workspace being removed.
-- **Working directory:** the workspace the removal command runs in, not the workspace being removed.
-- **Exit codes:** `0` lets the removal proceed; any non-zero exit blocks it. The `&&` chain is the fail-closed guarantee — a failing hook keeps the worktree on disk.
-- **Absent hook:** a missing file, or a file without the executable bit (for example after a checkout that lost it), is treated as no hook; PI WEB then runs the removal command on its own.
-
-The composed command is dispatched like any other workspace deletion — same `Delete workspace: <branch>` terminal title — so hook output and failures are visible in the terminal run. If PI WEB cannot probe the hook path because of an unexpected filesystem error, the deletion request fails before any workspace terminals are closed.
-
-Example: a hook that stops and removes local dev containers that bind-mount the worktree, so deletion does not leave stale containers behind. The hook is an opaque extension point — the contract does not assume any specific tooling, so use whatever the repository standardizes on:
-
-```sh
-#!/bin/sh
-# .pi-web/hooks/worktree-pre-remove
-set -eu
-
-worktree_path="$1"
-
-# Stop/remove local dev containers bind-mounting "$worktree_path",
-# release other per-worktree resources, etc.
-# Exit non-zero to block the worktree removal.
-```
+| Item | Behavior |
+| --- | --- |
+| Argument | One absolute path: the workspace being removed. |
+| Success (`0`) | Continue with workspace removal. |
+| Failure (nonzero) | Block removal; keep the workspace on disk. |
+| Missing / not executable | Skip the hook and run removal normally. |
+| Output | Visible in the workspace deletion terminal run. |
 
 ## Configuration matrix
 
@@ -202,16 +187,22 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
+| Session archive directory | `sessionArchive.directory` | `PI_WEB_SESSION_ARCHIVE_DIR` | Global/session daemon | Not supported locally | Restart session daemon on that machine; new archives only |
+| Session naming | `sessionNaming.model`, `sessionNaming.maxTokens`, `sessionNaming.thinkingLevel`, `sessionNaming.timeoutMs` | — | Global/session daemon | Not supported locally | Next naming request; no restart |
 | Extension dialog auto-cancel timeout | `extensionDialogsTimeoutMs` | — | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session environment facts | `environmentFacts` | `PI_WEB_ENVIRONMENT_FACTS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
-| PI WEB plugin desired enablement/settings | `plugins.<id>.enabled`, `plugins.<id>.settings` | — | Global + sessiond startup snapshot for server entries | Not core local config; plugins may read their own project files | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
+| PI WEB plugin desired enablement | `plugins.<id>.enabled` | — | Global | Not supported locally | Browser-only: reload tab. Server-backed: manually restart sessiond, then reload tab |
+| PI WEB plugin settings | `plugins.<id>.settings` | — | Global + project for server plugins supporting project settings | **Merges top-level setting keys** over global settings; no project enablement | Browser-only global settings: reload tab. Server-backed global/project settings: manually restart sessiond, then reload tab |
+| Git worktree discovery hooks | `plugins.git.settings.workspaceDiscoveryHooks` | — | Global + project | Project boolean overrides global; default `true` | Manually restart session daemon; browser reload alone does not apply changes |
 | Server-plugin safe start | `serverPlugins.safeStart` | — | Global/offline recovery | Not supported locally; manage with `pi-web plugins safe-start ...` | Applied before discovery/import on next sessiond start |
 | Default browser theme | `defaultTheme.themeId`, `defaultTheme.auto` | — | Gateway global | Not supported locally; device choices take precedence | Settings save / browser config refresh; no restart |
+| Streaming send default | `defaultStreamingBehavior` | — | Global gateway | Not supported locally | Applies after settings save/config refresh; defaults to `steer` |
 | Keyboard shortcuts | `shortcuts.<actionId>` | — | Global | Not supported locally | Applies after settings save/config refresh |
 | Project config version | `version` | — | Project | Project-local only; must be `1` when present | Next project-config read |
 | **Runtime-only environment variables** |  |  |  |  |  |
 | Global config file path | — | `PI_WEB_CONFIG` (`XDG_CONFIG_HOME` affects the default path) | Process/env | Selects the global config file; not a project config | Restart services/processes after changing env |
 | Managed data directory | — | `PI_WEB_DATA_DIR` | Process/env | Not supported locally | Restart web/API and session daemon |
+| Git hook instance namespace | — | `PI_WEB_INSTANCE_NAMESPACE` | Session daemon env | Not supported locally | Restart session daemon; see [running multiple instances](#git-instance-namespace) |
 | Session daemon socket | — | `PI_WEB_SESSIOND_SOCKET` | Web/API + session daemon env | Not supported locally | Restart daemon and web/API; both must match |
 | Session daemon TCP port | — | `PI_WEB_SESSIOND_PORT` | Session daemon env | Not supported locally | Restart session daemon; set `PI_WEB_SESSIOND_URL` for web/API too |
 | Session daemon TCP host | — | `PI_WEB_SESSIOND_HOST` | Session daemon env | Not supported locally | Restart session daemon |
@@ -229,19 +220,35 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 
 `PI_WEB_DATA_DIR` sets the root for PI WEB-managed runtime state and defaults to `~/.pi-web`. Unless a more specific path override is configured, PI WEB stores its project and machine registries, locally discovered plugins, default session-daemon socket, and session archives beneath this root.
 
-Each data directory is independent: after pointing PI WEB at a new root, it starts there with empty registries and no session archives. To carry session archives over, stop PI WEB, then copy `archived-sessions.json` and the `archived-sessions/` directory from the old data directory into the new one before starting it again.
+PI WEB creates `$PI_WEB_DATA_DIR/maintenance` when a maintenance terminal first needs it. Commands from Updates run there on the selected machine, not in a user workspace. This directory is not registered as a project.
+
+Each data directory is independent: after pointing PI WEB at a new root, it starts there with empty registries and no archive index. Changing paths does not migrate data. Archive records retain their stored paths; see [Session archive directory](#session-archive-directory).
 
 Only one live session daemon may use a data directory. For a second instance, set a distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT`. Stale ownership markers are normally recovered automatically. If startup still refuses, verify the named owner is no longer running before deleting `sessiond-owner.json` as the error suggests.
 
 This setting does not change the PI WEB config file selected by `PI_WEB_CONFIG` or Pi-owned state such as the active session files selected by `PI_CODING_AGENT_SESSION_DIR`.
 
+### Session archive directory
+
+Set `sessionArchive.directory` in the global config file to choose where new session archives are written. It defaults to `$PI_WEB_DATA_DIR/archived-sessions`. Project-local overrides are not supported.
+
+```json
+{ "sessionArchive": { "directory": "/srv/pi-web/archives" } }
+```
+
+A nonempty `PI_WEB_SESSION_ARCHIVE_DIR` environment value takes precedence over the config file; an empty value is ignored. Relative paths resolve against the process working directory. Use an absolute path for a predictable destination; do not rely on tilde expansion.
+
+Restart the session daemon on the affected machine after changing either value. Only the destination for new archives changes: the index stays at `$PI_WEB_DATA_DIR/archived-sessions.json`, existing records keep their stored paths, and no migration occurs.
+
+Edit the global config file or daemon environment directly. Neither this destination nor the managed data directory is exposed in Settings.
+
 ### Agent process environment
 
-Agent shells, terminals, and spawned sessions inherit the session daemon's environment almost as-is. When the daemon starts, it removes only `NODE_ENV` and `PORT` from the environment agent processes see, so development commands behave normally inside sessions — for example, `npm install` is not affected by a production `NODE_ENV` meant for the daemon. Ordinary variables (`PATH`, `HOME`, proxy settings, and the like) stay visible, and so do the daemon's `PI_WEB_*` configuration keys and the resolved `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` values, so a `pi` CLI started from inside a session uses the same agent state — auth, models, and session storage — as the daemon. The daemon itself keeps using the values it captured at startup.
+Agent shells, terminals, and child sessions inherit the daemon environment, including its Pi state paths. `NODE_ENV` and `PORT` are removed so they do not interfere with development commands.
 
-Every process spawned from a session also inherits `PI_WEB_SESSION=1`, marking it as nested inside the running PI WEB instance. The inherited `PI_WEB_*` values point at that live instance, so starting another PI WEB instance from inside a session fails loudly at startup because the live instance owns the state (see [Managed data directory](#managed-data-directory)); running one deliberately requires a distinct `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET` (or `PI_WEB_SESSIOND_PORT` / `PI_WEB_SESSIOND_HOST`), and `PI_WEB_PORT`.
+`PI_WEB_SESSION=1` marks nested processes. Inherited `PI_WEB_*` values still point to the hosting instance. Use a separate data directory, daemon endpoint, and web port for a second instance. Do not restart the hosting session daemon from inside an active session you need to preserve.
 
-Session system prompts state these nesting facts — and, in a Docker deployment, the container layout facts — so agents learn the rules before discovering them by breaking their own session, including the precautions never to restart the hosting session daemon and to restart the web/API process before the session daemon. Set the `environmentFacts` config key to `false`, or `PI_WEB_ENVIRONMENT_FACTS=false` in the session daemon's environment, to leave environment facts out of session system prompts; they default to on.
+`environmentFacts` includes nesting and deployment guidance in session system prompts by default. Set it to `false`, or use `PI_WEB_ENVIRONMENT_FACTS=false`, to omit that guidance. Restart sessiond after changing it.
 
 ### External path access
 
@@ -255,7 +262,7 @@ Accepted root forms:
 - Home-relative paths: `~/SDKs`
 - Windows absolute paths on Windows hosts: `C:\Users\dev\SDKs`
 
-When an absolute request is served, PI WEB expands `~`, canonicalizes the configured roots with `realpath`, requires roots to be existing directories, and rejects symlink escapes outside the allowed roots.
+Roots must be existing directories. Symlink escapes outside allowed roots are rejected.
 
 In **Settings → General**, external filesystem roots are saved on the selected machine. Gateway host, port, and allowed-hosts fields stay on the gateway config.
 
@@ -278,7 +285,7 @@ The Files panel can upload one or more files in two ways:
 }
 ```
 
-The value must be a non-empty workspace-relative folder. PI WEB normalizes repeated separators and backslashes to `/`, and rejects absolute paths or `..` traversal. In the upload dialog only, clearing the destination field uploads that batch to the workspace root.
+The value must be a non-empty workspace-relative folder, without absolute paths or `..` traversal. In the upload dialog only, clearing the destination uploads that batch to the workspace root.
 
 Uploads stay inside the workspace, create parent folders by default, and do not overwrite existing files unless you enable overwrite in the review dialog. Direct drag/drop never overwrites. Check the upload progress UI for completion, conflicts, and errors.
 
@@ -300,7 +307,7 @@ When the chat composer has pending attachments, its delivery selector offers **S
 }
 ```
 
-The value must be a non-empty workspace-relative folder. PI WEB normalizes repeated separators and backslashes to `/`, and rejects absolute paths or `..` traversal. Saved attachments always stay inside the workspace root, and an explicit per-request folder on the attachments API overrides the configured default.
+The value must be a non-empty workspace-relative folder, without absolute paths or `..` traversal. Saved attachments stay inside the workspace. An explicit per-request folder overrides the configured default.
 
 In Fleet, Settings saves the global attachment default on the selected machine; the composer uses that project's effective destination.
 
@@ -318,9 +325,7 @@ PI_CODING_AGENT_SESSION_DIR=/opt/pi-profiles/lab-sessions
 
 The directory must use the data layout supported by the bundled Pi SDK; PI WEB does not load or convert incompatible formats, migrate profile data, or repartition PI WEB-managed archives when the directory changes.
 
-The session daemon resolves the directory once at startup and exports the resolved values to everything it starts, so sessions, terminals, the bash tool, and subsessions all observe the same `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`. That resolved active directory stays fixed for the daemon lifetime: changing the environment takes effect on the next session-daemon restart on that machine, and until then sessions, Pi package operations, Pi-package-backed PI WEB plugin discovery, status/install detection, and update planning continue to use the daemon-owned active directory; a web/API restart recovers that same active directory instead of applying the new value.
-
-If the session daemon cannot report a valid active directory, profile-dependent Pi package and PI WEB plugin operations report unavailable instead of falling back to independently resolved values. A package-managed update command is shown only when the daemon reports a valid active directory and the `pi` command is on `PATH`, and the command pins that directory for the update. Restart the session daemon on the selected machine to establish the next active directory.
+Changing either path requires a session-daemon restart on the target machine; restarting only web/API does not apply it. Sessions, terminals, and package operations use the daemon's active paths. If those paths are unavailable, profile-dependent operations are unavailable too.
 
 ### Pi extension provider baseline
 
@@ -328,13 +333,13 @@ Model providers are shared across all sessions on a machine. PI WEB loads them w
 
 Provider connection settings stay fixed until the daemon restarts. Project extensions and `/reload` cannot add, replace, or remove providers. Other Pi extension features continue to load and reload normally.
 
-Pi virtual models are unsupported in PI WEB, even from global extensions: their routers capture session-bound context that cannot safely be shared across sessions. Calls to `registerVirtualModel()` or `unregisterVirtualModel()` on the shared runtime raise explicit errors, reported in bootstrap diagnostics or session extension errors. Disable the extension's virtual-model feature and select a physical model instead; restarting the daemon does not enable it.
+Pi virtual models are unsupported, including from global extensions. Disable the extension's virtual-model feature and select a physical model instead; restarting the daemon does not enable virtual models.
 
 #### Model list refresh for a known provider
 
 An extension may refresh an existing provider's **model list** without a restart, provided all other provider settings remain unchanged. Changes to credentials, connection settings, or provider implementation require a daemon restart. Accepted model-list updates are available to sessions immediately.
 
-Model lists are shared daemon-wide state. If extensions in two workspaces register different model lists for the same provider ID, the last registration wins. A model entry may also carry its own `baseUrl` and `headers`, which take precedence over the provider-level values for that model, so an accepted refresh can change where requests for those models are sent. Both are accepted trade-offs: a catalog is treated as a property of the provider rather than of the project, and Pi extensions are trusted daemon code.
+Model lists are shared across the machine, not isolated per project. If two workspaces update the same provider's list, the last update wins. Pi extensions remain trusted code, and model entries can override provider connection details.
 
 #### Provider decisions in the daemon log
 
@@ -344,22 +349,33 @@ This prevents accidental provider, configuration, or credential contamination be
 
 Configure providers before the daemon starts: use the active agent directory's `models.json`, or install the Pi extension globally in that agent directory. Project Pi extensions and project-level `models.json` files cannot add providers to PI WEB's shared baseline. After updating PI WEB—or after installing, removing, or updating a global Pi extension that registers providers—manually restart `pi-web-sessiond.service` (`systemctl --user restart pi-web-sessiond`). Restarting only the web/API service and running `/reload` do not rebuild the baseline.
 
+### MCP server sign-in and sign-out
+
+Select a nonarchived session, then choose **MCP login** or **MCP logout** from **Actions**. Each action asks you to select an eligible server, even when only one is available. MCP actions are separate from model-provider authentication; the provider dialogs have no MCP footer.
+
+Alternatively, open **Settings → MCP** to see enabled OAuth-eligible servers for the selected session on the settings machine. Each server has **Login** and **Logout** controls that target it directly, without another server picker. Disabled servers, servers using header-based authentication, and stdio servers are not listed as OAuth authentication candidates.
+
+Both entry points use the same MCP dialog flow, showing the chosen server and Pi’s progress and outcome without switching to Chat. They require an idle session in a trusted workspace with Pi’s built-in MCP command enabled. Finish the current MCP authentication operation before starting another on the same machine.
+
+Pi can reuse valid or refreshable credentials without asking you to authorize again. No browser prompt may mean credentials were reused; it is not proof of success. Read Pi’s messages for the outcome: **Operation finished** means the command ended, not that login succeeded. There is no force-reauthorization or switch-account control.
+
+If Pi provides an authorization link, open it and complete authentication in your browser. If the callback cannot reach the runtime—for example, with a remote or container deployment—paste the full redirected URL into the dialog when prompted.
+
+**Logout** removes the server’s local Pi credentials and disconnects its authenticated connection. Other sessions using the same saved credentials are also affected. It does not disable the server configuration or revoke access at the provider. To revoke access, use the provider’s account settings.
+
+**Cancel** requests that pending UI or future prompts stop. It may not immediately stop browser approval, token exchange, or reconnection already in progress; credentials may already have been saved if you cancel after approval.
+
+Pi owns OAuth tokens and server reconnection, storing MCP credentials in the active profile’s `mcp-auth.json`, separate from model-provider authentication. Ordinary `/mcp` commands entered in Chat still use Pi’s inline extension UI.
+
+After updating PI WEB, manually restart the session daemon to activate this flow. A browser reload or web/API restart is insufficient. For the systemd user service, run `systemctl --user restart pi-web-sessiond` from outside its hosted sessions; restarting interrupts active sessions and terminals.
+
 ### Background model catalog refresh
 
-PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Requests never start a catalog fetch of their own, so a slow or unreachable provider cannot stall opening the model selector, starting a session, or the auth dialogs on its own account.
+PI WEB refreshes provider model catalogs automatically in the background and after login or logout. Reopen the model selector to see new models. Failed refreshes keep the last successful catalog and report problems in daemon logs. A refresh can briefly delay session startup; the activity line reports when model lists are refreshing.
 
-A refresh that is *already* in flight can still briefly delay starting or opening a session, because the shared runtime is read while that refresh is running. PI WEB says so while you wait: the session's activity line names the startup step it is on and adds `provider model lists are refreshing` when a background refresh is running at the same time. That note reports what is happening concurrently, not a proven cause.
+Set `PI_WEB_OFFLINE` or `PI_OFFLINE` in the web/API and session-daemon environment and restart both to disable release checks and catalog network refresh. Sessions then use stored catalogs. `PI_WEB_SKIP_VERSION_CHECK` and `PI_SKIP_VERSION_CHECK` disable only release checks.
 
-The session daemon runs the refresh:
-
-- **15 seconds after the daemon starts**, then **hourly**. Pi treats stored catalogs as fresh for four hours, so most hourly ticks make no network request at all; the shorter tick only makes sure a due refresh is not delayed to the next tick.
-- **Immediately after a provider login or logout**, bypassing that freshness window, because the cached catalog is known to be wrong.
-
-Each run is bounded: it is aborted after **60 seconds**, and a run that times out or cannot reach a provider earns **one retry after five minutes**; a provider that answers with an error status is retried on the next scheduled refresh instead. Failures never clear the stored catalogs — the last successfully fetched models stay in use and the daemon log records what failed. A refresh in flight is also aborted when the daemon shuts down.
-
-Models fetched by a background refresh appear the next time a client asks for the model list, so a model selector left open across a refresh may need to be reopened.
-
-To turn the background refresh off entirely, set `PI_WEB_OFFLINE` or `PI_OFFLINE` in the session daemon's environment and restart it. In offline mode PI WEB performs no provider catalog network requests, including after logins, and sessions use the catalogs already stored in the agent directory. The `PI_WEB_SKIP_VERSION_CHECK` and `PI_SKIP_VERSION_CHECK` keys do **not** affect this refresh; they only suppress PI WEB release checks.
+Unset or clear these flags to turn them off: any nonempty value, including `false` or `0`, enables them.
 
 ### Project trust for project-local resources
 
@@ -382,13 +398,11 @@ This mirrors the Pi CLI: with `defaultProjectTrust: "never"`, an opened workspac
 
 `subsessions` controls whether agents receive the tracked-subsession tools: `spawn_subsession`, `list_subsessions`, `check_subsession`, `read_subsession`, and `yield_to_subsessions`. It defaults to `true` and also requires `spawnSessions` to be enabled.
 
-Tracked subsessions are join-oriented. Calling `spawn_subsession` returns immediately, so the parent can continue independent work while the child runs. Work whose result the parent does not need to join belongs in the fire-and-forget `spawn_session` tool instead.
+Independent sessions run in a workspace of the same project without returning output to their parent. Tracked subsessions run in the parent's working directory and return results automatically; the parent can keep working or wait for them. Delivered results are not automatically repeated, but remain available for review.
 
-A tracked subsession always runs in the spawning session's working directory, so it stays in that workspace's session tree next to its parent. `spawn_subsession` takes no `cwd`. To get work done elsewhere, instruct the child to work there from this workspace, or use `spawn_session`, which still targets any workspace of the project, for an independent session there.
+Agent-created tracked subsessions are collapsed under their parent. Use **Agent subsessions** to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.
 
-The parent can continue independent work or wait for its tracked children. Completion notices arrive automatically and wake an idle parent; no polling is needed. Child output is available to the parent when the child stops.
-
-Both `spawn_session` and `spawn_subsession` accept an optional `model` parameter, given as an exact `provider/model-id` such as `anthropic/claude-sonnet-4-5`. When set, the new session starts on that model instead of inheriting the dispatching session's model. The match is strict: an unknown or malformed value is rejected with an error. A `#provider/model-id` reference in the prompt (see [Prompt completions](#prompt-completions)) is how users ask for a specific model; agents forward that reference as this parameter. The new session also inherits the dispatching session's thinking level, clamped to its model's capabilities.
+New sessions inherit the parent's model and thinking level unless another model is requested, for example with a `#provider/model-id` prompt reference. Thinking levels are limited to what the chosen model supports.
 
 In **Settings → Session daemon**, these keys are saved on the selected machine. Restart the session daemon on that machine after changing them.
 
@@ -398,21 +412,42 @@ In **Settings → Session daemon**, these keys are saved on the selected machine
 
 Use **Settings → Session daemon → Allow agents to ask questions** to change `askUser` on the selected machine. An environment override makes the toggle read-only.
 
-Agents can post a form with 1–20 questions, with free-text answers or up to 12 choices per question. Some questions allow multiple selections. A **Custom** free-text answer is always available, and you may leave any question unanswered.
+Agents can ask questions with choices or free-text answers. You may leave questions unanswered; partial submissions are confirmed before sending. Answering or skipping resumes the agent.
 
-Calling `ask_user` posts the whole set as one browser form and ends the current agent run instead of waiting for the user. The open form is owned by the session daemon, so it survives a browser disconnect, browser reload, or web/API restart while that daemon keeps running. When the user submits, the answers arrive as a follow-up that wakes the session; each question is reported with its selected option values or free text, or explicitly as unanswered.
-
-PI WEB confirms a partial submission before sending it and names the unanswered questions. Only one ask can be open per session: a later `ask_user` call supersedes the earlier one, reports that fact and its unanswered questions to the model, and turns the earlier card into a read-only transcript record. Submitted and cancelled asks likewise remain readable in the transcript.
-
-Sending an ordinary chat message while a form is open voids the form: the card closes as cancelled and the model is told its questions went unanswered as part of the turn the message itself starts.
+Forms are saved in the conversation and survive restarts. Only a form at the end of the active conversation is open; answering, skipping, or sending another message closes it. Earlier forms remain expandable for read-only review. Returning the conversation to a question reopens it; archived conversations remain read-only.
 
 Restart the session daemon after changing `askUser` or after upgrading PI WEB to a version that introduces this tool. For the systemd user service, run `systemctl --user restart pi-web-sessiond`.
+
+### Session naming
+
+Use **Settings → Session daemon → Session naming** on the selected machine to choose a naming model, generation budget, thinking level, and timeout. The naming model button opens a searchable list of that machine's available models; choose **Use session model** to remove the model override. No active session is required. Refresh settings to reload the list after configuring a provider. By default, naming uses the session's model and **24 tokens**, including for reasoning models. Naming does not change the conversation's model.
+
+These settings are optional machine-global overrides:
+
+```json
+{
+  "sessionNaming": {
+    "model": "provider/model-id",
+    "maxTokens": 2048,
+    "thinkingLevel": "off",
+    "timeoutMs": 90000
+  }
+}
+```
+
+`model` must identify a model in that machine's model catalog, using its configured provider and credentials. Omit it to use the session model. `maxTokens` must be a positive integer; omit it to restore 24. This is a generation budget, not title length; providers may count reasoning against it. Project-local overrides are not supported.
+
+`thinkingLevel` defaults to `minimal`. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Choose `off` to disable optional reasoning where supported, while keeping a positive token budget for the title. Models and providers may limit or map thinking levels; `off` cannot disable mandatory reasoning. Naming settings do not change the conversation's thinking level.
+
+`timeoutMs` sets the total naming-request timeout, including gateway queueing, model loading, and generation. It defaults to `10000` (10 seconds). Use a positive integer in milliseconds, up to `2147483647`; Settings displays seconds. Increase it for local models that need time to load. Clearing the UI field restores 10 seconds. This is a total wall-time limit, not an idle timeout, and has no environment-variable override.
+
+Saved model, budget, thinking-level, and timeout changes apply to the next naming request without a restart or reload. Existing names and in-progress naming requests are unchanged. Agent permission changes in the same panel still require a session-daemon restart. Naming failures use the existing first-message fallback and are recorded in daemon logs.
 
 ### Extension dialogs
 
 Pi extensions can show confirmation, selection, and text-input dialogs inline in the session transcript, including while a session starts or a tool runs. Dialog support is always on; there is no enable flag. See [Pi extension dialogs in PI WEB](https://pi-web.dev/plugins#pi-extension-dialogs) for details.
 
-`extensionDialogsTimeoutMs` is the unattended-dialog safety valve: how long the session daemon waits for an answer before settling the dialog with its kind's cancel value (`false` for confirm, `undefined` for select and input). It defaults to `300000` (5 minutes); set it to `0` to wait forever. An extension's own `timeout` option still applies, and the effective deadline is the sooner of the two.
+`extensionDialogsTimeoutMs` cancels unanswered extension dialogs after the configured interval. It defaults to `300000` (5 minutes); set it to `0` to wait forever. If the extension sets its own timeout, the sooner deadline applies.
 
 The key is edited directly in the global config file. Restart the session daemon after changing it — for the systemd user service, run `systemctl --user restart pi-web-sessiond`.
 
@@ -430,7 +465,44 @@ The `plugins` key controls desired enablement and JSON settings for PI WEB brows
 }
 ```
 
-Plugins are enabled by default unless their package metadata declares `defaultEnabled: false`, as Captain's Log does. Explicit `plugins.<id>.enabled` config overrides the package default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active server entry until that restart. The bundled `pi-web.terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Server settings take effect at daemon startup; diagnostics do not expose their values.
+Plugins are enabled by default unless their package metadata declares `defaultEnabled: false`, as Captain's Log does. Explicit `plugins.<id>.enabled` config overrides the package default. `plugins.<id>.enabled: false` hides a browser-only entry on the next page load. For a server-backed entry, desired disablement takes effect on the next sessiond start; its paired browser entry continues to follow the still-active server entry until that restart. The bundled `pi-web.terminal` plugin is required during normal startup: ordinary config cannot disable it, and Settings renders it non-editable. Global server settings are captured at daemon startup; diagnostics do not expose their values.
+
+#### Project plugin settings
+
+Supporting server plugins, including Git, accept `plugins.<id>.settings` in `<project>/.pi-web/config.json` at the registered project's path, not in individual worktrees. Project top-level keys override global settings; nested objects are replaced rather than deep-merged. Plugin enablement stays global.
+
+After changing global or project server-plugin settings, manually restart the target session daemon, then reload the browser. A browser reload, web/API restart, or Pi's `/reload` is insufficient. The daemon restart can interrupt sessions and terminals; finish important work and restart from outside its hosted sessions.
+
+#### Git worktree discovery hooks
+
+`plugins.git.settings.workspaceDiscoveryHooks` enables automatic worktree discovery on supported Git builds (Git 2.54+). It defaults to `true` and preserves existing hooks. See [Automatic Git worktree discovery](https://pi-web.dev/plugins#automatic-git-worktree-discovery).
+
+To opt out, merge this into machine config or the registered project's `.pi-web/config.json`:
+
+```json
+{
+  "plugins": {
+    "git": {
+      "settings": {
+        "workspaceDiscoveryHooks": false
+      }
+    }
+  }
+}
+```
+
+Project values override the machine default. Changes require a manual session-daemon restart. Disabling hooks leaves the Git plugin and ordinary workspace discovery available.
+
+<a id="git-instance-namespace"></a>
+#### Git worktree discovery when running multiple instances
+
+Most installations need no changes. Docker dev automatically uses `dev` to keep its worktree notifications separate from production; production keeps its existing behavior.
+
+For a custom setup where instances share a PI WEB data directory, set `PI_WEB_INSTANCE_NAMESPACE=dev` in the dev session daemon's environment and leave it unset in production. Use a different name for each additional instance: 1–32 letters, digits, underscores or hyphens, starting with a letter or digit.
+
+Restart the affected daemon to apply the change; for Docker, recreate the affected containers. This interrupts active sessions and terminals, so finish important work first. This setting separates Git notifications only; separate data directories are still recommended for independent instances.
+
+Keep the name stable. If you need to retire a name, disable [discovery hooks](#git-worktree-discovery-hooks) while still using that name before switching, so the old notifications are removed.
 
 #### Desired versus active plugin state
 
@@ -471,28 +543,21 @@ Ordinary import/activation/start/health failures are quarantined when possible, 
 
 ### Theme default and device choices
 
-In **Settings → General → Theme**, choose a theme and whether **Auto** should follow the device's light/dark preference when that theme has a pair. Then choose one of three actions:
+In **Settings → General → Theme**, choose a theme and **Auto** mode, then:
 
-- **Use on this device** saves the theme and Auto choice in this browser. Other browsers are unchanged.
-- **Set as default** saves the theme and Auto choice to the global PI WEB config. Browsers using the default pick it up after a page reload or config refresh; existing device choices are unchanged.
-- **Use the default** removes this browser's saved override and follows the configured default.
+- **Use on this device** saves a choice for this browser only.
+- **Set as default** shares a default without replacing existing device choices.
+- **Use the default** clears this browser's override.
 
-The action palette's **Select theme** action opens these settings too. Existing browser-local choices remain device overrides; they are not copied into shared config.
+Device choices take precedence over the configured default, then the built-in default (PI WEB Dark with Auto on). Auto follows the device's light/dark preference for paired themes; unpaired themes stay selected. Unavailable themes temporarily fall back to Classic without erasing the choice.
+
+The default belongs to the gateway, not a project or remote machine. Changes apply after settings save or browser config refresh, with no service restart.
 
 ```json
-{
-  "defaultTheme": {
-    "themeId": "themes:pi-web-dark",
-    "auto": true
-  }
-}
+{ "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true } }
 ```
 
-`themeId` must be a qualified theme contribution ID (`<plugin-id>:<theme-id>`), not its display name or a theme-pair ID. Built-in IDs are `themes:pi-web-dark`, `themes:pi-web-light`, and `themes:classic`; installed gateway plugins may provide additional themes. `auto` must be a boolean. With Auto off, the selected theme stays fixed. Without a pair, Auto leaves the selected theme unchanged.
-
-Precedence is **device choice → configured default → built-in default**. The built-in default is PI WEB Dark with Auto on. A missing or disabled plugin theme temporarily falls back to Classic without erasing the requested choice, so it can return when the plugin is available again. Applying a configured default does not create a device override.
-
-The theme default belongs to the browser-facing gateway, even when a remote machine is selected. It is not a project-local `.pi-web/config.json` setting; remote plugins cannot change the app-wide theme. No session-daemon or web service restart is needed for a theme preference change.
+Use a theme contribution ID rather than a display name. Built-in IDs are `themes:pi-web-dark`, `themes:pi-web-light`, and `themes:classic`.
 
 ### Shortcut config
 
@@ -512,11 +577,11 @@ Shortcut values are keyed by action id. Values are shortcut strings such as `mod
 
 Prefer Settings → Keyboard for editing, recording, disabling, or resetting shortcuts. `mod` accepts Ctrl or ⌘. Browsers and operating systems may reserve some combinations.
 
-App shortcuts can be single keys or sequences. Unmodified and Shift-only shortcuts do not start inside inputs, textareas, selects, or contenteditable editors. Sequences expire after 1.2 seconds; Escape or a focus change cancels them. Custom bindings win over defaults; ties resolve by action id. A shorter binding shadows sequences with that prefix (for example, `g` shadows `g p`).
+App shortcuts support single keys or sequences. Avoid conflicting bindings and browser-reserved combinations. Unmodified and Shift-only shortcuts do not start while editing text.
 
-The two **Chat composer** send bindings accept one key combination each, not sequences. **Send message — desktop** defaults to Enter; **Send message — touch or narrow screen** defaults to Shift+Enter. The latter applies when the browser reports a coarse primary pointer (typically touch) or a viewport at most 760px wide; otherwise, desktop applies. Its config key remains `composer.send.mobile`. Enter and Shift+Enter insert newlines when not assigned to send. Composer send bindings take priority over app shortcuts only inside the message editor, even when the draft is empty or sending is unavailable. Plain Enter accepts a selected completion first. `null` disables keyboard submission for that context; the send button remains available.
+Composer send bindings accept one key combination, not sequences. Desktop defaults to Enter; touch or narrow screens default to Shift+Enter. The touch or narrow-screen binding (`composer.send.mobile`) applies when the primary pointer is coarse or the viewport is at most 760px wide; desktop applies otherwise. This keyboard-specific exception does not affect control sizing. Touch keyboards can report autocapitalization as Shift, so this context requires an explicit Shift keydown for Shift+Enter; plain Enter inserts a newline by default. Unassigned Enter/Shift+Enter insert newlines; Enter accepts a selected completion first. `null` disables keyboard submission, not the send button.
 
-Existing browser-local Enter preferences remain the fallback until the corresponding composer binding is configured. Reset removes the override and returns to that fallback. New bindings are saved in the gateway config, like other shortcuts; the old preference is not copied into shared configuration. Automatic touch-keyboard capitalization is ignored when interpreting Shift+Enter.
+Existing browser-local Enter preferences remain the fallback until a composer binding is configured. Reset restores that fallback. New bindings are saved in gateway config.
 
 ## Prompt completions
 

@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 
-import type { JsonValue, PluginPeerChannelOptions, PluginPeer, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeerChannelOptions, PluginPeer, StylesheetIntegrationCapabilityV1, WorkspacePanelContext, WorkspacePanelNavigationV1 } from "@jmfederico/pi-web/plugin-api";
 import { Terminal } from "@xterm/xterm";
+import { installTerminalRendererFake as fakeTerminalBoundary } from "./terminalRenderer.testSupport";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TerminalContext, WorkspaceTerminalBinding } from "./TerminalContext";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
 import { TerminalPanel, filterTerminalInput } from "./TerminalPanel";
 import { defineTerminalCustomElements, TERMINAL_SOFT_KEYS_ELEMENT } from "./pi-web-plugin";
@@ -14,12 +16,22 @@ afterEach(() => {
   localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("Terminal panel lifecycle", () => {
   it("renders the registered pi-web.terminal soft-key element from its default path", async () => {
     defineTerminalCustomElements();
     const panel = createTerminalPanel();
+    const roots = new Set<ShadowRoot>();
+    panel.stylesheetIntegration = {
+      registerRoot: (root) => {
+        roots.add(root);
+        return () => { roots.delete(root); };
+      },
+      createController: vi.fn(),
+      subscribe: () => () => undefined,
+    };
     document.body.append(panel);
     await panel.updateComplete;
 
@@ -31,6 +43,82 @@ describe("Terminal panel lifecycle", () => {
     expect(panel.shadowRoot?.querySelector(TERMINAL_SOFT_KEYS_ELEMENT)?.localName)
       .toBe(TERMINAL_SOFT_KEYS_ELEMENT);
     expect(panel.shadowRoot?.querySelector("pi-web-terminal-soft-keys-terminal")).toBeNull();
+    const keys = panel.shadowRoot?.querySelector(TERMINAL_SOFT_KEYS_ELEMENT);
+    expect(roots).toEqual(new Set([panel.shadowRoot, keys?.shadowRoot]));
+    panel.remove();
+    expect(roots.size).toBe(0);
+    document.body.append(panel);
+    // Reconnect re-applies the saved/default soft-key preference.
+    Reflect.set(panel, "softKeysEnabled", true);
+    await panel.updateComplete;
+    expect(roots.size).toBe(2);
+  });
+
+  it("refreshes the external terminal palette after stylesheet notifications without document theme mutations", async () => {
+    const terminals = fakeTerminalBoundary();
+    const styles = stylesheetFixture("#102030");
+    await mountPalettePanel(styles.capability);
+    const terminal = terminals[0];
+    expect(terminal?.options.theme).toMatchObject({ background: "#102030", foreground: "#abcdef", cursor: "#123456", selectionBackground: "#654321" });
+
+    styles.adoptPalette("#405060");
+
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    expect(styles.listeners.size).toBe(1);
+  });
+
+  it("handles delayed stylesheet injection, replacement, removal, disconnect, and reconnect", async () => {
+    const terminals = fakeTerminalBoundary();
+    const panel = await mountPalettePanel();
+    const terminal = terminals[0];
+    const first = stylesheetFixture("#102030");
+    panel.stylesheetIntegration = first.capability;
+    expect(terminal?.options.theme?.background).toBe("#102030");
+    expect(first.listeners.size).toBe(1);
+    panel.stylesheetIntegration = first.capability;
+    expect(first.capability.subscribe).toHaveBeenCalledOnce();
+
+    const replacement = stylesheetFixture("#405060");
+    panel.stylesheetIntegration = replacement.capability;
+    expect(first.unsubscribe).toHaveBeenCalledOnce();
+    expect(first.roots.size).toBe(0);
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    panel.style.setProperty("--pi-terminal-bg", "#778899");
+    first.notify();
+    expect(terminal?.options.theme?.background).toBe("#405060");
+    replacement.notify();
+    expect(terminal?.options.theme?.background).toBe("#778899");
+
+    panel.stylesheetIntegration = undefined;
+    expect(replacement.unsubscribe).toHaveBeenCalledOnce();
+    expect(replacement.roots.size).toBe(0);
+    panel.style.setProperty("--pi-terminal-bg", "#aabbcc");
+    replacement.notify();
+    expect(terminal?.options.theme?.background).toBe("#778899");
+
+    panel.stylesheetIntegration = replacement.capability;
+    panel.remove();
+    expect(replacement.unsubscribe).toHaveBeenCalledTimes(2);
+    expect(replacement.listeners.size).toBe(0);
+    expect(replacement.roots.size).toBe(0);
+    expect(terminal?.dispose).toHaveBeenCalledOnce();
+    replacement.adoptPalette("#ddeeff");
+    expect(terminal?.options.theme?.background).toBe("#405060");
+
+    panel.stylesheetIntegration = first.capability;
+    expect(first.capability.subscribe).toHaveBeenCalledOnce();
+    first.adoptPalette("#112233");
+    document.body.append(panel);
+    await panel.updateComplete;
+    expect(first.listeners.size).toBe(1);
+    expect(first.roots).toEqual(new Set([panel.shadowRoot]));
+    expect(terminals).toHaveLength(2);
+    expect(terminals[1]?.options.theme?.background).toBe("#112233");
+    first.adoptPalette("#445566");
+    expect(terminals[1]?.options.theme?.background).toBe("#445566");
+    panel.remove();
+    expect(first.unsubscribe).toHaveBeenCalledTimes(2);
+    expect(first.listeners.size).toBe(0);
   });
 
   it("closes the peer channel and cancels retries, requests, observers, timers, and Xterm on disconnect", () => {
@@ -178,7 +266,7 @@ describe("Terminal panel lifecycle", () => {
     // Project resolution supplies a fresh setter, but neither the empty query
     // nor the remembered shell changes. No second list response should be needed.
     const acceptedNavigation = vi.fn(() => true);
-    panel.context = { ...context, navigation: { ...terminalNavigation(), set: acceptedNavigation } };
+    panel.context = { ...context, workspace: { ...context.workspace, navigation: { ...terminalNavigation(), set: acceptedNavigation } } };
     callPanelMethod(panel, "willUpdate");
     callPanelMethod(panel, "updated");
 
@@ -207,6 +295,127 @@ describe("Terminal panel lifecycle", () => {
     create.resolve(terminalInfo("new-shell"));
     await start;
     expect(Reflect.get(panel, "selectedId")).toBe("new-shell");
+  });
+
+  it("lists existing maintenance terminals without allowing shell creation",  async () => {
+    const panel = createTerminalPanel();
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    const request = vi.fn((operation: string): Promise<JsonValue> =>
+      Promise.resolve(operation === "terminal.create" ? terminalInfo("maintenance-shell") : []));
+    const workspace = terminalContext();
+    const context = { machine: workspace.machine, host: workspace.host, maintenance: { scope: "maintenance" as const, peer: terminalPeer(request) } };
+    panel.context = context;
+    panel.runtime = runtime;
+    callPanelMethod(panel, "willUpdate");
+    await callAsyncPanelMethod(panel, "loadTerminals");
+    await callAsyncPanelMethod(panel, "startTerminal");
+    expect(request.mock.calls.map(([operation]) => operation)).toEqual(["terminal.list", "terminal.list-runs"]);
+    expect(runtime.selectedTerminalId(context)).toBeUndefined();
+    document.body.append(panel);
+    await panel.updateComplete;
+    expect(panel.shadowRoot?.querySelector<HTMLButtonElement>("button.new")?.disabled).toBe(true);
+  });
+
+  it("keeps machine-only terminal selection stable across fresh host contexts", async () => {
+    fakeTerminalBoundary();
+    const panel = createTerminalPanel();
+    let hostRenders = 0;
+    const requestRender = vi.fn(() => {
+      hostRenders += 1;
+      if (hostRenders > 8) throw new Error("Terminal selection caused an unbounded host render loop");
+      // Recreate the binding as well as the context, just like a real host.
+      panel.context = { ...context, maintenance: { ...context.maintenance } };
+    });
+    const channel = { closed: new Promise<never>(() => undefined), send: vi.fn(), close: vi.fn() };
+    const attach = vi.fn(() => Promise.resolve(channel));
+    const request = vi.fn((operation: string): Promise<JsonValue> => Promise.resolve(
+      operation === "terminal.list" ? [{ ...terminalInfo("maintenance"), scope: "maintenance" }] : []));
+    const context = {
+      machine: terminalContext().machine,
+      host: { requestRender },
+      maintenance: { scope: "maintenance" as const, peer: terminalPeer(request, attach) },
+    };
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    panel.context = context;
+    panel.runtime = runtime;
+    document.body.append(panel);
+    await vi.waitFor(() => { expect(attach).toHaveBeenCalledOnce(); });
+    await panel.updateComplete;
+    expect(hostRenders).toBeLessThanOrEqual(2);
+    requestRender.mockClear();
+
+    // The host recreates contexts when requestRender is called. Bound the
+    // simulation so a regression fails rather than locking up the test runner.
+    for (let render = 0; render < 4; render += 1) {
+      panel.context = { ...context };
+      await panel.updateComplete;
+    }
+
+    expect(requestRender).not.toHaveBeenCalled();
+    expect(panel.shadowRoot?.querySelector("button.selected")?.textContent).toContain("maintenance");
+    expect(attach).toHaveBeenCalledOnce();
+    panel.remove();
+    runtime.dispose();
+  });
+
+  it("combines workspace and maintenance tabs and keeps maintenance channel authority across workspace switches", async () => {
+    fakeTerminalBoundary();
+    const channel = { closed: new Promise<never>(() => undefined), send: vi.fn(), close: vi.fn() };
+    const maintenanceAttach = vi.fn(() => Promise.resolve(channel));
+    const workspaceAttach = vi.fn(() => new Promise<never>(() => undefined));
+    const maintenanceRequest = vi.fn((operation: string): Promise<JsonValue> => Promise.resolve(
+      operation === "terminal.list" ? [{ ...terminalInfo("maintenance"), scope: "maintenance" }]
+        : operation === "terminal.close" ? { closed: true } : []));
+    const workspaceRequest = vi.fn((operation: string): Promise<JsonValue> => Promise.resolve(
+      operation === "terminal.list" ? [terminalInfo("workspace")] : []));
+    const context = {
+      ...terminalContext({ peer: terminalPeer(workspaceRequest, workspaceAttach) }),
+      maintenance: { scope: "maintenance" as const, peer: terminalPeer(maintenanceRequest, maintenanceAttach) },
+    };
+    const panel = createTerminalPanel();
+    panel.context = context;
+    panel.runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    document.body.append(panel);
+    await vi.waitFor(() => { expect(panel.shadowRoot?.textContent).toContain("Maintenance · maintenance"); });
+    const maintenanceTab = Array.from(panel.shadowRoot?.querySelectorAll("button") ?? []).find((button) => button.textContent.includes("Maintenance · maintenance"));
+    maintenanceTab?.click();
+    await panel.updateComplete;
+    await vi.waitFor(() => { expect(Reflect.get(panel, "channel")).toBe(channel); });
+    expect(maintenanceAttach).toHaveBeenCalledOnce();
+    callPanelMethod(panel, "sendTerminalInput", "hello");
+    callPanelMethod(panel, "send", { type: "resize", cols: 80, rows: 24 });
+    expect(channel.send).toHaveBeenCalledWith({ type: "input", data: "hello" });
+    expect(channel.send).toHaveBeenCalledWith({ type: "resize", cols: 80, rows: 24 });
+    panel.context = { ...context, workspace: { ...context.workspace, workspace: { ...context.workspace.workspace, id: "workspace-2", path: "/other" } } };
+    await panel.updateComplete;
+    await vi.waitFor(() => { expect(maintenanceAttach).toHaveBeenCalledTimes(2); });
+    expect(panel.shadowRoot?.querySelector("button.selected")?.textContent).toContain("maintenance");
+    expect(workspaceRequest.mock.calls.some(([operation]) => operation === "terminal.create")).toBe(false);
+    expect(maintenanceRequest.mock.calls.some(([operation]) => operation === "terminal.create")).toBe(false);
+    const close = panel.shadowRoot?.querySelector<HTMLButtonElement>("button.selected small");
+    close?.click();
+    await vi.waitFor(() => { expect(maintenanceRequest).toHaveBeenCalledWith("terminal.close", { terminalId: "maintenance" }, expect.anything()); });
+    expect(workspaceRequest.mock.calls.some(([operation]) => operation === "terminal.close")).toBe(false);
+  });
+
+  it("continues and cancels existing maintenance commands with only machine authority", async () => {
+    const panel = createTerminalPanel();
+    const workspace = terminalContext();
+    const info = { ...terminalInfo("terminal-1"), scope: "maintenance" as const, commandRunId: "run-1" };
+    const run = { ...commandRun("running"), scope: "maintenance" };
+    Reflect.deleteProperty(run, "projectId");
+    Reflect.deleteProperty(run, "workspaceId");
+    const request = vi.fn((operation: string): Promise<JsonValue> => Promise.resolve(
+      operation === "terminal.list" ? [info]
+        : operation === "terminal.continue" ? info : operation === "terminal.list-runs" ? [run] : null));
+    panel.context = { machine: workspace.machine, host: workspace.host, maintenance: { scope: "maintenance" as const, peer: terminalPeer(request) } };
+    panel.runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    callPanelMethod(panel, "willUpdate");
+    await callAsyncPanelMethod(panel, "loadTerminals");
+    await callAsyncPanelMethod(panel, "continueTerminal", "terminal-1");
+    await callAsyncPanelMethod(panel, "cancelCommandRun", run);
+    expect(request).toHaveBeenCalledWith("terminal.continue", { terminalId: "terminal-1" }, expect.anything());
+    expect(request).toHaveBeenCalledWith("terminal.cancel-run", { runId: "run-1" }, expect.anything());
   });
 
   it("starts an empty panel only for an explicit one-shot open request", async () => {
@@ -257,6 +466,7 @@ describe("Terminal panel lifecycle", () => {
     if (phase === "load") await callAsyncPanelMethod(panel, "loadTerminals");
     else {
       Reflect.set(panel, "loadedWorkspaceScope", runtime.workspaceScope(context));
+      runtime.selectionController.loaded(context, []);
       callPanelMethod(panel, "applyAutoStartRequest");
     }
 
@@ -269,7 +479,7 @@ describe("Terminal panel lifecycle", () => {
     const acceptedNavigation = vi.fn(() => true);
     Reflect.set(panel, "context", {
       ...context,
-      navigation: { ...terminalNavigation(undefined, "open-1"), set: acceptedNavigation },
+      workspace: { ...context.workspace, navigation: { ...terminalNavigation(undefined, "open-1"), set: acceptedNavigation } },
     });
     callPanelMethod(panel, "willUpdate");
     await callAsyncPanelMethod(panel, "loadTerminals");
@@ -297,6 +507,7 @@ describe("Terminal panel lifecycle", () => {
       navigation: { ...terminalNavigation("terminal-newer"), set: setNavigation },
     });
     Reflect.set(panel, "terminals", [terminalInfo("terminal-newer")]);
+    runtime.selectionController.loaded(initialContext, [terminalInfo("terminal-newer")]);
     Reflect.set(panel, "context", newerContext);
     callPanelMethod(panel, "willUpdate");
     setNavigation.mockClear();
@@ -307,6 +518,36 @@ describe("Terminal panel lifecycle", () => {
     expect(Reflect.get(panel, "terminals")).toEqual([terminalInfo("terminal-newer"), terminalInfo("terminal-created")]);
     expect(Reflect.get(panel, "selectedId")).toBe("terminal-newer");
     expect(setNavigation).not.toHaveBeenCalled();
+  });
+
+  it("keeps a repeated explicit maintenance open over an older pending shell creation", async () => {
+    const panel = createTerminalPanel();
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    const pendingCreate = deferred<JsonValue>();
+    const request = vi.fn((operation: string): Promise<JsonValue> => operation === "terminal.create" ? pendingCreate.promise : Promise.resolve([]));
+    const context = {
+      ...terminalContext({ peer: terminalPeer(request) }),
+      maintenance: { scope: "maintenance" as const, peer: terminalPeer(vi.fn(() => Promise.resolve([]))) },
+    };
+    const maintenance = { ...terminalInfo("maintenance"), scope: "maintenance" as const };
+    Reflect.set(panel, "context", context);
+    Reflect.set(panel, "runtime", runtime);
+    callPanelMethod(panel, "willUpdate");
+    Reflect.set(panel, "terminals", [maintenance]);
+    runtime.selectionController.loaded(context, [maintenance]);
+    callPanelMethod(panel, "willUpdate");
+    expect(Reflect.get(panel, "selectedId")).toBe("maintenance");
+
+    const starting = callAsyncPanelMethod(panel, "startTerminal");
+    await vi.waitFor(() => { expect(request).toHaveBeenCalledWith("terminal.create", expect.anything(), expect.anything()); });
+    runtime.requestMaintenanceTerminal(context.machine.id, "maintenance");
+    callPanelMethod(panel, "willUpdate");
+    pendingCreate.resolve(terminalInfo("created-shell"));
+    await starting;
+
+    expect(Reflect.get(panel, "terminals")).toEqual([maintenance, terminalInfo("created-shell")]);
+    expect(Reflect.get(panel, "selectedId")).toBe("maintenance");
+    runtime.dispose();
   });
 
   it("lets only the latest terminal start select its result", async () => {
@@ -490,9 +731,9 @@ describe("Terminal panel lifecycle", () => {
     Reflect.set(panel, "channelAbort", channelAbort);
     Reflect.set(panel, "channel", channel);
     Reflect.set(panel, "terminal", terminal);
-    const movedContext: WorkspacePanelContext = {
+    const movedContext: TerminalContext = {
       ...context,
-      workspace: { ...context.workspace, path: "/repo-moved" },
+      workspace: { ...context.workspace, workspace: { ...context.workspace.workspace, path: "/repo-moved" } },
     };
     Reflect.set(panel, "context", movedContext);
 
@@ -523,6 +764,164 @@ describe("Terminal panel lifecycle", () => {
     expect(request).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(request).toHaveBeenCalledTimes(4);
+    panel.disconnectedCallback();
+  });
+
+  it.each(["route", "memory"] as const)("bounds missing %s selection reloads in the real Lit lifecycle", async (source) => {
+    const panel = createTerminalPanel();
+    const memory = new InMemoryTerminalSelectionMemory();
+    const runtime = new TerminalBrowserRuntime(memory);
+    let listings = 0;
+    const request = vi.fn((operation: string): Promise<JsonValue> => {
+      if (operation !== "terminal.list") return Promise.resolve([]);
+      listings += 1;
+      // Cap the broken render loop without relying on wall-clock timing.
+      if (listings > 6) return new Promise(() => undefined);
+      return Promise.resolve([terminalInfo("terminal-live")]);
+    });
+    const context = terminalContext({
+      peer: terminalPeer(request),
+      navigation: { ...terminalNavigation(source === "route" ? "terminal-gone" : undefined), set: vi.fn(() => false) },
+    });
+    if (source === "memory") memory.rememberTerminal(runtime.selectionScope(context), "terminal-gone");
+    panel.context = context;
+    panel.runtime = runtime;
+    Reflect.set(panel, "visible", true);
+    document.body.append(panel);
+    try {
+      // Let completed requests and their resulting Lit updates settle, without
+      // manually invoking lifecycle methods or asking the host to rerender.
+      for (let turn = 0; turn < 100; turn += 1) await Promise.resolve();
+      expect(listings).toBeLessThanOrEqual(2);
+      expect(listings).toBeGreaterThanOrEqual(1);
+    } finally {
+      panel.remove();
+      runtime.dispose();
+    }
+  });
+
+  it("backs off failed requested-terminal reloads and reconciles a fresh context", async () => {
+    vi.useFakeTimers();
+    const panel = createTerminalPanel();
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    let listings = 0;
+    let offline = true;
+    const request = vi.fn((operation: string): Promise<JsonValue> => {
+      if (operation !== "terminal.list") return Promise.resolve([]);
+      listings += 1;
+      if (listings > 1 && offline) return Promise.reject(new Error("offline"));
+      return Promise.resolve([terminalInfo("terminal-live")]);
+    });
+    const context = terminalContext({
+      peer: terminalPeer(request),
+      navigation: { ...terminalNavigation("terminal-gone"), set: vi.fn(() => false) },
+    });
+    panel.context = context;
+    panel.runtime = runtime;
+    Reflect.set(panel, "visible", true);
+    document.body.append(panel);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(listings).toBe(2);
+      for (const [delay, expected] of [[1_000, 3], [2_000, 4], [5_000, 5]] as const) {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(listings).toBe(expected - 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(listings).toBe(expected);
+      }
+      offline = false;
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(listings).toBe(6);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(listings).toBe(6);
+
+      panel.context = terminalContext({
+        peer: terminalPeer(request),
+        navigation: terminalNavigation("terminal-gone"),
+      });
+      await panel.updateComplete;
+      await panel.updateComplete;
+      expect(Reflect.get(panel, "selectedId")).toBe("terminal-live");
+      expect(listings).toBe(6);
+    } finally {
+      panel.remove();
+      runtime.dispose();
+    }
+  });
+
+  it("reloads a missing requested terminal once instead of on every update", async () => {
+    vi.useFakeTimers();
+    const panel = createTerminalPanel();
+    const memory = new InMemoryTerminalSelectionMemory();
+    const runtime = new TerminalBrowserRuntime(memory);
+    const request = vi.fn((operation: string): Promise<JsonValue> =>
+      Promise.resolve(operation === "terminal.list" ? [terminalInfo("terminal-live")] : []));
+    // The host rejects the fallback selection write, so the requested terminal stays
+    // absent from the list and the reload reason never clears on its own.
+    const context = terminalContext({
+      peer: terminalPeer(request),
+      navigation: { ...terminalNavigation("terminal-gone"), set: vi.fn(() => false) },
+    });
+    Reflect.set(panel, "context", context);
+    Reflect.set(panel, "runtime", runtime);
+    Reflect.set(panel, "visible", true);
+    callPanelMethod(panel, "willUpdate");
+    await callAsyncPanelMethod(panel, "loadTerminals");
+
+    // A settled list writes terminals/commandRuns, which schedules another updated().
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      callPanelMethod(panel, "updated");
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+
+    expect(request.mock.calls.map(([operation]) => operation)).toEqual([
+      "terminal.list", "terminal.list-runs",
+      "terminal.list", "terminal.list-runs",
+    ]);
+    panel.disconnectedCallback();
+  });
+
+  it("reloads once for a newly requested terminal and then applies its selection", async () => {
+    vi.useFakeTimers();
+    const panel = createTerminalPanel();
+    const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+    let listings = 0;
+    const request = vi.fn((operation: string): Promise<JsonValue> => {
+      if (operation !== "terminal.list") return Promise.resolve([]);
+      listings += 1;
+      // The terminal appears only after the panel refetches.
+      return Promise.resolve(listings === 1 ? [] : [terminalInfo("terminal-live")]);
+    });
+    const setNavigation = vi.fn();
+    const loadedContext = terminalContext({
+      peer: terminalPeer(request),
+      navigation: { ...terminalNavigation(), set: setNavigation },
+    });
+    Reflect.set(panel, "context", loadedContext);
+    Reflect.set(panel, "runtime", runtime);
+    Reflect.set(panel, "visible", true);
+    callPanelMethod(panel, "willUpdate");
+    await callAsyncPanelMethod(panel, "loadTerminals");
+    callPanelMethod(panel, "updated");
+    expect(request).toHaveBeenCalledTimes(2);
+
+    // A navigation to a terminal the panel has not listed yet refetches exactly once.
+    const routedContext = terminalContext({
+      peer: terminalPeer(request),
+      navigation: { ...terminalNavigation("terminal-live"), set: setNavigation },
+    });
+    Reflect.set(panel, "context", routedContext);
+    callPanelMethod(panel, "willUpdate");
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      callPanelMethod(panel, "updated");
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+
+    expect(request.mock.calls.map(([operation]) => operation)).toEqual([
+      "terminal.list", "terminal.list-runs",
+      "terminal.list", "terminal.list-runs",
+    ]);
+    expect(Reflect.get(panel, "selectedId")).toBe("terminal-live");
     panel.disconnectedCallback();
   });
 
@@ -569,6 +968,7 @@ describe("Terminal panel lifecycle", () => {
     await Promise.resolve();
     expect(reload).toHaveBeenCalledOnce();
     expect(terminal.reset).not.toHaveBeenCalled();
+    Reflect.set(panel, "terminals", [terminalInfo("terminal-1")]);
 
     callPanelMethod(panel, "handleChannelClosed", 1, "terminal-1", terminal, {
       code: 1011,
@@ -624,6 +1024,7 @@ describe("Terminal panel lifecycle", () => {
     Reflect.set(panel, "terminal", terminal);
     Reflect.set(panel, "channelGeneration", 1);
     Reflect.set(panel, "context", context);
+    Reflect.set(panel, "terminals", [terminalInfo("terminal-1")]);
 
     callPanelMethod(panel, "handleChannelClosed", 1, "terminal-1", terminal, {
       code: 1011,
@@ -652,6 +1053,7 @@ describe("Terminal panel lifecycle", () => {
     Reflect.set(panel, "selectedId", "terminal-1");
     Reflect.set(panel, "terminal", terminal);
     Reflect.set(panel, "connectionError", "Terminal connection closed: offline");
+    Reflect.set(panel, "terminals", [terminalInfo("terminal-1")]);
 
     callPanelMethod(panel, "connectChannel", context, "terminal-1", terminal, undefined);
     await vi.waitFor(() => { expect(openChannel).toHaveBeenCalledOnce(); });
@@ -794,6 +1196,56 @@ describe("Terminal panel lifecycle", () => {
   });
 });
 
+async function mountPalettePanel(integration?: StylesheetIntegrationCapabilityV1): Promise<TerminalPanel> {
+  const panel = createTerminalPanel();
+  panel.stylesheetIntegration = integration;
+  panel.context = terminalContext({
+    peer: terminalPeer(vi.fn((operation: string) => Promise.resolve(operation === "terminal.list" ? [terminalInfo("palette-shell")] : []))),
+  });
+  panel.runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory());
+  document.body.append(panel);
+  // Let the public list response and its subsequent Lit updates settle.
+  await vi.waitFor(() => { expect(panel.shadowRoot?.querySelector(".terminal-tabs button.selected")?.textContent).toContain("palette-shell"); });
+  await panel.updateComplete;
+  return panel;
+}
+
+function stylesheetFixture(initialBackground: string) {
+  const roots = new Set<ShadowRoot>();
+  const listeners = new Set<() => void>();
+  let background = initialBackground;
+  const applyPalette = (root: ShadowRoot) => {
+    const host = root.host;
+    if (!(host instanceof HTMLElement)) throw new Error("Expected HTML stylesheet host");
+    host.style.setProperty("--pi-terminal-bg", background);
+    host.style.setProperty("--pi-terminal-text", "#abcdef");
+    host.style.setProperty("--pi-accent", "#123456");
+    host.style.setProperty("--pi-terminal-selection", "#654321");
+  };
+  const unsubscribe = vi.fn();
+  const capability: StylesheetIntegrationCapabilityV1 = {
+    registerRoot: (root) => {
+      roots.add(root);
+      applyPalette(root);
+      return () => { roots.delete(root); };
+    },
+    createController: vi.fn(),
+    subscribe: vi.fn((listener: () => void) => {
+      listeners.add(listener);
+      return () => { unsubscribe(); listeners.delete(listener); };
+    }),
+  };
+  const notify = () => { for (const listener of listeners) listener(); };
+  return {
+    capability, roots, listeners, unsubscribe, notify,
+    adoptPalette: (nextBackground: string) => {
+      background = nextBackground;
+      for (const root of roots) applyPalette(root);
+      notify();
+    },
+  };
+}
+
 function isInputFrame(value: unknown): value is { type: "input"; data: string } {
   return typeof value === "object" && value !== null && Reflect.get(value, "type") === "input" && typeof Reflect.get(value, "data") === "string";
 }
@@ -805,21 +1257,16 @@ function createTerminalPanel(): TerminalPanel {
   return element;
 }
 
-function terminalContext(overrides: Partial<WorkspacePanelContext> = {}): WorkspacePanelContext {
+function terminalContext(overrides: Partial<WorkspacePanelContext> = {}): TerminalContext & { workspace: WorkspaceTerminalBinding } {
   return {
-    navigate: () => Promise.resolve(),
-    machine: { id: "local", name: "Local", kind: "local" },
-    workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
-    files: { readFile: vi.fn(), listFiles: vi.fn(), writeFile: vi.fn(), deleteFile: vi.fn(), moveFile: vi.fn() },
-    peer: terminalPeer(
-      vi.fn(() => Promise.resolve([])),
-      vi.fn(() => new Promise<never>(() => undefined)),
-    ),
-    host: { requestRender: vi.fn() },
-    prompt: { insertText: vi.fn(), getText: vi.fn(() => ""), getSelection: vi.fn(() => null) },
-    terminal: { open: vi.fn(), runCommand: vi.fn() },
-    navigation: terminalNavigation(),
-    ...overrides,
+    machine: overrides.machine ?? { id: "local", name: "Local", kind: "local" },
+    workspace: {
+      scope: "workspace",
+      workspace: overrides.workspace ?? { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
+      peer: overrides.peer ?? terminalPeer(vi.fn(() => Promise.resolve([])), vi.fn(() => new Promise<never>(() => undefined))),
+      navigation: overrides.navigation ?? terminalNavigation(),
+    },
+    host: overrides.host ?? { requestRender: vi.fn() },
   };
 }
 
@@ -845,11 +1292,11 @@ function terminalNavigation(terminalId?: string, autoStartRequest?: string): Wor
   };
 }
 
-function terminalInfo(id: string): JsonValue & { id: string; cwd: string; name: string; createdAt: string; exited: boolean } {
+function terminalInfo(id: string): { id: string; cwd: string; name: string; createdAt: string; exited: boolean } {
   return { id, cwd: "/repo", name: id, createdAt: "now", exited: false };
 }
 
-function commandRun(status: "running" | "succeeded"): JsonValue & { status: "running" | "succeeded" } {
+function commandRun(status: "running" | "succeeded") {
   return {
     id: "run-1",
     origin: "test",

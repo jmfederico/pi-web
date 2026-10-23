@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
+import { ModelRuntime } from "../../piSdk.js";
+import type { AuthProvidersResponse, AuthType, ModelSelectionResponse, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 
@@ -79,6 +79,20 @@ export class AuthService {
   dispose(): void {
     this.authFlows.dispose();
     this.listeners.clear();
+  }
+
+  /** Machine-wide credential-available chat models, independent of session selection scope. */
+  async availableModels(): Promise<ModelSelectionResponse> {
+    await this.runtime.refresh({ allowNetwork: false });
+    return {
+      models: this.runtime.getAvailableSnapshot().map((model) => ({
+        provider: model.provider,
+        id: model.id,
+        name: model.name,
+        contextWindow: model.contextWindow,
+        reasoning: model.reasoning,
+      })),
+    };
   }
 
   async authProviders(mode: "login" | "logout", authType?: AuthType): Promise<AuthProvidersResponse> {

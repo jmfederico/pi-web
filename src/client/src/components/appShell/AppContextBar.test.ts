@@ -8,6 +8,19 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
+it("omits folder workspace selection while preserving project and session selection", async () => {
+  const bar = new AppContextBar();
+  bar.workspaceSelectionVisible = false;
+  document.body.append(bar);
+  await bar.updateComplete;
+  expect(bar.shadowRoot?.querySelector('button[aria-label^="Workspace:"]')).toBeNull();
+  expect(bar.shadowRoot?.querySelector('button[aria-label^="Project:"]')).not.toBeNull();
+  expect(bar.shadowRoot?.querySelector('button[aria-label^="Session:"]')).not.toBeNull();
+  bar.workspaceSelectionVisible = true;
+  await bar.updateComplete;
+  expect(bar.shadowRoot?.querySelector('button[aria-label^="Workspace:"]')).not.toBeNull();
+});
+
 describe("machineContextDetail", () => {
   it("identifies the local machine by the serving gateway", () => {
     expect(machineContextDetail(machine("local"), "pi-dev.example.com")).toBe("pi-dev.example.com");

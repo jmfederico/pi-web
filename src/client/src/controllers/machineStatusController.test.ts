@@ -75,6 +75,37 @@ describe("MachineStatusController", () => {
     expect(state.error).toBe("");
   });
 
+  it("recovers missed session completions wholesale without visiting the sessions", async () => {
+    let state = initialAppState();
+    const controller = new MachineStatusController(() => state, (patch) => { state = { ...state, ...patch }; }, {
+      api: { machineStatus: () => Promise.resolve(snapshot({ revision: 2, sessions: {} })) },
+    });
+    controller.apply("local", snapshot({ revision: 1, sessions: {
+      "child-1": { "core:working": true }, "child-2": { "core:working": true },
+    } }));
+    await controller.refresh("local");
+    expect(state.machineStatusSnapshots["local"]?.sessions).toEqual({});
+    expect(state.selectedSession).toBeUndefined();
+  });
+
+  it("does not let an HTTP read from an old daemon replace a new socket epoch", async () => {
+    let state = initialAppState();
+    let resolveFetch: ((value: MachineStatusSnapshot) => void) | undefined;
+    const fetched = new Promise<MachineStatusSnapshot>((resolve) => { resolveFetch = resolve; });
+    const controller = new MachineStatusController(() => state, (patch) => { state = { ...state, ...patch }; }, {
+      api: { machineStatus: () => fetched },
+    });
+    controller.apply("local", snapshot({ epochId: "old", revision: 5, sessions: { child: { "core:working": true } } }));
+    const refreshing = controller.refresh("local");
+    // The coordinator starts its read in a microtask.
+    await Promise.resolve();
+    controller.apply("local", snapshot({ epochId: "new", revision: 0, sessions: {} }));
+    resolveFetch?.(snapshot({ epochId: "old", revision: 6, sessions: { child: { "core:working": true } } }));
+    await refreshing;
+    expect(state.machineStatusSnapshots["local"]?.epochId).toBe("new");
+    expect(state.machineStatusSnapshots["local"]?.sessions).toEqual({});
+  });
+
   it("does not let a late refresh response overwrite a newer socket snapshot", async () => {
     let state = initialAppState();
     let resolveFetch: ((value: MachineStatusSnapshot) => void) | undefined;
@@ -84,10 +115,12 @@ describe("MachineStatusController", () => {
     });
 
     const refreshing = controller.refresh("local");
-    controller.apply("local", snapshot({ revision: 7, machine: { "core:terminal": true } }));
-    resolveFetch?.(snapshot({ revision: 3, machine: {} }));
+    await Promise.resolve();
+    controller.apply("local", snapshot({ revision: 7, machine: { "core:terminal": true }, sessions: {} }));
+    resolveFetch?.(snapshot({ revision: 3, machine: {}, sessions: { child: { "core:working": true } } }));
     await refreshing;
 
     expect(state.machineStatusSnapshots["local"]).toMatchObject({ revision: 7, machine: { "core:terminal": true } });
+    expect(state.machineStatusSnapshots["local"]?.sessions).toEqual({});
   });
 });

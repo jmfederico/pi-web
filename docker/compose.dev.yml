@@ -4,10 +4,12 @@ x-pi-web-dev-build: &pi-web-dev-build
   context: ..
   dockerfile: docker/Dockerfile.dev
   args:
-    OPENSUSE_IMAGE: ${PI_WEB_OPENSUSE_IMAGE:-opensuse/tumbleweed}
-    NODEJS_MAJOR: ${PI_WEB_NODEJS_MAJOR:-22}
-    NODEJS_REPO: ${PI_WEB_NODEJS_REPO:-auto}
-    PI_WEB_EXTRA_ZYPPER_PACKAGES: ${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
+    UBUNTU_IMAGE: ${PI_WEB_UBUNTU_IMAGE:-ubuntu:26.04}
+    NODE_IMAGE: ${PI_WEB_NODE_IMAGE:-node:22.22.2-bookworm-slim}
+    PI_WEB_EXTRA_APT_PACKAGES: ${PI_WEB_EXTRA_APT_PACKAGES:-}
+    DOCKER_CLI_VERSION: ${PI_WEB_DOCKER_CLI_VERSION:-29-cli}
+    MISE_VERSION: ${PI_WEB_MISE_VERSION:-2026.10.17}
+    GIT_VERSION: ${PI_WEB_GIT_VERSION:-}
     PI_WEB_UID: ${PI_WEB_UID:-1000}
     PI_WEB_GID: ${PI_WEB_GID:-1000}
 
@@ -15,6 +17,7 @@ x-pi-web-dev-environment: &pi-web-dev-environment
   HOME: /data/home
   XDG_CONFIG_HOME: /data/config
   PI_WEB_DATA_DIR: /data/pi-web
+  PI_WEB_INSTANCE_NAMESPACE: ${PI_WEB_INSTANCE_NAMESPACE:-dev}
   PI_WEB_SESSIOND_SOCKET: ${PI_WEB_DEV_SESSIOND_SOCKET:-/data/pi-web/sessiond-dev.sock}
   PI_CODING_AGENT_DIR: /data/pi-agent
   HOSTEXEC_IMAGE: ${HOSTEXEC_IMAGE:-alpine:3.22}
@@ -83,8 +86,9 @@ services:
       - -lc
       - |
         set -euo pipefail
+        # Prepare only managed roots; never walk persistent user tool stores.
         mkdir -p /data/home /data/config /data/npm-cache /data/pi-web /data/pi-agent
-        chown -R "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}" /data
+        chown "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}" /data /data/home /data/config /data/npm-cache /data/pi-web /data/pi-agent
         /usr/local/sbin/pi-web-dev-sync-node-modules
     user: "0:0"
     security_opt:
@@ -97,7 +101,7 @@ services:
   sessiond:
     build: *pi-web-dev-build
     image: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
-    command: ["npm", "run", "start:sessiond"]
+    command: ["pi-web-service", "scripts/dev-sessiond.mjs"]
     working_dir: /workspace
     depends_on:
       web:
@@ -120,7 +124,7 @@ services:
   web:
     build: *pi-web-dev-build
     image: ${PI_WEB_DEV_IMAGE:-pi-web:dev}
-    command: ["bash", "-lc", "trap 'kill 0' EXIT; npm run dev:web & npm run dev:client & wait"]
+    command: ["bash", "-c", "trap 'kill 0' EXIT; (pi-web-service node_modules/typescript/bin/tsc -p tsconfig.plugins.json && pi-web-service scripts/dev-web.mjs) & pi-web-service node_modules/vite/bin/vite.js --host 0.0.0.0 & wait"]
     working_dir: /workspace
     depends_on:
       data-init:

@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+[ "$(id -u)" != 0 ] || {
+  echo "pi-web-docker: global mise reconciliation requires a nonroot service user" >&2
+  exit 1
+}
+
+# Never discover project configs, even if invoked from a checkout or $HOME.
+cd /
+unset MISE_CD
+export MISE_CEILING_PATHS=/
+export MISE_NO_ENV=1 MISE_NO_HOOKS=1
+# An update must check remote versions even when the last update was recent.
+export MISE_FETCH_REMOTE_VERSIONS_CACHE=0s MISE_PREFER_OFFLINE=0
+
+# Install missing exact pins first; upgrade stays within configured requests.
+# No --bump, --force, or pruning: existing pins and project installs are retained.
+mise install
+mise upgrade --global --no-prune
+mise reshim

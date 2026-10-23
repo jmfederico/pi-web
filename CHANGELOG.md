@@ -1,5 +1,137 @@
 # @jmfederico/pi-web
 
+## 1.202610.6
+
+### Patch Changes
+
+- 995b701: Restore the visible caret when the empty chat input is focused.
+- 4de7e81: Show a static dot beneath the chat navigation arrow while following live, making the state distinguishable without relying on colour.
+- 478c5c5: Fix slash-command, file, and model completion menus appearing behind chat messages.
+
+## 1.202610.5
+
+### Patch Changes
+
+- 9cdb2de: Add a built-in base theme for responsive layouts, shared controls, and transcripts, preserving the proportional chat input font, left-aligned Files rows, and consistent typography, spacing, and hover feedback alongside plugin and third-party styles. Render tables with unified message-surface backgrounds and stronger headers across colour schemes.
+
+  Let themes override layout and control CSS and customise syntax colours, transcript surfaces, and UI/code fonts independently of status colours. Syntax deletions use the danger colour, with fallbacks for existing themes. Styling and layout selectors remain experimental.
+- 52e8735: Make the chat composer full-width, with model and thinking controls on the left, send and stop on the right, navigation arrows at the top-right, and a compact attachment button at the bottom-right. Keep the input at least two lines tall and preserve padding when long drafts scroll. Place a shorter, 18px activity indicator across the chat/composer border without adding a gap or shifting the transcript.
+- 5fb6e31: Keep the chat scrollbar visible over sticky event-group headers.
+- e4bac59: Make Settings clearer and easier to use with explicit machine/browser scope, saved-versus-running plugin status, refresh and restart guidance, accessible controls, and flat sections with consistent buttons and gapless lists.
+
+  Configure any registered machine without changing the active workspace or session, see its connection status, and confirm before discarding unsaved changes when switching targets. Preserve unsaved settings during refreshes and shortcut edits, and improve recovery from machine and project setup failures.
+- 66663de: Link Pi package settings and the plugin guide to the community plugin directory so you can find packages to install.
+- 8e2a143: Make navigation lists easier to scan with distinct grey section headers, continuous full-width rows, and leading activity and unread indicators that leave room for selection checkboxes. Remove excess space above Archived sessions and doubled separators between collapsed sections.
+
+  Visually attach agent subsessions to their parent with a subtle connector and activity beside the disclosure label. Keep disclosure targets compact on desktop and larger on touch devices.
+- 438f19e: Give Files, Terminal, Git, Tasks, and Relays compact desktop toolbars beneath the panel tabs, retaining larger touch targets. Give Relays document tabs and main navigation matching tab controls. Use consistent controls in Tasks, Captain's Log, and Updates, with clear focus and disabled states and readable update commands in narrow panels.
+
+  Unify Files and Git trees with gapless 32px rows, matching indentation, icons, hover and selection feedback, and right-aligned Git change markers. Keep file rows compact on touch devices and make these patterns available in shared UI styles v1.
+- 594fa84: Allow configuring the destination for new session archives with `sessionArchive.directory` or `PI_WEB_SESSION_ARCHIVE_DIR`. Restart the session daemon to apply changes; existing archives and the archive index stay in their current locations.
+- a44a8b8: Add session naming controls for the model, token budget, thinking level, and timeout in Settings → Session daemon. Defaults remain the session's model, 24 tokens, minimal thinking, and a 10-second timeout. Saved changes apply to the next naming request without a restart and leave existing names unchanged.
+- f27caed: Size Projects and Workspaces to their contents, each using at most one-third of the navigation area below the header and leaving the rest for Sessions. Long lists share the area equally. Drag a section divider to save a fixed height across navigation and reloads; double-click or double-tap to restore automatic sizing.
+
+  Disable section resizing in one-column layouts without losing saved heights. Make dragging respond immediately when reversing at size limits, and use consistent thin resize highlights on desktop and touch devices.
+- cad66ad: Make chat more compact with fewer repeated headings, nested outlines, and gaps. Distinguish user messages and replies with subtle theme-aware backgrounds and leading borders, while keeping errors clear. Align thinking, tool output, and question cards as full-width activity sections; keep ordinary text inset and skill loading in collapsible activity. Expand thinking panels by default while remembering individual collapse choices.
+- bea1c3e: Keep project, workspace, and session action menus anchored to their buttons when rows move or the on-screen keyboard changes the viewport, and keep menus visible when their buttons scroll offscreen.
+- 6545860: Refresh cached browser-only plugin files when a newly advertised module revision is requested, avoiding stale-cache 404 responses without restarting the web server.
+- 8e2a143: Make sidebar rows, panel tabs, Git controls, and chat controls easier to click with larger contiguous targets and subtle separators instead of outlined chips. Unify navigation menus, session selection, cleanup, and new-session controls with compact toolbars while preserving native interactions and larger touch targets.
+
+  Reduce header crowding by removing the separate PI WEB title and showing the Actions label only when space allows. Let the machine selector, Actions, and compact-layout context controls fill their header space.
+- c0feb28: Preserve the working directory for projects inside Git repositories without enabling worktree management. Keep the Git panel available for the enclosing repository, and hide workspace controls for folder-only projects.
+- 5b5d574: Keep workspace file refreshes tied to agent activity rather than conversation selection. Restore focus without changing views, and let Chat become ready independently of notification loading. Keep application refreshes pending until every requested refresh has finished, preserving independent failures.
+- 79d0498: Add MCP login and logout actions with a server picker and per-server controls in Settings → MCP, separate from model-provider authentication. Show the selected server and authentication outcome. Login may reuse valid credentials; logout removes local Pi credentials and disconnects without disabling the server or revoking provider access.
+
+  Restart the session daemon after updating to activate this flow; restarting interrupts active sessions and terminals.
+- 3eccec7: Skip the workspace selection step in mobile navigation when a project has only one workspace. Open Sessions directly while keeping Workspaces available to open manually.
+- 0f6375d: Add browser and server plugin API v5 with read-only project, workspace, and session catalogs and machine-, project-, and workspace-scoped backend access. Let companion extension tools reuse their plugin's backend request and channel handlers through `createCompanionBackend`, without custom networking. Deliver companion channel data only after opening succeeds.
+
+  Keep deprecated browser v4 and server v3 plugins supported, including v4 token-based themes and compatible independently versioned capabilities. New stylesheet, syntax-highlighter, and renderer contribution fields require v5.
+
+  After updating PI WEB, manually restart the session daemon when safe to enable the backend capabilities and companion helper. Restarting interrupts active sessions and terminals.
+- 8ba3796: Add Paper and Graphite themes with neutral grey surfaces, minimal colour, and an option to follow the system light/dark preference. Show the saved theme as selected when opening theme settings.
+- b13cd34: Add local syntax highlighting for common languages in chat code blocks. Let plugins extend the bundled Highlighted renderer with language grammars or offer independent highlighting renderers, and refresh previews when grammars change. Add Mermaid source highlighting alongside the Diagram renderer for Mermaid blocks and `.mmd`/`.mermaid` files.
+
+  Keep Raw source unhighlighted and copied source unchanged. Default to the last discovered matching automatic renderer while preserving explicit choices.
+- b1e33ac: Restore the session list and selection before loading chat, and defer hidden chats until they become visible. Show chat content before formatting and plugin previews finish, deferring offscreen enhancements and collapsed details while preserving disclosure choices and source controls.
+- 5588ed6: Add back and fork actions to question cards so you can answer again without retaining the previous answer on the new branch.
+- 5c6f408: Show compaction cancellation as informational feedback, not an error. Keep manual and automatic compaction failures and cancellations in the session notification inbox across browser refreshes, without duplicate transcript errors or command output. Show concise failure messages and send technical details to the browser console.
+- 1c803ab: Keep automatic session navigation out of collapsed groups when archiving, deleting, refreshing sessions, or returning to a workspace whose remembered session is no longer available. Clear the selection when no visible replacement is available, while preserving explicit user and plugin navigation.
+- e595782: Keep narrow sidebars usable with a 260px minimum width and a compact machine selector that prioritizes the machine name. Fade offline machines instead of showing an online dot, show activity and unread attention from other machines separately, and allow full machine names to wrap in the dropdown.
+- 8646ca7: Remove the suggested-input panel from chat. Go back restores selected user messages directly into the editor and warns before replacing an unsent draft. Going back to other messages preserves the draft without a replacement warning.
+- b13cd34: Show all matching renderer views as named buttons alongside Raw in Files and chat, using plugin titles such as Highlighted instead of a generic Preview label. Click a view to activate it, and scroll the button row horizontally when space is limited.
+- d519834: Use consistent, touch-friendly controls for chat notifications, attachments, and questions. Keep queued-message copy feedback temporary and scoped to its session instead of adding persistent “Copied” messages to the transcript.
+- 3d0bb92: Unify model, thinking, Actions, Navigation, login, and project/machine setup dialogs with consistent headers, full-row choices, fields, and action controls while preserving keyboard and form behaviour. Show pinned destinations and starred defaults through icons without persistent button backgrounds, retaining hover, focus, and selection feedback.
+
+  Keep action groups beside descriptions—or titles when there is no description—instead of adding a third line, with wrapping on narrow screens.
+- 497b45d: Add file-based plugin and selected-theme stylesheets with relative asset URLs, bounded loading, visible failure diagnostics, and preserved local SVG references. Apply ready files without waiting for unrelated loads or failures, and allow failed files to retry. Built-in Dark, Light, and Classic themes now use CSS palettes through the same contribution API.
+
+  Let plugins opt shadow roots into host-managed shared buttons, selects, toolbars, tabs, and file trees without bundling a UI library or copying CSS. Provide Lit and plain-DOM integration helpers and stylesheet-change subscriptions; keep open terminal palettes in sync with theme changes. Shared styling, theme properties, and layout remain experimental.
+- 11ac67d: Separate the short plugin overview from the implementation reference, with a copyable prompt for asking an agent to build a plugin.
+- 3cc8093: Skip reinstalling packages and restarting services when a global npm installation is already at the latest PI WEB version. Use `pi-web update --force` for an intentional reinstall.
+- ce65581: Put chat message actions behind a bottom-right ellipsis button. Reveal a single row of icons on click and show message information below the text, without reserving an action row or text column. Keep larger touch targets and a background matching the message when actions are open.
+- 98a246b: Fix active session message counts dropping after compaction by counting transcript history rather than the shortened model context.
+- 112aecc: Keep streamed assistant messages from appearing twice when tool events intervene, and preserve their identity and metadata across reconnects.
+- 2b8000f: Show tool images as compact thumbnails and combine consecutive image outputs into one strip and gallery. Keep individual source details and actions available, with previous/next controls, arrow-key and swipe navigation, and focus restored to the selected thumbnail on close.
+- da7d273: Move panel collapse and expand buttons into the top navigation bars, preserving keyboard focus when panels toggle and keeping resizing on vertical separators. Show only one set of workspace tool tabs when the workspace column is collapsed or the window is narrow.
+- 3f9fe20: Add a Create Worktree dialog to choose a base branch and describe the work. Submit the `/worktree` prompt in a fresh conversation in the project's main workspace without changing the current conversation or draft. Restart the session daemon after updating to activate this flow; restarting interrupts active sessions and terminals.
+
+## 1.202610.4
+
+### Patch Changes
+
+- 8f5ca72: Fix Moonshot-compatible providers rejecting the first request because session-spawning and Relay dispatch tools omit the string type from their thinking-level options.
+
+## 1.202610.3
+
+### Patch Changes
+
+- 5c682d1: Add opt-in instance namespaces for Git workspace-discovery hooks and ownership records without changing existing production registrations. Docker dev defaults to the `dev` namespace.
+- 493841b: Update runtime dependencies and keep Captain's Log and the session-bridge example compatible with Pi 1.2 custom-message startup events.
+- f25db9a: Add copy, recall, remove, and Steer/Queue controls to pending session messages. Recall restores only the text and clears later messages in delivery order, with an attachment-loss warning only when the recalled message has attachments. Switching modes appends to the destination queue. Show attachment indicators and counts on queued messages without loading previews, and use consistent control icons with accessible labels and tooltips. When the runtime cannot safely support individual queue controls, disable Recall, Remove, and Steer/Queue switches and show the reason while keeping Copy and Clear queue available.
+- 5843f4f: Remove the sidebar preference-saving notice to prevent flickering when opening a project for the first time after a page reload.
+- 5e3013f: Preserve streaming message elements when replies are finalized to prevent the chat viewport from jumping to the previous message.
+
+## 1.202610.2
+
+### Patch Changes
+
+- 1e15853: Add application-wide plugin tabs, making Info and Updates available without a selected workspace. Expand the browser plugin API with selection subscriptions, project listings, and directory suggestions.
+- 951686d: Automatically discover new Git worktrees on supported Git builds (Git 2.54+), with configurable opt-out settings. Keep workspace lists up to date after reconnects and prevent deleted worktrees from reappearing.
+- b5d734a: Prevent duplicate session rows when recovering an empty browser-cached session.
+- 4106a4f: Keep long skill paths scrollable inside their cards without creating horizontal scrolling in the chat area.
+- 5362e78: Fix session selection so “Select all” includes collapsed subsessions in the current or archived section. Selecting a collapsed parent also selects its hidden children, keeping selection counts and bulk actions consistent.
+- f51147b: Add a configurable theme default and Theme controls in Settings → General: use a theme on this device, set it as the default, or follow the default without overriding saved device choices.
+- dc40959: Fix native checkout updates when run from another project by installing dependencies and building in the PI WEB checkout.
+- 6d68caa: Save agent question forms in the conversation so they survive session-daemon restarts. Keep earlier forms available for read-only review, with only the latest pending questions open for answers.
+- d9f0db5: Require full session IDs in URLs, plugin navigation, and session API lookups. Update abbreviated bookmarks and integrations; shortened IDs no longer resolve sessions.
+- 061ac7e: Fix extension commands that fork or rewind conversations, and recover conversation changes after reconnects without replacing drafts. Show message actions once per message, preserve intervening history when navigating, and restore Go back text without overwriting unsent input.
+- 15c13a4: Fix Markdown files getting stuck on “Loading…” in Preview mode when the Files plugin runs alongside the development web UI.
+- dfdd09e: Fix iPhone keyboards treating the empty prompt hint as existing input.
+- 90fc32f: Update runtime dependencies and bundled diagram rendering, and verify the Pi integration against SDK 1.1.0.
+- 00c964f: Let plugins add chat message actions, including actions on streaming messages and temporary success feedback. Move Copy, Fork, and Go back onto the shared plugin API while preserving their existing safeguards.
+- bf7af9f: Add the removable Workflows package with a `/worktree` prompt and a Create Worktree shortcut for preparing new worktrees from a task description.
+- 4a45865: Let plugins update individual navigation selections without resetting unrelated panels or sessions. Opening a Relay from its session label no longer reloads the current chat.
+- 3cde79a: Save custom project and workspace ordering, and add pinning and reordering for top-level session trees.
+- 02d24ec: Let plugins add removable context chips to the chat composer. Include their text when sending, and keep them available if a send fails.
+- bebe715: Collapse agent subsessions by default while keeping user-created forks and clones visible. Show activity and unread indicators for hidden descendants, keep collapsed chips stable, and fix session-list scrollbar and menu overlap.
+- 9f104dd: Make ignored extension provider changes easier to diagnose with clearer daemon-log warnings and recovery guidance, without repeated warnings for unchanged providers.
+- f685d2a: Show a dismissible notice when another PI WEB instance is using a session, keeping the transcript readable and preserving drafts and attachments.
+- 280124d: Restore diagram rendering controls when plugins finish loading after a session reload, without requiring navigation away and back.
+- 4bd0953: Add `dispatch_relay` to hand off Relay work from saved packets, with session links back to the packet. Simplify Relay guidance around an agreed goal, compact handovers, and a fresh-context final review.
+- 6ed051e: Remove legacy panel aliases and historical panel links. Plugins must remove `routeAliases` and `navigationAliases` to register, and saved links must use current panel IDs; see the [panel migration guide](https://pi-web.dev/plugins#panel-and-tab-navigation).
+- 93817d7: Avoid Pi's host-provided TypeBox dependency warning when loading PI WEB as a Pi package, while preserving the standalone server's TypeBox dependency.
+- 0438390: Let plugins add compact labels and links to session rows, backed by public metadata saved with conversations and available in archived listings.
+- b50ca79: Improve iPad chat scrolling with code-block headers and accessible Copy controls, including when a rendered preview is visible.
+- 70049c9: Automatically recover temporary conversation and session-list network failures when returning to the app or reconnecting, showing Retry only if recovery fails.
+- f6afa1a: Keep chat reading positions stable when loading older history, returning to a conversation, or loading images. Prevent repeated automatic history loading while the view stays at the top.
+- c6ae2d3: Recover session and subsession activity indicators after returning to a backgrounded tab or reconnecting, without opening each session.
+- 5275ca4: Default the keyboard send shortcut to Steer while the agent is responding, with a setting to choose Follow-up instead. Highlight the action currently assigned to the shortcut.
+- 7a7d6ea: Use a tabbed two-column layout when the workspace column is collapsed, and remember collapsed columns across reloads. Keep panel tabs a consistent height with or without icons and badges.
+- 13e59fb: Fix repeated Terminal panel reloads when navigating to a terminal that is no longer available.
+- 485a861: Prevent duplicate delivery of tracked subsession results. Return completed results promptly even while other subsessions are still working.
+- 33fd87f: Add jump-to-top and jump-to-end controls that show when chat is following live updates. Keep following reliably as content changes without interrupting paused reading.
+
 ## 1.202610.1
 
 ### Patch Changes

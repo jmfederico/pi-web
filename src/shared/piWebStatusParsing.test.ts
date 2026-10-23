@@ -1,7 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parsePiWebComponentStatus, parsePiWebInstallationInfo, parsePiWebRuntimeResponse, parsePiWebVersionResponse } from "./piWebStatusParsing";
+import { parsePiWebComponentStatus, parsePiWebInstallationInfo, parsePiWebRuntimeComponent, parsePiWebRuntimeResponse, parsePiWebVersionResponse } from "./piWebStatusParsing";
 
 describe("PI WEB status parsing", () => {
+  it("preserves optional engine facts and accepts legacy or malformed optional metadata", () => {
+    const legacy = { component: "sessiond", label: "Session daemon", available: true, stale: false, capabilities: [] };
+    for (const parse of [parsePiWebComponentStatus, parsePiWebRuntimeComponent]) {
+      expect(parse(legacy)).not.toHaveProperty("runtime");
+      expect(parse({ ...legacy, runtime: { name: "bun", version: "1.3.0" } })?.runtime)
+        .toEqual({ name: "bun", version: "1.3.0" });
+      const malformed = parse({ ...legacy, runtime: { name: "future", version: false } });
+      expect(malformed).toBeDefined();
+      expect(malformed).not.toHaveProperty("runtime");
+    }
+  });
+
   it("drops every advertised capability string while the registry is empty", () => {
     expect(parsePiWebRuntimeResponse({
       packageName: "@jmfederico/pi-web",

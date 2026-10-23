@@ -183,10 +183,11 @@ describe("bundled Git workspace provider", () => {
   });
 
   it("preserves the Git command timeout, environment sanitization, and diff truncation signal", async () => {
-    const execFile = vi.fn<ServerPluginActivationContext["execFile"]>(() => Promise.resolve(commandResult({
-      stdout: "diff --git a/tracked.txt b/tracked.txt\n",
-      stdoutTruncated: true,
-    })));
+    const execFile = vi.fn<ServerPluginActivationContext["execFile"]>(({ args }) => Promise.resolve(commandResult(
+      args?.includes("--show-toplevel") === true
+        ? { stdout: "/repo\n" }
+        : { stdout: "diff --git a/tracked.txt b/tracked.txt\n", stdoutTruncated: true },
+    )));
     const activation = await activationFor(execFile);
     const request = requiredPeerRequest(activation);
     const signal = new AbortController().signal;
@@ -246,7 +247,7 @@ describe("bundled Git workspace provider", () => {
     });
   });
 
-  it("keeps current raw worktree paths for a registered subdirectory", async () => {
+  it("declines workspace ownership for subdirectories of main and linked checkouts", async () => {
     const repository = await createRepository("monorepo", "packages/app/tracked.txt");
     const linked = join(repository.parent, "linked checkout");
     runGit(repository.path, ["worktree", "add", "-b", "feature", linked]);
@@ -254,16 +255,9 @@ describe("bundled Git workspace provider", () => {
     const input = project(projectPath);
     const workspaceProvider = await providerFor(createServerPluginExecFile({ env: cleanGitEnvironment() }));
 
-    const workspaces = await workspaceProvider.list(input, new AbortController().signal);
-
-    expect(workspaces).toEqual([
-      expect.objectContaining({ path: repository.path, isMain: true, label: "main" }),
-      expect.objectContaining({ path: linked, isMain: false, label: "feature" }),
-    ]);
-    expect(workspaces.map(({ path, label }) => ({ path, label }))).toEqual([
-      { path: repository.path, label: "main" },
-      { path: linked, label: "feature" },
-    ]);
+    await expect(workspaceProvider.probe(input, new AbortController().signal)).resolves.toBe("pass");
+    await expect(workspaceProvider.probe(project(join(linked, "packages", "app")), new AbortController().signal)).resolves.toBe("pass");
+    await expect(workspaceProvider.probe(project(linked), new AbortController().signal)).resolves.toBe("claim");
   });
 
   it("claims a Git submodule as its own repository", async () => {
@@ -285,7 +279,7 @@ describe("bundled Git workspace provider", () => {
     expect(workspaces[0]?.publicMetadata).toMatchObject({ isGitRepo: true, isGitWorktree: true });
   });
 
-  it("stays resolvable through the host registry when a linked branch lacks the registered subdirectory", async () => {
+  it("preserves a subdirectory as a folder workspace even when another worktree lacks it", async () => {
     const repository = await createRepository("changing monorepo", "packages/app/tracked.txt");
     const linked = join(repository.parent, "branch without app");
     runGit(repository.path, ["worktree", "add", "-b", "without-app", linked]);
@@ -300,8 +294,9 @@ describe("bundled Git workspace provider", () => {
 
     const resolution = await registry.resolve(input);
 
-    expect(resolution).toMatchObject({ status: "provider", ownerPluginId: "git" });
-    expect(resolution.workspaces.map(({ path }) => path)).toEqual([repository.path, linked]);
+    expect(resolution).toMatchObject({ status: "folder" });
+    expect(resolution.ownerPluginId).toBeUndefined();
+    expect(resolution.workspaces.map(({ path }) => path)).toEqual([input.path]);
   });
 
   it("allows a primary provider to suppress the real fallback Git provider without invoking Git", async () => {
@@ -473,7 +468,13 @@ function peerContribution(pluginId: string, peer: ServerPluginPeer): ServerPlugi
     source: "test fixture",
     scope: "local",
     moduleRevision: "1",
-    backend: peer,
+    apiVersion: 3,
+    backend: {
+      request: ({ scope, ...context }) => {
+        if (scope.kind !== "workspace" || peer.request === undefined) throw new Error("Expected legacy workspace request");
+        return peer.request({ ...context, project: scope.project, workspace: scope.workspace });
+      },
+    },
   };
 }
 

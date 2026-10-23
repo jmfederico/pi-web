@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getPackageDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cliPath = join(packageRoot, "dist", "cli.js");
@@ -63,6 +63,8 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv = {}): Prom
 }
 
 async function runPiWeb(args: string[], env: NodeJS.ProcessEnv = {}): Promise<{ code: number; output: string }> {
+  // Pi maps this SDK import to its own installation, outside PI WEB's npm tree.
+  env = { ...env, PI_WEB_PI_PACKAGE_DIR: getPackageDir() };
   if (existsSync(cliPath)) {
     return run(process.execPath, [cliPath, ...args], env);
   }

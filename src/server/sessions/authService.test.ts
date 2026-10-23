@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CredentialSynchronizationError, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { CredentialSynchronizationError, ModelRuntime } from "../../piSdk.js";
 import { InMemoryCredentialStore, type Credential, type OAuthAuth, type Provider } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthFlowState } from "../../shared/apiTypes.js";

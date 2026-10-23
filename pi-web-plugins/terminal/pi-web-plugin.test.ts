@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 
-import type { PluginActivationContext, PluginRuntimeContext, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { ApplicationPanelContextV5, PluginActivationContextV5, PluginRuntimeContextV5, WorkspacePanelContextV5 } from "@jmfederico/pi-web/plugin-api";
 import { html, svg, type TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
+import { applicationTerminalContext } from "./TerminalContext";
 import { TERMINAL_BROWSER_FACADE_CAPABILITY } from "./TerminalFacade";
 import plugin, { TERMINAL_PANEL_ELEMENT, TERMINAL_SOFT_KEYS_ELEMENT, activateTerminalPlugin, terminalPanelElementName, terminalSoftKeysElementName } from "./pi-web-plugin";
 
@@ -14,12 +15,12 @@ afterEach(() => {
 });
 
 describe("Terminal browser plugin activation", () => {
-  it("registers its compatible panel/action identities, facade, and custom elements", () => {
+  it("registers its canonical panel/action identities, facade, and custom elements", () => {
     const result = activateTerminalPlugin(activationContext());
-    const panel = result.contributions.workspacePanels?.[0];
+    const panel = result.contributions.applicationPanels?.[0];
     const action = result.contributions.actions?.[0];
 
-    expect(plugin).toMatchObject({ apiVersion: 4, name: "Terminal" });
+    expect(plugin).toMatchObject({ apiVersion: 5, name: "Terminal" });
     const provides = result.provides;
     if (provides === undefined) throw new Error("Expected Terminal facade provision");
     expect(provides).toHaveLength(1);
@@ -29,8 +30,6 @@ describe("Terminal browser plugin activation", () => {
       id: "workspace.terminal",
       title: "Terminal",
       order: 30,
-      routeAliases: ["core:workspace.terminal"],
-      navigationAliases: ["core:workspace.terminal"],
     });
     expect(action).toMatchObject({
       id: "view.terminal",
@@ -42,18 +41,18 @@ describe("Terminal browser plugin activation", () => {
   });
 
   it("allocates browser product state per local or remote registration", () => {
-    const firstContext = workspaceContext("remote-1");
-    const secondContext = workspaceContext("remote-2");
-    const first = plugin.activate(activationContext("machine.one.pi-web.terminal")).contributions.workspacePanels?.[0]?.render(firstContext);
-    const second = plugin.activate(activationContext("machine.two.pi-web.terminal")).contributions.workspacePanels?.[0]?.render(secondContext);
+    const firstContext = applicationContext("remote-1");
+    const secondContext = applicationContext("remote-2");
+    const first = plugin.activate(activationContext("machine.one.pi-web.terminal")).contributions.applicationPanels?.[0]?.render(firstContext);
+    const second = plugin.activate(activationContext("machine.two.pi-web.terminal")).contributions.applicationPanels?.[0]?.render(secondContext);
     const firstValues = templateValues(first);
     const secondValues = templateValues(second);
     const firstRuntime = firstValues.find((value) => value instanceof TerminalBrowserRuntime);
     const secondRuntime = secondValues.find((value) => value instanceof TerminalBrowserRuntime);
 
     expect(templateText(first)).toContain("pi-web-terminal-panel-machine-one-pi-web-terminal");
-    expect(firstValues).toContain(firstContext);
-    expect(secondValues).toContain(secondContext);
+    expect(firstValues).toContainEqual(applicationTerminalContext(firstContext));
+    expect(secondValues).toContainEqual(applicationTerminalContext(secondContext));
     expect(customElements.get(terminalPanelElementName("machine.one.pi-web.terminal"))).toBeDefined();
     expect(customElements.get(terminalPanelElementName("machine.two.pi-web.terminal"))).toBeDefined();
     expect(customElements.get(terminalPanelElementName("machine.two.pi-web.terminal")))
@@ -75,7 +74,7 @@ describe("Terminal browser plugin activation", () => {
     const facade = TERMINAL_BROWSER_FACADE_CAPABILITY.parse(provision.value);
     const context = workspaceContext("local");
     if (context.peer === undefined) throw new Error("Expected Terminal peer");
-    const rendered = result.contributions.workspacePanels?.[0]?.render(context);
+    const rendered = result.contributions.applicationPanels?.[0]?.render(applicationContext("local"));
     const runtime = templateValues(rendered).find((value) => value instanceof TerminalBrowserRuntime);
     if (!(runtime instanceof TerminalBrowserRuntime)) throw new Error("Expected Terminal browser runtime");
     const terminal = facade.createWorkspaceTerminal({
@@ -90,17 +89,42 @@ describe("Terminal browser plugin activation", () => {
     await result.dispose?.(new AbortController().signal);
 
     expect(() => { terminal.open(); }).toThrow(expect.objectContaining({ name: "AbortError" }));
-    await expect(runtime.refresh(context)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(runtime.refresh(applicationTerminalContext(applicationContext("local")))).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("routes the navigation action through the required Terminal host facade", async () => {
     const result = activateTerminalPlugin(activationContext("machine.remote.pi-web.terminal"));
-    const openTerminal = vi.fn<PluginRuntimeContext["openTerminal"]>();
+    const openTerminal = vi.fn<PluginRuntimeContextV5["openTerminal"]>();
     const context = runtimeContext(openTerminal);
 
     await result.contributions.actions?.[0]?.run(context);
 
     expect(openTerminal).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("renders maintenance with a machine peer regardless of workspace selection (%s)", (selected) => {
+    const result = activateTerminalPlugin(activationContext());
+    const panel = result.contributions.applicationPanels?.[0];
+    const workspace = workspaceContext("remote");
+    const peer = workspace.peer;
+    if (peer === undefined) throw new Error("Expected Terminal peer");
+    const forScope = vi.fn(() => peer);
+    expect(panel).toMatchObject({ id: "workspace.terminal", title: "Terminal" });
+    expect(result.contributions.workspacePanels).toBeUndefined();
+    const rendered = panel?.render({
+      machine: workspace.machine,
+      host: workspace.host,
+      catalog: workspace.catalog,
+      navigate: workspace.navigate,
+      prompt: workspace.prompt,
+      ...(selected ? { workspace: workspace.workspace, terminal: workspace.terminal } : {}),
+      state: selected ? { selectedWorkspace: workspace.workspace } : {},
+      backend: { machineId: "remote", forScope },
+    });
+    expect(forScope).toHaveBeenCalledWith({ kind: "machine" });
+    expect(templateValues(rendered)).toContainEqual(expect.objectContaining({ machine: workspace.machine, host: workspace.host, maintenance: { scope: "maintenance", peer } }));
+    if (selected) expect(forScope).toHaveBeenCalledWith({ kind: "workspace", projectId: workspace.workspace.projectId, workspaceId: workspace.workspace.id });
+    void result.dispose?.(new AbortController().signal);
   });
 
   it("rejects activation under any source identity other than pi-web.terminal", () => {
@@ -109,9 +133,9 @@ describe("Terminal browser plugin activation", () => {
   });
 });
 
-function activationContext(runtimePluginId = "pi-web.terminal"): PluginActivationContext {
+function activationContext(runtimePluginId = "pi-web.terminal"): PluginActivationContextV5 {
   return Object.freeze({
-    apiVersion: 4,
+    apiVersion: 5,
     pluginId: "pi-web.terminal",
     runtimePluginId,
     html,
@@ -121,8 +145,9 @@ function activationContext(runtimePluginId = "pi-web.terminal"): PluginActivatio
   });
 }
 
-function workspaceContext(machineId: string): WorkspacePanelContext {
+function workspaceContext(machineId: string): WorkspacePanelContextV5 {
   return {
+    catalog: catalog(machineId),
     navigate: () => Promise.resolve(),
     machine: { id: machineId, name: machineId, kind: machineId === "local" ? "local" : "remote" },
     workspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true },
@@ -135,8 +160,16 @@ function workspaceContext(machineId: string): WorkspacePanelContext {
   };
 }
 
-function runtimeContext(openTerminal: PluginRuntimeContext["openTerminal"]): PluginRuntimeContext {
+function applicationContext(machineId: string): ApplicationPanelContextV5 {
+  const context = workspaceContext(machineId);
+  const peer = context.peer;
+  if (peer === undefined) throw new Error("Expected peer");
+  return { ...context, state: { selectedWorkspace: context.workspace }, backend: { machineId, forScope: () => peer } };
+}
+
+function runtimeContext(openTerminal: PluginRuntimeContextV5["openTerminal"]): PluginRuntimeContextV5 {
   return {
+    catalog: catalog("local"),
     navigate: () => Promise.resolve(),
     state: { selectedWorkspace: { id: "workspace-1", projectId: "project-1", path: "/repo", label: "main", isMain: true } },
     prompt: { insertText: vi.fn(), getText: vi.fn(() => ""), getSelection: vi.fn(() => null) },
@@ -156,6 +189,15 @@ function runtimeContext(openTerminal: PluginRuntimeContext["openTerminal"]): Plu
     startSession: vi.fn(),
     archiveSession: vi.fn(),
     stopActiveWork: vi.fn(),
+  };
+}
+
+function catalog(machineId: string): WorkspacePanelContextV5["catalog"] {
+  return {
+    version: 1, machineId,
+    projects: { list: vi.fn(), get: vi.fn() },
+    workspaces: { list: vi.fn(), get: vi.fn() },
+    sessions: { list: vi.fn(), get: vi.fn() },
   };
 }
 

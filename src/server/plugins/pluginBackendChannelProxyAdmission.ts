@@ -10,8 +10,9 @@ import { closePluginBackendChannelWebSocket } from "../webSocketBridge.js";
 export interface PluginBackendChannelProxyScope {
   readonly authorityId: string;
   readonly pluginId: string;
-  readonly projectId: string;
-  readonly workspaceId: string;
+  readonly scope?: "machine" | "project" | "workspace";
+  readonly projectId?: string | undefined;
+  readonly workspaceId?: string | undefined;
 }
 
 export interface PluginBackendChannelProxyAdmissionPoolOptions {
@@ -64,7 +65,7 @@ export class PluginBackendChannelProxyAdmissionPool {
       throw new PluginBackendChannelProxyAdmissionError(
         "admission-denied",
         1013,
-        `Plugin backend channel edge resource limit was reached for ${scope.pluginId} in ${scope.projectId}/${scope.workspaceId} via ${scope.authorityId}`,
+        `Plugin backend channel edge resource limit was reached for ${scope.pluginId} in ${scope.projectId ?? "machine"}/${scope.workspaceId ?? "none"} via ${scope.authorityId}`,
       );
     }
 

@@ -1,44 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CLASSIC_THEME_ID, DEFAULT_THEME_PREFERENCE, effectiveThemePreference, findThemePairForTheme, resolveThemePreference } from "./theme";
-import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, ThemeColorScheme, ThemeTokens } from "./plugins/types";
-
-const tokens = {
-  "--pi-bg": "#000000",
-  "--pi-surface": "#000000",
-  "--pi-surface-hover": "#000000",
-  "--pi-terminal-bg": "#000000",
-  "--pi-terminal-text": "#000000",
-  "--pi-border": "#000000",
-  "--pi-border-muted": "#000000",
-  "--pi-text": "#000000",
-  "--pi-text-secondary": "#000000",
-  "--pi-text-bright": "#000000",
-  "--pi-muted": "#000000",
-  "--pi-dim": "#000000",
-  "--pi-accent": "#000000",
-  "--pi-accent-border": "#000000",
-  "--pi-selection-bg": "#000000",
-  "--pi-success": "#000000",
-  "--pi-success-border": "#000000",
-  "--pi-success-bg": "#000000",
-  "--pi-success-surface": "#000000",
-  "--pi-success-ring": "#000000",
-  "--pi-warning": "#000000",
-  "--pi-warning-border": "#000000",
-  "--pi-warning-surface": "#000000",
-  "--pi-danger": "#000000",
-  "--pi-purple": "#000000",
-  "--pi-purple-border": "#000000",
-  "--pi-purple-surface": "#000000",
-  "--pi-overlay": "#000000",
-  "--pi-shadow-soft": "#000000",
-  "--pi-shadow": "#000000",
-  "--pi-shadow-strong": "#000000",
-  "--pi-bg-overlay-soft": "#000000",
-  "--pi-bg-overlay": "#000000",
-  "--pi-success-bg-overlay": "#000000",
-  "--pi-terminal-selection": "#000000",
-} satisfies ThemeTokens;
+import type { QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, ThemeColorScheme } from "./plugins/types";
 
 const themes = [
   theme("pi-web-dark", "PI WEB Dark", "dark"),
@@ -148,6 +110,5 @@ function theme(localId: string, name: string, colorScheme: ThemeColorScheme): Qu
     localId,
     name,
     colorScheme,
-    tokens,
   };
 }

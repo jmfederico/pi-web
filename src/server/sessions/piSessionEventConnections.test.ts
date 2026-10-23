@@ -1,4 +1,4 @@
-import { createEventBus } from "@earendil-works/pi-coding-agent";
+import { createEventBus } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
 
@@ -57,6 +57,30 @@ describe("session-local package event connections", () => {
       connection.close();
       logged.mockRestore();
     }
+  });
+
+  it("binds backend discovery to concrete session buses and revokes it on replacement or close", () => {
+    const received = vi.fn();
+    const detach = vi.fn();
+    const registry = new PiSessionEventConnections((bus) => {
+      const unsubscribe = bus.on("backend", received);
+      return () => { unsubscribe(); detach(); };
+    });
+    const session = {};
+    const first = createEventBus(), second = createEventBus();
+    registry.register(session, first);
+    first.emit("backend", "first");
+    expect(received).toHaveBeenLastCalledWith("first");
+    registry.register(session, second);
+    expect(detach).toHaveBeenCalledTimes(1);
+    first.emit("backend", "stale");
+    second.emit("backend", "second");
+    expect(received.mock.calls).toEqual([["first"], ["second"]]);
+    registry.close(session);
+    registry.close(session);
+    second.emit("backend", "closed");
+    expect(received).toHaveBeenCalledTimes(2);
+    expect(detach).toHaveBeenCalledTimes(2);
   });
 
   it("invalidates concrete sessions without retargeting old handles", () => {

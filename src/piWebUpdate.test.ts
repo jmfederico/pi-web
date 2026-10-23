@@ -17,12 +17,16 @@ function fixture(installation: PiWebInstallationInfo = { kind: "docker", dockerM
     mkdir: vi.fn<PiWebUpdateDependencies["mkdir"]>(() => Promise.resolve()),
     writeFile: vi.fn<PiWebUpdateDependencies["writeFile"]>(() => Promise.resolve()),
     removeFile: vi.fn<PiWebUpdateDependencies["removeFile"]>(() => Promise.resolve()),
+    readFile: vi.fn<PiWebUpdateDependencies["readFile"]>(() => Promise.resolve(JSON.stringify({ version: "1.202610.2" }))),
     piCliPath: "/owned/pi/dist/cli.js",
     interactive,
     agentDir: vi.fn(() => Promise.resolve("/profiles/active agent")),
     detectInstallation: vi.fn(() => Promise.resolve(installation)),
     realpath: vi.fn((path: string) => Promise.resolve(normalize(path))),
-    capture: vi.fn<PiWebUpdateDependencies["capture"]>((command) => Promise.resolve(command.executable === "npm" ? "/opt/node/lib/node_modules" : command.executable === "systemctl" ? "loaded" : "")),
+    capture: vi.fn<PiWebUpdateDependencies["capture"]>((command) => {
+      if (command.executable === "npm") return Promise.resolve(command.args.includes("view") ? '"1.202610.3"' : "/opt/node/lib/node_modules");
+      return Promise.resolve(command.executable === "systemctl" ? "loaded" : "");
+    }),
     run: vi.fn<PiWebUpdateDependencies["run"]>(() => Promise.resolve()),
     confirm: vi.fn(() => Promise.resolve(true)),
     log: vi.fn(),
@@ -50,7 +54,7 @@ function configureLocalCheckout(deps: ReturnType<typeof fixture>, status = "", b
 }
 
 describe("runPiWebUpdate", () => {
-  it.each([["--force"], ["--yes", "--yes"], ["latest"], ["--help", "--yes"], ["--dev"], ["--all"]])("rejects invalid arguments %j before inspecting or changing anything", async (...args) => {
+  it.each([["--force", "--force"], ["--yes", "--yes"], ["latest"], ["--help", "--yes"], ["--dev"], ["--all"]])("rejects invalid arguments %j before inspecting or changing anything", async (...args) => {
     const deps = fixture();
     await expect(runPiWebUpdate(args, deps)).rejects.toThrow("Invalid update arguments");
     expect(deps.agentDir).not.toHaveBeenCalled();
@@ -311,10 +315,88 @@ describe("runPiWebUpdate", () => {
     await runPiWebUpdate(["--yes"], deps);
     const npmPrefix = basename(dirname(globalInstall.npmRoot ?? "")) === "lib" ? dirname(dirname(globalInstall.npmRoot ?? "")) : dirname(globalInstall.npmRoot ?? "");
     expect(deps.capture).toHaveBeenCalledWith({ executable: "npm", args: ["root", "--global", "--prefix", npmPrefix], env: deps.env });
+    expect(deps.capture).toHaveBeenCalledWith({ executable: "npm", args: ["view", "--global", "--prefix", resolve(npmPrefix), "@jmfederico/pi-web@latest", "version", "--json"], env: deps.env });
     expect(deps.run.mock.calls.map(([command]) => [command.executable, command.args])).toEqual([
-      ["npm", ["install", "--global", "--prefix", resolve(npmPrefix), "@jmfederico/pi-web@latest", "--allow-scripts=node-pty"]],
+      ["npm", ["install", "--global", "--prefix", resolve(npmPrefix), "@jmfederico/pi-web@1.202610.3", "--allow-scripts=node-pty"]],
       ["/tools/node", [join("/opt/node/lib/node_modules/@jmfederico/pi-web", "dist", "cli.js"), "restart"]],
     ]);
+  });
+
+  it.each([[], ["--yes"]])("skips an already-current npm installation without confirmation or service effects (%j)", async (...args) => {
+    const deps = fixture(globalInstall, false);
+    deps.env = { ...deps.env, PI_WEB_SESSION: "1" };
+    deps.readFile.mockResolvedValue(JSON.stringify({ version: "1.202610.3" }));
+    deps.exists.mockReturnValue(false);
+
+    await runPiWebUpdate(args, deps);
+
+    expect(deps.readFile).toHaveBeenCalledWith(join(globalInstall.path ?? "", "package.json"));
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining("already up to date (1.202610.3)"));
+    expect(deps.confirm).not.toHaveBeenCalled();
+    expect(deps.exists).not.toHaveBeenCalled();
+    expect(deps.run).not.toHaveBeenCalled();
+    expect(deps.capture.mock.calls.every(([command]) => command.executable === "npm")).toBe(true);
+  });
+
+  it.each([["--force", "--yes"], ["--yes", "--force"]])("reinstalls the current npm version with force (%j)", async (...args) => {
+    const deps = fixture(globalInstall, false);
+    deps.readFile.mockResolvedValue(JSON.stringify({ version: "1.202610.3" }));
+
+    await runPiWebUpdate(args, deps);
+
+    expect(deps.run.mock.calls[0]?.[0].args).toContain("@jmfederico/pi-web@1.202610.3");
+    expect(deps.run.mock.calls[1]?.[0].args).toContain("restart");
+    expect(deps.confirm).not.toHaveBeenCalled();
+  });
+
+  it("still requires consent for a forced reinstall", async () => {
+    const deps = fixture(globalInstall, false);
+    await expect(runPiWebUpdate(["--force"], deps)).rejects.toThrow("explicit --yes");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("preserves force in the detached macOS updater", async () => {
+    const deps = fixture(globalInstall, true, "darwin");
+    deps.env = { ...deps.env, PI_WEB_SESSION: "1" };
+    deps.readFile.mockResolvedValue(JSON.stringify({ version: "1.202610.3" }));
+
+    await runPiWebUpdate(["--yes", "--force"], deps);
+
+    expect(deps.writeFile.mock.calls[0]?.[1]).toContain("<string>--force</string>");
+    expect(deps.run.mock.calls[0]?.[0].executable).toBe("launchctl");
+  });
+
+  it.each(["", "null", "{}", '"not-a-version"', '["1.202610.3"]'])("fails closed on an invalid registry version %j", async (response) => {
+    const deps = fixture(globalInstall);
+    deps.capture.mockImplementation((command) => Promise.resolve(command.args.includes("view") ? response : "/opt/node/lib/node_modules"));
+
+    await expect(runPiWebUpdate(["--yes"], deps)).rejects.toThrow("Cannot determine the latest");
+    expect(deps.confirm).not.toHaveBeenCalled();
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("does not install or restart when the registry lookup fails", async () => {
+    const deps = fixture(globalInstall);
+    deps.capture.mockImplementation((command) => command.args.includes("view") ? Promise.reject(new Error("registry offline")) : Promise.resolve("/opt/node/lib/node_modules"));
+
+    await expect(runPiWebUpdate(["--yes"], deps)).rejects.toThrow("Cannot determine the latest");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it.each(["null", "{}", '{"version":123}'])("refuses an installed manifest without a version (%s)", async (manifest) => {
+    const deps = fixture(globalInstall);
+    deps.readFile.mockResolvedValue(manifest);
+
+    await expect(runPiWebUpdate(["--yes"], deps)).rejects.toThrow("Cannot determine the installed");
+    expect(deps.run).not.toHaveBeenCalled();
+  });
+
+  it("does not guess the installed version when its manifest cannot be read", async () => {
+    const deps = fixture(globalInstall);
+    deps.readFile.mockRejectedValue(new Error("manifest unreadable"));
+
+    await expect(runPiWebUpdate(["--yes"], deps)).rejects.toThrow("manifest unreadable");
+    expect(deps.run).not.toHaveBeenCalled();
   });
 
   it("refuses a changed npm root rather than updating another global installation", async () => {

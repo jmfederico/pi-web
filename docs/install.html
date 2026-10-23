@@ -51,7 +51,7 @@
             <a href="machines">Fleet</a>
             <a href="install" aria-current="page">Install</a>
             <a href="config">Config</a>
-            <a href="plugins">Plugins</a>
+            <a href="community-plugins">Plugins</a>
             <a href="faq">FAQ</a>
           </div>
           <div class="nav-actions">
@@ -91,6 +91,7 @@
             <strong>On this page</strong>
             <a href="#requirements">Requirements</a>
             <a href="#user-services">User service install</a>
+            <a href="#bun">Best-effort Bun support</a>
             <a href="#one-line">One-line install</a>
             <a href="#pi-package">Install through Pi</a>
             <a href="#manual-run">WSL / manual run</a>
@@ -106,12 +107,12 @@
             <section id="requirements">
               <h2>Requirements</h2>
               <ul>
-                <li><strong>Node.js 22.19.0 or newer</strong> and npm.</li>
-                <li><strong>Pi Coding Agent <code>1.x</code></strong> installed/configured so the <code>pi</code> command works for your user.</li>
-                <li>A shell login environment that exposes Node, npm, Pi, git, and any tools your agents need.</li>
+                <li><strong>Node.js 22.19.0 or newer</strong> and npm (recommended), or <a href="#bun">Bun on a best-effort basis</a>.</li>
+                <li><strong>Pi Coding Agent</strong> installed as an npm SDK package through npm or Bun and configured so the <code>pi</code> command works for your user. Binary-only installations without the SDK are not supported.</li>
+                <li>A shell login environment that exposes your runtime, Pi, git, and any tools your agents need. The package launchers use POSIX <code>sh</code>. Pi's Bash tool and some service scripts still require Bash.</li>
                 <li>For the automatic installer: a supported per-user service manager.</li>
               </ul>
-              <p>PI WEB requires Pi 1.x; Pi 0.x and Pi 2.x are outside the supported dependency range. When upgrading from Pi 0.x, update Pi and PI WEB together, then restart the web/API service before the session daemon. Restarting the daemon interrupts active sessions.</p>
+              <p>PI WEB reuses your existing Pi installation; it does not install a separate Pi engine or pin its version. After upgrading or downgrading Pi in that installation, restart the web/API service before the session daemon to use the changed version. Restarting the daemon interrupts active sessions. If a Pi upgrade causes compatibility problems, you can downgrade Pi. If Pi was previously installed only as part of PI WEB, install Pi itself before updating PI WEB.</p>
               <div class="callout warning">
                 <strong>Important PATH detail:</strong>
                 PI WEB services run through a non-interactive login shell with <code>-lc</code>. Setup that only lives in
@@ -146,6 +147,27 @@
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
             </section>
 
+            <section id="bun">
+              <h2>Best-effort Bun support</h2>
+              <p>Bun support is provided on a best-effort basis. The maintainers use Node.js, not Bun, for day-to-day development. Reported Bun bugs will be addressed where possible, but Bun compatibility is not guaranteed. Node.js remains the recommended runtime.</p>
+              <p>PI WEB can run without Node.js using Bun's native terminals. Linux is verified with Bun 1.4.3; macOS service installation has not been verified with Bun. Bun must provide <code>Bun.Terminal</code> and <code>Bun.spawn</code>; an older Bun cannot use <code>node-pty</code> as a fallback.</p>
+              <div class="code-card">
+                <div class="copy-row">
+                  <strong>Bun global install</strong>
+                  <button class="copy-button" data-copy="#bun-install">Copy</button>
+                </div>
+                <pre id="bun-install"><code><span class="comment"># Keep using your existing Pi SDK installation. If Pi is not installed:</span>
+<span class="prompt">$</span> bun add --global --bun @earendil-works/pi-coding-agent
+<span class="prompt">$</span> bun add --global @jmfederico/pi-web
+<span class="prompt">$</span> PI_WEB_RUNTIME=bun pi-web install
+<span class="prompt">$</span> PI_WEB_RUNTIME=bun pi-web doctor</code></pre>
+              </div>
+              <p><code>PI_WEB_RUNTIME</code> selects <code>node</code>, <code>bun</code>, or <code>auto</code> (the default). Auto prefers a supported Node.js, then Bun, regardless of which package manager installed PI WEB. An explicit selection fails rather than silently switching engines. <code>pi-web --print-runtime</code> reports the launcher's selection without starting a service. Service preflight checks sessiond's terminal prerequisites using the selected service interpreter before replacing definitions. Once running, doctor reports the activated Terminal plugin's state; recovery safe start is shown as disabled, not as a healthy terminal service.</p>
+              <p>The installer retains an explicit runtime preference in the service definitions. Services choose the interpreter again at each start. Rerun <code>pi-web install</code> to replace older definitions that launch an interpreter directly; changing definitions or restarting sessiond interrupts active sessions. For manual operation, prefix both <code>pi-web-sessiond</code> and <code>pi-web-server</code> with <code>PI_WEB_RUNTIME=bun</code>.</p>
+              <p>Bun terminals do not load <code>node-pty</code>, so its optional native build can be skipped. Node terminals still require a working <code>node-pty</code> installation. Pi extensions may load other native modules whose Bun compatibility PI WEB cannot guarantee; an incompatible native module can abort the daemon. The agent's <code>httpIdleTimeoutMs</code> setting is not applied under Bun; see <a href="faq#model-response-terminated">HTTP timeout troubleshooting</a>. Both runtimes enforce PI WEB's channel message limits. Node can also apply these limits during message assembly; Bun's native transport buffers messages before delivering them to PI WEB.</p>
+              <p>For Bun global installations, update with <code>bun add --global @jmfederico/pi-web@latest</code>, then restart the web/API service before sessiond. Automatic <code>pi-web update</code> is not provided for Bun global installs. Development service scripts still use the Node/npm toolchain; Bun support here covers the installed application.</p>
+            </section>
+
             <section id="one-line">
               <h2>One-line install</h2>
               <p>If you prefer a curl pipe for the native user-service install, use the repository installer. This path still requires Node.js, npm, and Pi Coding Agent on the host.</p>
@@ -161,7 +183,7 @@
             <section id="pi-package">
               <h2>Install through Pi</h2>
               <p>PI WEB is also published as a Pi package. This exposes a <code>/pi-web</code> command inside Pi.</p>
-              <p>You do not need a separate global npm install; manage the services with <code>/pi-web</code> inside Pi.</p>
+              <p>You do not need a separate global npm install; manage the services with <code>/pi-web</code> inside Pi. The commands and installed services use that same Pi installation. If you move Pi to a different installation path, run <code>/pi-web install</code> again to update the service definitions.</p>
               <div class="code-card">
                 <div class="copy-row">
                   <strong>Pi package path</strong>
@@ -346,7 +368,8 @@ server {
             <section id="updates">
               <h2>Update PI WEB</h2>
               <p>Run <code>pi-web version --check</code> to compare installed and running versions and check the latest available npm release. Ordinary <code>pi-web version</code> and <code>pi-web --version</code> do not check for new releases.</p>
-              <p>Run <code>pi-web update</code> to update a supported installation. The Updates panel runs the same command on the selected machine; it does not use a separate updater.</p>
+              <p>Run <code>pi-web update</code> to update a supported installation. The Updates panel runs the same command on the selected machine from <code>$PI_WEB_DATA_DIR/maintenance</code> (default <code>~/.pi-web/maintenance</code>), independently of the selected workspace. Output opens in the Terminal tab; no project or workspace selection is required. Maintenance terminals appear alongside workspace terminals on the same machine. They start from actions such as Update, not from New terminal; completed runs can still be continued interactively.</p>
+              <p>Global npm installations check the latest release first. If that version is already installed, the command exits without reinstalling packages or restarting services. Use <code>pi-web update --force</code> to reinstall it intentionally; <code>--force</code> does not bypass confirmation.</p>
               <p>The command explains the update and asks for confirmation. Restarting the session daemon interrupts active sessions and terminals. Use <code>--yes</code> only when you explicitly accept that interruption, including in non-interactive scripts.</p>
               <p>Docker, global npm, user-scope Pi-managed installations, and Git checkouts use their respective update tools. Native updates require installed PI WEB services. A checkout update only fast-forwards a clean branch with an upstream, then installs dependencies and builds in that checkout regardless of where you run the command. Dirty, detached, or non-fast-forward checkouts stop before installation and restart; a failed dependency install or build also prevents restart.</p>
               <p>Inside PI WEB, Linux native updates require a working systemd user manager. The restart runs independently of the terminal; the command prints a journal command for checking its outcome. On macOS, native updates use a detached launchd handoff so the initiating terminal can finish safely. Docker uses its existing independent update runner.</p>
@@ -442,7 +465,7 @@ server {
           <a href="remote-first">Remote-first</a>
           <a href="machines">Fleet</a>
           <a href="config">Config</a>
-          <a href="plugins">Plugins</a>
+          <a href="community-plugins">Plugins</a>
           <a href="faq">FAQ</a>
           <a href="https://github.com/jmfederico/pi-web">GitHub</a>
           <span class="version-switcher" role="group" aria-label="Documentation version">

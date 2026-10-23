@@ -8,6 +8,7 @@ const publicApiDeclarationPaths = [
   "plugin-api.d.ts",
   "server-plugin-api.d.ts",
   "shared/pluginApiTypes.d.ts",
+  "shared/pluginCatalogTypes.d.ts",
 ];
 
 describe("public API delivery artifacts", () => {

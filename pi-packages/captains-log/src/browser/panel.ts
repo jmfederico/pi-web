@@ -38,9 +38,9 @@ export function renderCaptainPanel(html: Html, view: CaptainPanelView) {
     <section class="captains-log" aria-label="Captain's Log">
       <div class="captain-heading"><h2>⚓ Captain's Log</h2><p class="muted">Your last reply, retold by a theatrical pirate.</p></div>
       <div class="captain-source"><span class="muted">Selected session</span><strong>${view.source?.name ?? "No session selected"}</strong></div>
-      <button class="captain-primary" ?disabled=${disabled} @click=${view.onTranslate}>Let the Captain tell it</button>
+      <button class="ui-button ui-button--primary captain-primary" ?disabled=${disabled} @click=${view.onTranslate}>Let the Captain tell it</button>
       <p class="captain-status" role="status" aria-live="polite">${status}
-        ${!view.connected && !view.connecting ? html`<button @click=${view.onReconnect}>Reconnect</button>` : null}
+        ${!view.connected && !view.connecting ? html`<button class="ui-button ui-button--compact" @click=${view.onReconnect}>Reconnect</button>` : null}
       </p>
       ${!view.connected && !view.connecting ? html`<p class="captain-notice">Reconnect to see the result. The captain may still be working; your request will not be sent again.</p>` : null}
       ${view.notice !== undefined && view.notice !== "" ? html`<p class="captain-notice" role="alert">${view.notice}</p>` : null}
@@ -49,11 +49,11 @@ export function renderCaptainPanel(html: Html, view: CaptainPanelView) {
         ${selected.status === "completed" ? html`<div class="captain-answer">${selected.text ? renderCaptainMarkdown(html, selected.text) : "Receiving the captain's reply…"}</div>`
           : selected.status === "running" ? html`<p class="muted">Reading the source reply and turning it into pirate. No message is sent to the source conversation.</p>`
             : html`<div class="captain-notice" role="alert"><strong>${selected.status === "interrupted" ? "Translation interrupted" : "Couldn't translate that reply"}</strong><p>${selected.text || "Check Diagnostics for details, then try again when the session is ready."}</p></div>`}
-        ${sourceSessionId !== undefined && sourceSessionId !== "" ? html`<button @click=${() => { view.onOpenSource(sourceSessionId); }}>Open source session</button>` : null}
+        ${sourceSessionId !== undefined && sourceSessionId !== "" ? html`<button class="ui-button" @click=${() => { view.onOpenSource(sourceSessionId); }}>Open source session</button>` : null}
       </article>` : html`<p class="captain-empty muted">Pick a conversation, then translate its latest finished assistant reply. The original stays untouched.</p>`}
       <div class="captain-secondary">
         ${view.entries.length > 1 ? html`<details><summary>Previous translations <span class="muted">(${view.entries.length})</span></summary>
-          <div class="captain-history">${view.entries.map((entry) => html`<button class=${entry.id === selected?.id ? "selected" : ""} ?disabled=${!view.connected} @click=${() => { view.onRead(entry.id); }}>
+          <div class="captain-history">${view.entries.map((entry) => html`<button class=${`ui-button${entry.id === selected?.id ? " selected" : ""}`} aria-pressed=${entry.id === selected?.id ? "true" : "false"} ?disabled=${!view.connected} @click=${() => { view.onRead(entry.id); }}>
             <span>${dateLabel(entry.createdAt)} · ${entry.status === "completed" ? "Translated" : entry.status === "running" ? "Working" : "Not completed"}</span>
           </button>`)}</div>
         </details>` : null}
@@ -66,18 +66,14 @@ export function renderCaptainPanel(html: Html, view: CaptainPanelView) {
       </div>
     </section>`;
 }
-// Light DOM inherits workspace typography/buttons. Extra rules are package-scoped and use host themes.
+// Content layout stays package-scoped; native buttons use the host UI styles capability.
 const styles = `
   captains-log-lifetime { display: block; min-width: 0; }
   .captains-log { box-sizing: border-box; padding: 16px; min-width: 0; color: inherit; font: inherit; line-height: 1.5; }
   .captains-log *, .captains-log *::before, .captains-log *::after { box-sizing: border-box; }
   .captains-log h2, .captains-log p { margin: 0; }
   .captains-log h2 { font-size: 15px; }
-  .captains-log button { font: inherit; }
-  .captains-log button:hover:not(:disabled) { background: var(--pi-surface-hover); }
-  .captains-log button:disabled { opacity: .5; cursor: not-allowed; }
-  .captains-log button:focus-visible, .captains-log summary:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
-  .captains-log .captain-primary { border-color: var(--pi-accent-border); background: var(--pi-selection-bg); padding: 8px 12px; }
+  .captains-log summary:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
   .captains-log .captain-source { display: grid; gap: 3px; margin: 18px 0 12px; padding: 10px 12px; background: var(--pi-surface); border: 1px solid var(--pi-border-muted); border-radius: 8px; overflow-wrap: anywhere; }
   .captains-log .captain-source span { font-size: 11px; }
   .captains-log .captain-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0 16px; color: var(--pi-muted); font-size: 12px; }
@@ -113,7 +109,7 @@ const styles = `
   .captains-log summary { cursor: pointer; color: var(--pi-muted); }
   .captains-log details p { margin: 8px 0; overflow-wrap: anywhere; }
   .captains-log .captain-history { display: grid; gap: 6px; padding-top: 8px; }
-  .captains-log .captain-history button { text-align: left; min-width: 0; }
+  .captains-log .captain-history button { justify-content: flex-start; text-align: left; min-width: 0; }
   .captains-log dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; font-size: 11px; }
   .captains-log dd { margin: 0; overflow-wrap: anywhere; }
   .captains-log .captain-footnote { font-size: 11px; margin-top: 10px; }

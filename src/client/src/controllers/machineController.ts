@@ -60,6 +60,7 @@ export class MachineController {
       selectedMachine: machine,
       projects: [],
       workspaces: [],
+      workspaceResolution: undefined,
       isLoadingWorkspaces: false,
       selectedProject: undefined,
       selectedWorkspace: undefined,

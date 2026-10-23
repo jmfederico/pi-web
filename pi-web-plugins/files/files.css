@@ -1,4 +1,4 @@
 :host {
   color: var(--pi-text);
-  font: 14px system-ui, sans-serif;
+  font: 14px var(--pi-font, system-ui, sans-serif);
 }

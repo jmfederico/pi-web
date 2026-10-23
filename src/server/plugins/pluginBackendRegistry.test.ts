@@ -2,8 +2,8 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   JsonValue,
-  ServerPluginPeerChannelOpenContext,
-  ServerPluginPeerRequestContext,
+  ServerPluginPeerChannelOpenContextV5 as ServerPluginPeerChannelOpenContext,
+  ServerPluginPeerRequestContextV5 as ServerPluginPeerRequestContext,
   WorkspaceProvider,
 } from "../../server-plugin-api.js";
 import type { Project } from "../types.js";
@@ -29,6 +29,46 @@ afterEach(() => {
 });
 
 describe("PluginBackendRegistry", () => {
+  it("dispatches v5 machine and project scopes without workspace resolution and rejects v3 scoped calls", async () => {
+    const resolve = vi.fn(() => Promise.reject(new Error("Workspace resolution must not run")));
+    const contribution = backendContribution("notes", ({ scope }) => scope.kind === "project" ? { kind: scope.kind, project: { ...scope.project } } : { kind: scope.kind });
+    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { resolve } });
+    const base = { pluginId: "notes", moduleRevision: "notes-r1", operation: "notes.list", input: null };
+    await expect(registry.request({ ...base, scope: "machine" })).resolves.toEqual({ kind: "machine" });
+    await expect(registry.request({ ...base, scope: "project", project })).resolves.toEqual({ kind: "project", project: { id: project.id, name: project.name, path: project.path } });
+    await expect(registry.request({ ...base, scope: "machine", project })).rejects.toMatchObject({ code: "invalid-scope" });
+    await expect(registry.request({ ...base, scope: "project", project, workspaceId: "spoof" })).rejects.toMatchObject({ code: "invalid-scope" });
+    await expect(registry.request({ ...base, scope: "machine", moduleRevision: "stale" })).rejects.toMatchObject({ code: "stale-plugin-revision" });
+    expect(resolve).not.toHaveBeenCalled();
+    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { resolve } });
+    for (const scope of ["machine", "project"] as const) {
+      await expect(legacy.request({ ...base, scope, ...(scope === "project" ? { project } : {}) })).rejects.toMatchObject({ code: "invalid-scope" });
+    }
+    await Promise.all([registry.closeAll(), legacy.closeAll()]);
+  });
+
+  it("keeps v5 scoped channel admissions distinct and cleans up machine/project channels", async () => {
+    const resolve = vi.fn(() => Promise.reject(new Error("Workspace resolution must not run")));
+    const close = vi.fn();
+    const contribution = channelContribution("notes", ({ scope }) => {
+      expect(["machine", "project"]).toContain(scope.kind);
+      expect(Object.isFrozen(scope)).toBe(true);
+      return { receive() { /* no incoming frames */ }, close };
+    });
+    const registry = new PluginBackendRegistry({ contributions: [contribution], workspaces: { resolve }, channelMaxPerPluginWorkspace: 1 });
+    const base = { pluginId: "notes", moduleRevision: "notes-r1", operation: "notes.watch", input: null };
+    const machine = await registry.openChannel({ ...base, scope: "machine" }, channelTransport().value);
+    const selectedProject = await registry.openChannel({ ...base, scope: "project", project }, channelTransport().value);
+    expect(registry.activeChannelCount()).toBe(2);
+    await expect(registry.openChannel({ ...base, scope: "machine" }, channelTransport().value)).rejects.toMatchObject({ code: "admission-denied" });
+    const legacy = new PluginBackendRegistry({ contributions: [{ ...contribution, apiVersion: 3 }], workspaces: { resolve } });
+    await expect(legacy.openChannel({ ...base, scope: "machine" }, channelTransport().value)).rejects.toMatchObject({ code: "invalid-scope" });
+    await Promise.all([machine.close(), selectedProject.close()]);
+    expect(registry.activeChannelCount()).toBe(0);
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(resolve).not.toHaveBeenCalled();
+    await Promise.all([registry.closeAll(), legacy.closeAll()]);
+  });
   it("dispatches a non-provider plugin against a host-resolved provider workspace", async () => {
     let observed: ServerPluginPeerRequestContext | undefined;
     const workspaces = providerRegistry([providerContribution("git", {
@@ -48,9 +88,10 @@ describe("PluginBackendRegistry", () => {
     const registry = new PluginBackendRegistry({
       contributions: [backendContribution("terminal", (context) => {
         observed = context;
+        if (context.scope.kind !== "workspace") throw new Error("Expected workspace scope");
         return {
-          workspaceId: context.workspace.id,
-          owner: context.workspace.provider?.pluginId ?? null,
+          workspaceId: context.scope.workspace.id,
+          owner: context.scope.workspace.provider?.pluginId ?? null,
           input: context.input,
         };
       })],
@@ -70,9 +111,9 @@ describe("PluginBackendRegistry", () => {
       input: { includeExited: false },
     });
 
-    if (observed === undefined) throw new Error("Expected paired backend context");
-    expect(observed.project).toEqual({ id: project.id, name: project.name, path: project.path });
-    expect(observed.workspace).toMatchObject({
+    if (observed?.scope.kind !== "workspace") throw new Error("Expected paired backend workspace context");
+    expect(observed.scope.project).toEqual({ id: project.id, name: project.name, path: project.path });
+    expect(observed.scope.workspace).toMatchObject({
       id: workspaceId,
       projectId: project.id,
       path: join(project.path, "worktree"),
@@ -83,12 +124,12 @@ describe("PluginBackendRegistry", () => {
         metadata: { branch: "feature/paired" },
       },
     });
-    expect(observed.workspace).not.toHaveProperty("data");
+    expect(observed.scope.workspace).not.toHaveProperty("data");
     expect(Object.isFrozen(observed)).toBe(true);
-    expect(Object.isFrozen(observed.project)).toBe(true);
-    expect(Object.isFrozen(observed.workspace)).toBe(true);
-    expect(Object.isFrozen(observed.workspace.provider)).toBe(true);
-    expect(Object.isFrozen(observed.workspace.provider?.metadata)).toBe(true);
+    expect(Object.isFrozen(observed.scope.project)).toBe(true);
+    expect(Object.isFrozen(observed.scope.workspace)).toBe(true);
+    expect(Object.isFrozen(observed.scope.workspace.provider)).toBe(true);
+    expect(Object.isFrozen(observed.scope.workspace.provider?.metadata)).toBe(true);
     expect(Object.isFrozen(observed.input)).toBe(true);
     expect(observed.signal.aborted).toBe(true);
   });
@@ -98,10 +139,10 @@ describe("PluginBackendRegistry", () => {
     const workspaceId = (await workspaces.resolve(project)).workspaces[0]?.id;
     if (workspaceId === undefined) throw new Error("Expected folder workspace");
     const registry = new PluginBackendRegistry({
-      contributions: [backendContribution("notes", ({ workspace }) => ({
-        path: workspace.path,
-        provider: workspace.provider?.pluginId ?? null,
-      }))],
+      contributions: [backendContribution("notes", ({ scope }) => {
+        if (scope.kind !== "workspace") throw new Error("Expected workspace scope");
+        return { path: scope.workspace.path, provider: scope.workspace.provider?.pluginId ?? null };
+      })],
       workspaces,
     });
 
@@ -356,7 +397,7 @@ describe("PluginBackendRegistry", () => {
     }, transport.value);
 
     if (openContext === undefined) throw new Error("Expected channel context");
-    expect(openContext.workspace).toMatchObject({ id: workspaceId, projectId: project.id, path: project.path });
+    expect(openContext.scope.kind === "workspace" ? openContext.scope.workspace : undefined).toMatchObject({ id: workspaceId, projectId: project.id, path: project.path });
     expect(Object.isFrozen(openContext)).toBe(true);
     expect(Object.isFrozen(openContext.input)).toBe(true);
     expect(openContext.signal.aborted).toBe(false);
@@ -807,6 +848,7 @@ function backendContribution(
     source: "fixture",
     scope: "local",
     moduleRevision: `${pluginId}-r1`,
+    apiVersion: 5,
     backend: Object.freeze({ version: 1, request }),
   };
 }
@@ -822,6 +864,7 @@ function channelContribution(
     source: "fixture",
     scope: "local",
     moduleRevision: `${pluginId}-r1`,
+    apiVersion: 5,
     backend: Object.freeze({ version: 1, openChannel }),
   };
 }

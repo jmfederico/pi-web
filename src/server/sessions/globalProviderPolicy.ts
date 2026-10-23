@@ -7,7 +7,7 @@ import {
   type AgentSessionRuntimeDiagnostic,
   type AgentSessionServices,
   type ModelRuntime,
-} from "@earendil-works/pi-coding-agent";
+} from "../../piSdk.js";
 
 /** Structured logging boundary supplied by the session daemon. */
 export interface GlobalProviderBootstrapLogger {

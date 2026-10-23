@@ -1,3 +1,4 @@
+// Keyboard behavior is an input-specific exception to viewport-only control sizing.
 export const MOBILE_PROMPT_ENTER_MEDIA_QUERY = "(pointer: coarse), (max-width: 760px)";
 export const PROMPT_ENTER_PREFERENCE_STORAGE_KEY = "pi-web.promptEnterPreference";
 
@@ -40,7 +41,7 @@ export function shouldSendPromptOnEnter(media = createMobilePromptEnterMedia(), 
 
 export function shouldUsePromptEnterShiftShortcut(shiftKey: boolean, explicitShiftKeyActive: boolean, media = createMobilePromptEnterMedia()): boolean {
   // Touch keyboards can report autocapitalization as Shift on Enter after a line break.
-  // On mobile-like screens, only trust Shift when the editor saw an explicit Shift keydown.
+  // On touch or narrow screens, only trust Shift when the editor saw an explicit Shift keydown.
   if (!shiftKey) return false;
   if (media?.matches === true) return explicitShiftKeyActive;
   return true;

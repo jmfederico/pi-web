@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { projectBrowserMessageResponse } from "../browserMessageProjection.js";
 import { SessionMediaIndex, type SessionMediaScope } from "./sessionMediaIndex.js";
+import { readSessionImageDimensions } from "./sessionImageDimensions.js";
 
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=";
 const image = () => ({ type: "image", data: png, mimeType: "image/png" });
@@ -16,7 +17,7 @@ function referenceOf(index: SessionMediaIndex, block = image(), binding: Session
 }
 
 describe("SessionMediaIndex", () => {
-  it("projects only MIME/source SHA256 references, then decodes exactly the requested original image", () => {
+  it("projects dimensioned MIME/source SHA256 references, then decodes exactly the requested original image", () => {
     const decode = vi.fn(decodeBase64);
     const index = new SessionMediaIndex({ decode });
     const block = Object.freeze(image());
@@ -25,7 +26,7 @@ describe("SessionMediaIndex", () => {
     const projected = projectBrowserMessageResponse(page, (part) => index.reference(scope, part));
     const id = sha256(`image/png\0${png}`);
     expect(projected.messages).toEqual([{ role: "user", content: [
-      { type: "image", mediaId: id, mimeType: "image/png", byteSize: decodeBase64(png).byteLength },
+      { type: "image", mediaId: id, mimeType: "image/png", byteSize: decodeBase64(png).byteLength, width: 1, height: 1 },
       { type: "image", mediaId: sha256("image/png\0AQID"), mimeType: "image/png", byteSize: 3 },
     ] }]);
     expect(decode).not.toHaveBeenCalled();
@@ -52,27 +53,33 @@ describe("SessionMediaIndex", () => {
     expect(index.get(scope, jpeg.mediaId)).toEqual({ data: Buffer.from([1]), mimeType: "image/jpeg" });
   });
 
-  it("reuses content hashes across clones and detects data, MIME, and type mutations", () => {
+  it("reuses hashes and dimensions across clones and detects data, MIME, and type mutations", () => {
     const hash = vi.fn(sha256);
-    const index = new SessionMediaIndex({ hash });
+    const readDimensions = vi.fn(readSessionImageDimensions);
+    const index = new SessionMediaIndex({ hash, readDimensions });
     const block = image();
     const first = referenceOf(index, block);
-    expect(referenceOf(index, { ...block })).toEqual(first);
-    expect(referenceOf(index, block, { ...scope, id: "s2" })).toEqual(first);
+    expect(first).toMatchObject({ width: 1, height: 1 });
+    expect(referenceOf(index, { ...block })).toBe(first);
+    expect(referenceOf(index, block, { ...scope, id: "s2" })).toBe(first);
     expect(hash).toHaveBeenCalledOnce();
+    expect(readDimensions).toHaveBeenCalledExactlyOnceWith(png, "image/png");
     block.data = "AQID";
     expect(referenceOf(index, block).mediaId).not.toBe(first.mediaId);
     block.mimeType = "image/webp";
     expect(referenceOf(index, block).mediaId).toBe(sha256("image/webp\0AQID"));
     expect(hash).toHaveBeenCalledTimes(3);
+    expect(readDimensions).toHaveBeenCalledTimes(3);
     block.type = "text";
     expect(index.reference(scope, block)).toBeUndefined();
+    expect(readDimensions).toHaveBeenCalledTimes(3);
   });
 
-  it("bounds source bindings and content memos while weak memos prevent rehashing after eviction", () => {
+  it("bounds strong memos while weak memos prevent rehashing and metadata re-extraction after eviction", () => {
     const hash = vi.fn(sha256);
     const decode = vi.fn(decodeBase64);
-    const index = new SessionMediaIndex({ maxMediaEntries: 1, maxMemoEntries: 1, hash, decode });
+    const readDimensions = vi.fn(readSessionImageDimensions);
+    const index = new SessionMediaIndex({ maxMediaEntries: 1, maxMemoEntries: 1, hash, decode, readDimensions });
     const first = image();
     const firstId = referenceOf(index, first).mediaId;
     const clonedFirst = { ...first };
@@ -89,25 +96,30 @@ describe("SessionMediaIndex", () => {
     index.find(scope, "0".repeat(64), values);
     referenceOf(index, first);
     expect(hash).toHaveBeenCalledTimes(2);
+    expect(readDimensions).toHaveBeenCalledTimes(2);
     expect(decode).toHaveBeenCalledOnce();
     index.forgetSession(scope);
     expect(index.get(scope, firstId)).toBeUndefined();
     index.clear();
     referenceOf(index, first);
     expect(hash).toHaveBeenCalledTimes(3);
+    expect(readDimensions).toHaveBeenCalledTimes(3);
   });
 
-  it("cold-scans and memoizes nonmatches without decoding, even with both strong caches disabled", () => {
+  it("cold-scans and memoizes nonmatches without payload decoding, even with both strong caches disabled", () => {
     const hash = vi.fn(sha256);
     const decode = vi.fn(decodeBase64);
-    const index = new SessionMediaIndex({ maxMediaEntries: 0, maxMemoEntries: 0, hash, decode });
+    const readDimensions = vi.fn(readSessionImageDimensions);
+    const index = new SessionMediaIndex({ maxMediaEntries: 0, maxMemoEntries: 0, hash, decode, readDimensions });
     const blocks = [image(), { ...image(), data: "AQID" }];
     expect(index.find(scope, "0".repeat(64), blocks)).toBeUndefined();
     expect(index.find(scope, "0".repeat(64), blocks)).toBeUndefined();
     expect(hash).toHaveBeenCalledTimes(2);
+    expect(readDimensions).toHaveBeenCalledTimes(2);
     expect(decode).not.toHaveBeenCalled();
     expect(index.find(scope, sha256("image/png\0AQID"), blocks)?.data).toEqual(Buffer.from([1, 2, 3]));
     expect(hash).toHaveBeenCalledTimes(2);
+    expect(readDimensions).toHaveBeenCalledTimes(2);
     expect(decode).toHaveBeenCalledExactlyOnceWith("AQID");
   });
 
@@ -162,8 +174,27 @@ describe("SessionMediaIndex", () => {
     expect(index.get(scope, id)?.data).toEqual(decodeBase64(png));
   });
 
-  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])("accepts only supported canonical MIME types (%s)", (mimeType) => {
-    expect(referenceOf(new SessionMediaIndex(), { ...image(), mimeType }).mimeType).toBe(mimeType);
+  it.each(["image/png", "image/jpeg", "image/gif", "image/webp"])("preserves supported MIME types but omits mismatched metadata (%s)", (mimeType) => {
+    expect(referenceOf(new SessionMediaIndex(), { ...image(), mimeType })).toEqual({
+      type: "image", mediaId: sha256(`${mimeType}\0${png}`), mimeType, byteSize: decodeBase64(png).byteLength,
+      ...(mimeType === "image/png" ? { width: 1, height: 1 } : {}),
+    });
+  });
+
+  it.each(["AQID", "iVBORw0KGgo="])("retains a lazy reference and memoizes unavailable metadata (%s)", (data) => {
+    const readDimensions = vi.fn(readSessionImageDimensions);
+    const decode = vi.fn(decodeBase64);
+    const index = new SessionMediaIndex({ readDimensions, decode });
+    const block = { ...image(), data };
+    const reference = referenceOf(index, block);
+    expect(reference).toEqual({ type: "image", mediaId: sha256(`image/png\0${data}`), mimeType: "image/png", byteSize: decodeBase64(data).byteLength });
+    expect(referenceOf(index, block)).toBe(reference);
+    expect(referenceOf(index, { ...block })).toBe(reference);
+    expect(readDimensions).toHaveBeenCalledExactlyOnceWith(data, "image/png");
+    expect(decode).not.toHaveBeenCalled();
+    expect(index.get(scope, reference.mediaId)).toEqual({ data: decodeBase64(data), mimeType: "image/png" });
+    expect(decode).toHaveBeenCalledExactlyOnceWith(data);
+    expect(block).toEqual({ ...image(), data });
   });
 
   it.each(["AQ==", "AQ", "AQI=", "AQI", "AQID", "/w==", "/w", "//8=", "//8"])("computes standard base64 size without decoding (%s)", (data) => {
@@ -188,10 +219,12 @@ describe("SessionMediaIndex", () => {
   ])("consistently rejects malformed content in projection and lookup: %j", (block) => {
     const hash = vi.fn(sha256);
     const decode = vi.fn(decodeBase64);
-    const index = new SessionMediaIndex({ hash, decode });
+    const readDimensions = vi.fn(readSessionImageDimensions);
+    const index = new SessionMediaIndex({ hash, decode, readDimensions });
     expect(index.reference(scope, block)).toBeUndefined();
     expect(index.find(scope, "0".repeat(64), [block])).toBeUndefined();
     expect(hash).not.toHaveBeenCalled();
     expect(decode).not.toHaveBeenCalled();
+    expect(readDimensions).not.toHaveBeenCalled();
   });
 });

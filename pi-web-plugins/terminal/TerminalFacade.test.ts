@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, PluginPeer, TerminalCommandRun, Workspace } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginPeer, AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, Workspace } from "@jmfederico/pi-web/plugin-api";
 import { TerminalFacade } from "./TerminalFacade";
+import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
+import { InMemoryTerminalSelectionMemory } from "./terminalSelection";
 
 const workspace: Workspace = {
   id: "w1",
@@ -35,6 +37,90 @@ afterEach(() => {
 });
 
 describe("Terminal facade", () => {
+  it("runs maintenance commands and opens their output without workspace navigation", async () => {
+    const maintenanceRun: MaintenanceTerminalCommandRun = {
+      id: "maintenance-run", scope: "maintenance", origin: "updates", terminalId: "maintenance-terminal",
+      title: "Update", command: "pi-web update", status: "succeeded", createdAt: "now", metadata: {},
+    };
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>(() => Promise.resolve(runJson(maintenanceRun)));
+    const navigateApplicationContribution = vi.fn(() => true);
+    const selection = new InMemoryTerminalSelectionMemory();
+    const runtime = new TerminalBrowserRuntime(selection);
+    const facade = new TerminalFacade({ requestMaintenanceTerminal: (machineId, terminalId) => { runtime.requestMaintenanceTerminal(machineId, terminalId); } });
+    const terminal = facade.createMaintenanceTerminal({ origin: "updates", machineId: "remote", registrationPluginId: "machine.remote.pi-web.terminal", peer: peer(request), host: { navigateApplicationContribution } });
+    const handle = await terminal.runCommand({ title: "Update", command: "pi-web update", open: true });
+    expect(navigateApplicationContribution).toHaveBeenCalledExactlyOnceWith("machine.remote.pi-web.terminal:workspace.terminal");
+    expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["terminal.run", { origin: "updates", title: "Update", command: "pi-web update", metadata: {} }]);
+    await expect(handle.completed).resolves.toEqual(maintenanceRun);
+    expect(runtime.selectedTerminalId({
+      machine: { id: "remote", name: "Remote", kind: "remote" },
+      workspace: { scope: "workspace", workspace, peer: peer(request), navigation: { version: 1, contributionId: "machine.remote.pi-web.terminal:workspace.terminal", query: { terminal: "workspace-terminal" }, set: vi.fn() } },
+      maintenance: { scope: "maintenance", peer: peer(request) }, host: { requestRender: vi.fn() },
+    })).toBe("maintenance-terminal");
+    runtime.dispose();
+    facade.dispose();
+    await expect(terminal.runCommand({ title: "Update", command: "pi-web update" })).rejects.toThrow("disposed");
+  });
+
+  it("does not store selection when command completion outlives its navigation context", async () => {
+    const run: MaintenanceTerminalCommandRun = {
+      id: "maintenance-run", scope: "maintenance", origin: "updates", terminalId: "maintenance-terminal",
+      title: "Update", command: "pi-web update", status: "succeeded", createdAt: "now", metadata: {},
+    };
+    let complete: (value: JsonValue) => void = () => undefined;
+    const response = new Promise<JsonValue>((resolve) => { complete = resolve; });
+    const requestMaintenanceTerminal = vi.fn();
+    let current = true;
+    const navigateApplicationContribution = vi.fn(() => current);
+    const facade = new TerminalFacade({ requestMaintenanceTerminal });
+    const terminal = facade.createMaintenanceTerminal({
+      origin: "updates", machineId: "local", registrationPluginId: "pi-web.terminal",
+      peer: peer(vi.fn(() => response)), host: { navigateApplicationContribution },
+    });
+    const pending = terminal.runCommand({ title: "Update", command: "pi-web update", open: true });
+    current = false;
+    complete(runJson(run));
+    await pending;
+    expect(navigateApplicationContribution).toHaveReturnedWith(false);
+    expect(requestMaintenanceTerminal).not.toHaveBeenCalled();
+    facade.dispose();
+  });
+
+  it("rejects maintenance results through workspace-only list and parse ports", async () => {
+    const maintenance: MaintenanceTerminalCommandRun = {
+      id: "maintenance-run", scope: "maintenance", origin: "updates", terminalId: "maintenance-terminal",
+      title: "Update", command: "true", status: "succeeded", createdAt: "now", metadata: {},
+    };
+    const facade = new TerminalFacade();
+    expect(() => facade.parseCommandRun(maintenance)).toThrow("Expected workspace");
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>(() => Promise.resolve([runJson(maintenance)]));
+    await expect(facade.listCommandRuns({ peer: peer(request) })).rejects.toThrow("scope does not match");
+    facade.dispose();
+  });
+
+  it("shares maintenance completion polling and disposal with workspace commands", async () => {
+    vi.useFakeTimers();
+    const run: MaintenanceTerminalCommandRun = {
+      id: "maintenance-run", scope: "maintenance", origin: "updates", terminalId: "maintenance-terminal",
+      title: "Update", command: "true", status: "running", createdAt: "now", metadata: {},
+    };
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>(() => Promise.resolve(runJson(run)));
+    const facade = new TerminalFacade({ pollIntervalMs: 25 });
+    const terminal = facade.createMaintenanceTerminal({
+      origin: "updates", machineId: "local", registrationPluginId: "pi-web.terminal",
+      peer: peer(request), host: { navigateApplicationContribution: () => true },
+    });
+    const handle = await terminal.runCommand({ title: "Update", command: "true" });
+    await vi.advanceTimersByTimeAsync(25);
+    expect(request.mock.calls.at(-1)?.slice(0, 2)).toEqual(["terminal.get-run", { runId: "maintenance-run" }]);
+    expect(request.mock.calls.at(-1)?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    facade.dispose();
+    await expect(handle.completed).rejects.toMatchObject({ name: "AbortError" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(() => { terminal.open(); }).toThrow("disposed");
+  });
+
   it("runs a command through the peer and opens its terminal when requested", async () => {
     const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => {
       if (operation === "terminal.run") return Promise.resolve(runJson(succeededRun));
@@ -60,7 +146,6 @@ describe("Terminal facade", () => {
     expect(request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     expect(navigateWorkspaceContribution).toHaveBeenCalledWith(workspace, {
       contributionId: "pi-web.terminal:workspace.terminal",
-      navigationAliases: ["core:workspace.terminal"],
       query: { terminal: "t1", start: undefined },
     });
     await expect(handle.completed).resolves.toEqual(succeededRun);
@@ -130,17 +215,14 @@ describe("Terminal facade", () => {
     expect(navigateWorkspaceContribution.mock.calls).toEqual([
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { start: "1" },
       }],
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { start: "2" },
       }],
       [workspace, {
         contributionId: "machine.remote.pi-web.terminal:workspace.terminal",
-        navigationAliases: ["core:workspace.terminal"],
         query: { terminal: "selected", start: undefined },
       }],
     ]);
@@ -260,12 +342,11 @@ function peer(request: NonNullable<PluginPeer["request"]>): PluginPeer {
   return { request };
 }
 
-function runJson(run: TerminalCommandRun): JsonValue {
+function runJson(run: AnyTerminalCommandRun): JsonValue {
   return {
     id: run.id,
     origin: run.origin,
-    projectId: run.projectId,
-    workspaceId: run.workspaceId,
+    ...(run.scope === "maintenance" ? { scope: "maintenance" } : { projectId: run.projectId, workspaceId: run.workspaceId }),
     terminalId: run.terminalId,
     title: run.title,
     command: run.command,

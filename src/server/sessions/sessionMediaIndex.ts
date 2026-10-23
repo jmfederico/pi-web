@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { SessionMediaReference } from "../../shared/sessionMedia.js";
 import { canonicalizeStoredCwd } from "../workingDirectory.js";
+import { readSessionImageDimensions } from "./sessionImageDimensions.js";
 
 export type SessionImageMimeType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
 export interface SessionMedia {
@@ -27,6 +28,8 @@ export interface SessionMediaIndexOptions {
   hash?: (source: string) => string;
   /** Only invoked for the image matched by a media request. */
   decode?: (source: string) => Buffer;
+  /** Bounded header metadata, extracted once per image memo (including misses). */
+  readDimensions?: typeof readSessionImageDimensions;
 }
 
 /**
@@ -47,6 +50,7 @@ export class SessionMediaIndex {
   private readonly maxMemoEntries: number;
   private readonly hash: (source: string) => string;
   private readonly decode: (source: string) => Buffer;
+  private readonly readDimensions: typeof readSessionImageDimensions;
 
   constructor(options: SessionMediaIndexOptions = {}) {
     this.maxMediaBytes = options.maxMediaBytes ?? 64 * 1024 * 1024;
@@ -55,6 +59,7 @@ export class SessionMediaIndex {
     this.maxMemoEntries = options.maxMemoEntries ?? 256;
     this.hash = options.hash ?? ((source) => createHash("sha256").update(source).digest("hex"));
     this.decode = options.decode ?? ((source) => Buffer.from(source, "base64"));
+    this.readDimensions = options.readDimensions ?? readSessionImageDimensions;
   }
 
   /** An unscoped projection may produce a reference, but cannot create a binding. */
@@ -120,7 +125,11 @@ export class SessionMediaIndex {
     }
     const byteSize = imageByteSize(source);
     if (byteSize === undefined) return undefined;
-    const image: ImageMemo = { source, mimeType, reference: { type: "image", mediaId: this.hash(key), mimeType, byteSize } };
+    const dimensions = this.readDimensions(source, mimeType);
+    const image: ImageMemo = {
+      source, mimeType,
+      reference: { type: "image", mediaId: this.hash(key), mimeType, byteSize, ...dimensions },
+    };
     this.blocks.set(block, image);
     const weight = memoWeight(image);
     if (weight <= this.maxMemoBytes && this.maxMemoEntries > 0) {

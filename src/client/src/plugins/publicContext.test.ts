@@ -1,8 +1,8 @@
 import { html, svg } from "lit";
 import { expect, it, vi } from "vitest";
 import { initialAppState } from "../appState";
-import { adaptPublicPlugin, publicPluginState } from "./publicContext";
-import type { WorkspacePanelContext } from "./types";
+import { adaptPublicPlugin, publicPluginSession, publicPluginState } from "./publicContext";
+import type { SessionLabelContext, WorkspacePanelContext } from "./types";
 
 const session = {
   id: "session", cwd: "/workspace", name: "Conversation", path: "/private/session.jsonl",
@@ -24,6 +24,31 @@ it("projects only documented session fields and does not share the internal sess
     .toMatchObject({ archived: true, pending: false });
 });
 
+it("exposes detached public session metadata without sharing nested values with host state", () => {
+  const metadata = { "example.workflow": { identity: { leg: 2 }, flags: [true] } };
+  const state = { ...initialAppState(), selectedSession: { ...session, metadata } };
+  const projected = publicPluginState(state).selectedSession;
+  expect(projected?.metadata).toEqual(metadata);
+  if (projected?.metadata === undefined) throw new Error("Expected public metadata");
+  expect(projected.metadata).not.toBe(metadata);
+  expect(projected.metadata["example.workflow"]).not.toBe(metadata["example.workflow"]);
+  Reflect.set(projected.metadata["example.workflow"] ?? {}, "identity", { leg: 99 });
+  expect(metadata["example.workflow"].identity.leg).toBe(2);
+  expect(publicPluginState({ ...initialAppState(), selectedSession: session }).selectedSession).not.toHaveProperty("metadata");
+});
+
+it("projects an unselected row independently of the selected conversation", () => {
+  const row = { ...session, id: "other-row", archived: true, clientPendingStart: false,
+    metadata: { workflow: { nested: { leg: 3 } } } };
+  const snapshot = publicPluginSession(row);
+  expect(snapshot).toEqual({ id: "other-row", cwd: "/workspace", name: "Conversation", archived: true, pending: false,
+    metadata: row.metadata });
+  expect(snapshot).not.toHaveProperty("path");
+  expect(snapshot).not.toHaveProperty("firstMessage");
+  Reflect.set(snapshot.metadata?.["workflow"] ?? {}, "nested", { leg: 100 });
+  expect(row.metadata.workflow.nested.leg).toBe(3);
+});
+
 it("preserves lifecycle callback receivers while adapting contributions", async () => {
   class Activation {
     contributions = {};
@@ -42,17 +67,18 @@ it("preserves lifecycle callback receivers while adapting contributions", async 
   expect(source.started).toBe(false);
 });
 
-it("projects state for every external workspace callback without changing the host context", async () => {
+it.each([4, 5] as const)("projects state for API v%s external workspace callbacks without changing the host context", async (apiVersion) => {
   const visible = vi.fn(() => true);
   const badge = vi.fn(() => "badge");
   const onInvalidate = vi.fn();
   const render = vi.fn(() => html`panel`);
   const items = vi.fn(() => []);
-  const plugin = adaptPublicPlugin({ apiVersion: 4, name: "External", activate: () => ({ contributions: {
+  const plugin = adaptPublicPlugin({ apiVersion, name: "External", activate: () => ({ contributions: {
     workspacePanels: [{ id: "panel", title: "Panel", visible, badge, onInvalidate, render }],
     workspaceLabels: [{ id: "label", visible, items }],
+    sessionLabels: [{ id: "session-label", visible, items }],
   } }) });
-  const activation = await plugin.activate({ apiVersion: 4, pluginId: "external", runtimePluginId: "external", html, svg,
+  const activation = await plugin.activate({ apiVersion, pluginId: "external", runtimePluginId: "external", html, svg,
     signal: new AbortController().signal, lifetimeSignal: new AbortController().signal });
   const unused = () => { throw new Error("Unexpected host call"); };
   const context: WorkspacePanelContext = {
@@ -72,6 +98,10 @@ it("projects state for every external workspace callback without changing the ho
   panel?.render(context);
   label?.visible?.(context);
   label?.items(context);
+  const rowContext: SessionLabelContext = { ...context, session: publicPluginSession({ ...session, id: "row" }) };
+  activation.contributions.sessionLabels?.[0]?.visible?.(rowContext);
+  activation.contributions.sessionLabels?.[0]?.items(rowContext);
+  expect(items).toHaveBeenLastCalledWith(expect.objectContaining({ session: { id: "row", cwd: "/workspace", name: "Conversation", archived: false, pending: true } }));
   for (const callback of [visible, badge, onInvalidate, render, items]) {
     expect(callback).toHaveBeenCalledWith(expect.objectContaining({ state: publicPluginState(context.state) }),
       ...(callback === onInvalidate ? [{ reason: "manual", resources: ["workspace.files"] }] : []));

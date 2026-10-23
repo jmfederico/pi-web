@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from "undici";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { piWebRuntimeIdentity } from "../../shared/piWebRuntime.js";
 import {
   applyAgentHttpIdleTimeout,
   configureAgentHttpDispatcher,
   resolveAgentHttpIdleTimeoutMs,
   type AgentHttpDispatcherInput,
-  type AppliedAgentHttpIdleTimeout,
+  type AgentHttpIdleTimeoutResult,
 } from "./agentHttpDispatcher.js";
 
 /**
@@ -17,6 +18,7 @@ import {
  * real local HTTP server, so every test saves and restores the global
  * dispatcher and closes everything it started.
  */
+const runningOnBun = piWebRuntimeIdentity().name === "bun";
 let savedDispatcher: Dispatcher;
 const installedDispatchers: Dispatcher[] = [];
 let servers: Server[] = [];
@@ -37,9 +39,9 @@ function configureAndTrack(timeoutMs: number): void {
   installedDispatchers.push(getGlobalDispatcher());
 }
 
-function applyAndTrack(input: AgentHttpDispatcherInput): AppliedAgentHttpIdleTimeout {
+function applyAndTrack(input: AgentHttpDispatcherInput): AgentHttpIdleTimeoutResult {
   const applied = applyAgentHttpIdleTimeout(input);
-  installedDispatchers.push(getGlobalDispatcher());
+  if (applied.applied) installedDispatchers.push(getGlobalDispatcher());
   return applied;
 }
 
@@ -133,20 +135,35 @@ describe("applyAgentHttpIdleTimeout", () => {
     await rm(agentDir, { recursive: true, force: true });
   });
 
-  it("applies a valid setting without warning", async () => {
+  it.skipIf(runningOnBun)("applies a valid setting without warning on Node", async () => {
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ httpIdleTimeoutMs: 42_000 })}\n`, "utf8");
-    expect(applyAndTrack({ agentDir, cwd: agentDir })).toEqual({ timeoutMs: 42_000 });
+    expect(applyAndTrack({ agentDir, cwd: agentDir })).toEqual({ applied: true, timeoutMs: 42_000 });
   });
 
   it("falls back to the default with a warning when the setting is invalid", async () => {
     await writeFile(join(agentDir, "settings.json"), `${JSON.stringify({ httpIdleTimeoutMs: -5 })}\n`, "utf8");
     const applied = applyAndTrack({ agentDir, cwd: agentDir });
     expect(applied.timeoutMs).toBe(300_000);
+    expect(applied.applied).toBe(!runningOnBun);
     expect(applied.warning).toMatch(/httpIdleTimeoutMs/);
+    if (runningOnBun) expect(applied.warning).toContain("not applied under Bun");
+  });
+
+  it.skipIf(!runningOnBun).each([0, 42_000])("reports the requested %i ms as unsupported on Bun without changing HTTP globals", async timeoutMs => {
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify({ httpIdleTimeoutMs: timeoutMs }));
+    const fetchBefore = globalThis.fetch;
+    const result = applyAgentHttpIdleTimeout({ agentDir, cwd: agentDir });
+    expect(result.applied).toBe(false);
+    expect(result.timeoutMs).toBe(timeoutMs);
+    expect(result.warning).toContain("not applied under Bun");
+    expect(result.warning).toContain("Use Node.js");
+    expect(getGlobalDispatcher()).toBe(savedDispatcher);
+    expect(globalThis.fetch).toBe(fetchBefore);
   });
 });
 
-describe("configureAgentHttpDispatcher", () => {
+// These are Node's dispatcher/native-fetch integration semantics, not Bun's.
+describe.skipIf(runningOnBun)("configureAgentHttpDispatcher", () => {
   it("rejects invalid timeout values without touching the global dispatcher", () => {
     const before = getGlobalDispatcher();
     expect(() => { configureAgentHttpDispatcher(-1); }).toThrow(/Invalid HTTP idle timeout/);

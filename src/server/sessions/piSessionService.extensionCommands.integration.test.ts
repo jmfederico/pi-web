@@ -6,7 +6,7 @@ import {
   createAgentSessionFromServices, createAgentSessionServices, createEventBus,
   DefaultResourceLoader, SessionManager, SettingsManager,
   type AgentSession, type ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+} from "../../piSdk.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { PiSessionEventConnections } from "./piSessionEventConnections.js";
 import { PiSessionService } from "./piSessionService.js";

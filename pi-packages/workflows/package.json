@@ -1,0 +1,23 @@
+{
+  "name": "@jmfederico/pi-web-workflows",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Opinionated PI WEB workflow prompts and shortcuts, starting with named Git worktree creation.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "prompts": ["./prompts"]
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "workflows",
+        "defaultEnabled": true,
+        "browserRoot": "browser",
+        "module": "browser/pi-web-plugin.js",
+        "serverModule": "server-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

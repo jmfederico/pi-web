@@ -7,17 +7,20 @@ import {
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "../../server-plugin-api.js";
 import type {
+  JsonObject,
   JsonValue,
   PiWebHostPiSessionsV1,
   PiWebHostWorkspacesV1,
-  PiWebServerPlugin,
+  PiWebServerPlugin as SupportedPiWebServerPlugin,
   PluginCapability,
-  ServerPluginActivation,
-  ServerPluginActivationContext,
+  ProjectInput,
+  LegacyServerPluginActivation as ServerPluginActivation,
+  LegacyServerPluginActivationContext as ServerPluginActivationContext,
   ServerPluginNoticeInput,
   ServerPluginNoticeReporterV1,
   WorkspaceProvider,
 } from "../../server-plugin-api.js";
+type PiWebServerPlugin = Extract<SupportedPiWebServerPlugin, { apiVersion: 3 }>;
 import type { PiWebPluginScope } from "../../shared/apiTypes.js";
 import {
   SERVER_NOTICE_SCOPE_ID_MAX_LENGTH,
@@ -83,6 +86,37 @@ function createServerPluginRuntimeWithRequiredTerminal(options: Omit<CreateServe
 }
 
 describe("server plugin runtime", () => {
+  it("activates v3 and v5 with their own version and adapts only legacy workspace contexts", async () => {
+    const logger = testLogger();
+    const legacyRequest = vi.fn<(context: unknown) => null>(() => null);
+    const modernRequest = vi.fn<(context: unknown) => null>(() => null);
+    const activated: number[] = [];
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([entry("legacy"), entry("modern")])) },
+      logger,
+      importer: (url) => {
+        const legacy = pluginIdFromUrl(url) === "legacy";
+        return Promise.resolve({ default: {
+          apiVersion: legacy ? 3 : 5,
+          name: legacy ? "Legacy" : "Modern",
+          activate(context: { apiVersion: number }) {
+            activated.push(context.apiVersion);
+            return { peer: { request: legacy ? legacyRequest : modernRequest } };
+          },
+        } });
+      },
+    });
+    expect(activated.sort()).toEqual([3, 5]);
+    const scope = { kind: "workspace" as const, project: { id: "p", name: "P", path: "/p" }, workspace: { id: "w", projectId: "p", path: "/p", label: "P", isMain: true } };
+    const invocation = { scope, operation: "read", input: null, signal: new AbortController().signal };
+    const contributions = runtime.pairedBackendContributions();
+    await contributions.find(({ pluginId }) => pluginId === "legacy")?.backend.request?.(invocation);
+    await contributions.find(({ pluginId }) => pluginId === "modern")?.backend.request?.({ ...invocation, scope: { kind: "machine" } });
+    expect(legacyRequest.mock.calls[0]?.[0]).toEqual({ project: scope.project, workspace: scope.workspace, operation: "read", input: null, signal: invocation.signal });
+    expect(modernRequest.mock.calls[0]?.[0]).toMatchObject({ scope: { kind: "machine" } });
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith({ pluginId: "legacy", apiVersion: 3 }, "Server plugin API v3 is deprecated; migrate to API v5");
+    await runtime.stop();
+  });
   it("creates isolated persistent directories before activation and retains plugin-owned files across runtimes", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-web-plugin-data-"));
     tempRoots.push(root);
@@ -864,6 +898,52 @@ describe("server plugin runtime", () => {
     expect(() => runtime.resolve(foreign)).toThrow("is not active");
   });
 
+  it("binds project settings resolvers to each plugin's catalog id and immutable activation settings", async () => {
+    const contexts = new Map<string, ServerPluginActivationContext>();
+    const alphaSettings = { nested: { value: "global alpha" } };
+    const resolver = vi.fn((pluginId: string, globalSettings: JsonObject, project: ProjectInput, signal: AbortSignal): Promise<JsonObject> => {
+      void signal;
+      return Promise.resolve(Object.freeze({ ...globalSettings, owner: pluginId, projectId: project.id }));
+    });
+    const runtime = await createServerPluginRuntime({
+      catalog: { snapshot: () => Promise.resolve(testSnapshot([
+        entry("alpha", { settings: alphaSettings }),
+        entry("beta", { settings: { value: "global beta" } }),
+      ])) },
+      importer: () => Promise.resolve({ default: plugin("Project settings fixture", (context) => {
+        contexts.set(context.pluginId, context);
+        return {};
+      }) }),
+      projectSettingsResolver: resolver,
+      logger: testLogger(),
+    });
+    try {
+      const alpha = contexts.get("alpha");
+      const beta = contexts.get("beta");
+      if (alpha?.resolveProjectSettings === undefined || beta?.resolveProjectSettings === undefined) {
+        throw new Error("Expected project settings resolvers for both plugins");
+      }
+      expect(resolver).not.toHaveBeenCalled();
+      expect(alpha.signal.aborted).toBe(true);
+      alphaSettings.nested.value = "catalog changed after activation";
+      const selected = { id: "project", name: "Project", path: "/projects/selected" };
+      const signal = new AbortController().signal;
+      expect(await alpha.resolveProjectSettings(selected, signal)).toEqual({ nested: { value: "global alpha" }, owner: "alpha", projectId: "project" });
+      expect(await beta.resolveProjectSettings(selected, signal)).toEqual({ value: "global beta", owner: "beta", projectId: "project" });
+      expect(resolver).toHaveBeenNthCalledWith(1, "alpha", alpha.settings, selected, signal);
+      expect(resolver.mock.calls[0]?.[1]).toBe(alpha.settings);
+      expect(resolver).toHaveBeenNthCalledWith(2, "beta", beta.settings, selected, signal);
+      expect(Object.isFrozen(alpha.settings["nested"])).toBe(true);
+
+      const scopeError = new Error("bad project scope");
+      resolver.mockRejectedValueOnce(scopeError);
+      await expect(alpha.resolveProjectSettings(selected, signal)).rejects.toBe(scopeError);
+      expect(runtime.healthRecords().map(({ state }) => state)).toEqual(["active", "active"]);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it("freezes activation inputs, scopes invocation signals, and cancels lifetime before disposal", async () => {
     let activationContext: ServerPluginActivationContext | undefined;
     const lifecycleSignals: AbortSignal[] = [];
@@ -891,6 +971,8 @@ describe("server plugin runtime", () => {
     expect(Object.isFrozen(activationContext.logger)).toBe(true);
     expect(Object.isFrozen(activationContext.settings)).toBe(true);
     expect(activationContext.notices).toBeUndefined();
+    expect(activationContext.resolveProjectSettings).toBeUndefined();
+    expect(Object.hasOwn(activationContext, "resolveProjectSettings")).toBe(false);
     expect(lifecycleSignals).toHaveLength(2);
     expect(lifecycleSignals.every((signal) => signal.aborted)).toBe(true);
     expect(activationContext.lifetimeSignal.aborted).toBe(false);
@@ -1604,15 +1686,21 @@ describe("server plugin runtime", () => {
     expect(Object.isFrozen(runtime.pairedBackendContributions()[0]?.backend)).toBe(true);
     expect(runtime.healthRecords().find(({ pluginId }) => pluginId === "mutable")).toMatchObject({ pairedRequestVersion: 1, pairedChannelVersion: 1 });
     await expect(Promise.resolve(runtime.pairedBackendContributions()[0]?.backend.request?.({
-      project: { id: "p", name: "P", path: "/p" },
-      workspace: { id: "w", projectId: "p", path: "/p", label: "P", isMain: true },
+      scope: {
+        kind: "workspace",
+        project: { id: "p", name: "P", path: "/p" },
+        workspace: { id: "w", projectId: "p", path: "/p", label: "P", isMain: true },
+      },
       operation: "status",
       input: null,
       signal: new AbortController().signal,
     }))).resolves.toEqual({ captured: true });
     const channel = await runtime.pairedBackendContributions()[0]?.backend.openChannel?.({
-      project: { id: "p", name: "P", path: "/p" },
-      workspace: { id: "w", projectId: "p", path: "/p", label: "P", isMain: true },
+      scope: {
+        kind: "workspace",
+        project: { id: "p", name: "P", path: "/p" },
+        workspace: { id: "w", projectId: "p", path: "/p", label: "P", isMain: true },
+      },
       operation: "attach",
       input: null,
       signal: new AbortController().signal,

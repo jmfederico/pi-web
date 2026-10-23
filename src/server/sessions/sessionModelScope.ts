@@ -1,4 +1,4 @@
-import { modelsAreEqual } from "@earendil-works/pi-ai";
+import { modelsAreEqual } from "../../piAi.js";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
   resolveModelScopeWithDiagnostics,
@@ -7,7 +7,7 @@ import {
   type ModelRuntime,
   type ScopedModel,
   type SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "../../piSdk.js";
 
 type SessionModel = NonNullable<ExtensionContext["model"]>;
 

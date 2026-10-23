@@ -97,10 +97,12 @@ describe("PiSessionService.detachParent summary memo", () => {
     const parentPath = join(sessionDir, "parent.jsonl");
     await writeFile(parentPath, `${JSON.stringify({ type: "session", version: 3, id: "parent", timestamp: "2026-01-01T00:00:00.000Z", cwd: LISTING_CWD })}\n`, "utf8");
     const childPath = join(sessionDir, "child.jsonl");
+    await writeFile(parentPath, `${JSON.stringify({ type: "session", version: 3, id: "parent", timestamp: "2026-01-01T00:00:00.000Z", cwd: LISTING_CWD })}\n${JSON.stringify({ type: "custom", customType: "pi-web.subsession.link", data: { spawnedBySessionId: "parent", spawnedSessionId: "child", spawnedSessionFile: childPath } })}\n`, "utf8");
     const message = (id: string, role: string, text: string) =>
       JSON.stringify({ type: "message", id, parentId: "root", timestamp: "2026-01-01T00:01:00.000Z", message: { role, content: [{ type: "text", text }] } });
     await writeFile(childPath, [
       JSON.stringify({ type: "session", version: 3, id: "child", timestamp: "2026-01-01T00:00:00.000Z", cwd: LISTING_CWD, parentSession: parentPath }),
+      JSON.stringify({ type: "custom", customType: "pi-web.subsession.spawned", data: { spawnedBySessionId: "parent", spawnedSessionId: "child" } }),
       message("m1", "user", "hello"),
       message("m2", "assistant", "hi there"),
     ].join("\n") + "\n", "utf8");
@@ -130,7 +132,7 @@ describe("PiSessionService.detachParent summary memo", () => {
     });
 
     const before = await service.list(LISTING_CWD);
-    expect(before.find((session) => session.id === "child")).toMatchObject({ id: "child", messageCount: 2, parentSessionPath: parentPath });
+    expect(before.find((session) => session.id === "child")).toMatchObject({ id: "child", messageCount: 2, parentSessionPath: parentPath, agentSubsession: true });
 
     await service.detachParent(sessionRef("child", LISTING_CWD));
 
@@ -142,6 +144,7 @@ describe("PiSessionService.detachParent summary memo", () => {
     const detached = after.find((session) => session.id === "child");
     expect(detached).toMatchObject({ id: "child", messageCount: 2 });
     expect(detached).not.toHaveProperty("parentSessionPath");
+    expect(detached).not.toHaveProperty("agentSubsession");
     await service.dispose();
   });
 });

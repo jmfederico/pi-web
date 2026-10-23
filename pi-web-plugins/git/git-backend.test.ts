@@ -11,9 +11,9 @@ import { gitDiff as requestGitDiff, gitStatus as requestGitStatus } from "./git-
 // Isolate from any global/system git config and force a deterministic identity;
 // `protocol.file.allow` is required for `submodule add` from a local path.
 const GIT_FLAGS = ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "protocol.file.allow=always", "-c", "commit.gpgsign=false"];
-// Strip all GIT_* variables (e.g. GIT_DIR/GIT_INDEX_FILE, set by git hooks such
-// as this repo's pre-commit verify run) so fixture commands never pick up an
-// outer repository's environment, then pin the handful we rely on.
+// Strip all GIT_* variables inherited from enclosing Git commands or hooks
+// so fixture commands never pick up an outer repository's environment,
+// then pin the handful we rely on.
 const GIT_ENV = Object.fromEntries([
   ...Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
   ["GIT_CONFIG_GLOBAL", "/dev/null"],
@@ -128,6 +128,31 @@ describe("Git changes backend", { timeout: FIXTURE_TEST_TIMEOUT_MS }, () => {
     expect(staged.diff).not.toContain("+unstaged");
     expect(unstaged.diff).toContain("+unstaged");
     expect(untracked.diff).toContain("+new");
+  });
+
+  it("shows the enclosing repository from a subdirectory, with repository-relative diffs", async () => {
+    const { dir } = createFixture();
+    const cwd = join(dir, "folder with spaces");
+    mkdirSync(cwd);
+    writeFileSync(join(cwd, "inside.txt"), "inside\n");
+    git(dir, ["add", "folder with spaces/inside.txt"]);
+    git(dir, ["commit", "-m", "add project directory"]);
+    writeFileSync(join(cwd, "inside.txt"), "inside changed\n");
+    writeFileSync(join(dir, "root.txt"), "outside staged\n");
+    git(dir, ["add", "root.txt"]);
+    writeFileSync(join(dir, "root.txt"), "outside unstaged\n");
+    writeFileSync(join(dir, "new.txt"), "outside untracked\n");
+    writeFileSync(join(dir, "HARL", "a.txt"), "submodule changed\n");
+
+    expect(await gitStatus(cwd)).toEqual(await gitStatus(dir));
+    expect((await gitStatus(cwd)).files.map(({ path }) => path)).toEqual(expect.arrayContaining([
+      "folder with spaces/inside.txt", "root.txt", "new.txt", "HARL/a.txt",
+    ]));
+    for (const options of [{}, { path: "root.txt", staged: true }, { path: "root.txt" }, { path: "new.txt" }, { path: "HARL/a.txt" }]) {
+      const diff = await gitDiff(cwd, options);
+      expect(diff).toEqual(await gitDiff(dir, options));
+      expect(diff.diff).not.toBe("");
+    }
   });
 
   it("rejects absolute and traversing diff paths before invoking Git", async () => {
@@ -378,6 +403,10 @@ async function mappedSubmoduleStatus(fixture: { top: string; gitlink?: string; i
     cwd: dir,
     args: ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"],
     stdout: fixture.top,
+  }, {
+    cwd: dir,
+    args: ["rev-parse", "--show-toplevel"],
+    stdout: `${dir}\n`,
   }];
   if (fixture.gitlink !== undefined) {
     mkdirSync(join(dir, path));

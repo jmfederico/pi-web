@@ -1,4 +1,4 @@
-import type { ContentRenderingCapability, PluginCapability, PiWebPlugin, PluginActivationContext, PluginActivationResult } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, ContentRenderingCapability, PluginCapability, PiWebPlugin, PluginActivationContext, PluginActivationResult } from "@jmfederico/pi-web/plugin-api";
 import { FilesCodeViewer } from "./FilesCodeViewer";
 import { WorkspaceFilesPanel } from "./FilesPanel";
 import { FilesRuntime } from "./FilesRuntime";
@@ -31,8 +31,25 @@ function isContentRenderingCapability(value: unknown): value is ContentRendering
     && "renderMarkdown" in value && typeof value.renderMarkdown === "function";
 }
 
+const stylesheetIntegrationCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> = {
+  pluginId: "pi-web", id: "stylesheet-integration", version: 1,
+  parse(value) {
+    if (!isStylesheetIntegration(value)) {
+      throw new Error("Stylesheet integration capability v1 requires registerRoot and createController");
+    }
+    return value;
+  },
+};
+
+function isStylesheetIntegration(value: unknown): value is StylesheetIntegrationCapabilityV1 {
+  return typeof value === "object" && value !== null
+    && "registerRoot" in value && typeof value.registerRoot === "function"
+    && "createController" in value && typeof value.createController === "function"
+    && "subscribe" in value && typeof value.subscribe === "function";
+}
+
 const plugin = {
-  requires: [contentRenderingCapability],
+  requires: [stylesheetIntegrationCapability, contentRenderingCapability],
   apiVersion: 4,
   name: "Files",
   activate: (context) => activateFilesPlugin(context, new FilesRuntime()),
@@ -43,6 +60,7 @@ export default plugin;
 export function activateFilesPlugin(context: PluginActivationContext, filesRuntime: FilesRuntime): PluginActivationResult {
   defineFilesCustomElements();
   let contentRendering: ContentRenderingCapability | undefined;
+  let stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined;
   const panelId = `${context.runtimePluginId}:workspace.files`;
   const icon = context.svg`
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
@@ -50,19 +68,20 @@ export function activateFilesPlugin(context: PluginActivationContext, filesRunti
     </svg>
   `;
   return {
-    start: ({ capabilities }) => { contentRendering = capabilities.resolve(contentRenderingCapability); },
+    start: ({ capabilities }) => {
+      contentRendering = capabilities.resolve(contentRenderingCapability);
+      stylesheetIntegration = capabilities.resolve(stylesheetIntegrationCapability);
+    },
     contributions: {
       workspacePanels: [{
         id: "workspace.files",
         title: "Files",
         icon,
         order: 10,
-        routeAliases: ["files", "core:workspace.files"],
-        navigationAliases: ["core:workspace.files"],
         invalidationResources: ["workspace.files"],
         fileOpenQuery: (_workspaceContext, path) => ({ file: path }),
         onInvalidate: (workspaceContext, invalidation) => filesRuntime.invalidate(workspaceContext, invalidation),
-        render: (workspaceContext) => context.html`<pi-web-files-panel .context=${workspaceContext} .runtime=${filesRuntime} .contentRendering=${contentRendering}></pi-web-files-panel>`,
+        render: (workspaceContext) => context.html`<pi-web-files-panel .stylesheetIntegration=${stylesheetIntegration} .context=${workspaceContext} .runtime=${filesRuntime} .contentRendering=${contentRendering}></pi-web-files-panel>`,
       }],
       actions: [
         {

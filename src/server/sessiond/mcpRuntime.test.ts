@@ -24,7 +24,7 @@ describe("daemon MCP assembly", () => {
       registerSessionDaemonMcpRoutes(app, {
         agentDir,
         projects: { requireProject: (id) => id === project.id ? Promise.resolve(project) : Promise.reject(new Error("Project not found")) },
-        workspaces: { resolve: () => Promise.resolve<WorkspaceProviderAuthorityResolution>({
+        workspaces: { reconcileProject: () => Promise.resolve(), resolve: () => Promise.resolve<WorkspaceProviderAuthorityResolution>({
           status: "folder", projectId: project.id, diagnostics: [],
           workspaces: exists ? [{ id: "w1", projectId: project.id, label: "Workspace", path: workspaceRoot, isMain: true }] : [],
         }) },

@@ -1,14 +1,37 @@
-import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, PiWebPlugin, PluginCapability } from "@jmfederico/pi-web/plugin-api";
 import { RELAYS_ROOT } from "./relayDiscovery.js";
-import { defineRelaysPanelElement } from "./relaysPanelElement.js";
+import { relayIdentityFromMetadata } from "./relayIdentity.js";
+import { defineRelaysPanelElement, RELAY_SELECTION_QUERY_KEY } from "./relaysPanelElement.js";
+
+const stylesheetIntegrationCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> = {
+  pluginId: "pi-web", id: "stylesheet-integration", version: 1,
+  parse(value) {
+    if (!isStylesheetIntegration(value)) {
+      throw new Error("Stylesheet integration capability v1 requires registerRoot and createController");
+    }
+    return value;
+  },
+};
+
+function isStylesheetIntegration(value: unknown): value is StylesheetIntegrationCapabilityV1 {
+  return typeof value === "object" && value !== null
+    && "registerRoot" in value && typeof value.registerRoot === "function"
+    && "createController" in value && typeof value.createController === "function"
+    && "subscribe" in value && typeof value.subscribe === "function";
+}
 
 const plugin = {
   apiVersion: 4,
   name: "Relays",
+  requires: [stylesheetIntegrationCapability],
   activate: ({ runtimePluginId, html, svg }) => {
     defineRelaysPanelElement();
+    let stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined;
 
     return {
+      start: ({ capabilities }) => {
+        stylesheetIntegration = capabilities.resolve(stylesheetIntegrationCapability);
+      },
       contributions: {
         actions: [
           {
@@ -20,6 +43,34 @@ const plugin = {
             run: (context) => {
               if (context.state.selectedWorkspace === undefined) return;
               context.selectWorkspaceTool(`${runtimePluginId}:workspace.relays`);
+            },
+          },
+        ],
+        sessionLabels: [
+          {
+            id: "session.relay",
+            items: (context) => {
+              const identity = relayIdentityFromMetadata(context.session.metadata);
+              if (identity === undefined) return [];
+              return [{
+                type: "render",
+                render: () => html`
+                  <button
+                    type="button"
+                    style="border:0; padding:0; background:transparent; color:var(--pi-accent); font:inherit; text-align:start; overflow-wrap:anywhere; cursor:pointer"
+                    title=${identity.packetPath}
+                    aria-label=${`Open Relay ${identity.relayName}, leg ${identity.leg}`}
+                    @click=${() => context.navigate({
+                      machineId: context.machine.id,
+                      projectId: context.workspace.projectId,
+                      workspaceId: context.workspace.id,
+                      view: "workspace",
+                      tool: `${runtimePluginId}:workspace.relays`,
+                      query: { [RELAY_SELECTION_QUERY_KEY]: identity.packetPath },
+                    }, { mode: "patch" })}
+                  >relay</button>
+                `,
+              }];
             },
           },
         ],
@@ -35,7 +86,7 @@ const plugin = {
               </svg>
             `,
             order: 50,
-            render: (context) => html`<pi-web-relays-panel .context=${context}></pi-web-relays-panel>`,
+            render: (context) => html`<pi-web-relays-panel .stylesheetIntegration=${stylesheetIntegration} .context=${context}></pi-web-relays-panel>`,
           },
         ],
       },

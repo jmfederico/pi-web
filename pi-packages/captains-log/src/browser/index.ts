@@ -1,7 +1,24 @@
-import type { PiWebPlugin, WorkspacePanelContext, PluginPeerChannel } from "@jmfederico/pi-web/plugin-api";
+import type { PiWebPlugin, WorkspacePanelContext, PluginPeerChannel, PluginCapability, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import { isLogEntry, MAX_FINDINGS, type LogEntry } from "./protocol.js";
 import { renderCaptainPanel, selectedSourceSession } from "./panel.js";
 import { LOG_CHANNEL, isCaptainServerFrame, type CaptainClientFrame } from "./channelProtocol.js";
+
+const stylesheetIntegrationCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> = {
+  pluginId: "pi-web", id: "stylesheet-integration", version: 1,
+  parse(value) {
+    if (!isStylesheetIntegration(value)) {
+      throw new Error("Invalid PI WEB stylesheet integration capability v1");
+    }
+    return value;
+  },
+};
+
+function isStylesheetIntegration(value: unknown): value is StylesheetIntegrationCapabilityV1 {
+  return typeof value === "object" && value !== null
+    && "registerRoot" in value && typeof value.registerRoot === "function"
+    && "subscribe" in value && typeof value.subscribe === "function"
+    && "createController" in value && typeof value.createController === "function";
+}
 
 interface PanelState {
   entries: LogEntry[]; selected?: LogEntry; status: string;
@@ -9,22 +26,46 @@ interface PanelState {
   connecting: boolean; channel?: PluginPeerChannel; controller?: AbortController;
   pending?: string; revision: number; readRevision: number; updates: Map<string, LogEntry>;
 }
-const plugin: PiWebPlugin = {
+const plugin: Extract<PiWebPlugin, { apiVersion: 4 }> = {
   apiVersion: 4,
   name: "Captain's Log",
+  requires: [stylesheetIntegrationCapability],
   activate({ html, runtimePluginId, lifetimeSignal }) {
+    let stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined;
     if (!customElements.get("captains-log-lifetime")) {
       customElements.define("captains-log-lifetime", class extends HTMLElement {
         mount?: () => void;
         unmount?: () => void;
         private currentScope: unknown;
+        private integration: StylesheetIntegrationCapabilityV1 | undefined;
+        private releaseStyles: (() => void) | undefined;
+        set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+          if (this.integration === value) return;
+          this.releaseStyles?.();
+          this.releaseStyles = undefined;
+          this.integration = value;
+          this.registerStyles();
+        }
+        private registerStyles() {
+          if (!this.isConnected || this.releaseStyles !== undefined) return;
+          const root = this.getRootNode();
+          // Reuse the host panel root without creating another rendering boundary.
+          if (root instanceof ShadowRoot) this.releaseStyles = this.integration?.registerRoot(root, { sharedUi: true });
+        }
         set scope(value: unknown) {
           if (value === this.currentScope) return;
           this.currentScope = value;
           if (this.isConnected) queueMicrotask(() => { if (this.isConnected) this.mount?.(); });
         }
-        connectedCallback() { queueMicrotask(() => { if (this.isConnected) this.mount?.(); }); }
-        disconnectedCallback() { this.unmount?.(); }
+        connectedCallback() {
+          this.registerStyles();
+          queueMicrotask(() => { if (this.isConnected) this.mount?.(); });
+        }
+        disconnectedCallback() {
+          this.releaseStyles?.();
+          this.releaseStyles = undefined;
+          this.unmount?.();
+        }
       });
     }
     const states = new Map<string, PanelState>();
@@ -159,6 +200,9 @@ const plugin: PiWebPlugin = {
       context.host.requestRender();
     }
     return {
+      start({ capabilities }) {
+        stylesheetIntegration = capabilities.resolve(stylesheetIntegrationCapability);
+      },
       contributions: {
         actions: [{
           id: "summon", title: "Open pirate translator", group: "Captain's Log",
@@ -170,7 +214,7 @@ const plugin: PiWebPlugin = {
           render(context) {
             const state = stateFor(context);
             const source = selectedSourceSession(context);
-            return html`<captains-log-lifetime .mount=${() => { void connect(context, state); }} .unmount=${() => { stop(state); }} .scope=${state}>
+            return html`<captains-log-lifetime .stylesheetIntegration=${stylesheetIntegration} .mount=${() => { void connect(context, state); }} .unmount=${() => { stop(state); }} .scope=${state}>
               ${renderCaptainPanel(html, {
                 ...state,
                 connected: state.channel !== undefined && context.peer?.openChannel !== undefined,

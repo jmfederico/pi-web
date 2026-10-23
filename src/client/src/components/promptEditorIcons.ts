@@ -5,6 +5,25 @@ import type { ThinkingGauge } from "../../../shared/thinkingLevels";
 // (viewBox 0 0 24 24, fill none, stroke currentColor, round caps/joins).
 // See tabIcons.ts for the established convention.
 
+export function renderPhotosIcon(): TemplateResult {
+  return svg`
+    <svg class="prompt-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="2.5"></rect>
+      <circle cx="9" cy="9" r="1.6"></circle>
+      <path d="m20.5 15.5-4.5-4.5L5.5 20.5"></path>
+    </svg>
+  `;
+}
+
+export function renderCameraIcon(): TemplateResult {
+  return svg`
+    <svg class="prompt-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9.5a2 2 0 0 1 2-2h3.4l2-3h5.2l2 3H20a2 2 0 0 1 2 2Z"></path>
+      <circle cx="12" cy="13.5" r="3.6"></circle>
+    </svg>
+  `;
+}
+
 export function renderAttachIcon(): TemplateResult {
   return svg`
     <svg class="prompt-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">

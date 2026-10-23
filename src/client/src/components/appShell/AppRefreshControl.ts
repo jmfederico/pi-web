@@ -1,8 +1,14 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 
 @customElement("app-refresh-control")
 export class AppRefreshControl extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) onReload?: () => void;
 
   override render() {
@@ -34,9 +40,11 @@ export class AppRefreshControl extends LitElement {
   };
 
   static override styles = css`
-    :host { position: relative; z-index: 1; display: flex; align-items: center; pointer-events: auto; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+    :host { position: relative; z-index: 1; display: flex; align-items: stretch; min-height: 44px; pointer-events: auto; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
     :host, :host * { -webkit-user-select: none; user-select: none; }
-    .app-refresh-button { box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-surface); color: var(--pi-text); padding: 0; line-height: 1; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; }
+    .app-refresh-button { box-sizing: border-box; width: 44px; min-height: 44px; height: 100%; align-self: stretch; display: grid; place-items: center; border: 0; border-radius: 0; background: transparent; color: var(--pi-text); padding: 0; line-height: 1; cursor: pointer; touch-action: manipulation; -webkit-touch-callout: none; }
+    .app-refresh-button:hover { background: var(--pi-surface-hover); }
+    .app-refresh-button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
     .app-refresh-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   `;
 }

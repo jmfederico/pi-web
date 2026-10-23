@@ -3,10 +3,11 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DefaultResourceLoader, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Window } from "happy-dom";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES, PI_WEB_PLUGIN_ARTIFACT_MAX_ENTRIES } from "../src/server/piWebPluginCatalog.js";
+import { PiWebPluginCatalog, PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES, PI_WEB_PLUGIN_ARTIFACT_MAX_ENTRIES } from "../src/server/piWebPluginCatalog.js";
 import { PluginRegistry } from "../src/client/src/plugins/registry.js";
 
 // Delivery-only: run after npm run build. Never build or mutate checkout artifacts here.
@@ -53,7 +54,7 @@ describe("plugin delivery artifacts", () => {
       if (!isRecord(imported)) throw new Error(`Built server plugin did not import as a module: ${plugin.id}`);
       const pluginExport = imported["default"];
       if (!isRecord(pluginExport)) throw new Error(`Built server plugin has no default object export: ${plugin.id}`);
-      expect(pluginExport["apiVersion"]).toBe(3);
+      expect(pluginExport["apiVersion"]).toBe(plugin.id === "pi-web.terminal" ? 5 : 3);
       expect(typeof pluginExport["activate"]).toBe("function");
     }
     // npm 10 can still execute prepare with --ignore-scripts. Pack a copy of
@@ -74,10 +75,12 @@ describe("plugin delivery artifacts", () => {
     expect(packagedFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles).toEqual(expect.arrayContaining([
       "dist/cli.js", "dist/server/app.js", "dist/server/index.js", "dist/server/sessiond.js",
+      "dist/bin/pi-web.sh", "dist/bin/pi-web-server.sh", "dist/bin/pi-web-sessiond.sh", "dist/runtimePreflight.js",
       "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/server-plugin-api.js",
-      "dist/shared/pluginApiTypes.d.ts",
+      "dist/shared/pluginApiTypes.d.ts", "dist/shared/pluginCatalogTypes.d.ts", "dist/shared/pluginCatalogTypes.js",
       "plugin-api.d.ts", "server-plugin-api.d.ts", "dist/client/index.html",
       "examples/session-bridge-plugin/package.json",
+      "dist/pi-web-plugins/git/workspace-discovery-notify.cjs",
     ]));
     expect(packagedFiles.some((path) => path.includes("/node_modules/") || /^examples\/[^/]+\/dist\//u.test(path))).toBe(false);
     expect(packagedFiles).not.toContain("dist/plugin-api/unstable.d.ts");
@@ -106,12 +109,101 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/prompts/relay-worktree.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
+    expect(builtPackageFiles).toEqual(expect.arrayContaining([
+      "dist/pi-packages/workflows/package.json",
+      "dist/pi-packages/workflows/browser/pi-web-plugin.js",
+      "dist/pi-packages/workflows/browser/worktreeDialog.js",
+      "dist/pi-packages/workflows/server-plugin.js",
+      "dist/pi-packages/workflows/prompts/worktree.md",
+    ]));
+    // Check the materialized build output, not words in agent instructions.
+    for (const name of ["relay", "relay-runner"]) {
+      const canonical = await readFile(join(repoRoot, "skills", name, "SKILL.md"), "utf8");
+      const packaged = await readFile(join(builtPackagesRoot, "relays", "skills", name, "SKILL.md"), "utf8");
+      expect(packaged).toBe(canonical);
+    }
     expect(builtPackageFiles.some((path) => /\.(?:test|spec)\./u.test(path))).toBe(false);
     expect(packagedFiles.filter((path) => path.startsWith("dist/pi-packages/")).sort()).toEqual(builtPackageFiles);
     const builtRelaysPackage = JSON.parse(await readFile(join(builtPackagesRoot, "relays", "package.json"), "utf8"));
     if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
     expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
   });
+  it("ships a standalone Git notification helper that fails open", async () => {
+    const helperName = "workspace-discovery-notify.cjs";
+    const builtHelper = join(repoRoot, "dist", "pi-web-plugins", "git", helperName);
+    // Run outside the plugin tree to catch accidental checkout/runtime dependencies.
+    const helper = join(tempDir, helperName);
+    await cp(builtHelper, helper);
+    const marker = join(tempDir, "notification-attempted");
+    const failingCommand = [process.execPath, "-e", 'require("node:fs").writeFileSync(process.argv[1], "attempted"); process.exit(17);', marker];
+    const checkoutArgs = ["0".repeat(40), "2".repeat(40), "1"];
+    await expect(execUtf8(process.execPath, [helper, JSON.stringify(failingCommand), ...checkoutArgs], tempDir, 5_000)).resolves.toBe("");
+    expect(await readFile(marker, "utf8")).toBe("attempted");
+    await expect(execUtf8(process.execPath, [helper, JSON.stringify([join(tempDir, "missing-notification-command")]), ...checkoutArgs], tempDir, 5_000)).resolves.toBe("");
+  });
+
+  it("ships default-enabled Workflows web integration and loadable prompt resources", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "workflows");
+    const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    expect(metadata).toMatchObject({ name: "@jmfederico/pi-web-workflows", pi: { prompts: ["./prompts"] } });
+    const promptPath = join(source, "prompts", "worktree.md");
+    expect(await readFile(promptPath, "utf8")).toBe(await readFile(join(repoRoot, "pi-packages", "workflows", "prompts", "worktree.md"), "utf8"));
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [source] }),
+      noExtensions: true, noSkills: true, noThemes: true,
+    });
+    await loader.reload();
+    expect(loader.getPrompts().diagnostics).toEqual([]);
+    expect(loader.getPrompts().prompts).toEqual([expect.objectContaining({
+      name: "worktree", argumentHint: "Purpose and/or base branch", filePath: promptPath,
+    })]);
+
+    let enabled;
+    const catalog = new PiWebPluginCatalog({
+      roots: [],
+      packageProvider: {
+        listPackages: () => [{ source, installedPath: source, scope: "user" }],
+        getInstalledPath: () => source,
+      },
+      configProvider: () => enabled === undefined ? {} : { plugins: { workflows: { enabled } } },
+    });
+    const snapshot = await catalog.snapshot();
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(snapshot.plugins).toEqual([expect.objectContaining({
+      id: "workflows", enabled: true, defaultEnabled: true, machineSpecific: true,
+      browserRoot: expect.objectContaining({ path: "browser" }),
+    })]);
+    const browserModule = snapshot.plugins[0].browserModule.filePath;
+    expect(moduleSpecifiers(await readFile(browserModule, "utf8"))).toEqual(["./worktreeDialog.js"]);
+    expect((await import(pathToFileURL(browserModule).href)).default).toMatchObject({ name: "Workflows", apiVersion: 5 });
+    const serverModule = join(source, metadata.piWeb.plugins[0].serverModule);
+    expect(moduleSpecifiers(await readFile(serverModule, "utf8"))).toEqual([]);
+    expect((await import(pathToFileURL(serverModule).href)).default).toMatchObject({ name: "Workflows", apiVersion: 5 });
+    enabled = false;
+    expect((await catalog.snapshot()).plugins[0].enabled).toBe(false);
+    // Disabling web contributions leaves Pi prompt resources installed.
+    await loader.reload();
+    expect(loader.getPrompts().prompts.map(({ name }) => name)).toEqual(["worktree"]);
+  });
+
+  it("ships Code highlighting as a self-contained, enabled portable browser plugin", async () => {
+    const target = join(repoRoot, "dist/pi-web-plugins/code-highlight");
+    expect(await recursiveFiles(target)).toEqual(["browser/pi-web-plugin.js", "package.json"]);
+    const entry = await readFile(join(target, "browser/pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(entry)).toEqual([]);
+    expect(Buffer.byteLength(entry)).toBeLessThan(PI_WEB_PLUGIN_ARTIFACT_MAX_BYTES);
+    const catalog = new PiWebPluginCatalog({
+      roots: [{ path: join(repoRoot, "dist/pi-web-plugins"), source: "bundled", scope: "bundled" }],
+      packageProvider: { listPackages: () => [], getInstalledPath: () => undefined },
+    });
+    const snapshot = await catalog.snapshot();
+    expect(snapshot.diagnostics).toEqual([]);
+    expect(snapshot.plugins).toContainEqual(expect.objectContaining({
+      id: "code-highlight", enabled: true, machineSpecific: false,
+    }));
+  });
+
   describe("Mermaid browser package build", () => {
     it("ships a self-contained sandbox engine and browser entry within artifact limits", { timeout: 60_000 }, async () => {
       const target = join(repoRoot, "dist/pi-web-plugins/mermaid");

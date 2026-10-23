@@ -4,9 +4,19 @@ import {
   gatewayServerDraftFromConfig,
   machineAccessConfigPatchFromDraft,
   machineAccessDraftFromConfig,
+  reconcileConfigDraft,
 } from "./settingsConfigDraft";
 
 describe("settings config drafts", () => {
+  it("rebases untouched fields and leaves dirty fields intact without mutating snapshots", () => {
+    const previous = { host: "old.local", port: "8504" };
+    const draft = { host: "draft.local", port: "8504" };
+    const incoming = { host: "new.local", port: "9000" };
+    expect(reconcileConfigDraft(draft, previous, incoming)).toEqual({ host: "draft.local", port: "9000" });
+    expect(incoming).toEqual({ host: "new.local", port: "9000" });
+    expect(draft).toEqual({ host: "draft.local", port: "8504" });
+  });
+
   it("splits gateway server and selected-machine access drafts", () => {
     const config = {
       host: "0.0.0.0",
@@ -68,6 +78,17 @@ describe("settings config drafts", () => {
       allowedHostsMode: "list",
       allowedHostsText: "example.local, 192.168.1.20\n",
     })).toEqual({ allowedHosts: ["example.local", "192.168.1.20"] });
+  });
+
+  it("preserves the default theme when saving gateway fields", () => {
+    const defaultTheme = { themeId: "themes:pi-web-light", auto: false };
+    expect(gatewayServerConfigFromDraft(gatewayServerDraftFromConfig({}), { defaultTheme }).defaultTheme).toEqual(defaultTheme);
+  });
+
+  it.each(["steer", "followUp"] as const)("preserves defaultStreamingBehavior %s during gateway edits", (defaultStreamingBehavior) => {
+    const draft = gatewayServerDraftFromConfig({ host: "gateway.local" });
+    expect(gatewayServerConfigFromDraft(draft, { defaultStreamingBehavior }).defaultStreamingBehavior).toBe(defaultStreamingBehavior);
+    expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty("defaultStreamingBehavior");
   });
 
   it("builds selected-machine access/upload patches only from selected-machine-safe fields", () => {

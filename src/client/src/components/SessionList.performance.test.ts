@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionInfo } from "../api";
 import * as sessionPaths from "../sessionPaths";
+import { installPopoverFake } from "./anchoredPopup.testSupport";
+installPopoverFake();
 import { SessionList } from "./SessionList";
 
 afterEach(() => {
@@ -83,7 +85,7 @@ describe("SessionList row identity and derived data", () => {
 
     button(row(list, "parent"), ".action-menu-toggle").click();
     await list.updateComplete;
-    expect(row(list, "parent").textContent).toContain("Archive with descendants (1)");
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")?.textContent).toContain("Archive with descendants (1)");
     list.unreadSessionIds = new Set([child.id]);
     list.sending = { child: true };
     list.activities = {};
@@ -103,10 +105,46 @@ describe("SessionList row identity and derived data", () => {
     expect(list.shadowRoot?.querySelectorAll(".action-row")).toHaveLength(1);
     button(row(list, "parent"), ".action-menu-toggle").click();
     await list.updateComplete;
-    expect(row(list, "parent").textContent).not.toContain("Archive with descendants");
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")?.textContent ?? "").not.toContain("Archive with descendants");
     button(list.shadowRoot, ".subheading .section-toggle").click();
     await list.updateComplete;
     expect(row(list, "child").style.getPropertyValue("--depth")).toBe("0");
+  });
+
+  it("reuses hidden-agent attention across unrelated UI updates and invalidates on signal changes", async () => {
+    const parent = session("parent");
+    const agent = session("agent", { parentSessionPath: parent.path, agentSubsession: true });
+    const list = await mount([parent, agent]);
+    const readAgentActivity = vi.fn(() => ({ sessionId: agent.id, phase: "active" as const, label: "Working", at: "now" }));
+    list.activities = { get agent() { return readAgentActivity(); } };
+    await list.updateComplete;
+    const toggle = () => button(list.shadowRoot, ".agent-subsession-toggle");
+    expect(toggle().querySelector(".activity-indicator.session")).not.toBeNull();
+    expect(readAgentActivity).toHaveBeenCalledOnce();
+    readAgentActivity.mockClear();
+
+    button(row(list, "parent"), ".action-menu-toggle").click();
+    await list.updateComplete;
+    list.startingCount = 1;
+    await list.updateComplete;
+    list.collapsed = true;
+    await list.updateComplete;
+    list.collapsed = false;
+    await list.updateComplete;
+    expect(readAgentActivity).not.toHaveBeenCalled();
+
+    list.statuses = {};
+    await list.updateComplete;
+    expect(readAgentActivity).toHaveBeenCalledOnce();
+    list.sending = { agent: true };
+    await list.updateComplete;
+    expect(toggle().querySelector(".activity-indicator.sending")).not.toBeNull();
+    list.unreadSessionIds = new Set([agent.id]);
+    await list.updateComplete;
+    expect(toggle().querySelector(".unread-ring")).not.toBeNull();
+    list.sessions = [parent];
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".agent-subsession-toggle")).toBeNull();
   });
 
   it("defers descendant work until expansion and uses the latest collapsed sessions", async () => {
@@ -127,6 +165,6 @@ describe("SessionList row identity and derived data", () => {
     expect(row(list, "child").style.getPropertyValue("--depth")).toBe("1");
     button(row(list, "parent"), ".action-menu-toggle").click();
     await list.updateComplete;
-    expect(row(list, "parent").textContent).toContain("Archive with descendants (1)");
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")?.textContent).toContain("Archive with descendants (1)");
   });
 });

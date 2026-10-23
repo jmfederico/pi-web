@@ -16,6 +16,9 @@ import {
   serializePluginBackendChannelDataEnvelope,
   serializePluginBackendChannelOpenEnvelope,
   utf8ByteLength,
+  pairedPluginBackendPath,
+  pluginBackendScopeFromRoute,
+  type PluginBackendScopeKind,
 } from "../../../shared/pluginBackendProtocol";
 import { resolveAppUrl, resolveAppWebSocketUrl, type AppUrlContext } from "../appUrl";
 
@@ -23,8 +26,9 @@ export interface PluginBackendRequestTarget {
   pluginId: string;
   backendRevision: string;
   machineId: string;
-  projectId: string;
-  workspaceId: string;
+  scope?: PluginBackendScopeKind;
+  projectId?: string;
+  workspaceId?: string;
 }
 
 export interface PluginBackendRequestOptions {
@@ -51,7 +55,7 @@ export interface PluginBackendChannel {
 
 export type PluginBackendWebSocketFactory = (url: string) => WebSocket;
 
-type PluginBackendPathTarget = Pick<PluginBackendRequestTarget, "pluginId" | "machineId" | "projectId" | "workspaceId">;
+type PluginBackendPathTarget = Pick<PluginBackendRequestTarget, "pluginId" | "machineId" | "projectId" | "workspaceId" | "scope">;
 type PluginBackendRequestUrlBuilder = (target: PluginBackendPathTarget, operation: string) => string;
 
 export function pairedPluginBackendRequestPath(target: PluginBackendPathTarget, operation: string): string {
@@ -99,7 +103,7 @@ export function openPairedPluginBackendChannel(
   socketFactory: PluginBackendWebSocketFactory = (url) => new WebSocket(url),
 ): Promise<PluginBackendChannel> {
   if (options.signal?.aborted === true) return Promise.reject(abortError(options.signal));
-  const openFrame = serializePluginBackendChannelOpenEnvelope(target.backendRevision, input);
+  const openFrame = serializePluginBackendChannelOpenEnvelope(target.backendRevision, input, wireScope(target));
   const url = pairedPluginBackendChannelUrl(target, operation);
   let socket: WebSocket;
   try {
@@ -226,11 +230,22 @@ function scopedPluginBackendRequestPath(
   if (target.machineId === "") throw new Error("Machine id is required");
   if (target.projectId === "") throw new Error("Project id is required");
   if (target.workspaceId === "") throw new Error("Workspace id is required");
+  if (target.workspaceId !== undefined && target.projectId === undefined) throw new Error("Workspace scope requires a project id");
+  pluginBackendScopeFromRoute(target, wireScope(target));
   const validatedOperation = requirePluginBackendOperation(operation);
   const prefix = target.machineId === "local"
     ? "api"
     : `api/machines/${encodeURIComponent(target.machineId)}`;
-  return `${prefix}/paired-plugin-backends/${encodeURIComponent(target.pluginId)}/projects/${encodeURIComponent(target.projectId)}/workspaces/${encodeURIComponent(target.workspaceId)}/${encodeURIComponent(validatedOperation)}`;
+  return `${prefix}${pairedPluginBackendPath({ ...target, operation: validatedOperation })}`;
+}
+
+function wireScope(target: PluginBackendPathTarget) {
+  // Omit the new envelope fields for legacy workspace callers.
+  return target.scope === undefined ? {} : {
+    scope: target.scope,
+    ...(target.projectId === undefined ? {} : { projectId: target.projectId }),
+    ...(target.workspaceId === undefined ? {} : { workspaceId: target.workspaceId }),
+  };
 }
 
 async function requestPluginBackendAt(
@@ -242,7 +257,7 @@ async function requestPluginBackendAt(
 ): Promise<JsonValue> {
   const revision = requirePluginBackendRevision(target.backendRevision);
   const clonedInput = cloneBoundedPluginBackendJson(input, "Plugin backend request input");
-  const body = JSON.stringify({ revision, input: clonedInput });
+  const body = JSON.stringify({ revision, input: clonedInput, ...wireScope(target) });
   if (utf8ByteLength(body) > PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES) {
     throw new Error(`Plugin backend request exceeds the ${String(PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES)} byte wire limit`);
   }

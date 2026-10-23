@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "./ChatView";
+import { ConversationLayout } from "./ConversationLayout";
 
 const frames = new Map<number, FrameRequestCallback>();
 let nextFrame = 0;
@@ -43,12 +44,19 @@ const transitions = {
   sending: (view: ChatView, active: boolean) => { view.isSendingPrompt = active; },
 };
 
-describe.each(Object.entries(transitions))("ChatView activity overlay: %s", (_name, transition) => {
+describe.each(Object.entries(transitions))("Conversation activity boundary: %s", (_name, transition) => {
   it.each([true, false])("toggles visibility without scrolling (at bottom: %s)", async (atBottom) => {
     const view = new ChatView();
     transition(view, false);
-    document.body.append(view);
+    const layout = new ConversationLayout();
+    layout.append(view);
+    const composer = document.createElement("div");
+    composer.slot = "composer";
+    composer.textContent = "Message input";
+    layout.append(composer);
+    document.body.append(layout);
     await view.updateComplete;
+    await layout.updateComplete;
     flushFrame();
     const chat = view.shadowRoot?.querySelector<HTMLElement>(".chat");
     if (!chat) throw new Error("Missing transcript");
@@ -70,9 +78,18 @@ describe.each(Object.entries(transitions))("ChatView activity overlay: %s", (_na
 
     for (const active of [true, false]) {
       transition(view, active);
+      layout.status = view.status;
+      layout.activity = view.activity;
+      layout.sending = view.isSendingPrompt;
       await view.updateComplete;
+      await layout.updateComplete;
       flushFrame();
-      expect(view.shadowRoot?.querySelector(".activity-dock") !== null).toBe(active);
+      const dock = layout.shadowRoot?.querySelector(".activity-dock");
+      expect(dock !== null).toBe(active);
+      expect(view.shadowRoot?.querySelector(".activity-dock")).toBeNull();
+      expect(layout.shadowRoot?.querySelector<HTMLSlotElement>('slot[name="composer"]')?.assignedElements()).toEqual([composer]);
+      expect(view.shadowRoot?.querySelector(".chat-statusbar")).toBeNull();
+      expect(chat.querySelector(".activity-dock, .chat-jumps")).toBeNull();
       expect(scroll).not.toHaveBeenCalled();
     }
   });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Workspace } from "../api";
 import {
   createPluginPeer,
+  createPluginBackend,
   type PluginPeerChannelOpener,
   type PluginPeerRequester,
 } from "./pluginPeer";
@@ -24,6 +25,27 @@ const workspace: Workspace = {
 };
 
 describe("plugin peer", () => {
+  it("captures machine/package scope and cancels retained scoped peers on disposal", async () => {
+    const lifetime = new AbortController();
+    const request = vi.fn<PluginPeerRequester>(() => Promise.resolve(null));
+    const backend = createPluginBackend({ registrationPluginId: "remote.plugin", sourcePluginId: "example.plugin", backendRevision: "r1", pairedRequestVersion: 1 }, "remote", lifetime.signal, request);
+    if (backend === undefined) throw new Error("Expected backend");
+    const machine = backend.forScope({ kind: "machine" });
+    await machine.request?.("list", null);
+    await backend.forScope({ kind: "project", projectId: "p1" }).request?.("list", null);
+    await backend.forScope({ kind: "workspace", projectId: "p1", workspaceId: "w1" }).request?.("list", null);
+    expect(request.mock.calls.map(([target]) => target)).toEqual([
+      { pluginId: "example.plugin", backendRevision: "r1", machineId: "remote", scope: "machine" },
+      { pluginId: "example.plugin", backendRevision: "r1", machineId: "remote", scope: "project", projectId: "p1" },
+      { pluginId: "example.plugin", backendRevision: "r1", machineId: "remote", scope: "workspace", projectId: "p1", workspaceId: "w1" },
+    ]);
+    const signal = request.mock.calls[0]?.[3]?.signal;
+    lifetime.abort();
+    expect(signal?.aborted).toBe(true);
+    expect(() => machine.request?.("list", null)).toThrow();
+    expect(() => backend.forScope({ kind: "machine" })).toThrow();
+    expect(request).toHaveBeenCalledTimes(3);
+  });
   it("binds peer capabilities to the contribution source, revision, workspace, and machine", async () => {
     const request = vi.fn<PluginPeerRequester>(() => Promise.resolve({ files: [] }));
     const openChannel = vi.fn<PluginPeerChannelOpener>(() => Promise.resolve({

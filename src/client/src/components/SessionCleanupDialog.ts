@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionCleanupExecuteResponse, SessionCleanupPreviewResponse, SessionCleanupProjectSummary, SessionCleanupRequest } from "../api";
@@ -6,6 +7,11 @@ import "./ModalSurface";
 
 @customElement("session-cleanup-dialog")
 export class SessionCleanupDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) preview?: SessionCleanupPreviewResponse;
   @property({ attribute: false }) previewRequest?: SessionCleanupRequest;
   @property({ attribute: false }) result?: SessionCleanupExecuteResponse;
@@ -43,6 +49,8 @@ export class SessionCleanupDialog extends LitElement {
           ${this.renderForm(validation.ok ? "" : validation.error)}
           ${this.renderMessage()}
           ${this.preview === undefined ? null : this.renderPreview(this.preview)}
+        </div>
+        <div class="feedback" role="status" aria-atomic="true">
           ${this.result === undefined ? null : this.renderResult(this.result)}
         </div>
         <footer>
@@ -205,9 +213,9 @@ export class SessionCleanupDialog extends LitElement {
   }
 
   static override styles = css`
-    :host { position: fixed; inset: 0; z-index: 30; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    :host { position: fixed; inset: 0; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
     modal-surface { --modal-surface-backdrop-padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); --modal-surface-width: min(760px, 100%); --modal-surface-max-height: min(760px, 100%); --modal-surface-radius: 14px; }
-    header, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--pi-border); }
+    header, footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--pi-border); }
     footer { border-top: 1px solid var(--pi-border); border-bottom: 0; justify-content: end; }
     .body { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; gap: 14px; padding: 16px; }
     .eyebrow { display: block; color: var(--pi-muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -218,12 +226,13 @@ export class SessionCleanupDialog extends LitElement {
     fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 10px; }
     .toggle-row { display: grid; grid-template-columns: auto minmax(0, max-content) 88px auto; align-items: center; gap: 8px; color: var(--pi-text); }
     input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--pi-accent); }
-    input.days { box-sizing: border-box; width: 88px; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 8px 9px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
+    input.days { box-sizing: border-box; width: 88px; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 8px 9px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); }
     input.days:disabled { opacity: .55; }
     .warning, .dialog-error, .result { border: 1px solid var(--pi-border); border-radius: 10px; padding: 10px 12px; }
     .warning { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); color: var(--pi-text); }
     .dialog-error { border-color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); color: var(--pi-danger); }
-    .result { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
+    .feedback { flex-shrink: 0; }
+    .result { margin: 12px 16px; border-color: var(--pi-success-border); background: var(--pi-success-bg); }
     .preview { display: grid; gap: 10px; min-width: 0; }
     .selection-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .selection-controls span { color: var(--pi-muted); }
@@ -234,7 +243,7 @@ export class SessionCleanupDialog extends LitElement {
     thead th:first-child, td.select-cell { width: 72px; text-align: center; }
     th:nth-child(2), td:nth-child(2) { text-align: left; }
     tbody tr.unselected { opacity: .58; }
-    tbody th { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 500; }
+    tbody th { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-weight: 500; }
     tfoot th, tfoot td { border-bottom: 0; font-weight: 700; }
     button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; font: inherit; cursor: pointer; }
     button:disabled { opacity: .5; cursor: not-allowed; }

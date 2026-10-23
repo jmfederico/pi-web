@@ -8,6 +8,7 @@ const publicApiDeclarationPaths = [
   "plugin-api.d.ts",
   "server-plugin-api.d.ts",
   "shared/pluginApiTypes.d.ts",
+  "shared/pluginCatalogTypes.d.ts",
 ];
 const expectedPackageDeclarationPaths = [
   ...publicApiDeclarationPaths.map((path) => `dist/${path}`),
@@ -71,21 +72,24 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
     assertStrictPluginConsumer("browser-only", [browserPath], mode, packageRoot, repoRoot, [
       "dist/plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
+      "dist/shared/pluginCatalogTypes.d.ts",
     ]);
     assertStrictPluginConsumer("server-only", [serverPath], mode, packageRoot, repoRoot, [
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
+      "dist/shared/pluginCatalogTypes.d.ts",
     ]);
     assertStrictPluginConsumer("session-bridge browser/backend", [
       join(consumerRoot, "session-bridge", "src", "browser", "index.ts"),
       join(consumerRoot, "session-bridge", "src", "server.ts"),
     ], mode, packageRoot, repoRoot, [
-      "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/shared/pluginApiTypes.d.ts",
+      "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/shared/pluginApiTypes.d.ts", "dist/shared/pluginCatalogTypes.d.ts",
     ], ["node"]);
     assertStrictPluginConsumer("dual-entry example", dualEntryPaths, mode, packageRoot, repoRoot, [
       "dist/plugin-api.d.ts",
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
+      "dist/shared/pluginCatalogTypes.d.ts",
     ], ["node"]);
   }
 }
@@ -152,15 +156,27 @@ async function assertExampleCompatibilityFloor(packageRoot) {
 async function assertServerRuntimeApi(consumerRoot) {
   const fixturePath = join(consumerRoot, "server-runtime.mjs");
   await writeFile(fixturePath, `
+    export { createCompanionBackend } from "@jmfederico/pi-web/server-plugin-api";
     import {
       PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
       PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY,
       PI_WEB_HOST_WORKSPACES_CAPABILITY,
+      PI_WEB_HOST_CATALOG_CAPABILITY,
     } from "@jmfederico/pi-web/server-plugin-api";
-    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY];
+    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY];
   `, "utf8");
   const serverApi = await import(pathToFileURL(fixturePath).href);
-  const [workspacesCapability, piSessionsCapability, sessionEventsCapability] = serverApi.default;
+  if (typeof serverApi.createCompanionBackend !== "function") throw new Error("Installed companion backend helper is missing");
+  const backend = { machineId: "local", forScope: () => ({ request: async () => null }) };
+  if (serverApi.createCompanionBackend({ emit: (_channel, query) => query.accept(() => backend) }, "fixture.server") !== backend) {
+    throw new Error("Installed companion helper did not return the hosted v5 backend");
+  }
+  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability] = serverApi.default;
+  if (!Object.isFrozen(catalogCapability) || catalogCapability?.pluginId !== "pi-web.host"
+    || catalogCapability?.id !== "catalog" || catalogCapability?.version !== 1
+    || typeof catalogCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/catalog v1 token");
+  }
   if (!Object.isFrozen(sessionEventsCapability) || sessionEventsCapability?.pluginId !== "pi-web.host"
     || sessionEventsCapability?.id !== "pi-session-events" || sessionEventsCapability?.version !== 1
     || typeof sessionEventsCapability?.parse !== "function") {

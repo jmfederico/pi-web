@@ -1,4 +1,4 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionFactory } from "../../piSdk.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
@@ -6,12 +6,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.doUnmock("@earendil-works/pi-coding-agent");
+  vi.doUnmock("../../piSdk.js");
   vi.resetModules();
 });
 
 async function loadFactories(sdkExports: Record<string, unknown>) {
-  vi.doMock("@earendil-works/pi-coding-agent", () => sdkExports);
+  vi.doMock("../../piSdk.js", () => sdkExports);
   return (await import("./builtinExtensionFactories.js")).getBuiltinExtensionFactories;
 }
 
@@ -22,7 +22,7 @@ function builtinCreators() {
   return {
     factories: { mcp, codemode, toolSearch },
     exports: {
-      createMcpExtension: vi.fn(() => mcp),
+      createMcpExtension: vi.fn<(options?: { openUrl?: (url: string) => void }) => ExtensionFactory>(() => mcp),
       createCodemodeExtension: vi.fn(() => codemode),
       createToolSearchExtension: vi.fn(() => toolSearch),
     },
@@ -50,6 +50,25 @@ describe("getBuiltinExtensionFactories", () => {
     expect(await getFactories()).toBe(first);
     for (const create of Object.values(exports)) {
       expect(create).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("captures structured MCP URLs through the public factory hook without launching a host browser", async () => {
+    const { exports } = builtinCreators();
+    const getFactories = await loadFactories(exports);
+    await getFactories();
+    const openUrl = exports.createMcpExtension.mock.calls[0]?.[0]?.openUrl;
+    if (!openUrl) throw new Error("Missing public openUrl hook");
+    const { McpAuthFlowService } = await import("./mcpAuthFlowService.js");
+    const flows = new McpAuthFlowService();
+    try {
+      const flow = flows.start({ sessionId: "session", identity: {}, isCurrent: () => true, run: () => {
+        openUrl("https://example.test/authorize");
+        return Promise.resolve();
+      } });
+      expect(flow.auth).toEqual({ url: "https://example.test/authorize" });
+    } finally {
+      flows.dispose();
     }
   });
 

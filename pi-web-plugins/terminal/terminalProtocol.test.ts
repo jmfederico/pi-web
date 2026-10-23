@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { JsonValue, PluginPeerChannel, PluginPeer } from "@jmfederico/pi-web/plugin-api";
-import { TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES, TerminalPeerClient, parseTerminalCommandRun, parseTerminalServerFrame, terminalChannelFailureMessage, terminalInputFrames } from "./terminalProtocol";
+import { TERMINAL_CHANNEL_DATA_JSON_MAX_BYTES, TerminalPeerClient, parseTerminalInfo, parseTerminalCommandRun, parseTerminalServerFrame, terminalChannelFailureMessage, terminalInputFrames } from "./terminalProtocol";
 
 const terminal = {
   id: "terminal-1",
@@ -24,6 +24,13 @@ const run = {
 };
 
 describe("Terminal peer protocol", () => {
+  it("preserves terminal scope and workspace identity and rejects ambiguous maintenance identity", () => {
+    const workspace = { ...terminal, scope: "workspace", projectId: "project-1", workspaceId: "workspace-1" };
+    expect(parseTerminalInfo(workspace)).toEqual(workspace);
+    expect(parseTerminalInfo({ ...terminal, scope: "maintenance" })).toEqual({ ...terminal, scope: "maintenance" });
+    expect(() => parseTerminalInfo({ ...workspace, scope: "maintenance" })).toThrow("must not contain workspace identity");
+    expect(() => parseTerminalInfo({ ...terminal, scope: "invalid" })).toThrow("Invalid Terminal info scope");
+  });
   it("maps list/create/close/continue and command operations without host scope fields", async () => {
     const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => {
       if (operation === "terminal.list") return Promise.resolve([terminal]);
@@ -33,7 +40,7 @@ describe("Terminal peer protocol", () => {
       if (operation === "terminal.create" || operation === "terminal.continue") return Promise.resolve(terminal);
       return Promise.resolve(run);
     });
-    const client = new TerminalPeerClient({ request });
+    const client = new TerminalPeerClient({ scope: "workspace", peer: { request } });
 
     await expect(client.list()).resolves.toEqual([terminal]);
     await expect(client.create({ cols: 120, rows: 40 })).resolves.toEqual(terminal);
@@ -54,6 +61,39 @@ describe("Terminal peer protocol", () => {
     expect(JSON.stringify(request.mock.calls)).not.toContain("workspaceId");
   });
 
+  it.each(["workspace", "maintenance"] as const)("enforces %s binding scope on every terminal and command response", async (scope) => {
+    const workspaceRun: JsonValue = { ...run };
+    const machineRun: JsonValue = {
+      id: run.id, origin: run.origin, scope: "maintenance", terminalId: run.terminalId,
+      title: run.title, command: run.command, status: run.status, createdAt: run.createdAt, metadata: run.metadata,
+    };
+    const oppositeTerminal: JsonValue = scope === "workspace" ? { ...terminal, scope: "maintenance" } : terminal;
+    const oppositeRun = scope === "workspace" ? machineRun : workspaceRun;
+    const matchingTerminal: JsonValue = scope === "workspace" ? terminal : { ...terminal, scope: "maintenance" };
+    const matchingRun = scope === "workspace" ? workspaceRun : machineRun;
+    let wrongScope = true;
+    const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation): Promise<JsonValue> => {
+      const info = wrongScope ? oppositeTerminal : matchingTerminal;
+      const result = wrongScope ? oppositeRun : matchingRun;
+      if (operation === "terminal.list") return Promise.resolve([info]);
+      if (operation === "terminal.create" || operation === "terminal.continue") return Promise.resolve(info);
+      return Promise.resolve(operation === "terminal.list-runs" ? [result] : result);
+    });
+    const client = new TerminalPeerClient({ scope, peer: { request } });
+    const operations = [
+      () => client.list(),
+      () => client.create(),
+      () => client.continue("terminal-1"),
+      () => client.runCommand("tasks", { title: "Build", command: "true" }),
+      () => client.listCommandRuns(),
+      () => client.getCommandRun("run-1"),
+      () => client.cancelCommandRun("run-1"),
+    ];
+    for (const operation of operations) await expect(operation()).rejects.toThrow("scope does not match");
+    wrongScope = false;
+    for (const operation of operations) await expect(operation()).resolves.toBeDefined();
+  });
+
   it("opens the bounded attach channel and validates plugin-private frames", async () => {
     const channel: PluginPeerChannel = {
       closed: Promise.resolve({ code: 1000, reason: "done", wasClean: true }),
@@ -65,7 +105,7 @@ describe("Terminal peer protocol", () => {
       return Promise.resolve(channel);
     });
     const frames: unknown[] = [];
-    const client = new TerminalPeerClient({ request: vi.fn(), openChannel });
+    const client = new TerminalPeerClient({ scope: "workspace", peer: { request: vi.fn(), openChannel } });
 
     await expect(client.attach({ terminalId: "terminal-1", size: { cols: 80, rows: 24 }, onFrame: (frame) => { frames.push(frame); } })).resolves.toBe(channel);
 
@@ -97,6 +137,14 @@ describe("Terminal peer protocol", () => {
     }
   });
 
+  it("parses maintenance runs without accepting workspace or unknown scope identities", () => {
+    const maintenance = { ...run, scope: "maintenance", projectId: undefined, workspaceId: undefined };
+    expect(parseTerminalCommandRun(maintenance)).toEqual(expect.objectContaining({ scope: "maintenance", id: "run-1" }));
+    expect(parseTerminalCommandRun(maintenance)).not.toHaveProperty("projectId");
+    expect(() => parseTerminalCommandRun({ ...run, scope: "maintenance" })).toThrow("must not contain workspace identity");
+    expect(() => parseTerminalCommandRun({ ...run, scope: "other" })).toThrow("Invalid Terminal command run scope");
+  });
+
   it("rejects malformed command records and attributes channel closure", () => {
     expect(() => parseTerminalCommandRun({ ...run, status: "done" })).toThrow("Invalid Terminal command run status");
     expect(() => parseTerminalCommandRun({ ...run, metadata: { source: 2 } })).toThrow("must be a string");
@@ -106,7 +154,7 @@ describe("Terminal peer protocol", () => {
   });
 
   it("fails closed when the peer has no channel capability", async () => {
-    const client = new TerminalPeerClient({ request: vi.fn() });
+    const client = new TerminalPeerClient({ scope: "workspace", peer: { request: vi.fn() } });
     await expect(client.attach({ terminalId: "terminal-1", onFrame: vi.fn() }))
       .rejects.toThrow("Required Terminal peer channel capability is unavailable");
   });

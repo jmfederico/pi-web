@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH, PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES } from "../../shared/pluginBackendProtocol.js";
+import { PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS, pairedPluginBackendPath, pluginBackendScopeFromRoute, PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES } from "../../shared/pluginBackendProtocol.js";
 import { markPluginBackendChannelUpgradeRequest } from "../webSocketBridge.js";
 import {
   type PluginBackendChannelProxyAdmissionPool,
@@ -13,8 +13,8 @@ import {
 
 interface PluginBackendChannelProxyParams {
   pluginId: string;
-  projectId: string;
-  workspaceId: string;
+  projectId?: string;
+  workspaceId?: string;
   operation: string;
 }
 
@@ -29,8 +29,8 @@ export function registerPluginBackendChannelProxyRoutes(
   prefix = "/api",
   admissions: PluginBackendChannelProxyAdmissionPool = pluginBackendChannelProxyAdmissionPool(app),
 ): void {
-  app.get<{ Params: PluginBackendChannelProxyParams }>(
-    `${prefix}${PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH}`,
+  for (const path of PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS) app.get<{ Params: PluginBackendChannelProxyParams }>(
+    `${prefix}${path}`,
     {
       websocket: true,
       onRequest(request, _reply, done) {
@@ -45,6 +45,7 @@ export function registerPluginBackendChannelProxyRoutes(
         admissions,
         scope: {
           authorityId: "local",
+          scope: pluginBackendScopeFromRoute(request.params),
           pluginId: request.params.pluginId,
           projectId: request.params.projectId,
           workspaceId: request.params.workspaceId,
@@ -68,16 +69,7 @@ export function registerPluginBackendChannelProxyRoutes(
 }
 
 function daemonPluginBackendChannelPath(params: PluginBackendChannelProxyParams): string {
-  return [
-    "/paired-plugin-backends",
-    encodeURIComponent(params.pluginId),
-    "projects",
-    encodeURIComponent(params.projectId),
-    "workspaces",
-    encodeURIComponent(params.workspaceId),
-    "channels",
-    encodeURIComponent(params.operation),
-  ].join("/");
+  return pairedPluginBackendPath(params, true);
 }
 
 function errorMessage(error: unknown): string {

@@ -44,7 +44,7 @@ Prefer this order unless the behavior requires a higher layer:
 2. **Controller/runtime adapter tests** for state orchestration, endpoint selection, cancellation, timers, and injected collaborators.
 3. **Route/API contract tests** for HTTP status mapping, path/query/body parsing, proxy allowlists, and compatibility contracts.
 4. **Component-boundary tests** for UI event wiring and rendered state. Prefer real DOM/custom-element interaction via the per-file happy-dom harness (see Lit component tests).
-5. **Broad verification** (`npm run verify`) when a change is cross-cutting, changes shared helpers/types, or before final merge review.
+5. **Broad verification** (`npm run verify`) when the affected surface cannot be bounded, validation configuration changes, or the user explicitly asks for all checks. CI owns the mandatory full PR/merge checks; a scoped local change does not need a full run merely because it is ready for handoff.
 
 Do not jump to a broad UI or integration test just because it feels more realistic if a lower layer proves the same behavior with less noise and less flake risk.
 
@@ -116,13 +116,15 @@ Existing extraction tests are acceptable as-is. Convert them to a pure seam or t
 
 ## Checks to run
 
-Delivery artifact checks are separate from the ordinary suite: run `npm run build` followed by `npm run check:artifacts` when changing emitted package contracts. The latter consumes the existing `dist` output and never refreshes it. See [development and delivery checks](../../../docs/development-checks.md) for check ownership.
+Use [development and delivery checks](../../../docs/development-checks.md) as the canonical command/ownership matrix. Keep the inner loop focused on the changed behavior:
 
-Run the narrowest meaningful check first:
+- Known test file: `npm test -- <test-file>`; use `-t <test-name-pattern>` to narrow a large file further.
+- Repeated interactive edits: `npm exec -- vitest watch --config vitest.config.ts <test-file>` avoids restarting the runner on every edit.
+- Unknown affected tests: `npm exec -- vitest related --run --config vitest.config.ts <changed-source-files>`. Add explicit tests for assets read at runtime, which import analysis cannot discover. An empty selection is not evidence that the behavior passed.
+- Before completing a TypeScript code change: run the relevant tests, `npm exec -- eslint <changed-files>`, and `npm run typecheck:cached` once against the final changes. Rerun affected checks if relevant files change afterward, not merely because you are committing. The cached typecheck still covers the whole project; its first run is cold. Documentation/comment-only changes need relevant documentation/asset checks, not a local whole-project TypeScript check.
+- The pre-commit hook only runs `git diff --cached --check` for staged whitespace/conflict-marker hygiene. It does not run npm, lint, typechecking, Knip, or tests. Agents own explicit scoped local verification; a successful commit is not proof that the code passed its checks.
+- Escalate to local `npm run verify` when the affected surface cannot be bounded, validation configuration changes, or the user requests full verification. A shared helper with a known set of consumers can use related tests; being shared alone is not a reason for all checks.
+- For changes to emitted declarations, exports, package contents, bundles, or deployment URLs: run `npm run build` followed by `npm run check:artifacts`. Artifact checks consume the existing `dist` and never refresh it.
+- Run `npm run smoke:package-install` locally when changing the installed-package boundaries listed in the development-checks document or reproducing an install failure. Do not require it for ordinary UI, route, or application-logic work. Main/manual CI and publication own the routine smoke gate.
 
-- Changed test file: `npm test -- --run <test-file>`.
-- Source or exported type changes: also run `npm run typecheck`.
-- Non-trivial test helper, component, or lint-sensitive changes: run `npx eslint <changed-file>` or `npm run lint` when broader lint coverage is needed.
-- Cross-cutting changes or final merge review: prefer `npm run verify`.
-
-Record exact commands and results when working under relay/audit workflows or when handing work to another agent.
+Report the checks actually run and their scope. Do not claim the full suite passed after a focused run. Record exact commands and results when working under relay/audit workflows or when handing work to another agent.

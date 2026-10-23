@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "../../piSdk.js";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import {
   bootstrapAndFreezeGlobalExtensionProviders,

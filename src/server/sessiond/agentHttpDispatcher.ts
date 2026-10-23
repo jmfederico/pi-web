@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { SettingsManager } from "../../piSdk.js";
+import { piWebRuntimeIdentity } from "../../shared/piWebRuntime.js";
 import { Client, EnvHttpProxyAgent, Pool, setGlobalDispatcher, type Dispatcher } from "undici";
 
 /**
@@ -32,7 +33,9 @@ import { Client, EnvHttpProxyAgent, Pool, setGlobalDispatcher, type Dispatcher }
  * compressed bodies), revisit. If the SDK ever exports
  * `configureHttpDispatcher`, prefer delegating to it.
  *
- * The value is applied once, at daemon start; changing `httpIdleTimeoutMs`
+ * On Node the value is applied once, at daemon start. Bun's native fetch does
+ * not use this dispatcher, so the setting is reported as unsupported without
+ * replacing fetch or changing Bun's native proxy handling. Changing the setting
  * requires restarting the session daemon.
  */
 
@@ -45,10 +48,9 @@ export interface AgentHttpDispatcherInput {
   cwd: string;
 }
 
-export interface AppliedAgentHttpIdleTimeout {
-  timeoutMs: number;
-  warning?: string;
-}
+export type AgentHttpIdleTimeoutResult =
+  | { applied: true; timeoutMs: number; warning?: string }
+  | { applied: false; timeoutMs: number; warning: string };
 
 /**
  * Read the active agent profile's `httpIdleTimeoutMs` through the SDK
@@ -106,21 +108,25 @@ export function configureAgentHttpDispatcher(timeoutMs: number): void {
 }
 
 /**
- * Resolve the agent profile's `httpIdleTimeoutMs` and install it on the
- * global dispatcher. Never throws: an unreadable or invalid setting falls
- * back to the 300_000 ms default and reports a warning for logging, so a bad
- * settings file cannot keep the daemon from starting.
+ * Resolve the requested timeout, then apply it only where this dispatcher
+ * controls fetch. An invalid setting resolves to the 300_000 ms default with
+ * a warning. timeoutMs is the resolved request, not a claim of enforcement;
+ * callers must use applied when reporting whether configuration succeeded.
  */
-export function applyAgentHttpIdleTimeout({ agentDir, cwd }: AgentHttpDispatcherInput): AppliedAgentHttpIdleTimeout {
+export function applyAgentHttpIdleTimeout({ agentDir, cwd }: AgentHttpDispatcherInput): AgentHttpIdleTimeoutResult {
   let timeoutMs = DEFAULT_HTTP_IDLE_TIMEOUT_MS;
   let warning: string | undefined;
   try {
     timeoutMs = resolveAgentHttpIdleTimeoutMs({ agentDir, cwd });
   } catch (error) {
-    warning = `Falling back to the ${String(DEFAULT_HTTP_IDLE_TIMEOUT_MS)} ms HTTP idle default because the agent profile httpIdleTimeoutMs could not be applied: ${describeError(error)}`;
+    warning = `Could not read agent profile httpIdleTimeoutMs; using ${String(DEFAULT_HTTP_IDLE_TIMEOUT_MS)} ms as the requested timeout: ${describeError(error)}`;
+  }
+  if (piWebRuntimeIdentity().name === "bun") {
+    const unsupported = "httpIdleTimeoutMs is not applied under Bun: native fetch does not use the Undici global dispatcher. Bun's native timeout and proxy behavior are unchanged. Use Node.js to apply this setting.";
+    return { applied: false, timeoutMs, warning: warning === undefined ? unsupported : `${warning} ${unsupported}` };
   }
   configureAgentHttpDispatcher(timeoutMs);
-  return warning === undefined ? { timeoutMs } : { timeoutMs, warning };
+  return { applied: true, timeoutMs, ...(warning === undefined ? {} : { warning }) };
 }
 
 function describeError(error: unknown): string {

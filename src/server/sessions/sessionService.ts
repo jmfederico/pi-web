@@ -1,6 +1,6 @@
 import type {
-  AskUserCloseResponse,
   AskUserSubmission,
+  SessionQueueMessageMutation,
   ExtensionDialogAnswer,
   ExtensionDialogCloseResponse,
   SavedPromptAttachment,
@@ -70,8 +70,9 @@ export interface SessionRouteService {
   dismissNotification(ref: SessionRouteRef, request: Omit<SessionNotificationDismissRequest, "cwd">): SessionNotificationInboxSnapshot | Promise<SessionNotificationInboxSnapshot>;
   dismissAllNotifications(ref: SessionRouteRef, request: Omit<SessionNotificationDismissAllRequest, "cwd">): SessionNotificationInboxSnapshot | Promise<SessionNotificationInboxSnapshot>;
   clearQueue(ref: SessionRouteRef): Promise<ClientSessionStatus>;
-  submitAsk(ref: SessionRouteRef, askId: string, submission: AskUserSubmission): Promise<AskUserCloseResponse>;
-  cancelAsk(ref: SessionRouteRef, askId: string): Promise<AskUserCloseResponse>;
+  mutateQueueMessage(ref: SessionRouteRef, mutation: SessionQueueMessageMutation): Promise<ClientSessionStatus>;
+  submitAsk(ref: SessionRouteRef, askId: string, submission: AskUserSubmission): Promise<ClientSessionStatus>;
+  cancelAsk(ref: SessionRouteRef, askId: string): Promise<ClientSessionStatus>;
   answerDialog(ref: SessionRouteRef, dialogId: string, value: ExtensionDialogAnswer): Promise<ExtensionDialogCloseResponse>;
   cancelDialog(ref: SessionRouteRef, dialogId: string): Promise<ExtensionDialogCloseResponse>;
   dismissWarning(ref: SessionRouteRef, dismissId: string): Promise<ClientSessionStatus>;

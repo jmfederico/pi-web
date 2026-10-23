@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
-import { ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore, SettingsManager } from "../piSdk.js";
 import type { WorkspaceTrustResponse } from "../shared/apiTypes.js";
 import { expandUserPath } from "./projects/directorySuggestions.js";
 import type { ProjectService } from "./projects/projectService.js";

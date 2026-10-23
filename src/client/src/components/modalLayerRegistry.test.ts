@@ -1,138 +1,113 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it } from "vitest";
-import { hasRenderedModal, registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { activeModalElement, hasRenderedModal, registerRenderedModal, type RenderedModalRegistration } from "./modalLayerRegistry";
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
-interface TestModalLayer {
-  /** Container standing in for a view or panel that responsive CSS can hide. */
-  readonly view: HTMLElement;
-  readonly element: HTMLElement;
-  readonly focusTarget: HTMLButtonElement;
-  readonly registration: RenderedModalRegistration;
-}
-
-const openLayers: RenderedModalRegistration[] = [];
-
+const registrations: RenderedModalRegistration[] = [];
 afterEach(() => {
-  while (openLayers.length > 0) openLayers.pop()?.unregister();
   document.body.replaceChildren();
+  for (const registration of registrations.splice(0)) registration.unregister();
+  vi.restoreAllMocks();
 });
 
-describe("rendered modal layer visibility", () => {
-  it("stops counting a layer that its view hides, and counts it again when the view returns", () => {
-    const trigger = appendTrigger("Open review");
-    trigger.focus();
-    const layer = mountLayer("upload review");
+function dialog(): HTMLDialogElement {
+  const element = document.createElement("dialog");
+  document.body.append(element);
+  return element;
+}
+function register(element: HTMLDialogElement): RenderedModalRegistration {
+  const registration = registerRenderedModal({ element, focus: () => { element.focus(); } });
+  registrations.push(registration);
+  return registration;
+}
 
-    expect(hasRenderedModal(document)).toBe(true);
-    expect(layer.registration.isTop).toBe(true);
-
-    layer.view.style.display = "none";
-
+describe("native modal ownership", () => {
+  it("captures focus before activation but owns interaction only until close", () => {
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    opener.focus();
+    const element = dialog();
+    const registration = register(element);
+    expect(registration.isTop).toBe(false);
+    expect(registration.focus()).toBe(false);
     expect(hasRenderedModal(document)).toBe(false);
-    expect(layer.registration.isTop).toBe(false);
-
-    layer.view.style.display = "";
-
-    expect(hasRenderedModal(document)).toBe(true);
-    expect(layer.registration.isTop).toBe(true);
-  });
-
-  it("keeps a visible lower layer in charge while a higher layer is hidden", () => {
-    appendTrigger("Open lower").focus();
-    const lower = mountLayer("lower dialog");
-    const upper = mountLayer("upper dialog");
-
-    expect(upper.registration.isTop).toBe(true);
-    expect(lower.registration.isTop).toBe(false);
-
-    upper.view.style.display = "none";
-
-    expect(hasRenderedModal(document)).toBe(true);
-    expect(upper.registration.isTop).toBe(false);
-    expect(lower.registration.isTop).toBe(true);
-    expect(lower.registration.focus()).toBe(true);
-    expect(document.activeElement).toBe(lower.focusTarget);
-  });
-
-  it("restores focus outside the stack instead of into a hidden lower layer", () => {
-    const trigger = appendTrigger("Open lower");
-    trigger.focus();
-    const lower = mountLayer("lower dialog");
-    lower.registration.focus();
-    expect(document.activeElement).toBe(lower.focusTarget);
-    const upper = mountLayer("upper dialog");
-    upper.registration.focus();
-    expect(document.activeElement).toBe(upper.focusTarget);
-
-    lower.view.style.display = "none";
-    upper.registration.unregister();
-    openLayers.splice(openLayers.indexOf(upper.registration), 1);
-
-    expect(document.activeElement).toBe(trigger);
+    element.showModal();
+    expect(registration.isTop).toBe(true);
+    expect(registration.focus()).toBe(true);
+    element.close();
+    expect(registration.isTop).toBe(false);
+    registration.unregister();
+    expect(document.activeElement).toBe(opener);
     expect(hasRenderedModal(document)).toBe(false);
   });
 
-  it("refuses focus for a hidden layer so the caller can tell it is not rendered", () => {
-    const trigger = appendTrigger("Open review");
-    trigger.focus();
-    const layer = mountLayer("upload review");
-    layer.view.style.display = "none";
-
-    expect(layer.registration.focus()).toBe(false);
-    expect(document.activeElement).toBe(trigger);
+  it("uses native activation order, never host z-index or registration order", () => {
+    const first = dialog();
+    const second = dialog();
+    second.style.zIndex = "99999";
+    const a = register(first);
+    const b = register(second);
+    second.showModal();
+    first.showModal();
+    expect(a.isTop).toBe(true);
+    expect(b.isTop).toBe(false);
+    first.close();
+    expect(b.isTop).toBe(true);
+    first.showModal();
+    expect(a.isTop).toBe(true);
+    expect(activeModalElement(document)).toBe(first);
   });
 
-  it("detects an unregistered native dialog through a plugin shadow boundary", () => {
+  it("detects plugin dialogs across shadow boundaries without private registrations", () => {
     const host = document.createElement("div");
     const root = host.attachShadow({ mode: "open" });
-    const dialog = document.createElement("dialog");
-    root.append(dialog);
+    const element = document.createElement("dialog");
+    root.append(element);
     document.body.append(host);
-
     expect(hasRenderedModal(document)).toBe(false);
-    dialog.showModal();
+    element.showModal();
     expect(hasRenderedModal(document)).toBe(true);
-    dialog.close();
+    expect(activeModalElement(document)).toBe(element);
+    element.close();
     expect(hasRenderedModal(document)).toBe(false);
   });
 
-  it("keeps a native top-layer dialog registered while it is still closed", () => {
-    // Hosts capture the pre-modal focus target by registering before
-    // `showModal()`, so the dialog is still `display: none` at that moment and
-    // must not be mistaken for a hidden phantom layer.
-    appendTrigger("Zoom image").focus();
-    const custom = mountLayer("custom dialog");
-    const dialog = document.createElement("dialog");
-    dialog.textContent = "Zoomed image";
-    document.body.append(dialog);
+  it("does not treat a nonmodal dialog as an interaction boundary", () => {
+    const element = dialog();
+    register(element);
+    element.show();
+    expect(hasRenderedModal(document)).toBe(false);
+    expect(activeModalElement(document)).toBeUndefined();
+  });
 
-    const registration = registerRenderedModal({ element: dialog, nativeTopLayer: true, focus: () => { dialog.focus(); } });
-    openLayers.push(registration);
-
+  it("keeps a native modal active even when its ordinary host is hidden", () => {
+    const host = document.createElement("div");
+    const element = dialog();
+    document.body.append(host);
+    host.append(element);
+    const registration = register(element);
+    element.showModal();
+    host.hidden = true;
+    // Native top-layer modality ends with close(), not ancestor layout. An
+    // owner that hides its view must close the dialog explicitly.
     expect(registration.isTop).toBe(true);
-    expect(custom.registration.isTop).toBe(false);
-    expect(hasRenderedModal(document)).toBe(true);
+    element.close();
+    expect(registration.isTop).toBe(false);
+  });
+
+  it("closing an older registration cannot steal focus from a newer dialog", () => {
+    const first = dialog();
+    const second = dialog();
+    const older = register(first);
+    first.showModal();
+    const newer = register(second);
+    second.showModal();
+    newer.focus();
+    first.close();
+    older.unregister();
+    expect(document.activeElement).toBe(second);
+    expect(newer.isTop).toBe(true);
   });
 });
-
-function mountLayer(label: string): TestModalLayer {
-  const view = document.createElement("div");
-  const element = document.createElement("div");
-  const focusTarget = document.createElement("button");
-  focusTarget.textContent = `${label} action`;
-  element.append(focusTarget);
-  view.append(element);
-  document.body.append(view);
-
-  const registration = registerRenderedModal({ element, focus: () => { focusTarget.focus(); } });
-  openLayers.push(registration);
-  return { view, element, focusTarget, registration };
-}
-
-function appendTrigger(text: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.textContent = text;
-  document.body.append(button);
-  return button;
-}

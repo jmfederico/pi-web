@@ -10,6 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  browser-ui:
+    name: Browser surface contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Check browser surface contracts
+        run: npm run test:browser
+
+      - name: Save browser failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-surface-failures
+          path: test-results/
+          retention-days: 7
+
   verify:
     name: Verify and package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -41,6 +71,30 @@ jobs:
       - name: Check delivery artifacts
         run: npm run check:artifacts
 
-      - name: Smoke test npm 12 global package install
-        if: runner.os == 'Linux'
+      # Registry installs and native PTY checks belong to the main/manual delivery
+      # gate, not every PR. publish.yml also runs this before publication.
+      - name: Smoke test npm 12 global package install (main/manual)
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
         run: npm run smoke:package-install
+
+      - name: Setup Bun for runtime interoperability (main/manual)
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Smoke test mixed runtimes (main/manual)
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        run: |
+          PI_WEB_SMOKE_WEB_RUNTIME=node PI_WEB_SMOKE_DAEMON_TRANSPORT=tcp npm run smoke:bun-install
+          PI_WEB_SMOKE_SESSIOND_RUNTIME=node npm run smoke:bun-install
+
+      - name: Smoke test Bun without Node (main/manual)
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
+        run: |
+          docker run --rm --init --user root -v "$PWD:/code:ro" -w /code \
+            -e PI_WEB_SMOKE_PREFERENCE=auto -e PI_WEB_SMOKE_NODE_ABSENT=1 \
+            oven/bun:1.4.3 bash -lc '
+              apt-get update && apt-get install -y --no-install-recommends git ca-certificates &&
+              bun scripts/smoke-bun-install.mjs
+            '

@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { mcpApi, type Machine, type McpCheckResponse, type McpServerInfo, type McpServersResponse, type Workspace } from "../../api";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api, mcpApi, type Machine, type McpCheckResponse, type McpServerInfo, type McpServersResponse, type Workspace } from "../../api";
 import { HttpRequestError } from "../../api/http";
-import { SettingsMcpPanel } from "./SettingsMcpPanel";
+import { SettingsMcpPanel, type McpAuthContext } from "./SettingsMcpPanel";
 import type { SettingsPanelFrame } from "./SettingsPanelFrame";
 
 const machine: Machine = { id: "remote-a", name: "Build host", kind: "remote", baseUrl: "https://remote.example.test", createdAt: "now", updatedAt: "now" };
@@ -38,6 +38,10 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+beforeEach(() => {
+  vi.spyOn(api, "mcpAuthServers").mockResolvedValue({ servers: [] });
+});
+
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
@@ -48,6 +52,7 @@ async function settle(panel: SettingsMcpPanel): Promise<void> {
   await panel.updateComplete;
   await panel.updateComplete;
   await frame(panel).updateComplete;
+  await authFrame(panel).updateComplete;
 }
 
 async function mount(apiClient = client(), target: { machine: Machine | undefined } = { machine }): Promise<SettingsMcpPanel> {
@@ -107,7 +112,7 @@ describe("settings-mcp-panel", () => {
       expect(content).toContain(expected);
     }
     expect(content).not.toContain("/mcp login");
-    expect(content).not.toContain("OAuth");
+    expect(panel.shadowRoot?.querySelector('settings-panel-frame')?.textContent).not.toContain("OAuth");
     expect(content).not.toContain("raw-secret");
     expect(content).not.toContain("Authorization");
     expect(panel.shadowRoot?.querySelector('[aria-label="Temporary MCP connection test"]')).toBeNull();
@@ -130,7 +135,7 @@ describe("settings-mcp-panel", () => {
     expect(configuration.textContent).toContain("/mcp reconnect filesystem");
     expect(text(panel)).toContain("/mcp");
     expect(text(panel)).not.toContain("/mcp login");
-    expect(text(panel)).not.toContain("OAuth");
+    expect(frame(panel).textContent).not.toContain("OAuth");
 
     checkButton(panel).click();
     await settle(panel);
@@ -194,7 +199,7 @@ describe("settings-mcp-panel", () => {
       expect(result.textContent).toContain(expected);
     }
     expect(text(panel)).not.toContain("/mcp login");
-    expect(text(panel)).not.toContain("OAuth");
+    expect(frame(panel).textContent).not.toContain("OAuth");
     expect(checkButton(panel).disabled).toBe(false);
     expect(apiClient.list).toHaveBeenCalledOnce();
     expect(apiClient.setEnabled).not.toHaveBeenCalled();
@@ -412,5 +417,186 @@ describe("MCP target-switch protection", () => {
     await settle(panel);
     expect(text(panel)).not.toContain("Stale original target");
     expect(text(panel)).toContain("Service catalog");
+  });
+});
+
+const context: McpAuthContext = { machineId: "remote-a", session: { id: "session-a", cwd: "/workspace/a" } };
+
+async function mountAuth(origin: McpAuthContext | undefined = context): Promise<SettingsMcpPanel> {
+  const panel = new SettingsMcpPanel();
+  panel.apiClient = client();
+  panel.context = origin;
+  panel.targetLabel = "Build Box";
+  panel.onMcpAuth = vi.fn();
+  document.body.append(panel);
+  await settle(panel);
+  return panel;
+}
+
+function authFrame(panel: SettingsMcpPanel): SettingsPanelFrame {
+  return required(panel.shadowRoot?.querySelectorAll("settings-panel-frame")[1]);
+}
+
+function refresh(panel: SettingsMcpPanel): HTMLButtonElement {
+  const result = authFrame(panel).shadowRoot?.querySelector("button");
+  if (!result) throw new Error("Missing refresh button");
+  return result;
+}
+
+function action(panel: SettingsMcpPanel, label: string): HTMLButtonElement {
+  const result = panel.shadowRoot?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!result) throw new Error(`Missing ${label}`);
+  return result;
+}
+
+describe("MCP settings DOM", () => {
+  it("keeps configuration checks and session authentication independent", async () => {
+    vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs" }] });
+    const apiClient = client();
+    const pending = deferred<McpCheckResponse>();
+    apiClient.check.mockReturnValue(pending.promise);
+    const panel = await mount(apiClient);
+    panel.context = context;
+    panel.onMcpAuth = vi.fn();
+    await settle(panel);
+
+    checkButton(panel).click();
+    await settle(panel);
+    expect(checkButton(panel).disabled).toBe(true);
+    expect(action(panel, "Login to docs").disabled).toBe(false);
+    action(panel, "Login to docs").click();
+    expect(panel.onMcpAuth).toHaveBeenCalledExactlyOnceWith("login", "docs", context);
+
+    refresh(panel).click();
+    await settle(panel);
+    expect(api.mcpAuthServers).toHaveBeenCalledTimes(2);
+    expect(apiClient.list).toHaveBeenCalledOnce();
+    expect(apiClient.setEnabled).not.toHaveBeenCalled();
+    expect(checkButton(panel).disabled).toBe(true);
+    pending.resolve(check);
+    await settle(panel);
+    expect(text(panel)).toContain(check.checkedAt);
+    expect(action(panel, "Logout from docs").disabled).toBe(false);
+  });
+
+  it("requires a selected nonarchived session without making a request", async () => {
+    const panel = new SettingsMcpPanel();
+    panel.apiClient = client();
+    panel.targetLabel = "Build Box";
+    document.body.append(panel);
+    await settle(panel);
+    expect(panel.shadowRoot?.textContent).toContain("Select a nonarchived session on Build Box");
+    expect(panel.shadowRoot?.textContent).toContain("Configure machine");
+    expect(refresh(panel).disabled).toBe(true);
+    refresh(panel).click();
+    expect(api.mcpAuthServers).not.toHaveBeenCalled();
+  });
+
+  it("shows context, preserves SDK descriptions and sends both actions with captured origin", async () => {
+    const description = "Connected? <not a status>\nSDK description unchanged";
+    vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs", description }] });
+    const panel = await mountAuth();
+    expect(api.mcpAuthServers).toHaveBeenCalledWith(context.session, "remote-a");
+    expect(authFrame(panel).shadowRoot?.querySelector(".description")?.textContent).toContain("enabled MCP servers that support OAuth");
+    expect(panel.shadowRoot?.textContent).toContain("session-a");
+    expect(panel.shadowRoot?.textContent).toContain("/workspace/a");
+    expect(panel.shadowRoot?.querySelector(".server-description")?.textContent).toBe(description);
+    expect(panel.shadowRoot?.textContent).toContain("does not disable the server or revoke permission at the provider");
+    action(panel, "Login to docs").click();
+    action(panel, "Logout from docs").click();
+    expect(panel.onMcpAuth).toHaveBeenNthCalledWith(1, "login", "docs", context);
+    expect(panel.onMcpAuth).toHaveBeenNthCalledWith(2, "logout", "docs", context);
+    expect(panel.shadowRoot?.querySelectorAll("li button")).toHaveLength(2);
+  });
+
+  it("shows loading, empty and error states and retries through refresh", async () => {
+    const request = deferred<{ servers: { name: string }[] }>();
+    vi.mocked(api.mcpAuthServers).mockReturnValueOnce(request.promise);
+    const panel = await mountAuth();
+    expect(panel.shadowRoot?.textContent).toContain("Loading MCP servers");
+    expect(refresh(panel).disabled).toBe(true);
+    request.resolve({ servers: [] });
+    await settle(panel);
+    expect(panel.shadowRoot?.textContent).toContain("No enabled MCP servers with OAuth support");
+    vi.mocked(api.mcpAuthServers).mockRejectedValueOnce(new Error("offline"));
+    refresh(panel).click();
+    await settle(panel);
+    expect(authFrame(panel).shadowRoot?.querySelector('[role="alert"]')?.textContent).toContain("offline");
+    expect(panel.shadowRoot?.textContent).not.toContain("No enabled MCP servers");
+    refresh(panel).click();
+    await settle(panel);
+    expect(authFrame(panel).notices).toEqual([]);
+    expect(api.mcpAuthServers).toHaveBeenCalledTimes(3);
+  });
+
+  it("clears old rows immediately and ignores late success or failure after context changes", async () => {
+    vi.mocked(api.mcpAuthServers).mockResolvedValueOnce({ servers: [{ name: "old" }] });
+    const panel = await mountAuth();
+    const stale = deferred<{ servers: { name: string }[] }>();
+    vi.mocked(api.mcpAuthServers).mockReturnValueOnce(stale.promise);
+    refresh(panel).click();
+    await settle(panel);
+    expect(panel.shadowRoot?.querySelector("li")).toBeNull();
+    panel.context = { machineId: "remote-b", session: { id: "session-b", cwd: "/workspace/b" } };
+    await settle(panel);
+    stale.resolve({ servers: [{ name: "stale" }] });
+    await settle(panel);
+    expect(panel.shadowRoot?.textContent).not.toContain("stale");
+    const failure = deferred<{ servers: { name: string }[] }>();
+    vi.mocked(api.mcpAuthServers).mockReturnValueOnce(failure.promise);
+    refresh(panel).click();
+    await settle(panel);
+    panel.context = undefined;
+    await settle(panel);
+    failure.reject(new Error("stale error"));
+    await settle(panel);
+    expect(authFrame(panel).notices).toEqual([]);
+    expect(panel.shadowRoot?.querySelector("li")).toBeNull();
+  });
+
+  it("invalidates pending loads on disconnect and reloads on reconnect", async () => {
+    const request = deferred<{ servers: { name: string }[] }>();
+    vi.mocked(api.mcpAuthServers).mockReturnValueOnce(request.promise);
+    const panel = await mountAuth();
+    panel.remove();
+    request.resolve({ servers: [{ name: "stale" }] });
+    await Promise.resolve();
+    document.body.append(panel);
+    await settle(panel);
+    expect(api.mcpAuthServers).toHaveBeenCalledTimes(2);
+    expect(panel.shadowRoot?.querySelector("li")).toBeNull();
+  });
+
+  it("does not refetch when the parent recreates an equivalent context", async () => {
+    const panel = await mountAuth();
+    panel.context = { machineId: context.machineId, session: { ...context.session } };
+    await settle(panel);
+    expect(api.mcpAuthServers).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an in-flight action tied to its captured origin and ignores its late error", async () => {
+    vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs" }] });
+    const panel = await mountAuth();
+    const pending = deferred<undefined>();
+    const callback = vi.fn().mockReturnValue(pending.promise);
+    panel.onMcpAuth = callback;
+    await settle(panel);
+    action(panel, "Logout from docs").click();
+    panel.context = { machineId: "remote-b", session: { id: "session-b", cwd: "/workspace/b" } };
+    await settle(panel);
+    pending.reject(new Error("old action failed"));
+    await settle(panel);
+    expect(callback).toHaveBeenCalledExactlyOnceWith("logout", "docs", context);
+    expect(authFrame(panel).notices).toEqual([]);
+  });
+
+  it("reports callback failures without turning them into authentication status", async () => {
+    vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs" }] });
+    const panel = await mountAuth();
+    panel.onMcpAuth = vi.fn().mockRejectedValue(new Error("cannot open"));
+    await settle(panel);
+    action(panel, "Login to docs").click();
+    await settle(panel);
+    expect(authFrame(panel).notices[0]?.content).toContain("cannot open");
   });
 });

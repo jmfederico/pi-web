@@ -1,23 +1,55 @@
-import type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
+import type { PluginBackend, JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
 export type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, };
+export { PI_WEB_HOST_CATALOG_CAPABILITY, type PluginCatalogProject, type PluginCatalogWorkspace, type PluginSessionSnapshot, type PluginWorkspaceSelection, type PluginSessionSelection, type PluginCatalogReadOptions, type PluginCatalogV1, } from "./shared/pluginCatalogTypes.js";
+/** Discover this package's local v5 backend on a hosted pi.events bus.
+ * Throws synchronously outside PI WEB or when the paired backend is unavailable.
+ * Extensions are trusted in-process code, not a sandbox.
+ */
+export declare function createCompanionBackend(events: {
+    emit(channel: string, data: unknown): void;
+}, pluginId: string): PluginBackend;
 type MaybePromise<T> = T | Promise<T>;
 /** Public server entry exported by a package's `serverModule`. */
-export interface PiWebServerPlugin {
+export type PiWebServerPlugin = LegacyPiWebServerPlugin | PiWebServerPluginV5;
+export interface PiWebServerPluginV5 {
+    apiVersion: 5;
+    name: string;
+    requires?: readonly PluginCapability[];
+    activate(context: ServerPluginActivationContextV5): MaybePromise<ServerPluginActivationV5>;
+}
+/** @deprecated Server API v3 remains supported; use PiWebServerPluginV5 for scoped peers. */
+export interface LegacyPiWebServerPlugin {
     apiVersion: 3;
     name: string;
     /** Exact capability versions that must be active before this plugin starts. */
     requires?: readonly PluginCapability[];
-    activate(context: ServerPluginActivationContext): MaybePromise<ServerPluginActivation>;
+    activate(context: LegacyServerPluginActivationContext): MaybePromise<LegacyServerPluginActivation>;
 }
-/** Host-owned frozen values supplied during server plugin activation. */
-export interface ServerPluginActivationContext {
+export type LegacyServerPluginActivationContext = Omit<ServerPluginActivationContextV5, "apiVersion"> & {
     readonly apiVersion: 3;
+};
+export type LegacyServerPluginActivation = Omit<ServerPluginActivationV5, "peer"> & {
+    peer?: LegacyServerPluginPeer;
+};
+/** Backwards-compatible v3 type names. Scoped v5 entry points use the V5 types. */
+export type ServerPluginActivationContext = LegacyServerPluginActivationContext;
+export type ServerPluginActivation = LegacyServerPluginActivation;
+export type ServerPluginPeer = LegacyServerPluginPeer;
+export type ServerPluginPeerRequestContext = LegacyServerPluginPeerRequestContext;
+export type ServerPluginPeerChannelOpenContext = LegacyServerPluginPeerChannelOpenContext;
+/** Host-owned frozen values supplied during server plugin activation. */
+export interface ServerPluginActivationContextV5 {
+    readonly apiVersion: 5;
     readonly pluginId: string;
     readonly packageRoot: string;
     /** Absolute plugin-specific persistent directory, created by the host before activation. Plugins own all file I/O and data formats. */
     readonly dataDirectory: string;
     readonly logger: ServerPluginLogger;
     readonly settings: JsonObject;
+    /** Resolve this plugin's global snapshot plus the registered project's settings snapshot. Settings remain fixed until sessiond restarts. */
+    readonly resolveProjectSettings?: (project: ProjectInput, signal: AbortSignal) => Promise<JsonObject>;
+    /** Machine-local command used by provider-owned integrations to send a bounded notification to this daemon. */
+    readonly workspaceNotifications?: ServerPluginWorkspaceNotifications;
     /** Record a host-attributed application notice when this capability is available. */
     readonly notices?: ServerPluginNoticeReporterV1;
     /**
@@ -190,10 +222,10 @@ export interface ServerPluginStartContext {
  * and are aborted when it times out or settles. Lifetime cancellation is
  * supplied separately during activation and precedes bounded disposal.
  */
-export interface ServerPluginActivation {
+export interface ServerPluginActivationV5 {
     workspaceProvider?: WorkspaceProvider;
     /** Serve bounded requests and optional duplex channels from this package's paired browser entry. */
-    peer?: ServerPluginPeer;
+    peer?: ServerPluginPeerV5;
     /** Typed capability values owned by this plugin and published only after start succeeds. */
     provides?: readonly PluginCapabilityProvision[];
     /** Initialize resources after every exact declared capability requirement is active. */
@@ -212,14 +244,21 @@ export interface ServerPluginHealth {
  * Capabilities for this package's matching browser entry. An activation may
  * supply a request handler, a channel handler, or both, but never neither.
  */
-export type ServerPluginPeer = {
-    request(context: ServerPluginPeerRequestContext): MaybePromise<JsonValue>;
+export type LegacyServerPluginPeer = {
+    request(context: LegacyServerPluginPeerRequestContext): MaybePromise<JsonValue>;
+    openChannel?(context: LegacyServerPluginPeerChannelOpenContext): MaybePromise<ServerPluginPeerChannel>;
+} | {
+    request?: undefined;
+    openChannel(context: LegacyServerPluginPeerChannelOpenContext): MaybePromise<ServerPluginPeerChannel>;
+};
+export type ServerPluginPeerV5 = {
+    request(context: ServerPluginPeerRequestContextV5): MaybePromise<JsonValue>;
     /** Open one finite-lived, host-bounded duplex channel. */
-    openChannel?(context: ServerPluginPeerChannelOpenContext): MaybePromise<ServerPluginPeerChannel>;
+    openChannel?(context: ServerPluginPeerChannelOpenContextV5): MaybePromise<ServerPluginPeerChannel>;
 } | {
     request?: undefined;
     /** Open one finite-lived, host-bounded duplex channel. */
-    openChannel(context: ServerPluginPeerChannelOpenContext): MaybePromise<ServerPluginPeerChannel>;
+    openChannel(context: ServerPluginPeerChannelOpenContextV5): MaybePromise<ServerPluginPeerChannel>;
 };
 /** Channel instance returned by `openChannel()` after the host validates scope. */
 export interface ServerPluginPeerChannel {
@@ -254,9 +293,22 @@ export interface ServerPluginPeerWorkspace {
  * this callback and is aborted when the request times out, is cancelled, or
  * settles.
  */
-export interface ServerPluginPeerRequestContext {
+export type ServerPluginPeerScope = {
+    readonly kind: "machine";
+} | {
+    readonly kind: "project";
+    readonly project: ProjectInput;
+} | {
+    readonly kind: "workspace";
     readonly project: ProjectInput;
     readonly workspace: ServerPluginPeerWorkspace;
+};
+export type LegacyServerPluginPeerRequestContext = Omit<ServerPluginPeerRequestContextV5, "scope"> & {
+    readonly project: ProjectInput;
+    readonly workspace: ServerPluginPeerWorkspace;
+};
+export interface ServerPluginPeerRequestContextV5 {
+    readonly scope: ServerPluginPeerScope;
     readonly operation: string;
     readonly input: JsonValue;
     readonly signal: AbortSignal;
@@ -267,13 +319,27 @@ export interface ServerPluginPeerRequestContext {
  * and bounds one JSON frame synchronously; success means queue acceptance, not
  * remote receipt. Invalid data or host queue overflow throws and closes the channel.
  */
-export interface ServerPluginPeerChannelOpenContext {
-    readonly project: ProjectInput;
-    readonly workspace: ServerPluginPeerWorkspace;
+export type LegacyServerPluginPeerChannelOpenContext = LegacyServerPluginPeerRequestContext & {
+    readonly send: (data: JsonValue) => void;
+};
+export interface ServerPluginPeerChannelOpenContextV5 {
+    readonly scope: ServerPluginPeerScope;
     readonly operation: string;
     readonly input: JsonValue;
     readonly signal: AbortSignal;
     readonly send: (data: JsonValue) => void;
+}
+/** Host-attributed invocation for provider-owned external integrations. */
+export interface ServerPluginWorkspaceNotifications {
+    /** An argv invocation attributed to this plugin and registered project; providers own any hook-specific argument filtering. */
+    readonly command: (projectId: string) => readonly string[];
+}
+/** Optional external integration maintained only for the project's current provider. */
+export interface WorkspaceProviderIntegration {
+    /** Idempotently maintain integration, including removal when plugin settings disable it. Failure never changes discovery authority. */
+    reconcile(project: ProjectInput, signal: AbortSignal): Promise<void>;
+    /** Apply provider-owned policy to an incoming hint. A true result asks the host to invalidate workspace projections, not register a path. */
+    acceptNotification(project: ProjectInput, signal: AbortSignal): Promise<boolean>;
 }
 /**
  * Every signal supplied to a provider is scoped to that single callback
@@ -281,6 +347,8 @@ export interface ServerPluginPeerChannelOpenContext {
  * must not be retained as a plugin-lifetime shutdown signal.
  */
 export interface WorkspaceProvider {
+    /** External integration lifecycle; separate from side-effect-free probing and listing. */
+    integration?: WorkspaceProviderIntegration;
     /** Fallback providers are considered only after all primary providers pass. */
     fallback?: boolean;
     probe(project: ProjectInput, signal: AbortSignal): Promise<ProviderClaim>;

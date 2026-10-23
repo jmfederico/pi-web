@@ -8,14 +8,14 @@
   "files": ["dist", "src", "docs", "test", "tsconfig.json", "vite.config.mjs"],
   "scripts": { "build": "tsc -p tsconfig.json && vite build", "test": "node --test test/*.test.mjs" },
   "dependencies": {
-    "marked": "^18.0.6"
+    "marked": "^18.1.1"
   },
   "devDependencies": {
     "@jmfederico/pi-web": "^1.202609.1",
-    "@earendil-works/pi-coding-agent": "^1.0.0",
-    "@types/node": "^24.13.3",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@types/node": "^24.19.2",
     "typescript": "^6.0.3",
-    "vite": "^8.1.4"
+    "vite": "^8.3.4"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "^1.0.0",

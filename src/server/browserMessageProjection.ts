@@ -42,7 +42,7 @@ export function projectBrowserTranscriptSnapshot(snapshot: SessionTranscriptSnap
 }
 
 export function projectBrowserSessionEvent(event: SessionUiEvent, images?: BrowserImageProjector): SessionUiEvent {
-  if ((event.type === "message.end" || event.type === "message.append") && event.message !== undefined) {
+  if ((event.type === "assistant.start" || event.type === "message.end" || event.type === "message.append") && event.message !== undefined) {
     const message = projectBrowserMessage(event.message, images);
     return message === event.message ? event : { ...event, message };
   }

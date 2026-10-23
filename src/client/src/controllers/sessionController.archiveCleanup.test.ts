@@ -6,6 +6,95 @@ import { InMemorySessionSelectionMemory } from "./sessionSelection";
 import { emptyTranscriptApi as defaultApi, deferred, emptyPage, FakeSocket, oldSession, sessionLookupId, status, workspace, type AppState } from "./sessionController.testSupport";
 
 describe("SessionController archive and cleanup", () => {
+  it.each([false, true])("uses only visible workspace fallbacks when a remembered session is missing (visible: %s)", (hasVisible) => {
+    const hidden = { ...oldSession, id: "hidden", path: "/tmp/hidden.jsonl" };
+    const visible = { ...oldSession, id: "visible", path: "/tmp/visible.jsonl" };
+    const sessions = [hidden, ...(hasVisible ? [visible] : [])];
+    const memory = new InMemorySessionSelectionMemory();
+    const state = { ...initialAppState(), selectedWorkspace: workspace, sessions };
+    const controller = new SessionController(
+      () => state,
+      () => undefined,
+      () => undefined,
+      memory,
+      { socket: new FakeSocket(), automaticSessionCandidates: (candidates) => candidates.filter((session) => session.id === visible.id) },
+    );
+
+    // No remembered destination and a stale remembered destination share the
+    // visibility-aware fallback, including the no-visible-sessions case.
+    expect(controller.preferredSession(workspace.path, sessions, undefined)?.id).toBe(hasVisible ? visible.id : undefined);
+    memory.rememberSession({ ...oldSession, id: "missing", cwd: `local:${workspace.path}` });
+    expect(controller.preferredSession(workspace.path, sessions, undefined)?.id).toBe(hasVisible ? visible.id : undefined);
+
+    expect(controller.preferredSession(workspace.path, sessions, hidden.id)).toBe(hidden);
+    expect(controller.preferredSession(workspace.path, sessions, "missing")).toBeUndefined();
+    memory.rememberSession({ ...hidden, cwd: `local:${workspace.path}` });
+    expect(controller.preferredSession(workspace.path, sessions, undefined)).toBe(hidden);
+    controller.dispose();
+  });
+
+  describe.each([false, true])("visible replacement available: %s", (hasVisibleReplacement) => {
+    it.each(["archive", "archive-tree", "archive-many", "delete", "refresh"] as const)("%s skips hidden fallback sessions", async (action) => {
+      const selected = { ...oldSession, persisted: true, ...(action === "delete" ? { archived: true } : {}) };
+      const hidden = { ...oldSession, id: "hidden", path: "/tmp/hidden.jsonl" };
+      const visible = { ...oldSession, id: "visible", path: "/tmp/visible.jsonl" };
+      const remaining = [hidden, ...(hasVisibleReplacement ? [visible] : [])];
+      let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: selected, sessions: [selected, ...remaining] };
+      const controller = new SessionController(
+        () => state,
+        (patch) => { state = { ...state, ...patch }; },
+        () => undefined,
+        undefined,
+        {
+          socket: new FakeSocket(),
+          automaticSessionCandidates: (sessions) => sessions.filter((session) => session.id === visible.id),
+          api: {
+            ...defaultApi,
+            archive: () => Promise.resolve({ archived: true }),
+            archiveWithDescendants: () => Promise.resolve({ archived: true, sessionIds: [selected.id], archivedCount: 1, skippedAlreadyArchivedCount: 0 }),
+            archiveMany: () => Promise.resolve({ archived: true, archivedSessionIds: [selected.id], failures: [], generatedAt: "now" }),
+            deleteArchivedMany: () => Promise.resolve({ deleted: true, deletedSessionIds: [selected.id], failures: [], generatedAt: "now" }),
+            sessions: () => Promise.resolve(remaining),
+            status: (session) => Promise.resolve(status(sessionLookupId(session))),
+          },
+        },
+      );
+
+      if (action === "archive") await controller.archiveSession();
+      else if (action === "archive-tree") await controller.archiveSessionWithDescendants();
+      else if (action === "archive-many") await controller.archiveSessions([selected]);
+      else if (action === "delete") await controller.deleteArchivedSessions([selected]);
+      else await controller.refreshCurrentWorkspaceSessions();
+
+      expect(state.selectedSession?.id).toBe(hasVisibleReplacement ? visible.id : undefined);
+      // Explicit URL/plugin targets may still select a hidden row.
+      expect(controller.preferredSession(workspace.path, remaining, hidden.id)).toBe(hidden);
+      controller.dispose();
+    });
+  });
+
+  it("clears agent subsession classification when detaching from its parent", async () => {
+    const child = { ...oldSession, parentSessionPath: "/tmp/parent.jsonl", agentSubsession: true };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, selectedSession: child, sessions: [child] };
+    const api: typeof defaultApi = {
+      ...defaultApi,
+      detachParent: () => Promise.resolve({ detached: true }),
+    };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      new InMemorySessionSelectionMemory(),
+      { api, socket: new FakeSocket() },
+    );
+
+    await controller.detachParent();
+
+    expect(state.sessions[0]).not.toHaveProperty("parentSessionPath");
+    expect(state.sessions[0]).not.toHaveProperty("agentSubsession");
+    expect(state.selectedSession).not.toHaveProperty("agentSubsession");
+  });
+
   it("forgets the selected active session when archiving leaves only archived sessions", async () => {
     const persistedSession = { ...oldSession, persisted: true };
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [persistedSession] };

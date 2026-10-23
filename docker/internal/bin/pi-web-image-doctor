@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' 'Image build manifest (recorded after custom hooks):'
+cat /usr/local/share/pi-web/image-manifest.json
+printf '\nCurrent execution environment:\n'
+printf 'uid=%s gid=%s\nPATH=%s\n' "$(id -u)" "$(id -g)" "$PATH"
+for variable in MISE_CONFIG_DIR MISE_DATA_DIR MISE_CACHE_DIR MISE_STATE_DIR MISE_AUTO_INSTALL MISE_PARANOID; do
+  printf '%s=%s\n' "$variable" "${!variable:-}"
+done
+# Report project resolution without executing project-selected binaries or
+# loading untrusted mise configuration just to diagnose the container.
+for tool in node npm git mise docker; do
+  printf '%s resolves to: %s\n' "$tool" "$(command -v "$tool" || printf missing)"
+done
+printf '\nCurrent image-owned tooling:\n'
+/usr/local/lib/pi-web-node/bin/node --version
+/usr/local/lib/pi-web-node/bin/node /usr/local/lib/pi-web-node/lib/node_modules/npm/bin/npm-cli.js --version
+/usr/bin/git --version
+/usr/local/bin/mise --version
+/usr/local/bin/docker --version
+/usr/local/bin/docker compose version
+/usr/local/bin/docker buildx version
+printf 'Run mise doctor for user/project configuration diagnostics.\n'

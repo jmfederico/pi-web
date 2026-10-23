@@ -17,7 +17,7 @@ describe("settings-packages-panel layout", () => {
 
     expectTextOrder(rendered, [
       "Failed to load Pi packages from Lab Mac (remote machine): Could not reach Lab Mac.",
-      "Pi package list unavailable for Lab Mac (remote machine). Use Reload to try again.",
+      "Pi package list unavailable for Lab Mac (remote machine). Choose Refresh package list to try again.",
     ]);
     expect(rendered).not.toContain("No Pi packages configured");
     expect(rendered).not.toContain("Trusted code warning");

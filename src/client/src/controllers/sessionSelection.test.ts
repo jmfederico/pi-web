@@ -10,10 +10,18 @@ describe("selectPreferredSession", () => {
     expect(selectPreferredSession(sessions, { targetSessionId: "s2", latestSessionId: "s1" })?.id).toBe("s2");
   });
 
-  it("matches explicit target sessions by id prefix", () => {
-    const session = testSession("abcdef");
+  it.each([false, true])("rejects partial target IDs without falling back to a remembered session (archived: %s)", (archived) => {
+    const session = { ...testSession("abcdef"), archived };
 
-    expect(selectPreferredSession([session], { targetSessionId: "abc" })).toBe(session);
+    for (const targetSessionId of ["abc", "abcde", "abcdefg", "ABCDEF"]) {
+      expect(selectPreferredSession([session], { targetSessionId, latestSessionId: session.id })).toBeUndefined();
+    }
+  });
+
+  it("selects an exact ID even when an earlier session shares that prefix", () => {
+    const exact = testSession("abc");
+
+    expect(selectPreferredSession([testSession("abcdef"), exact], { targetSessionId: "abc" })).toBe(exact);
   });
 
   it("remembers the latest selected session when no explicit target is provided", () => {

@@ -31,7 +31,9 @@ Commands:
   logs [web|sessiond|data-init]
                           Follow Docker Compose logs
   shell [web|sessiond]    Open a shell in a service container
-  doctor                  Print static Docker command diagnostics
+  build                   Build images without pulling Git or starting services
+  validate                Check Compose configuration and Dockerfile builds
+  doctor [--json]         Report safe configuration and tooling diagnostics
   cli <pi-web args...>    Run the pi-web CLI in the web container
 
 Update and restart commands launched inside a PI WEB Docker container start an
@@ -329,6 +331,8 @@ default_runtime_entrypoint_hint() {
   elif [ -n "${HOME:-}" ]; then
     printf '%s\n' "$HOME/.local/share/pi-web-docker/pi-web-docker"
   else
+    # This is a copyable hint, not a path to expand in this process.
+    # shellcheck disable=SC2088
     printf '%s\n' '~/.local/share/pi-web-docker/pi-web-docker'
   fi
 }
@@ -397,7 +401,11 @@ runtime_compose() {
   project_name=$(required_env_file_value "$root/.env" COMPOSE_PROJECT_NAME)
   (
     cd "$root" || exit 1
-    docker_compose --project-name "$project_name" --env-file .env -f compose.yml -f compose.override.yml "$@"
+    if [ -f compose.local.yml ]; then
+      docker_compose --project-name "$project_name" --env-file .env -f compose.yml -f compose.override.yml -f compose.local.yml "$@"
+    else
+      docker_compose --project-name "$project_name" --env-file .env -f compose.yml -f compose.override.yml "$@"
+    fi
   )
 }
 
@@ -446,6 +454,21 @@ run_start() {
   esac
 }
 
+run_build() {
+  assert_no_args build "$@"
+  require_command docker
+  compose_for_install build
+}
+
+run_validate() {
+  assert_no_args validate "$@"
+  require_command docker
+  compose_for_install config --quiet
+  # BuildKit checks do not execute build steps or deploy services. Unsupported
+  # Compose/Buildx versions fail explicitly rather than silently skipping checks.
+  compose_for_install build --check
+}
+
 run_stop() {
   assert_no_args stop "$@"
   require_command docker
@@ -492,7 +515,7 @@ run_runtime_installer_update() {
   installer=$(runtime_installer "$root")
   PI_WEB_DOCKER_REFRESH_ASSETS=1
   export PI_WEB_DOCKER_REFRESH_ASSETS
-  exec "$installer" --install-dir "$root"
+  "$installer" --install-dir "$root"
 }
 
 dev_update_fast_forward() {
@@ -545,6 +568,11 @@ run_update() {
       dev_compose up -d --force-recreate --remove-orphans
       ;;
   esac
+  log "Reconciling global mise tools in the updated container ..."
+  # Compose exec inherits the service UID/GID, not the host/helper identity.
+  # Use image-owned tools rather than persistent user shims.
+  compose_for_install exec -T --workdir / web env PATH=/usr/local/bin:/usr/bin:/bin \
+    /usr/local/bin/pi-web-reconcile-mise
 }
 
 validate_logs_target() {
@@ -586,8 +614,7 @@ run_shell() {
   compose_for_install exec "$target" bash
 }
 
-run_doctor() {
-  assert_no_args doctor "$@"
+print_doctor_paths() {
   root=$(control_root)
   printf 'PI WEB Docker mode: %s\n' "$(docker_mode)"
   printf 'PI WEB Docker root: %s\n' "$root"
@@ -643,6 +670,172 @@ run_doctor() {
   else
     printf '%s\n' 'Docker CLI: not found'
   fi
+}
+
+# Only allowlisted build/deployment fields are read. Process env files may hold
+# credentials: report their paths, never their contents or Compose's full config.
+doctor_record() {
+  if [ "$doctor_json" = 1 ]; then
+    printf '%s' "$doctor_separator"
+    doctor_separator=,
+    printf '{"key":'; doctor_json_string "$1"
+    printf ',"value":'; doctor_json_string "$2"
+    printf ',"source":'; doctor_json_string "$3"
+    printf '}'
+  else
+    printf '%s: %s [%s]\n' "$1" "$2" "$3"
+  fi
+}
+
+doctor_json_string() {
+  printf '%s' "$1" | awk '
+      function quote(s, i,c,out) {
+        out=""
+        for(i=1;i<=length(s);i++) {
+          c=substr(s,i,1)
+          if(c=="\\" || c=="\"") out=out "\\" c
+          else if(c=="\t") out=out "\\t"
+          else if(c=="\r") out=out "\\r"
+          else if(c in controls) out=out controls[c]
+          else out=out c
+        }
+        return out
+      }
+      BEGIN { for (n=1;n<32;n++) controls[sprintf("%c",n)]=sprintf("\\u%04x",n); printf "\"" }
+      { if (NR>1) printf "\\n"; printf "%s", quote($0) }
+      END { printf "\"" }'
+}
+
+doctor_probe() {
+  probe_key=$1
+  shift
+  if probe_value=$("$@" 2>/dev/null); then
+    doctor_record "$probe_key" "$(printf '%s\n' "$probe_value" | head -n 1)" probe
+  else
+    doctor_record "$probe_key" unavailable probe
+  fi
+}
+
+doctor_default_value() {
+  case "$1" in
+    PI_WEB_UBUNTU_IMAGE) printf '%s' ubuntu:26.04 ;;
+    PI_WEB_NODE_IMAGE) printf '%s' node:22.22.2-bookworm-slim ;;
+    PI_WEB_EXTRA_APT_PACKAGES|PI_WEB_GIT_VERSION) printf '' ;;
+    PI_WEB_DOCKER_CLI_VERSION) printf '%s' 29-cli ;;
+    PI_WEB_MISE_VERSION) printf '%s' 2026.10.17 ;;
+    PI_WEB_IMAGE) printf '%s' pi-web:local ;;
+    PI_WEB_DEV_IMAGE) printf '%s' pi-web:dev ;;
+    COMPOSE_PROJECT_NAME) [ "$(docker_mode)" = dev ] && printf '%s' pi-web-dev || printf '%s' pi-web ;;
+    *) printf '%s' 'host detection or path resolution on next command' ;;
+  esac
+}
+
+run_doctor() {
+  doctor_json=0
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--json) doctor_json=1 ;;
+    *) die 'doctor accepts only --json' ;;
+  esac
+  root=$(control_root)
+  doctor_separator=
+  [ "$doctor_json" = 1 ] || print_doctor_paths
+  [ "$doctor_json" != 1 ] || printf '{"schemaVersion":1,"diagnostics":['
+  doctor_record mode "$(docker_mode)" controller
+  doctor_record root "$root" controller
+  case "$(docker_mode)" in
+    runtime)
+      doctor_env=$root/.env
+      doctor_local=$root/compose.local.yml
+      doctor_hooks=$root/custom-image.d
+      ;;
+    dev)
+      doctor_env=$root/.pi-web/docker-compose-dev.generated.env
+      doctor_local=$root/.pi-web/docker-compose-dev.local.yml
+      doctor_hooks=$root/docker/custom-image.d
+      doctor_runtime_env=${PI_WEB_DOCKER_RUNTIME_ENV_FILE:-${HOME:-}/.local/share/pi-web-docker/.env}
+      doctor_record dev_config "$root/.pi-web/docker-compose-dev.local.env" path
+      doctor_record dev_container_environment "$root/.pi-web/docker-compose-dev.container.env" 'path only; contents private'
+      ;;
+  esac
+  case "$(docker_mode)" in
+    runtime)
+      doctor_record compose_base "$root/compose.yml" path
+      doctor_record compose_generated_override "$root/compose.override.yml" path
+      doctor_record dockerfile "$root/Dockerfile" path
+      ;;
+    dev)
+      doctor_record compose_base "$root/docker/compose.dev.yml" path
+      doctor_record compose_generated_override "$root/.pi-web/docker-compose-dev.host.generated.yml" path
+      doctor_record dockerfile "$root/docker/Dockerfile.dev" path
+      ;;
+  esac
+  doctor_record generated_environment "$doctor_env" path
+  doctor_record local_compose "$doctor_local" 'optional; loaded last when present'
+  doctor_record image_hooks "$doctor_hooks" path
+  for doctor_key in PI_WEB_UBUNTU_IMAGE PI_WEB_NODE_IMAGE PI_WEB_EXTRA_APT_PACKAGES PI_WEB_DOCKER_CLI_VERSION PI_WEB_MISE_VERSION PI_WEB_GIT_VERSION PI_WEB_IMAGE PI_WEB_DEV_IMAGE PI_WEB_UID PI_WEB_GID DOCKER_GID COMPOSE_PROJECT_NAME PI_WEB_DOCKER_DATA_DIR; do
+    doctor_source=$doctor_env
+    doctor_value=
+    if [ "$(docker_mode)" = dev ] && doctor_value=$(env_file_value "$root/.pi-web/docker-compose-dev.local.env" "$doctor_key" 2>/dev/null); then
+      doctor_source=$root/.pi-web/docker-compose-dev.local.env
+    elif [ "$(docker_mode)" = runtime ] && [ "$doctor_key" != COMPOSE_PROJECT_NAME ] && eval '[ "${'"$doctor_key"'+x}" = x ]'; then
+      eval 'doctor_value=${'"$doctor_key"'}'
+      doctor_source='shell environment'
+    elif doctor_value=$(env_file_value "$doctor_env" "$doctor_key" 2>/dev/null); then
+      :
+    elif [ "$(docker_mode)" = dev ] && eval '[ "${'"$doctor_key"'+x}" = x ]'; then
+      eval 'doctor_value=${'"$doctor_key"'}'
+      doctor_source='shell environment; next generation'
+    else
+      doctor_value=$(doctor_default_value "$doctor_key")
+      doctor_source=default
+      if [ "$(docker_mode)" = dev ] && [ "$doctor_key" != PI_WEB_UID ] && [ "$doctor_key" != PI_WEB_GID ] && [ "$doctor_key" != COMPOSE_PROJECT_NAME ]; then
+        if doctor_runtime_value=$(env_file_value "$doctor_runtime_env" "$doctor_key" 2>/dev/null); then
+          doctor_value=$doctor_runtime_value
+          doctor_source=$doctor_runtime_env
+        fi
+      fi
+    fi
+    doctor_record "$doctor_key" "$doctor_value" "$doctor_source"
+  done
+  doctor_data=$(env_file_value "$doctor_env" PI_WEB_DOCKER_DATA_DIR 2>/dev/null || true)
+  if [ -n "$doctor_data" ]; then
+    doctor_record container_environment "$(container_env_file_for_data_dir "$root" "$doctor_data")" 'path only; contents private'
+  fi
+  doctor_record configuration_scope 'Build inputs above; local Compose overrides can change effective service settings' controller
+  doctor_probe docker_client docker --version
+  doctor_probe docker_server docker version --format '{{.Server.Version}}'
+  doctor_probe compose docker compose version
+  doctor_probe buildx docker buildx version
+  # Locate an existing web container without running the dev launcher (which
+  # generates files). Diagnostics must not initialize or deploy a stack.
+  doctor_project=$(env_file_value "$doctor_env" COMPOSE_PROJECT_NAME 2>/dev/null || true)
+  doctor_container=
+  if [ -n "$doctor_project" ]; then
+    doctor_container=$(docker ps -q --filter "label=com.docker.compose.project=$doctor_project" --filter label=com.docker.compose.service=web 2>/dev/null | head -n 1 || true)
+  fi
+  if [ -n "$doctor_container" ]; then
+    if doctor_image_report=$(docker exec "$doctor_container" pi-web-image-doctor 2>/dev/null); then
+      doctor_record image_diagnostics "$doctor_image_report" pi-web-image-doctor
+    else
+      doctor_record image_diagnostics 'unavailable; pi-web-image-doctor failed' probe
+    fi
+    # Expand PATH inside the target container, not the controller process.
+    # shellcheck disable=SC2016
+    doctor_probe mise_path_health docker exec "$doctor_container" sh -c '
+      tool_data=${MISE_DATA_DIR:-/data/home/.local/share/mise}
+      case ":$PATH:" in *:"$tool_data/shims":*) ;; *) echo "missing shim PATH"; exit 0 ;; esac
+      command -v mise >/dev/null || { echo "mise missing"; exit 0; }
+      parent=$tool_data
+      while [ ! -e "$parent" ] && [ "$parent" != / ]; do
+        case "$parent" in */*) parent=${parent%/*}; [ -n "$parent" ] || parent=/ ;; *) parent=. ;; esac
+      done
+      [ -w "$parent" ] || { echo "tool data parent not writable"; exit 0; }
+      echo "shim PATH present; mise available; tool data parent writable"'
+  else
+    doctor_record container_probes 'unavailable; no running web container' probe
+  fi
+  [ "$doctor_json" != 1 ] || printf ']}\n'
 }
 
 run_cli() {
@@ -796,7 +989,7 @@ start_detached_helper() {
 
   timestamp=$(date -u +%Y%m%d%H%M%S)
   helper_name=pi-web-docker-$action-$timestamp-$$
-  generated_env_keys="PI_WEB_UID PI_WEB_GID DOCKER_GID PI_WEB_DOCKER_HOST_PROFILE HOSTEXEC_MODE PI_WEB_DOCKER_EXTRA_HOST_PATHS PI_WEB_DOCKER_DATA_DIR PI_WEB_DOCKER_INSTALL_DIR PI_WEB_DOCKER_DEV_REPO_ROOT PI_WEB_DOCKER_REF PI_WEB_BIND_ADDR PI_WEB_PORT PI_WEB_DEV_API_BIND_ADDR PI_WEB_DEV_BIND_ADDR PI_WEB_DEV_API_PORT PI_WEB_DEV_PORT PI_WEB_DEV_SESSIOND_SOCKET PI_WEB_VERSION PI_WEB_OPENSUSE_IMAGE PI_WEB_NODEJS_MAJOR PI_WEB_NODEJS_REPO PI_WEB_EXTRA_ZYPPER_PACKAGES PI_WEB_IMAGE PI_WEB_DEV_IMAGE COMPOSE_PROJECT_NAME HOSTEXEC_IMAGE PI_WEB_MAX_UPLOAD_BYTES"
+  generated_env_keys="PI_WEB_UID PI_WEB_GID DOCKER_GID PI_WEB_DOCKER_HOST_PROFILE HOSTEXEC_MODE PI_WEB_DOCKER_EXTRA_HOST_PATHS PI_WEB_DOCKER_DATA_DIR PI_WEB_DOCKER_INSTALL_DIR PI_WEB_DOCKER_DEV_REPO_ROOT PI_WEB_DOCKER_REF PI_WEB_BIND_ADDR PI_WEB_PORT PI_WEB_DEV_API_BIND_ADDR PI_WEB_DEV_BIND_ADDR PI_WEB_DEV_API_PORT PI_WEB_DEV_PORT PI_WEB_DEV_SESSIOND_SOCKET PI_WEB_VERSION PI_WEB_UBUNTU_IMAGE PI_WEB_NODE_IMAGE PI_WEB_EXTRA_APT_PACKAGES PI_WEB_DOCKER_CLI_VERSION PI_WEB_MISE_VERSION PI_WEB_GIT_VERSION PI_WEB_IMAGE PI_WEB_DEV_IMAGE COMPOSE_PROJECT_NAME HOSTEXEC_IMAGE PI_WEB_MAX_UPLOAD_BYTES"
 
   set -- run -d \
     --env-file "$env_file" \
@@ -854,11 +1047,12 @@ run_detached_action() {
   is_truthy "${PI_WEB_DOCKER_RUNTIME:-}" || die "detached actions only run inside the PI WEB Docker runtime"
   require_command docker
   log "PI WEB Docker helper running action: $action"
+  shift
   case "$action" in
-    update) run_update ;;
-    restart) run_restart_all ;;
-    restart-web) run_restart_web ;;
-    restart-sessiond) run_restart_sessiond ;;
+    update) run_update "$@" ;;
+    restart) run_restart_all "$@" ;;
+    restart-web) run_restart_web "$@" ;;
+    restart-sessiond) run_restart_sessiond "$@" ;;
     *) die "unsupported detached action: $action" ;;
   esac
   log "PI WEB Docker helper completed action: $action"
@@ -879,10 +1073,10 @@ run_restart_or_update() {
   fi
 
   case "$action" in
-    update) run_update ;;
-    restart) run_restart_all ;;
-    restart-web) run_restart_web ;;
-    restart-sessiond) run_restart_sessiond ;;
+    update) run_update "$@" ;;
+    restart) run_restart_all "$@" ;;
+    restart-web) run_restart_web "$@" ;;
+    restart-sessiond) run_restart_sessiond "$@" ;;
     *) die "unsupported action: $action" ;;
   esac
 }
@@ -894,11 +1088,13 @@ case "$command_name" in
   install)
     run_install "$@"
     ;;
-  start|stop|status|logs|shell|doctor|cli|update|restart|restart-web|restart-sessiond|__run-detached)
+  start|build|validate|stop|status|logs|shell|doctor|cli|update|restart|restart-web|restart-sessiond|__run-detached)
     enforce_dev_root_safety
     enforce_container_mode_match
     case "$command_name" in
       start) run_start "$@" ;;
+      build) run_build "$@" ;;
+      validate) run_validate "$@" ;;
       stop) run_stop "$@" ;;
       status) run_status "$@" ;;
       logs) run_logs "$@" ;;

@@ -1,5 +1,5 @@
 import { Type, type Static } from "pi-web-typebox";
-import { defineTool } from "@earendil-works/pi-coding-agent";
+import { defineTool } from "../../piSdk.js";
 import {
   ASK_USER_ID_MAX_LENGTH,
   ASK_USER_OPTION_LIMIT,
@@ -7,21 +7,11 @@ import {
   ASK_USER_TEXT_MAX_LENGTH,
   type AskUserQuestion,
   type AskUserQuestionOption,
+  type AskUserRequest,
 } from "../../shared/apiTypes.js";
-import { renderSupersededAskText, type PendingAskOpenResult } from "./pendingAskStore.js";
+import { createAskUserRequest, type AskUserRequestOptions } from "./askUserDomain.js";
 
-/** One `ask_user` call: the questions to post, for the session that called the tool. */
-export interface AskUserInvocation {
-  sessionId: string;
-  questions: AskUserQuestion[];
-}
-
-export interface AskUserToolDeps {
-  /** Registers the ask as the session's open one; rejects malformed question sets. */
-  open(input: AskUserInvocation): Promise<PendingAskOpenResult>;
-}
-
-type AskUserToolDetails = PendingAskOpenResult;
+interface AskUserToolDetails { ask: AskUserRequest }
 
 const AskUserOptionParams = Type.Object({
   value: Type.String({
@@ -68,7 +58,7 @@ const AskUserParams = Type.Object({
   }),
 });
 
-/** Shapes one schema question into the domain question; the store owns validation. */
+/** Shapes schema defaults before domain validation builds the durable payload. */
 function toQuestion(param: Static<typeof AskUserQuestionParams>): AskUserQuestion {
   const { detail, options, multiple } = param;
   return {
@@ -85,10 +75,9 @@ function toOption(param: Static<typeof AskUserOptionParams>): AskUserQuestionOpt
   return { value: param.value, label: param.label, ...(detail === undefined ? {} : { detail }) };
 }
 
-function postedText(result: PendingAskOpenResult): string {
-  const count = result.ask.questions.length;
-  const posted = `Posted ${count.toString()} question${count === 1 ? "" : "s"} to the user as ask ${result.ask.askId}. Ending this run; the answers arrive as a follow-up message that wakes you, naming every question the user left unanswered. Do not repost these questions.`;
-  return result.superseded === undefined ? posted : `${posted}\n\n${renderSupersededAskText(result.superseded)}`;
+function postedText(ask: AskUserRequest): string {
+  const count = ask.questions.length;
+  return `Posted ${count.toString()} question${count === 1 ? "" : "s"} to the user as ask ${ask.askId}. Ending this run; the answers arrive as a follow-up message that wakes you, naming every question the user left unanswered. Do not repost these questions.`;
 }
 
 /**
@@ -97,13 +86,14 @@ function postedText(result: PendingAskOpenResult): string {
  * It deliberately does **not** await the user. Awaiting would pin the agent run
  * for an unbounded human-scale wait, keep the session streaming, and leave a
  * dangling tool call if the runtime were replaced meanwhile. Instead the ask
- * becomes daemon-owned state, the tool terminates the run, and the submitted
- * answers return later as a follow-up message that wakes the session.
+ * is durably recorded in the successful tool result's details, the tool
+ * terminates the run, and answers return later as a follow-up message. There
+ * is no service registration or runtime question state to reconstruct.
  *
  * Rejected question sets throw: the agent loop turns the thrown message into an
  * error tool result, so the model can fix the ask and post it again.
  */
-export function createAskUserToolDefinition(deps: AskUserToolDeps) {
+export function createAskUserToolDefinition(options: AskUserRequestOptions = {}) {
   return defineTool<typeof AskUserParams, AskUserToolDetails>({
     name: "ask_user",
     // Nested tools cannot terminate the outer agent run.
@@ -115,14 +105,12 @@ export function createAskUserToolDefinition(deps: AskUserToolDeps) {
       "When you need decisions from the user, post them together with ask_user instead of asking in prose one at a time. It ends the run and the answers, including the questions the user left unanswered, come back as a follow-up message that wakes you. Call it alone and last, and do not repost the same questions or poll for answers.",
     ],
     parameters: AskUserParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = await deps.open({
-        sessionId: ctx.sessionManager.getSessionId(),
-        questions: params.questions.map(toQuestion),
-      });
+    // eslint-disable-next-line @typescript-eslint/require-await -- Tool execution is promise-shaped; validation failures reject before a successful result exists.
+    async execute(_toolCallId, params) {
+      const ask = createAskUserRequest(params.questions.map(toQuestion), options);
       return {
-        content: [{ type: "text", text: postedText(result) }],
-        details: result,
+        content: [{ type: "text", text: postedText(ask) }],
+        details: { ask },
         terminate: true,
       };
     },

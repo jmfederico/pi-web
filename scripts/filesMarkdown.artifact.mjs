@@ -6,6 +6,9 @@ import { html } from "lit";
 import { createContentRenderingCapability } from "../src/client/src/formatting/contentRendering.ts";
 import { ContentRenderingBoundary } from "../src/client/src/components/ContentRenderingBoundary.ts";
 import { ContentRendererHost } from "../src/client/src/components/ContentRendererHost.ts";
+import { settleDeferredContent, useDeferredContent } from "../src/client/src/formatting/deferredContent.testSupport.ts";
+
+useDeferredContent();
 
 // Consume the built, production-Lit plugin alongside the development-Lit host.
 // Source-only component tests share one runtime and cannot catch this failure.
@@ -40,7 +43,7 @@ it("loads saved Markdown Preview through the bundled Files plugin without crossi
   await viewer.updateComplete;
   const boundary = viewer.shadowRoot.querySelector("pi-web-content-rendering-boundary");
   expect(boundary).toBeInstanceOf(ContentRenderingBoundary);
-  await boundary.updateComplete;
+  await settleDeferredContent(boundary);
   const preview = viewer.shadowRoot.querySelector(".markdown-preview");
   expect(preview.querySelector("h1").textContent).toBe("Notes");
   expect(preview.querySelector("script")).toBeNull();
@@ -48,7 +51,7 @@ it("loads saved Markdown Preview through the bundled Files plugin without crossi
   expect(viewer.shadowRoot.querySelector('[role="status"]')).toBeNull();
   const host = preview.querySelector("blockquote pi-web-content-renderer");
   expect(host).toBeInstanceOf(ContentRendererHost);
-  await host.updateComplete;
+  await settleDeferredContent(host);
   expect(host.shadowRoot.querySelector("b").textContent).toBe("source");
   expect([...viewer.shadowRoot.querySelectorAll("button")].map((button) => button.textContent.trim())).toEqual(["Preview", "Raw"]);
 });

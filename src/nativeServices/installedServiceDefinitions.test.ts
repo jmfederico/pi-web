@@ -160,6 +160,48 @@ function legacySystemdDependencies(
 }
 
 describe("installed native-service definition boundary", () => {
+  describe.each(["systemd", "launchd"] as const)("%s managed Pi package selector", (kind) => {
+    it.each([
+      ["matching", "/managed/pi", "/managed/pi", true],
+      ["mismatching", "/managed/pi", "/other/pi", false],
+      ["absent from manager", "/managed/pi", undefined, false],
+      ["absent from installed definition", undefined, "/managed/pi", false],
+    ] as const)("validates a selector %s", (_name, installed, loaded, ok) => {
+      const configPath = "/managed/config.json";
+      const contents = kind === "systemd"
+        ? systemdDefinitionWithEnvironment(
+          configPath,
+          installed === undefined ? [] : [`PI_WEB_PI_PACKAGE_DIR=${installed}`],
+        )
+        : launchdDefinition(configPath).replace(
+          `<string>${configPath}</string>`,
+          `<string>${configPath}</string>${installed === undefined ? "" : `\n    <key>PI_WEB_PI_PACKAGE_DIR</key>\n    <string>${installed}</string>`}`,
+        );
+      const stdout = kind === "systemd"
+        ? managerOutput({
+          Environment: `PI_WEB_CONFIG=${configPath}${loaded === undefined ? "" : ` PI_WEB_PI_PACKAGE_DIR=${loaded}`}`,
+        })
+        : launchdPrint(launchdPath, configPath).replace(
+          "\t\tXPC_SERVICE_NAME =>",
+          `${loaded === undefined ? "" : `\t\tPI_WEB_PI_PACKAGE_DIR => ${loaded}\n`}\t\tXPC_SERVICE_NAME =>`,
+        );
+      const result = inspectInstalledNativeServiceDefinitions(
+        { kind, label: kind },
+        [{ ...source, path: kind === "systemd" ? servicePath : launchdPath }],
+        dependencies(new TextEncoder().encode(contents), { status: 0, stdout, stderr: "" }),
+        "doctor",
+      );
+
+      if (ok) {
+        expect(result).toEqual({ ok: true, value: [{ id: "web", contents }] });
+      } else {
+        expect(result.ok).toBe(false);
+        if (result.ok) throw new Error("Expected a managed Pi package selector mismatch to fail");
+        expect(result.message).toContain(kind === "systemd" ? "effective environment" : "PI_WEB_PI_PACKAGE_DIR");
+      }
+    });
+  });
+
   it("binds a strict systemd fragment snapshot to modern quoted manager output", () => {
     const contents = `[Unit]\nDescription=é\n${systemdDefinition("/managed/$HOME/config with space.json")}`;
     const deps = dependencies(
@@ -312,7 +354,7 @@ describe("installed native-service definition boundary", () => {
 
       expect(result).toEqual({ ok: true, value: [{ id: "web", contents }] });
       expect(deps.warn).toHaveBeenCalledExactlyOnceWith(
-        "Systemd unit pi-web-web.service uses EnvironmentFile. PI WEB cannot verify whether it overrides PI_WEB_CONFIG; checks use the config path from the installed service definition unless explicitly overridden for this command.",
+        "Systemd unit pi-web-web.service uses EnvironmentFile. PI WEB cannot verify whether it overrides PI_WEB_CONFIG or PI_WEB_PI_PACKAGE_DIR; checks use the config path from the installed service definition unless explicitly overridden for this command.",
       );
       expect(deps.readFile).toHaveBeenCalledExactlyOnceWith(servicePath);
     });

@@ -1,7 +1,8 @@
 import { Type } from "pi-web-typebox";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
-import { defineTool, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionContext } from "../../piSdk.js";
 import type { TranscriptContentKind, TranscriptEntry, TranscriptRole, TranscriptView } from "./subsessionTranscript.js";
+import { renderSubsessionCompletions, type SubsessionCompletion } from "./subsessionCompletionInbox.js";
 
 /** Lifecycle phase of a tracked subsession as seen by its parent. */
 export type SubsessionStatus = "working" | "idle" | "error" | "unknown";
@@ -53,6 +54,12 @@ export interface SubsessionCheckResult {
   status: SubsessionStatus;
   finalText: string;
   messageCount: number;
+  errorDetail?: string;
+}
+
+export interface SubsessionJoinResult {
+  subsessions: SubsessionSummary[];
+  completions: SubsessionCompletion[];
 }
 
 /** Exploratory transcript read: a filtered, paginated slice of the subsession's history. */
@@ -60,6 +67,7 @@ export interface SubsessionReadResult extends TranscriptView {
   sessionId: string;
   cwd: string;
   status: SubsessionStatus;
+  errorDetail?: string;
 }
 
 /** Filters the parent passes to narrow a transcript read; mirrors {@link TranscriptQuery}. */
@@ -76,12 +84,14 @@ export interface SubsessionReadQuery {
 export interface SubsessionToolDeps {
   spawn(input: SpawnSubsessionInvocation): Promise<SpawnSubsessionResult>;
   list(parentSessionId: string, parentSessionFile?: string): Promise<SubsessionSummary[]>;
-  check(parentSessionId: string, sessionId: string, parentSessionFile?: string): Promise<SubsessionCheckResult>;
-  read(parentSessionId: string, sessionId: string, query: SubsessionReadQuery, parentSessionFile?: string): Promise<SubsessionReadResult>;
+  join(parentSessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionJoinResult>;
+  check(parentSessionId: string, sessionId: string, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionCheckResult>;
+  read(parentSessionId: string, sessionId: string, query: SubsessionReadQuery, parentSessionFile?: string, toolCallId?: string): Promise<SubsessionReadResult>;
 }
 
 const SpawnSubsessionParams = Type.Object({
   thinkingLevel: Type.Optional(Type.Enum(KNOWN_THINKING_LEVELS, {
+    type: "string",
     description: "Thinking level override for the child session. Set this field only when instructed to use a specific thinking level or to choose an appropriate one. Otherwise omit it to inherit this session's thinking level. An unknown value is rejected; valid levels are clamped to the selected model's capabilities.",
   })),
   prompt: Type.String({
@@ -185,7 +195,8 @@ function renderTranscript(result: SubsessionReadResult): string {
     : (result.matched === 0
       ? "(no messages matched the filters)"
       : `(no messages before index ${String(result.start)}; all ${String(result.matched)} matches have later indexes)`);
-  return `Subsession ${result.sessionId} [${result.status}] — ${range}.${more}\n\n--- SUBSESSION TRANSCRIPT: ${result.sessionId} ---\n${body}`;
+  const error = result.errorDetail === undefined ? "" : `Error: ${result.errorDetail}\n\n`;
+  return `Subsession ${result.sessionId} [${result.status}] — ${range}.${more}\n\n${error}--- SUBSESSION TRANSCRIPT: ${result.sessionId} ---\n${body}`;
 }
 
 /**
@@ -246,17 +257,17 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const checkTool = defineTool<typeof CheckSubsessionParams, SubsessionCheckResult>({
     name: "check_subsession",
     label: "Check subsession",
-    description: "Get a tracked child's status and latest output. Working output is withheld. Never yields; do not poll.",
+    description: "Get a tracked child's status and latest output. Receiving a completed result marks it read, so it will not arrive again automatically. Working output is withheld. Never yields; do not poll.",
     promptSnippet: "check_subsession: inspect child status and available output; never yields",
     parameters: CheckSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
-      const result = await deps.check(parentSessionId, params.sessionId, parentSessionFile);
+      const result = await deps.check(parentSessionId, params.sessionId, parentSessionFile, _toolCallId);
       const body = result.finalText === "" ? "(no output yet)" : result.finalText;
       const text = result.status === "working"
         ? workingInspectionGuidance(result.sessionId)
-        : `Subsession ${result.sessionId} [${result.status}].\n\n--- SUBSESSION OUTPUT: ${result.sessionId} ---\n${body}`;
+        : `Subsession ${result.sessionId} [${result.status}].\n\n${result.errorDetail === undefined ? "" : `Error: ${result.errorDetail}\n\n`}--- SUBSESSION OUTPUT: ${result.sessionId} ---\n${body}`;
       return {
         content: [{ type: "text", text }],
         details: result,
@@ -267,14 +278,14 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
   const readTool = defineTool<typeof ReadSubsessionParams, SubsessionReadResult>({
     name: "read_subsession",
     label: "Read subsession",
-    description: "Read a tracked child's filtered transcript. Working transcripts are withheld. Never yields; do not poll.",
+    description: "Read a tracked child's filtered transcript. Returning its complete latest final output marks that completion read; filtered or historical-only reads do not. Working transcripts are withheld. Never yields; do not poll.",
     promptSnippet: "read_subsession: inspect an available child transcript; never yields",
     parameters: ReadSubsessionParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
       const { sessionId, ...query } = params;
-      const result = await deps.read(parentSessionId, sessionId, query, parentSessionFile);
+      const result = await deps.read(parentSessionId, sessionId, query, parentSessionFile, _toolCallId);
       const text = result.status === "working"
         ? workingInspectionGuidance(result.sessionId)
         : renderTranscript(result);
@@ -285,31 +296,37 @@ export function createSubsessionToolDefinitions(spawningCwd: string, deps: Subse
     },
   });
 
-  const yieldTool = defineTool<typeof YieldToSubsessionsParams, { subsessions: SubsessionSummary[] }>({
+  const yieldTool = defineTool<typeof YieldToSubsessionsParams, SubsessionJoinResult>({
     name: "yield_to_subsessions",
     // Nested tools cannot terminate the outer agent run.
     exposure: "model-only",
     label: "Yield to subsessions",
-    description: "At a join point, end this run while tracked children work; completion notices wake you. If none work, continue. Call alone and last; do not poll.",
-    promptSnippet: "yield_to_subsessions: end the run at a join point; call alone and last",
+    description: "Collect unread child results at a join point. Ready results are returned and marked read. If none are ready but children are working, end this run; a new result wakes you. If nothing is outstanding, continue. Call alone and last; do not poll.",
+    promptSnippet: "yield_to_subsessions: collect unread results or end the run until a result arrives; call alone and last",
     promptGuidelines: [
-      "After calling spawn_subsession, you can continue with other work. At the join point, call yield_to_subsessions alone and last; completion notices wake you, so do not poll.",
+      "After calling spawn_subsession, continue independent work, then call yield_to_subsessions alone and last at the join point. It returns unread results now or ends the run until a result arrives; do not poll. Receiving a completed result marks it read, so it will not arrive again automatically.",
     ],
     parameters: YieldToSubsessionsParams,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const parentSessionId = ctx.sessionManager.getSessionId();
       const parentSessionFile = ctx.sessionManager.getSessionFile() ?? undefined;
-      const subsessions = await deps.list(parentSessionId, parentSessionFile);
-      const working = subsessions.filter(({ status }) => status === "working");
-      if (working.length === 0) {
+      const result = await deps.join(parentSessionId, parentSessionFile, _toolCallId);
+      const workingIds = result.subsessions.filter(({ status }) => status === "working").map(({ sessionId }) => sessionId);
+      if (result.completions.length > 0) {
         return {
-          content: [{ type: "text", text: "No tracked subsessions are working; continuing." }],
-          details: { subsessions },
+          content: [{ type: "text", text: renderSubsessionCompletions(result.completions, workingIds) }],
+          details: result,
+        };
+      }
+      if (workingIds.length === 0) {
+        return {
+          content: [{ type: "text", text: "No unread child results; no tracked subsessions are working. Continuing." }],
+          details: result,
         };
       }
       return {
-        content: [{ type: "text", text: `Working: ${working.map(({ sessionId }) => sessionId).join(", ")}. Ending this run; completion notices will wake you.` }],
-        details: { subsessions },
+        content: [{ type: "text", text: `Working: ${workingIds.join(", ")}. Ending this run; a new unread result will wake you.` }],
+        details: result,
         terminate: true,
       };
     },

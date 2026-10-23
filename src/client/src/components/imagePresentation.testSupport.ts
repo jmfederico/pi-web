@@ -1,6 +1,5 @@
 import type { LitElement } from "lit";
-import { vi } from "vitest";
-import { ImagePresentation } from "./ImagePresentation";
+import type { ImagePresentation } from "./ImagePresentation";
 
 export function imagePresentation(host: LitElement): ImagePresentation {
   const presentation = host.renderRoot.querySelector<ImagePresentation>("pi-web-image-presentation");
@@ -16,37 +15,25 @@ export async function settleImage(host: LitElement): Promise<ImagePresentation> 
   return presentation;
 }
 
-/** Observer notifications, not simulated layout, are the component's browser boundary. */
-export class ImageIntersectionObserver implements IntersectionObserver {
-  static instances: ImageIntersectionObserver[] = [];
-  readonly root: Element | Document | null;
-  readonly rootMargin: string;
-  readonly scrollMargin = "0px";
-  readonly thresholds: readonly number[] = [0];
-  private target: Element | undefined;
-  readonly disconnect = vi.fn();
-  readonly unobserve = vi.fn();
-  readonly observe = vi.fn((target: Element) => { this.target = target; });
-
-  constructor(private readonly callback: IntersectionObserverCallback, options: IntersectionObserverInit = {}) {
-    this.root = options.root ?? null;
-    this.rootMargin = options.rootMargin ?? "0px";
-    ImageIntersectionObserver.instances.push(this);
-  }
-
-  takeRecords(): IntersectionObserverEntry[] { return []; }
-
-  notify(isIntersecting = true): void {
-    if (this.target === undefined) throw new Error("Expected observed image");
-    this.callback([{
-      target: this.target, isIntersecting, intersectionRatio: isIntersecting ? 1 : 0,
-      time: 0, rootBounds: null, boundingClientRect: new DOMRectReadOnly(), intersectionRect: new DOMRectReadOnly(),
-    }], this);
-  }
+/** Stub browser decode metadata, not layout: happy-dom does not decode images. */
+export function loadIntrinsicDimensions(image: HTMLImageElement, width: number, height: number): void {
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: width },
+    naturalHeight: { configurable: true, value: height },
+    currentSrc: { configurable: true, value: image.src },
+    complete: { configurable: true, value: true },
+  });
+  image.dispatchEvent(new Event("load"));
 }
 
-export function latestImageObserver(): ImageIntersectionObserver {
-  const observer = ImageIntersectionObserver.instances.at(-1);
-  if (observer === undefined) throw new Error("Expected image observer");
-  return observer;
+export function nativeImage(presentation: ImagePresentation): HTMLImageElement {
+  const image = presentation.renderRoot.querySelector("img");
+  if (image === null) throw new Error("Expected native image");
+  return image;
+}
+
+export function imageButton(presentation: ImagePresentation, selector = ".image-button"): HTMLButtonElement {
+  const button = presentation.renderRoot.querySelector<HTMLButtonElement>(selector);
+  if (button === null) throw new Error("Expected image button");
+  return button;
 }

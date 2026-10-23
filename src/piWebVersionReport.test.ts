@@ -123,6 +123,22 @@ describe("printPiWebVersionReport release checks", () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
+  it("prints actual per-component engines without confusing package versions", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json({
+      packageName: "@jmfederico/pi-web", generatedAt: "now",
+      components: {
+        web: componentStatus({ runtimeVersion: "1.202608.1", runtime: { name: "node", version: "22.9.0" } }),
+        sessiond: sessiondStatus({ runtimeVersion: "1.202608.1", runtime: { name: "bun", version: "1.3.0" } }),
+      },
+    }));
+    const result = await printPiWebVersionReport({ configEnv, env: {}, fetch });
+    expect(result.web?.runtime).toEqual({ name: "node", version: "22.9.0" });
+    expect(result.sessiond?.runtime).toEqual({ name: "bun", version: "1.3.0" });
+    expect(output()).toContain("runtime: Node.js 22.9.0");
+    expect(output()).toContain("runtime: Bun 1.3.0");
+    expect(output()).toContain("running: 1.202608.1");
+  });
+
   it.each([undefined, false])("keeps ordinary reports local (check=%s)", async (check) => {
     const remote = vi.fn<typeof globalThis.fetch>();
     const fetch = reportFetch(remote);

@@ -141,7 +141,7 @@ it("removes stale readiness when a rebuild fails", async () => {
   await copyFile(join(repoRoot, "scripts/build-plugins.mjs"), join(tempDir, "scripts/build-plugins.mjs"));
   await symlink(join(repoRoot, "node_modules"), join(tempDir, "node_modules"), process.platform === "win32" ? "junction" : "dir");
   // Empty special-plugin directories reach the missing Files manifest before any bundle work.
-  for (const plugin of ["files", "terminal", "mermaid"]) {
+  for (const plugin of ["files", "terminal", "mermaid", "code-highlight"]) {
     await mkdir(join(tempDir, "pi-web-plugins", plugin), { recursive: true });
   }
   const readyPath = join(tempDir, "dist/.plugins-ready");

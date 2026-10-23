@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import {
+  createCompanionBackend,
   PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
   PI_WEB_HOST_WORKSPACES_CAPABILITY,
 } from "./server-plugin-api.js";
+import type { PluginBackend } from "./plugin-api.js";
 import type {
   JsonObject,
   PiWebHostPiSessionRun,
@@ -21,6 +23,8 @@ import type {
   ServerPluginPeerChannelCloseContext,
   ServerPluginPeerChannelOpenContext,
   ServerPluginPeerRequestContext,
+  ServerPluginPeerRequestContextV5,
+  ServerPluginPeerChannelOpenContextV5,
   ServerPluginPeerWorkspace,
   PiWebServerPlugin,
   ProjectInput,
@@ -33,9 +37,11 @@ import type {
   ServerPluginLogger,
   ServerPluginNoticeInput,
   ServerPluginStartContext,
+  ServerPluginWorkspaceNotifications,
   ServerPluginNoticeReporterV1,
   ServerPluginNoticeScope,
   WorkspaceProvider,
+  WorkspaceProviderIntegration,
   WorkspaceRemovalPresentation,
   WorkspaceRemovePlan,
 } from "@jmfederico/pi-web/server-plugin-api";
@@ -91,6 +97,46 @@ type ReadonlyKeys<Value> = {
 type WritableKeys<Value> = Exclude<keyof Value, ReadonlyKeys<Value>>;
 
 describe("public server plugin API", () => {
+  it("discovers a companion backend synchronously and fails closed without a host", () => {
+    expectTypeOf<ReturnType<typeof createCompanionBackend>>().toEqualTypeOf<PluginBackend>();
+    expect(() => createCompanionBackend({ emit: vi.fn() }, "paired")).toThrow("hosted PI WEB");
+    const backend: PluginBackend = { machineId: "local", forScope: () => ({ request: () => Promise.resolve(null) }) };
+    const emit = vi.fn((_channel: string, data: unknown) => {
+      if (typeof data !== "object" || data === null) throw new Error("Expected discovery");
+      const accept: unknown = Reflect.get(data, "accept");
+      if (typeof accept !== "function") throw new Error("Expected discovery callback");
+      Reflect.apply(accept, undefined, [() => backend]);
+    });
+    expect(createCompanionBackend({ emit }, "paired")).toBe(backend);
+    expect(emit).toHaveBeenCalledWith("pi-web:companion-backend:discover", expect.objectContaining({ pluginId: "paired" }));
+    expect(() => createCompanionBackend({ emit: (_channel, data) => {
+      if (typeof data !== "object" || data === null) throw new Error("Expected discovery");
+      const accept: unknown = Reflect.get(data, "accept");
+      if (typeof accept !== "function") throw new Error("Expected discovery callback");
+      Reflect.apply(accept, undefined, [() => { throw new Error("Unavailable"); }]);
+    } }, "paired")).toThrow("Unavailable");
+  });
+  it("discriminates legacy v3 and scoped v5 plugin entry points", () => {
+    const legacy: PiWebServerPlugin = {
+      apiVersion: 3,
+      name: "Legacy",
+      activate(context) {
+        expectTypeOf(context.apiVersion).toEqualTypeOf<3>();
+        return { peer: { request({ workspace }) { return workspace.id; } } };
+      },
+    };
+    const modern: PiWebServerPlugin = {
+      apiVersion: 5,
+      name: "Modern",
+      activate(context) {
+        expectTypeOf(context.apiVersion).toEqualTypeOf<5>();
+        return { peer: { request({ scope }) { return scope.kind; } } };
+      },
+    };
+    expectTypeOf<keyof ServerPluginPeerRequestContextV5>().toEqualTypeOf<"scope" | "operation" | "input" | "signal">();
+    expectTypeOf<keyof ServerPluginPeerChannelOpenContextV5>().toEqualTypeOf<"scope" | "operation" | "input" | "signal" | "send">();
+    expect([legacy.apiVersion, modern.apiVersion]).toEqual([3, 5]);
+  });
   it("supports lifecycle-owned providers, peers, and typed capability composition", async () => {
     const observedSignals: AbortSignal[] = [];
     const observedLifetimes: AbortSignal[] = [];
@@ -339,8 +385,11 @@ describe("public server plugin API", () => {
 
   it("keeps host inputs readonly and concrete services out of the declaration surface", async () => {
     expectTypeOf<keyof ServerPluginActivationContext>().toEqualTypeOf<
-      "apiVersion" | "pluginId" | "packageRoot" | "dataDirectory" | "logger" | "settings" | "notices" | "execFile" | "signal" | "lifetimeSignal"
+      "apiVersion" | "pluginId" | "packageRoot" | "dataDirectory" | "logger" | "settings" | "resolveProjectSettings" | "workspaceNotifications" | "notices" | "execFile" | "signal" | "lifetimeSignal"
     >();
+    expectTypeOf<keyof ServerPluginWorkspaceNotifications>().toEqualTypeOf<"command">();
+    expectTypeOf<keyof WorkspaceProviderIntegration>().toEqualTypeOf<"reconcile" | "acceptNotification">();
+    expectTypeOf<ReadonlyKeys<ServerPluginWorkspaceNotifications>>().toEqualTypeOf<"command">();
     expectTypeOf<keyof ServerPluginNoticeReporterV1>().toEqualTypeOf<"version" | "record">();
     expectTypeOf<keyof ServerPluginNoticeInput>().toEqualTypeOf<"severity" | "message" | "scope" | "context">();
     expectTypeOf<keyof PiWebServerPlugin>().toEqualTypeOf<"apiVersion" | "name" | "requires" | "activate">();
@@ -360,7 +409,7 @@ describe("public server plugin API", () => {
     expectTypeOf<keyof ServerPluginActivation>().toEqualTypeOf<"workspaceProvider" | "peer" | "provides" | "start" | "dispose" | "health">();
     expectTypeOf<keyof ServerPluginNoticeScope>().toEqualTypeOf<"projectId" | "workspaceId" | "sessionId">();
     expectTypeOf<keyof WorkspaceProvider>().toEqualTypeOf<
-      "fallback" | "probe" | "list" | "prepareRemove"
+      "fallback" | "probe" | "list" | "prepareRemove" | "integration"
     >();
     expectTypeOf<keyof ServerPluginPeer>().toEqualTypeOf<"request" | "openChannel">();
     // eslint-disable-next-line @typescript-eslint/no-generated-empty-object-type -- Record<never, never> deliberately probes that an empty scope object satisfies the notice-scope contract.
@@ -427,7 +476,7 @@ describe("public server plugin API", () => {
       readFile("src/plugin-api.ts", "utf8"),
     ]);
     expect(source).not.toMatch(/\b(?:BackgroundService|Fastify|WorkspaceService|ProjectService|TerminalService|PiSessionService|SessionManager|SessionDaemonClient)\b/u);
-    expect(source).not.toMatch(/event\s*bus|service\s*locator|registerRoute/iu);
+    expect(source).not.toMatch(/service\s*locator|registerRoute/iu);
     expect(source).toContain('from "./shared/pluginApiTypes.js";');
     expect(source).not.toContain("./shared/apiTypes.js");
     expect(browserSource).not.toMatch(/PI_WEB_HOST_(?:STATE|WORKSPACES|PI_SESSIONS)_CAPABILITY|PiWebHost(?:State|Workspace|Workspaces|PiSession|PiSessions)/u);

@@ -300,7 +300,8 @@ function appendBoundedQueryParam(
   budget.recordLength += value.length;
 }
 
-function replaceContributionQueryParams(
+/** Apply contribution state to a URL before its single route/history commit. */
+export function replaceContributionQueryParams(
   params: URLSearchParams,
   record: Readonly<Record<string, string | readonly string[]>>,
 ): void {

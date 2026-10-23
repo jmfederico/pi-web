@@ -57,7 +57,7 @@ describe("settings-dialog plugin settings machine targeting", () => {
     expect(saveSpy).toHaveBeenCalledWith({ plugins: { info: { enabled: true } } }, "remote-a");
     expect(pluginsSpy).not.toHaveBeenCalled();
     expect(getDialogProperty(dialog, "selectedPluginConfigResponse")).toBe(saved);
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("Plugin settings saved for Lab Mac.");
     expect(getDialogProperty(dialog, "pluginError")).toContain("Plugin lifecycle diagnostics are not available on Lab Mac");
   });
 
@@ -132,7 +132,7 @@ describe("settings-dialog plugin settings machine targeting", () => {
     expect(pluginsSpy.mock.calls).toEqual([["remote-a"]]);
     expect(getDialogProperty(dialog, "selectedPluginConfigResponse")).toBe(savedConfig);
     expect(getDialogProperty(dialog, "selectedPluginsResponse")).toBe(refreshedPlugins);
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("Plugin settings saved for Lab Mac.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 
@@ -152,7 +152,7 @@ describe("settings-dialog plugin settings machine targeting", () => {
 
     expect(getDialogProperty(dialog, "selectedPluginConfigResponse")).toBe(savedConfig);
     expect(getDialogProperty(dialog, "selectedPluginsResponse")).toBeUndefined();
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("Plugin settings saved for Lab Mac.");
     expect(getDialogProperty(dialog, "pluginError")).toContain("Config saved, but failed to refresh PI WEB plugins");
   });
 

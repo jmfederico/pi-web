@@ -9,6 +9,7 @@ import { afterEach, beforeEach } from "vitest";
 import { buildApp } from "./app.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
+import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
 import type { MachineClient } from "./machines/machineClient.js";
 import { MachineService } from "./machines/machineService.js";
 import { MachineStore } from "./machines/machineStore.js";
@@ -97,6 +98,7 @@ export function registerAppTestHooks(): void {
     workspaceCatalog = new AppTestWorkspaceCatalog(projects);
     app = await buildApp({
       projects,
+      navigationPreferences: new NavigationPreferenceStore(join(tempDir, "navigation-preferences.json")),
       workspaceCatalog,
       machines: new MachineService(new MachineStore(join(tempDir, "machines.json")), {
         remoteClientFactory: () => {

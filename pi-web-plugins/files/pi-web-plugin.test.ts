@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import type { PluginActivationContext, PluginRuntimeContext, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { PluginActivationContext, PluginCapability, PluginRuntimeContext, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { html, svg, type TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FilesRuntime } from "./FilesRuntime";
@@ -13,7 +13,31 @@ afterEach(() => {
 });
 
 describe("Files plugin activation", () => {
-  it("registers the canonical panel, compatibility aliases, actions, and custom elements synchronously", () => {
+  it("requires stylesheet integration v1 and passes the start-resolved capability across the panel boundary", async () => {
+    expect(plugin.requires.map(({ id, version }) => ({ id, version }))).toEqual([
+      { id: "stylesheet-integration", version: 1 },
+      { id: "content-rendering", version: 1 },
+    ]);
+    const result = activateFilesPlugin(activationContext(), new FilesRuntime());
+    const integration = { registerRoot: vi.fn(() => vi.fn()), createController: vi.fn(), subscribe: vi.fn(() => vi.fn()) };
+    const requests: string[] = [];
+    await result.start?.({ signal: new AbortController().signal, capabilities: {
+      resolve<Value>(token: PluginCapability<Value>): Value {
+        requests.push(token.id);
+        return token.parse(token.id === "stylesheet-integration" ? integration : { listRenderers: vi.fn(), renderText: vi.fn(), renderMarkdown: vi.fn() });
+      },
+    } });
+    expect(requests).toEqual(["content-rendering", "stylesheet-integration"]);
+    const panel = result.contributions.workspacePanels?.[0]?.render(createWorkspaceContext());
+    expect(panel?.values).toContain(integration);
+    const requirement = plugin.requires.find(({ id }) => id === "stylesheet-integration");
+    if (requirement === undefined) throw new Error("Missing stylesheet integration requirement");
+    for (const value of [null, {}, { ...integration, registerRoot: undefined }, { ...integration, createController: undefined }, { ...integration, subscribe: undefined }]) {
+      expect(() => requirement.parse(value)).toThrow("Stylesheet integration capability v1");
+    }
+  });
+
+  it("registers the canonical panel, actions, and custom elements synchronously", () => {
     const runtime = new FilesRuntime();
     const result = activateFilesPlugin(activationContext(), runtime);
     const panel = result.contributions.workspacePanels?.[0];
@@ -25,8 +49,6 @@ describe("Files plugin activation", () => {
       id: "workspace.files",
       title: "Files",
       order: 10,
-      routeAliases: ["files", "core:workspace.files"],
-      navigationAliases: ["core:workspace.files"],
       invalidationResources: ["workspace.files"],
     });
     expect(actions.map((action) => ({ id: action.id, shortcut: action.shortcut, aliases: action.shortcutAliases }))).toEqual([

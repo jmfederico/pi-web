@@ -1,5 +1,5 @@
-import type { TemplateResult } from "lit";
-import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, JsonValue, MachineKind, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebStatusResponse, PluginCapability, PluginCapabilityProvision, TerminalCommandRunHandle, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "./shared/pluginApiTypes.js";
+import type { ReactiveControllerHost, TemplateResult } from "lit";
+import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse, MachineKind, PluginBackend, PluginPeer, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, PiWebStatusResponse, PluginCapability, PluginCapabilityProvision, MaintenanceTerminalCommandRun, TerminalCommandRunHandle, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse } from "./shared/pluginApiTypes.js";
 
 export type {
   FileContentMediaType,
@@ -9,8 +9,16 @@ export type {
   JsonObject,
   JsonPrimitive,
   JsonValue,
+  PluginBackend,
+  PluginBackendScope,
+  PluginPeer,
+  PluginPeerRequestOptions,
+  PluginPeerChannelOptions,
+  PluginPeerChannelClose,
+  PluginPeerChannel,
   MachineKind,
   PiWebComponentStatus,
+  PiWebRuntimeIdentity,
   PiWebDockerMode,
   PiWebInstallationInfo,
   PiWebInstallationKind,
@@ -22,6 +30,9 @@ export type {
   PiWebVersionResponse,
   PluginCapability,
   PluginCapabilityProvision,
+  SessionUiMetadata,
+  AnyTerminalCommandRun,
+  MaintenanceTerminalCommandRun,
   TerminalCommandRun,
   TerminalCommandRunHandle,
   TerminalCommandRunStatus,
@@ -35,6 +46,96 @@ export type {
   MoveWorkspaceFileResponse,
 } from "./shared/pluginApiTypes.js";
 
+export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
+import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
+
+// eslint-disable-next-line @typescript-eslint/no-deprecated -- The host intentionally accepts supported legacy entries.
+export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
+
+/** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
+export interface PiWebPluginV5 {
+  apiVersion: 5;
+  name: string;
+  requires?: readonly PluginCapability[];
+  activate(context: PluginActivationContextV5): MaybePromise<PluginActivationResultV5>;
+}
+
+export type PluginActivationContextV5 = Omit<PluginActivationContext, "apiVersion"> & { readonly apiVersion: 5 };
+export type PluginActivationResultV5 = Omit<PluginActivationResult, "contributions"> & { contributions: PluginContributionsV5 };
+
+/** Captured machine target; changing selection never retargets this catalog. */
+export interface PluginCatalog extends PluginCatalogV1 {
+  readonly machineId: string;
+}
+
+export interface PluginDiscoveryContext {
+  readonly catalog: PluginCatalog;
+  readonly backend?: PluginBackend;
+}
+
+export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext;
+export type ApplicationPanelContextV5 = ApplicationPanelContext & PluginDiscoveryContext;
+export type WorkspacePanelContextV5 = WorkspacePanelContext & PluginDiscoveryContext;
+export type WorkspaceLabelContextV5 = WorkspaceLabelContext & PluginDiscoveryContext;
+export type SessionLabelContextV5 = SessionLabelContext & PluginDiscoveryContext;
+export interface MessageActionMessageV5 extends MessageActionMessage {
+  /** This entry contains an ask_user question request, not an answer record. */
+  readonly isQuestion?: boolean;
+}
+export interface MessageActionAvailabilityContextV5 extends Omit<MessageActionAvailabilityContext, "message"> {
+  readonly message: MessageActionMessageV5;
+}
+export type MessageActionContextV5 = Omit<MessageActionContext, "message"> & MessageActionAvailabilityContextV5 & PluginDiscoveryContext;
+export type DisplayedMessageActionContextV5 = DisplayedMessageActionContext & PluginDiscoveryContext;
+
+export interface PluginContributionsV5 extends Omit<PluginContributions, "actions" | "applicationPanels" | "workspacePanels" | "workspaceLabels" | "sessionLabels" | "messageActions" | "contentRenderers" | "themes"> {
+  stylesheets?: StylesheetContribution[];
+  syntaxHighlighters?: SyntaxHighlighterContribution[];
+  contentRenderers?: ContentRendererContributionV5[];
+  themes?: ThemeContributionV5[];
+  actions?: PluginActionV5[];
+  applicationPanels?: ApplicationPanelContributionV5[];
+  workspacePanels?: WorkspacePanelContributionV5[];
+  workspaceLabels?: WorkspaceLabelContributionV5[];
+  sessionLabels?: SessionLabelContributionV5[];
+  messageActions?: MessageActionContributionV5[];
+}
+
+export type PluginActionV5 = Omit<PluginAction, "enabled" | "disabledReason" | "run"> & {
+  enabled?: (context: PluginRuntimeContextV5) => boolean;
+  disabledReason?: (context: PluginRuntimeContextV5) => string | undefined;
+  run: (context: PluginRuntimeContextV5) => MaybePromise<void>;
+};
+export type ApplicationPanelContributionV5 = Omit<ApplicationPanelContribution, "visible" | "badge" | "render" | "onInvalidate"> & {
+  onInvalidate?: (context: ApplicationPanelContextV5) => MaybePromise<void>;
+  visible?: (context: ApplicationPanelContextV5) => boolean;
+  badge?: (context: ApplicationPanelContextV5) => string | number | TemplateResult | undefined;
+  render: (context: ApplicationPanelContextV5) => TemplateResult;
+};
+export type WorkspacePanelContributionV5 = Omit<WorkspacePanelContribution, "visible" | "badge" | "render" | "fileOpenQuery" | "onInvalidate"> & {
+  visible?: (context: WorkspacePanelContextV5) => boolean;
+  badge?: (context: WorkspacePanelContextV5) => string | number | TemplateResult | undefined;
+  render: (context: WorkspacePanelContextV5) => TemplateResult;
+  fileOpenQuery?: (context: WorkspacePanelContextV5, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
+  onInvalidate?: (context: WorkspacePanelContextV5, invalidation?: WorkspaceInvalidation) => MaybePromise<void>;
+};
+export type WorkspaceLabelContributionV5 = Omit<WorkspaceLabelContribution, "visible" | "items"> & {
+  visible?: (context: WorkspaceLabelContextV5) => boolean;
+  items: (context: WorkspaceLabelContextV5) => WorkspaceLabelItem[];
+};
+export type SessionLabelContributionV5 = Omit<SessionLabelContribution, "visible" | "items"> & {
+  visible?: (context: SessionLabelContextV5) => boolean;
+  items: (context: SessionLabelContextV5) => SessionLabelItem[];
+};
+export type MessageActionContributionV5 =
+  | (Omit<EntryMessageActionContribution, "run" | "ariaLabel" | "visible" | "enabled"> & {
+      ariaLabel?: (context: MessageActionAvailabilityContextV5) => string;
+      visible?: (context: MessageActionAvailabilityContextV5) => boolean;
+      enabled?: (context: MessageActionAvailabilityContextV5) => boolean;
+      run: (context: MessageActionContextV5) => MaybePromise<MessageActionResult>;
+    })
+  | (Omit<DisplayedMessageActionContribution, "run"> & { run: (context: DisplayedMessageActionContextV5) => MaybePromise<MessageActionResult> });
+
 export type PluginId = string;
 export type LocalContributionId = string;
 export type QualifiedContributionId = string;
@@ -43,7 +144,8 @@ export type SvgTemplateTag = (strings: TemplateStringsArray, ...values: unknown[
 
 type MaybePromise<T> = T | Promise<T>;
 
-export interface PiWebPlugin {
+/** @deprecated Browser API v4 remains supported; use PiWebPluginV5 for catalog and scoped backend access. */
+export interface LegacyPiWebPlugin {
   apiVersion: 4;
   name: string;
   /** Exact capability versions that must be active before this plugin starts. */
@@ -109,6 +211,53 @@ export interface ContentRendererContribution {
   render(input: ContentRendererInput): TemplateResult;
 }
 
+export interface ContentRendererInputV5 extends ContentRendererInput {
+  readonly machineId?: string;
+  readonly language?: string;
+  readonly filePath?: string;
+}
+
+export interface ContentRendererContributionV5 extends Omit<ContentRendererContribution, "render"> {
+  /** Human-readable name used for renderer view buttons. */
+  title?: string;
+  /** Synchronous eligibility; replaces absent selectors or further restricts declared selectors. */
+  supports?(request: Readonly<ContentRenderRequest>): boolean;
+  render(input: ContentRendererInputV5): TemplateResult;
+}
+
+export type SyntaxHighlightTokenKind = "keyword" | "string" | "number" | "comment" | "type" | "function" | "variable" | "operator" | "punctuation" | "property" | "literal" | "meta";
+
+export interface SyntaxHighlightToken {
+  /** UTF-16 code-unit offsets: inclusive start, exclusive end. Sorted and nonoverlapping. */
+  readonly from: number;
+  readonly to: number;
+  readonly kind: SyntaxHighlightTokenKind;
+}
+
+export interface SyntaxHighlighterContribution {
+  id: LocalContributionId;
+  languages?: readonly string[];
+  /** Extensions without a leading dot, matched case-insensitively. */
+  fileExtensions?: readonly string[];
+  highlight(input: { readonly text: string; readonly signal: AbortSignal }): readonly SyntaxHighlightToken[] | Promise<readonly SyntaxHighlightToken[]>;
+}
+
+export interface SyntaxHighlightRequest {
+  machineId: string;
+  text: string;
+  language?: string;
+  filePath?: string;
+  signal: AbortSignal;
+}
+
+/** Host capability token: { pluginId: "pi-web", id: "syntax-highlighting", version: 1, parse }. */
+export interface SyntaxHighlightingCapability {
+  /** Whether a currently active grammar matches this machine and source metadata. */
+  supports(request: Pick<ContentRenderRequest, "machineId" | "language" | "filePath">): boolean;
+  /** Last discovered match; undefined when no match or over 100,000 UTF-16 units. Errors reject. */
+  highlight(request: SyntaxHighlightRequest): Promise<readonly SyntaxHighlightToken[] | undefined>;
+}
+
 export interface ContentRenderRequest {
   machineId: string;
   text: string;
@@ -120,6 +269,8 @@ export interface ContentRenderRequest {
 export interface ContentRendererOption {
   readonly id: string;
   readonly label: string;
+  /** Explicit plugin title, when supplied; label also includes the host's fallback name. */
+  readonly title?: string;
   readonly renderMode: "manual" | "automatic";
 }
 
@@ -139,21 +290,56 @@ export interface ContentMarkdownRenderRequest {
 
 /** Host capability token: { pluginId: "pi-web", id: "content-rendering", version: 1, parse }. */
 export interface ContentRenderingCapability {
-  /** Eligible choices in source plugin ID order, then local contribution ID order. */
+  /** Eligible choices in plugin discovery order, then contribution declaration order. */
   listRenderers(request: ContentRenderRequest): readonly ContentRendererOption[];
   /**
    * Undefined when no renderer claims the complete text file.
    * External controls require the caller to provide raw-source access, mode switching and a renderer chooser.
-   * Only external controls accept rendererId; absent or unavailable IDs use the first match.
+   * Only external controls accept rendererId; absent or unavailable IDs use the last automatic match, otherwise the first manual match.
    * Consumers authorize manual previews according to their own user-intent policy.
    * Listing and creating templates never call render.
    */
   renderText(request: ContentTextRenderRequest): TemplateResult | undefined;
   /**
    * The caller supplies its existing trusted HTML sanitizer; policies are not shared.
-   * Each eligible fence owns its chooser and Raw control. No remembered intent is stored.
+   * Each eligible fence owns its renderer buttons and Raw control. No remembered intent is stored.
    */
   renderMarkdown(request: ContentMarkdownRenderRequest): TemplateResult;
+}
+
+/** Styling is experimental: shared classes, tokens and presentation may change between releases. */
+export interface StylesheetRootOptions {
+  /** Inject the host's shared controls and file/tree-row styles into this root. Defaults to false. */
+  readonly sharedUi?: boolean;
+}
+
+/**
+ * Host capability token: { pluginId: "pi-web", id: "stylesheet-integration", version: 1, parse }.
+ * Direct stylesheet rules reach only explicitly registered roots; custom properties can inherit further.
+ * Opt into shared UI styles per root; the host owns injection, ordering and cleanup.
+ * Styling, including shared classes and internal host markup, is experimental rather than a stable API.
+ */
+export interface StylesheetIntegrationCapabilityV1 {
+  /** Register a retained open or closed root. Release on disconnect; register again on reconnect. */
+  readonly registerRoot: (root: ShadowRoot, options?: StylesheetRootOptions) => () => void;
+  /**
+   * Subscribe to active stylesheet changes after adoption in all registered roots.
+   * Includes removal, not initial subscription or root registration. Read initial values
+   * after registering your root. Listeners run synchronously; failures are logged in isolation.
+   * Release on disconnect. This does not observe arbitrary CSS mutations or media queries.
+   */
+  readonly subscribe: (listener: () => void) => () => void;
+  /** Installs a Lit lifecycle controller; call once when constructing the component. */
+  readonly createController: (host: ReactiveControllerHost & { readonly renderRoot?: HTMLElement | DocumentFragment }, options?: StylesheetRootOptions) => void;
+}
+
+/** A CSS file, normally new URL("./custom.css", import.meta.url).href. Inline CSS and runtime @import are unsupported. */
+export interface StylesheetContribution {
+  id: string;
+  /** Absolute HTTP(S) URL. Assets resolve relative to the CSS file, including redirects. */
+  url: string;
+  /** Lower numbers load first; default 1000. Ties use qualified contribution IDs. */
+  order?: number;
 }
 
 export interface PluginContributions {
@@ -163,6 +349,7 @@ export interface PluginContributions {
   applicationPanels?: ApplicationPanelContribution[];
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
+  sessionLabels?: SessionLabelContribution[];
   themes?: ThemeContribution[];
   themePairs?: ThemePairContribution[];
 }
@@ -200,6 +387,8 @@ export interface PluginSelectedSession {
   /** Workspace working directory. */
   cwd: string;
   name?: string;
+  /** Detached, explicitly UI-safe data by package/plugin namespace. Absent on older hosts. */
+  metadata?: import("./shared/pluginApiTypes.js").SessionUiMetadata;
   archived: boolean;
   /** True while the browser is waiting for session creation to finish. */
   pending: boolean;
@@ -268,19 +457,52 @@ export interface PluginPromptEditor {
   removeChip?(id: string): void;
 }
 
-/** A complete navigation destination, not a patch of the current route. */
+/** A non-null destination: complete by default, or a current-URL patch with mode: "patch". */
 export interface PluginNavigationDestination {
   machineId?: string;
   projectId?: string;
   workspaceId?: string;
+  /** Full, exact session ID in the target workspace; prefixes are not resolved. */
   sessionId?: string;
   view?: "navigation" | "chat" | "workspace";
   tool?: QualifiedContributionId;
+  /** Local query keys for tool. Requires a tool/project/workspace
+   *  (explicit in replace mode, optionally inherited in patch mode).
+   *  Replace mode replaces all contribution query state; patch mode merges only these keys. */
+  query?: Readonly<Record<string, ContributionQueryValue>>;
+}
+
+/** Current-URL patch, accepted only with mode: "patch". Undefined fields are preserved. */
+export interface PluginNavigationPatchDestination {
+  /** Null resets the machine to local; other null route fields remove that URL field. */
+  machineId?: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
+  /** Full, exact session ID in the target workspace; prefixes are not resolved. */
+  sessionId?: string | null;
+  view?: "navigation" | "chat" | "workspace" | null;
+  tool?: QualifiedContributionId | null;
+  /** Merge local keys into the effective tool/project/workspace query; null values remove keys. */
+  query?: Readonly<Record<string, ContributionQueryValue | null>>;
+}
+
+export interface PluginNavigationOptions {
+  /** Defaults to replace. Patch preserves omitted fields and clears inherited descendants
+   *  when their machine/project/workspace changes. Null route fields are valid only in patch mode. */
+  mode?: "replace" | "patch";
+  /** Browser history behavior, independent of mode. Defaults to push. */
+  history?: "push" | "replace";
+}
+
+/** Shared navigation callable; nullable destinations require explicit patch options. */
+export interface PluginNavigate {
+  (destination: PluginNavigationDestination, options?: PluginNavigationOptions): Promise<void>;
+  (destination: PluginNavigationPatchDestination, options: PluginNavigationOptions & { mode: "patch" }): Promise<void>;
 }
 
 export interface PluginRuntimeContext {
   /** Navigate using host restoration defaults. Route failures appear in the host UI. */
-  navigate: (destination: PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   state: PluginRuntimeState;
   /** Read-only discovery on this context's machine. Omitted by older hosts. */
   projects?: PluginProjects;
@@ -324,7 +546,7 @@ export interface MessageActionAvailabilityContext {
 /** Created on invocation, with helpers scoped to the initiating machine/conversation. */
 export interface MessageActionContext extends MessageActionAvailabilityContext {
   readonly prompt: PluginPromptEditor;
-  readonly navigate: (destination: PluginNavigationDestination) => Promise<void>;
+  readonly navigate: PluginNavigate;
   readonly projects: PluginProjects;
   readonly workspace?: Workspace;
   readonly files?: WorkspaceFilesContextValue;
@@ -483,48 +705,6 @@ export interface WorkspaceFilesCapabilityV1 extends WorkspaceFiles {
 export type WorkspaceFilesContextValue = LegacyWorkspaceFiles | WorkspaceFilesCapabilityV1;
 export type WorkspacePanelFiles = WorkspaceFiles;
 
-export interface PluginPeerRequestOptions {
-  /** Cancels this bounded request through local or federated host transport. */
-  readonly signal?: AbortSignal;
-}
-
-/** Callbacks and cancellation for one bounded package-peer channel. */
-export interface PluginPeerChannelOptions {
-  /** Cancels the channel open or closes the live channel through every host hop. */
-  readonly signal?: AbortSignal;
-  /** Receives one plugin-authored JSON frame after the channel is ready. */
-  readonly onData: (data: JsonValue) => void;
-}
-
-export interface PluginPeerChannelClose {
-  readonly code: number;
-  readonly reason: string;
-  readonly wasClean: boolean;
-  /** Attributed host or server-plugin failure when one preceded the close. */
-  readonly error?: Readonly<{ code: string; message: string }>;
-}
-
-export interface PluginPeerChannel {
-  readonly closed: Promise<PluginPeerChannelClose>;
-  /** Queue one bounded JSON frame or throw. Success means queue acceptance, not remote receipt. */
-  send(data: JsonValue): void;
-  close(reason?: string): void;
-}
-
-/**
- * Exact revision-paired path to this browser package's active server entry.
- * A peer supplies a request handler, a channel handler, or both, but never neither.
- */
-export type PluginPeer =
-  | {
-      request(operation: string, input: JsonValue, options?: PluginPeerRequestOptions): Promise<JsonValue>;
-      openChannel?(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
-    }
-  | {
-      request?: undefined;
-      openChannel(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
-    };
-
 export interface WorkspaceHost {
   requestRender(): void;
 }
@@ -555,6 +735,11 @@ export interface WorkspacePanelTerminal {
   runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle>;
 }
 
+export interface MaintenanceTerminal {
+  open(options?: { terminalId?: string | undefined }): void;
+  runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle<MaintenanceTerminalCommandRun>>;
+}
+
 export type ContributionQueryValue = string | number | boolean | readonly (string | number | boolean)[];
 
 export interface WorkspacePanelNavigationV1 {
@@ -566,7 +751,7 @@ export interface WorkspacePanelNavigationV1 {
 
 export interface WorkspacePanelContext extends WorkspaceContext {
   /** Navigate using host restoration defaults. Route failures appear in the host UI. */
-  navigate: (destination: PluginNavigationDestination) => Promise<void>;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   terminal: WorkspacePanelTerminal;
   /** Contribution-scoped address-bar state for deep links and browser history. */
@@ -583,7 +768,11 @@ export interface ApplicationPanelContext {
   workspace?: Workspace;
   /** Workspace-bound terminal; present only with a selected workspace and an available Terminal provider. */
   terminal?: WorkspacePanelTerminal;
-  navigate: (destination: PluginNavigationDestination) => Promise<void>;
+  /** Runs on this machine in PI WEB's maintenance directory, independent of workspace selection. Omitted by older hosts. */
+  maintenanceTerminal?: MaintenanceTerminal;
+  /** Contribution-scoped workspace queries; present only when a workspace is selected. */
+  navigation?: WorkspacePanelNavigationV1;
+  navigate: PluginNavigate;
   prompt: PluginPromptEditor;
   host: WorkspaceHost;
 }
@@ -594,9 +783,10 @@ export interface ApplicationPanelContribution {
   title: string;
   icon?: TemplateResult;
   order?: number;
-  routeAliases?: string[];
   visible?: (context: ApplicationPanelContext) => boolean;
   badge?: (context: ApplicationPanelContext) => string | number | TemplateResult | undefined;
+  /** Refreshes the panel after navigation restore or manual invalidation. */
+  onInvalidate?: (context: ApplicationPanelContext) => void | Promise<void>;
   render: (context: ApplicationPanelContext) => TemplateResult;
 }
 
@@ -614,10 +804,6 @@ export interface WorkspacePanelContribution {
   title: string;
   icon?: WorkspacePanelIcon;
   order?: number;
-  /** Former URL tool/view values that should resolve to this panel. */
-  routeAliases?: string[];
-  /** Former qualified contribution ids whose namespaced query keys remain readable. */
-  navigationAliases?: QualifiedContributionId[];
   visible?: (context: WorkspacePanelContext) => boolean;
   /** Return a deep-link query to open a workspace-relative file, or undefined if unsupported. */
   fileOpenQuery?: (context: WorkspacePanelContext, path: string) => Readonly<Record<string, ContributionQueryValue>> | undefined;
@@ -665,9 +851,47 @@ export interface WorkspaceLabelContribution {
   items: (context: WorkspaceLabelContext) => WorkspaceLabelItem[];
 }
 
+/** Context for one session-list row, including unselected and archived sessions. */
+export interface SessionLabelContext extends WorkspaceContext {
+  /** Basic detached row snapshot, not necessarily state.selectedSession. */
+  session: Readonly<PluginSelectedSession>;
+  navigate: PluginNavigate;
+}
+
+export type SessionLabelItem = SessionLabelTextItem | SessionLabelLinkItem | SessionLabelRenderItem;
+
+export interface SessionLabelTextItem {
+  type: "text";
+  text: string;
+  title?: string;
+}
+
+export interface SessionLabelLinkItem {
+  type: "link";
+  text: string;
+  href: string;
+  title?: string;
+  target?: "_blank" | "_self";
+}
+
+export interface SessionLabelRenderItem {
+  type: "render";
+  render: () => TemplateResult;
+}
+
+/** Indicators on session-list rows only. Callbacks are synchronous and side-effect-free. */
+export interface SessionLabelContribution {
+  id: LocalContributionId;
+  order?: number;
+  visible?: (context: SessionLabelContext) => boolean;
+  items: (context: SessionLabelContext) => SessionLabelItem[];
+}
+
 export type ThemeColorScheme = "dark" | "light";
+
 export type ThemeTokens = Record<string, string>;
 
+/** Legacy v4 palette contract. V5 themes contribute CSS files instead. */
 export interface ThemeContribution {
   id: LocalContributionId;
   name: string;
@@ -675,6 +899,10 @@ export interface ThemeContribution {
   order?: number;
   colorScheme: ThemeColorScheme;
   tokens: ThemeTokens;
+}
+
+export interface ThemeContributionV5 extends Omit<ThemeContribution, "tokens"> {
+  stylesheets?: StylesheetContribution[];
 }
 
 export interface ThemePairContribution {

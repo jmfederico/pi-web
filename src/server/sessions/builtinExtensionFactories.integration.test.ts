@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessage } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, createEventBus } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, createEventBus } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
 import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
@@ -104,9 +104,9 @@ describe("builtin extension factories load through DefaultResourceLoader", () =>
       ({ session } = await createAgentSession({
         cwd: directory, agentDir: directory, settingsManager, resourceLoader: loader,
         sessionManager: SessionManager.inMemory(directory), modelRuntime, model: testModel(),
-        customTools: [createAskUserToolDefinition({ open: unexpectedRunEndingCall }),
+        customTools: [createAskUserToolDefinition({ createAskId: unexpectedRunEndingCall }),
           ...createSubsessionToolDefinitions(directory, {
-            spawn: unexpectedRunEndingCall, list: unexpectedRunEndingCall,
+            spawn: unexpectedRunEndingCall, list: unexpectedRunEndingCall, join: unexpectedRunEndingCall,
             check: unexpectedRunEndingCall, read: unexpectedRunEndingCall,
           })],
       }));

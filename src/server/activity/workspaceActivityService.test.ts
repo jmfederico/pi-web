@@ -37,6 +37,27 @@ describe("WorkspaceActivityService", () => {
     expect(onChanged).toHaveBeenCalledTimes(2);
   });
 
+  it("exposes individual active sessions even when they share a cwd", () => {
+    const { service } = activityRecord();
+    service.applySessionStatus("/repo", status({ sessionId: "s1", isStreaming: true }));
+    service.applySessionActivity("/repo", { sessionId: "s2", phase: "active", label: "tool", at: "now" });
+    service.updateTerminal({ id: "t1", cwd: "/terminal", exited: false });
+
+    expect(service.snapshot().sessions).toEqual([
+      { sessionId: "s1", cwd: "/repo" },
+      { sessionId: "s2", cwd: "/repo" },
+    ]);
+
+    service.applySessionStatus("/repo", status());
+    expect(service.snapshot().sessions).toEqual([{ sessionId: "s2", cwd: "/repo" }]);
+    expect(service.snapshot().workspaces).toContainEqual({ cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false });
+
+    service.applySessionActivity("/moved", { sessionId: "s2", phase: "active", label: "tool", at: "now" });
+    expect(service.snapshot().sessions).toEqual([{ sessionId: "s2", cwd: "/moved" }]);
+    service.removeSession("s2");
+    expect(service.snapshot().sessions).toEqual([]);
+  });
+
   it("does not report a workspace active for a session that is only starting up", () => {
     const { service, onChanged } = activityRecord();
 
@@ -45,6 +66,7 @@ describe("WorkspaceActivityService", () => {
     // must not be reported as busy because of it.
     service.applySessionActivity("/repo", { sessionId: "s1", phase: "active", label: "Opening session", detail: "Starting the Pi session", at: "now", startup: true });
 
+    expect(service.snapshot().sessions).toEqual([]);
     expect(service.snapshot().workspaces).toEqual([]);
     expect(onChanged).toHaveBeenCalled();
   });
@@ -76,6 +98,10 @@ describe("WorkspaceActivityService", () => {
 
     service.reconcileSessionActivity("/repo", ["s2"]);
 
+    expect(service.snapshot().sessions).toEqual([
+      { sessionId: "s2", cwd: "/repo" },
+      { sessionId: "s3", cwd: "/other" },
+    ]);
     expect(service.snapshot().workspaces).toMatchObject([
       { cwd: "/other", hasSessionActivity: true, hasTerminalActivity: false },
       { cwd: "/repo", hasSessionActivity: true, hasTerminalActivity: false },

@@ -1,8 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   LaunchdNativeServiceProbe,
   SpawnProbeCommandRunner,
+  nativeServicePrerequisiteFailureDetail,
   SystemdNativeServiceProbe,
   launchdProbePlist,
   nativeServicePrerequisiteShellCheck,
@@ -455,7 +459,161 @@ describe("probe service definitions", () => {
     expect(result.status).toBe(accepted ? 0 : 1);
   });
 
-  it("requires bundled entrypoints to be readable regular files", () => {
+  it("requires the resolved command to be the shipped launcher before trusting it", () => {
+    const check = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.command.pi-web-sessiond",
+      kind: "command-available",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named command is the bundled launcher",
+    });
+
+    expect(check).toContain("command -v 'pi-web-sessiond'");
+    expect(check).toContain("cmp -s \"$pi_web_probe_executable\" '/package/dist/bin/pi-web-sessiond.sh'");
+    // Identity replaces the plain availability verdict; a bare `command -v` would accept an old
+    // release's JavaScript entrypoint, which starts a daemon when probed.
+    expect(check).toContain('test -f "$pi_web_probe_executable" && test -x "$pi_web_probe_executable" && cmp -s');
+
+    const fish = nativeServicePrerequisiteShellCheck("fish", {
+      id: "web.command.pi-web-server",
+      kind: "command-available",
+      command: "pi-web-server",
+      identicalTo: "/package/dist/bin/pi-web-server.sh",
+      description: "named command is the bundled launcher",
+    });
+    expect(fish).toContain("; and cmp -s $pi_web_probe_executable[1] '/package/dist/bin/pi-web-server.sh'");
+
+    const withoutIdentity = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.command.npm",
+      kind: "command-available",
+      command: "npm",
+      description: "npm is available",
+    });
+    expect(withoutIdentity).not.toContain("cmp -s");
+  });
+
+  // The manager runs the launcher's own selection policy without starting the app.
+  it("asks the resolved launcher for its runtime instead of probing node", () => {
+    const check = nativeServicePrerequisiteShellCheck("zsh", {
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "bundled launcher selects a usable runtime",
+    });
+    expect(check).toContain("command -v '/package/dist/bin/pi-web-sessiond.sh'");
+    expect(check).toContain('"$pi_web_probe_executable" \'--check-runtime\'');
+    expect(check).not.toContain("-e ");
+    expect(check).not.toContain("process.versions.node");
+
+    const named = nativeServicePrerequisiteShellCheck("bash", {
+      id: "web.runtime",
+      kind: "runtime",
+      command: "pi-web-server",
+      description: "named launcher selects a usable runtime",
+    });
+    expect(named).toContain("command -v 'pi-web-server'");
+    expect(named).toContain("--check-runtime");
+  });
+
+  // A PATH-resolved name can belong to a *different* PI WEB installation that ships a
+  // byte-identical launcher; running it would boot that installation's code. After the bytes
+  // match, the launcher itself is asked which package owns it, and the answer must be the
+  // directory the running package shipped.
+  it("proves the verified launcher belongs to this installation, not a byte-identical copy", () => {
+    const named = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.command.pi-web-sessiond",
+      kind: "command-available",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named command is the bundled launcher",
+    });
+    expect(named).toContain('--print-launcher');
+    expect(named).toContain("cd -P \"$(dirname --");
+    // Bytes first: --print-launcher is only ever executed by a file already proven to be the
+    // shipped launcher.
+    expect(named.indexOf("cmp -s")).toBeLessThan(named.indexOf("--print-launcher"));
+
+    const runtime = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named launcher selects a usable runtime",
+    });
+    expect(runtime).toContain("cmp -s");
+    expect(runtime).toContain("--print-launcher");
+    expect(runtime.indexOf("--print-launcher")).toBeLessThan(runtime.indexOf("--check-runtime"));
+
+    const fish = nativeServicePrerequisiteShellCheck("fish", {
+      id: "web.runtime",
+      kind: "runtime",
+      command: "pi-web-server",
+      identicalTo: "/package/dist/bin/pi-web-server.sh",
+      description: "named launcher selects a usable runtime",
+    });
+    expect(fish).toContain("--print-launcher");
+    expect(fish).toContain("--check-runtime");
+
+    const unguarded = nativeServicePrerequisiteShellCheck("bash", {
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/elsewhere/launcher.sh",
+      description: "launcher selects a usable runtime",
+    });
+    expect(unguarded).not.toContain("--print-launcher");
+    expect(unguarded).toContain("--check-runtime");
+  });
+
+  it.skipIf(process.platform === "win32")("does not execute a legacy daemon bin during selection or runtime probes", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-web-probe-"));
+    try {
+      const bin = join(root, "bin");
+      mkdirSync(bin);
+      const sentinel = join(root, "started");
+      const launcher = join(root, "launcher.sh");
+      writeFileSync(launcher, "#!/bin/sh\nprintf 'node\\n'\n", { mode: 0o755 });
+      const legacy = join(root, "legacy.js");
+      // The old command ignores probe arguments and starts a daemon. This
+      // fixture makes any accidental invocation observable without a daemon.
+      writeFileSync(legacy, `#!/bin/sh\ntouch '${sentinel}'\n`, { mode: 0o755 });
+      symlinkSync(legacy, join(bin, "pi-web-sessiond"));
+      for (const kind of ["command-available", "runtime"] as const) {
+        const check = nativeServicePrerequisiteShellCheck("bash", {
+          id: `sessiond.${kind}`,
+          kind,
+          command: "pi-web-sessiond",
+          identicalTo: launcher,
+          description: "safe launcher probe",
+        });
+        const result = spawnSync("/bin/bash", ["-c", check], {
+          env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8",
+        });
+        expect(result.status, result.stderr).toBe(1);
+        expect(existsSync(sentinel)).toBe(false);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names the launcher or runtime as the problem when an identity-guarded runtime check fails", () => {
+    expect(nativeServicePrerequisiteFailureDetail({
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "pi-web-sessiond",
+      identicalTo: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "named launcher selects a usable runtime",
+    })).toContain("could not verify launcher /package/dist/bin/pi-web-sessiond.sh and select a usable runtime");
+
+    expect(nativeServicePrerequisiteFailureDetail({
+      id: "sessiond.runtime",
+      kind: "runtime",
+      command: "/package/dist/bin/pi-web-sessiond.sh",
+      description: "bundled launcher selects a usable runtime",
+    })).toContain("--check-runtime did not verify the runtime and required service abilities");
+  });
+
+  it("requires bundled launchers to be readable regular files", () => {
     const check = nativeServicePrerequisiteShellCheck("bash", {
       id: "sessiond.entrypoint",
       kind: "readable-file",

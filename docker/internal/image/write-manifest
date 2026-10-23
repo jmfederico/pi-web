@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+install -d -m 0755 /usr/local/share/pi-web
+# Version probes must not create root-owned mise state in the runtime user's
+# home, even when the development image defines its persistent paths already.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+export HOME="$tmp" XDG_CONFIG_HOME="$tmp/config"
+export MISE_CONFIG_DIR="$tmp/config/mise" MISE_DATA_DIR="$tmp/data"
+export MISE_CACHE_DIR="$tmp/cache" MISE_STATE_DIR="$tmp/state"
+# Call the image runtime directly: hooks may have changed ordinary PATH tools.
+/usr/local/lib/pi-web-node/bin/node --input-type=module <<'NODE'
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+const run = (command, args) => execFileSync(command, args, { encoding: 'utf8' }).trim();
+const inputs = Object.fromEntries([
+  'UBUNTU_IMAGE', 'NODE_IMAGE', 'DOCKER_CLI_VERSION', 'MISE_VERSION',
+  'GIT_VERSION', 'PI_WEB_EXTRA_APT_PACKAGES', 'PI_WEB_UID', 'PI_WEB_GID',
+].map(key => [key, process.env[key] ?? '']));
+const manifest = {
+  schemaVersion: 1,
+  inputs,
+  osRelease: readFileSync('/etc/os-release', 'utf8'),
+  architecture: run('dpkg', ['--print-architecture']),
+  versions: {
+    serviceNode: process.version,
+    serviceNpm: run('/usr/local/lib/pi-web-node/bin/node', ['/usr/local/lib/pi-web-node/lib/node_modules/npm/bin/npm-cli.js', '--version']),
+    git: run('git', ['--version']),
+    mise: run('/usr/local/bin/mise', ['--version']),
+    docker: run('docker', ['--version']),
+    compose: run('docker', ['compose', 'version']),
+    buildx: run('docker', ['buildx', 'version']),
+  },
+  packages: run('dpkg-query', ['-W', '-f=${binary:Package}\t${Version}\n']).split('\n'),
+};
+writeFileSync('/usr/local/share/pi-web/image-manifest.json', `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
+NODE

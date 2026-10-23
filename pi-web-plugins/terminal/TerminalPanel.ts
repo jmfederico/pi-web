@@ -5,9 +5,9 @@ import { styleMap, type StyleInfo } from "lit/directives/style-map.js";
 import { Terminal, type ITerminalOptions, type ITheme } from "@xterm/xterm";
 import { FitAddon, type ITerminalDimensions } from "@xterm/addon-fit";
 import xtermStyles from "@xterm/xterm/css/xterm.css?inline";
-import type { PluginPeerChannel, PluginPeerChannelClose, TerminalCommandRun, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, PluginPeerChannel, PluginPeerChannelClose, AnyTerminalCommandRun } from "@jmfederico/pi-web/plugin-api";
+import { terminalBinding, type TerminalContext } from "./TerminalContext";
 import { writeClipboardText } from "./clipboard";
-import { selectFallbackTerminal, selectPreferredTerminal } from "./terminalSelection";
 import { TerminalPeerClient, terminalChannelFailureMessage, terminalInputFrames, type TerminalClientFrame, type TerminalInfo, type TerminalServerFrame, type TerminalSize } from "./terminalProtocol";
 import { createTerminalCopySnapshot, DEFAULT_TERMINAL_ANSI_THEME, type TerminalCopyRunStyle, type TerminalCopySnapshot } from "./terminalCopySnapshot";
 import { createTerminalSoftKeysDefaultEnvironmentMedia, hasTerminalSoftKeysPreference, initialTerminalSoftKeysEnabled, isTerminalSoftKeysDefaultEnvironment, writeTerminalSoftKeysPreference } from "./terminalSoftKeysPreference";
@@ -27,7 +27,7 @@ const CHANNEL_RECONNECT_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
 const WORKSPACE_LOAD_RETRY_DELAYS_MS = [1_000, 2_000, 5_000] as const;
 
 interface ScopedPanelOperation {
-  readonly context: WorkspacePanelContext;
+  readonly context: TerminalContext;
   readonly runtime: TerminalBrowserRuntime;
   readonly scope: string;
   readonly generation: number;
@@ -42,14 +42,40 @@ interface TerminalReplayInputSuppression {
 }
 
 export class TerminalPanel extends LitElement {
-  @property({ attribute: false }) context: WorkspacePanelContext | undefined;
+  private integration: StylesheetIntegrationCapabilityV1 | undefined;
+  private releaseStyles: (() => void) | undefined;
+
+  @property({ attribute: false })
+  get stylesheetIntegration(): StylesheetIntegrationCapabilityV1 | undefined { return this.integration; }
+  set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+    if (value === this.integration) return;
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
+    this.integration = value;
+    this.connectStylesheetIntegration();
+  }
+
+  private connectStylesheetIntegration(): void {
+    if (!this.isConnected || !(this.renderRoot instanceof ShadowRoot) || this.integration === undefined || this.releaseStyles !== undefined) return;
+    const releaseRoot = this.integration.registerRoot(this.renderRoot);
+    const unsubscribe = this.integration.subscribe(() => { this.applyTerminalTheme(); });
+    this.releaseStyles = () => {
+      unsubscribe();
+      releaseRoot();
+    };
+    // Subscription does not deliver an initial notification; registration may
+    // already have adopted a new palette while a terminal view exists.
+    this.applyTerminalTheme();
+  }
+
+  @property({ attribute: false }) context: TerminalContext | undefined;
   @property({ attribute: false }) runtime: TerminalBrowserRuntime | undefined;
   @property({ attribute: false }) softKeysElementName = "pi-web-terminal-soft-keys-pi-web-terminal";
   @query(".terminal-host") private terminalHost?: HTMLDivElement | null;
   @query(".terminal-copy-content") private terminalCopyContent?: HTMLPreElement | null;
   @query(".terminal-copy-selector") private terminalCopySelector?: HTMLTextAreaElement | null;
   @state() private terminals: TerminalInfo[] = [];
-  @state() private commandRuns: TerminalCommandRun[] = [];
+  @state() private commandRuns: AnyTerminalCommandRun[] = [];
   @state() private selectedId: string | undefined;
   @state() private loading = false;
   @state() private error: string | undefined;
@@ -71,25 +97,21 @@ export class TerminalPanel extends LitElement {
   private channelReconnectTimer: number | undefined;
   private loadAbort: AbortController | undefined;
   private loadTerminalChanges: Map<string, TerminalInfo | undefined> | undefined;
-  private pendingStartNavigationGeneration: number | undefined;
   private loadRetryTimer: number | undefined;
   private loadRetryAttempt = 0;
   private commandRunLoadAbort: AbortController | undefined;
   private readonly operationAborts = new Set<AbortController>();
   private workspaceGeneration = 0;
-  private terminalNavigationGeneration = 0;
+  private get terminalNavigationGeneration(): number {
+    if (this.context === undefined || this.runtime === undefined) return 0;
+    return this.runtime.selectionController.synchronize(this.context).revision;
+  }
   private resizeObserver: ResizeObserver | undefined;
   private intersectionObserver: IntersectionObserver | undefined;
-  private themeObserver: MutationObserver | undefined;
   private replayInputSuppression: TerminalReplayInputSuppression | undefined;
   private observedRuntime: TerminalBrowserRuntime | undefined;
   private observedWorkspaceScope: string | undefined;
   private loadedWorkspaceScope: string | undefined;
-  private consumedAutoStartRequest: string | undefined;
-  private requestedAutoStartRequest: string | undefined;
-  private routedTerminalId: string | undefined;
-  private requestedTerminalId: string | undefined;
-  private pendingTerminalNavigation: { context: WorkspacePanelContext; terminalId: string | undefined } | undefined;
   private commandRunPollTimer: number | undefined;
   private readonly softKeysDefaultEnvironmentMedia = createTerminalSoftKeysDefaultEnvironmentMedia();
   private softKeysPreferenceStored = hasTerminalSoftKeysPreference();
@@ -99,10 +121,9 @@ export class TerminalPanel extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.connectStylesheetIntegration();
     this.syncDefaultSoftKeysEnvironment();
     this.softKeysDefaultEnvironmentMedia?.addEventListener("change", this.onSoftKeysDefaultEnvironmentChange);
-    this.themeObserver = new MutationObserver(() => { this.applyTerminalTheme(); });
-    this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
   }
 
   override firstUpdated(): void {
@@ -119,8 +140,6 @@ export class TerminalPanel extends LitElement {
   override disconnectedCallback(): void {
     this.intersectionObserver?.disconnect();
     this.intersectionObserver = undefined;
-    this.themeObserver?.disconnect();
-    this.themeObserver = undefined;
     this.softKeysDefaultEnvironmentMedia?.removeEventListener("change", this.onSoftKeysDefaultEnvironmentChange);
     this.workspaceGeneration += 1;
     this.cancelWorkspaceRequests();
@@ -128,6 +147,8 @@ export class TerminalPanel extends LitElement {
     this.continuingTerminalIds = [];
     this.updateCommandRunPolling(false);
     this.disposeTerminalView();
+    this.releaseStyles?.();
+    this.releaseStyles = undefined;
     super.disconnectedCallback();
   }
 
@@ -147,28 +168,12 @@ export class TerminalPanel extends LitElement {
     const context = this.context;
     const runtime = this.runtime;
     const workspaceScope = context === undefined || runtime === undefined ? undefined : runtime.workspaceScope(context);
-    let routedTerminalId = context === undefined || runtime === undefined ? undefined : runtime.routedTerminalId(context);
-    let requestedTerminalId = context === undefined || runtime === undefined ? undefined : runtime.selectedTerminalId(context);
-    const requestedAutoStart = context === undefined || runtime === undefined ? undefined : runtime.autoStartRequest(context);
-    const pendingTerminalNavigation = this.pendingTerminalNavigation;
-    if (context !== undefined && pendingTerminalNavigation?.context === context) {
-      routedTerminalId = pendingTerminalNavigation.terminalId;
-      requestedTerminalId = pendingTerminalNavigation.terminalId;
-    } else if (pendingTerminalNavigation !== undefined) {
-      this.pendingTerminalNavigation = undefined;
-    }
     if (workspaceScope !== this.observedWorkspaceScope || runtime !== this.observedRuntime) {
       this.workspaceGeneration += 1;
-      this.terminalNavigationGeneration += 1;
       this.cancelWorkspaceRequests();
       this.observedRuntime = runtime;
       this.observedWorkspaceScope = workspaceScope;
       this.loadedWorkspaceScope = undefined;
-      this.consumedAutoStartRequest = undefined;
-      this.requestedAutoStartRequest = requestedAutoStart;
-      this.routedTerminalId = routedTerminalId;
-      this.requestedTerminalId = requestedTerminalId;
-      this.pendingTerminalNavigation = undefined;
       this.terminals = [];
       this.commandRuns = [];
       this.selectedId = undefined;
@@ -180,15 +185,14 @@ export class TerminalPanel extends LitElement {
       this.loadRetryAttempt = 0;
       this.updateCommandRunPolling(false);
       this.disposeTerminalView();
-      return;
     }
-    if (routedTerminalId !== this.routedTerminalId || requestedTerminalId !== this.requestedTerminalId) {
-      this.terminalNavigationGeneration += 1;
-      this.routedTerminalId = routedTerminalId;
-      this.requestedTerminalId = requestedTerminalId;
-      this.applyRequestedTerminalSelection();
-    }
-    if (requestedAutoStart !== this.requestedAutoStartRequest) this.requestedAutoStartRequest = requestedAutoStart;
+    this.applySelectionSnapshot();
+  }
+
+  private applySelectionSnapshot(): void {
+    if (this.context === undefined || this.runtime === undefined) return;
+    const snapshot = this.runtime.selectionController.synchronize(this.context);
+    this.selectTerminalIdInView(snapshot.terminalId);
   }
 
   override updated(): void {
@@ -199,18 +203,8 @@ export class TerminalPanel extends LitElement {
     }
     if (this.hasPendingCommandRuns()) this.updateCommandRunPolling(true);
     this.loadVisibleWorkspaceTerminals();
-    if (this.shouldReloadForRequestedTerminal()) void this.loadTerminals();
-    // A list can settle before the host finishes resolving the workspace URL.
-    // Its selection write is correctly rejected then; reconcile with the latest
-    // context even when the routed/remembered terminal IDs have not changed.
-    if (!this.loading
-      && this.observedWorkspaceScope !== undefined
-      && this.loadedWorkspaceScope === this.observedWorkspaceScope
-      && this.selectedId === undefined
-      && this.terminals.length > 0
-      && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) {
-      this.selectPreferredLoadedTerminal({ replaceUrl: true });
-    }
+    if (!this.loading && this.loadedWorkspaceScope === this.observedWorkspaceScope
+      && this.context !== undefined && this.runtime?.selectionController.takeReload(this.context) === true) void this.loadTerminals();
     this.applyAutoStartRequest();
     this.ensureTerminalView();
   }
@@ -239,14 +233,12 @@ export class TerminalPanel extends LitElement {
     // while the request is in flight.
     const terminalChanges = new Map<string, TerminalInfo | undefined>();
     this.loadTerminalChanges = terminalChanges;
-    const navigationGeneration = this.terminalNavigationGeneration;
     this.loading = true;
     this.error = undefined;
     try {
-      const client = this.peerClient(context);
       const [terminals, commandRuns] = await Promise.all([
-        client.list(controller.signal),
-        client.listCommandRuns({}, controller.signal),
+        runtime.listTerminals(context, controller.signal),
+        runtime.listCommandRuns(context, controller.signal),
       ]);
       if (!this.workspaceIsCurrent(scope, generation, runtime) || controller.signal.aborted) return;
       this.loadedWorkspaceScope = scope;
@@ -259,14 +251,9 @@ export class TerminalPanel extends LitElement {
       this.terminals = [...reconciledTerminals.values()];
       this.commandRuns = commandRuns;
       runtime.updateTerminals(context, this.terminals);
-      if (navigationGeneration === this.terminalNavigationGeneration
-        && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) {
-        this.selectPreferredLoadedTerminal({ replaceUrl: true });
-      }
+      this.selectPreferredLoadedTerminal();
       this.updateCommandRunPolling(this.hasPendingCommandRuns(commandRuns));
-      const shouldAutoStart = this.consumeAutoStart(scope);
-      if (this.terminals.length === 0 && shouldAutoStart
-        && this.pendingStartNavigationGeneration !== this.terminalNavigationGeneration) await this.startTerminal();
+      this.applyAutoStartRequest();
     } catch (error) {
       if (!controller.signal.aborted && this.workspaceIsCurrent(scope, generation, runtime)) {
         this.loadedWorkspaceScope = undefined;
@@ -282,40 +269,9 @@ export class TerminalPanel extends LitElement {
     }
   }
 
-  private applyRequestedTerminalSelection(): void {
-    if (this.requestedTerminalId !== undefined && !this.terminals.some((terminal) => terminal.id === this.requestedTerminalId)) return;
-    this.selectPreferredLoadedTerminal({ replaceUrl: true });
-  }
-
   private applyAutoStartRequest(): void {
-    const scope = this.observedWorkspaceScope;
-    if (scope === undefined || scope !== this.loadedWorkspaceScope || this.loading) return;
-    const shouldAutoStart = this.consumeAutoStart(scope);
-    if (shouldAutoStart && this.terminals.length === 0) void this.startTerminal();
-  }
-
-  private consumeAutoStart(scope: string): boolean {
-    const request = this.requestedAutoStartRequest;
-    if (request === undefined) return false;
-    const key = JSON.stringify([scope, request]);
-    const shouldAutoStart = this.consumedAutoStartRequest !== key;
-    // Reject stale host contexts before consuming the request or creating a process.
-    // As with terminal selection, legacy void-returning hosts remain accepted.
-    const navigationResult: unknown = this.context?.navigation?.set("start", undefined, { replace: true });
-    if (navigationResult === false) return false;
-    this.consumedAutoStartRequest = key;
-    this.requestedAutoStartRequest = undefined;
-    return shouldAutoStart;
-  }
-
-  private shouldReloadForRequestedTerminal(): boolean {
-    return this.visible
-      && this.observedWorkspaceScope !== undefined
-      && this.observedWorkspaceScope === this.loadedWorkspaceScope
-      && this.requestedTerminalId !== undefined
-      && !this.loading
-      && this.loadRetryTimer === undefined
-      && !this.terminals.some((terminal) => terminal.id === this.requestedTerminalId);
+    if (this.context !== undefined && this.loadedWorkspaceScope === this.observedWorkspaceScope
+      && this.runtime?.selectionController.takeAutoStart(this.context) === true) void this.startTerminal();
   }
 
   private scheduleWorkspaceLoadRetry(scope: string, generation: number, runtime: TerminalBrowserRuntime): void {
@@ -339,7 +295,6 @@ export class TerminalPanel extends LitElement {
     this.loadAbort?.abort();
     this.loadAbort = undefined;
     this.loadTerminalChanges = undefined;
-    this.pendingStartNavigationGeneration = undefined;
     this.loading = false;
     this.clearWorkspaceLoadRetryTimer();
     for (const controller of this.operationAborts) controller.abort();
@@ -382,23 +337,12 @@ export class TerminalPanel extends LitElement {
     if (this.commandRunLoadAbort === operation.controller) this.commandRunLoadAbort = undefined;
   }
 
-  private selectPreferredLoadedTerminal(options?: { replaceUrl?: boolean | undefined }): void {
+  private selectPreferredLoadedTerminal(): void {
     const context = this.context;
     const runtime = this.runtime;
     if (context === undefined || runtime === undefined) return;
-    const latestTerminalId = runtime.selection.latestTerminalId(runtime.selectionScope(context));
-    let terminal = selectPreferredTerminal(this.terminals, {
-      targetTerminalId: this.requestedTerminalId,
-      latestTerminalId,
-    });
-    if (terminal === undefined && this.requestedTerminalId !== undefined) terminal = selectFallbackTerminal(this.terminals);
-    const selectedTerminalId = terminal?.id;
-    if (selectedTerminalId !== this.routedTerminalId || selectedTerminalId !== latestTerminalId) {
-      if (!this.publishTerminalSelection(context, runtime, selectedTerminalId, { replace: options?.replaceUrl === true })) return;
-    } else {
-      this.requestedTerminalId = selectedTerminalId;
-    }
-    this.selectTerminalIdInView(selectedTerminalId);
+    runtime.selectionController.loaded(context, this.terminals);
+    this.applySelectionSnapshot();
   }
 
   private selectTerminalIdInView(id: string | undefined): void {
@@ -408,12 +352,13 @@ export class TerminalPanel extends LitElement {
   }
 
   private async startTerminal(): Promise<void> {
+    if (this.context?.workspace === undefined) return;
     // Starting a terminal is itself a navigation intent: only the latest start
     // may select its eventual result, regardless of completion order.
-    this.terminalNavigationGeneration += 1;
+    if (this.runtime === undefined) return;
+    this.runtime.selectionController.beginStart(this.context);
     const operation = this.beginScopedOperation();
     if (operation === undefined) return;
-    this.pendingStartNavigationGeneration = operation.terminalNavigationGeneration;
     this.error = undefined;
     try {
       const size = this.measureTerminalSize() ?? DEFAULT_TERMINAL_SIZE;
@@ -422,11 +367,12 @@ export class TerminalPanel extends LitElement {
       this.loadTerminalChanges?.set(terminal.id, terminal);
       this.terminals = [...this.terminals.filter((existing) => existing.id !== terminal.id), terminal];
       operation.runtime.updateTerminals(operation.context, this.terminals);
+      operation.runtime.selectionController.loaded(this.context, this.terminals);
       if (this.operationTerminalNavigationIsCurrent(operation)) this.selectTerminal(terminal.id);
     } catch (error) {
       if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
-      if (this.pendingStartNavigationGeneration === operation.terminalNavigationGeneration) this.pendingStartNavigationGeneration = undefined;
+      operation.runtime.selectionController.finishStart(operation.context, operation.terminalNavigationGeneration);
       this.finishScopedOperation(operation);
     }
   }
@@ -436,19 +382,14 @@ export class TerminalPanel extends LitElement {
     const operation = this.beginScopedOperation();
     if (operation === undefined) return;
     try {
-      await this.peerClient(operation.context).close(id, operation.controller.signal);
+      await this.peerClient(operation.context, this.terminalInfoForAction(id)).close(id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       const next = this.terminals.filter((terminal) => terminal.id !== id);
       this.loadTerminalChanges?.set(id, undefined);
-      const selectionChanged = this.operationTerminalNavigationIsCurrent(operation)
-        && (this.selectedId === id || this.requestedTerminalId === id);
-      const nextSelectedId = selectionChanged ? selectFallbackTerminal(next)?.id : undefined;
-      const selectionPublished = !selectionChanged
-        || this.publishTerminalSelection(operation.context, operation.runtime, nextSelectedId, { replace: true });
       this.terminals = next;
-      operation.runtime.forgetTerminal(id);
+      operation.runtime.selectionController.closed(this.context ?? operation.context, id, next);
       operation.runtime.updateTerminals(operation.context, next);
-      if (selectionChanged && selectionPublished) this.selectTerminalIdInView(nextSelectedId);
+      this.applySelectionSnapshot();
     } catch (error) {
       if (this.operationIsCurrent(operation)) this.error = errorMessage(error);
     } finally {
@@ -465,16 +406,13 @@ export class TerminalPanel extends LitElement {
   }
 
   private publishTerminalSelection(
-    context: WorkspacePanelContext,
+    context: TerminalContext,
     runtime: TerminalBrowserRuntime,
     terminalId: string | undefined,
     options?: { replace?: boolean | undefined },
   ): boolean {
-    if (!runtime.selectTerminal(context, terminalId, options)) return false;
-    if (terminalId !== this.routedTerminalId || terminalId !== this.requestedTerminalId) this.terminalNavigationGeneration += 1;
-    this.pendingTerminalNavigation = { context, terminalId };
-    this.routedTerminalId = terminalId;
-    this.requestedTerminalId = terminalId;
+    if (!runtime.selectTerminal(context, terminalId, { ...options, scope: this.terminals.find((terminal) => terminal.id === terminalId)?.scope })) return false;
+    this.applySelectionSnapshot();
     return true;
   }
 
@@ -482,7 +420,7 @@ export class TerminalPanel extends LitElement {
     return this.terminals.find((terminal) => terminal.id === this.selectedId);
   }
 
-  private selectedCommandRun(): TerminalCommandRun | undefined {
+  private selectedCommandRun(): AnyTerminalCommandRun | undefined {
     const commandRunId = this.selectedTerminalInfo()?.commandRunId;
     if (commandRunId === undefined) return undefined;
     return this.commandRuns.find((run) => run.id === commandRunId);
@@ -494,7 +432,7 @@ export class TerminalPanel extends LitElement {
     if (operation === undefined) return;
     this.commandRunLoadAbort = operation.controller;
     try {
-      const commandRuns = await this.peerClient(operation.context).listCommandRuns({}, operation.controller.signal);
+      const commandRuns = await operation.runtime.listCommandRuns(operation.context, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       this.commandRuns = commandRuns;
       this.cancellingRunIds = this.cancellingRunIds.filter((runId) => commandRuns.some((run) => run.id === runId && isCommandRunPending(run)));
@@ -525,14 +463,14 @@ export class TerminalPanel extends LitElement {
     return commandRuns.some(isCommandRunPending);
   }
 
-  private async cancelCommandRun(run: TerminalCommandRun): Promise<void> {
+  private async cancelCommandRun(run: AnyTerminalCommandRun): Promise<void> {
     if (!isCommandRunPending(run) || this.cancellingRunIds.includes(run.id)) return;
     const operation = this.beginScopedOperation();
     if (operation === undefined) return;
     this.error = undefined;
     this.cancellingRunIds = [...this.cancellingRunIds, run.id];
     try {
-      await this.peerClient(operation.context).cancelCommandRun(run.id, operation.controller.signal);
+      await this.peerClient(operation.context, run).cancelCommandRun(run.id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       await this.loadCommandRuns();
     } catch (error) {
@@ -550,7 +488,7 @@ export class TerminalPanel extends LitElement {
     this.error = undefined;
     this.continuingTerminalIds = [...this.continuingTerminalIds, id];
     try {
-      const terminal = await this.peerClient(operation.context).continue(id, operation.controller.signal);
+      const terminal = await this.peerClient(operation.context, this.terminalInfoForAction(id)).continue(id, operation.controller.signal);
       if (!this.operationIsCurrent(operation)) return;
       this.terminals = this.terminals.map((item) => item.id === id ? terminal : item);
       operation.runtime.updateTerminals(operation.context, this.terminals);
@@ -568,7 +506,7 @@ export class TerminalPanel extends LitElement {
   private ensureTerminalView(): void {
     const context = this.context;
     const terminalHost = this.terminalHostElement();
-    if (!this.visible || this.terminal !== undefined || this.selectedId === undefined || terminalHost === undefined || context === undefined) return;
+    if (!this.visible || this.terminal !== undefined || this.selectedId === undefined || this.selectedTerminalInfo() === undefined || terminalHost === undefined || context === undefined) return;
     const terminal = new Terminal(terminalOptions(this));
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -587,7 +525,7 @@ export class TerminalPanel extends LitElement {
   }
 
   private connectChannel(
-    context: WorkspacePanelContext,
+    context: TerminalContext,
     terminalId: string,
     terminal: Terminal,
     initialSize: TerminalSize | undefined,
@@ -599,7 +537,7 @@ export class TerminalPanel extends LitElement {
     this.channelAbort = controller;
     const bufferedFrames: TerminalServerFrame[] = [];
     let readyForFrames = !resetAfterReconnect;
-    void this.peerClient(context).attach({
+    void this.peerClient(context, this.terminalInfoForAction(terminalId)).attach({
       terminalId,
       ...(initialSize === undefined ? {} : { size: initialSize }),
       signal: controller.signal,
@@ -809,9 +747,14 @@ export class TerminalPanel extends LitElement {
     this.connectionError = undefined;
   }
 
-  private peerClient(context: WorkspacePanelContext): TerminalPeerClient {
-    if (context.peer === undefined) throw new Error("Required Terminal peer is unavailable");
-    return new TerminalPeerClient(context.peer);
+  private terminalInfoForAction(id: string): TerminalInfo {
+    const terminal = this.terminals.find((item) => item.id === id);
+    if (terminal === undefined) throw new Error("Terminal is no longer available");
+    return terminal;
+  }
+
+  private peerClient(context: TerminalContext, item?: { scope?: "workspace" | "maintenance" }): TerminalPeerClient {
+    return new TerminalPeerClient(terminalBinding(context, item?.scope ?? "workspace"));
   }
 
   private renderCommandRunNotice() {
@@ -1018,6 +961,7 @@ export class TerminalPanel extends LitElement {
     const softKeysTag = unsafeStatic(this.softKeysElementName);
     return staticHtml`
       <${softKeysTag}
+        .stylesheetIntegration=${this.stylesheetIntegration}
         class="terminal-soft-keys"
         .modes=${this.terminal?.modes}
         .refocusOnClick=${!this.defaultSoftKeysEnvironment}
@@ -1033,12 +977,12 @@ export class TerminalPanel extends LitElement {
           ${this.renderCopyModeToggle()}
           ${this.renderSoftKeysToggle()}
           ${this.terminals.map((terminal) => html`
-            <button class=${this.selectedId === terminal.id ? "selected" : ""} @click=${() => { this.selectTerminal(terminal.id); }}>
-              <span>${terminal.name}${terminal.exited ? " · exited" : ""}</span>
+            <button class=${this.selectedId === terminal.id ? "selected" : ""} title=${`${terminal.name} · ${terminal.cwd}`} @click=${() => { this.selectTerminal(terminal.id); }}>
+              <span>${terminal.scope === "maintenance" ? "Maintenance · " : ""}${terminal.name}${terminal.exited ? " · exited" : ""}</span>
               <small @click=${(event: Event) => { void this.closeTerminal(terminal.id, event); }}>×</small>
             </button>
           `)}
-          <button class="new" ?disabled=${this.context === undefined} @click=${() => { void this.startTerminal(); }}>+ Shell</button>
+          <button class="new" ?disabled=${this.context?.workspace === undefined} @click=${() => { void this.startTerminal(); }}>+ Shell</button>
         </div>
         ${this.error === undefined ? null : html`<p class="error">${this.error}</p>`}
         ${this.connectionError === undefined ? null : html`<p class="error">${this.connectionError}</p>`}
@@ -1056,13 +1000,19 @@ export class TerminalPanel extends LitElement {
   static override styles = [unsafeCSS(xtermStyles), css`
     :host { flex: 1 1 auto; min-height: 0; display: flex; }
     .terminal-shell { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--pi-terminal-bg); }
-    .terminal-tabs { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; padding: 6px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); overflow: auto; }
-    .terminal-tabs > button { box-sizing: border-box; height: 30px; line-height: 16px; }
-    /* Desktop xterm already has mouse selection and hardware keys; keep touch controls to touch/narrow layouts. */
-    .copy-mode-toggle, .soft-keys-toggle, .terminal-soft-keys { display: none; }
-    .copy-mode-toggle.selected { display: inline-flex; }
-    @media (pointer: coarse), (max-width: 760px) {
-      .copy-mode-toggle, .soft-keys-toggle { display: inline-flex; }
+    .terminal-tabs { flex: 0 0 auto; display: flex; align-items: stretch; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); overflow: auto; }
+    .terminal-tabs > button { box-sizing: border-box; flex: 0 0 auto; min-width: 44px; height: 44px; gap: 0; padding: 0 10px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); font: 12px/16px var(--pi-font, system-ui, sans-serif); }
+    .terminal-tabs > button:has(small) { padding: 0; }
+    .terminal-tabs > button > span { padding: 0 10px; }
+    .terminal-tabs > button > small { display: inline-flex; align-items: center; justify-content: center; align-self: stretch; min-width: 44px; }
+    .terminal-tabs > button:hover:not(:disabled) { background: var(--pi-surface); color: var(--pi-text); }
+    .terminal-tabs > button.selected { border-color: var(--pi-border-muted); background: var(--pi-surface); color: var(--pi-text); box-shadow: inset 0 -2px var(--pi-text-secondary); }
+    .terminal-tabs > button:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: -3px; }
+    /* These accessories work around touch input limitations, not small screens.
+       Keep Done reachable if touch availability changes during copy mode. */
+    .copy-mode-toggle:not(.selected), .soft-keys-toggle, .terminal-soft-keys { display: none; }
+    @media (any-pointer: coarse) {
+      .copy-mode-toggle:not(.selected), .soft-keys-toggle { display: inline-flex; }
       .terminal-soft-keys { display: block; }
     }
     button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 180px; border: 1px solid var(--pi-border); border-radius: 7px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 7px; cursor: pointer; }
@@ -1080,19 +1030,22 @@ export class TerminalPanel extends LitElement {
     .command-run-notice.succeeded { border-color: var(--pi-success-border); }
     .command-run-notice.failed { border-color: var(--pi-danger); }
     .command-run-notice p { margin: 3px 0; color: var(--pi-muted); }
-    .command-run-notice code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text-secondary); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .command-run-notice kbd { border: 1px solid var(--pi-border); border-radius: 4px; background: var(--pi-bg); padding: 0 4px; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .command-run-notice code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text-secondary); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    .command-run-notice kbd { border: 1px solid var(--pi-border); border-radius: 4px; background: var(--pi-bg); padding: 0 4px; font: 11px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
     .command-run-notice button { justify-self: end; max-width: none; }
     .terminal-stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; background: var(--pi-terminal-bg); }
-    .terminal-host { position: absolute; inset: 0; padding: 6px; box-sizing: border-box; overflow: hidden; }
+    /* FitAddon measures the host's CSS size without subtracting its padding. */
+    .terminal-host { position: absolute; inset: 6px; overflow: hidden; }
     .terminal-host.copying { visibility: hidden; pointer-events: none; }
     .terminal-copy-view { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; background: var(--pi-terminal-bg); color: var(--pi-terminal-text); }
-    .terminal-copy-toolbar { box-sizing: border-box; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 47px; padding: 6px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); color: var(--pi-muted); font: 12px system-ui, sans-serif; }
-    .terminal-copy-toolbar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .terminal-copy-toolbar small { margin-left: auto; white-space: nowrap; color: var(--pi-dim); }
-    .terminal-copy-toolbar button { flex: 0 0 auto; width: auto; min-height: 34px; padding: 6px 9px; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .terminal-copy-toolbar { box-sizing: border-box; flex: 0 0 auto; display: flex; align-items: center; gap: 0; min-width: 0; min-height: 32px; padding: 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); color: var(--pi-muted); font: 12px var(--pi-font, system-ui, sans-serif); }
+    .terminal-copy-toolbar > span { min-width: 0; padding-inline: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .terminal-copy-toolbar small { margin-left: auto; padding-inline: 8px; white-space: nowrap; color: var(--pi-dim); }
+    .terminal-copy-toolbar button { box-sizing: border-box; align-self: stretch; flex: 0 0 auto; width: auto; min-height: 32px; border: 0; border-inline-end: 1px solid var(--pi-border-muted); border-radius: 0; background: transparent; color: var(--pi-muted); padding: 6px 9px; font: 12px/20px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    .terminal-copy-toolbar button:hover { background: var(--pi-surface); color: var(--pi-text); }
+    .terminal-copy-toolbar button:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: -3px; }
     .terminal-copy-layers { flex: 1 1 auto; min-height: 0; display: grid; overflow: hidden; background: var(--pi-terminal-bg); }
-    /* xterm renders the configured 13px terminal font in 17px-high cells. */
+    /* Match xterm's configured font, not theme code fonts, to keep copy selection aligned with its cells. */
     .terminal-copy-content, .terminal-copy-selector { grid-area: 1 / 1; box-sizing: border-box; min-width: 0; min-height: 0; width: 100%; height: 100%; margin: 0; padding: 6px; border: 0; border-radius: 0; font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 17px; letter-spacing: normal; font-variant-ligatures: none; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; }
     .terminal-copy-content { overflow: auto; pointer-events: none; background: var(--pi-terminal-bg); color: var(--pi-terminal-text); -webkit-user-select: none; user-select: none; }
     .terminal-copy-selector { z-index: 1; overflow: auto; resize: none; outline: none; appearance: none; background: transparent; color: transparent; caret-color: var(--pi-accent); -webkit-text-fill-color: transparent; cursor: text; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; touch-action: auto; }
@@ -1144,11 +1097,11 @@ function terminalCopyRunStyle(style: TerminalCopyRunStyle): StyleInfo {
   };
 }
 
-function isCommandRunPending(run: TerminalCommandRun): boolean {
+function isCommandRunPending(run: AnyTerminalCommandRun): boolean {
   return run.status === "queued" || run.status === "running";
 }
 
-function commandRunCompletionLabel(run: TerminalCommandRun): string {
+function commandRunCompletionLabel(run: AnyTerminalCommandRun): string {
   if (run.status === "succeeded") return `Command succeeded${run.exitCode === undefined ? "" : ` with exit code ${String(run.exitCode)}`}`;
   return `Command failed${run.exitCode === undefined ? "" : ` with exit code ${String(run.exitCode)}`}`;
 }

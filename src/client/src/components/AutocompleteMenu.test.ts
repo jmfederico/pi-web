@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { installPopoverFake } from "./anchoredPopup.testSupport";
+installPopoverFake();
 import { AutocompleteMenu } from "./AutocompleteMenu";
 
 afterEach(() => {
@@ -9,6 +11,29 @@ afterEach(() => {
 });
 
 describe("AutocompleteMenu", () => {
+  it("keeps editor focus while opening, picking, and dismissing a native completion panel", async () => {
+    const editor = document.createElement("div");
+    const input = document.createElement("textarea");
+    const menu = new AutocompleteMenu();
+    const close = vi.fn(); menu.onClose = close;
+    const pick = vi.fn(); menu.onPick = pick;
+    editor.append(input, menu); document.body.append(editor);
+    input.focus();
+    menu.items = [{ kind: "command", replaceFrom: 0, replaceTo: 1, insertText: "/tree", detail: "command" }];
+    await menu.updateComplete;
+    const panel = menu.shadowRoot?.querySelector<HTMLElement>("[popover]");
+    expect(document.activeElement).toBe(input);
+    const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    menu.shadowRoot?.querySelector("button")?.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(pick).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(input);
+    panel?.hidePopover(); await menu.updateComplete;
+    expect(close).toHaveBeenCalledOnce();
+    expect(menu.shadowRoot?.querySelector("[popover]")).toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
   it("renders all forty matches and scrolls later selections into view", async () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));

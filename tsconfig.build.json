@@ -7,6 +7,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/cli.ts", "src/server/**/*.ts"],
+  "include": ["src/cli.ts", "src/runtimePreflight.ts", "src/server/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "src/**/*.testSupport.ts"]
 }

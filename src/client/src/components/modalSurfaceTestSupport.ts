@@ -26,9 +26,9 @@ export function dialogSurface(host: LitElement): ModalSurface {
   return requiredElement(host.shadowRoot?.querySelector<ModalSurface>("modal-surface"), `${host.tagName.toLowerCase()} modal-surface`);
 }
 
-/** The `role="dialog"` section inside the surface's shadow root. */
+/** The native dialog inside the surface's shadow root. */
 export function dialogSection(host: LitElement): HTMLElement {
-  return requiredElement(dialogSurface(host).shadowRoot?.querySelector("section[role='dialog']"), `${host.tagName.toLowerCase()} dialog section`);
+  return requiredElement(dialogSurface(host).shadowRoot?.querySelector("dialog[role='dialog']"), `${host.tagName.toLowerCase()} dialog section`);
 }
 
 /** The backdrop element inside the surface's shadow root. */

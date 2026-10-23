@@ -54,12 +54,17 @@ describe("PiSessionService", () => {
     }
 
     it("records the parent, delivers the prompt, and lists the tracked child", async () => {
-      const { child, service } = subsessionService({ allowed: true, cwd: "/workspace" });
+      const { child, service, events } = subsessionService({ allowed: true, cwd: "/workspace" });
       await service.start("/workspace"); // bring the parent online so it can be notified
 
       const result = await service.spawnSubsession({ spawningCwd: "/workspace", parentSessionId: "parent-1", parentSessionFile: "/tmp/parent-1.jsonl", prompt: "do the slice" });
 
       expect(result).toEqual({ sessionId: "child-1", cwd: "/workspace" });
+      const created = events.globalEvents.filter((event) => event.type === "session.created");
+      expect(created).toHaveLength(2);
+      expect(created[0]?.session).not.toHaveProperty("agentSubsession");
+      expect(created[1]?.session).toMatchObject({ id: "child-1", agentSubsession: true });
+      expect((await service.list("/workspace")).find((session) => session.id === "child-1")?.agentSubsession).toBe(true);
       expect(child.calls.prompt).toEqual([{ text: "do the slice", options: undefined }]);
       await expect(service.listSubsessions("parent-1")).resolves.toEqual([
         { sessionId: "child-1", cwd: "/workspace", status: "idle" },
@@ -1011,7 +1016,7 @@ describe("PiSessionService", () => {
         });
         expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-1 stopped working (error).");
         expect(parent.calls.sendCustomMessage[0]?.message.content).toContain(message);
-        expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
+        expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true });
         await vi.advanceTimersByTimeAsync(50);
         expect(parent.calls.sendCustomMessage).toHaveLength(1);
 
@@ -1113,7 +1118,7 @@ describe("PiSessionService", () => {
       expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("Subsession child-1 stopped working");
       expect(parent.calls.sendCustomMessage[0]?.message.content).toContain("--- SUBSESSION OUTPUT: child-1 ---\nall done");
       expect(parent.calls.sendCustomMessage[0]?.message.customType).toBe("subsession.completion");
-      expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
+      expect(parent.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true });
       expect(parent.calls.prompt).toHaveLength(0); // not a user-authored message
       await service.dispose();
     });
@@ -1137,7 +1142,7 @@ describe("PiSessionService", () => {
       });
 
       expect(parent.calls.sendCustomMessage[0]?.message.content).toBe(
-        "Subsession child-1 stopped working (idle).\nNo other tracked subsessions are working.\n\nOutput from subsession child-1 was too long for this completion notice and was omitted. Call check_subsession with sessionId \"child-1\" to retrieve the final output.",
+        "Subsession child-1 stopped working (idle).\n\nOutput from subsession child-1 was too long for this completion notice and was omitted. Call check_subsession with sessionId \"child-1\" to retrieve the final output.\n\nNo other tracked subsessions are working.",
       );
       expect(parent.calls.sendCustomMessage[0]?.message.content).not.toContain("BEGIN_LONG_OUTPUT");
       await expect(service.checkSubsession("parent-1", "child-1", "/tmp/parent-1.jsonl")).resolves.toMatchObject({ finalText: longOutput });
@@ -1169,7 +1174,7 @@ describe("PiSessionService", () => {
       });
 
       expect(parent.calls.sendCustomMessage[0]?.message.content).toBe(
-        "Subsession child-1 stopped working (idle).\nStill working: child-2. Continue working, or call yield_to_subsessions alone and last at the next join point. Further completion notices arrive automatically; do not poll.\n\n--- SUBSESSION OUTPUT: child-1 ---\n(no output)",
+        "Subsession child-1 stopped working (idle).\n\n--- SUBSESSION OUTPUT: child-1 ---\n(no output)\n\nStill working: child-2. Continue working, or call yield_to_subsessions alone and last at the next join point. Further unread results arrive automatically; do not poll.",
       );
 
       second.session.isStreaming = false;
@@ -1180,7 +1185,7 @@ describe("PiSessionService", () => {
       });
 
       expect(parent.calls.sendCustomMessage[1]?.message.content).toBe(
-        "Subsession child-2 stopped working (idle).\nNo other tracked subsessions are working.\n\n--- SUBSESSION OUTPUT: child-2 ---\n(no output)",
+        "Subsession child-2 stopped working (idle).\n\n--- SUBSESSION OUTPUT: child-2 ---\n(no output)\n\nNo other tracked subsessions are working.",
       );
       await service.dispose();
     });
@@ -1203,7 +1208,8 @@ describe("PiSessionService", () => {
           expect(parent.calls.sendCustomMessage).toHaveLength(run - 1);
 
           child.session.isStreaming = false;
-          await vi.advanceTimersByTimeAsync(10);
+          // The heartbeat records readiness; idle delivery runs on the next tick.
+          await vi.advanceTimersByTimeAsync(20);
           expect(parent.calls.sendCustomMessage).toHaveLength(run);
           expect(parent.calls.sendCustomMessage[run - 1]?.message.content).toContain("Subsession child-1 stopped working");
 

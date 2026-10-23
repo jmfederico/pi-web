@@ -1,5 +1,6 @@
-import type { PiWebPlugin, PluginActivationContext, PluginActivationResult, PluginRuntimeContext, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { StylesheetIntegrationCapabilityV1, PluginCapability, PiWebPlugin, PluginActivationContextV5, PluginActivationResultV5, ApplicationPanelContextV5, PluginStartContext, PluginRuntimeContext } from "@jmfederico/pi-web/plugin-api";
 import { html as staticHtml, unsafeStatic } from "lit/static-html.js";
+import { applicationTerminalContext } from "./TerminalContext";
 import { TerminalBrowserRuntime } from "./TerminalBrowserRuntime";
 import { TERMINAL_BROWSER_FACADE_CAPABILITY, TerminalFacade, type RequiredTerminalBrowserFacadeV1 } from "./TerminalFacade";
 import { TerminalPanel } from "./TerminalPanel";
@@ -10,8 +11,26 @@ export const TERMINAL_SOFT_KEYS_ELEMENT = terminalSoftKeysElementName("pi-web.te
 
 const terminalCustomElementOwnersKey = Symbol.for("pi-web.terminal.custom-element-owners.v1");
 
+const stylesheetIntegrationCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> = {
+  pluginId: "pi-web", id: "stylesheet-integration", version: 1,
+  parse(value) {
+    if (!isStylesheetIntegration(value)) {
+      throw new Error("Stylesheet integration capability v1 requires registerRoot and createController");
+    }
+    return value;
+  },
+};
+
+function isStylesheetIntegration(value: unknown): value is StylesheetIntegrationCapabilityV1 {
+  return typeof value === "object" && value !== null
+    && "registerRoot" in value && typeof value.registerRoot === "function"
+    && "createController" in value && typeof value.createController === "function"
+    && "subscribe" in value && typeof value.subscribe === "function";
+}
+
 const plugin = {
-  apiVersion: 4,
+  requires: [stylesheetIntegrationCapability],
+  apiVersion: 5,
   name: "Terminal",
   activate: (context) => activateTerminalPlugin(context),
 } satisfies PiWebPlugin;
@@ -19,10 +38,10 @@ const plugin = {
 export default plugin;
 
 export function activateTerminalPlugin(
-  context: PluginActivationContext,
+  context: PluginActivationContextV5,
   runtime = new TerminalBrowserRuntime(),
-  facade: RequiredTerminalBrowserFacadeV1 & Partial<Pick<TerminalFacade, "dispose">> = new TerminalFacade(),
-): PluginActivationResult {
+  facade: RequiredTerminalBrowserFacadeV1 & Partial<Pick<TerminalFacade, "dispose">> = new TerminalFacade({ requestMaintenanceTerminal: (machineId, terminalId) => { runtime.requestMaintenanceTerminal(machineId, terminalId); } }),
+): PluginActivationResultV5 {
   if (context.pluginId !== "pi-web.terminal") {
     throw new Error(`Terminal browser entry must activate as plugin id pi-web.terminal, received ${context.pluginId}`);
   }
@@ -36,6 +55,7 @@ export function activateTerminalPlugin(
       <path d="m7 9 3 3-3 3M13 15h4"></path>
     </svg>
   `;
+  let stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined;
   let disposed = false;
   const disposeResources = (): void => {
     if (disposed) return;
@@ -45,22 +65,26 @@ export function activateTerminalPlugin(
   };
   context.lifetimeSignal.addEventListener("abort", disposeResources, { once: true });
   return Object.freeze({
+    start: ({ capabilities }: PluginStartContext) => {
+      stylesheetIntegration = capabilities.resolve(stylesheetIntegrationCapability);
+    },
     provides: [{ capability: TERMINAL_BROWSER_FACADE_CAPABILITY, value: facade }],
     dispose: () => {
       context.lifetimeSignal.removeEventListener("abort", disposeResources);
       disposeResources();
     },
     contributions: {
-      workspacePanels: [{
+      applicationPanels: [{
         id: "workspace.terminal",
         title: "Terminal",
         icon,
         order: 30,
-        routeAliases: ["core:workspace.terminal"],
-        navigationAliases: ["core:workspace.terminal"],
-        badge: (workspaceContext: WorkspacePanelContext) => runtime.activeTerminalBadge(workspaceContext),
-        onInvalidate: (workspaceContext: WorkspacePanelContext) => runtime.invalidate(workspaceContext),
-        render: (workspaceContext: WorkspacePanelContext) => context.html`${staticHtml`<${panelTag} .context=${workspaceContext} .runtime=${runtime} .softKeysElementName=${softKeysElement}></${panelTag}>`}`,
+        badge: (applicationContext: ApplicationPanelContextV5) => runtime.activeTerminalBadge(applicationTerminalContext(applicationContext)),
+        onInvalidate: (applicationContext: ApplicationPanelContextV5) => runtime.invalidate(applicationTerminalContext(applicationContext)),
+        render: (applicationContext: ApplicationPanelContextV5) => {
+          const terminalContext = applicationTerminalContext(applicationContext);
+          return context.html`${staticHtml`<${panelTag} .stylesheetIntegration=${stylesheetIntegration} .context=${terminalContext} .runtime=${runtime} .softKeysElementName=${softKeysElement}></${panelTag}>`}`;
+        },
       }],
       actions: [{
         id: "view.terminal",
@@ -68,7 +92,6 @@ export function activateTerminalPlugin(
         shortcut: "mod+4",
         shortcutAliases: ["core:view.terminal"],
         group: "Navigation",
-        enabled: (runtimeContext: PluginRuntimeContext) => runtimeContext.state.selectedWorkspace !== undefined,
         run: (runtimeContext: PluginRuntimeContext) => { runtimeContext.openTerminal(); },
       }],
     },

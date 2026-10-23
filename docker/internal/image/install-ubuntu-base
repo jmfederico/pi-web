@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build-time only. Image defaults live outside mounted home and /opt contents;
+# user configuration and subsequent tool installs belong on /data.
+# shellcheck disable=SC1091
+source /etc/os-release
+if [[ $ID != ubuntu || $VERSION_ID != 26.04 ]]; then
+  echo 'PI WEB images require Ubuntu 26.04.' >&2
+  exit 1
+fi
+for value in "${PI_WEB_UID:-1000}" "${PI_WEB_GID:-1000}"; do
+  if [[ ! $value =~ ^[0-9]+$ ]]; then
+    echo 'PI_WEB_UID and PI_WEB_GID must be numeric IDs.' >&2
+    exit 1
+  fi
+done
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update --error-on=any
+apt-get install -y --no-install-recommends ca-certificates curl gnupg
+install -d -m 0755 /etc/apt/keyrings
+# The stable Git PPA publishes for the Ubuntu release selected above.
+curl --fail --silent --show-error --location --retry 3 \
+  'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF911AB184317630C59970973E363C90F8F1B6217' \
+  | gpg --batch --dearmor -o /etc/apt/keyrings/git-core-ppa.gpg
+# Apt authenticates this public repository's index and package hashes using
+# the dedicated signing key, as it does for Ubuntu's HTTP package mirrors.
+printf 'deb [signed-by=/etc/apt/keyrings/git-core-ppa.gpg] http://ppa.launchpadcontent.net/git-core/ppa/ubuntu %s main\n' \
+  "$VERSION_CODENAME" > /etc/apt/sources.list.d/git-core-ppa.list
+# Never silently substitute distro Git when the upstream index is unavailable.
+apt-get update --error-on=any
+packages=(
+  bash wget git-lfs openssh-client procps tini passwd
+  build-essential python3 python3-dev python3-pip python3-venv
+  jq ripgrep fd-find fzf bat vim shellcheck less file which
+  tar gzip xz-utils unzip zip zstd findutils grep sed gawk patch diffutils
+  util-linux hostname iproute2 dnsutils rsync libatomic1 libstdc++6
+)
+if [[ -n ${GIT_VERSION:-} ]]; then
+  packages+=("git=$GIT_VERSION" "git-man=$GIT_VERSION")
+else
+  packages+=(git)
+fi
+extra_packages=()
+# Split names, not shell syntax: no globbing or evaluation of build input.
+read -r -a extra_packages <<< "${PI_WEB_EXTRA_APT_PACKAGES:-}"
+apt-get install -y --no-install-recommends "${packages[@]}" "${extra_packages[@]}"
+ln -s /usr/bin/fdfind /usr/local/bin/fd
+ln -s /usr/bin/batcat /usr/local/bin/bat
+ln -s /usr/bin/tini /usr/local/bin/tini
+
+case "$(dpkg --print-architecture)" in
+  amd64) mise_arch=x64 ;;
+  arm64) mise_arch=arm64 ;;
+  *) echo 'mise image installation supports amd64 and arm64 only.' >&2; exit 1 ;;
+esac
+[[ ${MISE_VERSION:?MISE_VERSION is required} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo 'MISE_VERSION must be an exact release without a v prefix.' >&2; exit 1;
+}
+mise_asset="mise-v${MISE_VERSION}-linux-${mise_arch}"
+mise_url="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+curl --fail --silent --show-error --location --retry 3 "$mise_url/$mise_asset" -o "$tmp/$mise_asset"
+curl --fail --silent --show-error --location --retry 3 "$mise_url/SHASUMS256.txt" -o "$tmp/SHASUMS256.txt"
+(cd "$tmp"; grep -E "^[a-f0-9]{64}  (\./)?${mise_asset}$" SHASUMS256.txt > checksum; sha256sum --check --strict checksum)
+install -m 0755 "$tmp/$mise_asset" /usr/local/bin/mise
+
+# System config is lower precedence than persistent user and project pins.
+install -d -m 0755 /etc/mise
+printf '[tools]\ngh = { version = "latest", minimum_release_age = "0s" }\n' > /etc/mise/config.toml
+# Use an ordinary data root, NOT --system: upgrades of system installs retain
+# their protected destination. Shared installs allow new versions under /data.
+# Keep build caches/state out of the runtime user's mounted directories.
+HOME="$tmp" XDG_CONFIG_HOME="$tmp/config" MISE_CONFIG_DIR="$tmp/config/mise" \
+  MISE_DATA_DIR=/usr/local/share/pi-web/mise MISE_SHARED_INSTALL_DIRS="" \
+  MISE_CACHE_DIR="$tmp/cache" MISE_STATE_DIR="$tmp/state" \
+  MISE_CEILING_PATHS=/ MISE_NO_ENV=1 MISE_NO_HOOKS=1 mise -C / install gh
+# mise 2026.10.17 prunes a relative shared `global` alias when a user pin or
+# upgrade selects another root. An absolute alias is unmanaged, so that repair
+# never attempts to modify the read-only image. Shims still resolve config.
+gh_global=/usr/local/share/pi-web/mise/installs/gh/global
+ln -sfn "$(readlink -f "$gh_global")" "$gh_global"
+
+runtime_uid=${PI_WEB_UID:-1000}
+runtime_gid=${PI_WEB_GID:-1000}
+# Ubuntu includes an unused default account at UID 1000. Remove only that
+# account (not its files), rather than leave duplicate UIDs and ambiguous HOME.
+if id ubuntu >/dev/null 2>&1 && [[ $(id -u ubuntu) == "$runtime_uid" ]]; then
+  userdel ubuntu
+fi
+if [[ $runtime_uid != 0 ]] && getent passwd "$runtime_uid" >/dev/null; then
+  echo "PI_WEB_UID $runtime_uid is already owned by another image account." >&2
+  exit 1
+fi
+if getent group "$runtime_gid" >/dev/null; then
+  runtime_group=$(getent group "$runtime_gid" | cut -d: -f1)
+else
+  runtime_group=pi-web
+  groupadd --gid "$runtime_gid" "$runtime_group"
+fi
+# UID 0 is intentional only when the deployment explicitly selects it; the
+# development launcher requires --allow-root before generating that setting.
+useradd --non-unique --uid "$runtime_uid" --gid "$runtime_group" --no-create-home \
+  --home-dir /data/home --shell /bin/bash pi-web
+install -d /data/home /data/config /data/npm-cache /data/pi-web /data/pi-agent /workspace
+chown -R "$runtime_uid:$runtime_gid" /data /workspace
+
+# Ubuntu's /etc/profile resets PATH. Capture the inherited value before the
+# reset and restore it after profile.d; interactive activation is not required.
+# shellcheck disable=SC2016
+{ printf '%s\n' '_pi_web_inherited_path=$PATH'; cat /etc/profile; printf '%s\n' \
+  'PATH=$_pi_web_inherited_path' 'export PATH' 'unset _pi_web_inherited_path'; } > /tmp/pi-web-profile
+install -m 0644 /tmp/pi-web-profile /etc/profile
+rm /tmp/pi-web-profile
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+/usr/local/lib/pi-web-node/bin/node --version
+/usr/local/lib/pi-web-node/bin/npm --version
+HOME="$tmp" XDG_CONFIG_HOME="$tmp/config" MISE_CONFIG_DIR="$tmp/config/mise" \
+  MISE_DATA_DIR="$tmp/data" MISE_CACHE_DIR="$tmp/cache" MISE_STATE_DIR="$tmp/state" mise --version
+git --version
+# Version probes (notably npm) may initialize caches. Leave all persistent-path
+# contents writable by the runtime account, never owned by the image builder.
+chown -R "$runtime_uid:$runtime_gid" /data

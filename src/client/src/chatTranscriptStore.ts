@@ -1,7 +1,7 @@
 import { normalizeMessages } from "./chatMessages";
 import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import { canMergeHistorySnapshot, mergeChatHistory, readChatHistoryCache, removeChatHistoryCache, writeChatHistoryCache, type RawMessagePage } from "./chatHistoryCache";
-import type { ChatLine } from "./components/shared";
+import type { ChatLine } from "./chatTypes";
 import type { SessionUiEvent } from "./sessionSocket";
 
 export interface ChatTranscriptView {

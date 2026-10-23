@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import plugin from "../../../pi-packages/captains-log/src/browser/index.js";
 import type { LogEntry } from "../../../pi-packages/captains-log/src/browser/protocol.js";
 import { entryFrames, isCaptainClientFrame } from "../../../pi-packages/captains-log/src/browser/channelProtocol.js";
-import type { JsonValue, PluginPeerChannelClose, PluginPeerChannelOptions, WorkspacePanelContext } from "../../plugin-api.js";
+import type { JsonValue, PluginCapability, PluginPeerChannelClose, PluginPeerChannelOptions, WorkspacePanelContext } from "../../plugin-api.js";
 import { parsePluginBackendChannelServerEnvelope } from "../../shared/pluginBackendProtocol.js";
 
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.useRealTimers(); });
@@ -15,6 +15,11 @@ async function setup(requestHandler: (operation: string) => Promise<JsonValue> =
   const container = document.createElement("div"); document.body.append(container);
   const lifetime = new AbortController();
   const activation = await plugin.activate({ apiVersion: 4, pluginId: "captains-log", runtimePluginId: "captains-log", html, svg, signal: new AbortController().signal, lifetimeSignal: lifetime.signal });
+  const stylesheetIntegration = { registerRoot: vi.fn(() => vi.fn()), subscribe: vi.fn(() => vi.fn()), createController: vi.fn() };
+  await activation.start?.({
+    capabilities: { resolve: <Value,>(capability: PluginCapability<Value>): Value => capability.parse(stylesheetIntegration) },
+    signal: new AbortController().signal,
+  });
   const panel = required(activation.contributions.workspacePanels?.[0]);
   const channels: { options: PluginPeerChannelOptions; send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; finish: (close: PluginPeerChannelClose) => void }[] = [];
   const request = vi.fn(requestHandler);
@@ -32,7 +37,7 @@ async function setup(requestHandler: (operation: string) => Promise<JsonValue> =
     return Promise.resolve({ ...channel, closed });
   });
   const unused = () => { throw new Error("Unrelated host API called"); };
-  const navigate = vi.fn<WorkspacePanelContext["navigate"]>(() => Promise.resolve());
+  const navigate = vi.fn<() => Promise<void>>(() => Promise.resolve());
   let context: WorkspacePanelContext = {
     navigate,
     machine: { id: "remote-a", name: "A", kind: "remote" },
@@ -53,6 +58,19 @@ function button(label = "Let the Captain tell it") {
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
 }
+it("requires stylesheet integration and preserves native controls during rerenders", async () => {
+  expect(plugin.requires).toMatchObject([{ pluginId: "pi-web", id: "stylesheet-integration", version: 1 }]);
+  expect(() => plugin.requires?.[0]?.parse({})).toThrow("stylesheet integration");
+  const app = await setup();
+  try {
+    expect(document.querySelector("style[data-ui-styles]")).toBeNull();
+    expect(button().classList.contains("ui-button--primary")).toBe(true);
+    const translate = button();
+    app.selectSession({ ...source, name: "Renamed source" });
+    expect(button()).toBe(translate);
+    expect([...document.querySelectorAll(".captains-log button")].every((control) => control.classList.contains("ui-button"))).toBe(true);
+  } finally { await app.dispose(); }
+});
 it("translates the session selected at click time, renders frozen reply chunks, and never polls", async () => {
   vi.useFakeTimers();
   const app = await setup();

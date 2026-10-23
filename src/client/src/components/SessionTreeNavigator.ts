@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNodeKind, SessionTreeSnapshot, SessionTreeSummaryChoice } from "../api";
@@ -39,6 +40,11 @@ const SESSION_TREE_KIND_PRESENTATION = {
 
 @customElement("session-tree-navigator")
 export class SessionTreeNavigator extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) tree: SessionTreeSnapshot = EMPTY_TREE;
   @property({ attribute: false }) onNavigate?: (targetId: string, summaryChoice: SessionTreeSummaryChoice) => Promise<SessionTreeNavigateResult>;
   @property({ attribute: false }) onFork?: (entryId: string) => Promise<SessionTreeForkResult>;
@@ -520,7 +526,7 @@ export class SessionTreeNavigator extends LitElement {
   }
 
   static override styles = css`
-    :host { position: fixed; inset: 0; z-index: 40; color: var(--pi-text); font: 14px system-ui, sans-serif; }
+    :host { position: fixed; inset: 0; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
     * { box-sizing: border-box; }
     /* Full-viewport shell: the surface's centered-card defaults are overridden
        so the dialog keeps covering the whole viewport. */
@@ -588,7 +594,7 @@ export class SessionTreeNavigator extends LitElement {
     .choice-option span { display: grid; gap: 3px; }
     .choice-option small { color: var(--pi-muted); }
     .custom-focus { display: grid; gap: 6px; margin: 2px 0 0 30px; font-weight: 600; }
-    textarea { width: 100%; resize: vertical; min-height: 94px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 9px 10px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
+    textarea { width: 100%; resize: vertical; min-height: 94px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 9px 10px; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, var(--pi-font, system-ui, sans-serif)); }
     textarea:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 1px; }
     .character-count { justify-self: end; color: var(--pi-muted); font-size: 11px; font-weight: 400; }
     .validation-error { margin-inline-start: 30px; color: var(--pi-danger); font-size: 12px; }

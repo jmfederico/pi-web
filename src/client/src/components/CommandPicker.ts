@@ -1,13 +1,20 @@
-import { LitElement, css, html, nothing } from "lit";
+import { stylesheetIntegrationCapability } from "../plugins/styles";
+import { LitElement, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { CommandOption } from "../api";
 import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEventTarget";
 import "./ModalSurface";
 import { defaultPin, defaultPinHelp, defaultPinStyles } from "./DefaultPin";
 import { scrollWhenSelected } from "./scrollWhenSelected";
+import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
 
 @customElement("command-picker")
 export class CommandPicker extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() override title = "Select";
   @property({ type: Boolean }) searchable = false;
   @property({ attribute: false }) options: CommandOption[] = [];
@@ -31,27 +38,27 @@ export class CommandPicker extends LitElement {
         .label=${this.title}
         @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}
       >
-        <header>
-          <strong>${this.title}</strong>
-          <button aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
+        <header class="ui-dialog-header">
+          <strong class="ui-dialog-title">${this.title}</strong>
+          <button class="ui-button ui-button--icon" aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
         </header>
-        ${this.searchable ? html`<input placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>` : null}
+        ${this.searchable ? html`<div class="ui-dialog-search-row"><input class="ui-dialog-search" placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}></div>` : null}
         ${this.onSetDefault ? defaultPinHelp : nothing}
-        <div class="options" tabindex="0">
+        <div class="options ui-selection-list" tabindex="0">
           ${options.map((option, index) => {
             const pick = html`<button
-              class=${index === this.selectedIndex ? "selected" : ""}
+              class=${`ui-button ui-selection-option ${index === this.selectedIndex ? "selected" : ""}`}
               aria-current=${index === this.selectedIndex ? "true" : nothing}
               ${scrollWhenSelected(index === this.selectedIndex, option.value)}
               @focus=${() => { this.selectedIndex = index; }}
               @click=${() => this.onPick?.(option.value)}
             >
               <span>${option.label}</span>
-              ${option.description !== undefined && option.description !== "" ? html`<small>${option.description}</small>` : null}
+              ${option.description !== undefined && option.description !== "" ? html`<small class="ui-selection-detail">${option.description}</small>` : null}
             </button>`;
-            return this.onSetDefault ? html`<div class="default-row">${pick}${defaultPin(option.label, option.value === this.defaultValue, this.defaultsLoading || this.defaultPending, () => { void this.setDefault(option.value); })}</div>` : pick;
+            return this.onSetDefault ? html`<div class="default-row ui-selection-row">${pick}${defaultPin(option.label, option.value === this.defaultValue, this.defaultsLoading || this.defaultPending, () => { void this.setDefault(option.value); })}</div>` : pick;
           })}
-          ${options.length === 0 ? html`<div class="empty">No matching options</div>` : null}
+          ${options.length === 0 ? html`<div class="empty ui-dialog-empty">No matching options</div>` : null}
         </div>
       </modal-surface>
     `;
@@ -112,18 +119,5 @@ export class CommandPicker extends LitElement {
     }
   }
 
-  static override styles = [css`
-    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100% - 40px)); }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
-    .options { min-height: 0; overflow: auto; outline: none; }
-    button { border: 0; background: transparent; color: var(--pi-text); cursor: pointer; }
-    header button { font-size: 20px; color: var(--pi-muted); }
-    input { margin: 10px 12px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); padding: 8px 10px; outline: none; }
-    input:focus { border-color: var(--pi-accent); }
-    .options button { display: block; width: 100%; padding: 10px 12px; border-bottom: 1px solid var(--pi-border-muted); text-align: left; }
-    .options button.selected, .options button:hover { background: var(--pi-selection-bg); }
-    small { display: block; margin-top: 4px; color: var(--pi-muted); }
-    .empty { padding: 24px; color: var(--pi-muted); text-align: center; }
-  `, defaultPinStyles];
+  static override styles = [uiDialogStyles, uiSelectionStyles, defaultPinStyles];
 }

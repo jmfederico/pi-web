@@ -14,6 +14,8 @@ import {
   templateValues,
   type TemplateEventHandler,
 } from "../templateInspection.testSupport";
+import { installPopoverFake } from "./anchoredPopup.testSupport";
+installPopoverFake();
 import { SessionList, sessionRowActivityKind, sessionRowsForCurrentTree, sessionRowUnread, unreadSessionCount } from "./SessionList";
 
 afterEach(() => {
@@ -31,6 +33,16 @@ describe("sessionRowActivityKind", () => {
 
   it("reports 'session' for server activity when not sending", () => {
     expect(sessionRowActivityKind(session("s"), { ...idle, isStreaming: true }, undefined, false)).toBe("session");
+  });
+
+  it("uses the complete daemon projection instead of stale chat status and activity", () => {
+    const staleStatus = { ...idle, isStreaming: true };
+    const staleActivity = { sessionId: "s", phase: "active" as const, label: "Working", at: "now" };
+    expect(sessionRowActivityKind(session("s"), staleStatus, staleActivity, false, {})).toBeUndefined();
+    expect(sessionRowActivityKind(session("s"), idle, undefined, false, { s: { "core:working": true } })).toBe("session");
+    expect(sessionRowActivityKind(session("s"), idle, undefined, true, {})).toBe("sending");
+    // Older daemons omit the projection and retain event-based compatibility.
+    expect(sessionRowActivityKind(session("s"), staleStatus, staleActivity, false, undefined)).toBe("session");
   });
 
   it("shows no active-work indicator for a session that is only starting up", () => {
@@ -112,10 +124,38 @@ describe("mark-as-read actions", () => {
     await openSessionMenu(list, unread.id);
     const markRead = list.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Mark session as read"]');
     expect(markRead?.textContent).toBe("Mark as read");
+    // Fixed actions must escape the scroller's isolated paint context without
+    // leaving the component (document-click dismissal still belongs to it).
+    expect(markRead?.closest(".list-body")).toBeNull();
+    expect(markRead?.closest(".action-menu-panel")?.parentElement).toBe(list.shadowRoot?.querySelector("section"));
     markRead?.click();
 
     expect(onMarkRead).toHaveBeenCalledWith(unread);
     expect(componentState(list, "openMenuSessionId")).toBeUndefined();
+  });
+
+  it("retargets the floating menu to the clicked session and closes it when the session disappears", async () => {
+    const first = session("first");
+    const second = session("second");
+    const list = sessionList([first, second], new Set([first.id, second.id]));
+    const onMarkRead = vi.fn();
+    list.onMarkRead = onMarkRead;
+    await openSessionMenu(list, first.id);
+    await openSessionMenu(list, second.id);
+    expect(list.shadowRoot?.querySelectorAll(".action-menu-panel")).toHaveLength(1);
+    list.shadowRoot?.querySelector<HTMLButtonElement>('button[title="Mark session as read"]')?.click();
+    expect(onMarkRead).toHaveBeenCalledWith(second);
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
+
+    await openSessionMenu(list, first.id);
+    list.sessions = [{ ...first, archived: true }, second];
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
+    list.sessions = [second];
+    await list.updateComplete;
+    await list.updateComplete;
+    expect(list.shadowRoot?.querySelector(".action-menu-panel")).toBeNull();
   });
 
   it("hides Mark as read for read, transient, and archived sessions even when tracked as unread", async () => {

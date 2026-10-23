@@ -95,6 +95,9 @@ describe("extension-dialog-card input dialog", () => {
     const root = renderRoot(card);
     const input = requiredElement(root.querySelector("input"), "dialog input");
 
+    expect(input.classList.contains("ui-input")).toBe(true);
+    input.focus();
+    expect(root.activeElement).toBe(input);
     expect(input.placeholder).toBe("feature/…");
     expect(input.maxLength).toBe(4000);
 

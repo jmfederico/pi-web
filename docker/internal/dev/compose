@@ -13,7 +13,6 @@ die() {
 script_dir=$(unset CDPATH; cd "$(dirname "$0")" && pwd -P)
 repo_root=$(unset CDPATH; cd "$script_dir/../../.." && pwd -P)
 dev_config_file=$repo_root/.pi-web/docker-compose-dev.local.env
-legacy_dev_env_file=$repo_root/.pi-web/docker-compose-dev.env
 generated_env_file=$repo_root/.pi-web/docker-compose-dev.generated.env
 
 # shellcheck source=../host-profile.sh
@@ -126,18 +125,6 @@ write_initial_dev_config() {
 EOF
   umask "$previous_umask"
 
-  if [ -f "$legacy_dev_env_file" ]; then
-    {
-      printf '\n%s\n' "# Values copied from the previous generated dev env file."
-      printf '%s\n' "# Keep, edit, or delete these lines as needed."
-      for key in PI_WEB_DEV_API_BIND_ADDR PI_WEB_DEV_BIND_ADDR PI_WEB_DEV_API_PORT PI_WEB_DEV_PORT; do
-        if value=$(env_file_value "$legacy_dev_env_file" "$key"); then
-          printf '%s=%s\n' "$key" "$value"
-        fi
-      done
-    } >>"$temp_config"
-  fi
-
   mv "$temp_config" "$dev_config_file"
   log "Created user-editable dev config: $dev_config_file"
 }
@@ -235,10 +222,12 @@ docker_gid=$(value_from_config_or_generated_or_env_or_runtime_or_default DOCKER_
 default_data_dir=${HOME:-$repo_root/.pi-web}/.local/share/pi-web-docker/data
 pi_web_data_dir=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DOCKER_DATA_DIR "$default_data_dir")
 pi_web_extra_host_paths=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DOCKER_EXTRA_HOST_PATHS "")
-pi_web_opensuse_image=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_OPENSUSE_IMAGE opensuse/tumbleweed)
-pi_web_nodejs_major=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_NODEJS_MAJOR 22)
-pi_web_nodejs_repo=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_NODEJS_REPO auto)
-pi_web_extra_zypper_packages=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_EXTRA_ZYPPER_PACKAGES "")
+pi_web_ubuntu_image=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_UBUNTU_IMAGE ubuntu:26.04)
+pi_web_node_image=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_NODE_IMAGE node:22.22.2-bookworm-slim)
+pi_web_extra_apt_packages=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_EXTRA_APT_PACKAGES "")
+pi_web_docker_cli_version=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DOCKER_CLI_VERSION 29-cli)
+pi_web_mise_version=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_MISE_VERSION 2026.10.17)
+pi_web_git_version=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_GIT_VERSION "")
 pi_web_dev_image=$(value_from_config_or_generated_or_env_or_runtime_or_default PI_WEB_DEV_IMAGE pi-web:dev)
 compose_project_name=$(value_from_config_or_generated_or_env_or_default COMPOSE_PROJECT_NAME pi-web-dev)
 hostexec_image=$(value_from_config_or_generated_or_env_or_runtime_or_default HOSTEXEC_IMAGE alpine:3.22)
@@ -306,10 +295,12 @@ PI_WEB_DOCKER_HOST_PROFILE=$PI_WEB_DETECTED_DOCKER_HOST_PROFILE
 PI_WEB_DOCKER_SOCKET_SOURCE=$PI_WEB_DETECTED_DOCKER_SOCKET_SOURCE
 HOSTEXEC_MODE=$PI_WEB_DETECTED_HOSTEXEC_MODE
 PI_WEB_DOCKER_EXTRA_HOST_PATHS=$pi_web_extra_host_paths
-PI_WEB_OPENSUSE_IMAGE=$pi_web_opensuse_image
-PI_WEB_NODEJS_MAJOR=$pi_web_nodejs_major
-PI_WEB_NODEJS_REPO=$pi_web_nodejs_repo
-PI_WEB_EXTRA_ZYPPER_PACKAGES=$pi_web_extra_zypper_packages
+PI_WEB_UBUNTU_IMAGE=$pi_web_ubuntu_image
+PI_WEB_NODE_IMAGE=$pi_web_node_image
+PI_WEB_EXTRA_APT_PACKAGES=$pi_web_extra_apt_packages
+PI_WEB_DOCKER_CLI_VERSION=$pi_web_docker_cli_version
+PI_WEB_MISE_VERSION=$pi_web_mise_version
+PI_WEB_GIT_VERSION=$pi_web_git_version
 PI_WEB_DEV_IMAGE=$pi_web_dev_image
 COMPOSE_PROJECT_NAME=$compose_project_name
 HOSTEXEC_IMAGE=$hostexec_image
@@ -346,6 +337,12 @@ log "Generated dev Compose override: $override_file"
 
 if [ "$#" -eq 0 ]; then
   set -- up --build
+fi
+
+# User-owned service and mount overrides always take precedence.
+local_compose_file=$repo_root/.pi-web/docker-compose-dev.local.yml
+if [ -f "$local_compose_file" ]; then
+  set -- -f "$local_compose_file" "$@"
 fi
 
 pi_web_docker_compose \

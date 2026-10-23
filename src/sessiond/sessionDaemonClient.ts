@@ -12,6 +12,12 @@ export type SessionDaemonAgentProfileResult =
   | { status: "unavailable"; error: string }
   | { status: "invalid"; error: string };
 
+export interface SessionDaemonClientOptions {
+  baseUrl?: string;
+  /** An explicit socket suppresses the inherited client URL unless baseUrl is also supplied. */
+  socketPath?: string;
+}
+
 export interface SessionDaemonRequestOptions {
   signal?: AbortSignal;
 }
@@ -32,8 +38,13 @@ export interface SessionDaemonRequestClient {
 }
 
 export class SessionDaemonClient {
-  private readonly baseUrl = sessiondHttpUrl();
-  private readonly socketPath = sessiondSocketPath();
+  private readonly baseUrl: string | undefined;
+  private readonly socketPath: string;
+
+  constructor(options: SessionDaemonClientOptions = {}) {
+    this.baseUrl = options.baseUrl ?? (options.socketPath === undefined ? sessiondHttpUrl() : undefined);
+    this.socketPath = options.socketPath ?? sessiondSocketPath();
+  }
 
   async request(
     method: string,

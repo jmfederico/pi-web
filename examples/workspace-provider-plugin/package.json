@@ -8,7 +8,7 @@
   },
   "devDependencies": {
     "@jmfederico/pi-web": "^1.202609.1",
-    "@types/node": "^24.13.3",
+    "@types/node": "^24.19.2",
     "typescript": "^6.0.3"
   },
   "piWeb": {

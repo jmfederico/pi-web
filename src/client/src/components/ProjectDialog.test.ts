@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api, trustApi } from "../api";
@@ -112,6 +114,68 @@ describe("project-dialog modal surface", () => {
     expect(dialog.shadowRoot?.textContent).not.toContain("Loading folders…");
   });
 
+  it("distinguishes folder lookup failure from no results and retries the current machine and path", async () => {
+    const dialog = await mountDialog();
+    dialog.machineId = "remote-box";
+    vi.mocked(api.projectDirectories).mockRejectedValueOnce(new Error("Offline"));
+    const input = pathInput(dialog);
+    input.value = "/work/proj";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await vi.waitFor(() => {
+      expect(dialog.shadowRoot?.querySelector("#project-folder-error")).not.toBeNull();
+    });
+    await settleRenderedDialog(dialog);
+
+    expect(dialog.shadowRoot?.textContent).not.toContain("No matching folders");
+    expect(descriptions(dialog, input)).toContain("remote machine: remote-box");
+    expect(descriptions(dialog, input)).toContain("Could not load folders");
+    expect(dialog.shadowRoot?.querySelector("#project-folder-error")?.getAttribute("role")).toBe("alert");
+    // A failed lookup does not mean that the typed path is invalid.
+    expect(input.getAttribute("aria-invalid")).not.toBe("true");
+
+    vi.mocked(api.projectDirectories).mockResolvedValue([]);
+    buttonByText(dialog, "Retry folder lookup").click();
+    await vi.waitFor(() => {
+      expect(dialog.shadowRoot?.textContent).toContain("No matching folders");
+    });
+    await settleRenderedDialog(dialog);
+    expect(api.projectDirectories).toHaveBeenLastCalledWith("/work/proj", "remote-box");
+    expect(dialog.shadowRoot?.querySelector("#project-folder-error")).toBeNull();
+    expect(descriptions(dialog, input)).toContain("No matching folders");
+  });
+
+  it("keeps trust unavailable after a failed read and offers a retry with associated guidance", async () => {
+    const onSubmit = vi.fn<(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => void>();
+    const dialog = await mountDialog({ onSubmit });
+    vi.mocked(trustApi.projectTrust).mockRejectedValueOnce(new Error("Offline"));
+    const input = pathInput(dialog);
+    input.value = "/work/proj";
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await vi.waitFor(() => {
+      expect(dialog.shadowRoot?.querySelector("#project-trust-error")).not.toBeNull();
+    });
+    await settleRenderedDialog(dialog);
+    expect(trustCheckbox(dialog).disabled).toBe(true);
+    expect(trustCheckbox(dialog).checked).toBe(false);
+    expect(descriptions(dialog, trustCheckbox(dialog))).toContain("execute code on this machine");
+    expect(descriptions(dialog, trustCheckbox(dialog))).toContain("Retry to load the existing trust decision");
+    pressKey(input, "Enter");
+    expect(onSubmit).toHaveBeenCalledWith("/work/proj", true, { trusted: false, changed: false });
+
+    let resolveTrust: ((value: { path: string; decision: boolean; trusted: boolean }) => void) | undefined;
+    vi.mocked(trustApi.projectTrust).mockReturnValue(new Promise((resolve) => { resolveTrust = resolve; }));
+    buttonByText(dialog, "Retry trust check").click();
+    await settleRenderedDialog(dialog);
+    expect(trustCheckbox(dialog).disabled).toBe(true);
+    expect(dialog.shadowRoot?.querySelector("#project-trust-error")).toBeNull();
+    resolveTrust?.({ path: "/work/proj", decision: true, trusted: true });
+    await waitForTrustRead(dialog);
+    expect(trustApi.projectTrust).toHaveBeenLastCalledWith("/work/proj", "local");
+    expect(trustCheckbox(dialog).checked).toBe(true);
+    expect(descriptions(dialog, trustCheckbox(dialog))).not.toContain("Could not check");
+    expect(dialog.shadowRoot?.querySelector("header button")?.getAttribute("aria-label")).toBe("Close add project");
+  });
+
   it("keeps showing folder suggestions while a slower trust read is still in flight", async () => {
     const dialog = await mountDialog();
     vi.mocked(api.projectDirectories).mockResolvedValue([{ path: "/work/proj/", kind: "other" }]);
@@ -147,6 +211,17 @@ describe("project-dialog modal surface", () => {
     expect(link?.textContent).toBe("Learn about project trust");
   });
 });
+
+function descriptions(dialog: ProjectDialog, control: Element): string {
+  const description = control.getAttribute("aria-describedby");
+  if (description === null) throw new Error("Expected description ids");
+  const ids = description.split(" ");
+  return ids.map((id) => requiredElement(dialog.shadowRoot?.getElementById(id), `description ${id}`).textContent).join(" ");
+}
+
+function buttonByText(dialog: ProjectDialog, text: string): HTMLButtonElement {
+  return requiredElement(Array.from(dialog.shadowRoot?.querySelectorAll("button") ?? []).find((button) => button.textContent.trim() === text), text);
+}
 
 interface ProjectDialogProps {
   onSubmit?: (path: string, create: boolean, trust: ProjectTrustChoice | undefined) => void;

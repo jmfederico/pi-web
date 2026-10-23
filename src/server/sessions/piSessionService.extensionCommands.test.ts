@@ -1,4 +1,4 @@
-import type { ExtensionCommandContextActions } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContextActions } from "../../piSdk.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiSessionService, type PiAgentSession } from "./piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";

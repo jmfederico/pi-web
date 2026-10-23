@@ -4,6 +4,8 @@ dist/
 .DS_Store
 *.log
 .playwright-cli/
+/playwright-report/
+/test-results/
 
 # Local plugin development sandboxes. Symlink these into ~/.pi-web/plugins/<plugin-id>.
 /dev-plugins/

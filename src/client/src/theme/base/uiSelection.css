@@ -1,0 +1,11 @@
+  .ui-selection-list { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .ui-selection-list:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+  .ui-selection-option { box-sizing: border-box; display: block; width: 100%; min-height: 44px; padding: 10px 16px; color: var(--pi-text); font: 14px/20px var(--pi-font, system-ui, sans-serif); text-align: left; white-space: normal; overflow-wrap: anywhere; box-shadow: inset 0 -1px var(--pi-border-muted); }
+  .ui-selection-row { display: flex; align-items: stretch; min-width: 0; box-shadow: inset 0 -1px var(--pi-border-muted); }
+  .ui-selection-row > .ui-selection-option { flex: 1 1 auto; min-width: 0; width: auto; box-shadow: none; }
+  /* Saved pin/default state is conveyed by the icon, not another selection surface. */
+  .ui-selection-row > .ui-button--icon[aria-pressed="true"]:not(:hover) { background: transparent; }
+  .ui-selection-row:hover, .ui-selection-option:hover:not(:disabled) { background: var(--pi-surface-hover); }
+  .ui-selection-row.selected, .ui-selection-row:has(.ui-selection-option.selected), .ui-selection-option.selected, .ui-selection-option.selected:hover:not(:disabled) { background: var(--pi-selection-bg); }
+  .ui-selection-detail { display: block; margin-top: 4px; color: var(--pi-muted); font-size: 12px; line-height: 18px; }
+  .ui-dialog-empty { padding: 24px; color: var(--pi-muted); text-align: center; }

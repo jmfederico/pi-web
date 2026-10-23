@@ -17,7 +17,8 @@ import { registerSessionProxyRoutes } from "./sessionProxyRoutes.js";
 describe("browser-facing session media delivery", () => {
   it("roundtrips a projected image through the real daemon HTTP client and local proxy without changing Pi content", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-web-media-delivery-"));
-    const data = "A".repeat(80 * 1024);
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=";
+    const data = Buffer.concat([Buffer.from(png, "base64"), Buffer.alloc(60 * 1024)]).toString("base64");
     const image = Object.freeze({ type: "image", mimeType: "image/png", data });
     const message = Object.freeze({ role: "user", content: Object.freeze([image]) });
     const entries = [{ type: "message", id: "entry-1", message }];
@@ -51,6 +52,7 @@ describe("browser-facing session media delivery", () => {
       if (typeof first !== "object" || first === null || !("content" in first) || !Array.isArray(first.content)) throw new Error("Expected image content");
       const part: unknown = first.content[0];
       if (typeof part !== "object" || part === null || !("mediaId" in part) || !isSessionMediaId(part.mediaId)) throw new Error("Expected media reference");
+      expect(part).toMatchObject({ width: 1, height: 1 });
       expect(references.body.length).toBeLessThan(inline.body.length / 100);
       expect(references.body).not.toContain(data);
       const served = await gateway.inject({ url: `${base}/media/${part.mediaId}?cwd=%2Fworkspace` });

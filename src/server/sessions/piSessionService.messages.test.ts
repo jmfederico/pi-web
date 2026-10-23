@@ -3,6 +3,7 @@ import { PiSessionService } from "./piSessionService.js";
 import { CapturingSessionEventHub, fakeRuntime, fakeSessionManager, runtimeCreator, sessionGateway, sessionRecord, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
+const streamIdMatcher: unknown = expect.any(String);
 
 describe("PiSessionService", () => {
   describe("assistant thinking-level attribution", () => {
@@ -47,6 +48,64 @@ describe("PiSessionService", () => {
       } finally {
         await service.dispose();
       }
+    });
+
+    it("keeps one browser identity across start, deltas, both snapshots and end without mutating runtime messages", async () => {
+      const message = {
+        role: "assistant", provider: "openai", model: "model-1", timestamp: 123,
+        content: [{ type: "thinking", thinking: "working", thinkingSignature: "secret" }],
+      };
+      const original = structuredClone(message);
+      const { fake, service, events } = messagesService([], { thinkingLevel: "high", state: { streamingMessage: message } });
+      const ref = sessionRef("session-1");
+      try {
+        await service.status(ref);
+        fake.emit({ type: "message_start", message });
+        const start = events.sessionEvents.map(({ event }) => event).find((event) => event.type === "assistant.start");
+        const partial = (await service.streamSnapshot(ref)).partial;
+        expect(partial).toMatchObject({ streamId: streamIdMatcher });
+        expect(start).toEqual({ type: "assistant.start", message: partial });
+        expect(partial).toEqual({
+          ...message, content: [{ type: "thinking", thinking: "working" }], thinkingLevel: "high", streamId: streamIdMatcher,
+        });
+        expect((await service.transcriptSnapshot(ref)).partial).toEqual(partial);
+        if (typeof partial !== "object" || partial === null || !("streamId" in partial)) throw new Error("Missing stream identity");
+        const streamId: unknown = partial.streamId;
+        // Other message lifecycles cannot finalize the assistant stream.
+        const toolResult = { role: "toolResult", toolName: "bash", toolCallId: "call-1", content: [] };
+        fake.emit({ type: "tool_execution_start", toolName: "bash", toolCallId: "call-1", args: {} });
+        fake.emit({ type: "message_start", message: toolResult });
+        fake.emit({ type: "message_end", message: toolResult });
+        expect((await service.transcriptSnapshot(ref)).partial).toEqual(partial);
+        for (const type of ["thinking_delta", "text_delta"]) {
+          fake.emit({ type: "message_update", message, assistantMessageEvent: { type, delta: "more" } });
+        }
+        expect(events.sessionEvents.map(({ event }) => event)).toEqual(expect.arrayContaining([
+          { type: "assistant.thinking.delta", text: "more", streamId },
+          { type: "assistant.delta", text: "more", streamId },
+        ]));
+        expect((await service.streamSnapshot(ref)).partial).toEqual(partial);
+        expect((await service.transcriptSnapshot(ref)).partial).toEqual(partial);
+        fake.emit({ type: "message_end", message });
+        // The capturing hub observes events before the real hub's browser projection.
+        expect(events.sessionEvents.map(({ event }) => event)).toContainEqual({
+          type: "message.end", message: { ...message, thinkingLevel: "high", streamId },
+        });
+        expect((await service.transcriptSnapshot(ref)).partial).toBeNull();
+        // A fake may retain SDK state after end: it must not retain the ended identity.
+        expect((await service.streamSnapshot(ref)).partial).not.toHaveProperty("streamId");
+        fake.emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "no start" } });
+        expect(events.sessionEvents.map(({ event }) => event)).toContainEqual({ type: "assistant.delta", text: "no start" });
+        fake.emit({ type: "message_start", message });
+        expect((await service.streamSnapshot(ref)).partial).not.toEqual(partial);
+        fake.emit({ type: "agent_end", messages: [] });
+        expect((await service.streamSnapshot(ref)).partial).not.toHaveProperty("streamId");
+        fake.emit({ type: "message_start", message });
+        await service.stop(ref);
+        expect((await service.streamSnapshot(ref)).partial).not.toHaveProperty("streamId");
+        expect((await service.transcriptSnapshot(ref)).partial).toBeNull();
+        expect(message).toEqual(original);
+      } finally { await service.dispose(); }
     });
 
     it("annotates paged assistant messages with the thinking level in effect from branch entries", async () => {

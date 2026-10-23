@@ -248,11 +248,11 @@ export function formatNativeServiceDoctorResult(result: NativeServiceDoctorResul
       if (failure.kind === "probe-infrastructure") {
         infrastructure = true;
         lines.push(`✗ Native service probe infrastructure failure (${failure.reason}): ${failure.message}`);
-      } else if (failure.kind === "entrypoint-inspection-failure") {
+      } else if (failure.kind === "launcher-inspection-failure") {
         infrastructure = true;
-        lines.push(`✗ Could not inspect bundled ${failure.serviceId} entrypoint ${failure.entrypointPath}: ${failure.message}`);
+        lines.push(`✗ Could not inspect bundled ${failure.serviceId} launcher ${failure.launcherPath}: ${failure.message}`);
       } else {
-        lines.push(`✗ ${failure.namedCommand} is unavailable to the native service manager, and bundled entrypoint ${failure.bundledEntrypointPath} is missing.`);
+        lines.push(`✗ ${failure.namedCommand} is unavailable to the native service manager, and bundled launcher ${failure.bundledLauncherPath} is missing.`);
         if (failure.namedCommandFailure !== null) lines.push(`  ${failure.namedCommandFailure}`);
       }
     }

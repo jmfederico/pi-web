@@ -49,7 +49,7 @@ const systemdInspectionProperties = [
 const systemdBusDestination = "org.freedesktop.systemd1";
 const systemdUnitObjectPathPrefix = "/org/freedesktop/systemd1/unit/";
 const legacySystemdUnprintableValue = "[unprintable]";
-const managedSystemdEnvironmentKeys = ["PI_WEB_CONFIG"] as const;
+const managedEnvironmentKeys = ["PI_WEB_CONFIG", "PI_WEB_PI_PACKAGE_DIR"] as const;
 
 type SystemdInspectionProperty = typeof systemdInspectionProperties[number];
 
@@ -62,7 +62,7 @@ type SystemdInspectionProperty = typeof systemdInspectionProperties[number];
  * unrelated environment values are outside this assertion. Legacy
  * systemctl output is recovered losslessly from the manager's D-Bus property.
  * A loaded LaunchAgent must report the canonical
- * plist and the same PI_WEB_CONFIG. Launchd restart is the exception: its existing
+ * plist and matching PI WEB-managed environment values. Launchd restart is the exception: its existing
  * bootout/bootstrap path deliberately replaces loaded state before probing.
  */
 export function inspectInstalledNativeServiceDefinitions(
@@ -218,7 +218,7 @@ function inspectEffectiveSystemdDefinition(
   const environmentFiles = parsed.value.properties.get("EnvironmentFiles") ?? [];
   if (environmentFiles.some((value) => value !== "")) {
     dependencies.warn(
-      `Systemd unit ${source.systemdName} uses EnvironmentFile. PI WEB cannot verify whether it overrides PI_WEB_CONFIG; checks use the config path from the installed service definition unless explicitly overridden for this command.`,
+      `Systemd unit ${source.systemdName} uses EnvironmentFile. PI WEB cannot verify whether it overrides PI_WEB_CONFIG or PI_WEB_PI_PACKAGE_DIR; checks use the config path from the installed service definition unless explicitly overridden for this command.`,
     );
   }
   return { ok: true, value: null };
@@ -272,13 +272,15 @@ function inspectLoadedLaunchdDefinition(
     };
   }
 
-  const expectedConfigPath = ownEnvironmentValue(expectedEnvironment, "PI_WEB_CONFIG");
-  const loadedConfigPath = ownEnvironmentValue(loaded.environment, "PI_WEB_CONFIG");
-  if (loadedConfigPath !== expectedConfigPath) {
-    return {
-      ok: false,
-      message: `Loaded LaunchAgent ${source.launchdTarget} has PI_WEB_CONFIG ${JSON.stringify(loadedConfigPath)} instead of installed value ${JSON.stringify(expectedConfigPath)}; run \`pi-web restart\` to reload the managed LaunchAgents.`,
-    };
+  for (const key of managedEnvironmentKeys) {
+    const expectedValue = ownEnvironmentValue(expectedEnvironment, key);
+    const loadedValue = ownEnvironmentValue(loaded.environment, key);
+    if (loadedValue !== expectedValue) {
+      return {
+        ok: false,
+        message: `Loaded LaunchAgent ${source.launchdTarget} has ${key} ${JSON.stringify(loadedValue)} instead of installed value ${JSON.stringify(expectedValue)}; run \`pi-web restart\` to reload the managed LaunchAgents.`,
+      };
+    }
   }
   return { ok: true, value: null };
 }
@@ -407,7 +409,7 @@ function managedEnvironmentValues(
   environment: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
   const managed = new Map<string, string>();
-  for (const key of managedSystemdEnvironmentKeys) {
+  for (const key of managedEnvironmentKeys) {
     const value = ownEnvironmentValue(environment, key);
     if (value !== undefined) managed.set(key, value);
   }

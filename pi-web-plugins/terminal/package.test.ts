@@ -9,6 +9,7 @@ import { PiWebPluginService } from "../../src/server/piWebPluginService.js";
 import { createServerPluginRuntime } from "../../src/server/plugins/serverPluginRuntime.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "../../src/server/workspaces/workspaceCatalog.js";
 import { REQUIRED_TERMINAL_SERVICE_CAPABILITY } from "../../src/server/terminals/requiredTerminalService.js";
+import { MAINTENANCE_TERMINAL_CAPABILITY } from "../../src/server/terminals/maintenanceTerminalCapability.js";
 
 const tempRoots: string[] = [];
 
@@ -77,7 +78,11 @@ describe("bundled Terminal package", () => {
       .sort();
     expect(files).toEqual([
       "browser/pi-web-plugin.js",
+      "bunPtyProvider.js",
+      "nodePtyProvider.js",
       "package.json",
+      "ptyComposition.js",
+      "ptyProvider.js",
       "server-plugin.js",
       "terminalService.js",
     ]);
@@ -101,6 +106,7 @@ describe("bundled Terminal package", () => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
     const runtime = await createServerPluginRuntime({
       dataDir: join(root, "data"),
+      hostCapabilities: [{ capability: MAINTENANCE_TERMINAL_CAPABILITY, value: { cwd: join(root, "data", "maintenance"), env: { ...process.env } } }],
       catalog,
       logger,
       importer: async (moduleUrl) => {

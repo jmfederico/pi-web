@@ -4,10 +4,12 @@ x-pi-web-build: &pi-web-build
   context: .
   dockerfile: Dockerfile
   args:
-    OPENSUSE_IMAGE: ${PI_WEB_OPENSUSE_IMAGE:-opensuse/tumbleweed}
-    NODEJS_MAJOR: ${PI_WEB_NODEJS_MAJOR:-22}
-    NODEJS_REPO: ${PI_WEB_NODEJS_REPO:-auto}
-    PI_WEB_EXTRA_ZYPPER_PACKAGES: ${PI_WEB_EXTRA_ZYPPER_PACKAGES:-}
+    UBUNTU_IMAGE: ${PI_WEB_UBUNTU_IMAGE:-ubuntu:26.04}
+    NODE_IMAGE: ${PI_WEB_NODE_IMAGE:-node:22.22.2-bookworm-slim}
+    PI_WEB_EXTRA_APT_PACKAGES: ${PI_WEB_EXTRA_APT_PACKAGES:-}
+    DOCKER_CLI_VERSION: ${PI_WEB_DOCKER_CLI_VERSION:-29-cli}
+    MISE_VERSION: ${PI_WEB_MISE_VERSION:-2026.10.17}
+    GIT_VERSION: ${PI_WEB_GIT_VERSION:-}
     PI_WEB_UID: ${PI_WEB_UID:-1000}
     PI_WEB_GID: ${PI_WEB_GID:-1000}
     PI_WEB_VERSION: ${PI_WEB_VERSION:-latest}
@@ -41,7 +43,7 @@ services:
   sessiond:
     build: *pi-web-build
     image: ${PI_WEB_IMAGE:-pi-web:local}
-    command: ["pi-web-sessiond"]
+    command: ["pi-web-service", "/usr/local/bin/pi-web-sessiond"]
     restart: unless-stopped
     user: "${PI_WEB_UID:-1000}:${PI_WEB_GID:-1000}"
     group_add:
@@ -61,7 +63,7 @@ services:
   web:
     build: *pi-web-build
     image: ${PI_WEB_IMAGE:-pi-web:local}
-    command: ["pi-web-server"]
+    command: ["pi-web-service", "/usr/local/bin/pi-web-server"]
     restart: unless-stopped
     depends_on:
       sessiond:

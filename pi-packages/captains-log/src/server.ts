@@ -6,7 +6,7 @@ import { LOG_CHANNEL, entryFrames, isCaptainClientFrame, type CaptainServerFrame
 import { collectReply, collectSourceReply } from "./roundtrip.js";
 import { LogStore, logScope } from "./store.js";
 
-const plugin: PiWebServerPlugin = {
+const plugin: Extract<PiWebServerPlugin, { apiVersion: 3 }> = {
   apiVersion: 3,
   name: "Captain's Log",
   requires: [PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY],

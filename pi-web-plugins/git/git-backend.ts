@@ -100,7 +100,7 @@ async function gitStatusWithRunner(runGit: RunGit, cwd: string): Promise<GitStat
   const result = await runGit(cwd, ["status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"]);
   if (result.code !== 0) return { isGitRepo: false, hash: hash(result.stdout + result.stderr), files: [], submodules: [] };
   const parsed = parseStatus(result.stdout, { deferSubmodules: true });
-  return expandSubmodules(runGit, cwd, parsed, result.stdout);
+  return expandSubmodules(runGit, await gitWorktreeRoot(runGit, cwd), parsed, result.stdout);
 }
 
 /**
@@ -202,6 +202,9 @@ async function gitDiffWithRunner(runGit: RunGit, cwd: string, options: { path?: 
   let path: string | undefined;
   if (options.path !== undefined && options.path !== "") path = normalizeRelativePath(options.path);
 
+  // Status paths and every diff belong to the enclosing repository, not the
+  // registered project directory. Keep the session's cwd unchanged.
+  cwd = await gitWorktreeRoot(runGit, cwd);
   if (path !== undefined) {
     const owner = await submoduleForPath(runGit, cwd, path);
     if (owner !== undefined) return submoduleDiff(runGit, owner, path, staged);
@@ -243,6 +246,14 @@ async function submoduleDiff(runGit: RunGit, owner: ValidatedSubmodule, path: st
     return { path, staged, hash: hash(untracked.stdout), diff: untracked.stdout, truncated: untracked.truncated };
   }
   return { path, staged, hash: hash(result.stdout), diff: result.stdout, truncated: result.truncated };
+}
+
+async function gitWorktreeRoot(runGit: RunGit, cwd: string): Promise<string> {
+  const result = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  if (result.code !== 0) throw new Error(result.stderr.trim() || "Cannot resolve Git worktree root");
+  const root = result.stdout.replace(/\r?\n$/u, "");
+  if (!isAbsolute(root)) throw new Error("Git returned an invalid worktree root");
+  return root;
 }
 
 async function isUntracked(runGit: RunGit, cwd: string, path: string): Promise<boolean> {

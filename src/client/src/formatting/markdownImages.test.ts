@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { localMarkdownImage } from "./markdownImages";
 import { toSafeMarkdownHtml } from "./markdown";
 import { MarkdownImage } from "../components/MarkdownImage";
-import { imagePresentation, settleImage } from "../components/imagePresentation.testSupport";
+import { imagePresentation, loadIntrinsicDimensions, nativeImage, settleImage } from "../components/imagePresentation.testSupport";
 
 beforeEach(() => { vi.stubGlobal("IntersectionObserver", undefined); });
 afterEach(() => { document.body.replaceChildren(); localStorage.clear(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
@@ -66,6 +66,20 @@ it.each(["/srv/work", "C:/work", "C:\\work", "\\\\server\\share\\work"])("render
   expect(host.querySelector("img")?.src).toBe("https://example.com/a.png");
 });
 
+it("uses native attributes and independently disables every built-in Markdown image source", () => {
+  const context = { machineId: "local", projectId: "p", workspaceId: "w", root: "/srv/work" };
+  const text = "![inside](a.png) ![outside](/tmp/a.png) ![remote](https://example.test/a.png)";
+  const host = document.createElement("div");
+  host.innerHTML = toSafeMarkdownHtml(text, context, "image-flag", false);
+  expect(host.querySelector("img")?.hasAttribute("src")).toBe(false);
+  expect(host.querySelector("img")?.getAttribute("loading")).toBe("lazy");
+  expect(host.querySelector("img")?.getAttribute("decoding")).toBe("async");
+  expect([...host.querySelectorAll("pi-web-markdown-image")].every((image) => image.hasAttribute("loading-disabled"))).toBe(true);
+  host.innerHTML = toSafeMarkdownHtml(text, context, "image-flag", true);
+  expect(host.querySelector("img")?.getAttribute("src")).toBe("https://example.test/a.png");
+  expect(host.querySelector("pi-web-markdown-image")?.hasAttribute("loading-disabled")).toBe(false);
+});
+
 it("restores only a clicked image on revisit within the code-block intent lifetime", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(0);
@@ -81,7 +95,7 @@ it("restores only a clicked image on revisit within the code-block intent lifeti
     return images;
   }
   function isShown(images: MarkdownImage[], index = 0): boolean {
-    return imagePresentation(required(images[index])).renderRoot.querySelector("img") !== null;
+    return imagePresentation(required(images[index])).renderRoot.querySelector("img")?.hasAttribute("src") === true;
   }
   const initial = await visit();
   expect(initial).toHaveLength(2);
@@ -107,7 +121,30 @@ it("restores only a clicked image on revisit within the code-block intent lifeti
   expect(localStorage.length).toBe(0);
 });
 
-it("replaces the placeholder with just the image, reports failures, and resets approval for a different image", async () => {
+it("restores dimension hints even when reusing the same cached Markdown HTML", async () => {
+  const context = { machineId: "remote /1", projectId: "p", workspaceId: "w", root: "/srv/work" };
+  const text = "![cached geometry](screenshots/reused.png)";
+  const html = toSafeMarkdownHtml(text, context, "dimension-html-cache");
+  async function visit() {
+    const host = document.createElement("div");
+    host.innerHTML = toSafeMarkdownHtml(text, context, "dimension-html-cache");
+    document.body.append(host);
+    const image = required(host.querySelector<MarkdownImage>("pi-web-markdown-image"));
+    const presentation = await settleImage(image);
+    return { host, image, presentation, native: nativeImage(presentation) };
+  }
+  const first = await visit();
+  expect(first.native.hasAttribute("width")).toBe(false);
+  loadIntrinsicDimensions(first.native, 640, 480);
+  await settleImage(first.image);
+  first.host.remove();
+  expect(toSafeMarkdownHtml(text, context, "dimension-html-cache")).toBe(html);
+  const returned = await visit();
+  expect(returned.native.getAttribute("width")).toBe("640");
+  expect(returned.native.getAttribute("height")).toBe("480");
+});
+
+it("keeps an inert native image until approval and resets consent for a different source", async () => {
   const image = new MarkdownImage();
   image.outside = true;
   image.path = "/tmp/example.png";
@@ -115,21 +152,25 @@ it("replaces the placeholder with just the image, reports failures, and resets a
   document.body.append(image);
   const presentation = await settleImage(image);
   const root = presentation.renderRoot;
-  expect(root.querySelector("img")).toBeNull();
-  expect(root.textContent).toContain("/tmp/example.png");
-  required(root.querySelector("button")).click();
+  const native = required(root.querySelector("img"));
+  const placeholder = required(root.querySelector<HTMLButtonElement>(".placeholder"));
+  expect(native.hasAttribute("src")).toBe(false);
+  expect(placeholder.textContent).toContain("/tmp/example.png");
+  placeholder.click();
   await settleImage(image);
-  expect(root.querySelector("img")?.src).toBe(image.previewUrl);
-  required(root.querySelector("img")).dispatchEvent(new Event("load"));
+  expect(native.src).toBe(image.previewUrl);
+  expect(placeholder.hidden).toBe(true);
+  const render = vi.spyOn(presentation, "render");
+  native.dispatchEvent(new Event("load"));
+  native.dispatchEvent(new Event("error"));
   await presentation.updateComplete;
-  expect(root.querySelector(".placeholder")).toBeNull();
-  expect(root.querySelector("code")).toBeNull();
-  expect(root.textContent.trim()).toBe("");
-  required(root.querySelector("img")).dispatchEvent(new Event("error"));
-  await presentation.updateComplete;
-  expect(root.querySelector('[role="status"]')?.textContent).toContain("Image unavailable");
+  expect(render).not.toHaveBeenCalled();
+  expect(root.querySelector("img")).toBe(native);
+  expect(root.querySelector('[role="status"]')).toBeNull();
   image.previewUrl = "https://example.com/another";
   await settleImage(image);
-  expect(root.querySelector("img")).toBeNull();
-  expect(required(root.querySelector("button")).textContent).toContain("Show image");
+  expect(root.querySelector("img")).toBe(native);
+  expect(native.hasAttribute("src")).toBe(false);
+  expect(placeholder.hidden).toBe(false);
+  expect(placeholder.textContent).toContain("Show image");
 });

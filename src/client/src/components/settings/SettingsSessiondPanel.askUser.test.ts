@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiWebConfigResponse } from "../../api";
 import { SettingsSessiondPanel } from "./SettingsSessiondPanel";
 
-beforeEach(() => {
+afterEach(() => {
   document.body.replaceChildren();
+  localStorage.clear();
 });
 
 describe("SettingsSessiondPanel Ask Questions setting", () => {
@@ -22,7 +23,7 @@ describe("SettingsSessiondPanel Ask Questions setting", () => {
     expect(toggle.disabled).toBe(false);
 
     toggle.click();
-    await Promise.resolve();
+    await panel.updateComplete;
 
     expect(onSave).toHaveBeenCalledWith({ askUser: false });
   });
@@ -36,11 +37,14 @@ describe("SettingsSessiondPanel Ask Questions setting", () => {
     const toggle = askUserToggle(panel);
     expect(toggle.checked).toBe(true);
     expect(toggle.disabled).toBe(true);
+    const help = panel.shadowRoot?.getElementById(toggle.getAttribute("aria-describedby") ?? "");
+    expect(help?.textContent).toContain("Read-only because PI_WEB_ASK_USER overrides this setting.");
+    expect(toggle.closest("label")?.textContent).toContain("Allow agents to ask you questions");
   });
 });
 
 function askUserToggle(panel: SettingsSessiondPanel): HTMLInputElement {
-  const toggle = panel.shadowRoot?.querySelector<HTMLInputElement>('input[aria-label="Enable Ask Questions"]');
+  const toggle = panel.shadowRoot?.querySelector<HTMLInputElement>('input#ask-user');
   if (toggle === undefined || toggle === null) throw new Error("Ask Questions toggle was not rendered");
   return toggle;
 }

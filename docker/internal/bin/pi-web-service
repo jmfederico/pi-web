@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Select the service interpreter, not its environment. Children (including
+# agent tools and terminals) inherit the ordinary tooling PATH unchanged.
+if [[ $# -eq 0 ]]; then
+  echo 'Usage: pi-web-service <Node entrypoint> [args...]' >&2
+  exit 2
+fi
+exec /usr/local/lib/pi-web-node/bin/node "$@"

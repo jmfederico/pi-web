@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Workspace } from "../api";
@@ -5,6 +6,7 @@ import type { QualifiedContributionId } from "../plugins/types";
 import { renderNavigationMenuIcon } from "./tabIcons";
 import { workspacePanelStyles } from "./shared";
 import { pinnedNavigationTabs } from "../navigationPreferences";
+import { renderPanelToggleButton } from "./appShell/panelToggleButton";
 
 export interface WorkspacePanelEmptyState {
   title: string;
@@ -25,6 +27,11 @@ export interface WorkspaceToolPanel {
 
 @customElement("workspace-panel")
 export class WorkspacePanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) emptyState: WorkspacePanelEmptyState | undefined;
   @property() error = "";
@@ -33,6 +40,7 @@ export class WorkspacePanel extends LitElement {
   @property({ type: Boolean }) hideToolTabs = false;
   @property({ attribute: false }) pinnedIds: string[] = [];
   @property({ attribute: false }) onShowNavigation?: () => void;
+  @property({ attribute: false }) onTogglePanel?: () => void;
   @property({ attribute: false }) onSelectTool: (tool: QualifiedContributionId) => void = () => undefined;
   @query(".workspace-header-strip") private workspaceHeaderStrip?: HTMLElement | null;
   @state() private workspaceHeaderCanScrollLeft = false;
@@ -77,7 +85,7 @@ export class WorkspacePanel extends LitElement {
         <header>
           <div class=${this.workspaceHeaderFrameClass()}>
             <div class="workspace-header-strip" @scroll=${this.onWorkspaceHeaderScroll}>
-              <div class="tabs">
+              <div class="tabs ui-tabs ui-tabs--primary">
                 ${pinnedPanels.map((panel) => {
                   const selected = selectedPanel?.id === panel.id;
                   const badge = panel.badge?.();
@@ -92,6 +100,7 @@ export class WorkspacePanel extends LitElement {
             </div>
           </div>
           ${this.renderNavigationButton(selectedPanel !== undefined && !pinnedPanels.some((panel) => panel.id === selectedPanel.id))}
+          ${renderPanelToggleButton("workspace", false, this.onTogglePanel)}
         </header>
       `}
       ${this.error !== "" ? this.renderEmptyState({ title: this.error }) : selectedPanel === undefined ? this.renderEmptyState({
@@ -106,6 +115,7 @@ export class WorkspacePanel extends LitElement {
 
   private panelTabClass(panel: WorkspaceToolPanel, selected: boolean): string {
     return [
+      "ui-button", "ui-tab",
       ...(panel.icon === undefined ? [] : ["icon-tab"]),
       ...(selected ? ["selected"] : []),
     ].join(" ");
@@ -130,12 +140,12 @@ export class WorkspacePanel extends LitElement {
   }
 
   private renderNavigationButton(hiddenActiveDestination = false) {
-    return this.onShowNavigation === undefined ? null : html`<button type="button" class=${`navigation-menu-button${hiddenActiveDestination ? " selected" : ""}`} title="Navigation" aria-label="Navigation" aria-haspopup="dialog" @click=${this.onShowNavigation}>${renderNavigationMenuIcon()}</button>`;
+    return this.onShowNavigation === undefined ? null : html`<button type="button" class=${`ui-button ui-button--icon navigation-menu-button${hiddenActiveDestination ? " selected" : ""}`} title="Navigation" aria-label="Navigation" aria-haspopup="dialog" @click=${this.onShowNavigation}>${renderNavigationMenuIcon()}</button>`;
   }
 
   private renderEmptyState(state: WorkspacePanelEmptyState, showNavigation = false): TemplateResult {
     return html`
-      ${showNavigation && !this.hideToolTabs ? html`<header>${this.renderNavigationButton()}</header>` : null}
+      ${showNavigation && !this.hideToolTabs ? html`<header>${this.renderNavigationButton()}${renderPanelToggleButton("workspace", false, this.onTogglePanel)}</header>` : null}
       <section class="empty-state" role="status">
         <h2>${state.title}</h2>
         ${state.body === undefined ? null : html`<p>${state.body}</p>`}

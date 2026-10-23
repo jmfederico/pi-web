@@ -80,6 +80,10 @@ describe("PiSessionService archive and cleanup", () => {
       heartbeatIntervalMs: 60_000,
     });
 
+    await service.status(sessionRef("root"));
+    await expect(service.archiveTree(sessionRef("roo"))).rejects.toThrow("Session not found");
+    expect(archivedInputs).toEqual([]);
+    expect(service.activeCount()).toBe(1);
     await expect(service.archiveTree(sessionRef("root"))).resolves.toEqual({
       archived: true,
       sessionIds: ["root", "direct-child", "grandchild"],
@@ -164,7 +168,7 @@ describe("PiSessionService archive and cleanup", () => {
     await service.dispose();
   });
 
-  it("permanently deletes archived sessions through the archive store", async () => {
+  it("permanently deletes only exact archived session ids in the requested cwd", async () => {
     const deletedSessionIds: string[] = [];
     const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-delete-test" });
     const registration = notificationStore.registerSession("archived", "/workspace");
@@ -175,7 +179,7 @@ describe("PiSessionService archive and cleanup", () => {
       modelRuntime: testModelRuntime,
       notificationStore,
       archiveStore: {
-        list: () => Promise.resolve([archivedRecord]),
+        list: () => Promise.resolve([{ ...archivedRecord, sessionId: "archived-extended" }, archivedRecord]),
         get: () => Promise.resolve(undefined),
         archive: () => { throw new Error("archive should not be called for records that already have archive files"); },
         restore: () => Promise.resolve(),
@@ -189,10 +193,19 @@ describe("PiSessionService archive and cleanup", () => {
       heartbeatIntervalMs: 60_000,
     });
 
-    const result = await service.deleteArchivedMany([{ id: "arch", cwd: "/workspace" }, { id: "active", cwd: "/workspace" }]);
+    const result = await service.deleteArchivedMany([
+      { id: "arch", cwd: "/workspace" },
+      { id: "archived", cwd: "/workspace" },
+      { id: "active", cwd: "/workspace" },
+      { id: "archived", cwd: "/other" },
+    ]);
 
     expect(result.deletedSessionIds).toEqual(["archived"]);
-    expect(result.failures).toEqual([{ sessionId: "active", error: "Archived session not found" }]);
+    expect(result.failures).toEqual([
+      { sessionId: "arch", error: "Archived session not found" },
+      { sessionId: "active", error: "Archived session not found" },
+      { sessionId: "archived", error: "Archived session not found" },
+    ]);
     expect(deletedSessionIds).toEqual(["archived"]);
     expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
     await service.dispose();
@@ -276,6 +289,55 @@ describe("PiSessionService archive and cleanup", () => {
     expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["b", "c", "a"]);
     expect(notificationStore.catalogSnapshot().sessions).toEqual([]);
     await service.dispose();
+  });
+
+  it("bulk archive requires exact listed and archived ids within the requested cwd", async () => {
+    const records = [sessionRecord("listed-extended"), sessionRecord("listed"), sessionRecord("listed-only-full")];
+    const archivedRecords = ["archived-extended", "archived", "archived-only-full"].map((sessionId) => ({
+      sessionId, cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z",
+    }));
+    const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) => Promise.resolve(inputs.map((input) => ({
+      ...input, archivedAt: "2026-01-03T00:00:00.000Z",
+    }))));
+    const gateway = sessionGateway(records);
+    gateway.list = (cwd) => Promise.resolve(records.filter((record) => record.cwd === cwd));
+    const open = vi.spyOn(gateway, "open");
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      archiveStore: {
+        list: () => Promise.resolve(archivedRecords),
+        get: () => Promise.resolve(undefined),
+        archive: () => Promise.reject(new Error("bulk archive should use archiveMany")),
+        archiveMany,
+        restore: () => Promise.resolve(),
+        isArchived: () => Promise.resolve(false),
+      },
+      sessionManager: gateway,
+      heartbeatIntervalMs: 60_000,
+    });
+    try {
+      const result = await service.archiveMany([
+        { id: "listed-only", cwd: "/workspace" },
+        { id: "archived-only", cwd: "/workspace" },
+        { id: "listed", cwd: "/workspace" },
+        { id: "archived", cwd: "/workspace" },
+        { id: "listed", cwd: "/other" },
+        { id: "archived", cwd: "/other" },
+      ]);
+
+      expect(result.archivedSessionIds).toEqual(["archived", "listed"]);
+      expect(result.failures).toEqual([
+        { sessionId: "listed-only", error: "Session not found" },
+        { sessionId: "archived-only", error: "Session not found" },
+        { sessionId: "listed", error: "Session not found" },
+        { sessionId: "archived", error: "Session not found" },
+      ]);
+      expect(archiveMany.mock.calls[0]?.[0].map((input) => input.sessionId)).toEqual(["listed"]);
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      await service.dispose();
+    }
   });
 
   it("bulk archive reports per-session failures without aborting other archives", async () => {

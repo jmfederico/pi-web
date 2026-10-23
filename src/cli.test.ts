@@ -11,6 +11,7 @@ import {
   launchdRuntimeDetails,
   managedServiceProbeEnvironment,
   nodeVersionCheck,
+  nativeServiceEnvironment,
   parseVersionOptions,
   regularFileExists,
   runReadinessCliCommand,
@@ -36,6 +37,21 @@ afterEach(() => {
   } else {
     process.env["PI_WEB_CONFIG"] = originalPiWebConfig;
   }
+});
+
+describe("native service environment", () => {
+  it("keeps the selected Pi installation for services without copying unrelated environment", () => {
+    expect(nativeServiceEnvironment("/config.json", {
+      PI_WEB_PI_PACKAGE_DIR: "/existing/pi installation",
+      PATH: "/caller/bin",
+    })).toEqual({ PI_WEB_CONFIG: "/config.json", PI_WEB_PI_PACKAGE_DIR: "/existing/pi installation" });
+  });
+
+  it("does not invent a Pi installation or require an explicit config", () => {
+    expect(nativeServiceEnvironment(undefined, {})).toEqual({});
+    expect(nativeServiceEnvironment(undefined, { PI_WEB_PI_PACKAGE_DIR: "/existing/pi" }))
+      .toEqual({ PI_WEB_PI_PACKAGE_DIR: "/existing/pi" });
+  });
 });
 
 describe("version arguments", () => {
@@ -86,10 +102,17 @@ describe("nodeVersionCheck", () => {
 });
 
 describe("generalDoctorChecks", () => {
+  it("does not require Node or npm for a Bun-only runtime", () => {
+    const checks = generalDoctorChecks({ name: "bun", version: "1.3.0" });
+    expect(checks.map(([label]) => label)).toHaveLength(2);
+    expect(checks[0]?.[0]).toContain("can find bun");
+    expect(checks.map(([label]) => label).join("\n")).not.toMatch(/can find (node|npm)/);
+  });
+
   it("probes node and npm, then a hardcoded pi on PATH", () => {
     process.env["SHELL"] = "/bin/bash";
 
-    const checks = generalDoctorChecks();
+    const checks = generalDoctorChecks({ name: "node", version: "22.19.0" });
     const piCheck = checks.find(([label]) => label.endsWith("can find pi"));
 
     expect(checks.map(([label]) => label)).toHaveLength(3);

@@ -38,6 +38,15 @@ export function machineAccessDraftFromConfig(config: PiWebConfigValues): Machine
   };
 }
 
+// Refresh untouched fields without replacing edits made against the previous snapshot.
+export function reconcileConfigDraft<T extends object>(draft: T, previous: T, incoming: T): T {
+  const result = { ...incoming };
+  for (const key in draft) {
+    if (draft[key] !== previous[key]) result[key] = draft[key];
+  }
+  return result;
+}
+
 export function gatewayServerConfigFromDraft(draft: GatewayServerConfigDraft, baseConfig: PiWebConfigValues = {}): PiWebConfigValues {
   const config = preservedGatewayConfigRemainder(baseConfig);
   const host = draft.host.trim();
@@ -66,6 +75,8 @@ export function machineAccessConfigPatchFromDraft(draft: MachineAccessConfigDraf
 function preservedGatewayConfigRemainder(baseConfig: PiWebConfigValues): PiWebConfigValues {
   return {
     ...(baseConfig.shortcuts === undefined ? {} : { shortcuts: baseConfig.shortcuts }),
+    ...(baseConfig.defaultTheme === undefined ? {} : { defaultTheme: baseConfig.defaultTheme }),
+    ...(baseConfig.defaultStreamingBehavior === undefined ? {} : { defaultStreamingBehavior: baseConfig.defaultStreamingBehavior }),
     ...(baseConfig.plugins === undefined ? {} : { plugins: baseConfig.plugins }),
     ...(baseConfig.pathAccess === undefined ? {} : { pathAccess: baseConfig.pathAccess }),
     ...(baseConfig.uploads === undefined ? {} : { uploads: baseConfig.uploads }),

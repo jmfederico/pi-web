@@ -4,7 +4,7 @@ import { browserErrorScopeKey, sessionBrowserErrorScope, visibleBrowserErrors } 
 import { ChatTranscriptStore } from "../chatTranscriptStore";
 import { SessionController } from "./sessionController";
 import type { NavigationFreshness } from "./types";
-import { transcriptSnapshotFixture, defaultApi, deferred, emptyPage, FakeSocket, oldSession, replacementSession, sessionLookupId, status, workspace, type AppState, type MessagePage, type SessionStatus, type SessionStreamSnapshot } from "./sessionController.testSupport";
+import { transcriptSnapshotFixture, defaultApi, deferred, emptyPage, EmitSocket, FakeSocket, oldSession, replacementSession, sessionLookupId, status, workspace, type AppState, type MessagePage, type SessionStatus, type SessionStreamSnapshot } from "./sessionController.testSupport";
 
 function page(text: string, total: number): MessagePage {
   return { messages: [{ role: "assistant", content: text }], start: 0, total };
@@ -42,6 +42,81 @@ describe("SessionController selected-session refresh", () => {
     await selecting;
 
     expect(ready).toEqual([`local:${oldSession.id}`]);
+  });
+
+  it.each(["resolve", "reject"] as const)("completes the initial join after coherent replay without waiting for later refresh work (%s)", async (outcome) => {
+    const initial = deferred<SessionStreamSnapshot & { page: MessagePage; status: SessionStatus }>();
+    const trailing = deferred<SessionStreamSnapshot & { page: MessagePage; status: SessionStatus }>();
+    const socket = new EmitSocket();
+    const ready = vi.fn();
+    const updateUrl = vi.fn();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockReturnValueOnce(initial.promise)
+      .mockReturnValueOnce(trailing.promise);
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, updateUrl, undefined, {
+      api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) },
+      socket,
+      onSelectedSessionReady: ready,
+    });
+    let selected = false;
+    let refreshed = false;
+    const selecting = controller.selectSession(oldSession).then(() => { selected = true; });
+    await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+    const refreshing = controller.refreshSelectedSession().then(() => { refreshed = true; });
+    socket.emit({ type: "message.append", message: { role: "user", content: "replayed" }, seq: 6 });
+    initial.resolve({ page: page("snapshot", 1), status: status(oldSession.id), seq: 5, partial: null });
+    try {
+      await vi.waitFor(() => { expect(selected).toBe(true); });
+      expect(transcriptSnapshot).toHaveBeenCalledTimes(2);
+      expect(refreshed).toBe(false);
+      expect(ready).toHaveBeenCalledOnce();
+      expect(updateUrl).toHaveBeenCalledOnce();
+      expect(state.messages.map((message) => message.parts)).toEqual([
+        [{ type: "text", text: "snapshot" }], [{ type: "text", text: "replayed" }],
+      ]);
+      if (outcome === "reject") trailing.reject(new Error("later refresh failed"));
+      else trailing.resolve({ page: page("later", 2), status: status(oldSession.id), seq: 7, partial: null });
+      await refreshing;
+      expect(ready).toHaveBeenCalledOnce();
+      if (outcome === "reject") expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: later refresh failed");
+    } finally {
+      trailing.resolve({ page: emptyPage, status: status(oldSession.id), seq: 7, partial: null });
+      await Promise.all([selecting, refreshing]);
+      controller.dispose();
+    }
+  });
+
+  it("waits for a replacement snapshot when buffered replay invalidates the initial branch", async () => {
+    const initial = deferred<SessionStreamSnapshot & { page: MessagePage; status: SessionStatus }>();
+    const replacement = deferred<SessionStreamSnapshot & { page: MessagePage; status: SessionStatus }>();
+    const socket = new EmitSocket();
+    const ready = vi.fn();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockReturnValueOnce(initial.promise)
+      .mockReturnValueOnce(replacement.promise);
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      api: { ...defaultApi, transcriptSnapshot, thinkingLevels: () => Promise.resolve({ levels: [] }) }, socket, onSelectedSessionReady: ready,
+    });
+    let selected = false;
+    const selecting = controller.selectSession(oldSession, { updateUrl: false }).then(() => { selected = true; });
+    try {
+      await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledOnce(); });
+      socket.emit({ type: "session.tree.changed", seq: 6 });
+      initial.resolve({ page: page("invalid branch", 1), status: status(oldSession.id), seq: 5, partial: null });
+      await vi.waitFor(() => { expect(transcriptSnapshot).toHaveBeenCalledTimes(2); });
+      expect(selected).toBe(false);
+      expect(ready).not.toHaveBeenCalled();
+      replacement.resolve({ page: page("current branch", 1), status: status(oldSession.id), seq: 6, partial: null });
+      await selecting;
+      expect(ready).toHaveBeenCalledOnce();
+      expect(state.messages[0]?.parts).toEqual([{ type: "text", text: "current branch" }]);
+    } finally {
+      replacement.resolve({ page: emptyPage, status: status(oldSession.id), seq: 6, partial: null });
+      await selecting;
+      controller.dispose();
+    }
   });
 
   it("does not apply a selected-session response after its route scope becomes stale", async () => {

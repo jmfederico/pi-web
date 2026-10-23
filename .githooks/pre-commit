@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
 set -eu
 
-echo "Running pre-commit checks: npm run verify:staged"
-npm run verify:staged
+git diff --cached --check

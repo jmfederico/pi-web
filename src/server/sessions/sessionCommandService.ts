@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { ExtensionCommandContextActions } from "@earendil-works/pi-coding-agent";
+import type { ExtensionCommandContextActions } from "../../piSdk.js";
 import type { SessionUiEvent } from "../../shared/apiTypes.js";
 import type { ClientCommandResult, ClientSession, ClientSessionTreeSnapshot } from "../types.js";
 import { isBuiltinCommand } from "./builtinCommands.js";
@@ -171,21 +171,15 @@ export class SessionCommandService<TSession extends CommandSession = CommandSess
   private compact(session: TSession, instructions: string): ClientCommandResult {
     this.lifecycle.onCompactionStart?.(session);
     void session.compact(instructions === "" ? undefined : instructions)
-      .then((result) => {
-        this.events.publish(session.sessionId, {
-          type: "command.output",
-          level: "success",
-          message: formatCompactionResult(result),
-        });
+      .then(() => {
         this.lifecycle.onCompactionEnd?.(session, "success");
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        this.events.publish(session.sessionId, { type: "command.output", level: "error", message: `Compaction failed: ${message}` });
-        this.events.publish(session.sessionId, { type: "session.error", message });
         this.lifecycle.onCompactionEnd?.(session, "error", message);
       });
-    return { type: "done", message: "Compaction started…" };
+    // SDK events own feedback; synthetic command messages disappear on refresh.
+    return { type: "done" };
   }
 
   private async reload(session: TSession): Promise<ClientCommandResult> {
@@ -396,15 +390,6 @@ function formatSessionStats(session: CommandSession): string {
     `Tool calls: ${String(stats.toolCalls)}`,
     `Tokens: ↑${String(stats.tokens.input)} ↓${String(stats.tokens.output)} total ${String(stats.tokens.total)}`,
     `Cost: $${stats.cost.toFixed(4)}`,
-  ].join("\n");
-}
-
-function formatCompactionResult(result: { summary: string; tokensBefore: number }): string {
-  return [
-    "Compaction complete.",
-    `Tokens before: ${String(result.tokensBefore)}`,
-    "",
-    result.summary,
   ].join("\n");
 }
 

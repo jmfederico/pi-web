@@ -1,4 +1,4 @@
-import { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { ExtensionToolContext } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
 import { Check } from "pi-web-typebox/value";
 import { KNOWN_THINKING_LEVELS } from "../../shared/thinkingLevels.js";
@@ -73,6 +73,17 @@ describe("createSpawnSessionToolDefinition", () => {
       },
     });
     expect(JSON.stringify(tool.parameters)).not.toContain("anthropic/claude-sonnet-4-5");
+  });
+
+  it("serializes optional thinking levels as an explicitly typed string enum for providers", () => {
+    const tool = createSpawnSessionToolDefinition("/repos/a", { spawn: vi.fn() });
+    const schema: unknown = JSON.parse(JSON.stringify(tool.parameters));
+
+    expect(schema).toMatchObject({ properties: { thinkingLevel: {
+      type: "string",
+      enum: [...KNOWN_THINKING_LEVELS],
+    } } });
+    expect(schema).toHaveProperty("required", ["prompt"]);
   });
 
   it.each(KNOWN_THINKING_LEVELS)("overrides inherited thinking with %s without changing the parent", async (thinkingLevel) => {

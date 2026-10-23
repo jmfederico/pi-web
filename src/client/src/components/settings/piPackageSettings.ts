@@ -32,7 +32,7 @@ export function normalizePiPackageSource(source: string): string {
 
 export function piPackageSourceValidationMessage(source: string): string | undefined {
   if (normalizePiPackageSource(source) !== "") return undefined;
-  return "Enter a Pi package source accepted by Pi, such as npm:@scope/package, a git/URL source, or a local path.";
+  return "Enter an npm package, Git URL, or local path.";
 }
 
 export function piPackageScopeLabel(packageInfo: Pick<PiPackageInfo, "scope">): string {
@@ -66,7 +66,7 @@ export function canUpdatePiPackage(packageInfo: Pick<PiPackageInfo, "scope">): b
 
 export function piPackageUpdateDisabledReason(packageInfo: Pick<PiPackageInfo, "scope">): string | undefined {
   if (canUpdatePiPackage(packageInfo)) return undefined;
-  return "Project-scope Pi packages are listed for visibility, but PI WEB only updates user-scope Pi packages safely from this view.";
+  return "Update this project package from its project folder using Pi’s package manager. This view updates user packages only.";
 }
 
 export function canUpdateAllPiPackages(packages: readonly Pick<PiPackageInfo, "scope">[]): boolean {
@@ -89,7 +89,7 @@ export function piPackageMutationFollowUpMessage(action: PiPackageMutationAction
   const targetSuffix = target.kind === "local" ? "" : ` on ${target.name}`;
   const sessionScope = target.kind === "local" ? "each idle PI WEB session" : `each idle PI WEB session on ${target.name}`;
   const pluginScope = target.kind === "local" ? "PI WEB browser plugin changes" : `PI WEB browser plugin changes served by ${target.name}`;
-  return `Pi package ${verb}${targetSuffix}. Type /reload in ${sessionScope} to rediscover Pi runtime resources: extensions, skills, prompt templates, themes, and context/system prompt files. Reload the browser page separately for ${pluginScope}.`;
+  return `Pi package ${verb}${targetSuffix}. Type /reload in ${sessionScope} to refresh extensions, skills, prompts, and themes. Reload this browser tab for ${pluginScope}. Server-plugin changes may also need a session daemon restart; restarting interrupts active sessions.`;
 }
 
 export function friendlyPiPackageErrorMessage(message: string, target: PiPackageTargetContext): string {

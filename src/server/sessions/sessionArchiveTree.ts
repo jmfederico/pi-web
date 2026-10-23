@@ -11,8 +11,8 @@ export interface SessionArchiveTreePlan<T extends SessionArchiveTreeCandidate> {
   skippedAlreadyArchivedCount: number;
 }
 
-export function findArchiveCandidateByIdOrPrefix<T extends SessionArchiveTreeCandidate>(candidates: readonly T[], sessionId: string): T | undefined {
-  return candidates.find((candidate) => candidate.id === sessionId) ?? candidates.find((candidate) => candidate.id.startsWith(sessionId));
+export function findArchiveCandidateByExactId<T extends SessionArchiveTreeCandidate>(candidates: readonly T[], sessionId: string): T | undefined {
+  return candidates.find((candidate) => candidate.id === sessionId);
 }
 
 export function planSessionArchiveTree<T extends SessionArchiveTreeCandidate>(root: T, candidates: readonly T[]): SessionArchiveTreePlan<T> {

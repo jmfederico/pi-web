@@ -1,5 +1,5 @@
 import type { AuthInteraction, AuthType } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "../../piSdk.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 

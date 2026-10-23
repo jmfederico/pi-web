@@ -1,5 +1,10 @@
-import type { Workspace } from "../api";
+import type { Workspace, WorkspaceProviderResolution } from "../api";
 import { browserSessionStorage, parseStoredString, PersistentValueMap, type KeyValueStorage } from "./sessionStorageMemory";
+
+/** Keep provider details visible even for one workspace; hide only ordinary folders. */
+export function shouldShowWorkspaceSelection(resolution: WorkspaceProviderResolution | undefined): boolean {
+  return resolution?.status !== "folder";
+}
 
 export interface WorkspaceSelectionMemory {
   latestWorkspaceId(projectId: string): string | undefined;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DisplayedMessageActionContext, DisplayedMessageActionContribution, MessageActionAvailabilityContext } from "../../../../plugin-api";
+import type { DisplayedMessageActionContext, DisplayedMessageActionContribution, MessageActionAvailabilityContextV5 as MessageActionAvailabilityContext } from "../../../../plugin-api";
 import { availableDisplayedMessageActions, availableMessageActions } from "../messageActions";
 import { createCoreMessageActions } from "./messageActions";
 
@@ -28,6 +28,28 @@ function invocation(role: "user" | "assistant" = "assistant"): DisplayedMessageA
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("core question history actions", () => {
+  it.each([
+    { flags: {}, enabled: true },
+    { flags: { busy: true }, enabled: false },
+    { flags: { archived: true }, enabled: false },
+    { flags: { pending: true }, enabled: false },
+  ])("uses the existing history policy for questions ($flags)", ({ flags, enabled }) => {
+    const actions = createCoreMessageActions().map((action) => ({
+      ...action, binding: { registrationPluginId: "core", sourcePluginId: "core" },
+    }));
+    const session = { ...input.session, ...flags };
+    expect(availableMessageActions(actions, {
+      ...input, session, message: { entryId: "question-result", role: "tool", text: "", isQuestion: true },
+    }).map(({ action, enabled }) => ({ id: action.id, enabled }))).toEqual([
+      { id: "message.fork", enabled }, { id: "message.back", enabled },
+    ]);
+    expect(availableMessageActions(actions, {
+      ...input, session, message: { entryId: "ordinary-tool-result", role: "tool", text: "Tool output" },
+    })).toEqual([]);
+  });
 });
 
 describe("core display Copy action", () => {

@@ -8,6 +8,62 @@ export interface JsonObject {
   readonly [key: string]: JsonValue;
 }
 
+export type PluginBackendScope =
+  | { readonly kind: "machine" }
+  | { readonly kind: "project"; readonly projectId: string }
+  | { readonly kind: "workspace"; readonly projectId: string; readonly workspaceId: string };
+
+/** Exact package-paired backend on the captured machine. */
+export interface PluginBackend {
+  readonly machineId: string;
+  forScope(scope: PluginBackendScope): PluginPeer;
+}
+
+export interface PluginPeerRequestOptions {
+  /** Cancels this bounded request through local or federated host transport. */
+  readonly signal?: AbortSignal;
+}
+
+/** Callbacks and cancellation for one bounded package-peer channel. */
+export interface PluginPeerChannelOptions {
+  /** Cancels the channel open or closes the live channel through every host hop. */
+  readonly signal?: AbortSignal;
+  /** Receives one plugin-authored JSON frame after the channel is ready. */
+  readonly onData: (data: JsonValue) => void;
+}
+
+export interface PluginPeerChannelClose {
+  readonly code: number;
+  readonly reason: string;
+  readonly wasClean: boolean;
+  /** Attributed host or server-plugin failure when one preceded the close. */
+  readonly error?: Readonly<{ code: string; message: string }>;
+}
+
+export interface PluginPeerChannel {
+  readonly closed: Promise<PluginPeerChannelClose>;
+  /** Queue one bounded JSON frame or throw. Success means queue acceptance, not remote receipt. */
+  send(data: JsonValue): void;
+  close(reason?: string): void;
+}
+
+/**
+ * Exact revision-paired path to this package's active server entry.
+ * A peer supplies a request handler, a channel handler, or both, but never neither.
+ */
+export type PluginPeer =
+  | {
+      request(operation: string, input: JsonValue, options?: PluginPeerRequestOptions): Promise<JsonValue>;
+      openChannel?(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    }
+  | {
+      request?: undefined;
+      openChannel(operation: string, input: JsonValue, options: PluginPeerChannelOptions): Promise<PluginPeerChannel>;
+    };
+
+/** Explicitly browser-public session data, keyed by owning package/plugin namespace. */
+export type SessionUiMetadata = Readonly<Record<string, JsonObject>>;
+
 /**
  * Typed token for one exact host/plugin capability version. The provider id
  * and package-local id together with the version form the stable capability
@@ -110,11 +166,9 @@ export interface MoveWorkspaceFileResponse {
 
 export type TerminalCommandRunStatus = "queued" | "running" | "succeeded" | "failed";
 
-export interface TerminalCommandRun {
+interface TerminalCommandRunFields {
   id: string;
   origin: string;
-  projectId: string;
-  workspaceId: string;
   terminalId: string;
   title: string;
   command: string;
@@ -126,9 +180,23 @@ export interface TerminalCommandRun {
   metadata: Record<string, string>;
 }
 
-export interface TerminalCommandRunHandle {
-  run: TerminalCommandRun;
-  completed: Promise<TerminalCommandRun>;
+export interface TerminalCommandRun extends TerminalCommandRunFields {
+  scope?: "workspace";
+  projectId: string;
+  workspaceId: string;
+}
+
+export interface MaintenanceTerminalCommandRun extends TerminalCommandRunFields {
+  scope: "maintenance";
+  projectId?: never;
+  workspaceId?: never;
+}
+
+export type AnyTerminalCommandRun = TerminalCommandRun | MaintenanceTerminalCommandRun;
+
+export interface TerminalCommandRunHandle<Run extends AnyTerminalCommandRun = TerminalCommandRun> {
+  run: Run;
+  completed: Promise<Run>;
 }
 
 export type PiWebServiceComponent = "web" | "sessiond";
@@ -145,7 +213,14 @@ export interface PiWebInstallationInfo {
   dockerMode?: PiWebDockerMode;
 }
 
+export interface PiWebRuntimeIdentity {
+  name: "node" | "bun";
+  version: string;
+}
+
 export interface PiWebComponentStatus {
+  /** Actual JavaScript engine of the reporting process, absent on older peers. */
+  runtime?: PiWebRuntimeIdentity;
   component: PiWebServiceComponent;
   label: string;
   runtimeVersion?: string;

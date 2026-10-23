@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
-import { createAgentSession, createEventBus, DefaultResourceLoader, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createEventBus, DefaultResourceLoader, SessionManager, SettingsManager } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
 import companion from "../../../examples/session-bridge-plugin/src/companion.js";
 import { collectReview } from "../../../examples/session-bridge-plugin/src/reviewRun.js";

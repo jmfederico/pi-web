@@ -24,6 +24,22 @@ afterEach(async () => {
 });
 
 describe("session daemon paired plugin backend routes", () => {
+  it("routes machine/project calls from current authority and rejects wire authority mismatches", async () => {
+    const request = vi.fn<PluginBackendRegistry["request"]>(() => Promise.resolve(null));
+    const projects = { requireProject: vi.fn(() => Promise.resolve(project)) };
+    registerPairedPluginBackendRoutes(app, { projects, backends: { request }, onWorkspacesMutated: vi.fn() });
+    const machine = await app.inject({ method: "POST", url: "/paired-plugin-backends/board/read", payload: { scope: "machine", revision: "r1", input: null } });
+    expect(machine.statusCode).toBe(200);
+    expect(request.mock.calls[0]?.[0]).toMatchObject({ scope: "machine", project: undefined, workspaceId: undefined });
+    expect(projects.requireProject).not.toHaveBeenCalled();
+    const url = `/paired-plugin-backends/board/projects/${encodeURIComponent(project.id)}/read`;
+    const selectedProject = await app.inject({ method: "POST", url, payload: { scope: "project", projectId: project.id, revision: "r1", input: null } });
+    expect(selectedProject.statusCode).toBe(200);
+    expect(request.mock.calls[1]?.[0]).toMatchObject({ scope: "project", project });
+    const mismatch = await app.inject({ method: "POST", url, payload: { scope: "project", projectId: "spoof", revision: "r1", input: null } });
+    expect(mismatch.statusCode).toBe(400);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
   it("routes a package peer against host-resolved workspace authority with an operation-scoped signal", async () => {
     let observedSignal: AbortSignal | undefined;
     const backends = registryFor(({ operation, input, signal }) => {

@@ -1,256 +1,170 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import { loadAskDraft, saveAskDraft } from "../askDrafts";
-import type { AskUserCloseResponse, AskUserQuestion, PendingAskUser } from "../api";
-import { SessionController } from "./sessionController";
-import { defaultApi, EmitSocket, emptyPage, FakeSocket, MemoryStorage, oldSession, sessionKey, status, workspace, type AppState, type SessionStatus } from "./sessionController.testSupport";
+import type { AskUserRequest, MessagePage } from "../api";
+import { SessionController, type SessionEventSocket } from "./sessionController";
+import { defaultApi, EmitSocket, FakeSocket, MemoryStorage, oldSession, runPendingAnimationFrames, sessionKey, status, workspace, type AppState } from "./sessionController.testSupport";
 
-const databaseQuestion: AskUserQuestion = { id: "q1", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] };
-const extrasQuestion: AskUserQuestion = { id: "q2", question: "Which extras?", options: [{ value: "metrics", label: "Metrics" }], multiple: true };
-
-function ask(askId: string): PendingAskUser {
-  return { askId, askedAt: "2026-07-20T00:00:00.000Z", questions: [databaseQuestion, extrasQuestion] };
-}
-
-function statusWithAsk(sessionId: string, pendingAsk: PendingAskUser): SessionStatus {
-  return { ...status(sessionId), pendingAsk };
-}
-
-function closeResponse(sessionStatus: SessionStatus, askId = "ask-1"): AskUserCloseResponse {
-  return {
-    result: "closed",
-    outcome: {
-      askId,
-      reason: "submitted",
-      askedAt: "2026-07-20T00:00:00.000Z",
-      closedAt: "2026-07-20T00:01:00.000Z",
-      questions: [
-        { question: databaseQuestion, answered: true, values: ["pg"] },
-        { question: extrasQuestion, answered: false, values: [] },
-      ],
-      answeredCount: 1,
-      unansweredIds: ["q2"],
-      summary: "Answered 1 of 2; unanswered: q2",
-    },
-    sessionStatus,
-  };
-}
+const ask: AskUserRequest = {
+  askId: "ask-1",
+  askedAt: "2026-07-20T00:00:00.000Z",
+  questions: [{ id: "q1", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] }],
+};
+const questionMessage = {
+  role: "toolResult",
+  toolName: "ask_user",
+  toolCallId: "ask-call-1",
+  content: [{ type: "text", text: "Posted questions." }],
+  details: { ask },
+  isError: false,
+};
+const questionPage: MessagePage = { messages: [questionMessage], start: 0, total: 1 };
 
 function selectedSessionState(patch: Partial<AppState> = {}): AppState {
-  return {
-    ...initialAppState(),
-    selectedWorkspace: workspace,
-    selectedSession: oldSession,
-    sessions: [oldSession],
-    ...patch,
-  };
+  return { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], ...patch };
 }
 
-function selectableApi(sessionStatus: SessionStatus): typeof defaultApi {
-  return {
-    ...defaultApi,
-    transcriptSnapshot: () => Promise.resolve({ page: emptyPage, status: sessionStatus, seq: 0, partial: null }),
-    status: () => Promise.resolve(sessionStatus),
-    thinkingLevels: () => Promise.resolve({ levels: [] }),
-  };
-}
-
-interface LiveHarness {
-  controller: SessionController;
-  socket: EmitSocket;
-  state: () => AppState;
-}
-
-async function liveSession(patch: Partial<AppState> = {}, sessionStatus = status(oldSession.id)): Promise<LiveHarness> {
-  const socket = new EmitSocket();
-  let state = selectedSessionState({ selectedSession: undefined, ...patch });
+function controllerHarness(api: typeof defaultApi = defaultApi, socket: SessionEventSocket = new FakeSocket()) {
+  let state = selectedSessionState();
   const controller = new SessionController(
     () => state,
-    (statePatch) => { state = { ...state, ...statePatch }; },
+    (patch) => { state = { ...state, ...patch }; },
     () => undefined,
     undefined,
-    { api: selectableApi(sessionStatus), socket },
+    { api, socket },
   );
-  await controller.selectSession(oldSession, { updateUrl: false });
-  return { controller, socket, state: () => state };
+  return { controller, state: () => state };
 }
 
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", { value: new MemoryStorage(), configurable: true });
 });
 
-describe("SessionController open ask state", () => {
-  it("rehydrates the open ask from the daemon-owned status on selection", async () => {
-    const pending = ask("ask-1");
+describe("SessionController question transcript", () => {
+  it("rehydrates questions from history without question state in status", async () => {
+    const h = controllerHarness({
+      ...defaultApi,
+      transcriptSnapshot: () => Promise.resolve({ page: questionPage, status: status(oldSession.id), seq: 0, partial: null }),
+      thinkingLevels: () => Promise.resolve({ levels: [] }),
+    });
+    try {
+      await h.controller.selectSession(oldSession, { updateUrl: false });
+      expect(h.state().messages.flatMap((message) => message.parts)).toContainEqual({ type: "askUserQuestion", ask });
+      expect(h.state()).not.toHaveProperty("pendingAsk");
 
-    const harness = await liveSession({}, statusWithAsk(oldSession.id, pending));
-
-    expect(harness.state().pendingAsk).toEqual(pending);
+      const before = h.state().messages;
+      h.controller.applySessionStatus(status(oldSession.id));
+      expect(h.state().messages).toBe(before);
+    } finally {
+      h.controller.dispose();
+    }
   });
 
-  it("opens and closes the card from live ask events", async () => {
-    const harness = await liveSession();
+  it("receives questions and subsequent human messages through ordinary transcript events", async () => {
+    const socket = new EmitSocket();
+    const h = controllerHarness({
+      ...defaultApi,
+      transcriptSnapshot: () => Promise.resolve({ page: { messages: [], start: 0, total: 0 }, status: status(oldSession.id), seq: 0, partial: null }),
+      thinkingLevels: () => Promise.resolve({ levels: [] }),
+    }, socket);
+    try {
+      await h.controller.selectSession(oldSession, { updateUrl: false });
+      socket.emit({ type: "tool.end", toolName: "ask_user", toolCallId: "ask-call-1", text: "Posted questions.", isError: false, details: { ask } });
+      socket.emit({ type: "message.end", message: questionMessage });
+      runPendingAnimationFrames();
+      expect(h.state().messages.flatMap((message) => message.parts).filter((part) => part.type === "askUserQuestion")).toEqual([{ type: "askUserQuestion", ask }]);
 
-    harness.socket.emit({ type: "ask.opened", ask: ask("ask-1") });
-    expect(harness.state().pendingAsk?.askId).toBe("ask-1");
-
-    harness.socket.emit({ type: "ask.closed", askId: "ask-1", reason: "submitted" });
-    expect(harness.state().pendingAsk).toBeUndefined();
-  });
-
-  it("keeps the newer ask when the supersede close for the old one arrives after it", async () => {
-    const harness = await liveSession();
-
-    harness.socket.emit({ type: "ask.opened", ask: ask("ask-1") });
-    harness.socket.emit({ type: "ask.opened", ask: ask("ask-2") });
-    harness.socket.emit({ type: "ask.closed", askId: "ask-1", reason: "superseded" });
-
-    expect(harness.state().pendingAsk?.askId).toBe("ask-2");
-  });
-
-  it("applies a status that no longer carries an ask as the authoritative close", async () => {
-    const harness = await liveSession({}, statusWithAsk(oldSession.id, ask("ask-1")));
-    expect(harness.state().pendingAsk?.askId).toBe("ask-1");
-
-    harness.controller.applySessionStatus(status(oldSession.id));
-
-    expect(harness.state().pendingAsk).toBeUndefined();
-  });
-
-  it("does not adopt another session's open ask", async () => {
-    const harness = await liveSession();
-
-    harness.controller.applySessionStatus(statusWithAsk("other-session", ask("ask-1")));
-
-    expect(harness.state().pendingAsk).toBeUndefined();
-  });
-
-  it("clears the card when the session is deselected", async () => {
-    const harness = await liveSession({}, statusWithAsk(oldSession.id, ask("ask-1")));
-    expect(harness.state().pendingAsk?.askId).toBe("ask-1");
-
-    harness.controller.deselectSession({ updateUrl: false });
-
-    expect(harness.state().pendingAsk).toBeUndefined();
+      socket.emit({ type: "message.append", message: { role: "user", content: "Use SQLite instead." } });
+      runPendingAnimationFrames();
+      expect(h.state().messages.at(-1)?.parts).toEqual([{ type: "text", text: "Use SQLite instead." }]);
+      expect(h.state().messages.flatMap((message) => message.parts)).toContainEqual({ type: "askUserQuestion", ask });
+    } finally {
+      h.controller.dispose();
+    }
   });
 });
 
-describe("SessionController ask submission", () => {
-  it("submits answers, clears the draft, and applies the returned status", async () => {
-    const submitCalls: { askId: string; answers: unknown; machineId: string }[] = [];
-    const closedStatus = status(oldSession.id);
-    let state = selectedSessionState({ status: statusWithAsk(oldSession.id, ask("ask-1")), pendingAsk: ask("ask-1") });
-    const api: typeof defaultApi = {
+describe("SessionController question responses", () => {
+  it("sends answers without a pending slot, clears the draft, and applies status", async () => {
+    const calls: { askId: string; answers: unknown; machineId: string }[] = [];
+    const returnedStatus = { ...status(oldSession.id), isStreaming: true };
+    const h = controllerHarness({
       ...defaultApi,
       submitAsk: (_session, askId, submission, machineId) => {
-        submitCalls.push({ askId, answers: submission.answers, machineId: machineId ?? "local" });
-        return Promise.resolve(closeResponse(closedStatus));
+        calls.push({ askId, answers: submission.answers, machineId: machineId ?? "local" });
+        return Promise.resolve(returnedStatus);
       },
-    };
-    const controller = new SessionController(
-      () => state,
-      (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
-      undefined,
-      { api, socket: new FakeSocket() },
-    );
-    saveAskDraft(sessionKey(oldSession.id), "ask-1", { q1: { values: ["pg"] } });
-
-    await controller.submitAsk("ask-1", { answers: [{ id: "q1", values: ["pg"] }] });
-
-    expect(submitCalls).toEqual([{ askId: "ask-1", answers: [{ id: "q1", values: ["pg"] }], machineId: "local" }]);
-    expect(loadAskDraft(sessionKey(oldSession.id), "ask-1")).toEqual({});
-    expect(state.pendingAsk).toBeUndefined();
-    expect(state.status).toEqual(closedStatus);
+    });
+    saveAskDraft(sessionKey(oldSession.id), ask.askId, { q1: { values: ["pg"] } });
+    try {
+      await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: ["pg"] }] });
+      expect(calls).toEqual([{ askId: ask.askId, answers: [{ id: "q1", values: ["pg"] }], machineId: "local" }]);
+      expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({});
+      expect(h.state().status).toEqual(returnedStatus);
+    } finally {
+      h.controller.dispose();
+    }
   });
 
-  it("cancels an ask through its own route and clears the draft", async () => {
-    const cancelCalls: string[] = [];
-    let state = selectedSessionState({ pendingAsk: ask("ask-1") });
-    const api: typeof defaultApi = {
-      ...defaultApi,
-      cancelAsk: (_session, askId) => {
-        cancelCalls.push(askId);
-        return Promise.resolve(closeResponse(status(oldSession.id)));
-      },
-    };
-    const controller = new SessionController(
-      () => state,
-      (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
-      undefined,
-      { api, socket: new FakeSocket() },
-    );
-    saveAskDraft(sessionKey(oldSession.id), "ask-1", { q1: { values: ["pg"] } });
-
-    await controller.cancelAsk("ask-1");
-
-    expect(cancelCalls).toEqual(["ask-1"]);
-    expect(loadAskDraft(sessionKey(oldSession.id), "ask-1")).toEqual({});
-    expect(state.pendingAsk).toBeUndefined();
+  it("records skips through the existing route", async () => {
+    const calls: string[] = [];
+    const h = controllerHarness({ ...defaultApi, cancelAsk: (_session, askId) => {
+      calls.push(askId);
+      return Promise.resolve(status(oldSession.id));
+    } });
+    saveAskDraft(sessionKey(oldSession.id), ask.askId, { q1: { values: ["pg"] } });
+    try {
+      await h.controller.cancelAsk(ask.askId);
+      expect(calls).toEqual([ask.askId]);
+      expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({});
+    } finally {
+      h.controller.dispose();
+    }
   });
 
-  it("trusts the status of a stale close and shows the superseding ask without an error", async () => {
-    const supersedingAsk = ask("ask-2");
-    let state = selectedSessionState({ pendingAsk: ask("ask-1") });
-    const api: typeof defaultApi = {
-      ...defaultApi,
-      submitAsk: () => Promise.resolve({ result: "stale", sessionStatus: statusWithAsk(oldSession.id, supersedingAsk) }),
-    };
-    const controller = new SessionController(
-      () => state,
-      (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
-      undefined,
-      { api, socket: new FakeSocket() },
-    );
-
-    await controller.submitAsk("ask-1", { answers: [] });
-
-    expect(state.error).toBe("");
-    expect(state.pendingAsk).toEqual(supersedingAsk);
+  it("does not suppress two human responses to the same request", async () => {
+    const calls: unknown[] = [];
+    const h = controllerHarness({ ...defaultApi, submitAsk: (_session, askId, submission) => {
+      calls.push({ askId, answers: submission.answers });
+      return Promise.resolve(status(oldSession.id));
+    } });
+    try {
+      await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: ["pg"] }] });
+      await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: [], otherText: "SQLite" }] });
+      expect(calls).toHaveLength(2);
+    } finally {
+      h.controller.dispose();
+    }
   });
 
-  it("keeps the draft and reports the failure when the submit request fails", async () => {
-    let state = selectedSessionState({ pendingAsk: ask("ask-1") });
-    const api: typeof defaultApi = { ...defaultApi, submitAsk: () => Promise.reject(new Error("submit failed")) };
-    const controller = new SessionController(
-      () => state,
-      (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
-      undefined,
-      { api, socket: new FakeSocket() },
-    );
-    saveAskDraft(sessionKey(oldSession.id), "ask-1", { q1: { values: ["pg"] } });
-
-    await controller.submitAsk("ask-1", { answers: [{ id: "q1", values: ["pg"] }] });
-
-    expect(Object.values(state.browserErrors).map((error) => error.message)).toContain("Error: submit failed");
-    expect(loadAskDraft(sessionKey(oldSession.id), "ask-1")).toEqual({ q1: { values: ["pg"] } });
-    expect(state.pendingAsk?.askId).toBe("ask-1");
+  it("keeps the draft and reports a failed submission", async () => {
+    const h = controllerHarness({ ...defaultApi, submitAsk: () => Promise.reject(new Error("submit failed")) });
+    saveAskDraft(sessionKey(oldSession.id), ask.askId, { q1: { values: ["pg"] } });
+    try {
+      await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: ["pg"] }] });
+      expect(Object.values(h.state().browserErrors).map((error) => error.message)).toContain("Error: submit failed");
+      expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({ q1: { values: ["pg"] } });
+    } finally {
+      h.controller.dispose();
+    }
   });
 
   it("does not submit for an archived session", async () => {
     const archived = { ...oldSession, archived: true as const };
     let state = selectedSessionState({ selectedSession: archived, sessions: [archived] });
     let submitted = false;
-    const api: typeof defaultApi = {
-      ...defaultApi,
-      submitAsk: () => {
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      api: { ...defaultApi, submitAsk: () => {
         submitted = true;
-        return Promise.resolve(closeResponse(status(oldSession.id)));
-      },
-    };
-    const controller = new SessionController(
-      () => state,
-      (patch) => { state = { ...state, ...patch }; },
-      () => undefined,
-      undefined,
-      { api, socket: new FakeSocket() },
-    );
-
-    await controller.submitAsk("ask-1", { answers: [] });
-
-    expect(submitted).toBe(false);
+        return Promise.resolve(status(oldSession.id));
+      } },
+      socket: new FakeSocket(),
+    });
+    try {
+      await controller.submitAsk(ask.askId, { answers: [] });
+      expect(submitted).toBe(false);
+    } finally {
+      controller.dispose();
+    }
   });
 });

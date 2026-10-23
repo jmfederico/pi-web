@@ -102,7 +102,7 @@ export class ChatScrollController {
         return "saved";
       }
 
-      const anchor = findVisibleScrollAnchor(scroller, anchors);
+      const anchor = findScrollAnchor(scroller, anchors);
       if (anchor === undefined) return "skipped";
 
       const position = captureScrollPosition(scroller, anchor);
@@ -113,20 +113,17 @@ export class ChatScrollController {
     }
   }
 
-  restorePosition(sessionId: string, scroller: ChatScrollViewport | undefined, anchors: ChatScrollElement[], options?: { fallbackToBottom?: boolean | undefined }): ChatScrollRestoreResult {
+  restorePosition(sessionId: string, scroller: ChatScrollViewport | undefined, anchors: ChatScrollElement[]): ChatScrollRestoreResult {
     const stored = this.readPosition(sessionId);
-    if (stored === undefined) return this.scrollToBottom(scroller);
-    return this.restoreExplicitPosition(stored, scroller, anchors, options);
+    if (stored === undefined) return { status: "skipped" };
+    return this.restoreExplicitPosition(stored, scroller, anchors);
   }
 
-  restoreExplicitPosition(position: ChatScrollPosition, scroller: ChatScrollViewport | undefined, anchors: ChatScrollElement[], options?: { fallbackToBottom?: boolean | undefined }): ChatScrollRestoreResult {
+  restoreExplicitPosition(position: ChatScrollPosition, scroller: ChatScrollViewport | undefined, anchors: ChatScrollElement[]): ChatScrollRestoreResult {
     if (position.mode === "bottom") return this.scrollToBottom(scroller);
     if (scroller === undefined || !hasUsableScrollViewport(scroller)) return { status: "skipped" };
     const anchor = findAnchorById(anchors, position.anchorId);
-    if (anchor === undefined) {
-      if (options?.fallbackToBottom === false) return { status: "missing", position };
-      return this.scrollToBottom(scroller);
-    }
+    if (anchor === undefined) return { status: "missing", position };
     const scrollerTop = scroller.getBoundingClientRect().top;
     const currentOffset = anchor.getBoundingClientRect().top - scrollerTop;
     scroller.scrollTop += currentOffset - position.offset;
@@ -188,20 +185,31 @@ export function captureScrollPosition(scroller: ChatScrollViewport, anchor: Chat
   };
 }
 
-export function findVisibleScrollAnchor<T extends ChatScrollElement>(scroller: ChatScrollViewport, anchors: T[]): T | undefined {
+/** Prefer a visible anchor; otherwise use the nearest usable anchor to the viewport top.
+ * Equal distances prefer the earlier element in DOM order.
+ */
+export function findScrollAnchor<T extends ChatScrollElement>(scroller: ChatScrollViewport, anchors: T[]): T | undefined {
   const scrollerRect = scroller.getBoundingClientRect();
   let nearestAbove: T | undefined;
   let nearestAboveOffset = Number.NEGATIVE_INFINITY;
   let nearestBelow: T | undefined;
   let nearestBelowOffset = Number.POSITIVE_INFINITY;
+  let nearestOutside: T | undefined;
+  let nearestOutsideDistance = Number.POSITIVE_INFINITY;
 
   for (const anchor of anchors) {
     if (anchorIdForElement(anchor) === undefined) continue;
     const rect = anchor.getBoundingClientRect();
     if (rect.bottom <= rect.top) continue;
-    if (rect.bottom < scrollerRect.top || rect.top > scrollerRect.bottom) continue;
     const offset = rect.top - scrollerRect.top;
-    if (offset <= 0 && offset >= nearestAboveOffset) {
+    if (rect.bottom < scrollerRect.top || rect.top > scrollerRect.bottom) {
+      if (Math.abs(offset) < nearestOutsideDistance) {
+        nearestOutside = anchor;
+        nearestOutsideDistance = Math.abs(offset);
+      }
+      continue;
+    }
+    if (offset <= 0 && offset > nearestAboveOffset) {
       nearestAbove = anchor;
       nearestAboveOffset = offset;
     } else if (offset > 0 && offset < nearestBelowOffset) {
@@ -210,19 +218,16 @@ export function findVisibleScrollAnchor<T extends ChatScrollElement>(scroller: C
     }
   }
 
-  return nearestAbove ?? nearestBelow;
-}
-
-export function findFirstVisibleArticle<T extends ChatScrollElement>(scroller: ChatScrollViewport, articles: T[]): T | undefined {
-  const scrollerRect = scroller.getBoundingClientRect();
-  return articles.find((article) => {
-    const rect = article.getBoundingClientRect();
-    return rect.bottom >= scrollerRect.top && rect.top <= scrollerRect.bottom;
-  });
+  return nearestAbove ?? nearestBelow ?? nearestOutside;
 }
 
 function findAnchorById<T extends ChatScrollElement>(anchors: T[], anchorId: string): T | undefined {
-  return anchors.find((anchor) => anchorIdForElement(anchor) === anchorId);
+  return anchors.find((anchor) => {
+    if (anchorIdForElement(anchor) !== anchorId) return false;
+    // Closed native disclosures retain their body DOM, but not its geometry.
+    const rect = anchor.getBoundingClientRect();
+    return rect.bottom > rect.top;
+  });
 }
 
 function anchorIdForElement(element: ChatScrollElement): string | undefined {

@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { VERSION as PI_CODING_AGENT_VERSION } from "@earendil-works/pi-coding-agent";
+import { VERSION as PI_CODING_AGENT_VERSION } from "../piSdk.js";
 import { comparePackageVersions, getPiWebRuntime, getPiWebStatus, getPiWebVersionStatus, updateCommandFor } from "./piWebStatus.js";
 import { SessionDaemonClient } from "../sessiond/sessionDaemonClient.js";
+import { piWebRuntimeIdentity } from "../shared/piWebRuntime.js";
 import type { PiWebRuntimeComponent } from "../shared/apiTypes.js";
 
 const originalSkipVersionCheck = process.env["PI_WEB_SKIP_VERSION_CHECK"];
@@ -34,6 +35,23 @@ afterEach(() => {
 });
 
 describe("PI WEB status", () => {
+  it("reports each process's factual engine separately", async () => {
+    const daemon = daemonWithRuntime({ ...runningSessiondRuntime(), runtime: { name: "bun", version: "1.3.99" } });
+    const status = await getPiWebVersionStatus(daemon);
+    const runtime = await getPiWebRuntime(daemon);
+    expect(status.components.web.runtime).toEqual(piWebRuntimeIdentity());
+    expect(runtime.components.web.runtime).toEqual(piWebRuntimeIdentity());
+    expect(status.components.sessiond.runtime).toEqual({ name: "bun", version: "1.3.99" });
+    expect(runtime.components.sessiond.runtime).toEqual({ name: "bun", version: "1.3.99" });
+  });
+
+  it("does not attribute this process's engine to a legacy or unavailable daemon", async () => {
+    const legacy = await getPiWebVersionStatus(daemonWithRuntime(runningSessiondRuntime()));
+    expect(legacy.components.sessiond).not.toHaveProperty("runtime");
+    const unavailable = await getPiWebVersionStatus({ request: () => Promise.reject(new Error("offline")) });
+    expect(unavailable.components.sessiond).not.toHaveProperty("runtime");
+  });
+
   it("compares semver-shaped CalVer versions", () => {
     expect(comparePackageVersions("1.202605.9", "1.202605.8")).toBeGreaterThan(0);
     expect(comparePackageVersions("1.202605.8", "1.202605.8")).toBe(0);

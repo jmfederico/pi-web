@@ -9,6 +9,7 @@ export interface WorkspaceCatalogProjectReader {
 
 export interface WorkspaceCatalogResolver {
   resolve(project: Project): Promise<WorkspaceProviderAuthorityResolution>;
+  reconcileProject(project: Project, resolution: WorkspaceProviderAuthorityResolution): Promise<void>;
 }
 
 export interface WorkspaceCatalogRouteDependencies {
@@ -28,7 +29,9 @@ export function registerWorkspaceCatalogRoutes(
   app.get<{ Params: { projectId: string } }>(`${prefix}/projects/:projectId/workspaces`, async (request, reply) => {
     try {
       const project = await dependencies.projects.requireProject(request.params.projectId);
-      return await dependencies.workspaces.resolve(project);
+      const resolution = await dependencies.workspaces.resolve(project);
+      await dependencies.workspaces.reconcileProject(project, resolution);
+      return resolution;
     } catch (error) {
       return catalogRequestFailed(reply, error);
     }

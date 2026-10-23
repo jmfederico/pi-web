@@ -1,5 +1,5 @@
-import type { DisplayedMessageActionAvailabilityContext, DisplayedMessageActionMessage, MessageActionAvailabilityContext, MessageActionContribution, MessageActionMessage } from "../../../plugin-api";
-import type { ChatLine } from "../components/shared";
+import type { DisplayedMessageActionAvailabilityContext, DisplayedMessageActionMessage, MessageActionAvailabilityContextV5 as MessageActionAvailabilityContext, MessageActionContribution, MessageActionMessageV5 as MessageActionMessage } from "../../../plugin-api";
+import type { ChatLine } from "../chatTypes";
 import type { WorkspacePluginBinding } from "./types";
 
 export type RegisteredMessageAction = MessageActionContribution & {
@@ -17,6 +17,7 @@ export function messageActionMessage(message: ChatLine, role = message.role): Me
   if (message.entryId === undefined) return undefined;
   return Object.freeze({
     entryId: message.entryId,
+    ...(message.parts.some((part) => part.type === "askUserQuestion") ? { isQuestion: true } : {}),
     role,
     text: message.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n\n"),
   });

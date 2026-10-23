@@ -1,12 +1,21 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { PiPackageInfo, PiPackageInstallableSuggestion, PiPackageScope, PiPackagesResponse } from "../../api";
+import { uiButtonStyles } from "../ui/controlStyles";
+import { uiFormStyles } from "../ui/formStyles";
+import { uiSettingsStyles } from "../ui/settingsStyles";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import { isPiPackageOperationPending, normalizePiPackageSource, piPackageFilteredLabel, piPackageInstalledPathLabel, piPackageScopeLabel, piPackageSourceValidationMessage, piPackageTargetContext, piPackageTargetLabel, piPackageUpdateDisabledReason, updateAllPiPackagesDisabledReason, type PiPackageOperationState, type PiPackageTargetContext } from "./piPackageSettings";
 
 @customElement("settings-packages-panel")
 export class SettingsPackagesPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) packagesResponse: PiPackagesResponse | undefined;
   @property({ type: Boolean }) loading = false;
   @property({ attribute: false }) operation: PiPackageOperationState | undefined;
@@ -29,12 +38,13 @@ export class SettingsPackagesPanel extends LitElement {
       <settings-panel-frame
         heading="Pi packages"
         .description=${packagesDescription(targetLabel)}
-        actionLabel="Reload"
-        actionTitle=${`Reload Pi packages from ${targetLabel}`}
+        actionLabel="Refresh package list"
+        actionTitle=${`Refresh Pi packages from ${targetLabel}`}
         .actionDisabled=${this.loading || this.isOperating}
         .notices=${this.panelNotices(showPackageControls)}
         .onAction=${this.onReload}
       >
+        <p><a href="https://pi-web.dev/community-plugins" target="_blank" rel="noopener noreferrer">Find community plugins ↗</a></p>
         ${this.renderPanelContent(packages, target, targetLabel)}
       </settings-panel-frame>
     `;
@@ -57,7 +67,7 @@ export class SettingsPackagesPanel extends LitElement {
 
   private renderPanelContent(packages: PiPackageInfo[], target: PiPackageTargetContext, targetLabel: string): TemplateResult | null {
     if (this.packagesResponse === undefined) {
-      return html`<div class="loading-card">${this.loading ? `Loading Pi packages from ${targetLabel}…` : `Pi package list unavailable for ${targetLabel}. Use Reload to try again.`}</div>`;
+      return html`<div class="loading-card ui-settings-summary">${this.loading ? `Loading Pi packages from ${targetLabel}…` : `Pi package list unavailable for ${targetLabel}. Choose Refresh package list to try again.`}</div>`;
     }
     return html`
       ${this.renderInstallableKnownPackages(targetLabel)}
@@ -70,10 +80,12 @@ export class SettingsPackagesPanel extends LitElement {
     const suggestions = this.packagesResponse?.installableKnownPackages ?? [];
     if (suggestions.length === 0) return null;
     return html`
-      <section class="known-package-section" aria-label="Available known Pi packages">
-        <h3>Available packages</h3>
-        <p>PI WEB ships these packages so you can install them on ${targetLabel} with one click, with no path to type — including one you previously removed.</p>
-        <div class="known-package-list">
+      <section class="known-package-section ui-settings-section" aria-label="Available known Pi packages">
+        <div class="ui-settings-heading">
+          <h3>Available packages</h3>
+          <p>Install a package included with PI WEB on ${targetLabel}.</p>
+        </div>
+        <div class="known-package-list ui-settings-list">
           ${suggestions.map((suggestion) => this.renderInstallableKnownPackage(suggestion))}
         </div>
       </section>
@@ -83,26 +95,26 @@ export class SettingsPackagesPanel extends LitElement {
   private renderInstallableKnownPackage(suggestion: PiPackageInstallableSuggestion): TemplateResult {
     const installing = isPiPackageOperationPending(this.operation, "install", suggestion.source);
     return html`
-      <article class="known-package-card">
+      <article class="known-package-card ui-settings-row">
         <div class="package-main">
           <strong>${suggestion.label}</strong>
           <small>${suggestion.description}</small>
         </div>
-        <button title=${`Install ${suggestion.label}`} ?disabled=${this.isOperating} @click=${() => { void this.installKnownPackage(suggestion.source); }}>${installing ? "Installing…" : "Install"}</button>
+        <button class="ui-button ui-button--action ui-button--primary" title=${`Install ${suggestion.label}`} aria-label=${`Install ${suggestion.label}`} ?disabled=${this.isOperating} @click=${() => { void this.installKnownPackage(suggestion.source); }}>${installing ? "Installing…" : "Install"}</button>
       </article>
     `;
   }
 
   private renderInstallForm(targetLabel: string): TemplateResult {
     return html`
-      <form class="install-card" @submit=${(event: Event) => { void this.installPackage(event); }}>
-        <label for="package-source">Pi package source</label>
+      <form class="install-card ui-settings-section" @submit=${(event: Event) => { void this.installPackage(event); }}>
+        <label class="ui-form-field" for="package-source">Pi package source</label>
         <div class="install-row">
-          <input id="package-source" .value=${this.installSource} ?disabled=${this.isOperating} placeholder="npm:@scope/package, git URL, or local path" @input=${(event: Event) => { this.updateInstallSource(event); }}>
-          <button type="submit" title="Install this Pi package" ?disabled=${this.isOperating}>${isPiPackageOperationPending(this.operation, "install") ? "Installing…" : "Install"}</button>
+          <input class="ui-input" id="package-source" aria-describedby="package-source-help package-source-error" aria-invalid=${this.validationMessage !== "" ? "true" : "false"} .value=${this.installSource} ?disabled=${this.isOperating} placeholder="npm:@scope/package, git URL, or local path" @input=${(event: Event) => { this.updateInstallSource(event); }}>
+          <button class="ui-button ui-button--action ui-button--primary" type="submit" title="Install this Pi package" ?disabled=${this.isOperating}>${isPiPackageOperationPending(this.operation, "install") ? "Installing…" : "Install"}</button>
         </div>
-        ${this.validationMessage === "" ? null : html`<div class="field-error">${this.validationMessage}</div>`}
-        <small>Installs run on ${targetLabel} and use Pi's default package location, equivalent to <code>pi install &lt;source&gt;</code>. PI WEB does not ask you to choose an install location.</small>
+        <div id="package-source-error" class="field-error" role="alert">${this.validationMessage}</div>
+        <small id="package-source-help">Enter an npm package, Git URL, or path on ${targetLabel}. Packages install in Pi’s default location, as with <code>pi install &lt;source&gt;</code>.</small>
       </form>
     `;
   }
@@ -113,13 +125,13 @@ export class SettingsPackagesPanel extends LitElement {
     const showUpdateAllReason = updateAllReason !== undefined && packages.length > 0;
     const updateAllTitle = updateAllReason ?? "Update all user-scope Pi packages";
     return html`
-      <section class="package-section" aria-label="Configured Pi packages">
+      <section class="package-section ui-settings-section" aria-label="Configured Pi packages">
         <div class="package-toolbar">
-          <div>
+          <div class="ui-settings-heading">
             <h3>Configured Pi packages</h3>
             <p>This list comes from Pi's package manager settings on ${targetLabel}.</p>
           </div>
-          <button class="secondary" title=${updateAllTitle} ?disabled=${this.isOperating || updateAllReason !== undefined} @click=${() => { void this.updatePackage(); }}>
+          <button class="secondary ui-button ui-button--action" title=${updateAllTitle} ?disabled=${this.isOperating || updateAllReason !== undefined} @click=${() => { void this.updatePackage(); }}>
             ${isPiPackageOperationPending(this.operation, "update-all") ? "Updating…" : "Update all"}
           </button>
         </div>
@@ -131,10 +143,10 @@ export class SettingsPackagesPanel extends LitElement {
   }
 
   private renderPackageListContent(packages: PiPackageInfo[], targetLabel: string): TemplateResult {
-    if (this.loading && packages.length === 0) return html`<div class="loading-card">Loading Pi packages from ${targetLabel}…</div>`;
-    if (packages.length === 0) return html`<div class="loading-card">No Pi packages configured in Pi settings on ${targetLabel} yet.</div>`;
+    if (this.loading && packages.length === 0) return html`<div class="loading-card ui-settings-summary">Loading Pi packages from ${targetLabel}…</div>`;
+    if (packages.length === 0) return html`<div class="loading-card ui-settings-summary">No Pi packages configured in Pi settings on ${targetLabel} yet.</div>`;
     return html`
-      <div class="package-list">
+      <div class="package-list ui-settings-list">
         ${packages.map((packageInfo) => this.renderPackage(packageInfo))}
       </div>
     `;
@@ -145,16 +157,16 @@ export class SettingsPackagesPanel extends LitElement {
     const updating = isPiPackageOperationPending(this.operation, "update", packageInfo.source);
     const removing = isPiPackageOperationPending(this.operation, "remove", packageInfo.source);
     return html`
-      <article class=${`package-card${packageInfo.filtered ? " filtered" : ""}`}>
+      <article class=${`package-card ui-settings-row${packageInfo.filtered ? " filtered" : ""}`}>
         <div class="package-main">
           <strong>${packageInfo.source}</strong>
           <small>${piPackageScopeLabel(packageInfo)} · ${piPackageFilteredLabel(packageInfo)}</small>
           <small>Installed path: <code>${piPackageInstalledPathLabel(packageInfo)}</code></small>
           ${updateReason === undefined ? null : html`<small class="action-note">${updateReason}</small>`}
         </div>
-        <div class="package-actions">
-          <button class="secondary" title=${updateReason ?? "Update this Pi package"} ?disabled=${this.isOperating || updateReason !== undefined} @click=${() => { void this.updatePackage(packageInfo.source); }}>${updating ? "Updating…" : "Update"}</button>
-          <button class="danger" title="Remove this Pi package" ?disabled=${this.isOperating} @click=${() => { void this.removePackage(packageInfo); }}>${removing ? "Removing…" : "Remove"}</button>
+        <div class="package-actions ui-settings-actions">
+          <button class="secondary ui-button ui-button--action" aria-label=${`Update ${packageInfo.source}`} title=${updateReason ?? "Update this Pi package"} ?disabled=${this.isOperating || updateReason !== undefined} @click=${() => { void this.updatePackage(packageInfo.source); }}>${updating ? "Updating…" : "Update"}</button>
+          <button class="danger ui-button ui-button--action" aria-label=${`Remove ${packageInfo.source}`} title="Remove this Pi package" ?disabled=${this.isOperating} @click=${() => { void this.removePackage(packageInfo); }}>${removing ? "Removing…" : "Remove"}</button>
         </div>
       </article>
     `;
@@ -215,45 +227,32 @@ export class SettingsPackagesPanel extends LitElement {
     return this.operation !== undefined;
   }
 
-  static override styles = css`
+  static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, css`
     :host { display: block; }
-    .package-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-    .package-toolbar > div, .package-main { display: grid; gap: 6px; min-width: 0; }
-    h3, p { margin: 0; }
-    h3 { font-size: 15px; line-height: 1.25; }
-    p, small { color: var(--pi-muted); line-height: 1.45; }
-    button, input { font: inherit; }
-    button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
-    button:disabled, input:disabled { opacity: .55; cursor: not-allowed; }
-    input { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 8px 9px; }
-    label { font-weight: 700; }
+    .package-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .package-toolbar > div { flex: 1 1 240px; min-width: 0; }
+    .package-main { flex: 1 1 240px; display: grid; gap: 6px; min-width: 0; }
+    small { color: var(--pi-muted); line-height: 1.45; }
     .secondary { flex: 0 0 auto; }
-    .danger { border-color: color-mix(in srgb, var(--pi-danger) 55%, var(--pi-border)); color: var(--pi-danger); }
-    .loading-card, .install-card, .package-card { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
     .field-error { color: var(--pi-danger); font-size: 12px; }
-    .install-card { display: grid; gap: 8px; }
+    .field-error:empty { display: none; }
     .install-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-    .package-section { display: block; }
-    .known-package-section { display: grid; gap: 8px; margin-bottom: 14px; }
-    .known-package-list { display: grid; gap: 10px; }
-    .known-package-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
+    .known-package-section, .package-section { padding: 0; gap: 0; }
+    .known-package-section > .ui-settings-heading, .package-toolbar { padding: 16px; }
     .loading-card, .action-note { color: var(--pi-muted); }
-    .action-note { margin-bottom: 10px; font-size: 12px; }
-    .package-list { display: grid; gap: 10px; }
-    .package-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+    .action-note { font-size: 12px; }
+    .package-section > .action-note { padding: 0 16px 12px; }
+    .package-card, .known-package-card { align-items: center; }
     .package-card.filtered { opacity: .82; }
-    .package-main strong, .package-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .package-actions { display: flex; align-items: center; gap: 8px; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .package-main strong, .package-main small { overflow-wrap: anywhere; }
+    code { color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
 
     @media (max-width: 760px) {
-      .package-toolbar { display: grid; gap: 12px; }
-      .package-toolbar .secondary { justify-self: start; }
-      .install-row, .package-card, .known-package-card { grid-template-columns: minmax(0, 1fr); align-items: start; }
-      .package-actions { justify-self: start; flex-wrap: wrap; }
-      .package-main strong, .package-main small { white-space: normal; }
+      .install-row { grid-template-columns: minmax(0, 1fr); }
+      .install-row > .ui-button { justify-self: start; }
+      .package-main { flex-basis: 100%; }
     }
-  `;
+  `];
 }
 
 function packagesDescription(targetLabel: string): TemplateResult {

@@ -1,10 +1,11 @@
+// @vitest-environment happy-dom
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Machine, SessionInfo, SessionUnreadEvent, SessionUnreadSummary } from "../api";
 import { initialAppState, type AppState } from "../appState";
 import type { BrowserRealtimeEvent } from "../sessionSocket";
 import type { AppMobileMainTab } from "./appShell/AppMobileMainTabs";
-// Template inspection is proportionate here because this node-environment test
+// Template inspection is retained here because the existing unmounted harness
 // verifies only PiWebApp's unread-state property wiring into navigation.
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";
@@ -264,7 +265,7 @@ function createApp(storedValues: Record<string, string> = {}, mobileNavigation =
     clearInterval: () => undefined,
     clearTimeout: () => undefined,
   });
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || "createElement" in document) {
     vi.stubGlobal("document", { baseURI: "https://pi.example.test/", visibilityState: "visible", hasFocus: () => true });
   }
   vi.stubGlobal("requestAnimationFrame", () => 1);

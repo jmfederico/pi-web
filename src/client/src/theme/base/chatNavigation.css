@@ -1,0 +1,7 @@
+  .chat-jumps { display: flex; gap: 0; }
+  .chat-jumps button { position: relative; display: inline-grid; place-items: center; box-sizing: border-box; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pi-muted); font: 14px/1 var(--pi-font, system-ui, sans-serif); cursor: pointer; }
+  .chat-jumps button.following { color: var(--pi-accent); }
+  .chat-jumps button.following::after { content: ""; position: absolute; bottom: 3px; left: calc(50% - 1.5px); width: 3px; height: 3px; border-radius: 50%; background: currentColor; pointer-events: none; }
+  .chat-jumps button:hover, .chat-jumps button:focus-visible { color: var(--pi-text-bright); background: var(--pi-selection-bg); }
+  .chat-jumps button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+  .chat-follow-state { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

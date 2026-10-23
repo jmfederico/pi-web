@@ -1,7 +1,7 @@
 import type {
   JsonObject,
   JsonValue,
-  TerminalCommandRun,
+  AnyTerminalCommandRun,
   TerminalCommandRunStatus,
   PluginPeerChannel,
   PluginPeerChannelClose,
@@ -10,6 +10,10 @@ import type {
 } from "@jmfederico/pi-web/plugin-api";
 
 export interface TerminalInfo {
+  /** Older workspace-only peers omit scope. */
+  scope?: "workspace" | "maintenance";
+  projectId?: string;
+  workspaceId?: string;
   id: string;
   cwd: string;
   name: string;
@@ -88,17 +92,27 @@ export interface TerminalAttachOptions {
 export class TerminalPeerClient {
   private readonly request: NonNullable<PluginPeer["request"]>;
 
-  constructor(private readonly peer: PluginPeer) {
-    this.request = requirePeerRequest(peer);
+  private readonly peer: PluginPeer;
+
+  constructor(private readonly binding: { scope: "workspace" | "maintenance"; peer: PluginPeer }) {
+    this.peer = binding.peer;
+    this.request = requirePeerRequest(binding.peer);
+  }
+
+  private scoped<T extends { scope?: "workspace" | "maintenance" }>(value: T): T {
+    if ((value.scope ?? "workspace") !== this.binding.scope) {
+      throw new Error(`Terminal response scope does not match ${this.binding.scope} binding`);
+    }
+    return value;
   }
 
   async list(signal?: AbortSignal): Promise<TerminalInfo[]> {
-    return parseTerminalInfoArray(await this.request("terminal.list", null, signal === undefined ? undefined : { signal }));
+    return parseTerminalInfoArray(await this.request("terminal.list", null, signal === undefined ? undefined : { signal })).map((info) => this.scoped(info));
   }
 
   async create(size?: TerminalSize, signal?: AbortSignal): Promise<TerminalInfo> {
     const input: JsonValue = size === undefined ? {} : { cols: size.cols, rows: size.rows };
-    return parseTerminalInfo(await this.request("terminal.create", input, signal === undefined ? undefined : { signal }));
+    return this.scoped(parseTerminalInfo(await this.request("terminal.create", input, signal === undefined ? undefined : { signal })));
   }
 
   async close(terminalId: string, signal?: AbortSignal): Promise<void> {
@@ -106,29 +120,29 @@ export class TerminalPeerClient {
   }
 
   async continue(terminalId: string, signal?: AbortSignal): Promise<TerminalInfo> {
-    return parseTerminalInfo(await this.request("terminal.continue", { terminalId }, signal === undefined ? undefined : { signal }));
+    return this.scoped(parseTerminalInfo(await this.request("terminal.continue", { terminalId }, signal === undefined ? undefined : { signal })));
   }
 
-  async runCommand(origin: string, input: WorkspaceTerminalCommandInput, signal?: AbortSignal): Promise<TerminalCommandRun> {
-    return parseTerminalCommandRun(await this.request("terminal.run", {
+  async runCommand(origin: string, input: WorkspaceTerminalCommandInput, signal?: AbortSignal): Promise<AnyTerminalCommandRun> {
+    return this.scoped(parseTerminalCommandRun(await this.request("terminal.run", {
       origin,
       title: input.title,
       command: input.command,
       metadata: input.metadata ?? {},
-    }, signal === undefined ? undefined : { signal }));
+    }, signal === undefined ? undefined : { signal })));
   }
 
-  async listCommandRuns(filter: TerminalCommandRunFilter = {}, signal?: AbortSignal): Promise<TerminalCommandRun[]> {
-    return parseTerminalCommandRunArray(await this.request("terminal.list-runs", terminalCommandRunFilterInput(filter), signal === undefined ? undefined : { signal }));
+  async listCommandRuns(filter: TerminalCommandRunFilter = {}, signal?: AbortSignal): Promise<AnyTerminalCommandRun[]> {
+    return parseTerminalCommandRunArray(await this.request("terminal.list-runs", terminalCommandRunFilterInput(filter), signal === undefined ? undefined : { signal })).map((run) => this.scoped(run));
   }
 
-  async getCommandRun(runId: string, signal?: AbortSignal): Promise<TerminalCommandRun | undefined> {
+  async getCommandRun(runId: string, signal?: AbortSignal): Promise<AnyTerminalCommandRun | undefined> {
     const value = await this.request("terminal.get-run", { runId }, signal === undefined ? undefined : { signal });
-    return value === null ? undefined : parseTerminalCommandRun(value);
+    return value === null ? undefined : this.scoped(parseTerminalCommandRun(value));
   }
 
-  async cancelCommandRun(runId: string, signal?: AbortSignal): Promise<TerminalCommandRun> {
-    return parseTerminalCommandRun(await this.request("terminal.cancel-run", { runId }, signal === undefined ? undefined : { signal }));
+  async cancelCommandRun(runId: string, signal?: AbortSignal): Promise<AnyTerminalCommandRun> {
+    return this.scoped(parseTerminalCommandRun(await this.request("terminal.cancel-run", { runId }, signal === undefined ? undefined : { signal })));
   }
 
   async attach(options: TerminalAttachOptions): Promise<PluginPeerChannel> {
@@ -168,6 +182,7 @@ function terminalCommandRunFilterInput(filter: TerminalCommandRunFilter): JsonVa
 export function parseTerminalInfo(value: unknown): TerminalInfo {
   const record = requireRecord(value, "Terminal info");
   return {
+    ...parseTerminalInfoScope(record),
     id: requireString(record, "id", "Terminal info"),
     cwd: requireString(record, "cwd", "Terminal info"),
     name: requireString(record, "name", "Terminal info"),
@@ -178,13 +193,26 @@ export function parseTerminalInfo(value: unknown): TerminalInfo {
   };
 }
 
-export function parseTerminalCommandRun(value: unknown): TerminalCommandRun {
+function parseTerminalInfoScope(record: Record<string, unknown>): Pick<TerminalInfo, "scope" | "projectId" | "workspaceId"> {
+  const scope = record["scope"];
+  if (scope === "maintenance") {
+    if (record["projectId"] !== undefined || record["workspaceId"] !== undefined) throw new Error("Maintenance terminal must not contain workspace identity");
+    return { scope };
+  }
+  if (scope !== undefined && scope !== "workspace") throw new Error("Invalid Terminal info scope");
+  return {
+    ...(scope === undefined ? {} : { scope }),
+    ...optionalStringField(record, "projectId", "Terminal info"),
+    ...optionalStringField(record, "workspaceId", "Terminal info"),
+  };
+}
+
+export function parseTerminalCommandRun(value: unknown): AnyTerminalCommandRun {
   const record = requireRecord(value, "Terminal command run");
   return {
     id: requireString(record, "id", "Terminal command run"),
     origin: requireString(record, "origin", "Terminal command run"),
-    projectId: requireString(record, "projectId", "Terminal command run"),
-    workspaceId: requireString(record, "workspaceId", "Terminal command run"),
+    ...parseCommandRunScope(record),
     terminalId: requireString(record, "terminalId", "Terminal command run"),
     title: requireString(record, "title", "Terminal command run"),
     command: requireString(record, "command", "Terminal command run"),
@@ -194,6 +222,18 @@ export function parseTerminalCommandRun(value: unknown): TerminalCommandRun {
     ...optionalStringField(record, "startedAt", "Terminal command run"),
     ...optionalStringField(record, "completedAt", "Terminal command run"),
     metadata: parseStringRecord(record["metadata"], "Terminal command run metadata"),
+  };
+}
+
+function parseCommandRunScope(record: Record<string, unknown>): { scope: "maintenance" } | { projectId: string; workspaceId: string } {
+  if (record["scope"] === "maintenance") {
+    if (record["projectId"] !== undefined || record["workspaceId"] !== undefined) throw new Error("Maintenance command run must not contain workspace identity");
+    return { scope: "maintenance" };
+  }
+  if (record["scope"] !== undefined && record["scope"] !== "workspace") throw new Error("Invalid Terminal command run scope");
+  return {
+    projectId: requireString(record, "projectId", "Terminal command run"),
+    workspaceId: requireString(record, "workspaceId", "Terminal command run"),
   };
 }
 
@@ -230,7 +270,7 @@ function parseTerminalInfoArray(value: unknown): TerminalInfo[] {
   return value.map(parseTerminalInfo);
 }
 
-function parseTerminalCommandRunArray(value: unknown): TerminalCommandRun[] {
+function parseTerminalCommandRunArray(value: unknown): AnyTerminalCommandRun[] {
   if (!Array.isArray(value)) throw new Error("Terminal command run list response must be an array");
   return value.map(parseTerminalCommandRun);
 }

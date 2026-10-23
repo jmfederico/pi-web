@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DisplayedMessageActionAvailabilityContext, DisplayedMessageActionContext, DisplayedMessageActionContribution, EntryMessageActionContribution, MessageActionAvailabilityContext, MessageActionContext, MessageActionContribution } from "../../../plugin-api";
+import type { PluginCatalog, DisplayedMessageActionAvailabilityContext, DisplayedMessageActionContext, DisplayedMessageActionContribution, EntryMessageActionContribution, MessageActionAvailabilityContext, MessageActionContext, MessageActionContribution } from "../../../plugin-api";
 import type { ChatLine } from "../components/shared";
 import { availableDisplayedMessageActions, availableMessageActions, displayedMessageActionMessage, MessageActionAvailabilityCache, messageActionMessage, type RegisteredMessageAction } from "./messageActions";
 import { PluginRegistry } from "./registry";
@@ -40,6 +40,35 @@ function displayedContext(snapshot = displayedInput): DisplayedMessageActionCont
 function registered(action: MessageActionContribution): RegisteredMessageAction {
   return { ...action, binding: { registrationPluginId: "runtime", sourcePluginId: "source" } };
 }
+
+it("injects v5 machine services only into entry/display invocation contexts, not availability", async () => {
+  const registry = new PluginRegistry();
+  const entryRun = vi.fn<(context: MessageActionContext & { catalog?: PluginCatalog; backend?: unknown }) => void>();
+  const displayRun = vi.fn<(context: DisplayedMessageActionContext & { catalog?: PluginCatalog; backend?: unknown }) => void>();
+  const visible = vi.fn((availability: MessageActionAvailabilityContext | DisplayedMessageActionAvailabilityContext) => {
+    expect(availability).not.toHaveProperty("catalog");
+    return true;
+  });
+  await registry.register({ id: "modern", plugin: { apiVersion: 5, name: "Modern", activate: () => ({ contributions: {
+    messageActions: [
+      { id: "entry", title: "Entry", visible, run: entryRun },
+      { id: "display", target: "display", title: "Display", visible, run: displayRun },
+    ],
+  } }) } });
+  const entryContext = context();
+  const displayContext = displayedContext();
+  await registry.runMessageAction("modern:entry", input, () => entryContext);
+  await registry.runDisplayedMessageAction("modern:display", displayedInput, () => displayContext);
+  for (const callback of [entryRun, displayRun]) {
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback.mock.calls[0]?.[0].catalog?.machineId).toBe("remote");
+    expect(callback.mock.calls[0]?.[0].backend).toBeUndefined();
+  }
+  expect(visible).toHaveBeenCalledTimes(2);
+  expect(entryContext).not.toHaveProperty("catalog");
+  expect(displayContext).not.toHaveProperty("catalog");
+  await registry.dispose();
+});
 
 describe("message action snapshots", () => {
   it("trims each original ordinary text part, skips blanks and excludes rendered/tool/thinking payloads", () => {

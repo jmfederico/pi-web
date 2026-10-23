@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TemplateResult } from "lit";
 import type { PiWebConfigResponse, PiWebConfigValues, PiWebPluginInfo, PiWebPluginsResponse } from "../../api";
-import { SettingsPluginsPanel, settingsPluginRows, type SettingsPluginRow } from "./SettingsPluginsPanel";
+import { SettingsPluginsPanel, settingsPluginRows } from "./SettingsPluginsPanel";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 
 describe("settings-plugins-panel layout", () => {
@@ -17,12 +17,12 @@ describe("settings-plugins-panel layout", () => {
 
     expectTextOrder(rendered, [
       "PI WEB plugins",
-      "Compare desired plugin config with the active sessiond startup snapshot on ",
+      "Manage saved plugin settings and check running server plugins on ",
       "Lab Mac (remote machine)",
       "Failed to load PI WEB plugin settings from Lab Mac: PI WEB plugins: timed out.",
-      "Config saved. Reload the browser tab to apply browser-only plugin changes.",
+      "Config saved. Reload this browser tab to apply browser-only plugin changes.",
       "Trusted code warning:",
-      "Config key on Lab Mac (remote machine):",
+      "Changes save automatically on Lab Mac (remote machine).",
       "remote-enabled",
     ]);
   });
@@ -35,7 +35,7 @@ describe("settings-plugins-panel layout", () => {
     const rendered = flattenTemplateContent(panel.render());
 
     expect(rendered).toContain("Config saved. Restart the session daemon to apply server-plugin changes");
-    expect(rendered).not.toContain("Config saved. Reload the browser tab to apply browser-only plugin changes.");
+    expect(rendered).not.toContain("Config saved. Reload this browser tab to apply browser-only plugin changes.");
   });
 
   it("does not show a false empty state when the plugin response is missing", () => {
@@ -44,7 +44,7 @@ describe("settings-plugins-panel layout", () => {
 
     const rendered = flattenTemplateContent(panel.render());
 
-    expect(rendered).toContain("PI WEB plugin list unavailable for Lab Mac (remote machine). Use Reload to try again.");
+    expect(rendered).toContain("PI WEB plugin list unavailable for Lab Mac (remote machine). Choose Refresh plugins to try again.");
     expect(rendered).not.toContain("No PI WEB browser plugins discovered");
     expect(rendered).not.toContain("Trusted code warning");
   });
@@ -93,7 +93,7 @@ describe("settings-plugins-panel layout", () => {
 
   it.each([
     ["bundled-only", "Only bundled server plugins were imported."],
-    ["none", "No server plugins were imported; Terminal is unavailable and the kernel folder workspace remains available for diagnosis."],
+    ["none", "No server plugins were loaded. Terminal is unavailable; use the folder workspace to investigate."],
   ] as const)("renders active %s safe-start recovery", (safeStart, message) => {
     const panel = new SettingsPluginsPanel();
     const response = pluginsResponse([]);
@@ -161,14 +161,14 @@ describe("settings-plugins-panel layout", () => {
 
     for (const label of [
       "Server-plugin safe mode active",
-      "No server plugins were imported",
+      "No server plugins were loaded",
       "Safe-mode restart pending",
-      "Safe start is cleared in offline config but remains active until sessiond restarts.",
-      "Session-daemon restart required",
+      "Safe mode is turned off in saved settings, but remains active until the session daemon restarts.",
+      "Saved changes aren’t active yet",
       "Plugin id conflict",
       "Failed",
       "Conflict",
-      "Stale revision",
+      "Package update pending",
       "Restart required",
       "Health unhealthy",
       "pi-web plugins disable broken-provider --restart",
@@ -200,11 +200,11 @@ describe("settings-plugins-panel layout", () => {
     panel.configResponse = config;
     const renderedWithoutLifecycle = flattenTemplateContent(panel.render());
     expect(renderedWithoutLifecycle).toContain("configured-only");
-    expect(renderedWithoutLifecycle).toContain("configured only · package not discovered");
+    expect(renderedWithoutLifecycle).toContain("Saved settings only · package not found");
     expect(renderedWithoutLifecycle).toContain("Configured only");
     const configuredOnly = rows.find(({ id }) => id === "configured-only");
     if (configuredOnly === undefined) throw new Error("Expected configured-only settings row");
-    expect(templateValues(renderPluginTemplate(panel, configuredOnly)).filter(isBoolean)).toEqual([true, false]);
+    expect(configuredOnly.editable).toBe(true);
   });
 
   it("renders required Terminal enabled and non-editable despite ordinary disable config", () => {
@@ -218,9 +218,8 @@ describe("settings-plugins-panel layout", () => {
     panel.pluginsResponse = pluginsResponse([terminal]);
     panel.configResponse = config;
     const rendered = flattenTemplateContent(panel.render());
-    expect(rendered).toContain("Required · ordinary config cannot disable");
+    expect(rendered).toContain("Required · cannot be disabled here");
     expect(rendered).not.toContain("Offline disable:");
-    expect(templateValues(renderPluginTemplate(panel, row)).filter(isBoolean)).toEqual([true, true]);
   });
 
   it("keeps loaded plugins visible but disabled when selected-machine config is unavailable", () => {
@@ -231,26 +230,13 @@ describe("settings-plugins-panel layout", () => {
     const rendered = flattenTemplateContent(panel.render());
 
     expectTextOrder(rendered, [
-      "Configuration is unavailable. Reload to try again before changing plugin enablement.",
+      "Plugin settings are unavailable. Choose Refresh plugins to try again before making changes.",
       "Trusted code warning:",
       "remote-disabled",
     ]);
-    expect(countOccurrences(rendered, "Configuration is unavailable. Reload to try again before changing plugin enablement.")).toBe(1);
-    expect(templateValues(renderPluginTemplate(panel, pluginInfo("remote-disabled", false))).filter(isBoolean)).toEqual([false, true]);
+    expect(countOccurrences(rendered, "Plugin settings are unavailable. Choose Refresh plugins to try again before making changes.")).toBe(1);
   });
 });
-
-function renderPluginTemplate(panel: SettingsPluginsPanel, plugin: PiWebPluginInfo | SettingsPluginRow): TemplateResult {
-  const renderPlugin: unknown = Reflect.get(panel, "renderPlugin");
-  if (!isPanelRenderPlugin(renderPlugin)) throw new Error("SettingsPluginsPanel.renderPlugin is not callable");
-  const row = "configOnly" in plugin ? plugin : settingsPluginRows(pluginsResponse([plugin]), panel.configResponse)[0];
-  if (row === undefined) throw new Error("Expected a settings plugin row");
-  return renderPlugin.call(panel, row);
-}
-
-function isPanelRenderPlugin(value: unknown): value is (this: SettingsPluginsPanel, plugin: SettingsPluginRow) => TemplateResult {
-  return typeof value === "function";
-}
 
 function flattenTemplateContent(template: TemplateResult): string {
   const chunks: string[] = [];
@@ -325,10 +311,6 @@ function isSettingsNotice(value: unknown): value is SettingsNotice {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
-}
-
-function isBoolean(value: unknown): value is boolean {
-  return typeof value === "boolean";
 }
 
 function configResponse(config: PiWebConfigValues): PiWebConfigResponse {

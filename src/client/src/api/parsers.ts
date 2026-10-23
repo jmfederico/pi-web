@@ -1,4 +1,4 @@
-import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserCloseResponse, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type PendingAskUser, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
+import { PI_WEB_PLUGIN_LIFECYCLE_VERSION, ASK_USER_COMMENT_MAX_LENGTH, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, EXTENSION_DIALOG_OPTION_LIMIT, EXTENSION_DIALOG_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH, SESSION_UNREAD_COMPLETED_AT_MAX_LENGTH, SESSION_UNREAD_CWD_MAX_LENGTH, SESSION_UNREAD_LIMIT, SESSION_UNREAD_SESSION_ID_MAX_LENGTH, type ArchiveSessionsResponse, type AskUserCloseReason, type AskUserOutcome, type AskUserQuestion, type AskUserQuestionOption, type AskUserQuestionRecord, type AskUserRequest, type PendingExtensionDialog, type AuthProviderOption, type AuthProviderStatus, type AuthProvidersResponse, type AuthStatusSource, type AuthType, type CommandOption, type CommandResult, type DeleteWorkspaceFileResponse, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogKind, type ExtensionDialogOutcome, type FileContentResponse, type FileSuggestion, type FileTreeEntry, type FileTreeResponse, type GlobalSessionEvent, type Machine, type MachineHealth, type MachineKind, type MachineRuntime, type MachineStatus, type MessagePage, type McpAuthServersResponse, type ModelSelectionResponse, type MoveWorkspaceFileResponse, type OAuthFlowState, type PiWebCapability, type PiWebComponentStatus, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues, type PiWebDeprecatedAgentInput, type PiWebInstallationInfo, type PiWebPluginConfigMap, type PiWebPluginInfo, type PiWebPluginsResponse, type PiWebPluginScope, type PiWebReleaseStatus, type PiWebRuntimeComponent, type PiWebRuntimeResponse, type PiWebServiceComponent, type PiWebShortcutConfig, type PiWebStatusMessage, type PiWebStatusResponse, type PiWebStatusSeverity, type Project, type QueuedSessionMessage, type SavedPromptAttachment, type SessionBulkArchiveResponse, type SessionBulkDeleteArchivedResponse, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionCleanupPreviewResponse, type SessionCleanupProjectSummary, type SessionCleanupThresholds, type SessionCleanupTotals, type SessionInfo, type SessionModel, type SessionModelCatalogEntry, type SessionModelCatalogResponse, type SessionNotification, type SessionNotificationClearReason, type SessionNotificationDismissThrough, type SessionNotificationInboxDelta, type SessionNotificationInboxEvent, type SessionNotificationInboxSnapshot, type SessionNotificationSeverity, type SessionNotificationSummary, type ServerNotice, type ServerNoticeEvent, type ServerNoticeSeverity, type ServerNoticeSnapshot, type SessionStatus, type SessionStreamSnapshot, type SessionTranscriptSnapshot, type SessionUiEvent, type SessionUnreadCatalogSnapshot, type SessionUnreadEvent, type SessionUnreadSummary, type SessionWarning, type SessionWarningSeverity, type SlashCommand, type ThinkingLevelsResponse, type WriteWorkspaceFileResponse, type Workspace, type WorkspaceEffectiveConfig, type WorkspaceTrustResponse } from "../../../shared/apiTypes";
 import { parseMachineStatusSnapshot, type MachineStatusSnapshot, type MachineStatusUiEvent } from "../../../shared/machineStatus";
 import type { JsonValue, McpCheckResponse, McpConfigScope, McpConnectionInfo, McpServerInfo, McpServersResponse, PiPackageInfo, PiPackageInstallableSuggestion, PiPackageMutationAction, PiPackageMutationResponse, PiPackageScope, PiPackagesResponse, SessionActivity, SessionStartupProgressEvent, SessionTreeForkResult, SessionTreeNavigateResult, SessionTreeNode, SessionTreeNodeKind, SessionTreeSnapshot, WorkspaceProviderDiagnostic, WorkspaceProviderDiagnosticCode, WorkspaceProviderResolution, WorkspaceProviderResolutionStatus, WorkspaceProviderTier } from "../../../shared/apiTypes";
 
@@ -7,6 +7,8 @@ import { parseDeprecatedAgentInputs } from "../../../shared/piWebStatusParsing";
 import { PI_WEB_PLUGIN_RECOVERY_COMMANDS, pluginDisableRecoveryCommand } from "../../../shared/pluginRecoveryCommands";
 import { parseServerNoticeScope } from "../../../shared/serverNoticeContract";
 import { requireDefaultThemePreference } from "../../../shared/themePreference";
+import { requireDefaultStreamingBehavior } from "../../../shared/streamingBehavior";
+import { isKnownThinkingLevel } from "../../../shared/thinkingLevels";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -265,10 +267,19 @@ function requireWorkspaceEffectiveConfig(value: unknown): WorkspaceEffectiveConf
   });
 }
 
+function parseSessionUiMetadata(value: unknown): NonNullable<SessionInfo["metadata"]> {
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid session metadata field");
+  return Object.freeze(Object.fromEntries(
+    Object.entries(value).map(([namespace, data]) => [namespace, parseJsonObject(data, "session metadata namespace")]),
+  ));
+}
+
 export function parseSessionInfo(value: unknown): SessionInfo {
   const record = requireRecord(value);
   const name = optionalString(record, "name");
+  const metadata = record["metadata"] === undefined ? undefined : parseSessionUiMetadata(record["metadata"]);
   const persisted = parseOptionalBoolean(record["persisted"], "persisted");
+  const agentSubsession = parseOptionalBoolean(record["agentSubsession"], "agentSubsession");
   const parentSessionPath = optionalString(record, "parentSessionPath");
   const archivedAt = optionalString(record, "archivedAt");
   return {
@@ -276,7 +287,9 @@ export function parseSessionInfo(value: unknown): SessionInfo {
     path: requireString(record, "path"),
     cwd: requireString(record, "cwd"),
     ...(persisted === undefined ? {} : { persisted }),
+    ...(agentSubsession === true ? { agentSubsession: true } : {}),
     ...(name === undefined ? {} : { name }),
+    ...(metadata === undefined ? {} : { metadata }),
     created: requireString(record, "created"),
     modified: requireString(record, "modified"),
     messageCount: requireNumber(record, "messageCount"),
@@ -340,41 +353,16 @@ function parseAskUserQuestion(value: unknown): AskUserQuestion {
   };
 }
 
-/**
- * Validate the session's open question set. A malformed ask must be dropped
- * rather than rendered: the card asks the user to answer on the model's behalf,
- * so questions or options the daemon did not really send must never appear.
- */
-function parsePendingAskUser(value: unknown): PendingAskUser {
+/** Validate the durable question payload before offering its interactive renderer. */
+export function parseAskUserRequest(value: unknown): AskUserRequest {
   const record = requireRecord(value);
   const questions = boundedArrayOf(record["questions"], parseAskUserQuestion, ASK_USER_QUESTION_LIMIT, "questions");
-  if (questions.length === 0) throw new Error("Pending ask has no questions");
+  if (questions.length === 0) throw new Error("Ask has no questions");
   assertUniqueStrings(questions.map((question) => question.id), "ask question id");
   return {
     askId: requireBoundedNonEmptyString(record, "askId", ASK_USER_ID_MAX_LENGTH),
     askedAt: requireNonEmptyString(record, "askedAt"),
     questions,
-  };
-}
-
-function optionalPendingAsk(value: unknown): Pick<SessionStatus, "pendingAsk"> | object {
-  if (value === undefined) return {};
-  return { pendingAsk: parsePendingAskUser(value) };
-}
-
-export function parseSessionAskOpenedEvent(value: unknown): { type: "ask.opened"; ask: PendingAskUser } {
-  const record = requireRecord(value);
-  if (record["type"] !== "ask.opened") throw new Error("Invalid ask opened event type");
-  return { type: "ask.opened", ask: parsePendingAskUser(record["ask"]) };
-}
-
-export function parseSessionAskClosedEvent(value: unknown): { type: "ask.closed"; askId: string; reason: AskUserCloseReason } {
-  const record = requireRecord(value);
-  if (record["type"] !== "ask.closed") throw new Error("Invalid ask closed event type");
-  return {
-    type: "ask.closed",
-    askId: requireBoundedNonEmptyString(record, "askId", ASK_USER_ID_MAX_LENGTH),
-    reason: parseAskUserCloseReason(record["reason"]),
   };
 }
 
@@ -390,11 +378,12 @@ function parseAskUserQuestionRecord(value: unknown): AskUserQuestionRecord {
   const offered = new Set(question.options.map((option) => option.value));
   if (values.some((selected) => !offered.has(selected))) throw new Error("Ask answer selected an option the question never offered");
   const otherText = optionalBoundedNonEmptyString(record, "otherText", ASK_USER_OTHER_TEXT_MAX_LENGTH);
+  const comment = optionalBoundedNonEmptyString(record, "comment", ASK_USER_COMMENT_MAX_LENGTH);
   const answered = requireBoolean(record, "answered");
   // The record is the one thing both the model and the user read, so a flag that
   // disagrees with the answer it describes is rejected rather than displayed.
   if (answered !== (values.length > 0 || otherText !== undefined)) throw new Error("Ask answer contradicts its answered flag");
-  return { question, answered, values, ...(otherText === undefined ? {} : { otherText }) };
+  return { question, answered, values, ...(otherText === undefined ? {} : { otherText }), ...(comment === undefined ? {} : { comment }) };
 }
 
 export function parseAskUserOutcome(value: unknown): AskUserOutcome {
@@ -416,21 +405,6 @@ export function parseAskUserOutcome(value: unknown): AskUserOutcome {
     answeredCount,
     unansweredIds,
     summary: requireNonEmptyString(record, "summary"),
-  };
-}
-
-export function parseAskUserCloseResponse(value: unknown): AskUserCloseResponse {
-  const record = requireRecord(value);
-  const result = record["result"];
-  if (result !== "closed" && result !== "stale") throw new Error("Invalid ask close result");
-  const outcome = record["outcome"] === undefined ? undefined : parseAskUserOutcome(record["outcome"]);
-  // Only the call that actually closed the ask carries an outcome; a stale close
-  // reports none and is trusted for the session status alone.
-  if ((result === "closed") !== (outcome !== undefined)) throw new Error("Ask close response outcome mismatch");
-  return {
-    result,
-    ...(outcome === undefined ? {} : { outcome }),
-    sessionStatus: parseSessionStatus(record["sessionStatus"]),
   };
 }
 
@@ -567,6 +541,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     isBashRunning: requireBoolean(record, "isBashRunning"),
     pendingMessageCount: requireNumber(record, "pendingMessageCount"),
     queuedMessages: record["queuedMessages"] === undefined ? [] : arrayOf(parseQueuedSessionMessage)(record["queuedMessages"]),
+    ...optionalField("queueMessageActionsUnavailable", optionalString(record, "queueMessageActionsUnavailable")),
     ...optionalField("messageCount", optionalNumber(record, "messageCount")),
     tokens: parseTokens(record["tokens"]),
     cost: requireNumber(record, "cost"),
@@ -574,7 +549,6 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     ...optionalContextUsage(record["contextUsage"]),
     ...optionalField("thinkingLevel", optionalString(record, "thinkingLevel")),
     ...optionalField("warnings", warnings?.filter((warning) => !isLegacyOtherInstanceActivityWarning(warning))),
-    ...optionalPendingAsk(record["pendingAsk"]),
     ...optionalPendingDialogs(record["pendingDialogs"]),
     ...optionalField("suggestedInput", optionalString(record, "suggestedInput")),
   };
@@ -703,10 +677,12 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
       // The message payload is a projected Pi message; only its presence is
       // guaranteed at this boundary.
       return { type: "message.append", message: requirePresent(record, "message") };
+    case "assistant.start":
+      return { type: "assistant.start", message: requirePresent(record, "message") };
     case "assistant.delta":
-      return { type: "assistant.delta", text: requireString(record, "text") };
+      return { type: "assistant.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")) };
     case "assistant.thinking.delta":
-      return { type: "assistant.thinking.delta", text: requireString(record, "text") };
+      return { type: "assistant.thinking.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")) };
     case "tool.start":
       return {
         type: "tool.start",
@@ -766,6 +742,8 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
       return parseCommandOutputEvent(record);
     case "session.error":
       return { type: "session.error", message: requireString(record, "message") };
+    case "session.diagnostic":
+      return { type: "session.diagnostic", message: requireString(record, "message") };
     case "session.name":
       return parseSessionNameEvent(record);
     case "session.created":
@@ -780,7 +758,7 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
 }
 
 type RealtimeStreamEvent =
-  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" | "models.changed" | "notices.updated" }>
+  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" | "models.changed" | "workspaces.changed" | "notices.updated" }>
   | MachineStatusUiEvent;
 
 export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
@@ -796,6 +774,8 @@ export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
       return { type: "session.created", session: parseSessionInfo(record["session"]) };
     case "models.changed":
       return { type: "models.changed", revision: requireNonNegativeSafeInteger(record, "revision") };
+    case "workspaces.changed":
+      return { type: "workspaces.changed", projectId: requireNonEmptyString(record, "projectId") };
     case "notices.updated":
       return parseServerNoticeEvent(record);
     case "machine.status":
@@ -1194,7 +1174,11 @@ function parseQueuedSessionMessage(value: unknown): QueuedSessionMessage {
   const record = requireRecord(value);
   const kind = requireString(record, "kind");
   if (kind !== "steer" && kind !== "followUp") throw new Error("Invalid queued message kind");
-  return { kind, text: requireString(record, "text") };
+  return {
+    kind, text: requireString(record, "text"),
+    ...optionalField("hasAttachments", optionalBoolean(record, "hasAttachments")),
+    ...optionalField("attachmentCount", record["attachmentCount"] === undefined ? undefined : requireNonNegativeSafeInteger(record, "attachmentCount")),
+  };
 }
 
 function parseTokens(value: unknown): SessionStatus["tokens"] {
@@ -1288,12 +1272,27 @@ export function parseAuthProvidersResponse(value: unknown): AuthProvidersRespons
   return { providers: arrayOf(parseAuthProviderOption)(record["providers"]) };
 }
 
+export function parseMcpAuthServersResponse(value: unknown): McpAuthServersResponse {
+  const record = requireRecord(value);
+  return { servers: arrayOf((item) => {
+    const server = requireRecord(item);
+    return { name: requireString(server, "name"), ...optionalField("description", optionalString(server, "description")) };
+  })(record["servers"]) };
+}
+
 export function parseOAuthFlowState(value: unknown): OAuthFlowState {
   const record = requireRecord(value);
-  const flow = {
+  const target = record["target"];
+  if (target !== undefined && target !== "mcp") throw new Error("Invalid login flow target");
+  const mcpMode = record["mcpMode"];
+  if (mcpMode !== undefined && mcpMode !== "login" && mcpMode !== "logout") throw new Error("Invalid MCP authentication mode");
+  const flow: OAuthFlowState = {
     flowId: requireString(record, "flowId"),
     providerId: requireString(record, "providerId"),
     providerName: requireString(record, "providerName"),
+    ...(target === undefined ? {} : { target }),
+    ...(mcpMode === undefined ? {} : { mcpMode }),
+    ...optionalField("cancelRequested", optionalBoolean(record, "cancelRequested")),
     status: parseOAuthFlowStatus(record["status"]),
     progress: arrayOf((item) => {
       if (typeof item !== "string") throw new Error("Expected progress item string");
@@ -1487,6 +1486,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("allowedHosts", optionalAllowedHosts(record["allowedHosts"])),
     ...optionalField("shortcuts", optionalShortcuts(record["shortcuts"])),
     ...optionalField("defaultTheme", record["defaultTheme"] === undefined ? undefined : requireDefaultThemePreference(record["defaultTheme"], "response")),
+    ...optionalField("defaultStreamingBehavior", record["defaultStreamingBehavior"] === undefined ? undefined : requireDefaultStreamingBehavior(record["defaultStreamingBehavior"], "response")),
     ...optionalField("plugins", optionalPlugins(record["plugins"])),
     ...optionalField("pathAccess", optionalPathAccess(record["pathAccess"])),
     ...optionalField("uploads", optionalUploads(record["uploads"])),
@@ -1496,6 +1496,33 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
+    ...optionalField("sessionNaming", optionalSessionNaming(record["sessionNaming"])),
+    ...optionalField("sessionArchive", optionalSessionArchive(record["sessionArchive"])),
+  };
+}
+
+function optionalSessionArchive(value: unknown): PiWebConfigValues["sessionArchive"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionArchive field");
+  return { ...optionalField("directory", optionalString(value, "directory")) };
+}
+
+function optionalSessionNaming(value: unknown): PiWebConfigValues["sessionNaming"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || Array.isArray(value)) throw new Error("Invalid PI WEB sessionNaming field");
+  const model = optionalString(value, "model");
+  const maxTokens = optionalNumber(value, "maxTokens");
+  const thinkingLevel = optionalString(value, "thinkingLevel");
+  const timeoutMs = optionalNumber(value, "timeoutMs");
+  if (model !== undefined && !/^[^/\s]+\/[^\s]+$/.test(model)) throw new Error("Invalid PI WEB sessionNaming.model field");
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) throw new Error("Invalid PI WEB sessionNaming.maxTokens field");
+  if (thinkingLevel !== undefined && !isKnownThinkingLevel(thinkingLevel)) throw new Error("Invalid PI WEB sessionNaming.thinkingLevel field");
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647)) throw new Error("Invalid PI WEB sessionNaming.timeoutMs field");
+  return {
+    ...optionalField("model", model),
+    ...optionalField("maxTokens", maxTokens),
+    ...optionalField("thinkingLevel", thinkingLevel),
+    ...optionalField("timeoutMs", timeoutMs),
   };
 }
 

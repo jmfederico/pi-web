@@ -6,6 +6,8 @@ import fastifyCompress from "@fastify/compress";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { ProjectStore } from "./storage/projectStore.js";
+import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
+import { registerNavigationPreferenceRoutes } from "./navigationPreferenceRoutes.js";
 import { ProjectService } from "./projects/projectService.js";
 import type { WorkspaceCatalog } from "./workspaces/workspaceCatalog.js";
 import { SessionDaemonWorkspaceCatalog } from "./workspaces/sessionDaemonWorkspaceCatalog.js";
@@ -44,6 +46,7 @@ import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } f
 
 export interface AppDependencies {
   projects?: ProjectService;
+  navigationPreferences?: Pick<NavigationPreferenceStore, "get" | "put">;
   workspaceCatalog?: WorkspaceCatalog;
   machines?: MachineService;
   sessionDaemon?: SessionProxyDaemon;
@@ -227,6 +230,10 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   const invalidatingConfigService = invalidatePiWebStatusOnWrite(configService, piWebStatusCache);
   registerConfigRoutes(app, invalidatingConfigService);
   registerLocalMachineConfigRoutes(app, invalidatingConfigService);
+
+  const navigationPreferences = deps.navigationPreferences ?? new NavigationPreferenceStore();
+  registerNavigationPreferenceRoutes(app, navigationPreferences);
+  registerNavigationPreferenceRoutes(app, navigationPreferences, "/api/machines/local");
 
   registerMachineRoutes(app, machines);
   registerMachinePluginProxyRoutes(app, machines);

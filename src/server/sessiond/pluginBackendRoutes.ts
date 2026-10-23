@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { isPiWebPluginId } from "../../shared/pluginIds.js";
 import {
-  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS,
+  pluginBackendScopeFromRoute,
   parsePluginBackendRequestEnvelope,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_JSON_MAX_BYTES,
@@ -18,8 +19,8 @@ import {
 
 interface PluginBackendRouteParams {
   pluginId: string;
-  projectId: string;
-  workspaceId: string;
+  projectId?: string;
+  workspaceId?: string;
   operation: string;
 }
 
@@ -44,8 +45,8 @@ export interface PluginBackendRouteDependencies {
 
 /** JSON-only sessiond boundary for one revision-paired package and current workspace. */
 export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependencies: PluginBackendRouteDependencies): void {
-  app.post<{ Params: PluginBackendRouteParams; Body: unknown }>(
-    PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  for (const path of PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS) app.post<{ Params: PluginBackendRouteParams; Body: unknown }>(
+    path,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
       const { pluginId, projectId, workspaceId } = request.params;
@@ -57,13 +58,14 @@ export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependen
         if (projectId === "") throw new Error("Project id is required");
         if (workspaceId === "") throw new Error("Workspace id is required");
         envelope = parsePluginBackendRequestEnvelope(request.body);
+        pluginBackendScopeFromRoute(request.params, envelope);
       } catch (error) {
         return attributedError(reply, 400, boundedErrorMessage(error), "invalid-request", pluginId, operation);
       }
 
-      let project: Project;
+      let project: Project | undefined;
       try {
-        project = await dependencies.projects.requireProject(projectId);
+        if (projectId !== undefined) project = await dependencies.projects.requireProject(projectId);
       } catch (error) {
         const message = boundedErrorMessage(error);
         return attributedError(
@@ -81,6 +83,7 @@ export function registerPairedPluginBackendRoutes(app: FastifyInstance, dependen
         const result = await dependencies.backends.request({
           pluginId,
           moduleRevision: envelope.revision,
+          scope: pluginBackendScopeFromRoute(request.params, envelope),
           project,
           workspaceId,
           operation,

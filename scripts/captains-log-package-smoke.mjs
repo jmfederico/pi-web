@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,16 @@ import { pathToFileURL } from "node:url";
 // Exercise shipped JS, not source imports or a simulated ExtensionAPI. The only
 // replacements are host admission and provider transport; no daemon or paid API.
 export async function smokeInstalledCaptainsLog({ packageRoot, fixtureRoot }) {
+  // Use the installed app's adapters so fixture sessions and plugins share one
+  // selected SDK/AI identity without altering process-wide module resolution.
+  assert.ok(process.env["PI_WEB_PI_PACKAGE_DIR"], "Captain's Log smoke requires an isolated Pi host");
+  const { loadPiSdk, loadPiAi } = await import(pathToFileURL(join(packageRoot, "dist", "piRuntime.js")).href);
+  const [sdk, ai] = await Promise.all([loadPiSdk(), loadPiAi()]);
+  const sharedSdk = await import(pathToFileURL(join(packageRoot, "dist", "piSdk.js")).href);
+  const sharedAi = await import(pathToFileURL(join(packageRoot, "dist", "piAi.js")).href);
+  assert.strictEqual(sharedSdk.SessionManager, sdk.SessionManager);
+  assert.strictEqual(sharedAi.normalizeContext, ai.normalizeContext);
+  assert.strictEqual(sharedAi.modelsAreEqual, ai.modelsAreEqual);
   const captainRoot = join(packageRoot, "dist", "pi-packages", "captains-log");
   const manifest = JSON.parse(await readFile(join(captainRoot, "package.json"), "utf8"));
   const entry = manifest.piWeb.plugins.find((plugin) => plugin.id === "captains-log");
@@ -27,14 +37,7 @@ export async function smokeInstalledCaptainsLog({ packageRoot, fixtureRoot }) {
 
   const root = join(fixtureRoot, "captains-log-roundtrip");
   await mkdir(root, { recursive: true });
-  // Resolve import-only SDK exports against installed dependencies, not the
-  // checkout's toolchain (createRequire.resolve uses the wrong condition).
-  await symlink(join(packageRoot, "node_modules"), join(root, "node_modules"), "dir");
-  await writeFile(join(root, "runtime.mjs"), `
-    export * as sdk from "@earendil-works/pi-coding-agent";
-    export * as ai from "@earendil-works/pi-ai";
-  `);
-  const { sdk, ai } = await import(pathToFileURL(join(root, "runtime.mjs")).href);
+  assert.equal(sdk.getPackageDir(), process.env["PI_WEB_PI_PACKAGE_DIR"], "Use the selected host SDK");
   const { PiSessionEventConnections } = await import(pathToFileURL(join(packageRoot, "dist/server/sessions/piSessionEventConnections.js")).href);
   const modelRuntime = await sdk.ModelRuntime.create({
     credentials: new ai.InMemoryCredentialStore(), modelsPath: null,

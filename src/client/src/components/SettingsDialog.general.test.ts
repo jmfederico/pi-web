@@ -34,7 +34,7 @@ describe("settings-dialog general settings machine targeting", () => {
     expect(saveSpy.mock.calls).toEqual([[{ host: "0.0.0.0", port: 9000, allowedHosts: true }]]);
     expect(getDialogProperty(dialog, "configResponse")).toBe(savedConfig);
     expect(onConfigSaved).toHaveBeenCalledWith({ host: "0.0.0.0", port: 9000, allowedHosts: true });
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("Gateway settings saved. Restart the web service to apply address changes.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 
@@ -65,7 +65,7 @@ describe("settings-dialog general settings machine targeting", () => {
     expect(saveSpy.mock.calls).toEqual([[patch, "remote-a"]]);
     expect(getDialogProperty(dialog, "accessConfigResponse")).toBe(savedConfig);
     expect(getDialogProperty(dialog, "configResponse")).toBeUndefined();
-    expect(getDialogProperty(dialog, "savedMessage")).toBe("Config saved.");
+    expect(getDialogProperty(dialog, "savedMessage")).toBe("File access and upload settings saved for Lab Mac.");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });
 

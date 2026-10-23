@@ -1,9 +1,10 @@
+// @vitest-environment happy-dom
 import type { TemplateResult } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionInfo, SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
 // Template inspection is proportionate here because this test verifies only the
-// sibling-component callback/property wiring in a node environment without DOM.
+// sibling-component callback/property wiring in the existing unmounted harness.
 import { templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";
 

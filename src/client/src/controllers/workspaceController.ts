@@ -12,7 +12,7 @@ const WORKSPACE_TOPOLOGY_REFRESH_DEBOUNCE_MS = 50;
 const WORKSPACE_SELECTION_SCOPE = ["machine", "project", "workspace", "session"] as const;
 
 export interface WorkspaceControllerDependencies {
-  api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  api?: Pick<typeof defaultApi, "sessions" | "workspaces" | "workspaceResolution">;
   navigateToWorkspace?: (workspace: Workspace | undefined, options?: NavigationDestinationOptions) => Promise<boolean>;
   captureNavigation?: () => NavigationSelection;
   beginNavigationOperation?: (scope: readonly NavigationScope[]) => NavigationFreshness;
@@ -28,13 +28,14 @@ interface WorkspaceMutationGuard {
 type WorkspaceSelectionTarget = RouteTarget & WorkspaceMutationGuard;
 
 export class WorkspaceController {
-  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces" | "workspaceResolution">;
   private readonly navigateToWorkspace: WorkspaceControllerDependencies["navigateToWorkspace"];
   private readonly captureNavigation: WorkspaceControllerDependencies["captureNavigation"];
   private readonly beginNavigationOperation: WorkspaceControllerDependencies["beginNavigationOperation"];
   private readonly onBackgroundError: (message: string, error: unknown) => void;
   private readonly browserErrors: BrowserErrorReporter;
   private readonly topologyRefreshes: TrailingRefreshCoordinator<string>;
+  private readonly workspaceListRequests = new Map<string, number>();
 
   constructor(
     private readonly getState: GetState,
@@ -57,7 +58,7 @@ export class WorkspaceController {
 
   clearSelection(options?: { updateUrl?: boolean | undefined }) {
     this.sessions.clearActiveSession();
-    this.setState({ selectedProject: undefined, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
+    this.setState({ selectedProject: undefined, workspaceResolution: undefined, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
     if (options?.updateUrl !== false) this.updateUrl();
   }
 
@@ -75,13 +76,17 @@ export class WorkspaceController {
     const machineId = selectedMachineId(this.getState());
     const errorScope = projectBrowserErrorScope(machineId, project.id);
     this.sessions.clearActiveSession();
-    this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
+    this.setState({ selectedProject: project, workspaceResolution: undefined, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
+    const listRequestIsCurrent = this.beginWorkspaceListRequest(project.id, machineId);
     try {
-      const workspaces = await this.api.workspaces(project.id, machineId);
-      if (!this.navigationIsCurrent(navigation)
+      const resolution = await this.api.workspaceResolution(project.id, machineId);
+      const workspaces = [...resolution.workspaces];
+      if (!listRequestIsCurrent()
+        || !this.navigationIsCurrent(navigation)
         || selectedMachineId(this.getState()) !== machineId
         || this.getState().selectedProject?.id !== project.id) return;
-      this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
+      this.setState({ workspaceResolution: resolution, workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
+      if (resolution.status === "degraded") throw new Error(resolution.diagnostics.map(({ message }) => message).join("; ") || "Workspace authority is degraded");
       const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
       if (workspace) {
         return await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl, navigation });
@@ -123,7 +128,7 @@ export class WorkspaceController {
       this.setState({ sessions });
       const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
       if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(target)) return;
-      if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
+      if (session) await this.sessions.selectSession(session, { deferChatLoading: true, updateUrl: target?.updateUrl, ...(navigation === undefined ? {} : { navigation }) });
       else if (target?.sessionId !== undefined && target.sessionId !== "") {
         this.browserErrors.report(errorScope, `Session not found: ${target.sessionId}`);
         return `Session not found: ${target.sessionId}`;
@@ -142,16 +147,28 @@ export class WorkspaceController {
     machineId = selectedMachineId(this.getState()),
     options?: WorkspaceMutationGuard,
   ): Promise<Workspace[]> {
-    if (!workspaceMutationIsCurrent(options)) return [];
+    return (await this.refreshProjectWorkspaceList(projectId, machineId, options)).workspaces;
+  }
+
+  private async refreshProjectWorkspaceList(
+    projectId: string,
+    machineId: string,
+    options?: WorkspaceMutationGuard,
+  ): Promise<{ workspaces: Workspace[]; isCurrent: () => boolean }> {
+    if (!workspaceMutationIsCurrent(options)) return { workspaces: [], isCurrent: () => false };
     const project = this.getState().projects.find((candidate) => candidate.id === projectId);
     if (project === undefined) throw new Error("Project not found");
-    const workspaces = options?.signal === undefined
-      ? await this.api.workspaces(project.id, machineId)
-      : await this.api.workspaces(project.id, machineId, { signal: options.signal });
-    if (workspaceMutationIsCurrent(options) && selectedMachineId(this.getState()) === machineId) {
+    const isCurrent = this.beginWorkspaceListRequest(projectId, machineId);
+    const resolution = options?.signal === undefined
+      ? await this.api.workspaceResolution(project.id, machineId)
+      : await this.api.workspaceResolution(project.id, machineId, { signal: options.signal });
+    const workspaces = [...resolution.workspaces];
+    if (isCurrent() && workspaceMutationIsCurrent(options) && selectedMachineId(this.getState()) === machineId) {
+      if (this.getState().selectedProject?.id === project.id) this.setState({ workspaceResolution: resolution });
+      if (resolution.status === "degraded") throw new Error(resolution.diagnostics.map(({ message }) => message).join("; ") || "Workspace authority is degraded");
       this.applyProjectWorkspaces(project.id, workspaces);
     }
-    return workspaces;
+    return { workspaces, isCurrent };
   }
 
   /**
@@ -170,18 +187,27 @@ export class WorkspaceController {
   async refreshSelectedProjectTopology(): Promise<void> {
     const state = this.getState();
     const project = state.selectedProject;
-    if (project === undefined) return;
+    // Explicit project navigation already loads topology and owns selection.
+    if (project === undefined || state.isLoadingWorkspaces) return;
     const machineId = selectedMachineId(state);
     // Callers are independent (browser resume and the plugin-facing app refresh), so two
     // refreshes for the same machine+project can overlap. Sharing one request keeps a slow
     // earlier response from landing last and overwriting a newer list, which would make a
     // just-created worktree disappear again.
     await this.topologyRefreshes.request(machineProjectKey(machineId, project.id), async () => {
+      if (this.getState().isLoadingWorkspaces) return;
+      const listRequestIsCurrent = this.beginWorkspaceListRequest(project.id, machineId);
       try {
-        const workspaces = await this.api.workspaces(project.id, machineId);
+        const resolution = await this.api.workspaceResolution(project.id, machineId);
         const current = this.getState();
-        if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
-        this.applyProjectWorkspaces(project.id, workspaces);
+        if (!listRequestIsCurrent() || selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
+        this.setState({ workspaceResolution: resolution });
+        // A provider outage is not evidence of removal. Automatic hints and
+        // reconnects must not replace a previously healthy topology with fallback.
+        if (resolution.status === "degraded") {
+          throw new Error(resolution.diagnostics.map(({ message }) => message).join("; ") || "Workspace authority is degraded");
+        }
+        this.applyProjectWorkspaces(project.id, [...resolution.workspaces]);
       } catch (error) {
         this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
       }
@@ -196,8 +222,8 @@ export class WorkspaceController {
   ): Promise<void> {
     if (!workspaceMutationIsCurrent(options)) return;
     const navigation = this.beginNavigationOperation?.(WORKSPACE_SELECTION_SCOPE);
-    const workspaces = await this.refreshProjectWorkspaces(projectId, machineId, options);
-    if (!this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(options)) return;
+    const { workspaces, isCurrent } = await this.refreshProjectWorkspaceList(projectId, machineId, options);
+    if (!isCurrent() || !this.navigationIsCurrent(navigation) || !workspaceMutationIsCurrent(options)) return;
     const state = this.getState();
     if (selectedMachineId(state) !== machineId || state.selectedProject?.id !== projectId || state.selectedWorkspace?.id !== workspaceId) return;
 
@@ -210,6 +236,14 @@ export class WorkspaceController {
     } else if (this.navigationIsCurrent(navigation) && workspaceMutationIsCurrent(options)) {
       this.clearSelection();
     }
+  }
+
+  /** Every list writer shares this counter: only the newest request may publish. */
+  private beginWorkspaceListRequest(projectId: string, machineId: string): () => boolean {
+    const key = machineProjectKey(machineId, projectId);
+    const request = (this.workspaceListRequests.get(key) ?? 0) + 1;
+    this.workspaceListRequests.set(key, request);
+    return () => this.workspaceListRequests.get(key) === request;
   }
 
   private applyProjectWorkspaces(projectId: string, workspaces: Workspace[]): void {

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { ProjectTrustStore } from "../piSdk.js";
 import type { WorkspaceTrustResponse } from "../shared/apiTypes.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";

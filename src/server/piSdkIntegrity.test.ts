@@ -9,13 +9,13 @@ import { describe, expect, it } from "vitest";
 
 describe("Pi SDK package integrity", () => {
   it("loads the pi-coding-agent barrel with the runtime surface PI WEB uses", async () => {
-    const sdk = await importSdk("@earendil-works/pi-coding-agent");
+    const sdk = await importSdk("../piSdk.js");
 
     const version = sdk["VERSION"];
     if (typeof version !== "string") {
       throw new Error("The @earendil-works/pi-coding-agent VERSION export is missing or not a string");
     }
-    expect(version).toMatch(/^1\./);
+    expect(version).not.toBe("");
     for (const name of [
       "AgentSession",
       "createAgentSession",
@@ -60,7 +60,7 @@ async function importSdk(specifier: string): Promise<Record<string, unknown>> {
     loaded = await import(specifier);
   } catch (error) {
     throw new Error(
-      `The ${specifier} package could not be loaded. This usually means the installed Pi SDK release has a packaging defect; check the resolved version against the supported range in package.json.`,
+      `The ${specifier} package could not be loaded. This usually means the installed Pi SDK release has a packaging defect; inspect the selected Pi installation and its SDK exports.`,
       { cause: error },
     );
   }

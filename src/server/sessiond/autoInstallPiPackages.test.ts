@@ -22,7 +22,8 @@ function fakePackageProvider(packages: ConfiguredPiPackage[] = [], getInstalledP
 
 function fakeInstaller(implementation: PiPackageAutoInstaller["install"] = () => Promise.resolve()) {
   const install = vi.fn<PiPackageAutoInstaller["install"]>(implementation);
-  return { installer: { install }, install };
+  const replaceSources = vi.fn<PiPackageAutoInstaller["replaceSources"]>(() => Promise.resolve());
+  return { installer: { install, replaceSources }, install, replaceSources };
 }
 
 function fakeDismissalChecker(isDismissed: PiPackageAutoInstallDismissalChecker["isDismissed"] = () => Promise.resolve(false)): PiPackageAutoInstallDismissalChecker {
@@ -62,16 +63,16 @@ describe("reconcileAutoInstallablePiPackages", () => {
     );
   });
 
-  it("does not install when a configured package already declares the known name", async () => {
+  it("does not change a configured copy at the current shipped path", async () => {
     const { installer, install } = fakeInstaller();
-    const packageProvider = fakePackageProvider([{ source: "npm:@acme/other", scope: "user", installedPath: "/agent/pi-packages/other" }]);
+    const packageProvider = fakePackageProvider([{ source: "npm:@acme/other", scope: "user", installedPath: "/pi-web/dist/pi-packages/relays" }]);
 
     await reconcileAutoInstallablePiPackages({
       profileDir: "/agent",
       packageProvider,
       installer,
       dismissalChecker: fakeDismissalChecker(),
-      identityResolver: fakeIdentityResolver((path) => Promise.resolve(path === "/agent/pi-packages/other" ? KNOWN_PACKAGE_ID : undefined)),
+      identityResolver: fakeIdentityResolver((path) => Promise.resolve(path === "/pi-web/dist/pi-packages/relays" ? KNOWN_PACKAGE_ID : undefined)),
       packageRoot: PACKAGE_ROOT,
       knownPackages: KNOWN_PACKAGES,
     });
@@ -81,7 +82,7 @@ describe("reconcileAutoInstallablePiPackages", () => {
 
   it("resolves installedPath via getInstalledPath when a configured package omits it", async () => {
     const { installer, install } = fakeInstaller();
-    const getInstalledPath = vi.fn<PiPackageProvider["getInstalledPath"]>(() => "/agent/pi-packages/other");
+    const getInstalledPath = vi.fn<PiPackageProvider["getInstalledPath"]>(() => "/pi-web/dist/pi-packages/relays");
     const packageProvider = fakePackageProvider([{ source: "npm:@acme/other", scope: "user" }], getInstalledPath);
 
     await reconcileAutoInstallablePiPackages({
@@ -206,9 +207,10 @@ describe("reconcileAutoInstallablePiPackages", () => {
       });
 
       expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
+      expect(install).toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "workflows"));
     });
 
-    it("does not install through the production defaults once the isolated dismissal store recorded a dismissal", async () => {
+    it("does not reinstall a dismissed package while reconciling other production defaults", async () => {
       const { installer, install } = fakeInstaller();
       const dismissalChecker = new PiPackageDismissalStore(join(tempDir, "pi-package-dismissals.json"));
       await dismissalChecker.dismiss("/agent", KNOWN_PACKAGE_ID);
@@ -221,7 +223,8 @@ describe("reconcileAutoInstallablePiPackages", () => {
         packageRoot: PACKAGE_ROOT,
       });
 
-      expect(install).not.toHaveBeenCalled();
+      expect(install).not.toHaveBeenCalledWith(join(PACKAGE_ROOT, "dist", "pi-packages", "relays"));
+      expect(install).toHaveBeenCalledExactlyOnceWith(join(PACKAGE_ROOT, "dist", "pi-packages", "workflows"));
     });
   });
 });

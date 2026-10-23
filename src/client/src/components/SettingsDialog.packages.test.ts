@@ -70,7 +70,7 @@ describe("settings-dialog Pi package orchestration", () => {
     expect(pluginsSpy.mock.calls).toEqual([[]]);
     expect(getDialogProperty(dialog, "packagesResponse")).toEqual({ packages: updatedPackages });
     expect(getDialogProperty(dialog, "pluginsResponse")).toBe(refreshedPlugins);
-    expect(getDialogProperty(dialog, "packageMessage")).toContain("Reload the browser page separately for PI WEB browser plugin changes");
+    expect(getDialogProperty(dialog, "packageMessage")).toContain("Reload this browser tab for PI WEB browser plugin changes");
     expect(getDialogProperty(dialog, "packageError")).toBe("");
     expect(getDialogProperty(dialog, "saving")).toBe(false);
   });

@@ -1,7 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { Workspace } from "../api";
 import type { KeyValueStorage } from "./sessionStorageMemory";
-import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, SessionStorageWorkspaceSelectionMemory } from "./workspaceSelection";
+import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, shouldShowWorkspaceSelection, SessionStorageWorkspaceSelectionMemory } from "./workspaceSelection";
+
+describe("shouldShowWorkspaceSelection", () => {
+  it("hides folder resolution", () => {
+    expect(shouldShowWorkspaceSelection({ projectId: "p", status: "folder", diagnostics: [], workspaces: [testWorkspace("single")] })).toBe(false);
+  });
+
+  it.each([0, 1, 2])("keeps provider workspace details visible, including a single checked-out branch (count=%s)", (count) => {
+    expect(shouldShowWorkspaceSelection({
+      projectId: "p", status: "provider", ownerPluginId: "git", diagnostics: [],
+      workspaces: Array.from({ length: count }, (_, index) => testWorkspace(String(index))),
+    })).toBe(true);
+  });
+
+  it("keeps loading and degraded resolution visible", () => {
+    expect(shouldShowWorkspaceSelection(undefined)).toBe(true);
+    expect(shouldShowWorkspaceSelection({ projectId: "p", status: "degraded", diagnostics: [], workspaces: [testWorkspace("single")] })).toBe(true);
+  });
+});
 
 describe("selectPreferredWorkspace", () => {
   it("prefers an explicit target workspace", () => {

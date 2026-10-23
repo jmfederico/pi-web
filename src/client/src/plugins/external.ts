@@ -49,7 +49,10 @@ export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest
   const declarations: PiWebPluginRegistrationDeclaration[] = [];
   const registrations: PiWebPluginRegistration[] = [];
   const failures: ExternalPluginLoadFailure[] = [];
-  const selected = manifest.plugins.filter((entry) => options.shouldLoadPlugin?.(entry) !== false);
+  // Bundled defaults are discovered before installed/project plugins, which can
+  // override automatic renderer defaults. Preserve manifest order within each group.
+  const selected = manifest.plugins.filter((entry) => options.shouldLoadPlugin?.(entry) !== false)
+    .sort((left, right) => Number(right.scope === "bundled") - Number(left.scope === "bundled"));
   const loadModule = options.moduleLoader ?? importPluginModule;
   const imports = new Map<PluginManifestEntry, Promise<PiWebPlugin>>();
   const startImport = (entry: PluginManifestEntry): Promise<PiWebPlugin> => {
@@ -59,13 +62,13 @@ export async function loadExternalPlugins(manifestUrl = "pi-web-plugins/manifest
       const moduleUrl = resolvePluginModuleUrl(entry.module, resolvedManifestUrl);
       return parsePluginModule(await loadModule(moduleUrl), moduleUrl);
     })();
-    // Settled in manifest order below; this only prevents an early rejection being reported as unhandled.
+    // Settled in discovery order below; this only prevents an early rejection being reported as unhandled.
     moduleImport.catch(() => undefined);
     imports.set(entry, moduleImport);
     return moduleImport;
   };
   // Download modules in parallel so startup costs one round trip per module depth rather than per
-  // plugin, while still registering in manifest order. A required Terminal loads alone first so its
+  // plugin, while still registering in discovery order. A required Terminal loads alone first so its
   // failure stops before any ordinary plugin module is imported.
   const terminalFirst = manifest.terminalMode === "required" && selected[0]?.id === REQUIRED_TERMINAL_PLUGIN_ID;
   if (!terminalFirst) selected.forEach((entry) => { void startImport(entry); });
@@ -218,15 +221,15 @@ function registrationDeclaration(entry: PluginManifestEntry, machineId: string |
 function parsePluginModule(module: unknown, moduleUrl: string): PiWebPlugin {
   if (!isRecord(module)) throw new Error(`Plugin module ${moduleUrl} did not export an object`);
   const plugin = module["default"];
-  if (isRecord(plugin) && plugin["apiVersion"] !== 4) {
-    throw new Error(`Unsupported browser plugin API version for ${moduleUrl}: ${String(plugin["apiVersion"])} (expected 4)`);
+  if (isRecord(plugin) && plugin["apiVersion"] !== 4 && plugin["apiVersion"] !== 5) {
+    throw new Error(`Unsupported browser plugin API version for ${moduleUrl}: ${String(plugin["apiVersion"])} (expected 4 or 5)`);
   }
   if (!isPiWebPlugin(plugin)) throw new Error(`Plugin module ${moduleUrl} default export is not a PiWebPlugin`);
   return adaptPublicPlugin(plugin);
 }
 
 function isPiWebPlugin(value: unknown): value is PiWebPlugin {
-  return isRecord(value) && value["apiVersion"] === 4 && typeof value["name"] === "string" && typeof value["activate"] === "function";
+  return isRecord(value) && (value["apiVersion"] === 4 || value["apiVersion"] === 5) && typeof value["name"] === "string" && typeof value["activate"] === "function";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

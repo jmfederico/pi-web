@@ -51,7 +51,7 @@
             <a href="machines">Fleet</a>
             <a href="install">Install</a>
             <a href="config">Config</a>
-            <a href="plugins">Plugins</a>
+            <a href="community-plugins">Plugins</a>
             <a href="faq" aria-current="page">FAQ</a>
           </div>
           <div class="nav-actions">
@@ -103,6 +103,7 @@
             <a href="#laptop-or-server">Laptop or server?</a>
             <a href="#plugins">Can I use local plugins?</a>
             <a href="#worktree-list-out-of-date">A worktree I created is missing</a>
+            <a href="#navigation-order">How do I arrange navigation lists?</a>
             <a href="#chat-images">How do chat images load?</a>
             <a href="#sessions-stop">Sessions stop unexpectedly</a>
             <a href="#model-response-terminated">Model responses fail with 'terminated'</a>
@@ -335,13 +336,27 @@
               </p>
             </article>
 
+            <article id="navigation-order" class="faq-item">
+              <h2>How do I arrange projects, workspaces, and sessions?</h2>
+              <p>
+                Open a project or workspace row’s <strong>⋯</strong> menu and choose <strong>Move up</strong> or
+                <strong>Move down</strong>. PI WEB saves the resulting order on that machine, so it survives reloads
+                and is available from other devices. New items follow the saved items.
+              </p>
+              <p>
+                For sessions, choose <strong>Pin session</strong> on a top-level parent. Its entire tree appears
+                under <strong>Pinned</strong>, while other trees retain their normal recent-first order. Use
+                <strong>Move pin up</strong> and <strong>Move pin down</strong> to arrange pinned parents, or
+                <strong>Unpin session</strong> to return a tree to the recent list. Nested sessions cannot be pinned
+                independently; archived sessions remain in the archive.
+              </p>
+            </article>
+
             <article id="chat-images" class="faq-item">
               <h2>How do chat images load?</h2>
               <p>
-                Images stored in a session load separately as they approach the visible chat area, so you can read
-                messages without downloading every screenshot first. Use <strong>Show image</strong> to load one
-                immediately, or <strong>Retry</strong> if a download fails. Images referenced by Markdown outside the
-                workspace still require your approval before loading.
+                Images load as needed while you browse the conversation. Select an image to enlarge it.
+                Markdown images outside the workspace require <strong>Show image</strong> approval before loading.
               </p>
               <p>
                 This changes only what PI WEB sends to the browser; Pi's session files and model inputs stay unchanged.
@@ -370,11 +385,12 @@
             <article id="model-response-terminated" class="faq-item">
               <h2>Model responses fail with 'terminated' after about 5 minutes</h2>
               <p>
-                A session transcript line like <code>(SYSTEM) Model response failed: terminated</code> at roughly
+                On Node.js, a session transcript line like <code>(SYSTEM) Model response failed: terminated</code> at roughly
                 the five-minute mark means a model stream stayed idle longer than the HTTP idle timeout governed by
                 Pi's <code>httpIdleTimeoutMs</code> agent setting (five minutes by default). Slow backends such as a
                 local vLLM server that emits one large final chunk can exceed it.
               </p>
+              <p>Bun session daemons do not apply <code>httpIdleTimeoutMs</code>. Startup logs report this limitation; Bun's native timeout and proxy behavior remain unchanged. Use Node.js if you need this setting. The steps below apply to Node.js.</p>
               <p>
                 Raise or disable the timeout in the active agent profile's <code>settings.json</code>
                 (<code>~/.pi/agent/settings.json</code> by default); the
@@ -442,7 +458,7 @@
           <a href="machines">Fleet</a>
           <a href="install">Install</a>
           <a href="config">Config</a>
-          <a href="plugins">Plugins</a>
+          <a href="community-plugins">Plugins</a>
           <a href="https://github.com/jmfederico/pi-web/issues">Issues</a>
           <span class="version-switcher" role="group" aria-label="Documentation version">
             <a class="version-switcher-option" data-version-option="stable" href="https://pi-web.dev/faq" aria-current="true">Stable</a>

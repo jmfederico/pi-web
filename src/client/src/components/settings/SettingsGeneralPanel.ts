@@ -1,6 +1,10 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, DEFAULT_WORKSPACE_UPLOADS_FOLDER, type PiWebConfigEnvOverrides, type PiWebConfigResponse, type PiWebConfigValues } from "../../api";
+import { uiButtonStyles } from "../ui/controlStyles";
+import { uiFormStyles } from "../ui/formStyles";
+import { uiSettingsStyles } from "../ui/settingsStyles";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 import {
@@ -10,16 +14,22 @@ import {
   gatewayServerDraftFromConfig,
   machineAccessConfigPatchFromDraft,
   machineAccessDraftFromConfig,
+  reconcileConfigDraft,
   type GatewayServerConfigDraft,
   type MachineAccessConfigDraft,
 } from "./settingsConfigDraft";
 
 function generalDescription(targetLabel: string): TemplateResult {
-  return html`Gateway server fields edit this local gateway. File access and upload defaults edit ${targetLabel}.`;
+  return html`Gateway settings apply to this server. File access and uploads apply to ${targetLabel}.`;
 }
 
 @customElement("settings-general-panel")
 export class SettingsGeneralPanel extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) configResponse: PiWebConfigResponse | undefined;
   @property({ attribute: false }) machineConfigResponse: PiWebConfigResponse | undefined;
   @property({ type: Boolean }) loading = false;
@@ -29,6 +39,7 @@ export class SettingsGeneralPanel extends LitElement {
   @property() machineError = "";
   @property() savedMessage = "";
   @property() targetLabel = "selected machine";
+  @property() targetId = "local";
   @property({ attribute: false }) onReload?: () => void | Promise<void>;
   @property({ attribute: false }) onReloadMachine?: () => void | Promise<void>;
   @property({ attribute: false }) onSave?: (config: PiWebConfigValues) => void | Promise<void>;
@@ -38,14 +49,44 @@ export class SettingsGeneralPanel extends LitElement {
   @state() private gatewayLocalError = "";
   @state() private machineLocalError = "";
 
+  private gatewayBaseline = emptyGatewayServerConfigDraft();
+  private machineBaseline = emptyMachineAccessConfigDraft();
+  private gatewaySubmission: { draft: GatewayServerConfigDraft; expected: GatewayServerConfigDraft } | undefined;
+  private machineSubmission: { draft: MachineAccessConfigDraft; expected: MachineAccessConfigDraft } | undefined;
+
+  get hasUnsavedMachineChanges(): boolean {
+    return !draftsEqual(this.machineDraft, this.machineBaseline);
+  }
+
+  discardMachineChanges(): void {
+    this.machineDraft = { ...this.machineBaseline };
+    this.machineLocalError = "";
+  }
+
   protected override willUpdate(changed: PropertyValues<this>): void {
     if (changed.has("configResponse") && this.configResponse !== undefined) {
-      this.gatewayDraft = gatewayServerDraftFromConfig(this.configResponse.config);
-      this.gatewayLocalError = "";
+      const incoming = gatewayServerDraftFromConfig(this.configResponse.config);
+      const submission = this.gatewaySubmission;
+      const acknowledged = submission !== undefined && draftsEqual(incoming, submission.expected);
+      this.gatewayDraft = reconcileConfigDraft(this.gatewayDraft, acknowledged ? submission.draft : this.gatewayBaseline, incoming);
+      this.gatewayBaseline = incoming;
+      if (acknowledged) this.gatewaySubmission = undefined;
     }
-    if (changed.has("machineConfigResponse") && this.machineConfigResponse !== undefined) {
-      this.machineDraft = machineAccessDraftFromConfig(this.machineConfigResponse.config);
+    // Never rebase one machine's edits onto another, including cached panels
+    // whose unavailable transition occurred while they were disconnected.
+    if (changed.has("targetId") || changed.has("targetLabel") || (changed.has("machineConfigResponse") && this.machineConfigResponse === undefined)) {
+      this.machineDraft = emptyMachineAccessConfigDraft();
+      this.machineBaseline = emptyMachineAccessConfigDraft();
+      this.machineSubmission = undefined;
       this.machineLocalError = "";
+    }
+    if ((changed.has("machineConfigResponse") || changed.has("targetId") || changed.has("targetLabel")) && this.machineConfigResponse !== undefined) {
+      const incoming = machineAccessDraftFromConfig(this.machineConfigResponse.config);
+      const submission = this.machineSubmission;
+      const acknowledged = submission !== undefined && draftsEqual(incoming, submission.expected);
+      this.machineDraft = reconcileConfigDraft(this.machineDraft, acknowledged ? submission.draft : this.machineBaseline, incoming);
+      this.machineBaseline = incoming;
+      if (acknowledged) this.machineSubmission = undefined;
     }
   }
 
@@ -54,12 +95,12 @@ export class SettingsGeneralPanel extends LitElement {
       <settings-panel-frame
         heading="General configuration"
         .description=${generalDescription(this.targetLabel)}
-        actionLabel="Reload"
-        .actionDisabled=${this.loading || this.machineLoading}
+        actionLabel="Refresh settings"
+        .actionDisabled=${this.loading || this.machineLoading || this.saving}
         .notices=${this.panelNotices()}
         .onAction=${() => { this.reloadAll(); }}
       >
-        <div class="settings-sections">
+        <div class="settings-sections ui-settings-list">
           <slot name="appearance"></slot>
           ${this.renderGatewayServerSettings()}
           ${this.renderSelectedMachineAccessSettings()}
@@ -71,53 +112,55 @@ export class SettingsGeneralPanel extends LitElement {
   private renderGatewayServerSettings(): TemplateResult {
     const config = this.configResponse;
     return html`
-      <section class="settings-card" aria-label="Gateway server settings">
-        <div class="card-heading">
+      <section class="settings-card ui-settings-section" aria-label="Gateway server settings">
+        <div class="card-heading ui-settings-heading">
           <h3>Gateway server</h3>
-          <p>Host, port, and allowed hosts are saved in the gateway config. Address changes require the web service to restart before the running server binds to the new address.</p>
+          <p>Save host, port, and allowed hosts on this gateway. Restart the web service to apply host or port changes.</p>
         </div>
-        ${config === undefined && this.loading ? html`<div class="loading-card">Loading gateway configuration…</div>` : html`
-          <div class="config-path-card">
+        ${config === undefined ? html`<div class="loading-card">${this.loading ? "Loading gateway configuration…" : "Gateway settings are unavailable. Choose Refresh settings to try again."}</div>` : html`
+          <div class="config-path-card ui-settings-path">
             <span>Gateway config file</span>
-            <code>${config?.path ?? "Unknown"}</code>
-            <small>${config?.exists === true ? "Existing file" : "This file will be created on save"}</small>
+            <code>${config.path}</code>
+            <small>${config.exists ? "Existing file" : "This file will be created on save"}</small>
           </div>
-          <form class="config-form" @submit=${(event: Event) => { void this.saveGatewayConfig(event); }}>
-            <label class="field">
+          <form class="config-form ui-settings-fields" @submit=${(event: Event) => { void this.saveGatewayConfig(event); }}>
+            <label class="field ui-form-field">
               <span class="field-heading">
                 <span>Host</span>
                 ${this.renderOverrideBadge("host")}
               </span>
-              <input .value=${this.gatewayDraft.host} placeholder="127.0.0.1" autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ host: inputValue(event) }); }}>
+              <input class="ui-input" .value=${this.gatewayDraft.host} placeholder="127.0.0.1" autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ host: inputValue(event) }); }}>
               <small>Address the web server should bind to. Leave empty to use PI WEB's default.</small>
             </label>
 
-            <label class="field">
+            <label class="field ui-form-field">
               <span class="field-heading">
                 <span>Port</span>
                 ${this.renderOverrideBadge("port")}
               </span>
-              <input .value=${this.gatewayDraft.port} inputmode="numeric" pattern="[0-9]*" placeholder="8504" autocomplete="off" @input=${(event: Event) => { this.updateGatewayDraft({ port: inputValue(event) }); }}>
+              <input class="ui-input" .value=${this.gatewayDraft.port} inputmode="numeric" pattern="[0-9]*" placeholder="8504" autocomplete="off" @input=${(event: Event) => { this.updateGatewayDraft({ port: inputValue(event) }); }}>
               <small>TCP port from 1 to 65535. Leave empty to use PI WEB's default.</small>
             </label>
 
-            <div class="field">
+            <div class="field ui-form-field">
               <span class="field-heading">
-                <span>Allowed hosts</span>
+                <label for="allowed-hosts-mode">Allowed hosts</label>
                 ${this.renderOverrideBadge("allowedHosts")}
               </span>
-              <select .value=${this.gatewayDraft.allowedHostsMode} @change=${(event: Event) => { this.updateGatewayDraft({ allowedHostsMode: selectValue(event) === "all" ? "all" : "list" }); }}>
+              <select class="ui-input" id="allowed-hosts-mode" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsMode} @change=${(event: Event) => { this.updateGatewayDraft({ allowedHostsMode: selectValue(event) === "all" ? "all" : "list" }); }}>
                 <option value="list">Only listed hosts</option>
                 <option value="all">Allow every host</option>
               </select>
-              <textarea .value=${this.gatewayDraft.allowedHostsText} ?disabled=${this.gatewayDraft.allowedHostsMode === "all"} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ allowedHostsText: textAreaValue(event) }); }}></textarea>
-              <small>Enter one host per line, or choose “Allow every host” to write <code>true</code>.</small>
+              <label for="allowed-hosts-list">Host list</label>
+              <textarea class="ui-input" id="allowed-hosts-list" aria-describedby="allowed-hosts-help" .value=${this.gatewayDraft.allowedHostsText} ?disabled=${this.gatewayDraft.allowedHostsMode === "all"} rows="4" placeholder="example.local&#10;192.168.1.20" spellcheck="false" @input=${(event: Event) => { this.updateGatewayDraft({ allowedHostsText: textAreaValue(event) }); }}></textarea>
+              <small id="allowed-hosts-help">Enter one host per line. “Allow every host” disables the host restriction.</small>
             </div>
 
             ${this.renderGatewayEffectiveConfig()}
 
-            <footer class="form-actions">
-              <button class="primary" ?disabled=${this.loading || this.saving}>${this.saving ? "Saving…" : "Save gateway server config"}</button>
+            <footer class="form-actions ui-settings-actions">
+              ${draftsEqual(this.gatewayDraft, this.gatewayBaseline) ? null : html`<small>Unsaved changes</small>`}
+              <button class="primary ui-button ui-button--action ui-button--primary" ?disabled=${this.loading || this.saving}>${this.saving ? "Saving…" : "Save gateway server config"}</button>
             </footer>
           </form>
         `}
@@ -128,47 +171,48 @@ export class SettingsGeneralPanel extends LitElement {
   private renderSelectedMachineAccessSettings(): TemplateResult {
     const config = this.machineConfigResponse;
     return html`
-      <section class="settings-card" aria-label="Selected machine file access and upload settings">
-        <div class="card-heading">
+      <section class="settings-card ui-settings-section" aria-label="Selected machine file access and upload settings">
+        <div class="card-heading ui-settings-heading">
           <h3>Selected machine file access and uploads</h3>
-          <p>External filesystem roots and upload defaults are saved on ${this.targetLabel}.</p>
+          <p>Save file access and upload defaults on ${this.targetLabel}.</p>
         </div>
         ${this.renderMachineMessages()}
-        ${config === undefined ? html`<div class="loading-card">${this.machineLoading ? "Loading selected-machine file access config…" : "Selected-machine file access config is unavailable. Reload before saving file/upload settings."}</div>` : html`
-          <div class="config-path-card">
+        ${config === undefined ? html`<div class="loading-card">${this.machineLoading ? "Loading selected-machine file access config…" : "File access settings are unavailable. Choose Refresh settings to try again."}</div>` : html`
+          <div class="config-path-card ui-settings-path">
             <span>Selected machine config file</span>
             <code>${config.path}</code>
             <small>${config.exists ? "Existing file" : "This file will be created on save"}</small>
           </div>
-          <form class="config-form" @submit=${(event: Event) => { void this.saveMachineAccessConfig(event); }}>
-            <label class="field">
+          <form class="config-form ui-settings-fields" @submit=${(event: Event) => { void this.saveMachineAccessConfig(event); }}>
+            <label class="field ui-form-field">
               <span class="field-heading">
                 <span>External filesystem roots</span>
               </span>
-              <textarea .value=${this.machineDraft.allowedPathsText} rows="4" placeholder="~/SDKs&#10;/opt/reference" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ allowedPathsText: textAreaValue(event) }); }}></textarea>
+              <textarea class="ui-input" .value=${this.machineDraft.allowedPathsText} rows="4" placeholder="~/SDKs&#10;/opt/reference" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ allowedPathsText: textAreaValue(event) }); }}></textarea>
               <small>Allowlist for absolute <code>@</code> completions and file explorer reads outside a workspace on ${this.targetLabel}. Enter one absolute path, Windows absolute path, or <code>~</code>-prefixed path per line. Leave empty to deny external paths by default.</small>
             </label>
 
-            <label class="field">
+            <label class="field ui-form-field">
               <span class="field-heading">
                 <span>Default upload folder</span>
               </span>
-              <input .value=${this.machineDraft.uploadDefaultFolder} placeholder=${DEFAULT_WORKSPACE_UPLOADS_FOLDER} autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ uploadDefaultFolder: inputValue(event) }); }}>
+              <input class="ui-input" .value=${this.machineDraft.uploadDefaultFolder} placeholder=${DEFAULT_WORKSPACE_UPLOADS_FOLDER} autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ uploadDefaultFolder: inputValue(event) }); }}>
               <small>Workspace-relative folder for manual file uploads on ${this.targetLabel}. Leave empty to use PI WEB's default <code>${DEFAULT_WORKSPACE_UPLOADS_FOLDER}</code>.</small>
             </label>
 
-            <label class="field">
+            <label class="field ui-form-field">
               <span class="field-heading">
                 <span>Default attachments folder</span>
               </span>
-              <input .value=${this.machineDraft.attachmentDefaultFolder} placeholder=${DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER} autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ attachmentDefaultFolder: inputValue(event) }); }}>
+              <input class="ui-input" .value=${this.machineDraft.attachmentDefaultFolder} placeholder=${DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER} autocomplete="off" spellcheck="false" @input=${(event: Event) => { this.updateMachineDraft({ attachmentDefaultFolder: inputValue(event) }); }}>
               <small>Workspace-relative folder for prompt attachments saved into the workspace on ${this.targetLabel}. Leave empty to use PI WEB's default <code>${DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER}</code>.</small>
             </label>
 
             ${this.renderMachineEffectiveConfig()}
 
-            <footer class="form-actions">
-              <button class="primary" ?disabled=${this.machineLoading || this.saving}>${this.saving ? "Saving…" : "Save file/upload config"}</button>
+            <footer class="form-actions ui-settings-actions">
+              ${draftsEqual(this.machineDraft, this.machineBaseline) ? null : html`<small>Unsaved changes</small>`}
+              <button class="primary ui-button ui-button--action ui-button--primary" ?disabled=${this.machineLoading || this.saving}>${this.saving ? "Saving…" : "Save file/upload config"}</button>
             </footer>
           </form>
         `}
@@ -187,7 +231,7 @@ export class SettingsGeneralPanel extends LitElement {
   private renderMachineMessages(): TemplateResult | null {
     const error = this.machineLocalError || this.machineError;
     if (error === "") return null;
-    return html`<div class="message error-message">${error}</div>`;
+    return html`<div class="message error-message ui-form-error" role="alert">${error}</div>`;
   }
 
   private renderOverrideBadge(key: keyof PiWebConfigEnvOverrides): TemplateResult | null {
@@ -198,8 +242,9 @@ export class SettingsGeneralPanel extends LitElement {
   private renderGatewayEffectiveConfig(): TemplateResult {
     const effective = this.configResponse?.effectiveConfig ?? {};
     return html`
-      <section class="effective-card" aria-label="Effective gateway configuration summary">
-        <h3>Effective gateway settings after environment overrides</h3>
+      <section class="effective-card ui-settings-summary" aria-label="Gateway settings after environment overrides">
+        <h3>Gateway settings after overrides</h3>
+        <p>Environment overrides take priority. Host and port apply after the web service restarts; these values do not verify the running address.</p>
         <dl>
           <div><dt>Host</dt><dd>${effective.host ?? html`<span class="muted">127.0.0.1 default</span>`}</dd></div>
           <div><dt>Port</dt><dd>${effective.port ?? html`<span class="muted">8504 default</span>`}</dd></div>
@@ -212,7 +257,7 @@ export class SettingsGeneralPanel extends LitElement {
   private renderMachineEffectiveConfig(): TemplateResult {
     const effective = this.machineConfigResponse?.effectiveConfig ?? {};
     return html`
-      <section class="effective-card" aria-label="Effective selected machine file access and upload summary">
+      <section class="effective-card ui-settings-summary" aria-label="Effective selected machine file access and upload summary">
         <h3>Effective selected-machine settings</h3>
         <dl>
           <div><dt>External roots</dt><dd>${formatAllowedPaths(effective.pathAccess?.allowedPaths)}</dd></div>
@@ -230,9 +275,18 @@ export class SettingsGeneralPanel extends LitElement {
 
   private async saveGatewayConfig(event: Event): Promise<void> {
     event.preventDefault();
+    if (this.configResponse === undefined || this.loading || this.saving || this.onSave === undefined) return;
     this.gatewayLocalError = "";
     try {
-      await this.onSave?.(gatewayServerConfigFromDraft(this.gatewayDraft, this.configResponse?.config ?? {}));
+      const config = gatewayServerConfigFromDraft(this.gatewayDraft, this.configResponse.config);
+      const submission = { draft: this.gatewayDraft, expected: gatewayServerDraftFromConfig(config) };
+      this.gatewaySubmission = submission;
+      try {
+        await this.onSave(config);
+        await this.updateComplete;
+      } finally {
+        if (this.gatewaySubmission === submission) this.gatewaySubmission = undefined;
+      }
     } catch (error) {
       this.gatewayLocalError = errorMessage(error);
     }
@@ -240,11 +294,21 @@ export class SettingsGeneralPanel extends LitElement {
 
   private async saveMachineAccessConfig(event: Event): Promise<void> {
     event.preventDefault();
+    if (this.machineConfigResponse === undefined || this.machineLoading || this.saving || this.onSaveMachineConfig === undefined) return;
     this.machineLocalError = "";
+    const target = this.targetId;
     try {
-      await this.onSaveMachineConfig?.(machineAccessConfigPatchFromDraft(this.machineDraft));
+      const config = machineAccessConfigPatchFromDraft(this.machineDraft);
+      const submission = { draft: this.machineDraft, expected: machineAccessDraftFromConfig(config) };
+      this.machineSubmission = submission;
+      try {
+        await this.onSaveMachineConfig(config);
+        await this.updateComplete;
+      } finally {
+        if (this.machineSubmission === submission) this.machineSubmission = undefined;
+      }
     } catch (error) {
-      this.machineLocalError = errorMessage(error);
+      if (this.targetId === target) this.machineLocalError = errorMessage(error);
     }
   }
 
@@ -258,46 +322,31 @@ export class SettingsGeneralPanel extends LitElement {
     this.machineLocalError = "";
   }
 
-  static override styles = css`
+  static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, css`
+    @layer pi-web-base {
     :host { display: block; }
-    .card-heading { display: grid; gap: 6px; min-width: 0; }
     h3, p { margin: 0; }
     h3 { font-size: 13px; line-height: 1.3; }
     p { color: var(--pi-muted); line-height: 1.45; }
-    button, input, select, textarea { font: inherit; }
-    button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: not-allowed; }
-    .settings-sections { display: grid; gap: 14px; }
-    .settings-card, .message, .loading-card, .config-path-card, .effective-card { border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); padding: 12px; }
-    .settings-card { display: grid; gap: 14px; }
-    .message { margin-bottom: 12px; }
-    .settings-card .message { margin-bottom: 0; }
-    .error-message { border-color: var(--pi-danger); color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-surface)); }
     .loading-card { color: var(--pi-muted); }
-    .config-path-card { display: grid; gap: 5px; }
-    .config-path-card span, .field-heading, dt { color: var(--pi-muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
-    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+    .config-path-card span, .field-heading, dt { color: var(--pi-muted); font-size: 12px; font-weight: 600; }
+    code { border: 1px solid var(--pi-border-muted); border-radius: 5px; background: var(--pi-bg); padding: 1px 4px; color: var(--pi-text); font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
     .config-path-card small, .field small { color: var(--pi-muted); }
-    .config-form { display: grid; gap: 14px; }
-    .field { display: grid; gap: 7px; }
     .field-heading { display: flex; align-items: center; gap: 8px; }
-    input, select, textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); padding: 9px 10px; outline: none; font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); }
-    input:focus, select:focus, textarea:focus { border-color: var(--pi-accent); box-shadow: 0 0 0 1px var(--pi-accent-border); }
-    textarea { resize: vertical; min-height: 94px; font-family: var(--pi-control-monospace-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+    textarea { resize: vertical; min-height: 94px; --ui-input-font-family: var(--pi-control-monospace-font-family, var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)); }
     textarea:disabled { opacity: .55; }
     .override-badge { border: 1px solid var(--pi-warning-border); border-radius: 999px; color: var(--pi-warning); background: var(--pi-warning-surface); padding: 2px 7px; font-size: 11px; font-weight: 600; text-transform: none; }
-    .effective-card { display: grid; gap: 10px; }
     .effective-card dl { display: grid; gap: 8px; margin: 0; }
     .effective-card dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 12px; align-items: baseline; }
     dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
     .muted { color: var(--pi-muted); }
-    .form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
-    .primary { border-color: var(--pi-accent); background: var(--pi-selection-bg); color: var(--pi-text-bright); }
+    .form-actions small { align-self: center; color: var(--pi-muted); padding-inline-end: 12px; }
 
     @media (max-width: 760px) {
       .effective-card dl > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
     }
-  `;
+    }
+  `];
 }
 
 function formatAllowedHosts(value: PiWebConfigValues["allowedHosts"]): string | TemplateResult {
@@ -321,6 +370,13 @@ function selectValue(event: Event): string {
 
 function textAreaValue(event: Event): string {
   return event.target instanceof HTMLTextAreaElement ? event.target.value : "";
+}
+
+function draftsEqual<T extends object>(left: T, right: T): boolean {
+  for (const key in left) {
+    if (left[key] !== right[key]) return false;
+  }
+  return true;
 }
 
 function errorMessage(error: unknown): string {

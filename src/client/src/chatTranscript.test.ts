@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserOutcome } from "../../shared/apiTypes";
+import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserOutcome, type AskUserRequest } from "../../shared/apiTypes";
 import { groupChatMessages } from "./chatGroups";
 import { normalizeMessages, textMessage } from "./chatMessages";
+import { openTranscriptQuestion } from "./chatQuestions";
 import { applyTranscriptEvent, seedStreamingPartial } from "./chatTranscript";
 import type { ChatLine } from "./components/shared";
 
@@ -27,6 +28,11 @@ const askUserOutcome: AskUserOutcome = {
   summary: "Answered 1 of 2; unanswered: region",
 };
 
+const askUserRequest: AskUserRequest = {
+  askId: askUserOutcome.askId, askedAt: askUserOutcome.askedAt,
+  questions: askUserOutcome.questions.map((record) => record.question),
+};
+
 const supersededAskUserOutcome: AskUserOutcome = {
   ...askUserOutcome,
   reason: "superseded",
@@ -47,6 +53,90 @@ const finalAssistant = {
   model: "model",
 };
 
+describe("assistant stream identity", () => {
+  const start = { ...finalAssistant, streamId: "stream-1", content: [] };
+  const toolStart = { type: "tool.start" as const, toolCallId: "call-1", toolName: "bash", summary: "pwd" };
+
+  it.each(["assistant.delta", "assistant.thinking.delta"] as const)("reconciles %s in place across an intervening tool", (type) => {
+    let messages = applyTranscriptEvent([], { type: "assistant.start", message: start }) ?? [];
+    messages = applyTranscriptEvent(messages, { type, streamId: start.streamId, text: "first" }) ?? messages;
+    expect(messages[0]?.meta).toEqual(normalizeMessages([finalAssistant])[0]?.meta);
+    messages = applyTranscriptEvent(messages, toolStart) ?? messages;
+    messages = applyTranscriptEvent(messages, { type, streamId: start.streamId, text: " second" }) ?? messages;
+    expect(messages[0]?.parts).toEqual([{ type: type === "assistant.delta" ? "text" : "thinking", text: "first second" }]);
+    const final = { ...start, content: type === "assistant.delta"
+      ? [{ type: "text", text: "authoritative" }]
+      : [{ type: "thinking", thinking: "authoritative" }] };
+    const tool = messages[1];
+    messages = applyTranscriptEvent(messages, { type: "message.end", message: final }) ?? messages;
+    expect(messages).toEqual([...normalizeMessages([final]), tool]);
+    expect(applyTranscriptEvent(messages, { type: "message.end", message: final })).toEqual(messages);
+  });
+
+  it("keeps separate assistant messages distinct even with identical text and no tool between them", () => {
+    const first = { ...start, content: [{ type: "text", text: "same" }] };
+    let messages = applyTranscriptEvent([], { type: "message.end", message: first }) ?? [];
+    const second = { ...start, streamId: "stream-2" };
+    messages = applyTranscriptEvent(messages, { type: "assistant.start", message: second }) ?? messages;
+    messages = applyTranscriptEvent(messages, { type: "assistant.delta", streamId: second.streamId, text: "same" }) ?? messages;
+    const final = { ...second, content: first.content };
+    messages = applyTranscriptEvent(messages, { type: "message.end", message: final }) ?? messages;
+    expect(messages).toEqual(normalizeMessages([first, final]));
+  });
+
+  it("retains snapshot identity across tool-call projection, streaming, and finalization", () => {
+    const partial = { ...start, content: [
+      { type: "text", text: "before" },
+      { type: "toolCall", id: "call-1", name: "bash", arguments: { command: "pwd" } },
+    ] };
+    let messages = seedStreamingPartial([], partial);
+    messages = applyTranscriptEvent(messages, { type: "assistant.delta", streamId: start.streamId, text: " after" }) ?? messages;
+    expect(messages[0]?.parts).toEqual([{ type: "text", text: "before after" }]);
+    const final = { ...start, content: [{ type: "text", text: "before after" }, partial.content[1]] };
+    messages = applyTranscriptEvent(messages, { type: "message.end", message: final }) ?? messages;
+    expect(messages).toEqual(normalizeMessages([final]));
+  });
+
+  it("keeps identity when joining an empty stream or a tool-call-only partial", () => {
+    for (const content of [[], [{ type: "toolCall", id: "call-1", name: "bash", arguments: {} }]]) {
+      let messages = seedStreamingPartial([], { ...start, content });
+      messages = applyTranscriptEvent(messages, { ...toolStart, toolCallId: "call-2" }) ?? messages;
+      messages = applyTranscriptEvent(messages, { type: "assistant.delta", streamId: start.streamId, text: "answer" }) ?? messages;
+      expect(messages.filter((line) => line.role === "assistant")).toEqual([
+        { ...normalizeMessages([{ ...start, content: [{ type: "text", text: "answer" }] }])[0] },
+      ]);
+    }
+  });
+
+  it("removes an empty provisional assistant on finalization without removing its tool", () => {
+    let messages = applyTranscriptEvent([], { type: "assistant.start", message: start }) ?? [];
+    messages = applyTranscriptEvent(messages, toolStart) ?? messages;
+    const tool = messages[1];
+    expect(applyTranscriptEvent(messages, { type: "message.end", message: start })).toEqual([tool]);
+    const toolOnlyFinal = { ...start, content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: {} }] };
+    expect(applyTranscriptEvent(messages, { type: "message.end", message: toolOnlyFinal })).toEqual([tool]);
+  });
+
+  it.each([true, false])("reconciles identified skill reads without duplicating the streamed skill row (thinking: %s)", (thinking) => {
+    const parts = thinking ? [{ type: "thinking", thinking: "load skill" }] : [];
+    const final = { ...start, content: [...parts,
+      { type: "toolCall", id: "skill-1", name: "read", arguments: { path: "/skills/playwright/SKILL.md" } },
+    ] };
+    let messages = applyTranscriptEvent([], { type: "assistant.start", message: start }) ?? [];
+    if (thinking) messages = applyTranscriptEvent(messages, { type: "assistant.thinking.delta", streamId: start.streamId, text: "load skill" }) ?? messages;
+    messages = applyTranscriptEvent(messages, { type: "tool.start", toolName: "read", toolCallId: "skill-1", summary: "read skill", args: { path: "/skills/playwright/SKILL.md" } }) ?? messages;
+    messages = applyTranscriptEvent(messages, { type: "message.end", message: final }) ?? messages;
+    expect(messages).toEqual(normalizeMessages([final]));
+    expect(applyTranscriptEvent(messages, { type: "message.end", message: final })).toEqual(messages);
+  });
+
+  it("does not append an identified delta to a neighboring message if start was unavailable", () => {
+    const history = normalizeMessages([finalAssistant]);
+    const messages = applyTranscriptEvent(history, { type: "assistant.delta", streamId: "new", text: "new" });
+    expect(messages).toEqual([...history, { role: "assistant", streamId: "new", parts: [{ type: "text", text: "new" }] }]);
+  });
+});
+
 describe("applyTranscriptEvent", () => {
   it("streams thinking and text into one assistant message", () => {
     let messages: ChatLine[] = [];
@@ -65,6 +155,7 @@ describe("applyTranscriptEvent", () => {
       customType: ASK_USER_ANSWERS_CUSTOM_TYPE,
       content: "The user submitted answers to your questions.",
       details: askUserOutcome,
+      entryId: "response-entry",
     };
     const hydrated = normalizeMessages([rawMessage]);
     const live = applyTranscriptEvent([], { type: "message.end", message: rawMessage });
@@ -73,11 +164,12 @@ describe("applyTranscriptEvent", () => {
     expect(live).toEqual([{
       role: "system",
       parts: [{ type: "askUserRecord", outcome: askUserOutcome }],
+      entryId: "response-entry",
     }]);
     expect(applyTranscriptEvent(live ?? [], { type: "message.end", message: rawMessage })).toEqual(live);
 
     const nextOutcome = { ...askUserOutcome, askId: "ask-2" };
-    const nextRawMessage = { ...rawMessage, details: nextOutcome };
+    const nextRawMessage = { ...rawMessage, entryId: "next-response-entry", details: nextOutcome };
     expect(applyTranscriptEvent(live ?? [], { type: "message.end", message: nextRawMessage })).toEqual([
       ...hydrated,
       ...normalizeMessages([nextRawMessage]),
@@ -116,6 +208,155 @@ describe("applyTranscriptEvent", () => {
     expect(live).toEqual(hydrated);
     expect(live.filter((line) => line.parts.some((part) => part.type === "askUserRecord"))).toHaveLength(1);
     expect(groupChatMessages(live).map((group) => group.kind)).toEqual(["group", "message"]);
+  });
+
+  it("reconciles tool.end and message.end into one durable question, matching replay", () => {
+    const args = { questions: askUserRequest.questions };
+    const content = [{ type: "text", text: "Questions posted" }];
+    const details = { ask: askUserRequest };
+    const finalResult = { role: "toolResult", toolName: "ask_user", toolCallId: "ask-call", content, details, isError: false,
+      entryId: "question-entry", timestamp: askUserRequest.askedAt };
+    let live = applyTranscriptEvent([], { type: "tool.start", toolName: "ask_user", toolCallId: "ask-call", summary: "", args }) ?? [];
+    live = applyTranscriptEvent(live, { type: "message.append", message: { role: "user", content: "Intervening conversation" } }) ?? live;
+    live = applyTranscriptEvent(live, { type: "tool.end", toolName: "ask_user", toolCallId: "ask-call", text: "Questions posted", content, details, isError: false }) ?? live;
+    expect(live.flatMap((line) => line.parts).some((part) => part.type === "askUserQuestion")).toBe(false);
+    live = applyTranscriptEvent(live, { type: "message.end", message: finalResult }) ?? live;
+    expect(live).toEqual(normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: args }] },
+      { role: "user", content: "Intervening conversation" }, finalResult,
+    ]));
+    expect(live.flatMap((line) => line.parts).filter((part) => part.type === "askUserQuestion")).toHaveLength(1);
+
+    const later = applyTranscriptEvent(live, { type: "assistant.delta", text: "Continue" }) ?? live;
+    const reconciled = applyTranscriptEvent(later, { type: "message.end", message: finalResult }) ?? later;
+    expect(reconciled.at(-1)).toEqual(textMessage("assistant", "Continue"));
+    expect(openTranscriptQuestion(reconciled, { historyReady: true, writable: true, messageEnd: 4, messageTotal: 4 })).toBeUndefined();
+  });
+
+  it.each([
+    { details: {}, isError: false },
+    { details: undefined, isError: false },
+    { details: { ask: { askId: "malformed" } }, isError: false },
+    { details: { ask: askUserRequest }, isError: true },
+  ])("uses the final message when an extension replaces provisional ask details (%j)", (replacement) => {
+    const args = { questions: askUserRequest.questions };
+    const content = [{ type: "text", text: "Questions posted" }];
+    const finalResult = { role: "toolResult", toolName: "ask_user", toolCallId: "ask-call", content, ...replacement };
+    let live = applyTranscriptEvent([], { type: "tool.start", toolName: "ask_user", toolCallId: "ask-call", summary: "", args }) ?? [];
+    live = applyTranscriptEvent(live, { type: "tool.end", toolName: "ask_user", toolCallId: "ask-call", text: "Questions posted", content,
+      details: { ask: askUserRequest, superseded: supersededAskUserOutcome }, isError: false }) ?? live;
+    live = applyTranscriptEvent(live, { type: "message.end", message: finalResult }) ?? live;
+
+    expect(live).toEqual(normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: args }] }, finalResult,
+    ]));
+    expect(live.flatMap((line) => line.parts).some((part) => part.type === "askUserQuestion" || part.type === "askUserRecord")).toBe(false);
+  });
+
+  it.each([{ content: [] }, { content: "" }, { content: [{ type: "text", text: "" }] }])("keeps an empty result after a question closed in live and replay (%j)", ({ content }) => {
+    const args = { command: "true" };
+    const call = { role: "assistant", content: [{ type: "toolCall", id: "other", name: "bash", arguments: args }] };
+    const question = { role: "toolResult", toolName: "ask_user", content: [], details: { ask: askUserRequest }, isError: false };
+    const result = { role: "toolResult", toolName: "bash", toolCallId: "other", content, isError: false, entryId: "empty-result" };
+    const tail = { historyReady: true, writable: true, messageEnd: 3, messageTotal: 3 };
+    // Both a coalesced result and a page starting after its call must retain chronology.
+    for (const history of [[call, question], [question]]) {
+      const before = normalizeMessages(history);
+      expect(openTranscriptQuestion(before, tail)).toEqual(askUserRequest);
+      const replay = normalizeMessages([...history, result]);
+      expect(openTranscriptQuestion(replay, tail)).toBeUndefined();
+      for (const type of ["message.end", "message.append"] as const) {
+        const live = applyTranscriptEvent(before, { type, message: result }) ?? before;
+        expect(openTranscriptQuestion(live, tail)).toBeUndefined();
+        expect(live.at(-1)?.entryId).toBe("empty-result");
+        // Without the call, live uses an execution card and replay a result card.
+        if (history.length === 2) expect(live).toEqual(replay);
+      }
+    }
+  });
+
+  it("does not fragment later technical groups merely because history contains a question", () => {
+    const question = { role: "toolResult", toolName: "ask_user", content: [], details: { ask: askUserRequest }, isError: false };
+    const continuation = { role: "user", content: "Continue" };
+    const args = { command: "true" };
+    const call = (id: string) => ({ role: "assistant", content: [{ type: "toolCall", id, name: "bash", arguments: args }] });
+    const result = (id: string) => ({ role: "toolResult", toolName: "bash", toolCallId: id, content: [], isError: false });
+    let live = normalizeMessages([question, continuation]);
+    for (const id of ["first", "second"]) {
+      live = applyTranscriptEvent(live, { type: "tool.start", toolName: "bash", toolCallId: id, summary: "", args }) ?? live;
+      live = applyTranscriptEvent(live, { type: "tool.end", toolName: "bash", toolCallId: id, text: "", content: [], isError: false }) ?? live;
+      live = applyTranscriptEvent(live, { type: "message.end", message: result(id) }) ?? live;
+    }
+    const replay = normalizeMessages([question, continuation, call("first"), result("first"), call("second"), result("second")]);
+    expect(live).toEqual(replay);
+    expect(live.flatMap((line) => line.parts).some((part) => part.type === "toolResultBoundary")).toBe(false);
+    const groups = groupChatMessages(live);
+    expect(groups.map((group) => group.kind)).toEqual(["group", "message", "message", "group"]);
+    expect(groups.at(-1)).toMatchObject({ kind: "group", messages: [{ message: { role: "tool" } }, { message: { role: "tool" } }] });
+  });
+
+  it("retains a later tool result's position when updating a call before a question", () => {
+    const args = { command: "echo later" };
+    let live = applyTranscriptEvent([], { type: "tool.start", toolName: "bash", toolCallId: "other", summary: "", args }) ?? [];
+    const question = { role: "toolResult", toolName: "ask_user", toolCallId: "ask-call", content: [{ type: "text", text: "Questions posted" }], details: { ask: askUserRequest }, isError: false };
+    // A tool call can be present in a stream snapshot before its finalized result.
+    live = seedStreamingPartial(live, { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: { questions: askUserRequest.questions } }] });
+    live = applyTranscriptEvent(live, { type: "message.end", message: question }) ?? live;
+    const result = { role: "toolResult", toolName: "bash", toolCallId: "other", content: [{ type: "text", text: "later" }], isError: false, entryId: "later-result" };
+    live = applyTranscriptEvent(live, { type: "tool.end", toolName: "bash", toolCallId: "other", text: "later", content: result.content, isError: false }) ?? live;
+    live = applyTranscriptEvent(live, { type: "message.end", message: result }) ?? live;
+    expect(live).toEqual(normalizeMessages([
+      { role: "assistant", content: [{ type: "toolCall", id: "other", name: "bash", arguments: args }] },
+      { role: "assistant", content: [{ type: "toolCall", id: "ask-call", name: "ask_user", arguments: { questions: askUserRequest.questions } }] }, question, result,
+    ]));
+    expect(openTranscriptQuestion(live, { historyReady: true, writable: true, messageEnd: 4, messageTotal: 4 })).toBeUndefined();
+  });
+
+  it.each([undefined, "stream-1"])("closes a question for an empty streaming partial and finalized invisible entry (identity: %s)", (streamId) => {
+    const question: ChatLine = { role: "tool", parts: [{ type: "askUserQuestion", ask: askUserRequest }] };
+    const emptyAssistant = { role: "assistant", content: [], entryId: "later-empty", ...(streamId === undefined ? {} : { streamId }) };
+    const tail = { historyReady: true, writable: true, messageEnd: 2, messageTotal: 2 };
+    const history = normalizeMessages([question, emptyAssistant]);
+    expect(openTranscriptQuestion(history, tail)).toBeUndefined();
+    expect(seedStreamingPartial([question], emptyAssistant)).toEqual(history);
+    expect(applyTranscriptEvent([question], { type: "message.end", message: emptyAssistant })).toEqual(history);
+    expect(applyTranscriptEvent([question], { type: "message.append", message: emptyAssistant })).toEqual(history);
+    if (streamId !== undefined) {
+      const started = applyTranscriptEvent([question], { type: "assistant.start", message: emptyAssistant }) ?? [];
+      const finalized = applyTranscriptEvent(started, { type: "message.end", message: emptyAssistant }) ?? [];
+      expect(finalized).toEqual(history);
+      expect(openTranscriptQuestion(finalized, tail)).toBeUndefined();
+    }
+    expect(groupChatMessages(history).map((group) => group.kind)).toEqual(["message"]);
+  });
+
+  it("never projects failed live ask payloads or in-progress tool arguments as questions", () => {
+    const details = { ask: askUserRequest };
+    let live = applyTranscriptEvent([], { type: "tool.start", toolName: "ask_user", toolCallId: "ask-call", summary: "", args: { questions: askUserRequest.questions } }) ?? [];
+    live = applyTranscriptEvent(live, { type: "tool.update", toolName: "ask_user", toolCallId: "ask-call", text: "partial", details }) ?? live;
+    live = applyTranscriptEvent(live, { type: "tool.end", toolName: "ask_user", toolCallId: "ask-call", text: "failed", details, isError: true }) ?? live;
+    expect(live.flatMap((line) => line.parts).some((part) => part.type === "askUserQuestion")).toBe(false);
+    expect(live[0]?.parts[0]).toMatchObject({ type: "toolExecution", status: "error", resultText: "failed" });
+  });
+
+  it("reconciles delivery of one response but keeps two replies to the same question", () => {
+    const response = { role: "custom", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, content: "Answers sent", details: askUserOutcome, entryId: "answer-1" };
+    let live = applyTranscriptEvent([], { type: "message.append", message: response }) ?? [];
+    live = applyTranscriptEvent(live, { type: "message.end", message: response }) ?? live;
+    const another = { ...response, entryId: "answer-2", details: { ...askUserOutcome, closedAt: "2026-07-20T10:06:00.000Z" } };
+    live = applyTranscriptEvent(live, { type: "message.end", message: another }) ?? live;
+    const identicalNewEntry = { ...another, entryId: "answer-3" };
+    live = applyTranscriptEvent(live, { type: "message.end", message: identicalNewEntry }) ?? live;
+    expect(live).toEqual(normalizeMessages([response, another, identicalNewEntry]));
+    expect(live).toHaveLength(3);
+  });
+
+  it("preserves equal human responses when live messages have no durable entry IDs", () => {
+    const response = { role: "custom", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, content: "Answers sent", details: askUserOutcome };
+    let live = applyTranscriptEvent([], { type: "message.end", message: response }) ?? [];
+    live = applyTranscriptEvent(live, { type: "message.end", message: response }) ?? live;
+    expect(live).toEqual(normalizeMessages([response, response]));
+    expect(live).toHaveLength(2);
   });
 
   it("replaces the streamed assistant message with the finalized history shape", () => {
@@ -312,7 +553,7 @@ describe("applyTranscriptEvent", () => {
     };
     expect(messages).toEqual([finalizedToolLine, textMessage("assistant", "done")]);
     expect(groupChatMessages(messages)).toEqual([
-      { kind: "group", startIndex: 0, endIndex: 0, messages: [{ ...finalizedToolLine, parts: [finalizedToolLine.parts[0]] }] },
+      { kind: "group", startIndex: 0, endIndex: 0, messages: [{ index: 0, message: { ...finalizedToolLine, parts: [finalizedToolLine.parts[0]] } }] },
       { kind: "tool-image", index: 0, message: { ...finalizedToolLine, parts: [finalImage] }, toolName: "read" },
       { kind: "message", index: 1, message: textMessage("assistant", "done") },
     ]);
@@ -418,7 +659,7 @@ describe("applyTranscriptEvent", () => {
 
     const liveGroups = groupChatMessages(liveMessages);
     const technicalParts = (groups: ReturnType<typeof groupChatMessages>) => groups.flatMap((group) => group.kind === "group"
-      ? group.messages.flatMap((message) => message.parts.filter((part) => part.type === "toolExecution"))
+      ? group.messages.flatMap(({ message }) => message.parts.filter((part) => part.type === "toolExecution"))
       : []);
     const visibleImages = (groups: ReturnType<typeof groupChatMessages>) => groups.flatMap((group) => group.kind !== "group"
       ? group.message.parts.filter((part) => part.type === "image")

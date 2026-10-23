@@ -21,6 +21,25 @@ function proxiedCall(request: MockedFunction<MachineClient["request"]>, index: n
 }
 
 describe("buildApp remote machine proxy routes", () => {
+  it("reads machine-global models from the selected remote machine without a session", async () => {
+    const add = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = add.json<{ id: string }>();
+    const selection = { models: [{ provider: "remote-provider", id: "remote-model", name: "Remote Chat", contextWindow: 32000, reasoning: false }] };
+    const request = vi.fn<MachineClient["request"]>(() => Promise.resolve({
+      statusCode: 200,
+      headers: { "content-type": "application/json" },
+      body: Readable.from([JSON.stringify(selection)]),
+    }));
+    appTestContext.remoteClient = fakeRemoteClient({ request });
+
+    const response = await appTestContext.app.inject({ method: "GET", url: `/api/machines/${remote.id}/models` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(selection);
+    expect(request).toHaveBeenCalledWith("GET", "/api/models", undefined);
+    expect(appTestContext.sessionDaemonRequests).toEqual([]);
+  });
+
   it("proxies allowlisted remote HTTP routes through the selected machine", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

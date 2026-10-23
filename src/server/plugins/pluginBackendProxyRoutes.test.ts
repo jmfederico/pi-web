@@ -21,6 +21,15 @@ afterEach(async () => {
 });
 
 describe("local paired plugin backend proxy route", () => {
+  it("forwards machine and project scoped envelopes without inventing workspace authority", async () => {
+    for (const scope of ["machine", "project"] as const) {
+      const path = scope === "machine" ? "/paired-plugin-backends/board/cards.summary" : "/paired-plugin-backends/board/projects/project%2Fone/cards.summary";
+      const payload = { scope, revision: "r1", input: null };
+      const response = await app.inject({ method: "POST", url: `/api${path}`, payload });
+      expect(response.statusCode).toBe(200);
+      expect(request.mock.calls.at(-1)?.slice(0, 3)).toEqual(["POST", path, payload]);
+    }
+  });
   it("encodes every daemon path segment and forwards the JSON envelope once", async () => {
     const payload = { revision: "server-r1", input: { cards: ["alpha", "beta"] } };
     const response = await app.inject({

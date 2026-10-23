@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deepActiveElement, dialogSection, dialogSurface, pressKey, requiredElement, settleRenderedDialog, surfaceBackdrop } from "./modalSurfaceTestSupport";
@@ -15,6 +17,28 @@ describe("session-cleanup-dialog modal surface", () => {
 
     expect(deepActiveElement()).toBe(dialogSection(dialog));
     expect(dialogSection(dialog).getAttribute("aria-label")).toBe("Clean up sessions");
+  });
+
+  it("shows completion feedback outside the scrolling body in a live region", async () => {
+    const dialog = await mountDialog();
+    const status = requiredElement(dialog.shadowRoot?.querySelector('[role="status"]'), "cleanup status");
+    expect(status.textContent.trim()).toBe("");
+
+    dialog.result = {
+      generatedAt: "2026-10-21T12:00:00Z",
+      thresholds: { archiveIdleDays: 30, deleteArchivedDays: 90 },
+      projects: [],
+      totals: { archiveCount: 1, deleteCount: 2 },
+      archivedSessionIds: ["archived"],
+      deletedSessionIds: ["deleted-1", "deleted-2"],
+    };
+    await dialog.updateComplete;
+
+    expect(status.textContent).toContain("Cleanup complete");
+    expect(status.textContent).toContain("Archived 1 session; permanently deleted 2 archived sessions.");
+    expect(status.closest(".body")).toBeNull();
+    expect(status.nextElementSibling?.tagName).toBe("FOOTER");
+    expect(status.getAttribute("aria-atomic")).toBe("true");
   });
 
   it("closes on Escape", async () => {

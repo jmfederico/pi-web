@@ -39,7 +39,7 @@ describe("eventual project unread cleanup", () => {
     expect(fixture.mutations[0]?.event).toMatchObject({ cwd: removed.path, unread: null });
 
     const status = new MachineStatusService({
-      activity: { snapshot: () => ({ workspaces: [] }) },
+      activity: { snapshot: () => ({ workspaces: [], sessions: [] }) },
       unread: fixture.unread,
       attribution: new CachedWorkspaceAttribution({
         projects: fixture.projects,

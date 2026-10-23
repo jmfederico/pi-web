@@ -55,9 +55,9 @@ describe("settings route helpers", () => {
   it("writes settings deep links while preserving other route fields", () => {
     const { pushed } = installWindow("http://localhost/app?project=p1#bottom");
 
-    writeSettingsSection("general");
+    writeSettingsSection("mcp");
 
-    expect(pushed).toEqual(["http://localhost/app?project=p1&settings=general#bottom"]);
+    expect(pushed).toEqual(["http://localhost/app?project=p1&settings=mcp#bottom"]);
   });
 
   it("preserves nested deployment and target fields in MCP deep links", () => {

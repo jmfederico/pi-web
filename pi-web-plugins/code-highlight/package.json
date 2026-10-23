@@ -1,0 +1,13 @@
+{
+  "name": "@pi-web/code-highlight-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [{
+      "id": "code-highlight",
+      "browserRoot": "browser",
+      "module": "browser/pi-web-plugin.js",
+      "machineSpecific": false
+    }]
+  }
+}

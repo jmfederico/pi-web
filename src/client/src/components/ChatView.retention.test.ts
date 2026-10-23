@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
+import { applyTranscriptEvent } from "../chatTranscript";
 import type { ChatLine } from "./shared";
 
 afterEach(() => {
@@ -69,6 +70,55 @@ describe("transcript DOM ownership", () => {
 
     expect(previous?.isConnected).toBe(false);
     expect(transcript(view).querySelector("article[data-index='0']")).not.toBe(previous);
+  });
+
+  it.each([false, true])("retains streaming reply and event DOM on finalization (thinking: %s)", async (thinking) => {
+    const view = new ChatView();
+    view.sessionId = "streaming";
+    view.messages = [
+      { ...textMessage("user", "prompt"), entryId: "prompt-id" },
+      { role: "assistant", parts: [
+        ...(thinking ? [{ type: "thinking" as const, text: "reasoning" }] : []),
+        { type: "text", text: "reply" },
+      ] },
+    ];
+    document.body.append(view);
+    await settle(view);
+    const reply = transcript(view).querySelector("article[data-index='1']");
+    const formatted = reply?.querySelector("formatted-text");
+    const events = transcript(view).querySelector("details.event-group");
+    expect(reply).not.toBeNull();
+
+    view.messages = applyTranscriptEvent(view.messages, {
+      type: "message.end",
+      message: { role: "assistant", entryId: "reply-id", content: [
+        ...(thinking ? [{ type: "thinking", thinking: "reasoning" }] : []),
+        { type: "text", text: "reply" },
+      ] },
+    }) ?? view.messages;
+    await settle(view);
+    expect(transcript(view).querySelector("article[data-index='1']")).toBe(reply);
+    expect(reply?.querySelector("formatted-text")).toBe(formatted);
+    expect(reply?.getAttribute("data-scroll-anchor-id")).toContain("reply-id");
+    if (thinking) expect(transcript(view).querySelector("details.event-group")).toBe(events);
+
+    // Durable identity continues to own the same node after a history prepend,
+    // even when raw page offsets and normalized display indexes differ.
+    view.messageStart = 0;
+    view.messages = [{ ...textMessage("user", "earlier"), entryId: "earlier-id" }, ...view.messages];
+    await settle(view);
+    expect(transcript(view).querySelector("article[data-index='2']")).toBe(reply);
+  });
+
+  it("replaces a committed message with a different entry at the same index", async () => {
+    const view = new ChatView();
+    view.messages = [{ ...textMessage("assistant", "first"), entryId: "first-id" }];
+    document.body.append(view);
+    await settle(view);
+    const previous = transcript(view).querySelector("article");
+    view.messages = [{ ...textMessage("assistant", "replacement"), entryId: "second-id" }];
+    await settle(view);
+    expect(transcript(view).querySelector("article")).not.toBe(previous);
   });
 
   it("reuses existing message elements during same-session updates and history prepends", async () => {

@@ -1,6 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatView } from "./ChatView";
+import { settleDeferredContent, useDeferredContent } from "../formatting/deferredContent.testSupport";
+
+useDeferredContent();
 import type { FormattedText } from "./FormattedText";
 import { normalizeMessages } from "../chatMessages";
 import { createContentRenderingService } from "../formatting/contentRendering";
@@ -14,7 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while copying original text (%s)", async (displayText) => {
+it.each([false, true].flatMap((previews) => ["```text\ndisplayed\n```", "", undefined].map((displayText) => ({ previews, displayText }))))("renders display text while copying original text ($displayText, previews: $previews)", async ({ displayText, previews }) => {
   const writeText = vi.fn(() => Promise.resolve());
   vi.stubGlobal("navigator", { clipboard: { writeText } });
   vi.stubGlobal("isSecureContext", true);
@@ -22,6 +25,7 @@ it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while 
   const registry = new PluginRegistry();
   await registry.register({ id: "core", plugin: corePlugin });
   const view = new ChatView();
+  view.behaviors = { ...view.behaviors, codeBlocks: { ...view.behaviors.codeBlocks, previews } };
   view.contentRendering = createContentRenderingService(select);
   view.messageActions = registry.getMessageActions("local");
   view.messageActionContext = {
@@ -45,7 +49,7 @@ it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while 
     await view.updateComplete;
   }
   const formatted = [...view.renderRoot.querySelectorAll<FormattedText>("formatted-text")];
-  await Promise.all(formatted.map((element) => element.updateComplete));
+  await settleDeferredContent(view);
   if (displayText === "") {
     expect(formatted).toHaveLength(0);
     expect(view.renderRoot.querySelector("details.part")).toBeNull();
@@ -57,7 +61,8 @@ it.each(["```text\ndisplayed\n```", "", undefined])("renders display text while 
       ? [expect.stringContaining("original reasoning"), expect.stringContaining("original")]
       : [expect.stringContaining("displayed"), expect.stringContaining("displayed")]);
     if (displayText !== undefined) {
-      expect(select).toHaveBeenCalledWith(expect.objectContaining({ text: "displayed" }));
+      if (previews) expect(select).toHaveBeenCalledWith(expect.objectContaining({ text: "displayed" }));
+      else expect(select).not.toHaveBeenCalled();
       expect(formatted.every((element) => !element.renderRoot.textContent.includes("original"))).toBe(true);
     }
   }

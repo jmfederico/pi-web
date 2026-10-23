@@ -1,3 +1,4 @@
+import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
@@ -6,6 +7,8 @@ import { keyboardEventOriginatesFromNativeActivationControl } from "./keyboardEv
 import "./ModalSurface";
 import { defaultPin, defaultPinHelp, defaultPinStyles } from "./DefaultPin";
 import { scrollWhenSelected } from "./scrollWhenSelected";
+import { uiDialogStyles, uiSelectionStyles } from "./ui/dialogStyles";
+import { uiToolbarStyles } from "./ui/controlStyles";
 
 /**
  * Scope the model dialog lists: `enabled` is the session's pickable model list
@@ -110,6 +113,11 @@ interface ModelPickerRow {
  */
 @customElement("model-picker")
 export class ModelPicker extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property() override title = "Select Model";
   /** Enabled-mode rows: the session's pickable models, pre-labeled by the host. */
   @property({ attribute: false }) options: CommandOption[] = [];
@@ -151,11 +159,11 @@ export class ModelPicker extends LitElement {
         .label=${this.title}
         @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}
       >
-        <header>
-          <strong>${this.title}</strong>
-          <button aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
+        <header class="ui-dialog-header">
+          <strong class="ui-dialog-title">${this.title}</strong>
+          <button class="ui-button ui-button--icon" aria-label="Close" @click=${() => this.onCancel?.()}>×</button>
         </header>
-        <div class="scope-toggle" role="group" aria-label="Model scope">
+        <div class="scope-toggle ui-toolbar" role="group" aria-label="Model scope">
           ${this.renderScopeToggleButton("enabled", "Enabled")}
           ${this.renderScopeToggleButton("all", "All models")}
         </div>
@@ -165,30 +173,27 @@ export class ModelPicker extends LitElement {
             <span>Showing models from this workspace’s <code>.pi/settings.json</code>. Model availability selection is disabled.</span>
           </div>
         ` : nothing}
-        <div class="search-row">
-          <input class="search" aria-label="Search models" placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>
+        <div class="search-row ui-dialog-search-row">
+          <input class="search ui-dialog-search" aria-label="Search models" placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }}>
           ${this.mode === "all" ? this.renderToggleAllButton() : nothing}
         </div>
         ${this.onSetDefault ? defaultPinHelp : nothing}
         <div
-          class="options"
+          class="options ui-selection-list"
           role="region"
           aria-label=${this.mode === "all" ? "All models in catalog order" : "Enabled models"}
           tabindex="0"
           aria-busy=${this.membershipChangePending ? "true" : "false"}
         >
           ${this.mode === "all" ? this.renderCatalogList() : this.renderEnabledList()}
-          ${rows.length === 0 ? html`<div class="empty">No matching options</div>` : null}
+          ${rows.length === 0 ? html`<div class="empty ui-dialog-empty">No matching options</div>` : null}
         </div>
       </modal-surface>
     `;
   }
 
-  override firstUpdated() {
-    this.anchorSelectionToSelectedValue();
-  }
-
   protected override willUpdate(changed: PropertyValues<this>): void {
+    if (!this.hasUpdated) this.anchorSelectionToSelectedValue();
     if (!changed.has("catalog")) return;
     if (this.mode === "all") {
       this.catalogScrollTopBeforeUpdate = this.shadowRoot?.querySelector<HTMLElement>(".options")?.scrollTop;
@@ -224,7 +229,7 @@ export class ModelPicker extends LitElement {
   }
 
   private renderScopeToggleButton(mode: ModelPickerMode, label: string): TemplateResult {
-    return html`<button ?disabled=${this.membershipChangePending} aria-pressed=${this.mode === mode ? "true" : "false"} @click=${() => { this.selectMode(mode); }}>${label}</button>`;
+    return html`<button class="ui-button" ?disabled=${this.membershipChangePending} aria-pressed=${this.mode === mode ? "true" : "false"} @click=${() => { this.selectMode(mode); }}>${label}</button>`;
   }
 
   private renderToggleAllButton(): TemplateResult {
@@ -232,7 +237,7 @@ export class ModelPicker extends LitElement {
     const label = plan.mode === "all" ? "Select all" : "Deselect all";
     return html`
       <button
-        class="toggle-all"
+        class="toggle-all ui-button"
         ?disabled=${!this.modelScopeEditable || !plan.canApply || !plan.hasChanges || this.toggleAllPending || this.pendingToggles.size > 0}
         aria-describedby="model-scope-status"
         title=${!this.modelScopeEditable ? "Workspace settings control model availability" : !plan.canApply ? "The current model is unavailable" : nothing}
@@ -255,7 +260,7 @@ export class ModelPicker extends LitElement {
   private renderEnabledList(): TemplateResult[] {
     return filterModelOptions(this.options, this.query).map((option, index) => {
       const pick = html`<button
-        class=${index === this.selectedIndex ? "selected" : ""}
+        class=${`ui-button ui-selection-option ${index === this.selectedIndex ? "selected" : ""}`}
         ?disabled=${this.membershipChangePending}
         aria-current=${index === this.selectedIndex ? "true" : nothing}
         ${scrollWhenSelected(index === this.selectedIndex, option.value)}
@@ -263,9 +268,9 @@ export class ModelPicker extends LitElement {
         @click=${() => this.onPick?.(option.value)}
       >
         <span>${option.label}</span>
-        ${option.description !== undefined && option.description !== "" ? html`<small>${option.description}</small>` : null}
+        ${option.description !== undefined && option.description !== "" ? html`<small class="ui-selection-detail">${option.description}</small>` : null}
       </button>`;
-      return this.onSetDefault ? html`<div class="default-row">${pick}${this.renderDefaultPin(option.value, option.label, this.catalog.find((entry) => modelCatalogEntryValue(entry) === option.value)?.enabled !== false)}</div>` : pick;
+      return this.onSetDefault ? html`<div class="default-row ui-selection-row">${pick}${this.renderDefaultPin(option.value, option.label, this.catalog.find((entry) => modelCatalogEntryValue(entry) === option.value)?.enabled !== false)}</div>` : pick;
     });
   }
 
@@ -303,18 +308,20 @@ export class ModelPicker extends LitElement {
       ? `Model availability for ${value} is controlled by workspace settings`
       : protectsCurrentModel ? `Current model ${value} cannot be deselected` : `${entry.enabled ? "Disable" : "Enable"} ${value}`;
     return html`
-      <div class="catalog-row ${selected ? "selected" : ""}" data-model-value=${value} ${scrollWhenSelected(selected, value)}>
-        <input
-          type="checkbox"
-          .checked=${entry.enabled}
-          ?disabled=${membershipDisabled}
-          aria-label=${membershipLabel}
-          title=${!this.modelScopeEditable ? "Workspace settings control model availability" : protectsCurrentModel ? "The current model must remain enabled" : nothing}
-          @focus=${() => { this.selectedIndex = index; }}
-          @click=${(event: MouseEvent) => { this.handleEnableToggleClick(entry, event); }}
-        />
+      <div class="catalog-row ui-selection-row ${selected ? "selected" : ""}" data-model-value=${value} ${scrollWhenSelected(selected, value)}>
+        <label class="membership-checkbox">
+          <input
+            type="checkbox"
+            .checked=${entry.enabled}
+            ?disabled=${membershipDisabled}
+            aria-label=${membershipLabel}
+            title=${!this.modelScopeEditable ? "Workspace settings control model availability" : protectsCurrentModel ? "The current model must remain enabled" : nothing}
+            @focus=${() => { this.selectedIndex = index; }}
+            @click=${(event: MouseEvent) => { this.handleEnableToggleClick(entry, event); }}
+          />
+        </label>
         <button
-          class="membership"
+          class="membership ui-button ui-selection-option"
           ?disabled=${membershipDisabled}
           aria-label=${membershipLabel}
           aria-current=${value === this.selectedValue ? "true" : nothing}
@@ -322,7 +329,7 @@ export class ModelPicker extends LitElement {
           @click=${(event: MouseEvent) => { this.requestEnabledToggle(entry, event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined); }}
         >
           <span>${entry.id}${value === this.selectedValue ? " ✓ current" : ""}</span>
-          <small>${entry.provider}</small>
+          <small class="ui-selection-detail">${entry.provider}</small>
         </button>
         ${this.renderDefaultPin(value, entry.name ?? entry.id, entry.enabled)}
       </div>
@@ -459,33 +466,15 @@ export class ModelPicker extends LitElement {
     }
   }
 
-  static override styles = [css`
-    :host { position: fixed; inset: 0; z-index: 10; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-    modal-surface { --modal-surface-width: min(720px, calc(100vw - 40px)); --modal-surface-max-height: min(640px, calc(100% - 40px)); }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--pi-border); }
-    .scope-toggle { display: flex; gap: 4px; margin: 10px 12px 0; padding: 3px; border: 1px solid var(--pi-border); border-radius: 8px; }
-    .scope-toggle button { flex: 1; padding: 6px 10px; border-radius: 6px; color: var(--pi-muted); }
-    .scope-toggle button[aria-pressed="true"] { background: var(--pi-selection-bg); color: var(--pi-text); }
+  static override styles = [uiDialogStyles, uiSelectionStyles, uiToolbarStyles, css`
+    .scope-toggle { border-bottom: 1px solid var(--pi-border-muted); }
+    .scope-toggle button { flex: 1; }
     .scope-notice { display: grid; gap: 3px; margin: 10px 12px 0; padding: 8px 10px; border: 1px solid var(--pi-border); border-radius: 8px; color: var(--pi-muted); }
     .scope-notice strong { color: var(--pi-text); }
     .scope-notice code { font: inherit; color: var(--pi-text); }
-    .options { min-height: 0; overflow: auto; outline: none; }
-    button { border: 0; background: transparent; color: var(--pi-text); cursor: pointer; }
-    header button { font-size: 20px; color: var(--pi-muted); }
-    .search-row { display: flex; align-items: center; gap: 8px; margin: 10px 12px; }
-    input.search { flex: 1; min-width: 0; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px) var(--pi-control-font-family, system-ui, sans-serif); padding: 8px 10px; outline: none; }
-    input.search:focus { border-color: var(--pi-accent); }
-    .toggle-all { flex: none; padding: 8px 10px; border: 1px solid var(--pi-border); border-radius: 8px; white-space: nowrap; }
-    .toggle-all:hover:not(:disabled) { background: var(--pi-selection-bg); }
-    .toggle-all:disabled { cursor: default; opacity: 0.55; }
+    .toggle-all { flex: none; white-space: nowrap; }
     .scope-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-    .options > button { display: block; width: 100%; padding: 10px 12px; border-bottom: 1px solid var(--pi-border-muted); text-align: left; }
-    .options > button.selected, .options > button:hover { background: var(--pi-selection-bg); }
-    .catalog-row { display: flex; align-items: center; border-bottom: 1px solid var(--pi-border-muted); }
-    .catalog-row.selected, .catalog-row:hover { background: var(--pi-selection-bg); }
-    .catalog-row input[type="checkbox"] { margin: 0 0 0 12px; accent-color: var(--pi-accent); }
-    .catalog-row .membership { flex: 1; min-width: 0; display: block; padding: 10px 12px; text-align: left; }
-    small { display: block; margin-top: 4px; color: var(--pi-muted); }
-    .empty { padding: 24px; color: var(--pi-muted); text-align: center; }
+    .membership-checkbox { display: flex; align-items: center; justify-content: center; flex: 0 0 44px; }
+    .membership-checkbox input { margin: 0; accent-color: var(--pi-accent); }
   `, defaultPinStyles];
 }

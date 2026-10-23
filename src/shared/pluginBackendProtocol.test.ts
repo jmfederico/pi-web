@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   boundedPluginBackendChannelCloseReason,
+  parsePluginBackendRequestEnvelope,
+  pluginBackendScopeFromRoute,
+  pairedPluginBackendPath,
   cloneBoundedPluginBackendJson,
   parseBoundedPluginBackendJson,
   parsePluginBackendChannelClientEnvelope,
@@ -17,6 +20,22 @@ import {
 } from "./pluginBackendProtocol.js";
 
 describe("plugin backend JSON contract", () => {
+  it("preserves scoped wire calls and rejects scope or id contradictions while keeping legacy workspace calls", () => {
+    for (const scope of ["machine", "project", "workspace"] as const) {
+      const selection = { scope, ...(scope !== "machine" ? { projectId: "p/1" } : {}), ...(scope === "workspace" ? { workspaceId: "w/1" } : {}) };
+      expect(parsePluginBackendRequestEnvelope({ revision: "r1", input: null, ...selection })).toMatchObject(selection);
+      expect(parsePluginBackendChannelClientEnvelope(serializePluginBackendChannelOpenEnvelope("r1", null, selection))).toMatchObject(selection);
+      expect(pluginBackendScopeFromRoute(selection, selection)).toBe(scope);
+      const path = pairedPluginBackendPath({ ...selection, pluginId: "notes", operation: "watch" }, true);
+      expect(path).toContain("/channels/watch");
+      if (scope !== "machine") expect(path).toContain("/projects/p%2F1");
+    }
+    expect(pluginBackendScopeFromRoute({ projectId: "p", workspaceId: "w" }, {})).toBe("workspace");
+    expect(() => pluginBackendScopeFromRoute({}, {})).toThrow("explicit scope");
+    expect(() => pluginBackendScopeFromRoute({ projectId: "p" }, { scope: "project", projectId: "other" })).toThrow("route authority");
+    expect(() => parsePluginBackendRequestEnvelope({ revision: "r1", input: null, scope: "machine", projectId: "p" })).toThrow("Machine scope");
+    expect(() => parsePluginBackendRequestEnvelope({ revision: "r1", input: null, scope: "global" })).toThrow("scope must be");
+  });
   it("round-trips __proto__ as an own JSON key without mutating object prototypes", () => {
     const input: unknown = JSON.parse('{"__proto__":{"polluted":true},"nested":{"__proto__":"value"}}');
 

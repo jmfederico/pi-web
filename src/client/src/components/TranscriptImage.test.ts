@@ -1,186 +1,162 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TranscriptImage } from "./TranscriptImage";
-import type { ImagePresentation } from "./ImagePresentation";
-import { ImageIntersectionObserver, latestImageObserver, settleImage } from "./imagePresentation.testSupport";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TranscriptImage, transcriptImageSource } from "./TranscriptImage";
+import { imageButton, nativeImage, settleImage } from "./imagePresentation.testSupport";
 
 const mediaId = "abc012".repeat(10) + "abcd";
-const reference = { type: "image" as const, mediaId, mimeType: "image/png", byteSize: 42 };
+const reference = { type: "image" as const, mediaId, mimeType: "image/png", byteSize: 42, width: 1200, height: 800 };
+const session = { id: "session /?#%", cwd: "/repo with spaces/?#%" };
 
-beforeEach(() => {
-  ImageIntersectionObserver.instances = [];
-  vi.stubGlobal("IntersectionObserver", ImageIntersectionObserver);
-});
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
-  vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  vi.restoreAllMocks();
 });
 
 async function mount(parent?: HTMLElement) {
-  const root = document.createElement("div");
-  root.setAttribute("data-image-scroll-root", "");
+  const root = parent ?? document.createElement("div");
   document.body.append(root);
-  if (parent !== undefined) root.append(parent);
   const image = new TranscriptImage();
   image.imagePart = reference;
-  image.session = { id: "session /?#%", cwd: "/repo with spaces/?#%" };
+  image.session = session;
   image.machineId = "remote /?#%";
-  (parent ?? root).append(image);
+  root.append(image);
   const presentation = await settleImage(image);
   return { image, presentation, root };
 }
 
-function nativeImage(presentation: ImagePresentation): HTMLImageElement {
-  const image = presentation.renderRoot.querySelector<HTMLImageElement>("img");
-  if (image === null) throw new Error("Expected native image");
-  return image;
-}
-
-function button(presentation: ImagePresentation, selector = "button"): HTMLButtonElement {
-  const control = presentation.renderRoot.querySelector<HTMLButtonElement>(selector);
-  if (control === null) throw new Error("Expected image button");
-  return control;
-}
-
-describe("transcript image loading and presentation", () => {
-  it("keeps references inert until near the chat viewport, then uses the encoded nested selected-machine URL", async () => {
+describe("native transcript images", () => {
+  it("immediately assigns the encoded nested selected-machine URL with native lazy loading", async () => {
     vi.stubEnv("BASE_URL", "/nested/pi-web/");
-    const { image, presentation, root } = await mount();
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-    expect(button(presentation).textContent).toContain("Show image");
-    expect(button(presentation).textContent).toContain("attached image");
-    const observer = latestImageObserver();
-    expect(observer.root).toBe(root);
-    expect(observer.rootMargin).toBe("300px 0px");
-    expect(observer.observe).toHaveBeenCalledWith(image);
-    observer.notify(false);
-    await settleImage(image);
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-
-    observer.notify();
-    await settleImage(image);
+    const { presentation } = await mount();
     const native = nativeImage(presentation);
     const url = new URL(native.src);
     expect(url.pathname).toBe(`/nested/pi-web/api/machines/remote%20%2F%3F%23%25/sessions/session%20%2F%3F%23%25/media/${mediaId}`);
-    expect(url.searchParams.get("cwd")).toBe("/repo with spaces/?#%");
+    expect(url.searchParams.get("cwd")).toBe(session.cwd);
+    expect(native.alt).toBe("attached image");
+    expect(native.getAttribute("width")).toBe("1200");
+    expect(native.getAttribute("height")).toBe("800");
+    expect(native.getAttribute("loading")).toBe("lazy");
     expect(native.getAttribute("decoding")).toBe("async");
-    expect(presentation.renderRoot.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(presentation.renderRoot.querySelector('[role="status"]')?.textContent).toContain("Loading image");
-    expect(observer.disconnect).toHaveBeenCalledOnce();
-    native.dispatchEvent(new Event("load"));
-    await presentation.updateComplete;
-    expect(presentation.renderRoot.querySelector(".placeholder")).toBeNull();
-    expect(presentation.renderRoot.querySelector("code")).toBeNull();
-    expect(button(presentation, ".image-button").disabled).toBe(false);
+    expect(imageButton(presentation).hidden).toBe(false);
+    expect(imageButton(presentation).disabled).toBe(false);
+    expect(imageButton(presentation, ".placeholder").hidden).toBe(true);
   });
 
-  it("supports Show image, error and Retry, then enlarges with click, Enter and Space", async () => {
+  it("passes thumbnail presentation and numbered descriptions without replacing or rewriting the source", async () => {
     const { image, presentation } = await mount();
-    const open = vi.fn<(event: Event) => void>();
-    image.addEventListener("image-open", open);
-    button(presentation).click();
+    const native = nativeImage(presentation);
+    const originalSource = native.src;
+    image.thumbnail = true;
+    image.description = "read output image 2 of 3";
     await settleImage(image);
-    const failed = nativeImage(presentation);
-    failed.dispatchEvent(new Event("error"));
-    await presentation.updateComplete;
-    expect(presentation.renderRoot.querySelector('[role="status"]')?.textContent).toContain("Image unavailable");
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-    expect(button(presentation).textContent).toBe("Retry");
-    button(presentation).click();
-    await presentation.updateComplete;
-    const retried = nativeImage(presentation);
-    expect(retried).not.toBe(failed);
-    expect(retried.src).toBe(failed.src);
-    retried.dispatchEvent(new Event("load"));
-    await presentation.updateComplete;
-    const enlarge = button(presentation, ".image-button");
-    expect(enlarge.getAttribute("aria-label")).toBe("Enlarge attached image");
-    enlarge.click();
-    for (const key of ["Enter", " "]) {
-      const event = new KeyboardEvent("keydown", { key, cancelable: true, bubbles: true });
-      enlarge.dispatchEvent(event);
-      expect(event.defaultPrevented).toBe(true);
-    }
-    expect(open).toHaveBeenCalledTimes(3);
-    for (const [event] of open.mock.calls) expect(event).toMatchObject({ detail: { src: retried.src, alt: "attached image" } });
+    expect(presentation.thumbnail).toBe(true);
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.src).toBe(originalSource);
+    expect(native.alt).toBe("read output image 2 of 3");
+    expect(imageButton(presentation).getAttribute("aria-label")).toBe("Enlarge read output image 2 of 3");
+    expect(native.getAttribute("loading")).toBe("lazy");
   });
 
-  it("keeps legacy inline images deferred and loads them without binary requests", async () => {
+  it("immediately assigns legacy inline images without changing the native element", async () => {
     const { image, presentation } = await mount();
+    const native = nativeImage(presentation);
     image.imagePart = { type: "image", mimeType: "image/jpeg", data: "QUJD" };
     await settleImage(image);
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-    latestImageObserver().notify();
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.src).toBe("data:image/jpeg;base64,QUJD");
+    expect(native.hasAttribute("width")).toBe(false);
+    expect(native.hasAttribute("height")).toBe(false);
+
+    image.imagePart = { ...image.imagePart, width: 400, height: 1600 };
     await settleImage(image);
-    expect(nativeImage(presentation).src).toBe("data:image/jpeg;base64,QUJD");
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.getAttribute("width")).toBe("400");
+    expect(native.getAttribute("height")).toBe("1600");
   });
 
-  it("disconnects stale observers on source changes/removal and rearms on reconnect", async () => {
+  it("updates sources and session context in place, including across reconnection", async () => {
     const { image, presentation, root } = await mount();
-    const stale = latestImageObserver();
+    const native = nativeImage(presentation);
     image.imagePart = { ...reference, mediaId: "f".repeat(64) };
+    image.machineId = "another machine";
+    image.session = { id: "another session", cwd: "/another cwd" };
     await settleImage(image);
-    expect(stale.disconnect).toHaveBeenCalledOnce();
-    stale.notify();
+    expect(nativeImage(presentation)).toBe(native);
+    const url = new URL(native.src);
+    expect(url.pathname).toContain(`/machines/another%20machine/sessions/another%20session/media/${"f".repeat(64)}`);
+    expect(url.searchParams.get("cwd")).toBe("/another cwd");
+
+    image.imagePart = { ...image.imagePart };
     await settleImage(image);
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-    const current = latestImageObserver();
+    expect(nativeImage(presentation)).toBe(native);
     image.remove();
-    expect(current.disconnect).toHaveBeenCalledOnce();
-    current.notify();
-    await image.updateComplete;
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
     root.append(image);
     await settleImage(image);
-    latestImageObserver().notify();
+    expect(nativeImage(presentation)).toBe(native);
+
+    image.imagePart = undefined;
     await settleImage(image);
-    expect(nativeImage(presentation).src).toContain(`/media/${"f".repeat(64)}?`);
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.hasAttribute("src")).toBe(false);
+    expect(native.hasAttribute("width")).toBe(false);
+    expect(native.hasAttribute("height")).toBe(false);
   });
 
-  it("ignores a late native load from the previous source", async () => {
+  it("leaves disclosure loading decisions to the browser instead of gating source assignment", async () => {
+    const details = document.createElement("details");
+    const { image, presentation } = await mount(details);
+    const native = nativeImage(presentation);
+    expect(details.open).toBe(false);
+    expect(native.src).toContain(`/media/${mediaId}?`);
+    expect(native.getAttribute("loading")).toBe("lazy");
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    await settleImage(image);
+    expect(nativeImage(presentation)).toBe(native);
+  });
+
+  it("can disable native sources from startup and re-enable them in the same DOM", async () => {
+    const image = new TranscriptImage();
+    image.loadingDisabled = true; image.imagePart = reference; image.session = session;
+    document.body.append(image);
+    const presentation = await settleImage(image);
+    const native = nativeImage(presentation);
+    expect(native.hasAttribute("src")).toBe(false);
+    expect(imageButton(presentation, ".placeholder").disabled).toBe(true);
+    imageButton(presentation, ".placeholder").click(); await settleImage(image);
+    expect(native.hasAttribute("src")).toBe(false);
+    image.loadingDisabled = false; await settleImage(image);
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.src).toContain(`/media/${mediaId}?`);
+    image.loadingDisabled = true; await settleImage(image);
+    expect(native.hasAttribute("src")).toBe(false);
+  });
+
+  it("does not assign a media source without valid session/media context", async () => {
     const { image, presentation } = await mount();
-    latestImageObserver().notify();
+    const native = nativeImage(presentation);
+    image.session = undefined;
     await settleImage(image);
-    const previous = nativeImage(presentation);
-    image.machineId = "another machine";
+    expect(native.hasAttribute("src")).toBe(false);
+    image.session = session;
+    image.imagePart = { ...reference, mediaId: "../../private-file" };
     await settleImage(image);
-    latestImageObserver().notify();
-    await settleImage(image);
-    previous.dispatchEvent(new Event("load"));
-    await presentation.updateComplete;
-    expect(presentation.renderRoot.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(nativeImage(presentation).src).toContain("/machines/another%20machine/");
+    expect(nativeImage(presentation)).toBe(native);
+    expect(native.hasAttribute("src")).toBe(false);
+    expect(imageButton(presentation).hidden).toBe(true);
+  });
+});
+
+describe("transcript image source safety", () => {
+  it.each(["", "../private.png", "a".repeat(63), "g".repeat(64), "A".repeat(64)])("rejects invalid media ID %s", (id) => {
+    expect(transcriptImageSource({ ...reference, mediaId: id }, session)).toBeUndefined();
   });
 
-  it.each([true, false])("does not eagerly load collapsed nested details (observer available: %s)", async (available) => {
-    if (!available) vi.stubGlobal("IntersectionObserver", undefined);
-    const outer = document.createElement("details");
-    const inner = document.createElement("details");
-    inner.open = true;
-    outer.append(inner);
-    const { image, presentation } = await mount(outer);
-    inner.append(image);
-    // Moving across disclosure parents disconnects/reconnects the element.
-    await settleImage(image);
-    expect(ImageIntersectionObserver.instances).toHaveLength(0);
-    expect(presentation.renderRoot.querySelector("img")).toBeNull();
-    outer.open = true;
-    outer.dispatchEvent(new Event("toggle"));
-    await settleImage(image);
-    if (available) {
-      inner.open = false;
-      inner.dispatchEvent(new Event("toggle"));
-      latestImageObserver().notify();
-      await settleImage(image);
-      expect(presentation.renderRoot.querySelector("img")).toBeNull();
-      inner.open = true;
-      inner.dispatchEvent(new Event("toggle"));
-      latestImageObserver().notify();
-      await settleImage(image);
-    }
-    expect(nativeImage(presentation).src).toContain(`/media/${mediaId}?`);
+  it("requires a session for references and preserves inline sources for helper consumers", () => {
+    expect(transcriptImageSource(reference)).toBeUndefined();
+    expect(transcriptImageSource({ type: "image", mimeType: "image/png", data: "QUJD" })).toEqual({
+      src: "data:image/png;base64,QUJD", alt: "attached image",
+    });
   });
 });

@@ -132,8 +132,14 @@ export class PiWebPluginService {
     let artifact = this.browserArtifacts.get(pluginId);
     if (artifact !== undefined && !await this.cachedArtifactIsActive(artifact)) artifact = undefined;
     artifact ??= await this.loadBrowserArtifact(pluginId);
+    // Browser-only snapshots may lag the catalog's advertised entry revision.
+    // Refresh on mismatch, but keep server-backed snapshots pinned to sessiond.
+    if (artifact !== undefined && artifact.backendRevision === undefined
+      && browserRevision !== undefined && artifact.revision !== browserRevision) {
+      artifact = await this.loadBrowserArtifact(pluginId);
+    }
     if (artifact === undefined) return undefined;
-    if (browserRevision !== undefined && assetPath === artifact.entryPath && artifact.revision !== browserRevision) return undefined;
+    if (browserRevision !== undefined && artifact.revision !== browserRevision) return undefined;
     const content = artifact.files.get(assetPath);
     if (content === undefined) return undefined;
     this.touchBrowserArtifact(artifact);

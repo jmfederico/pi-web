@@ -35,6 +35,8 @@
     "vite.config.ts",
     "vitest.config.ts",
     "vitest.artifacts.config.ts",
+    "playwright.config.ts",
+    "test-fixtures/browser/**/*.ts",
     "extensions/**/*.ts",
     "pi-web-plugins/**/*.ts",
     "pi-packages/**/*.ts"

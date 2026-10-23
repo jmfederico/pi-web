@@ -1,4 +1,7 @@
 import type {
+  AnyTerminalCommandRun,
+  MaintenanceTerminalCommandRun,
+  MaintenanceTerminal,
   TerminalCommandRun,
   TerminalCommandRunHandle,
   ContributionQueryValue,
@@ -18,7 +21,6 @@ type ClearTimer = (id: TimerId) => void;
 
 export interface WorkspaceContributionNavigationV1 {
   readonly contributionId: QualifiedContributionId;
-  readonly navigationAliases?: readonly QualifiedContributionId[];
   readonly query: Readonly<Record<string, ContributionQueryValue | undefined | null>>;
 }
 
@@ -32,6 +34,14 @@ export interface RequiredTerminalWorkspaceBindingV1 {
   readonly workspace: Workspace;
   readonly peer: PluginPeer;
   readonly host: RequiredTerminalFacadeHostV1;
+}
+
+export interface RequiredTerminalMaintenanceBindingV1 {
+  readonly origin: string;
+  readonly machineId: string;
+  readonly registrationPluginId: string;
+  readonly peer: PluginPeer;
+  readonly host: { navigateApplicationContribution(contributionId: QualifiedContributionId): boolean };
 }
 
 export interface RequiredTerminalCommandRunQueryV1 {
@@ -48,6 +58,7 @@ export interface RequiredTerminalCommandRunQueryV1 {
 export interface RequiredTerminalBrowserFacadeV1 {
   readonly version: 1;
   createWorkspaceTerminal(binding: RequiredTerminalWorkspaceBindingV1): WorkspacePanelTerminal;
+  createMaintenanceTerminal?(binding: RequiredTerminalMaintenanceBindingV1): MaintenanceTerminal;
   listCommandRuns(query: RequiredTerminalCommandRunQueryV1): Promise<TerminalCommandRun[]>;
   parseCommandRun(value: unknown): TerminalCommandRun;
 }
@@ -61,13 +72,13 @@ export const TERMINAL_BROWSER_FACADE_CAPABILITY = Object.freeze({
 }) satisfies PluginCapability<RequiredTerminalBrowserFacadeV1, 1>;
 
 export interface TerminalFacadeOptions {
+  requestMaintenanceTerminal?: (machineId: string, terminalId: string) => void;
   pollIntervalMs?: number;
   setTimeout?: SetTimer;
   clearTimeout?: ClearTimer;
 }
 
 const TERMINAL_PANEL_LOCAL_ID = "workspace.terminal";
-const TERMINAL_PANEL_NAVIGATION_ALIASES: readonly QualifiedContributionId[] = ["core:workspace.terminal"];
 
 export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
   readonly version = 1 as const;
@@ -76,28 +87,55 @@ export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
   private readonly setTimer: SetTimer;
   private readonly clearTimer: ClearTimer;
   private readonly lifetime = new AbortController();
+  private readonly requestMaintenanceTerminal: TerminalFacadeOptions["requestMaintenanceTerminal"];
 
   constructor(options: TerminalFacadeOptions = {}) {
+    this.requestMaintenanceTerminal = options.requestMaintenanceTerminal;
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000;
     this.setTimer = options.setTimeout ?? ((handler, timeout) => globalThis.setTimeout(handler, timeout));
     this.clearTimer = options.clearTimeout ?? ((id) => { globalThis.clearTimeout(id); });
   }
 
   createWorkspaceTerminal(binding: RequiredTerminalWorkspaceBindingV1): WorkspacePanelTerminal {
-    const client = new TerminalPeerClient(binding.peer);
+    return this.createTerminal(
+      new TerminalPeerClient({ scope: "workspace", peer: binding.peer }),
+      binding.origin,
+      parseWorkspaceCommandRun,
+      (terminalId) => { this.openTerminal(binding, terminalId === undefined ? undefined : { terminalId }); },
+    );
+  }
+
+  createMaintenanceTerminal(binding: RequiredTerminalMaintenanceBindingV1): MaintenanceTerminal {
+    const client = new TerminalPeerClient({ scope: "maintenance", peer: binding.peer });
+    const open = (terminalId?: string): void => {
+      throwIfAborted(this.lifetime.signal);
+      if (terminalId !== undefined && this.requestMaintenanceTerminal === undefined) throw new Error("Maintenance terminal selection is unavailable");
+      // The host rejects stale navigation before any selection intent is stored.
+      if (!binding.host.navigateApplicationContribution(`${binding.registrationPluginId}:${TERMINAL_PANEL_LOCAL_ID}`)) return;
+      if (terminalId !== undefined) this.requestMaintenanceTerminal?.(binding.machineId, terminalId);
+    };
+    return this.createTerminal(client, binding.origin, parseMaintenanceCommandRun, open);
+  }
+
+  private createTerminal<Run extends AnyTerminalCommandRun>(
+    client: TerminalPeerClient,
+    origin: string,
+    mapRun: (value: unknown) => Run,
+    open: (terminalId?: string) => void,
+  ): { open(options?: { terminalId?: string | undefined }): void; runCommand(input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle<Run>> } {
     return Object.freeze({
       open: (options?: { terminalId?: string | undefined }) => {
         throwIfAborted(this.lifetime.signal);
-        this.openTerminal(binding, options);
+        open(options?.terminalId);
       },
-      runCommand: async (input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle> => {
+      runCommand: async (input: WorkspaceTerminalCommandInput): Promise<TerminalCommandRunHandle<Run>> => {
         throwIfAborted(this.lifetime.signal);
-        const run = await client.runCommand(binding.origin, input, this.lifetime.signal);
+        const run = mapRun(await client.runCommand(origin, input, this.lifetime.signal));
         throwIfAborted(this.lifetime.signal);
-        if (input.open === true) this.openTerminal(binding, { terminalId: run.terminalId });
+        if (input.open === true) open(run.terminalId);
         return Object.freeze({
           run,
-          completed: waitForCommandRunCompletion(run, client, this.pollIntervalMs, this.setTimer, this.clearTimer, this.lifetime.signal),
+          completed: waitForCommandRunCompletion(run, client, this.pollIntervalMs, this.setTimer, this.clearTimer, this.lifetime.signal, mapRun),
         });
       },
     });
@@ -117,7 +155,6 @@ export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
       : { terminal: terminalId, start: undefined };
     void binding.host.navigateWorkspaceContribution(binding.workspace, {
       contributionId,
-      navigationAliases: TERMINAL_PANEL_NAVIGATION_ALIASES,
       query,
     });
   }
@@ -131,27 +168,28 @@ export class TerminalFacade implements RequiredTerminalBrowserFacadeV1 {
     };
     const linked = linkAbortSignals(this.lifetime.signal, query.signal);
     try {
-      const runs = await new TerminalPeerClient(query.peer).listCommandRuns(filter, linked.signal);
+      const runs = await new TerminalPeerClient({ scope: "workspace", peer: query.peer }).listCommandRuns(filter, linked.signal);
       throwIfAborted(linked.signal);
-      return runs;
+      return runs.map(parseWorkspaceCommandRun);
     } finally {
       linked.dispose();
     }
   }
 
   parseCommandRun(value: unknown): TerminalCommandRun {
-    return parseTerminalCommandRun(value);
+    return parseWorkspaceCommandRun(value);
   }
 }
 
-function waitForCommandRunCompletion(
-  initialRun: TerminalCommandRun,
+function waitForCommandRunCompletion<Run extends AnyTerminalCommandRun>(
+  initialRun: Run,
   client: Pick<TerminalPeerClient, "getCommandRun">,
   pollIntervalMs: number,
   setTimer: SetTimer,
   clearTimer: ClearTimer,
   signal: AbortSignal,
-): Promise<TerminalCommandRun> {
+  mapRun: (value: unknown) => Run,
+): Promise<Run> {
   if (signal.aborted) return Promise.reject(abortReason(signal));
   if (isTerminalCommandRunFinal(initialRun)) return Promise.resolve(initialRun);
   return new Promise((resolve, reject) => {
@@ -162,7 +200,7 @@ function waitForCommandRunCompletion(
       if (timer !== undefined) clearTimer(timer);
       signal.removeEventListener("abort", abort);
     };
-    const finish = (result: TerminalCommandRun): void => {
+    const finish = (result: Run): void => {
       if (settled) return;
       settled = true;
       cleanup();
@@ -187,7 +225,7 @@ function waitForCommandRunCompletion(
           return;
         }
         if (isTerminalCommandRunFinal(run)) {
-          finish(run);
+          finish(mapRun(run));
           return;
         }
         timer = setTimer(poll, pollIntervalMs);
@@ -198,13 +236,14 @@ function waitForCommandRunCompletion(
   });
 }
 
-function isTerminalCommandRunFinal(run: TerminalCommandRun): boolean {
+function isTerminalCommandRunFinal(run: AnyTerminalCommandRun): boolean {
   return run.status === "succeeded" || run.status === "failed";
 }
 
 function snapshotTerminalBrowserFacade(value: unknown): RequiredTerminalBrowserFacadeV1 {
   if (!isRecord(value) || value["version"] !== 1) throw new Error("Terminal browser facade capability must be facade v1");
   const createWorkspaceTerminal = value["createWorkspaceTerminal"];
+  const createMaintenanceTerminal = value["createMaintenanceTerminal"];
   const listCommandRuns = value["listCommandRuns"];
   const parseCommandRunValue = value["parseCommandRun"];
   if (typeof createWorkspaceTerminal !== "function" || typeof listCommandRuns !== "function" || typeof parseCommandRunValue !== "function") {
@@ -214,22 +253,48 @@ function snapshotTerminalBrowserFacade(value: unknown): RequiredTerminalBrowserF
     version: 1,
     createWorkspaceTerminal(binding: RequiredTerminalWorkspaceBindingV1): WorkspacePanelTerminal {
       const terminal: unknown = Reflect.apply(createWorkspaceTerminal, value, [binding]);
-      if (!isWorkspacePanelTerminal(terminal)) throw new Error("Terminal browser facade returned an invalid workspace terminal");
+      if (!isTerminalCapability(terminal)) throw new Error("Terminal browser facade returned an invalid workspace terminal");
       return Object.freeze({
         open(options?: { terminalId?: string | undefined }): void { terminal.open(options); },
-        runCommand: (input: WorkspaceTerminalCommandInput) => terminal.runCommand(input),
+        runCommand: async (input: WorkspaceTerminalCommandInput) => snapshotRunHandle(await terminal.runCommand(input), parseWorkspaceCommandRun),
       });
     },
+    ...(typeof createMaintenanceTerminal !== "function" ? {} : {
+      createMaintenanceTerminal(binding: RequiredTerminalMaintenanceBindingV1): MaintenanceTerminal {
+        const terminal: unknown = Reflect.apply(createMaintenanceTerminal, value, [binding]);
+        if (!isTerminalCapability(terminal)) throw new Error("Terminal browser facade returned an invalid maintenance terminal");
+        return Object.freeze({
+          open(options?: { terminalId?: string | undefined }): void { terminal.open(options); },
+          runCommand: async (input: WorkspaceTerminalCommandInput) => snapshotRunHandle(await terminal.runCommand(input), parseMaintenanceCommandRun),
+        });
+      },
+    }),
     async listCommandRuns(query: RequiredTerminalCommandRunQueryV1): Promise<TerminalCommandRun[]> {
       const result: unknown = await Reflect.apply(listCommandRuns, value, [query]);
       if (!Array.isArray(result)) throw new Error("Terminal browser facade returned an invalid command-run list");
-      return result.map(parseTerminalCommandRun);
+      return result.map(parseWorkspaceCommandRun);
     },
     parseCommandRun(input: unknown): TerminalCommandRun {
       const result: unknown = Reflect.apply(parseCommandRunValue, value, [input]);
-      return parseTerminalCommandRun(result);
+      return parseWorkspaceCommandRun(result);
     },
   });
+}
+
+function parseWorkspaceCommandRun(value: unknown): TerminalCommandRun {
+  const run = parseTerminalCommandRun(value);
+  if (run.scope === "maintenance") throw new Error("Expected workspace terminal command run");
+  return run;
+}
+
+function parseMaintenanceCommandRun(value: unknown): MaintenanceTerminalCommandRun {
+  const run = parseTerminalCommandRun(value);
+  if (run.scope !== "maintenance") throw new Error("Expected maintenance terminal command run");
+  return run;
+}
+
+function snapshotRunHandle<Run extends AnyTerminalCommandRun>(value: TerminalCommandRunHandle<AnyTerminalCommandRun>, mapRun: (value: unknown) => Run): TerminalCommandRunHandle<Run> {
+  return Object.freeze({ run: mapRun(value.run), completed: value.completed.then(mapRun) });
 }
 
 function linkAbortSignals(lifetime: AbortSignal, caller: AbortSignal | undefined): { signal: AbortSignal; dispose(): void } {
@@ -261,7 +326,7 @@ function abortReason(signal: AbortSignal): Error {
   return reason instanceof Error ? reason : new DOMException("Terminal browser facade disposed", "AbortError");
 }
 
-function isWorkspacePanelTerminal(value: unknown): value is WorkspacePanelTerminal {
+function isTerminalCapability(value: unknown): value is WorkspacePanelTerminal | MaintenanceTerminal {
   return isRecord(value) && typeof value["open"] === "function" && typeof value["runCommand"] === "function";
 }
 

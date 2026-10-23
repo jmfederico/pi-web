@@ -70,6 +70,7 @@ describe("SessionController factual tree invalidation", () => {
       expect(observer.state().sessions.map((session) => session.id)).toEqual([replacementSession.id, oldSession.id]);
       expect(observer.state().messages[0]?.parts).toEqual([{ type: "text", text: "changed branch" }]);
       expect(observer.state().status?.suggestedInput).toBe("optional text");
+      expect(observer.state().pendingTreeActions).toEqual([]);
       expect(observer.removed).toEqual([sourceKey]);
       expect(observer.cache.get(sourceKey)).toEqual(page("changed branch"));
       expect(observer.liveDraft()).toBe(`unsent browser ${String(index)}`);
@@ -206,6 +207,27 @@ describe("SessionController factual tree invalidation", () => {
     controller.dispose();
   });
 
+  it("keeps a session pending until its last overlapping history request settles", async () => {
+    const firstResult = deferred<Awaited<ReturnType<typeof defaultApi.navigateTree>>>();
+    const secondResult = deferred<Awaited<ReturnType<typeof defaultApi.navigateTree>>>();
+    let state: AppState = { ...initialAppState(), selectedSession: oldSession, treeDialog: tree };
+    const navigateTree = vi.fn<typeof defaultApi.navigateTree>()
+      .mockReturnValueOnce(firstResult.promise).mockReturnValueOnce(secondResult.promise);
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      api: { ...defaultApi, navigateTree }, socket: new EmitSocket(),
+    });
+    const first = controller.navigateTree("root", { mode: "none" });
+    const second = controller.navigateTree("root", { mode: "none" });
+    expect(state.pendingTreeActions).toHaveLength(2);
+    firstResult.resolve({ cancelled: true });
+    await first;
+    expect(state.pendingTreeActions).toEqual([{ machineId: "local", sessionId: oldSession.id }]);
+    secondResult.resolve({ cancelled: true });
+    await second;
+    expect(state.pendingTreeActions).toEqual([]);
+    controller.dispose();
+  });
+
   it.each(["navigate", "fork"] as const)("preserves explicit HTTP %s behavior when invalidation arrives during the action", async (action) => {
     const socket = new EmitSocket();
     const navigateResult = deferred<Awaited<ReturnType<typeof defaultApi.navigateTree>>>();
@@ -216,7 +238,9 @@ describe("SessionController factual tree invalidation", () => {
     const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
       api: {
         ...defaultApi, runCommand, navigateTree: () => navigateResult.promise, forkTree: () => forkResult.promise,
-        transcriptSnapshot: (session) => transcriptSnapshotFixture(page("current history"), { ...status(sessionLookupId(session)), suggestedInput: "do not auto-use" }),
+        transcriptSnapshot: (session) => transcriptSnapshotFixture(page("current history"), { ...status(sessionLookupId(session)),
+          suggestedInput: sessionLookupId(session) === replacementSession.id ? "explicit fork" : "do not auto-use",
+        }),
         thinkingLevels: () => Promise.resolve({ levels: [] }),
       }, socket, replacePromptEditorText,
     });
@@ -245,6 +269,63 @@ describe("SessionController factual tree invalidation", () => {
     }
     controller.dispose();
   });
+});
+
+describe("SessionController go-back editor restoration", () => {
+  it.each(["before response", "after refresh"] as const)("restores an empty composer without waiting for history or overwriting later edits when status arrives %s", async (arrival) => {
+    const navigation = deferred<Awaited<ReturnType<typeof defaultApi.navigateTree>>>();
+    const refresh = deferred<SessionTranscriptSnapshot>();
+    const socket = new EmitSocket();
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [oldSession] };
+    let liveDraft = "";
+    const replacePromptEditorText = vi.fn<NonNullable<SessionControllerDependencies["replacePromptEditorText"]>>(({ text }) => { liveDraft = text; });
+    const navigateTree = vi.fn<typeof defaultApi.navigateTree>(() => navigation.promise);
+    const transcriptSnapshot = vi.fn<typeof defaultApi.transcriptSnapshot>()
+      .mockImplementationOnce(() => transcriptSnapshotFixture(page("old branch"), status(oldSession.id)))
+      .mockReturnValue(refresh.promise);
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      api: { ...defaultApi, navigateTree, transcriptSnapshot,
+        runCommand: () => Promise.resolve({ type: "tree", tree }), thinkingLevels: () => Promise.resolve({ levels: [] }),
+      }, socket, replacePromptEditorText,
+    });
+    await controller.selectSession(oldSession, { updateUrl: false });
+    expect(loadDraft(sourceKey)).toBe("");
+    const acting = controller.actOnMessage("root", "back");
+    await vi.waitFor(() => { expect(navigateTree).toHaveBeenCalledOnce(); });
+    expect(state.pendingTreeActions).toEqual([{ machineId: "local", sessionId: oldSession.id }]);
+    const suggestion = { ...status(oldSession.id), suggestedInput: "original prompt" };
+    if (arrival === "before response") {
+      socket.emit({ type: "status.update", status: suggestion, seq: 1 });
+      runPendingAnimationFrames();
+      expect(state.status?.suggestedInput).toBe("original prompt");
+      expect(replacePromptEditorText).not.toHaveBeenCalled();
+    }
+    navigation.resolve({ cancelled: false, editorText: "original prompt" });
+    await vi.waitFor(() => {
+      expect(transcriptSnapshot).toHaveBeenCalledTimes(2);
+    });
+    // The transcript read is still unresolved, but the empty composer is restored.
+    expect(loadDraft(sourceKey)).toBe("original prompt");
+    expect(replacePromptEditorText).toHaveBeenCalledExactlyOnceWith({ machineId: "local", sessionId: oldSession.id, text: "original prompt" });
+    expect(state.pendingTreeActions).toEqual([{ machineId: "local", sessionId: oldSession.id }]);
+    expect(liveDraft).toBe("original prompt");
+    liveDraft = "typed while history was loading";
+    saveDraft(sourceKey, liveDraft);
+    refresh.resolve({ page: page("new branch"), status: arrival === "before response" ? suggestion : status(oldSession.id), seq: 2, partial: null });
+    await acting;
+    expect(state.pendingTreeActions).toEqual([]);
+    expect(liveDraft).toBe("typed while history was loading");
+    expect(loadDraft(sourceKey)).toBe(liveDraft);
+    socket.emit({ type: "status.update", status: suggestion, seq: 3 });
+    runPendingAnimationFrames();
+    // Status remains authoritative without replacing subsequent composer edits.
+    expect(state.status?.suggestedInput).toBe("original prompt");
+    expect(liveDraft).toBe("typed while history was loading");
+    expect(loadDraft(sourceKey)).toBe(liveDraft);
+    expect(replacePromptEditorText).toHaveBeenCalledOnce();
+    controller.dispose();
+  });
+
 });
 
 function page(text: string): MessagePage {

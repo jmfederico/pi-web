@@ -2,12 +2,18 @@
 
 import { html, render, svg } from "lit";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { JsonValue, PluginPeer, PluginRuntimeContext, Workspace, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
+import type { JsonValue, PluginCapability, PluginPeer, PluginRuntimeContext, Workspace, WorkspacePanelContext } from "@jmfederico/pi-web/plugin-api";
 import { GIT_FILE_VIEW_STORAGE_KEY } from "./browser/gitFileViewPreference.js";
 import plugin from "./browser/pi-web-plugin.js";
 
 const projectId = "project-1";
 const workspaceId = "workspace-1";
+const releaseStyles = vi.fn();
+const stylesheetIntegration = {
+  registerRoot: vi.fn(() => releaseStyles),
+  subscribe: vi.fn(),
+  createController: vi.fn(),
+};
 
 const gitWorkspace: Workspace = {
   id: workspaceId,
@@ -26,6 +32,36 @@ afterEach(() => {
 });
 
 describe("bundled Git browser plugin", () => {
+  it("requires stylesheet integration v1 and rejects invalid payloads", () => {
+    const capability = plugin.requires[0];
+    if (capability === undefined) throw new Error("Expected stylesheet integration requirement");
+    expect(capability).toMatchObject({ pluginId: "pi-web", id: "stylesheet-integration", version: 1 });
+    expect(capability.parse(stylesheetIntegration)).toBe(stylesheetIntegration);
+    for (const value of [null, {}, { ...stylesheetIntegration, registerRoot: 1 }, { ...stylesheetIntegration, subscribe: null }, { ...stylesheetIntegration, createController: null }]) {
+      expect(() => capability.parse(value)).toThrow("Invalid PI WEB stylesheet integration");
+    }
+  });
+
+  it("opts the containing panel root into shared UI for its mounted lifetime", () => {
+    const panel = requiredPanel(activate("git"));
+    const host = document.createElement("div");
+    const root = host.attachShadow({ mode: "open" });
+    document.body.append(host);
+    stylesheetIntegration.registerRoot.mockClear();
+    releaseStyles.mockClear();
+    const context = panelContext(backendFixture().request);
+    render(panel.render(context), root);
+    render(panel.render(context), root);
+    expect(stylesheetIntegration.registerRoot).toHaveBeenCalledExactlyOnceWith(root, { sharedUi: true });
+    expect(root.querySelector("style[data-ui-styles]")).toBeNull();
+    host.remove();
+    expect(releaseStyles).toHaveBeenCalledTimes(1);
+    document.body.append(host);
+    expect(stylesheetIntegration.registerRoot).toHaveBeenCalledTimes(2);
+    render(null, root);
+    expect(releaseStyles).toHaveBeenCalledTimes(2);
+  });
+
   it("contributes provider-owned actions and a panel that replacements suppress", async () => {
     const contributions = activate("git");
     const panel = contributions.workspacePanels?.[0];
@@ -50,7 +86,6 @@ describe("bundled Git browser plugin", () => {
     const refresh = contributions.actions?.find((action) => action.id === "workspace.refresh-git");
 
     expect(contributions.actions?.map(({ id }) => id)).toEqual(["view.git", "workspace.refresh-git"]);
-    expect(panel.routeAliases).toEqual(["git", "core:workspace.git"]);
     expect(goToGit?.shortcut).toBe("mod+3");
     expect(goToGit?.shortcutAliases).toEqual(["core:view.git"]);
     expect(refresh?.shortcutAliases).toEqual(["core:workspace.refresh-git"]);
@@ -65,6 +100,20 @@ describe("bundled Git browser plugin", () => {
     backend.request.mockClear();
     await panel.onInvalidate?.(context);
     expect(backend.request).toHaveBeenCalledWith("status", null);
+  });
+
+  it("inspects the repository from a folder workspace without requiring workspace ownership", async () => {
+    const folder: Workspace = { id: workspaceId, projectId, path: "/repo/app", label: "app", isMain: true };
+    const backend = backendFixture({ files: [changedFile("outside.txt")] });
+    const panel = requiredPanel(activate("git"));
+    const context = panelContext(backend.request, folder);
+    expect(panel.visible?.(context)).toBe(true);
+    await panel.onInvalidate?.(context);
+    const container = document.createElement("div");
+    document.body.append(container);
+    render(panel.render(context), container);
+    expect(backend.request).toHaveBeenCalledWith("status", null);
+    expect(container.textContent).toContain("outside.txt");
   });
 
   it("uses source identity for ownership and runtime identity for federated routes", async () => {
@@ -150,11 +199,20 @@ describe("bundled Git browser plugin", () => {
     expect(container.textContent).toContain("unstaged");
     expect(container.querySelector(".git-panel")).not.toBeNull();
     expect(container.querySelector(".split")).toBeNull();
-    const styleRules = (container.querySelector("style")?.textContent ?? "")
+    expect(container.querySelector("style[data-ui-styles]")).toBeNull();
+    expect(container.querySelector(".git-toolbar.ui-toolbar .ui-button")).not.toBeNull();
+    expect(container.querySelector(".git-file-list.ui-file-list")).not.toBeNull();
+    const selectedRow = button(container, "src/main.ts");
+    expect(selectedRow.classList.contains("selected")).toBe(true);
+    expect(selectedRow.querySelector(".ui-file-label")?.textContent).toBe("src/main.ts");
+    expect(selectedRow.querySelector(".ui-file-leading svg")?.getAttribute("viewBox")).toBe("0 0 24 24");
+    expect(selectedRow.querySelector(".ui-file-meta")?.textContent).toBe("M");
+    const styleRules = (container.querySelector("style[data-git-styles]")?.textContent ?? "")
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => line.includes("{"));
-    expect(styleRules).toContainEqual(expect.stringContaining(".git-panel .git-row"));
+      // Media queries group rules; their inner selectors must still be panel-scoped.
+      .filter((line) => line.includes("{") && !line.startsWith("@media "));
+    expect(styleRules).not.toContainEqual(expect.stringContaining(".git-panel .git-row"));
     expect(styleRules.every((rule) => rule.startsWith(".git-panel"))).toBe(true);
     expect(container.querySelector('[role="table"][aria-label="Unified diff"]')).not.toBeNull();
     expect([...container.querySelectorAll(".inline-change")].map((entry) => entry.textContent)).toContain("new");
@@ -449,7 +507,7 @@ describe("bundled Git browser plugin", () => {
 });
 
 function activate(pluginId: string, runtimePluginId = pluginId) {
-  return plugin.activate({
+  const result = plugin.activate({
     apiVersion: 4,
     pluginId,
     runtimePluginId,
@@ -457,7 +515,12 @@ function activate(pluginId: string, runtimePluginId = pluginId) {
     svg,
     signal: new AbortController().signal,
     lifetimeSignal: new AbortController().signal,
-  }).contributions;
+  });
+  result.start({
+    capabilities: { resolve: <Value,>(capability: PluginCapability<Value>): Value => capability.parse(stylesheetIntegration) },
+    signal: new AbortController().signal,
+  });
+  return result.contributions;
 }
 
 function requiredPanel(contributions: ReturnType<typeof activate>) {

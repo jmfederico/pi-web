@@ -1,4 +1,4 @@
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "../../piSdk.js";
 
 /**
  * Tick hourly and let pi decide when a fetch is actually due: pi treats stored

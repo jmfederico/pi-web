@@ -1,9 +1,14 @@
-import { api as defaultApi, type AuthProviderOption, type AuthType, type OAuthFlowState, type SessionStatus } from "../api";
+import { api as defaultApi, type AuthProviderOption, type AuthType, type OAuthFlowState, type SessionRef, type SessionStatus } from "../api";
 import type { AuthDialogState } from "../appState";
 import { BrowserErrorReporter, machineBrowserErrorScope } from "../browserErrors";
 import { selectedMachineId, type GetState, type SetState } from "./types";
 
 type OAuthDialogState = Extract<AuthDialogState, { step: "oauth" }>;
+
+export interface McpAuthContext {
+  session: SessionRef;
+  machineId: string;
+}
 
 /** The one-shot server request a response is being submitted for. */
 interface OAuthResponseTarget {
@@ -62,6 +67,21 @@ export class AuthController {
       return;
     }
     this.setState({ authDialog: { step: "method", machineId } });
+  }
+
+  async openMcpAuth(mode: "login" | "logout", serverName?: string, context?: McpAuthContext): Promise<void> {
+    const state = this.getState();
+    const session = context?.session ?? (state.selectedSession?.archived === true ? undefined : state.selectedSession);
+    const machineId = context?.machineId ?? selectedMachineId(state);
+    if (session === undefined) {
+      this.browserErrors.report(machineBrowserErrorScope(machineId), "Select a session to authenticate MCP servers.");
+      return;
+    }
+    const operationGeneration = this.advanceAuthOperation();
+    this.setState({ authDialog: { step: "starting", machineId, title: mode === "login" ? "Sign in to an MCP server" : "Sign out of an MCP server" } });
+    await this.startFlow(() => serverName === undefined
+      ? this.api.startMcpAuth(session, mode, machineId)
+      : this.api.startMcpAuth(session, mode, machineId, serverName), machineId, operationGeneration);
   }
 
   async chooseLoginMethod(authType: AuthType): Promise<void> {
@@ -138,7 +158,8 @@ export class AuthController {
     this.inFlightResponse = target;
     this.setState({ authDialog: { ...clean, responding: true } });
     try {
-      const flow = await this.api.respondOAuthFlow(flowId, requestId, responseValue, dialog.machineId);
+      const respond = dialog.flow.target === "mcp" ? this.api.respondMcpAuthFlow : this.api.respondOAuthFlow;
+      const flow = await respond(flowId, requestId, responseValue, dialog.machineId);
       const current = this.currentOAuthDialog(operationGeneration, flowId);
       if (flow.flowId !== flowId || current === undefined || oauthRequestId(current.flow) !== requestId) return;
       this.updateOAuthFlow(flow, current.machineId);
@@ -160,6 +181,31 @@ export class AuthController {
     }
     const flowId = dialog.flow.flowId;
     const machineId = dialog.machineId;
+    if (dialog.flow.target === "mcp") {
+      if (dialog.flow.status !== "running") {
+        this.closeDialog();
+        return;
+      }
+      if (dialog.flow.cancelRequested === true) return;
+      const operationGeneration = this.advanceAuthOperation();
+      // Cancellation can race token exchange. Keep showing Pi's operation
+      // until it actually ends rather than claiming that no credentials were saved.
+      this.setState({ authDialog: { ...dialog, flow: { ...dialog.flow, cancelRequested: true } } });
+      try {
+        const flow = await this.api.cancelMcpAuthFlow(flowId, machineId);
+        if (this.currentOAuthDialog(operationGeneration, flowId) !== undefined) {
+          this.updateOAuthFlow(flow, machineId);
+          if (flow.status === "running") this.startPolling(flowId, machineId);
+        }
+      } catch (error) {
+        const current = this.currentOAuthDialog(operationGeneration, flowId);
+        if (current !== undefined) {
+          this.setState({ authDialog: { ...current, flow: { ...current.flow, cancelRequested: false }, error: String(error) } });
+          this.startPolling(flowId, machineId);
+        }
+      }
+      return;
+    }
     this.closeDialog();
     try {
       await this.api.cancelOAuthFlow(flowId, machineId);
@@ -207,17 +253,25 @@ export class AuthController {
   }
 
   private async startLoginFlow(provider: AuthProviderOption, machineId: string, operationGeneration: number): Promise<void> {
+    await this.startFlow(
+      () => provider.authType === "oauth"
+        ? this.api.startOAuthLogin(provider.id, machineId)
+        : this.api.startInteractiveApiKeyLogin(provider.id, machineId),
+      machineId,
+      operationGeneration,
+    );
+  }
+
+  private async startFlow(start: () => Promise<OAuthFlowState>, machineId: string, operationGeneration: number): Promise<void> {
     if (!this.isCurrentAuthOperation(operationGeneration)) return;
     try {
-      const flow = provider.authType === "oauth"
-        ? await this.api.startOAuthLogin(provider.id, machineId)
-        : await this.api.startInteractiveApiKeyLogin(provider.id, machineId);
+      const flow = await start();
       if (!this.isCurrentAuthOperation(operationGeneration)) {
         // Sessiond has already allocated this flow. Do not orphan its timer,
         // provider polling, or callback listener when the UI operation is stale.
         if (flow.status === "running") {
           try {
-            await this.api.cancelOAuthFlow(flow.flowId, machineId);
+            await this.cancelFlow(flow, machineId);
           } catch {
             // Best-effort cleanup; the obsolete flow must not restore UI state.
           }
@@ -227,18 +281,24 @@ export class AuthController {
       this.updateOAuthFlow(flow, machineId);
       if (flow.status === "running") this.startPolling(flow.flowId, machineId);
     } catch (error) {
-      if (this.isCurrentAuthOperation(operationGeneration)) this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
+      if (!this.isCurrentAuthOperation(operationGeneration)) return;
+      const dialog = this.getState().authDialog;
+      if (dialog?.step === "starting") this.setState({ authDialog: { ...dialog, error: String(error) } });
+      else this.browserErrors.report(machineBrowserErrorScope(machineId), String(error));
     }
   }
 
   private updateOAuthFlow(flow: OAuthFlowState, machineId: string): void {
-    if (flow.status === "complete") {
+    if (flow.status === "complete" && flow.target !== "mcp") {
       this.stopPolling();
       this.closeDialog();
       void this.refreshStatus(machineId);
       return;
     }
-    if (flow.status === "error" || flow.status === "cancelled") this.advanceAuthOperation();
+    if (flow.status !== "running") {
+      this.advanceAuthOperation();
+      if (flow.target === "mcp") void this.refreshStatus(machineId);
+    }
     const existing = this.getState().authDialog;
     const previousInput = existing?.step === "oauth" && existing.flow.flowId === flow.flowId ? existing.inputValue ?? "" : "";
     const previousRequestId = existing?.step === "oauth" ? oauthRequestId(existing.flow) : undefined;
@@ -247,6 +307,10 @@ export class AuthController {
     const inputValue = sameRequest ? previousInput : "";
     const responding = sameRequest && existing?.step === "oauth" ? existing.responding === true : false;
     this.setState({ authDialog: { step: "oauth", flow, machineId, inputValue, responding } });
+  }
+
+  private cancelFlow(flow: OAuthFlowState, machineId: string): Promise<OAuthFlowState> {
+    return flow.target === "mcp" ? this.api.cancelMcpAuthFlow(flow.flowId, machineId) : this.api.cancelOAuthFlow(flow.flowId, machineId);
   }
 
   private startPolling(flowId: string, machineId: string): void {
@@ -272,7 +336,8 @@ export class AuthController {
     }
     const requestId = oauthRequestId(dialog.flow);
     try {
-      const flow = await this.api.oauthFlow(flowId, machineId);
+      const read = dialog.flow.target === "mcp" ? this.api.mcpAuthFlow : this.api.oauthFlow;
+      const flow = await read(flowId, machineId);
       const current = this.currentOAuthDialog(operationGeneration, flowId);
       if (flow.flowId !== flowId || pollGeneration !== this.pollGeneration || current?.machineId !== machineId || oauthRequestId(current.flow) !== requestId) return;
       this.updateOAuthFlow(flow, machineId);

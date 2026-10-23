@@ -23,6 +23,7 @@ describe("server plugin runtime child-process fixtures", () => {
       const runnerPath = join(root, "runner.mjs");
       const runtimeUrl = pathToFileURL(resolve("src/server/plugins/serverPluginRuntime.ts")).href;
       const terminalCapabilityUrl = pathToFileURL(resolve("src/server/terminals/requiredTerminalService.ts")).href;
+      const maintenanceCapabilityUrl = pathToFileURL(resolve("src/server/terminals/maintenanceTerminalCapability.ts")).href;
       const terminalPluginUrl = pathToFileURL(resolve("pi-web-plugins/terminal/server/server-plugin.ts")).href;
       const terminalModulePath = resolve("pi-web-plugins/terminal/server/server-plugin.ts");
       const commandMarker = `'${failureMarker.replaceAll("'", "'\\''")}'`;
@@ -57,6 +58,7 @@ describe("server plugin runtime child-process fixtures", () => {
         import terminalPlugin from ${JSON.stringify(terminalPluginUrl)};
         import { createServerPluginRuntime } from ${JSON.stringify(runtimeUrl)};
         import { REQUIRED_TERMINAL_SERVICE_CAPABILITY } from ${JSON.stringify(terminalCapabilityUrl)};
+        import { MAINTENANCE_TERMINAL_CAPABILITY } from ${JSON.stringify(maintenanceCapabilityUrl)};
 
         let resolveNotice = () => undefined;
         const noticeObserved = new Promise((resolve) => { resolveNotice = resolve; });
@@ -78,7 +80,11 @@ describe("server plugin runtime child-process fixtures", () => {
         const notices = [];
         const activity = [];
         const runtime = await createServerPluginRuntime({
-        dataDir: ${JSON.stringify(join(root, "data"))},
+          dataDir: ${JSON.stringify(join(root, "data"))},
+          hostCapabilities: [{
+            capability: MAINTENANCE_TERMINAL_CAPABILITY,
+            value: { cwd: ${JSON.stringify(join(root, "maintenance"))}, env: { ...process.env } },
+          }],
           catalog: { snapshot: async () => ({ plugins: ${JSON.stringify(entries)}, diagnostics: [] }) },
           importer: async (url) => url.startsWith(${JSON.stringify(terminalPluginUrl)})
             ? { default: terminalPlugin }

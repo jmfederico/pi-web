@@ -27,12 +27,14 @@ Options:
   --bind-address ADDR     Host bind address (default: 127.0.0.1)
   --port PORT             Host port (default: 8504)
   --pi-web-version VER    npm @jmfederico/pi-web version pin (default: latest)
-  --opensuse-image IMAGE  openSUSE base image (default: opensuse/tumbleweed)
-  --nodejs-major MAJOR    Node.js major version package to install (default: 22)
-  --nodejs-repo REPO      Node.js zypper repository URL, auto, or disabled
-                          (default: auto)
-  --extra-zypper-packages LIST
-                          extra openSUSE packages to install during image build
+  --ubuntu-image IMAGE    Ubuntu base image (default: ubuntu:26.04)
+  --node-image IMAGE      Image-owned Node.js source (default: node:22.22.2-bookworm-slim)
+  --extra-apt-packages LIST
+                          Extra Ubuntu packages to install during image build
+  --docker-cli-version VER
+                          Official Docker CLI image tag (default: 29-cli)
+  --mise-version VER      Exact mise release (default: 2026.10.17)
+  --git-version VER       Exact Git apt package version (default: stable PPA)
   --asset-dir DIR         Copy Docker assets from a local docker/ directory
   --asset-ref REF         Fetch Docker assets from a Git ref (default: main)
   --skip-compose          Write assets/.env but skip build and service recreate
@@ -65,6 +67,7 @@ running the installer, for example:
 EOF
 }
 
+parse_args() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --install-dir)
@@ -92,24 +95,34 @@ while [ "$#" -gt 0 ]; do
       PI_WEB_VERSION=$2
       shift 2
       ;;
-    --opensuse-image)
-      [ "$#" -ge 2 ] || die "--opensuse-image requires a value"
-      PI_WEB_OPENSUSE_IMAGE=$2
+    --ubuntu-image)
+      [ "$#" -ge 2 ] || die "--ubuntu-image requires a value"
+      PI_WEB_UBUNTU_IMAGE=$2
       shift 2
       ;;
-    --nodejs-major)
-      [ "$#" -ge 2 ] || die "--nodejs-major requires a value"
-      PI_WEB_NODEJS_MAJOR=$2
+    --node-image)
+      [ "$#" -ge 2 ] || die "--node-image requires a value"
+      PI_WEB_NODE_IMAGE=$2
       shift 2
       ;;
-    --nodejs-repo)
-      [ "$#" -ge 2 ] || die "--nodejs-repo requires a value"
-      PI_WEB_NODEJS_REPO=$2
+    --docker-cli-version)
+      [ "$#" -ge 2 ] || die "--docker-cli-version requires a value"
+      PI_WEB_DOCKER_CLI_VERSION=$2
       shift 2
       ;;
-    --extra-zypper-packages)
-      [ "$#" -ge 2 ] || die "--extra-zypper-packages requires a value"
-      PI_WEB_EXTRA_ZYPPER_PACKAGES=$2
+    --mise-version)
+      [ "$#" -ge 2 ] || die "--mise-version requires a value"
+      PI_WEB_MISE_VERSION=$2
+      shift 2
+      ;;
+    --git-version)
+      [ "$#" -ge 2 ] || die "--git-version requires a value"
+      PI_WEB_GIT_VERSION=$2
+      shift 2
+      ;;
+    --extra-apt-packages)
+      [ "$#" -ge 2 ] || die "--extra-apt-packages requires a value"
+      PI_WEB_EXTRA_APT_PACKAGES=$2
       shift 2
       ;;
     --asset-dir)
@@ -135,6 +148,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+}
+
+# Keep the original arguments available when handing off to a newer installer.
+parse_args "$@"
 
 absolute_dir() {
   dir=$1
@@ -280,6 +297,9 @@ write_asset() {
   fi
 
   chmod "$mode" "$temp_target"
+  if [ "$rel_path" = install.sh ] && ! cmp -s "$0" "$temp_target"; then
+    installer_refreshed=1
+  fi
   mv "$temp_target" "$target"
 }
 
@@ -288,6 +308,9 @@ compose_cmd() {
 }
 
 run_runtime_compose() {
+  if [ -f compose.local.yml ]; then
+    set -- -f compose.local.yml "$@"
+  fi
   compose_cmd --project-name "$compose_project_name" --env-file .env -f compose.yml -f compose.override.yml "$@"
 }
 
@@ -360,13 +383,25 @@ if ! pi_web_docker_host_resolve_profile "$persisted_host_profile" "$persisted_ho
   die "refusing to install on an unsupported or unknown Docker host setup"
 fi
 
+# The refreshed Dockerfile may need assets unknown to this installer. Let the
+# matching installer own the asset list before refreshing any build inputs.
+installer_refreshed=0
+write_asset install.sh 0755
+if [ "$installer_refreshed" = 1 ]; then
+  cleanup_profile_helper
+  exec "$install_dir/install.sh" "$@"
+fi
+
 write_asset Dockerfile 0644
 write_asset compose.yml 0644
 write_asset .dockerignore 0644
-write_asset install.sh 0755
 write_asset pi-web-docker 0755
 write_asset internal/bin/hostexec 0755
-write_asset internal/image/install-opensuse-base 0755
+write_asset internal/image/install-ubuntu-base 0755
+write_asset internal/bin/pi-web-service 0755
+write_asset internal/bin/pi-web-image-doctor 0755
+write_asset internal/bin/pi-web-reconcile-mise 0755
+write_asset internal/image/write-manifest 0755
 write_asset internal/host-profile.sh 0644
 
 custom_image_hooks_dir=$install_dir/custom-image.d
@@ -397,10 +432,12 @@ data_dir=$(absolute_dir "$(path_from_base "$install_dir" "$raw_data_dir")") || d
 pi_web_bind_addr=$(value_from_env_or_existing_or_default PI_WEB_BIND_ADDR 127.0.0.1)
 pi_web_port=$(value_from_env_or_existing_or_default PI_WEB_PORT 8504)
 pi_web_version=$(value_from_env_or_existing_or_default PI_WEB_VERSION latest)
-pi_web_opensuse_image=$(value_from_env_or_existing_or_default PI_WEB_OPENSUSE_IMAGE opensuse/tumbleweed)
-pi_web_nodejs_major=$(value_from_env_or_existing_or_default PI_WEB_NODEJS_MAJOR 22)
-pi_web_nodejs_repo=$(value_from_env_or_existing_or_default PI_WEB_NODEJS_REPO auto)
-pi_web_extra_zypper_packages=$(value_from_env_or_existing_or_default PI_WEB_EXTRA_ZYPPER_PACKAGES "")
+pi_web_ubuntu_image=$(value_from_env_or_existing_or_default PI_WEB_UBUNTU_IMAGE ubuntu:26.04)
+pi_web_node_image=$(value_from_env_or_existing_or_default PI_WEB_NODE_IMAGE node:22.22.2-bookworm-slim)
+pi_web_extra_apt_packages=$(value_from_env_or_existing_or_default PI_WEB_EXTRA_APT_PACKAGES "")
+pi_web_docker_cli_version=$(value_from_env_or_existing_or_default PI_WEB_DOCKER_CLI_VERSION 29-cli)
+pi_web_mise_version=$(value_from_env_or_existing_or_default PI_WEB_MISE_VERSION 2026.10.17)
+pi_web_git_version=$(value_from_env_or_existing_or_default PI_WEB_GIT_VERSION "")
 pi_web_image=$(value_from_env_or_existing_or_default PI_WEB_IMAGE pi-web:local)
 compose_project_name=$(value_from_env_or_existing_or_default COMPOSE_PROJECT_NAME pi-web)
 hostexec_image=$(value_from_env_or_existing_or_default HOSTEXEC_IMAGE alpine:3.22)
@@ -419,15 +456,16 @@ require_non_empty PI_WEB_DOCKER_REF "$asset_ref"
 require_non_empty PI_WEB_BIND_ADDR "$pi_web_bind_addr"
 require_non_empty PI_WEB_PORT "$pi_web_port"
 require_non_empty PI_WEB_VERSION "$pi_web_version"
-require_non_empty PI_WEB_OPENSUSE_IMAGE "$pi_web_opensuse_image"
-require_non_empty PI_WEB_NODEJS_MAJOR "$pi_web_nodejs_major"
-require_non_empty PI_WEB_NODEJS_REPO "$pi_web_nodejs_repo"
+require_non_empty PI_WEB_UBUNTU_IMAGE "$pi_web_ubuntu_image"
+require_non_empty PI_WEB_NODE_IMAGE "$pi_web_node_image"
+require_non_empty PI_WEB_DOCKER_CLI_VERSION "$pi_web_docker_cli_version"
+require_non_empty PI_WEB_MISE_VERSION "$pi_web_mise_version"
 require_non_empty PI_WEB_IMAGE "$pi_web_image"
 require_non_empty COMPOSE_PROJECT_NAME "$compose_project_name"
 require_non_empty HOSTEXEC_IMAGE "$hostexec_image"
 require_non_empty PI_WEB_MAX_UPLOAD_BYTES "$pi_web_max_upload_bytes"
 
-pi_web_extra_zypper_packages_env=$(dotenv_quote "$pi_web_extra_zypper_packages")
+pi_web_extra_apt_packages_env=$(dotenv_quote "$pi_web_extra_apt_packages")
 pi_web_extra_host_paths_env=$(dotenv_quote "$pi_web_extra_host_paths")
 compose_override_file=$install_dir/compose.override.yml
 if ! pi_web_docker_host_write_compose_override "$compose_override_file" "$pi_web_host_profile" "$pi_web_extra_host_paths" "$install_dir"; then
@@ -467,11 +505,13 @@ PI_WEB_PORT=$pi_web_port
 # npm package selection. Pi resolves from PI WEB's npm peer dependency.
 PI_WEB_VERSION=$pi_web_version
 
-# openSUSE/Node.js image build inputs.
-PI_WEB_OPENSUSE_IMAGE=$pi_web_opensuse_image
-PI_WEB_NODEJS_MAJOR=$pi_web_nodejs_major
-PI_WEB_NODEJS_REPO=$pi_web_nodejs_repo
-PI_WEB_EXTRA_ZYPPER_PACKAGES=$pi_web_extra_zypper_packages_env
+# Ubuntu image build inputs. Git defaults to the stable PPA without an exact pin.
+PI_WEB_UBUNTU_IMAGE=$pi_web_ubuntu_image
+PI_WEB_NODE_IMAGE=$pi_web_node_image
+PI_WEB_EXTRA_APT_PACKAGES=$pi_web_extra_apt_packages_env
+PI_WEB_DOCKER_CLI_VERSION=$pi_web_docker_cli_version
+PI_WEB_MISE_VERSION=$pi_web_mise_version
+PI_WEB_GIT_VERSION=$pi_web_git_version
 
 # Runtime image names, Compose project, and limits.
 PI_WEB_IMAGE=$pi_web_image

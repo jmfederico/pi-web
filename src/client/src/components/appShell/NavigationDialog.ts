@@ -1,6 +1,8 @@
+import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { paletteStyles } from "../paletteStyles";
+import { uiDialogStyles, uiSelectionStyles } from "../ui/dialogStyles";
+import { uiToolbarStyles } from "../ui/controlStyles";
 import { scrollWhenSelected } from "../scrollWhenSelected";
 import { isNavigationPinned, toggleNavigationPin, type NavigationPreferences } from "../../navigationPreferences";
 import type { AppMobileMainTab } from "./AppMobileMainTabs";
@@ -8,6 +10,11 @@ import "../ModalSurface";
 
 @customElement("navigation-dialog")
 export class NavigationDialog extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) tabs: AppMobileMainTab[] = [];
   // Layout/search visibility must not narrow implicit-all pin edits.
   @property({ attribute: false }) pinUniverse?: readonly string[];
@@ -41,24 +48,24 @@ export class NavigationDialog extends LitElement {
     const tabs = this.filteredTabs();
     return html`
       <modal-surface .label=${"Navigation"} .initialFocus=${"input"} .onClose=${this.onClose} @keydown=${this.navigateDestinations}>
-        <header>
-          <input aria-label="Search navigation" aria-describedby="navigation-selection" placeholder="Search navigation..." .value=${this.query} @input=${(event: Event) => {
+        <header class="ui-dialog-header">
+          <input class="ui-dialog-search" aria-label="Search navigation" aria-describedby="navigation-selection" placeholder="Search navigation..." .value=${this.query} @input=${(event: Event) => {
             if (event.target instanceof HTMLInputElement) {
               this.query = event.target.value;
               this.selectedIndex = 0;
             }
           }}>
-          <button aria-label="Close" title="Close" @click=${this.onClose}>×</button>
+          <button class="ui-button ui-button--icon" aria-label="Close" title="Close" @click=${this.onClose}>×</button>
         </header>
         <span id="navigation-selection" class="sr-only" role="status" aria-live="polite" aria-atomic="true">${tabs.length === 0 ? "No destinations found." : `${tabs[this.selectedIndex]?.label ?? ""}, ${String(this.selectedIndex + 1)} of ${String(tabs.length)}`}</span>
-        <h2>Navigation</h2>
+        <h2 class="ui-dialog-title">Navigation</h2>
         <p>Pin destinations to the tab bars. Removing the last pin shows all tabs.</p>
-        <nav class="options" aria-label="Destinations">
-          ${tabs.length === 0 ? html`<div class="empty">No destinations found.</div>` : nothing}
+        <nav class="options ui-selection-list" aria-label="Destinations">
+          ${tabs.length === 0 ? html`<div class="empty ui-dialog-empty">No destinations found.</div>` : nothing}
           ${tabs.map((tab, index) => html`
-            <div class="destination">
-              <button class=${`destination-button ${index === this.selectedIndex ? "selected" : ""}`} aria-current=${tab.id === this.selectedTab ? "page" : nothing} aria-pressed=${String(tab.id === this.selectedTab)} ${scrollWhenSelected(index === this.selectedIndex, tab.id)} @focus=${() => { this.selectedIndex = index; }} @click=${() => { this.select(tab); }}>${tab.label}</button>
-              <button type="button" class="pin-button" aria-label=${`Pin ${tab.label}`} title=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? `Unpin ${tab.label}` : `Pin ${tab.label}`} aria-pressed=${String(isNavigationPinned(tab.id, this.preferences.pinnedIds))} @click=${() => {
+            <div class="destination ui-selection-row">
+              <button class=${`destination-button ui-button ui-selection-option ${index === this.selectedIndex ? "selected" : ""}`} aria-current=${tab.id === this.selectedTab ? "page" : nothing} aria-pressed=${String(tab.id === this.selectedTab)} ${scrollWhenSelected(index === this.selectedIndex, tab.id)} @focus=${() => { this.selectedIndex = index; }} @click=${() => { this.select(tab); }}>${tab.label}</button>
+              <button type="button" class="pin-button ui-button ui-button--icon" aria-label=${`Pin ${tab.label}`} title=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? `Unpin ${tab.label}` : `Pin ${tab.label}`} aria-pressed=${String(isNavigationPinned(tab.id, this.preferences.pinnedIds))} @click=${() => {
                 this.onPreferencesChange?.({ ...this.preferences, pinnedIds: toggleNavigationPin(tab.id, this.preferences.pinnedIds, this.pinUniverse ?? this.tabs.map((item) => item.id)) });
               }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill=${isNavigationPinned(tab.id, this.preferences.pinnedIds) ? "currentColor" : "none"} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -68,15 +75,15 @@ export class NavigationDialog extends LitElement {
             </div>
           `)}
         </nav>
-        <footer>
-          <button @click=${() => { this.onPreferencesChange?.({ ...this.preferences, pinnedIds: [] }); }}>Show all tabs</button>
+        <footer class="ui-dialog-footer">
+          <button class="ui-button" @click=${() => { this.onPreferencesChange?.({ ...this.preferences, pinnedIds: [] }); }}>Show all tabs</button>
           <div class="mobile-navigation" role="group" aria-label="Mobile navigation">
             <span>Mobile navigation</span>
-            <div class="toggle-options">
-              <button type="button" aria-pressed=${String(!this.preferences.mobileCollapsed)} @click=${() => {
+            <div class="toggle-options ui-toolbar">
+              <button type="button" class="ui-button" aria-pressed=${String(!this.preferences.mobileCollapsed)} @click=${() => {
                 this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: false });
               }}>Expanded</button>
-              <button type="button" aria-pressed=${String(this.preferences.mobileCollapsed)} @click=${() => {
+              <button type="button" class="ui-button" aria-pressed=${String(this.preferences.mobileCollapsed)} @click=${() => {
                 this.onPreferencesChange?.({ ...this.preferences, mobileCollapsed: true });
               }}>Collapsed</button>
             </div>
@@ -126,25 +133,16 @@ export class NavigationDialog extends LitElement {
     buttons[next]?.scrollIntoView({ block: "nearest" });
   };
 
-  static override styles = [paletteStyles, css`
-    :host { z-index: 30; }
+  static override styles = [uiDialogStyles, uiSelectionStyles, uiToolbarStyles, css`
+    @layer pi-web-base {
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    header, footer { flex: 0 0 auto; }
-    .destination, footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    h2 { margin: 0; padding: 12px 12px 4px; font-size: 14px; }
+    footer { justify-content: space-between; flex-wrap: wrap; }
+    h2 { align-self: stretch; padding: 12px 16px 4px; }
     p { margin: 0; padding: 0 12px 12px; color: var(--pi-muted); font-size: 12px; flex: 0 0 auto; }
     nav { overscroll-behavior: contain; }
-    .destination { border-bottom: 1px solid var(--pi-border-muted); gap: 0; }
-    .destination-button { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; padding: 10px 12px; font: inherit; font-weight: 600; }
-    .destination-button.selected, .destination-button:hover { background: var(--pi-selection-bg); }
-    .pin-button { display: inline-flex; align-items: center; justify-content: center; padding: 10px 12px; }
+    .destination-button { overflow-wrap: anywhere; font-weight: 600; }
     .pin-button[aria-pressed="true"] svg { color: var(--pi-accent); }
-    footer { padding: 12px; flex-wrap: wrap; border-top: 1px solid var(--pi-border); }
     .mobile-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; }
-    .toggle-options { display: inline-flex; gap: 4px; }
-    .toggle-options button { font-size: inherit; padding: 5px 7px; }
-    footer button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); padding: 7px 9px; }
-    button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
-    footer button[aria-pressed="true"] { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
+    }
   `];
 }

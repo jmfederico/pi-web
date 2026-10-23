@@ -11,7 +11,34 @@ afterEach(() => {
 });
 
 describe("theme settings controls", () => {
-  it("stages theme and Auto choices, then offers distinct device/default actions", async () => {
+  it("selects the saved theme when first opened and when options arrive later", async () => {
+    const registry = new PluginRegistry();
+    await registry.registerBatch([{ id: "themes", plugin: themePackPlugin }]);
+    const themes = registry.getThemes();
+    for (const delayed of [false, true]) {
+      const panel = new SettingsThemePanel();
+      panel.preference = { themeId: "themes:graphite", auto: false };
+      panel.themes = delayed ? [] : themes;
+      document.body.append(panel);
+      await panel.updateComplete;
+      if (delayed) {
+        panel.themes = themes;
+        await panel.updateComplete;
+      }
+      const select = required(panel.shadowRoot?.querySelector<HTMLSelectElement>("select"));
+      expect(select.value).toBe("themes:graphite");
+      panel.preference = { themeId: "themes:paper", auto: false };
+      await panel.updateComplete;
+      expect(select.value).toBe("themes:paper");
+      selectTheme(panel, "themes:classic");
+      await panel.updateComplete;
+      expect(select.value).toBe("themes:classic");
+      panel.remove();
+    }
+    await registry.dispose();
+  });
+
+  it("stages theme and Auto choices, then offers distinct browser/default actions", async () => {
     const panel = await mountPanel();
     const useLocal = vi.fn();
     const setDefault = vi.fn();
@@ -28,8 +55,8 @@ describe("theme settings controls", () => {
     expect(useLocal).not.toHaveBeenCalled();
     expect(setDefault).not.toHaveBeenCalled();
 
-    button(panel, "Use on this device").click();
-    button(panel, "Set as default").click();
+    button(panel, "Use in this browser").click();
+    button(panel, "Set gateway default").click();
     button(panel, "Use the default").click();
     expect(useLocal).toHaveBeenCalledWith({ themeId: "themes:pi-web-light", auto: false });
     expect(setDefault).toHaveBeenCalledWith({ themeId: "themes:pi-web-light", auto: false });
@@ -43,8 +70,8 @@ describe("theme settings controls", () => {
     panel.defaultPreference = { themeId: "themes:pi-web-light", auto: true };
     panel.hasLocalOverride = true;
     await panel.updateComplete;
-    expect(panel.shadowRoot?.textContent).toContain("Using a theme saved on this device");
-    expect(panel.shadowRoot?.textContent).toContain("Default: PI WEB Light · Auto");
+    expect(panel.shadowRoot?.textContent).toContain("Using a theme saved in this browser");
+    expect(panel.shadowRoot?.textContent).toContain("Default: PI WEB Light · Follows system appearance");
     panel.hasLocalOverride = false;
     await panel.updateComplete;
     expect(panel.shadowRoot?.textContent).toContain("Using the default theme");
@@ -56,9 +83,17 @@ describe("theme settings controls", () => {
     panel.hasLocalOverride = true;
     await panel.updateComplete;
     expect(panel.shadowRoot?.textContent).toContain("custom:missing (unavailable)");
-    expect(button(panel, "Use on this device").disabled).toBe(true);
-    expect(button(panel, "Set as default").disabled).toBe(true);
+    expect(button(panel, "Use in this browser").disabled).toBe(true);
+    const select = required(panel.shadowRoot?.querySelector("select"));
+    const guidance = required(panel.shadowRoot?.getElementById("theme-unavailable-help"));
+    expect(select.getAttribute("aria-describedby")).toContain(guidance.id);
+    expect(guidance.textContent).toContain("Choose an available theme");
+    expect(button(panel, "Set gateway default").disabled).toBe(true);
     expect(button(panel, "Use the default").disabled).toBe(false);
+    selectTheme(panel, "themes:pi-web-light");
+    await panel.updateComplete;
+    expect(panel.shadowRoot?.getElementById("theme-unavailable-help")).toBeNull();
+    expect(button(panel, "Use in this browser").disabled).toBe(false);
   });
 
   it("disables edits while config is loading or saving", async () => {

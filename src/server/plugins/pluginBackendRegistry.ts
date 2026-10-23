@@ -3,9 +3,10 @@ import type {
   JsonObject,
   JsonValue,
   ServerPluginPeerChannel,
-  ServerPluginPeerChannelOpenContext,
-  ServerPluginPeerRequestContext,
+  ServerPluginPeerChannelOpenContextV5 as ServerPluginPeerChannelOpenContext,
+  ServerPluginPeerRequestContextV5 as ServerPluginPeerRequestContext,
   ServerPluginPeerWorkspace,
+  ServerPluginPeerScope,
   ProjectInput,
   WorkspaceProviderMetadata,
 } from "../../server-plugin-api.js";
@@ -39,8 +40,9 @@ import type { WorkspaceProviderRegistry } from "../workspaces/workspaceProviderR
 export interface PluginBackendRequest {
   pluginId: string;
   moduleRevision: string;
-  project: Project;
-  workspaceId: string;
+  scope?: "machine" | "project" | "workspace" | undefined;
+  project?: Project | undefined;
+  workspaceId?: string | undefined;
   operation: string;
   input: unknown;
 }
@@ -102,15 +104,16 @@ export interface PluginBackendChannelTransport {
 
 export interface PluginBackendChannelSession {
   readonly pluginId: string;
-  readonly workspaceId: string;
+  readonly workspaceId: string | undefined;
   receive(data: unknown): Promise<void>;
   close(code?: number, reason?: string): Promise<void>;
 }
 
 export interface PluginBackendChannelAdmissionRequest {
   readonly pluginId: string;
-  readonly projectId: string;
-  readonly workspaceId: string;
+  readonly scope?: "machine" | "project" | "workspace" | undefined;
+  readonly projectId?: string | undefined;
+  readonly workspaceId?: string | undefined;
 }
 
 /** A connection-scoped reservation created before the client sends its open frame. */
@@ -245,11 +248,17 @@ export class PluginBackendRegistry {
   reserveChannel(request: PluginBackendChannelAdmissionRequest): PluginBackendChannelAdmission {
     if (this.channelsAreShuttingDown()) throw channelError("shutdown", 1012, "Plugin backend channels are shutting down");
     if (!isPiWebPluginId(request.pluginId)) throw channelError("inactive-plugin", 1008, `Server plugin is not active: ${request.pluginId}`);
-    if (request.projectId === "" || request.workspaceId === "") {
+    const kind = requireScopeKind(request.scope);
+    if ((kind === "machine" && (request.projectId !== undefined || request.workspaceId !== undefined))
+      || (kind === "project" && request.workspaceId !== undefined)) {
+      throw channelError("invalid-scope", 1008, "Invalid plugin backend channel admission scope");
+    }
+    if ((kind !== "machine" && (request.projectId === undefined || request.projectId === ""))
+      || (kind === "workspace" && (request.workspaceId === undefined || request.workspaceId === ""))) {
       throw channelError("workspace-not-found", 1008, `Workspace not found for server plugin ${request.pluginId} channel`);
     }
     const pluginCount = this.channelsByPlugin.get(request.pluginId) ?? 0;
-    const scopeKey = channelScopeKey(request.pluginId, request.projectId, request.workspaceId);
+    const scopeKey = channelScopeKey(request.pluginId, request.projectId, request.workspaceId, request.scope);
     const scopeCount = this.channelsByPluginWorkspace.get(scopeKey) ?? 0;
     if (this.channelAdmissionCount >= this.channelMaxTotal || pluginCount >= this.channelMaxPerPlugin || scopeCount >= this.channelMaxPerPluginWorkspace) {
       throw channelError("admission-denied", 1013, `Server plugin ${request.pluginId} channel admission limit was reached`);
@@ -294,9 +303,11 @@ export class PluginBackendRegistry {
       );
     }
 
+    requireSupportedScope(request, contribution, true);
+    const admissionRequest = { pluginId, projectId: request.project?.id, workspaceId: request.workspaceId, scope: request.scope };
     const admission = reservedAdmission === undefined
-      ? this.reserveChannel({ pluginId, projectId: request.project.id, workspaceId: request.workspaceId })
-      : requireManagedChannelAdmission(reservedAdmission, { pluginId, projectId: request.project.id, workspaceId: request.workspaceId });
+      ? this.reserveChannel(admissionRequest)
+      : requireManagedChannelAdmission(reservedAdmission, admissionRequest);
     const releaseAdmission = (): void => { admission.release(); };
     const releaseAdmissionOnManagedClose = reservedAdmission === undefined;
     const lifetimeController = new AbortController();
@@ -343,10 +354,9 @@ export class PluginBackendRegistry {
         `channel ${operation} open`,
         this.channelOpenTimeoutMs,
         async (openSignal) => {
-          const { project, workspace } = await resolveDirectScope(this.options.workspaces, request, pluginId, operation, openSignal);
+          const scope = await resolveBackendScope(this.options.workspaces, request, pluginId, operation, openSignal);
           const context: ServerPluginPeerChannelOpenContext = Object.freeze({
-            project,
-            workspace,
+            scope,
             operation,
             input,
             signal: lifetimeController.signal,
@@ -510,50 +520,20 @@ export class PluginBackendRegistry {
         `Server plugin ${pluginId} does not expose paired request operation ${operation}`,
       );
     }
-    if (request.workspaceId === "") {
-      throw backendError(
-        "workspace-not-found",
-        404,
-        `Workspace not found for server plugin ${pluginId} operation ${operation}`,
-      );
-    }
-
-    const project = snapshotProject(request.project);
-    let target: WorkspaceListing | undefined;
+    requireSupportedScope(request, contribution, false);
+    let scope: ServerPluginPeerScope;
     try {
-      const resolution = await this.options.workspaces.resolve(request.project, dispatchSignal);
-      target = resolution.workspaces.find((workspace) => workspace.id === request.workspaceId);
+      scope = await resolveBackendScope(this.options.workspaces, request, pluginId, operation, dispatchSignal);
     } catch (error) {
       if (dispatchSignal.aborted) throw abortError(dispatchSignal);
-      throw backendError(
-        "resolution-failed",
-        502,
-        `Server plugin ${pluginId} could not resolve workspace scope for operation ${operation}: ${boundedErrorMessage(error)}`,
-        error,
-      );
-    }
-    if (target === undefined) {
-      throw backendError(
-        "workspace-not-found",
-        404,
-        `Workspace ${request.workspaceId} is stale or unavailable for server plugin ${pluginId} operation ${operation}`,
-      );
-    }
-
-    let workspace: ServerPluginPeerWorkspace;
-    try {
-      workspace = snapshotWorkspace(target, project.id);
-    } catch (error) {
-      throw backendError(
-        "invalid-scope",
-        502,
-        `Server plugin ${pluginId} received an invalid host workspace scope for operation ${operation}: ${boundedErrorMessage(error)}`,
-        error,
-      );
+      if (error instanceof PluginBackendChannelError) {
+        const code = error.code === "workspace-not-found" ? "workspace-not-found" : error.code === "resolution-failed" ? "resolution-failed" : "invalid-scope";
+        throw backendError(code, code === "workspace-not-found" ? 404 : 502, error.message, error);
+      }
+      throw error;
     }
     const context: ServerPluginPeerRequestContext = Object.freeze({
-      project,
-      workspace,
+      scope,
       operation,
       input,
       signal: dispatchSignal,
@@ -627,7 +607,8 @@ function requireManagedChannelAdmission(
   if (!(admission instanceof ManagedPluginBackendChannelAdmission)
     || admission.request.pluginId !== expected.pluginId
     || admission.request.projectId !== expected.projectId
-    || admission.request.workspaceId !== expected.workspaceId) {
+    || admission.request.workspaceId !== expected.workspaceId
+    || (admission.request.scope ?? "workspace") !== (expected.scope ?? "workspace")) {
     throw channelError("admission-denied", 1013, `Server plugin ${expected.pluginId} channel admission reservation is invalid`);
   }
   if (admission.signal.aborted) {
@@ -638,7 +619,7 @@ function requireManagedChannelAdmission(
 
 interface ManagedPluginBackendChannelOptions {
   pluginId: string;
-  workspaceId: string;
+  workspaceId: string | undefined;
   operation: string;
   channel: ServerPluginPeerChannel;
   transport: PluginBackendChannelTransport;
@@ -651,7 +632,7 @@ interface ManagedPluginBackendChannelOptions {
 
 class ManagedPluginBackendChannel implements PluginBackendChannelSession {
   readonly pluginId: string;
-  readonly workspaceId: string;
+  readonly workspaceId: string | undefined;
   private readonly lifetimeTimer: ReturnType<typeof setTimeout>;
   private readonly receiveCallbacks = new PluginCallbackDrain();
   private readonly closeCallbacks = new PluginCallbackDrain();
@@ -850,14 +831,21 @@ async function closeUnpublishedChannel(
   );
 }
 
-async function resolveDirectScope(
+async function resolveBackendScope(
   workspaces: Pick<WorkspaceProviderRegistry, "resolve">,
   request: PluginBackendRequest,
   pluginId: string,
   operation: string,
   signal: AbortSignal,
-): Promise<{ project: ProjectInput; workspace: ServerPluginPeerWorkspace }> {
-  if (request.workspaceId === "") {
+): Promise<ServerPluginPeerScope> {
+  const kind = requireScopeKind(request.scope);
+  if (kind === "machine") {
+    if (request.project !== undefined || request.workspaceId !== undefined) throw channelError("invalid-scope", 1008, "Machine scope cannot contain project or workspace authority");
+    return Object.freeze({ kind });
+  }
+  if (request.project === undefined) throw channelError("invalid-scope", 1008, "Project authority is required");
+  if (kind === "project" && request.workspaceId !== undefined) throw channelError("invalid-scope", 1008, "Project scope cannot contain workspace authority");
+  if (kind === "workspace" && (request.workspaceId === undefined || request.workspaceId === "")) {
     throw channelError("workspace-not-found", 1008, `Workspace not found for server plugin ${pluginId} channel ${operation}`);
   }
   let project: ProjectInput;
@@ -866,6 +854,7 @@ async function resolveDirectScope(
   } catch (error) {
     throw channelError("invalid-scope", 1011, boundedErrorMessage(error), error);
   }
+  if (kind === "project") return Object.freeze({ kind, project });
   let target: WorkspaceListing | undefined;
   try {
     const resolution = await workspaces.resolve(request.project, signal);
@@ -883,11 +872,11 @@ async function resolveDirectScope(
     throw channelError(
       "workspace-not-found",
       1008,
-      `Workspace ${request.workspaceId} is stale or unavailable for server plugin ${pluginId} channel ${operation}`,
+      `Workspace ${request.workspaceId ?? "missing"} is stale or unavailable for server plugin ${pluginId} channel ${operation}`,
     );
   }
   try {
-    return { project, workspace: snapshotWorkspace(target, project.id) };
+    return Object.freeze({ kind: "workspace", project, workspace: snapshotWorkspace(target, project.id) });
   } catch (error) {
     throw channelError(
       "invalid-scope",
@@ -898,8 +887,22 @@ async function resolveDirectScope(
   }
 }
 
-function channelScopeKey(pluginId: string, projectId: string, workspaceId: string): string {
-  return `${pluginId}\u0000${projectId}\u0000${workspaceId}`;
+function requireScopeKind(value: unknown): "machine" | "project" | "workspace" {
+  if (value === undefined) return "workspace";
+  if (value === "machine" || value === "project" || value === "workspace") return value;
+  throw channelError("invalid-scope", 1008, "Unknown plugin backend scope");
+}
+
+function requireSupportedScope(request: PluginBackendRequest, contribution: ServerPluginPairedBackendContribution, channel: boolean): void {
+  if (contribution.apiVersion !== 5 && (request.scope ?? "workspace") !== "workspace") {
+    const message = `Server plugin ${request.pluginId} API v3 requires workspace scope`;
+    if (channel) throw channelError("invalid-scope", 1008, message);
+    throw backendError("invalid-scope", 400, message);
+  }
+}
+
+function channelScopeKey(pluginId: string, projectId?: string, workspaceId?: string, scope = "workspace"): string {
+  return JSON.stringify([pluginId, scope, projectId, workspaceId]);
 }
 
 function decrementCount(map: Map<string, number>, key: string): void {

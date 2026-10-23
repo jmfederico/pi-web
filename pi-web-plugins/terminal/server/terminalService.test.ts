@@ -1,9 +1,10 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerPluginNoticeInput } from "@jmfederico/pi-web/server-plugin-api";
-import { interactiveShellArgs, TerminalService, type TerminalActivitySink, type TerminalInfo, type TerminalWorkspaceScope } from "./terminalService";
+import { interactiveShellArgs, TerminalService, type TerminalActivitySink, type TerminalInfo, type TerminalScope, type TerminalWorkspaceScope } from "./terminalService";
+import { createDefaultPtyProvider } from "./ptyComposition.js";
 
 describe("interactive shell arguments", () => {
   it.each([
@@ -24,8 +25,89 @@ describe("interactive shell arguments", () => {
 // printf/true/exit). The terminal feature is not supported on native Windows,
 // so these tests are skipped there rather than asserting Unix shell behavior.
 describe.skipIf(process.platform === "win32")("TerminalService command runs", () => {
+  it("retains the host execution snapshot for new and continued maintenance PTYs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-web-maintenance-env-"));
+    const service = new TerminalService(createDefaultPtyProvider());
+    const env = { ...process.env, SHELL: "/bin/sh", EXECUTION_MARKER: "captured", PI_WEB_CONFIG: join(directory, "config.json") };
+    try {
+      service.bindMaintenanceExecutionContext({ cwd: join(directory, "maintenance"), env });
+      env.EXECUTION_MARKER = "mutated";
+      vi.stubEnv("EXECUTION_MARKER", "ambient");
+      vi.stubEnv("SHELL", "/missing/shell");
+      const maintenance = service.maintenanceScope();
+      const command = 'printf "MARKER=%s CONFIG=%s TERM=%s TERMINAL=%s\\n" "$EXECUTION_MARKER" "$PI_WEB_CONFIG" "$TERM" "$PI_WEB_TERMINAL"';
+      const run = service.runCommand({ ...maintenance, origin: "updates", title: "Paths", command });
+      const output = await terminalExit(service, run.terminalId, maintenance);
+      const expected = `MARKER=captured CONFIG=${env.PI_WEB_CONFIG} TERM=xterm-256color TERMINAL=1`;
+      expect(output).toContain(expected);
+      service.continue(maintenance, run.terminalId);
+      const continuedExit = terminalExit(service, run.terminalId, maintenance);
+      service.write(maintenance, run.terminalId, `${command}\nexit\n`);
+      expect(await continuedExit).toContain(expected);
+      const next = service.runCommand({ ...maintenance, origin: "updates", title: "Again", command });
+      expect(await terminalExit(service, next.terminalId, maintenance)).toContain(expected);
+    } finally {
+      service.dispose();
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps workspace commands on the current environment without resolving their relative overrides", async () => {
+    const service = new TerminalService(createDefaultPtyProvider());
+    try {
+      service.bindMaintenanceExecutionContext({ cwd: process.cwd(), env: { ...process.env, PI_WEB_CONFIG: "/maintenance/config.json" } });
+      vi.stubEnv("SHELL", "/bin/sh");
+      for (const config of ["relative-first.json", "relative-second.json"]) {
+        vi.stubEnv("PI_WEB_CONFIG", config);
+        const run = service.runCommand({ ...scope(), origin: "test", title: "Workspace", command: 'printf "CONFIG=%s\\n" "$PI_WEB_CONFIG"' });
+        expect(await terminalExit(service, run.terminalId)).toContain(`CONFIG=${config}`);
+      }
+    } finally {
+      service.dispose();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("reports maintenance directory creation failures without retaining a run", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-web-maintenance-blocked-"));
+    const service = new TerminalService(createDefaultPtyProvider());
+    try {
+      const blocked = join(directory, "file");
+      await writeFile(blocked, "not a directory");
+      service.bindMaintenanceExecutionContext({ cwd: join(blocked, "maintenance"), env: { ...process.env } });
+      expect(() => service.runCommand({ ...service.maintenanceScope(), origin: "test", title: "Blocked", command: "true" })).toThrow();
+      expect(service.listCommandRuns()).toEqual([]);
+      expect(service.list(service.maintenanceScope())).toEqual([]);
+    } finally {
+      service.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an exited maintenance terminal intact when Continue cannot prepare its cwd", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-web-maintenance-continue-"));
+    const service = new TerminalService(createDefaultPtyProvider());
+    try {
+      const cwd = join(directory, "maintenance");
+      service.bindMaintenanceExecutionContext({ cwd, env: { ...process.env, SHELL: "/bin/sh" } });
+      const scope = service.maintenanceScope();
+      const run = service.runCommand({ ...scope, origin: "test", title: "Exit", command: "exit 7" });
+      await terminalExit(service, run.terminalId, scope);
+      const completed = service.get(scope, run.terminalId);
+      await rm(cwd, { recursive: true });
+      await writeFile(cwd, "not a directory");
+      expect(() => service.continue(scope, run.terminalId)).toThrow();
+      expect(service.get(scope, run.terminalId)).toEqual(completed);
+      expect(service.getCommandRun(run.id)).toMatchObject({ status: "failed", exitCode: 7 });
+    } finally {
+      service.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("closes all terminal records for a cwd", () => {
-    const service = new TerminalService();
+    const service = new TerminalService(createDefaultPtyProvider());
     try {
       const terminal = service.create(scope());
       let closed = 0;
@@ -46,7 +128,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
   });
 
   it("closes all terminals only in the requested workspace when cwd values match", () => {
-    const service = new TerminalService();
+    const service = new TerminalService(createDefaultPtyProvider());
     const firstScope = scope();
     const secondScope = { ...firstScope, projectId: "p2", workspaceId: "w2" };
     try {
@@ -71,7 +153,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
 
   it("loads login-profile PATH entries in new interactive terminals", async () => {
     await withBashLoginProfile(async () => {
-      const service = new TerminalService();
+      const service = new TerminalService(createDefaultPtyProvider());
       try {
         const terminal = service.create(scope());
         const exit = terminalExit(service, terminal.id);
@@ -87,7 +169,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
 
   it("loads login-profile PATH entries in continued interactive terminals", async () => {
     await withBashLoginProfile(async () => {
-      const service = new TerminalService();
+      const service = new TerminalService(createDefaultPtyProvider());
       try {
         const run = service.runCommand({
           origin: "core",
@@ -129,7 +211,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     });
 
     it("sets PI_WEB_TERMINAL for terminal commands", async () => {
-      const service = new TerminalService();
+      const service = new TerminalService(createDefaultPtyProvider());
       try {
         const frame = "__PI_WEB_RUN_ENV_7F3A9C__";
         const run = service.runCommand({
@@ -148,7 +230,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
     });
 
     it("sets PI_WEB_TERMINAL in a continued interactive shell", async () => {
-      const service = new TerminalService();
+      const service = new TerminalService(createDefaultPtyProvider());
       try {
         const run = service.runCommand({
           origin: "core",
@@ -182,7 +264,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
   });
 
   it("tracks dedicated terminal command runs through completion", async () => {
-    const service = new TerminalService();
+    const service = new TerminalService(createDefaultPtyProvider());
     try {
       const run = service.runCommand({
         origin: "core",
@@ -210,7 +292,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
   });
 
   it("marks failed command runs when the command exits non-zero", async () => {
-    const service = new TerminalService();
+    const service = new TerminalService(createDefaultPtyProvider());
     try {
       const run = service.runCommand({
         origin: "core",
@@ -231,7 +313,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
 
   it("records one host-attributed intent when a command fails", async () => {
     const records: ServerPluginNoticeInput[] = [];
-    const service = new TerminalService((input) => { records.push(input); });
+    const service = new TerminalService(createDefaultPtyProvider(), (input) => { records.push(input); });
     try {
       const run = service.runCommand({
         origin: "core",
@@ -266,7 +348,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
 
   it("does not record a failure intent for a successful command", async () => {
     const records: ServerPluginNoticeInput[] = [];
-    const service = new TerminalService((input) => { records.push(input); });
+    const service = new TerminalService(createDefaultPtyProvider(), (input) => { records.push(input); });
     try {
       const run = service.runCommand({
         origin: "core",
@@ -292,7 +374,7 @@ describe.skipIf(process.platform === "win32")("TerminalService command runs", ()
 
   it("publishes workspace activity updates across the terminal lifecycle", async () => {
     const workspaceActivity = createWorkspaceActivityRecorder();
-    const service = new TerminalService();
+    const service = new TerminalService(createDefaultPtyProvider());
     service.bindActivitySink(workspaceActivity);
     const cwd = process.cwd();
     try {
@@ -407,11 +489,11 @@ function firstLiveTerminalOutput(service: TerminalService, terminalId: string): 
   });
 }
 
-function terminalExit(service: TerminalService, terminalId: string): Promise<string> {
+function terminalExit(service: TerminalService, terminalId: string, terminalScope: TerminalScope = scope()): Promise<string> {
   const output: string[] = [];
   return new Promise((resolve, reject) => {
     try {
-      service.attach(scope(), terminalId, {
+      service.attach(terminalScope, terminalId, {
         output: (data) => { output.push(data); },
         exit: () => { resolve(output.join("")); },
       });

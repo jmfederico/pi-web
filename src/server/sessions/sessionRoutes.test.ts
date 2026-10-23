@@ -3,9 +3,8 @@ import { once } from "node:events";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../shared/apiTypes.js";
+import { ASK_USER_COMMENT_MAX_LENGTH, ASK_USER_ID_MAX_LENGTH, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, EXTENSION_DIALOG_ID_MAX_LENGTH, EXTENSION_DIALOG_INPUT_MAX_LENGTH, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../shared/apiTypes.js";
 import type {
-  AskUserCloseResponse,
   AskUserSubmission,
   ExtensionDialogAnswer,
   ExtensionDialogCloseResponse,
@@ -515,7 +514,7 @@ describe("session routes", () => {
     }
   });
 
-  it("parses ask submissions and reports both closed and stale outcomes", async () => {
+  it("parses question responses and skips and returns ordinary session status", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
     const eventHub = new SessionEventHub();
@@ -529,7 +528,7 @@ describe("session routes", () => {
         payload: {
           cwd: "/repo/./",
           askId: "ask-1",
-          answers: [{ id: "db", values: ["pg"] }, { id: "cache", values: [], otherText: "redis" }],
+          answers: [{ id: "db", values: ["pg"], comment: "behind pgbouncer" }, { id: "cache", values: [], otherText: "redis" }],
         },
       });
       const cancelled = await routeApp.inject({
@@ -539,14 +538,16 @@ describe("session routes", () => {
       });
 
       expect(submitted.statusCode).toBe(200);
-      expect(submitted.json()).toMatchObject({ result: "closed", sessionStatus: { sessionId: "session-1" } });
+      expect(submitted.json()).toMatchObject({ sessionId: "session-1" });
       expect(routeService.submitAskCalls).toEqual([{
         lookup: { id: "session-1", cwd: resolve("/repo") },
         askId: "ask-1",
-        submission: { answers: [{ id: "db", values: ["pg"] }, { id: "cache", values: [], otherText: "redis" }] },
+        submission: {
+          answers: [{ id: "db", values: ["pg"], comment: "behind pgbouncer" }, { id: "cache", values: [], otherText: "redis" }],
+        },
       }]);
       expect(cancelled.statusCode).toBe(200);
-      expect(cancelled.json()).toMatchObject({ result: "stale" });
+      expect(cancelled.json()).toMatchObject({ sessionId: "session-1" });
       expect(routeService.cancelAskCalls).toEqual([{ lookup: { id: "session-1", cwd: resolve("/repo") }, askId: "ask-2" }]);
     } finally {
       await routeService.dispose();
@@ -571,6 +572,8 @@ describe("session routes", () => {
       { cwd: "/repo", askId: "ask-1", answers: [{ id: "db", values: [1] }] },
       { cwd: "/repo", askId: "ask-1", answers: [{ id: "db", values: [], otherText: 7 }] },
       { cwd: "/repo", askId: "ask-1", answers: [{ id: "db", values: [], otherText: "x".repeat(ASK_USER_OTHER_TEXT_MAX_LENGTH + 1) }] },
+      { cwd: "/repo", askId: "ask-1", answers: [{ id: "db", values: ["pg"], comment: 7 }] },
+      { cwd: "/repo", askId: "ask-1", answers: [{ id: "db", values: ["pg"], comment: "x".repeat(ASK_USER_COMMENT_MAX_LENGTH + 1) }] },
       { cwd: "/repo", askId: "ask-1", answers: new Array<unknown>(ASK_USER_QUESTION_LIMIT + 1).fill({ id: "db", values: [] }) },
     ];
 
@@ -1209,6 +1212,35 @@ describe("session routes", () => {
     }
   });
 
+  it("validates and forwards queue message mutations with workspace context", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, new SessionEventHub());
+    const calls: unknown[] = [];
+    routeService.mutateQueueMessage = (ref, mutation) => {
+      calls.push({ ref, mutation });
+      return routeService.clearQueue(ref);
+    };
+    try {
+      const mutation = { action: "toggle", index: 0, expectedQueue: [{ kind: "steer", text: "original" }] };
+      const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/queue/message", payload: { cwd: "/repo", ...mutation } });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ sessionId: "session-1", queuedMessages: [] });
+      expect(calls).toEqual([{ ref: { id: "session-1", cwd: resolve("/repo") }, mutation }]);
+      const invalid = await routeApp.inject({ method: "POST", url: "/sessions/session-1/queue/message", payload: { cwd: "/repo", ...mutation, index: 0.5 } });
+      expect(invalid.statusCode).toBe(400);
+      expect(calls).toHaveLength(1);
+      routeService.clearQueueError = new Error("Queued messages changed; refresh the queue and try again");
+      const stale = await routeApp.inject({ method: "POST", url: "/sessions/session-1/queue/message", payload: { cwd: "/repo", ...mutation } });
+      expect(stale.statusCode).toBe(400);
+      expect(stale.json()).toEqual({ error: "Queued messages changed; refresh the queue and try again" });
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
   it("clears a session queue with workspace context and returns fresh status", async () => {
     const routeApp = Fastify({ logger: false });
     await routeApp.register(fastifyWebsocket);
@@ -1454,16 +1486,16 @@ class CapturingRouteSessionService implements SessionRouteService {
   reloadError: Error | undefined;
   clearQueueError: Error | undefined;
 
-  submitAsk(lookup: SessionRouteRef, askId: string, submission: AskUserSubmission): Promise<AskUserCloseResponse> {
+  submitAsk(lookup: SessionRouteRef, askId: string, submission: AskUserSubmission): Promise<SessionStatus> {
     if (this.askError !== undefined) return Promise.reject(this.askError);
     this.submitAskCalls.push({ lookup, askId, submission });
-    return Promise.resolve({ result: "closed", sessionStatus: idleStatus(lookup) });
+    return Promise.resolve(idleStatus(lookup));
   }
 
-  cancelAsk(lookup: SessionRouteRef, askId: string): Promise<AskUserCloseResponse> {
+  cancelAsk(lookup: SessionRouteRef, askId: string): Promise<SessionStatus> {
     if (this.askError !== undefined) return Promise.reject(this.askError);
     this.cancelAskCalls.push({ lookup, askId });
-    return Promise.resolve({ result: "stale", sessionStatus: idleStatus(lookup) });
+    return Promise.resolve(idleStatus(lookup));
   }
 
   answerDialog(lookup: SessionRouteRef, dialogId: string, value: ExtensionDialogAnswer): Promise<ExtensionDialogCloseResponse> {
@@ -1560,6 +1592,11 @@ class CapturingRouteSessionService implements SessionRouteService {
       tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       cost: 0,
     });
+  }
+
+  mutateQueueMessage(lookup: SessionRouteRef, mutation: Parameters<SessionRouteService["mutateQueueMessage"]>[1]): Promise<SessionStatus> {
+    void mutation;
+    return this.clearQueue(lookup);
   }
 
   clearQueue(lookup: SessionRouteRef): Promise<SessionStatus> {

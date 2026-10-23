@@ -91,9 +91,25 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.post(`${prefix}/projects`, (request, reply) => proxy(request, reply));
   app.delete(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));
 
+  // Catalog reads can include provider I/O; forward browser cancellation.
+  app.get(`${prefix}/plugin-catalog/*`, async (request, reply) => {
+    const cancellation = requestCancellation(request, reply);
+    try {
+      const upstream = await daemon.request("GET", stripPrefix(request.url, prefix), undefined, { signal: cancellation.signal });
+      reply.code(upstream.statusCode).header("cache-control", "no-store");
+      return upstream.body === "" ? undefined : parseJson(upstream.body);
+    } catch (error) {
+      requestFailed(reply, error);
+      return undefined;
+    } finally {
+      cancellation.dispose();
+    }
+  });
+
   app.all(`${prefix}/status`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/notices`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/notices/dismiss`, (request, reply) => proxy(request, reply));
+  app.get(`${prefix}/models`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));

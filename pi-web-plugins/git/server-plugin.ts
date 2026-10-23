@@ -11,15 +11,24 @@ import type {
   WorkspaceRemovePlan,
 } from "@jmfederico/pi-web/server-plugin-api";
 import { requestGitBackend } from "./git-backend.js";
+import { createWorkspaceDiscoveryHooks } from "./workspaceDiscoveryHooks.js";
 
 const GIT_LOCAL_ENV_VARS = Object.freeze([
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_COMMON_DIR",
+  "GIT_CONFIG",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_PARAMETERS",
   "GIT_DIR",
+  "GIT_GRAFT_FILE",
+  "GIT_IMPLICIT_WORK_TREE",
   "GIT_INDEX_FILE",
+  "GIT_NO_REPLACE_OBJECTS",
   "GIT_OBJECT_DIRECTORY",
   "GIT_PREFIX",
   "GIT_QUARANTINE_PATH",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
   "GIT_WORK_TREE",
 ]);
 
@@ -31,12 +40,12 @@ interface GitWorktreeInfo {
   prunable?: boolean;
 }
 
-const plugin: PiWebServerPlugin = {
+const plugin: Extract<PiWebServerPlugin, { apiVersion: 3 }> = {
   apiVersion: 3,
   name: "Git",
   activate(context) {
     return {
-      workspaceProvider: createGitWorkspaceProvider(context),
+      workspaceProvider: createGitWorkspaceProvider(context, process.env["PI_WEB_INSTANCE_NAMESPACE"] ?? ""),
       peer: { request: (request) => requestGitBackend(context, request) },
     };
   },
@@ -44,14 +53,23 @@ const plugin: PiWebServerPlugin = {
 
 export default plugin;
 
-export function createGitWorkspaceProvider(context: ServerPluginActivationContext): WorkspaceProvider {
+export function createGitWorkspaceProvider(context: ServerPluginActivationContext, instanceNamespace = ""): WorkspaceProvider {
   return Object.freeze({
     fallback: true,
+    integration: createWorkspaceDiscoveryHooks(context, (cwd, args, signal) => runGit(context, cwd, args, signal), process.execPath, instanceNamespace),
     async probe(project: ProjectInput, signal: AbortSignal): Promise<ProviderClaim> {
       const result = await runGit(context, project.path, ["rev-parse", "--is-inside-work-tree"], signal);
       if (result.signal !== null) throw new Error(`git repository probe ended from signal ${result.signal}`);
       if (result.exitCode !== 0) return "pass";
-      return result.stdout.trim() === "true" ? "claim" : "pass";
+      if (result.stdout.trim() !== "true") return "pass";
+      const root = await requireGit(
+        runGit(context, project.path, ["rev-parse", "--show-toplevel"], signal),
+        "resolve the Git worktree root",
+      );
+      if (root.stdout.trim() === "") throw new Error("Git returned an empty worktree root");
+      // Folder projects keep their exact working directory; only checkout
+      // roots opt into worktree discovery and management.
+      return resolve(root.stdout.trim()) === resolve(project.path) ? "claim" : "pass";
     },
     async list(project: ProjectInput, signal: AbortSignal): Promise<ProviderWorkspace[]> {
       const rootResult = await requireGit(
@@ -195,6 +213,7 @@ async function runGit(
     file: "git",
     args: ["-C", cwd, ...args],
     unsetEnv: GIT_LOCAL_ENV_VARS,
+    timeoutMs: 10_000,
     signal,
   });
   if (result.stdoutTruncated || result.stderrTruncated) {

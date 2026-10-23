@@ -48,6 +48,7 @@ describe("config routes", () => {
       uploads: { defaultFolder: "uploads\\manual" },
       attachments: { defaultFolder: "attachments\\saved" },
       maxUploadBytes: 1234,
+      sessionArchive: { directory: "/external/archives" },
       agent: { command: "agent-lab", dir: "~/agent-profiles/lab" },
     };
     const expectedConfig: PiWebConfigValues = {
@@ -65,6 +66,68 @@ describe("config routes", () => {
     expect(response.statusCode).toBe(200);
     expect(savedConfig).toEqual(expectedConfig);
     expect(response.json<PiWebConfigResponse>().config).toEqual(expectedConfig);
+    expect(parsePiWebConfigResponseBody(response.json()).config).toEqual(expectedConfig);
+  });
+
+  it.each(["/api/config", "/api/machines/local/config"])("saves and resets session naming through %s", async (url) => {
+    const sessionNaming = { model: "provider/org/model", maxTokens: 64, thinkingLevel: "off" as const, timeoutMs: 2147483647 };
+    const saved = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming } } });
+    expect(saved.statusCode).toBe(200);
+    expect(parsePiWebConfigResponseBody(saved.json()).config.sessionNaming).toEqual(sessionNaming);
+    expect(parsePiWebConfigResponseBody(saved.json()).effectiveConfig.sessionNaming).toEqual(sessionNaming);
+    const reset = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: {} } } });
+    expect(reset.statusCode).toBe(200);
+    expect(savedConfig.sessionNaming).toEqual({});
+  });
+
+  it("preserves session naming on unrelated selected-machine saves", async () => {
+    const sessionNaming = { model: "provider/model", maxTokens: 48, thinkingLevel: "high" as const, timeoutMs: 15000 };
+    savedConfig.sessionNaming = sessionNaming;
+    const response = await app.inject({ method: "PUT", url: "/api/machines/local/config", payload: { config: { spawnSessions: false } } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<PiWebConfigResponse>().config.sessionNaming).toEqual(sessionNaming);
+    expect(savedConfig.sessionNaming).toEqual(sessionNaming);
+  });
+
+  it.each(["/api/config", "/api/machines/local/config"])("validates session naming before writing through %s", async (url) => {
+    const response = await app.inject({ method: "PUT", url, payload: { config: { sessionNaming: { maxTokens: 0 } } } });
+    expect(response.statusCode).toBe(400);
+    expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "ultra", null, false, 42, {}, []])("rejects invalid naming thinking level %j before writing and in remote responses", async (thinkingLevel) => {
+    const config = { sessionNaming: { thinkingLevel } };
+    for (const url of ["/api/config", "/api/machines/local/config"]) {
+      const result = await app.inject({ method: "PUT", url, payload: { config } });
+      expect(result.statusCode).toBe(400);
+      expect(result.json<{ error: string }>().error).toContain("sessionNaming.thinkingLevel");
+    }
+    expect(service.write).not.toHaveBeenCalled();
+    const response = responseFor({}, true);
+    for (const field of ["config", "effectiveConfig"]) {
+      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: config })).toThrow("sessionNaming.thinkingLevel");
+    }
+  });
+
+  it.each([0, -1, 1.5, 2147483648, "10000", null, false, {}, []])("rejects invalid naming timeout %j before writing and in remote responses", async (timeoutMs) => {
+    const config = { sessionNaming: { timeoutMs } };
+    for (const url of ["/api/config", "/api/machines/local/config"]) {
+      const result = await app.inject({ method: "PUT", url, payload: { config } });
+      expect(result.statusCode).toBe(400);
+      expect(result.json<{ error: string }>().error).toContain("sessionNaming.timeoutMs");
+    }
+    expect(service.write).not.toHaveBeenCalled();
+    const response = responseFor({}, true);
+    for (const field of ["config", "effectiveConfig"]) {
+      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: config })).toThrow("sessionNaming.timeoutMs");
+    }
+  });
+
+  it("rejects invalid session naming in remote config responses", () => {
+    const response = responseFor({}, true);
+    for (const field of ["config", "effectiveConfig"]) {
+      expect(() => parsePiWebConfigResponseBody({ ...response, [field]: { sessionNaming: { model: "/missing" } } })).toThrow("sessionNaming.model");
+    }
   });
 
   it("rejects invalid config payloads before writing", async () => {
@@ -77,6 +140,37 @@ describe("config routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toHaveProperty("error");
     expect(service.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["steer", "followUp"] as const)("accepts defaultStreamingBehavior %s through config routes and response parsing", async (defaultStreamingBehavior) => {
+    const config = { defaultStreamingBehavior };
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config } });
+    expect(response.statusCode).toBe(200);
+    expect(savedConfig).toEqual(config);
+    expect(parsePiWebConfigResponseBody(response.json())).toMatchObject({ config, effectiveConfig: config });
+  });
+
+  it.each(["", "followup", "queue", null, false, 42, {}, []])("rejects invalid defaultStreamingBehavior %j before writing and in responses", async (defaultStreamingBehavior) => {
+    const config = { defaultStreamingBehavior };
+    const response = await app.inject({ method: "PUT", url: "/api/config", payload: { config } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json<{ error: string }>().error).toContain("defaultStreamingBehavior");
+    expect(service.write).not.toHaveBeenCalled();
+    const valid = responseFor({}, true);
+    for (const field of ["config", "effectiveConfig"]) {
+      expect(() => parsePiWebConfigResponseBody({ ...valid, [field]: config })).toThrow("defaultStreamingBehavior");
+    }
+  });
+
+  it("keeps defaultStreamingBehavior gateway-only", async () => {
+    savedConfig.defaultStreamingBehavior = "steer";
+    const read = await app.inject({ method: "GET", url: "/api/machines/local/config" });
+    expect(read.json<PiWebConfigResponse>().config).not.toHaveProperty("defaultStreamingBehavior");
+    expect(read.json<PiWebConfigResponse>().effectiveConfig).not.toHaveProperty("defaultStreamingBehavior");
+    const write = await app.inject({ method: "PUT", url: "/api/machines/local/config", payload: { config: { defaultStreamingBehavior: "followUp" } } });
+    expect(write.statusCode).toBe(400);
+    expect(service.write).not.toHaveBeenCalled();
+    expect(savedConfig.defaultStreamingBehavior).toBe("steer");
   });
 
   it("rejects malformed theme defaults before writing", async () => {

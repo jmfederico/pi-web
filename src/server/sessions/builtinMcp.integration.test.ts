@@ -5,7 +5,7 @@ import { createAssistantMessageEventStream, getCurrentTools, type AssistantMessa
 import {
   createAgentSessionFromServices, createAgentSessionRuntime, createAgentSessionServices,
   DefaultResourceLoader, SessionManager, SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "../../piSdk.js";
 import { expect, it, vi } from "vitest";
 import { getBuiltinExtensionFactories } from "./builtinExtensionFactories.js";
 import { createTestModelRuntime, testModel } from "./piSessionService.testSupport.js";

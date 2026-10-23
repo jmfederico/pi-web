@@ -1,99 +1,103 @@
-import { LitElement, css, html, type PropertyValues } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
-import { keyed } from "lit/directives/keyed.js";
+import { stylesheetIntegrationCapability } from "../plugins/styles";
+import { LitElement, css, html, nothing } from "lit";
+import { customElement, property } from "lit/decorators.js";
+import { styleMap } from "lit/directives/style-map.js";
+import { validImageDimensions, type ImageDimensions } from "../../../shared/sessionMedia";
+import { uiButtonStyles } from "./ui/controlStyles";
 
 export interface ImageOpenDetail {
   src: string;
   alt: string;
 }
 
-/** Native image states and controls only; the owner decides when a source may be assigned. */
+/** The owner authorizes sources; the browser owns image loading and failure display. */
 @customElement("pi-web-image-presentation")
 export class ImagePresentation extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ attribute: false }) source: string | undefined;
+  @property({ type: Boolean, reflect: true }) thumbnail = false;
+  @property({ attribute: false }) dimensions: ImageDimensions | undefined;
+  /** Optional metadata report; loading never changes this component's own state. */
+  @property({ attribute: false }) onIntrinsicDimensions: ((source: string, dimensions: ImageDimensions) => void) | undefined;
   @property() description = "";
   @property() label = "";
-  @state() private phase: "loading" | "loaded" | "error" = "loading";
-
-  override willUpdate(changed: PropertyValues): void {
-    if (changed.has("source")) this.phase = "loading";
-    if (changed.has("source") || changed.has("phase")) {
-      // Capture while the previous shell/image is still in the DOM. The paired
-      // image-layout event restores immediately after this render, before paint.
-      this.dispatchEvent(new Event("image-will-layout", { bubbles: true, composed: true }));
-    }
-  }
-
-  override updated(changed: PropertyValues): void {
-    if (changed.has("source") || changed.has("phase")) {
-      this.dispatchEvent(new Event("image-layout", { bubbles: true, composed: true }));
-    }
-  }
+  @property({ type: Boolean }) requestDisabled = false;
+  @property() pendingLabel = "Show image";
 
   private requestImage(event: MouseEvent): void {
+    if (this.requestDisabled) return;
     event.preventDefault();
     event.stopPropagation();
     this.dispatchEvent(new Event("image-request", { bubbles: true, composed: true }));
   }
 
-  private retry(event: MouseEvent): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.phase = "loading";
+  private reportIntrinsicDimensions(event: Event): void {
+    const image = event.currentTarget;
+    const source = this.source;
+    if (this.onIntrinsicDimensions === undefined || !(image instanceof HTMLImageElement)
+      || source === undefined || source === "" || image.getAttribute("src") !== source || !image.complete) return;
+    const dimensions = validImageDimensions(image.naturalWidth, image.naturalHeight);
+    if (dimensions !== undefined) this.onIntrinsicDimensions(source, dimensions);
   }
 
   private open(event: Event): void {
     event.preventDefault();
     event.stopPropagation();
-    if (this.source === undefined || this.phase !== "loaded") return;
+    if (this.source === undefined || this.source === "") return;
     this.dispatchEvent(new CustomEvent<ImageOpenDetail>("image-open", {
       detail: { src: this.source, alt: this.description }, bubbles: true, composed: true,
     }));
   }
 
   override render() {
-    const source = this.source;
-    const pending = source === undefined;
+    const pending = this.source === undefined || this.source === "";
+    const dimensions = this.dimensions;
     return html`
-      <div class=${`frame ${pending ? "pending" : this.phase}`} aria-busy=${!pending && this.phase === "loading" ? "true" : "false"}>
-        ${pending ? html`
-          <button class="placeholder" type="button" @click=${(event: MouseEvent) => { this.requestImage(event); }}>
-            <span>Show image</span>${this.renderLabel()}
-          </button>` : null}
-        ${!pending && this.phase === "loading" ? html`
-          <div class="placeholder" role="status"><span>Loading image…</span>${this.renderLabel()}</div>` : null}
-        ${!pending && this.phase === "error" ? html`
-          <div class="placeholder" role="status">
-            <span>Image unavailable: the file may be missing, inaccessible, unsupported, or too large.</span>
-            ${this.renderLabel()}<button type="button" @click=${(event: MouseEvent) => { this.retry(event); }}>Retry</button>
-          </div>` : null}
-        ${source !== undefined && this.phase !== "error" ? keyed(source, html`
-          <button class="image-button" type="button" aria-label=${`Enlarge ${this.description || "image"}`} title="Click to enlarge"
-            ?disabled=${this.phase !== "loaded"} @click=${(event: MouseEvent) => { this.open(event); }}
-            @keydown=${(event: KeyboardEvent) => { if (event.key === "Enter" || event.key === " ") this.open(event); }}>
-            <img src=${source} alt=${this.description} decoding="async"
-              @load=${(event: Event) => { if (event.currentTarget instanceof HTMLImageElement && event.currentTarget === this.renderRoot.querySelector("img")) this.phase = "loaded"; }}
-              @error=${(event: Event) => { if (event.currentTarget instanceof HTMLImageElement && event.currentTarget === this.renderRoot.querySelector("img")) this.phase = "error"; }} />
-          </button>`): null}
+      <div class="frame">
+        <button class="placeholder ui-button" type="button" ?hidden=${!pending} ?disabled=${this.requestDisabled}
+          @click=${(event: MouseEvent) => { this.requestImage(event); }}>
+          <span>${this.pendingLabel}</span>${this.label === "" ? null : html`<code>${this.label}</code>`}
+        </button>
+        <button class="image-button ui-button" type="button" ?hidden=${pending} ?disabled=${pending}
+          aria-label=${`Enlarge ${this.description || "image"}`} title="Click to enlarge"
+          @click=${(event: MouseEvent) => { this.open(event); }}
+          @keydown=${(event: KeyboardEvent) => { if (event.key === "Enter" || event.key === " ") this.open(event); }}>
+          <img loading="lazy" decoding="async" src=${pending ? nothing : this.source} alt=${this.description}
+            @load=${(event: Event) => { this.reportIntrinsicDimensions(event); }}
+            width=${dimensions?.width ?? nothing} height=${dimensions?.height ?? nothing}
+            style=${styleMap(dimensions === undefined ? {} : {
+              "--image-width": `${String(dimensions.width)}px`,
+              "--image-height": `${String(dimensions.height)}px`,
+              "--image-ratio": String(dimensions.width / dimensions.height),
+            })} />
+        </button>
       </div>
     `;
   }
 
-  private renderLabel() {
-    return this.label === "" ? null : html`<code>${this.label}</code>`;
-  }
-
-  static override styles = css`
+  static override styles = [uiButtonStyles, css`
+    @layer pi-web-base {
     :host { display: block; max-width: 100%; min-width: 0; }
-    .frame { position: relative; max-width: 100%; }
-    button { font: inherit; color: inherit; background: var(--pi-surface); border: 1px solid var(--pi-border, #888); border-radius: 4px; padding: .3em .65em; cursor: pointer; }
-    button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
+    .frame { max-width: 100%; }
+    button { font: inherit; color: inherit; }
     .placeholder { box-sizing: border-box; display: grid; align-content: center; justify-items: center; gap: .5em; width: 320px; max-width: 100%; min-height: 110px; padding: 1em; border: 1px dashed var(--pi-border, #888); border-radius: 4px; background: var(--pi-surface); text-align: center; }
+    .placeholder:disabled { cursor: default; }
     code { display: block; max-width: 100%; margin: 0; overflow-wrap: anywhere; color: var(--pi-text-secondary); font-size: .85em; }
-    [role="status"] { color: var(--pi-text-secondary); font-size: .9em; }
     .image-button { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+    [hidden] { display: none !important; }
     img { display: block; max-width: 100%; max-height: var(--pi-image-max-height, none); width: auto; height: auto; object-fit: contain; border-radius: var(--pi-image-radius, 0); }
-    /* Reserve a modest shell only until native dimensions are available. */
-    .loading .image-button { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
-  `;
+    /* A definite width plus the declared ratio reserves the final, height-capped
+       footprint before lazy loading. CSS still handles narrow viewports. */
+    img[width][height] { width: min(var(--image-width), calc(var(--pi-image-max-height, var(--image-height)) * var(--image-ratio))); }
+    :host([thumbnail]) .frame { width: 128px; height: 96px; }
+    :host([thumbnail]) button { box-sizing: border-box; width: 100%; height: 96px; min-height: 96px; border-radius: 0; padding: 6px; background: var(--pi-surface); }
+    :host([thumbnail]) .image-button:hover { background: var(--pi-surface-hover); }
+    :host([thumbnail]) .placeholder code { display: none; }
+    :host([thumbnail]) img { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+    }
+  `];
 }

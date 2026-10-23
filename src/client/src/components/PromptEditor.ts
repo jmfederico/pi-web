@@ -3,7 +3,8 @@ import { markdown, deleteMarkupBackward, insertNewlineContinueMarkup } from "@co
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
 import { drawSelection, EditorView, keymap, placeholder } from "@codemirror/view";
 import { defaultHighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
-import { LitElement, html, type PropertyValues } from "lit";
+import { stylesheetIntegrationCapability } from "../plugins/styles";
+import { LitElement, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER, type FileSuggestion, type PromptAttachment, type SessionModel, type SessionStatus, type SlashCommand } from "../api";
 import type { PromptAttachmentDelivery } from "../../../shared/apiTypes";
@@ -20,9 +21,31 @@ import { createMobilePromptEnterMedia, shouldUsePromptEnterShiftShortcut } from 
 import { composerSendShortcut, matchesComposerSend } from "../composerShortcuts";
 import type { ShortcutPreferenceConfig } from "../keyboardShortcuts";
 import { promptEditorStyles, type CompletionItem } from "./shared";
-import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
+import { renderAttachIcon, renderCameraIcon, renderPhotosIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
+import { AnchoredPopupController } from "./anchoredPopup";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
+
+const promptPlaceholder = "Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models";
+
+// Image inputs let mobile browsers offer photo-library sources; capture is a
+// separate camera preference, not a guarantee of a specific native chooser.
+// https://web.dev/articles/media-capturing-images
+// Keep the direct file dialog for fine-pointer devices, regardless of width.
+const ATTACH_SOURCE_MENU_MEDIA_QUERY = "(pointer: coarse)";
+
+function createAttachSourceMenuMedia(): Pick<MediaQueryList, "matches"> | undefined {
+  return typeof window !== "undefined" && "matchMedia" in window ? window.matchMedia(ATTACH_SOURCE_MENU_MEDIA_QUERY) : undefined;
+}
+
+// Text nodes inside contenteditable can become iOS keyboard context, even in
+// non-editable placeholder widgets. Render the hint with CSS-generated content.
+function createPromptPlaceholder(): HTMLElement {
+  const hint = document.createElement("span");
+  hint.className = "prompt-placeholder";
+  hint.dataset["placeholder"] = promptPlaceholder;
+  return hint;
+}
 
 type PromptSendArgs = [text: string, streamingBehavior?: "steer" | "followUp", attachments?: PromptAttachment[], delivery?: PromptAttachmentDelivery, folder?: string, chips?: readonly StagedPromptChip[]];
 // Existing composer consumers may still send fire-and-forget; only a boolean
@@ -31,8 +54,14 @@ type PromptSendHandler = ((...args: PromptSendArgs) => void | Promise<void>) | (
 
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
+  constructor() {
+    super();
+    stylesheetIntegrationCapability.createController(this);
+  }
+
   @property({ type: Boolean }) disabled = false;
   @property({ attribute: false }) shortcuts: ShortcutPreferenceConfig = {};
+  @property() defaultStreamingBehavior: "steer" | "followUp" = "steer";
   @property() sessionId?: string;
   @property() cwd?: string;
   @property() machineId = "local";
@@ -44,6 +73,7 @@ export class PromptEditor extends LitElement {
    * the save destination is always the folder the label advertised.
    */
   @property() attachmentsFolder = DEFAULT_WORKSPACE_ATTACHMENTS_FOLDER;
+  @property({ attribute: false }) chatNavigation: TemplateResult | undefined;
   @property({ type: Boolean }) canSteer = false;
   @property({ type: Boolean }) isCompacting = false;
   @property({ type: Boolean }) canStop = false;
@@ -58,6 +88,10 @@ export class PromptEditor extends LitElement {
   @property({ attribute: false }) availableThinkingLevels: readonly string[] = [];
   @query(".markdown-editor") private editorHost?: HTMLDivElement;
   @query(".attachment-input") private attachmentInput?: HTMLInputElement;
+  @query(".attachment-image-input") private attachmentImageInput?: HTMLInputElement;
+  @query(".attachment-camera-input") private attachmentCameraInput?: HTMLInputElement;
+  @query(".attach-source-panel") private attachSourcePanel?: HTMLDivElement;
+  @query(".editor-attach") private attachButton?: HTMLButtonElement;
   // `draft` is the live document text but is intentionally NOT reactive: it
   // changes on every keystroke and the visible text is owned by CodeMirror, not
   // by Lit's render. Re-rendering the surrounding template on each keystroke is
@@ -73,6 +107,16 @@ export class PromptEditor extends LitElement {
   @state() private attachmentError: string | undefined = undefined;
   @state() private chipSendingKey: string | undefined = undefined;
   @state() private chipError: string | undefined = undefined;
+  @state() private attachSourceOpen = false;
+  private readonly attachPopup = new AnchoredPopupController(this, () => {
+    if (!this.attachSourceOpen || !this.attachButton || !this.attachSourcePanel) return undefined;
+    return {
+      anchor: this.attachButton,
+      panel: this.attachSourcePanel,
+      onClose: () => { this.attachSourceOpen = false; },
+      options: { minWidth: 210 },
+    };
+  });
   private attachmentSeq = 0;
   private requestVersion = 0;
   private editor: EditorView | undefined;
@@ -82,6 +126,7 @@ export class PromptEditor extends LitElement {
   private explicitShiftKeyActive = false;
 
   protected override willUpdate(changed: PropertyValues<this>) {
+    if (this.busy || changed.has("sessionId") || changed.has("machineId")) this.attachSourceOpen = false;
     if (!changed.has("sessionId") && !changed.has("machineId")) return;
     const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
     const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
@@ -115,12 +160,17 @@ export class PromptEditor extends LitElement {
     this.createEditor();
   }
 
+  private get busy(): boolean {
+    return this.disabled || this.sending || this.chipSendingKey === this.composerKey();
+  }
+
   protected override updated(changed: PropertyValues) {
     if (changed.has("disabled")) this.updateEditorDisabledState();
     if (changed.has("sessionId") || changed.has("machineId")) this.syncEditorDoc();
   }
 
   override disconnectedCallback(): void {
+    this.attachSourceOpen = false;
     this.editor?.destroy();
     this.editor = undefined;
     super.disconnectedCallback();
@@ -130,24 +180,38 @@ export class PromptEditor extends LitElement {
     const shellInputMode = this.promptChips.length === 0 && this.currentInputMode.kind === "shell" ? this.currentInputMode : undefined;
     const shellMode = shellInputMode !== undefined;
     const queuesInput = this.canSteer || this.isCompacting;
-    const busy = this.disabled || this.sending || this.chipSendingKey === this.composerKey();
+    const keyboardSteers = this.defaultSendBehavior() === "steer";
+    const busy = this.busy;
+    const sourceMenu = createAttachSourceMenuMedia()?.matches === true;
     return html`
       <footer class=${shellMode ? "shell-mode" : ""} @paste=${(event: ClipboardEvent) => { void this.handlePaste(event); }} @dragover=${(event: DragEvent) => { this.handleDragOver(event); }} @drop=${(event: DragEvent) => { void this.handleDrop(event); }}>
         <div class="editor-wrap">
-          <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
-          <input class="attachment-input" type="file" multiple hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
-          <button class="editor-attach icon-button" ?disabled=${busy} title="Attach files" aria-label="Attach files" @click=${() => { this.attachmentInput?.click(); }}>${renderAttachIcon()}</button>
-          ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
-          ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
+          <div class="editor-input">
+            <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
+            ${this.chatNavigation === undefined ? null : html`<div class="editor-chat-navigation">${this.chatNavigation}</div>`}
+            <input class="attachment-input" type="file" multiple hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
+            <input class="attachment-image-input" type="file" multiple accept="image/*" hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
+            <input class="attachment-camera-input" type="file" accept="image/*" capture="environment" hidden @change=${(event: Event) => { void this.handleFileInput(event); }} />
+            <button type="button" class="editor-attach icon-button ui-button ui-button--icon" ?disabled=${busy} title="Attach files" aria-label="Attach files" aria-controls=${sourceMenu ? "attach-source-panel" : nothing} aria-expanded=${sourceMenu ? String(this.attachSourceOpen) : nothing} @click=${() => { this.handleAttachClick(); }}>${renderAttachIcon()}</button>
+            <div id="attach-source-panel" class="attach-source-panel ui-menu" popover="auto" role="group" aria-label="Attachment source">
+              <button type="button" class="ui-button ui-menu-item" ?disabled=${busy} title="Choose from your photo library" @click=${() => { this.openAttachmentPicker(this.attachmentImageInput); }}><span class="attach-source-icon" aria-hidden="true">${renderPhotosIcon()}</span><span class="attach-source-label">Photos</span></button>
+              <button type="button" class="ui-button ui-menu-item" ?disabled=${busy} title="Take a new photo" @click=${() => { this.openAttachmentPicker(this.attachmentCameraInput); }}><span class="attach-source-icon" aria-hidden="true">${renderCameraIcon()}</span><span class="attach-source-label">Camera</span></button>
+              <button type="button" class="ui-button ui-menu-item" ?disabled=${busy} title="Browse documents and other files" @click=${() => { this.openAttachmentPicker(this.attachmentInput); }}><span class="attach-source-icon" aria-hidden="true">${renderAttachIcon()}</span><span class="attach-source-label">Files</span></button>
+            </div>
+            ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
+            ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
+          </div>
           ${this.renderPromptChips()}
           ${this.renderAttachments()}
-          <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
+          <autocomplete-menu .onClose=${() => { this.closeCompletions(); }} .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(item: CompletionItem) => { this.pick(item); }}></autocomplete-menu>
         </div>
-        <div class="actions">
+        <div class="actions ui-toolbar ui-toolbar--primary">
           ${this.renderCompactStatus()}
-          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
-          ${this.canSteer && !this.isCompacting ? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
-          <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
+          <div class="ui-toolbar-group">
+            <button class="ui-button ui-button--icon icon-button send-button ${keyboardSteers ? "" : "default-send-action"}" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => { this.send("followUp"); }}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
+            ${this.canSteer && !this.isCompacting ? html`<button class="ui-button ui-button--icon icon-button steer-button ${keyboardSteers ? "default-send-action" : ""}" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => { this.send("steer"); }}>${renderSteerIcon()}</button>` : null}
+            <button class="ui-button ui-button--icon icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
+          </div>
         </div>
       </footer>
     `;
@@ -191,8 +255,10 @@ export class PromptEditor extends LitElement {
     const provider = status.model?.provider !== undefined && status.model.provider !== "" ? `${status.model.provider}/` : "";
     return html`
       <div class="compact-status" aria-label="Session status">
-        <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
-        <button class="select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
+        <div class="ui-toolbar-group ui-toolbar-group--bounded">
+          <button class="ui-button select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
+          <button class="ui-button ui-button--icon select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
+        </div>
       </div>
     `;
   }
@@ -204,7 +270,7 @@ export class PromptEditor extends LitElement {
         ${this.promptChips.map((chip) => html`
           <div class="prompt-chip" title=${chip.text}>
             <span>${chip.label}</span>
-            <button type="button" aria-label=${`Remove ${chip.label}`} ?disabled=${this.disabled} @click=${() => this.onRemoveChip?.(chip)}>×</button>
+            <button type="button" class="ui-button ui-button--compact ui-button--icon" aria-label=${`Remove ${chip.label}`} ?disabled=${this.disabled} @click=${() => this.onRemoveChip?.(chip)}>×</button>
           </div>
         `)}
         ${this.chipError === undefined ? null : html`<div class="chip-error" role="alert">${this.chipError}</div>`}
@@ -221,12 +287,12 @@ export class PromptEditor extends LitElement {
         ${this.attachments.map((attachment) => html`
           <div class=${`attachment-chip ${isInlinePromptAttachment(attachment) ? "attachment-chip-image" : "attachment-chip-file"}`} title=${attachment.name}>
             ${this.renderAttachmentPreview(attachment)}
-            <button type="button" class="attachment-remove" title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
+            <button type="button" class="ui-button ui-button--compact ui-button--icon attachment-remove" title="Remove attachment" aria-label=${`Remove ${attachment.name}`} @click=${() => { this.removeAttachment(attachment.id); }}>×</button>
           </div>
         `)}
         ${this.attachments.length > 0 ? html`
           <label class="attachment-delivery" title=${canUseInlineDelivery ? "How attachments are delivered to the agent" : "General files are saved and mentioned from the workspace"}>
-            <select .value=${delivery} @change=${(event: Event) => { this.changeDelivery(event); }}>
+            <select class="ui-select" aria-label="Attachment delivery" .value=${delivery} @change=${(event: Event) => { this.changeDelivery(event); }}>
               <option value="inline" ?disabled=${!canUseInlineDelivery}>Attach to message${canUseInlineDelivery ? "" : " (images only)"}</option>
               <option value="folder">${attachmentFolderDeliveryLabel(this.attachmentsFolder)}</option>
             </select>
@@ -281,6 +347,22 @@ export class PromptEditor extends LitElement {
     await this.addAttachmentFiles(files);
   }
 
+  private handleAttachClick(): void {
+    if (this.busy) return;
+    if (createAttachSourceMenuMedia()?.matches === true) {
+      this.attachSourceOpen = !this.attachSourceOpen;
+      return;
+    }
+    this.attachmentInput?.click();
+  }
+
+  private openAttachmentPicker(input: HTMLInputElement | undefined): void {
+    if (this.busy) return;
+    this.attachPopup.close();
+    this.attachButton?.focus();
+    input?.click();
+  }
+
   private async handleFileInput(event: Event) {
     if (!(event.target instanceof HTMLInputElement) || event.target.files === null) return;
     const files = Array.from(event.target.files);
@@ -324,7 +406,8 @@ export class PromptEditor extends LitElement {
             keyup: (event) => this.handleEditorKeyUp(event),
             blur: () => this.resetEditorModifierState(),
           }),
-          placeholder("Message pi... Use / for commands, @ for tracked files, @ space for all files, # for models"),
+          placeholder(createPromptPlaceholder),
+          EditorView.contentAttributes.of({ "aria-placeholder": promptPlaceholder }),
           promptArgumentHintExtension,
           this.editableCompartment.of(EditorView.editable.of(!this.disabled)),
           this.readOnlyCompartment.of(EditorState.readOnly.of(this.disabled)),
@@ -437,6 +520,9 @@ export class PromptEditor extends LitElement {
   }
 
   private closeCompletions(): boolean {
+    // Dismissal also invalidates loads started while the previous menu was
+    // visible, so a late response cannot reopen it after focus moved away.
+    this.requestVersion += 1;
     if (!this.completions.length) return false;
     this.completions = [];
     return true;
@@ -474,7 +560,7 @@ export class PromptEditor extends LitElement {
       return true;
     }
     if (send) {
-      this.send(this.canSteer || this.isCompacting ? "followUp" : undefined);
+      this.send(this.defaultSendBehavior());
       return true;
     }
     if (event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -520,6 +606,11 @@ export class PromptEditor extends LitElement {
       ...(item.argumentHint === undefined || item.argumentHint === "" ? {} : { effects: setPromptArgumentHint.of({ pos: cursor, text: item.argumentHint }) }),
     });
     this.completions = [];
+  }
+
+  private defaultSendBehavior(): "steer" | "followUp" | undefined {
+    if (this.isCompacting) return "followUp";
+    return this.canSteer ? this.defaultStreamingBehavior : undefined;
   }
 
   private send(streamingBehavior?: "steer" | "followUp") {

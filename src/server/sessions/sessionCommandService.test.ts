@@ -95,24 +95,20 @@ describe("SessionCommandService", () => {
     });
   });
 
-  it("starts compaction, updates lifecycle hooks, and publishes completion", async () => {
+  it("starts compaction and cleans up without synthetic transcript output", async () => {
     const active = activeSession();
     const events = eventPublisher();
     const onCompactionStart = vi.fn();
     const onCompactionEnd = vi.fn();
     const service = new SessionCommandService(() => getActive(active), vi.fn(), events, { onCompactionStart, onCompactionEnd });
 
-    await expect(service.run("s1", "/compact focus on tests")).resolves.toEqual({ type: "done", message: "Compaction started…" });
+    await expect(service.run("s1", "/compact focus on tests")).resolves.toEqual({ type: "done" });
     expect(onCompactionStart).toHaveBeenCalledWith(active.runtime.session);
     await vi.waitFor(() => {
-      expect(events.publish).toHaveBeenCalledWith("s1", {
-        type: "command.output",
-        level: "success",
-        message: "Compaction complete.\nTokens before: 123\n\nshort summary",
-      });
       expect(onCompactionEnd).toHaveBeenCalledWith(active.runtime.session, "success");
     });
     expect(active.runtime.session.compact).toHaveBeenCalledWith("focus on tests");
+    expect(events.publish).not.toHaveBeenCalled();
   });
 
   it("reloads runtime resources through the injected lifecycle callback", async () => {

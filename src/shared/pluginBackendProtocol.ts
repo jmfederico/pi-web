@@ -51,16 +51,68 @@ export const PLUGIN_BACKEND_CHANNEL_ERROR_CODE_MAX_LENGTH = 64;
 export const PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/:operation";
 export const PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH = "/paired-plugin-backends/:pluginId/projects/:projectId/workspaces/:workspaceId/channels/:operation";
 
+export const PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS = Object.freeze([
+  "/paired-plugin-backends/:pluginId/:operation",
+  "/paired-plugin-backends/:pluginId/projects/:projectId/:operation",
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+]);
+export const PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS = Object.freeze([
+  "/paired-plugin-backends/:pluginId/channels/:operation",
+  "/paired-plugin-backends/:pluginId/projects/:projectId/channels/:operation",
+  PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
+]);
+
+export type PluginBackendScopeKind = "machine" | "project" | "workspace";
+export interface PluginBackendScopeSelection {
+  readonly scope?: PluginBackendScopeKind;
+  readonly projectId?: string;
+  readonly workspaceId?: string;
+}
+
+/** Validate explicit wire authority without accepting browser-supplied paths. */
+export function parsePluginBackendScopeSelection(value: Record<string, unknown>): PluginBackendScopeSelection {
+  const scope = value["scope"];
+  const projectId = value["projectId"];
+  const workspaceId = value["workspaceId"];
+  if (scope === undefined && projectId === undefined && workspaceId === undefined) return {};
+  if (scope !== "machine" && scope !== "project" && scope !== "workspace") throw new Error("Plugin backend scope must be machine, project, or workspace");
+  for (const id of [projectId, workspaceId]) {
+    if (id !== undefined && (typeof id !== "string" || id === "" || id.length > 512)) throw new Error("Plugin backend scope ids must be non-empty strings of at most 512 characters");
+  }
+  if (scope === "machine" && (projectId !== undefined || workspaceId !== undefined)) throw new Error("Machine scope cannot contain project or workspace ids");
+  if (scope === "project" && workspaceId !== undefined) throw new Error("Project scope cannot contain a workspace id");
+  return { scope, ...(typeof projectId === "string" ? { projectId } : {}), ...(typeof workspaceId === "string" ? { workspaceId } : {}) };
+}
+
+export function pluginBackendScopeFromRoute(selection: PluginBackendScopeSelection, wire?: PluginBackendScopeSelection): PluginBackendScopeKind {
+  const scope = selection.workspaceId !== undefined ? "workspace" : selection.projectId !== undefined ? "project" : "machine";
+  if (wire === undefined) return scope;
+  if (scope !== "workspace" && wire.scope === undefined) throw new Error("Scoped plugin backend calls require an explicit scope");
+  if ((wire.scope !== undefined && wire.scope !== scope)
+    || (wire.projectId !== undefined && wire.projectId !== selection.projectId)
+    || (wire.workspaceId !== undefined && wire.workspaceId !== selection.workspaceId)) throw new Error("Plugin backend wire scope does not match route authority");
+  return scope;
+}
+
+export function pairedPluginBackendPath(selection: PluginBackendScopeSelection & { pluginId: string; operation: string }, channel = false): string {
+  const segments = ["", "paired-plugin-backends", encodeURIComponent(selection.pluginId)];
+  if (selection.projectId !== undefined) segments.push("projects", encodeURIComponent(selection.projectId));
+  if (selection.workspaceId !== undefined) segments.push("workspaces", encodeURIComponent(selection.workspaceId));
+  if (channel) segments.push("channels");
+  segments.push(encodeURIComponent(selection.operation));
+  return segments.join("/");
+}
+
 const OPERATION_PATTERN = /^[a-z][a-z0-9.-]*$/u;
 const CHANNEL_ERROR_CODE_PATTERN = /^[a-z][a-z0-9.-]*$/u;
 const MAX_JSON_DEPTH = 64;
 
-export interface PluginBackendRequestEnvelope {
+export interface PluginBackendRequestEnvelope extends PluginBackendScopeSelection {
   revision: string;
   input: JsonValue;
 }
 
-export interface PluginBackendChannelOpenEnvelope {
+export interface PluginBackendChannelOpenEnvelope extends PluginBackendScopeSelection {
   readonly version: 1;
   readonly kind: "open";
   readonly revision: string;
@@ -148,15 +200,17 @@ export function parseBoundedPluginBackendJson(
 export function parsePluginBackendRequestEnvelope(value: unknown): PluginBackendRequestEnvelope {
   if (!isPlainRecord(value)) throw new Error("Plugin backend request body must be an object");
   return Object.freeze({
+    ...parsePluginBackendScopeSelection(value),
     revision: requirePluginBackendRevision(value["revision"]),
     input: cloneBoundedPluginBackendJson(value["input"], "Plugin backend request input"),
   });
 }
 
-export function serializePluginBackendChannelOpenEnvelope(revision: unknown, input: unknown): string {
+export function serializePluginBackendChannelOpenEnvelope(revision: unknown, input: unknown, selection: PluginBackendScopeSelection = {}): string {
   return serializePluginBackendChannelEnvelope({
     version: 1,
     kind: "open",
+    ...parsePluginBackendScopeSelection({ ...selection }),
     revision: requirePluginBackendRevision(revision),
     input: cloneBoundedPluginBackendJson(input, "Plugin backend channel open input", PLUGIN_BACKEND_JSON_MAX_BYTES),
   }, "Plugin backend channel open envelope", PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES);
@@ -188,6 +242,7 @@ export function parsePluginBackendChannelClientEnvelope(text: string): PluginBac
     return Object.freeze({
       version: 1,
       kind: "open",
+      ...parsePluginBackendScopeSelection(value),
       revision: requirePluginBackendRevision(value["revision"]),
       input: cloneBoundedPluginBackendJson(value["input"], "Plugin backend channel open input", PLUGIN_BACKEND_JSON_MAX_BYTES),
     });

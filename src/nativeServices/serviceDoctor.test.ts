@@ -35,12 +35,12 @@ function productionInput(configured = false): ProductionNativeServicePlanInput {
       sessiond: {
         configuredCommand: configured ? "custom sessiond --flag" : undefined,
         namedCommand: "pi-web-sessiond",
-        bundledEntrypointPath: "/package/sessiond.js",
+        bundledLauncherPath: "/package/sessiond.js",
       },
       web: {
         configuredCommand: configured ? "custom web --flag" : undefined,
         namedCommand: "pi-web-server",
-        bundledEntrypointPath: "/package/server.js",
+        bundledLauncherPath: "/package/server.js",
       },
     },
   };
@@ -892,7 +892,7 @@ describe("native-service doctor planning and reporting", () => {
     expect(report.lines[0]).toContain("Prospective production native-service plan");
     expect(report.lines.join("\n")).toContain("Native service requirement failed");
     expect(report.failedPrerequisites).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "node-version" }),
+      expect.objectContaining({ kind: "runtime" }),
       expect.objectContaining({ kind: "readable-file" }),
     ]));
   });

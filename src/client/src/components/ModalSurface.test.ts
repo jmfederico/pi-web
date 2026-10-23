@@ -2,13 +2,29 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModalSurface } from "./ModalSurface";
+import { installNativeDialogFake } from "./nativeDialog.testSupport";
+installNativeDialogFake();
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+  vi.restoreAllMocks();
 });
 
 describe("modal-surface rendering", () => {
+  it("opens with accessible ownership and focus without scheduling a corrective render", async () => {
+    const surface = new ModalSurface();
+    surface.initialFocus = "input";
+    surface.innerHTML = `<input aria-label="Query">`;
+    document.body.append(surface);
+
+    expect(await surface.updateComplete).toBe(true);
+    expect(surface.isUpdatePending).toBe(false);
+    expect(dialogSection(surface).getAttribute("aria-modal")).toBe("true");
+    expect(dialogSection(surface).getAttribute("aria-hidden")).toBeNull();
+    expect(document.activeElement).toBe(surface.querySelector("input"));
+  });
+
   it("renders a self-contained accessible name around slotted content", async () => {
     const surface = await mountSurface({
       content: `<h1 id="greeting">Hello</h1>`,
@@ -90,6 +106,67 @@ describe("modal-surface refocus on request", () => {
 });
 
 describe("modal-surface close contract", () => {
+  it("uses a native modal lifecycle and reopens after reconnect", async () => {
+    const surface = await mountSurface({ content: `<button>Inside</button>` });
+    const dialog = requiredElement(surface.shadowRoot?.querySelector("dialog"), "native dialog");
+    expect(dialog.open).toBe(true);
+    surface.remove();
+    expect(dialog.open).toBe(false);
+    document.body.append(surface);
+    expect(await surface.updateComplete).toBe(true);
+    expect(surface.isUpdatePending).toBe(false);
+    expect(dialog.open).toBe(true);
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    expect(dialog.getAttribute("aria-hidden")).toBeNull();
+    expect(surface.shadowRoot?.activeElement).toBe(dialogSection(surface));
+  });
+
+  it("prevents native cancel from bypassing busy state or the close callback", async () => {
+    const onClose = vi.fn();
+    const onBusyEscape = vi.fn();
+    const surface = await mountSurface({ content: `<button>Inside</button>`, configure: (element) => {
+      element.onClose = onClose;
+      element.onBusyEscape = onBusyEscape;
+      element.busy = true;
+    } });
+    const dialog = requiredElement(surface.shadowRoot?.querySelector("dialog"), "native dialog");
+    const cancel = new Event("cancel", { cancelable: true });
+    dialog.dispatchEvent(cancel);
+    expect(cancel.defaultPrevented).toBe(true);
+    expect(dialog.open).toBe(true);
+    expect(onBusyEscape).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    surface.busy = false;
+    dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("ignores lower-layer events and refocus while a plugin modal is active", async () => {
+    const onClose = vi.fn();
+    const surface = await mountSurface({ content: `<button>Inside</button>`, configure: (element) => { element.onClose = onClose; } });
+    const plugin = document.createElement("dialog");
+    plugin.tabIndex = -1;
+    document.body.append(plugin);
+    plugin.showModal();
+    plugin.focus();
+    pressKey(contentButton(surface), "Escape");
+    backdrop(surface).dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    surface.focusDialog();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(plugin);
+    surface.remove();
+    expect(document.activeElement).toBe(plugin);
+  });
+
+  it("does not dismiss on composing or already-handled Escape", async () => {
+    const onClose = vi.fn();
+    const surface = await mountSurface({ content: `<button>Inside</button>`, configure: (element) => { element.onClose = onClose; } });
+    contentButton(surface).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", isComposing: true, bubbles: true, cancelable: true }));
+    const handled = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    handled.preventDefault();
+    contentButton(surface).dispatchEvent(handled);
+    expect(onClose).not.toHaveBeenCalled();
+  });
   it("routes Escape to the close callback without leaking the key", async () => {
     const onClose = vi.fn<() => void>();
     const surface = await mountSurface({
@@ -458,7 +535,7 @@ describe("modal-surface focus restoration", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("does not let a lower visual layer steal focus when it connects late", async () => {
+  it("uses native activation order instead of the host z-index", async () => {
     const trigger = appendFocusTarget("Opener");
     trigger.focus();
     const higher = await mountLayeredSurface(30, `<button id="higher-control">Higher dialog</button>`);
@@ -469,16 +546,25 @@ describe("modal-surface focus restoration", () => {
     const lower = await mountLayeredSurface(10, `<button id="lower-control">Lower dialog</button>`);
     await higher.surface.updateComplete;
 
-    expect(document.activeElement).toBe(higher.host);
-    expect(dialogSection(higher.surface).getAttribute("aria-modal")).toBe("true");
-    expect(dialogSection(lower.surface).getAttribute("aria-hidden")).toBe("true");
-    higher.host.remove();
-    await lower.surface.updateComplete;
     expect(deepActiveElement()).toBe(lower.surface.querySelector("#lower-control"));
     expect(dialogSection(lower.surface).getAttribute("aria-modal")).toBe("true");
-    expect(dialogSection(lower.surface).getAttribute("aria-hidden")).toBeNull();
+    expect(dialogSection(higher.surface).getAttribute("aria-hidden")).toBe("true");
+    expect(dialogSection(higher.surface).getAttribute("aria-modal")).toBe("false");
+    expect(higher.surface.isUpdatePending).toBe(false);
 
+    // A property render must not overwrite the registry's ownership state.
+    higher.surface.busy = true;
+    expect(await higher.surface.updateComplete).toBe(true);
+    expect(dialogSection(higher.surface).getAttribute("aria-busy")).toBe("true");
+    expect(dialogSection(higher.surface).getAttribute("aria-hidden")).toBe("true");
     lower.host.remove();
+    await higher.surface.updateComplete;
+    expect(deepActiveElement()).toBe(higherControl);
+    expect(dialogSection(higher.surface).getAttribute("aria-modal")).toBe("true");
+    expect(dialogSection(higher.surface).getAttribute("aria-hidden")).toBeNull();
+    expect(higher.surface.isUpdatePending).toBe(false);
+
+    higher.host.remove();
     expect(document.activeElement).toBe(trigger);
   });
 
@@ -511,6 +597,7 @@ async function mountSurface(options: MountSurfaceOptions): Promise<ModalSurface>
   options.configure?.(surface);
   surface.innerHTML = options.content;
   document.body.append(surface);
+  await surface.updateComplete;
   await surface.updateComplete;
   return surface;
 }
@@ -553,11 +640,12 @@ async function mountLayeredSurface(zIndex: number, content: string): Promise<{ h
   root.append(surface);
   document.body.append(host);
   await surface.updateComplete;
+  await surface.updateComplete;
   return { host, surface };
 }
 
 function dialogSection(surface: ModalSurface): HTMLElement {
-  return requiredElement(surface.shadowRoot?.querySelector("section[role='dialog']"), "modal-surface dialog section");
+  return requiredElement(surface.shadowRoot?.querySelector("dialog[role='dialog']"), "modal-surface dialog section");
 }
 
 function backdrop(surface: ModalSurface): HTMLElement {

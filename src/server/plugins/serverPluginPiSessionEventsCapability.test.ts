@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { createEventBus } from "@earendil-works/pi-coding-agent";
+import { createEventBus } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
 import { PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY } from "../../server-plugin-api.js";
 import type { Project } from "../types.js";

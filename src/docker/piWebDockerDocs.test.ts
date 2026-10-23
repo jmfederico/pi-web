@@ -37,8 +37,10 @@ describe("pi-web-docker documentation", () => {
       readRepoFile("docker/pi-web-docker"),
     ]);
 
-    expect(readDockerCommandMatrix(dockerReadme)).toEqual([...PI_WEB_DOCKER_USER_COMMANDS]);
-    expect(readEntrypointCommandCases(dockerEntrypoint)).toEqual(new Set(PI_WEB_DOCKER_USER_COMMANDS));
+    const documentedCommands = readDockerCommandMatrix(dockerReadme);
+    expect(new Set(documentedCommands)).toEqual(readEntrypointCommandCases(dockerEntrypoint));
+    // The application only needs a subset of the standalone Docker CLI.
+    for (const command of PI_WEB_DOCKER_USER_COMMANDS) expect(documentedCommands).toContain(command);
 
     expect(dockerReadme).toContain("`pi-web-docker --dev status`");
     expect(dockerReadme).toContain("`./docker/pi-web-docker --dev start`");

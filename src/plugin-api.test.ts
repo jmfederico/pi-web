@@ -15,6 +15,20 @@ import type {
   PluginStartContext,
   PluginSelectedSession,
   PluginRuntimeState,
+  PluginNavigate,
+  PluginNavigationDestination,
+  PluginNavigationPatchDestination,
+  PluginNavigationOptions,
+  QualifiedContributionId,
+  PluginRuntimeContext,
+  ApplicationPanelContext,
+  ApplicationPanelContribution,
+  MessageActionContext,
+  DisplayedMessageActionContext,
+  SessionLabelContext,
+  SessionLabelContribution,
+  SessionLabelItem,
+  ContributionQueryValue,
   Workspace,
   PluginPeerChannel,
   PluginPeerChannelOptions,
@@ -35,6 +49,12 @@ import type {
   WriteWorkspaceFileOptions,
   WriteWorkspaceFileResponse,
 } from "@jmfederico/pi-web/plugin-api";
+import type {
+  ApplicationPanelContext as InternalApplicationPanelContext,
+  PluginRuntimeContext as InternalPluginRuntimeContext,
+  SessionLabelContext as InternalSessionLabelContext,
+  WorkspacePanelContext as InternalWorkspacePanelContext,
+} from "./client/src/plugins/types";
 
 type IfEqual<Left, Right, Then, Else = never> =
   (<Value>(value: Value) => Value extends Left ? 1 : 2) extends
@@ -82,7 +102,50 @@ declare class ImplementedWorkspacePanelFiles implements WorkspacePanelFiles {
 describe("public browser plugin API", () => {
   it("exposes a minimal selected-session snapshot", () => {
     expectTypeOf<PluginRuntimeState["selectedSession"]>().toEqualTypeOf<PluginSelectedSession | undefined>();
-    expectTypeOf<keyof PluginSelectedSession>().toEqualTypeOf<"id" | "cwd" | "name" | "archived" | "pending">();
+    expectTypeOf<keyof PluginSelectedSession>().toEqualTypeOf<"id" | "cwd" | "name" | "metadata" | "archived" | "pending">();
+  });
+
+  it("exposes row labels with a public session snapshot and tool-scoped destination queries", () => {
+    expectTypeOf<PluginContributions["sessionLabels"]>().toEqualTypeOf<SessionLabelContribution[] | undefined>();
+    expectTypeOf<SessionLabelContext["session"]>().toEqualTypeOf<Readonly<PluginSelectedSession>>();
+    expectTypeOf<ReturnType<SessionLabelContribution["items"]>>().toEqualTypeOf<SessionLabelItem[]>();
+    expectTypeOf<PluginNavigationDestination["query"]>().toEqualTypeOf<Readonly<Record<string, ContributionQueryValue>> | undefined>();
+    expectTypeOf<PluginNavigationOptions>().toEqualTypeOf<{ mode?: "replace" | "patch"; history?: "push" | "replace" }>();
+  });
+
+  it("preserves non-null legacy destinations and separates nullable patches", () => {
+    expectTypeOf<PluginNavigationDestination>().toEqualTypeOf<{
+      machineId?: string;
+      projectId?: string;
+      workspaceId?: string;
+      sessionId?: string;
+      view?: "navigation" | "chat" | "workspace";
+      tool?: QualifiedContributionId;
+      query?: Readonly<Record<string, ContributionQueryValue>>;
+    }>();
+    expectTypeOf<PluginNavigationPatchDestination>().toEqualTypeOf<{
+      machineId?: string | null;
+      projectId?: string | null;
+      workspaceId?: string | null;
+      sessionId?: string | null;
+      view?: "navigation" | "chat" | "workspace" | null;
+      tool?: QualifiedContributionId | null;
+      query?: Readonly<Record<string, ContributionQueryValue | null>>;
+    }>();
+    expectTypeOf<PluginNavigate>().toExtend<(destination: PluginNavigationDestination) => Promise<void>>();
+  });
+
+  it("shares the navigation overloads across public and internal contexts", () => {
+    expectTypeOf<PluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<SessionLabelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<WorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<ApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<MessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<DisplayedMessageActionContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalPluginRuntimeContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalSessionLabelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalWorkspacePanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
+    expectTypeOf<InternalApplicationPanelContext["navigate"]>().toEqualTypeOf<PluginNavigate>();
   });
 
   it("keeps host-owned activation and workspace snapshots readonly", () => {
@@ -102,7 +165,7 @@ describe("public browser plugin API", () => {
   });
 
   it("exposes the v4 dependency-ready browser lifecycle and shared capability contracts", () => {
-    expectTypeOf<PiWebPlugin["apiVersion"]>().toEqualTypeOf<4>();
+    expectTypeOf<PiWebPlugin["apiVersion"]>().toEqualTypeOf<4 | 5>();
     expectTypeOf<PluginActivationContext["apiVersion"]>().toEqualTypeOf<4>();
     expectTypeOf<keyof PiWebPlugin>().toEqualTypeOf<"apiVersion" | "name" | "requires" | "activate">();
     expectTypeOf<keyof PluginCapability>().toEqualTypeOf<"pluginId" | "id" | "version" | "parse">();
@@ -156,12 +219,12 @@ describe("public browser plugin API", () => {
 
   it("adds optional versioned panel navigation without changing browser API v2 compatibility", () => {
     type NavigationIsOptional = IsOptional<WorkspacePanelContext, "navigation">;
-    type NavigationAliasesAreOptional = IsOptional<WorkspacePanelContribution, "navigationAliases">;
     expectTypeOf<WorkspacePanelNavigationV1["version"]>().toEqualTypeOf<1>();
     expectTypeOf<ReadonlyKeys<Pick<WorkspacePanelNavigationV1, "version" | "contributionId" | "query">>>()
       .toEqualTypeOf<"version" | "contributionId" | "query">();
     expectTypeOf<NavigationIsOptional>().toEqualTypeOf<true>();
-    expectTypeOf<NavigationAliasesAreOptional>().toEqualTypeOf<true>();
+    expectTypeOf<Extract<keyof WorkspacePanelContribution, "routeAliases" | "navigationAliases">>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<keyof ApplicationPanelContribution, "routeAliases" | "navigationAliases">>().toEqualTypeOf<never>();
   });
 
   it("keeps invalidation snapshots readonly and one-argument v2 callbacks assignable", () => {

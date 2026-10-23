@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import { ExtensionToolContext } from "../../piSdk.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPiWebCustomToolDefinitions, sessionAllowsDelegationTools, type PiSessionManager } from "./piSessionService.js";
 import type { SubsessionToolDeps } from "./spawnSubsessionTool.js";
@@ -20,6 +20,7 @@ function delegationDeps() {
   const subsessions: SubsessionToolDeps = {
     spawn: subsessionSpawn,
     list: vi.fn(() => Promise.resolve([])),
+    join: vi.fn(() => Promise.resolve({ subsessions: [], completions: [] })),
     check: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, finalText: "", messageCount: 0 })),
     read: vi.fn(() => Promise.resolve({ sessionId: "child-1", cwd: "/workspace", status: "idle" as const, entries: [], total: 0, matched: 0, start: 0, hasMore: false })),
   };

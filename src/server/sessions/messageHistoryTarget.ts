@@ -1,7 +1,8 @@
 /**
  * Resolve a message shortcut against the current root-to-leaf branch. Non-user
  * checkpoints retain the intervening history up to, but not including, the next
- * distinct user/assistant checkpoint. Pi still owns the actual tree mutation.
+ * distinct user/assistant checkpoint, or through a question but not its answer.
+ * Pi still owns the actual tree mutation.
  * Exact-entry tree operations do not use this resolver.
  */
 export function messageHistoryTargetId(branch: readonly unknown[], entryId: string): string {
@@ -9,6 +10,9 @@ export function messageHistoryTargetId(branch: readonly unknown[], entryId: stri
   if (index < 0) throw new Error("This message is no longer available on the active session branch.");
 
   const entry = branch[index];
+  // A question is answered from its durable tool result, without retaining any
+  // earlier answer (custom messages are otherwise part of a checkpoint's tail).
+  if (isQuestionResult(entry)) return entryId;
   // Pi restores a selected user message to the editor by positioning before it.
   if (isRecord(entry) && entry["type"] === "message" && isRecord(entry["message"])
     && entry["message"]["role"] === "user") return entryId;
@@ -18,8 +22,19 @@ export function messageHistoryTargetId(branch: readonly unknown[], entryId: stri
     const next = branch[nextIndex];
     if (!isRecord(next) || typeof next["id"] !== "string" || isConversationCheckpoint(next)) break;
     targetId = next["id"];
+    // The agent message that produced a question retains the request, not any
+    // later answer, just like selecting the question itself.
+    if (isQuestionResult(next)) break;
   }
   return targetId;
+}
+
+function isQuestionResult(entry: unknown): boolean {
+  if (!isRecord(entry) || entry["type"] !== "message" || !isRecord(entry["message"])) return false;
+  const message = entry["message"];
+  const details = message["details"];
+  return message["role"] === "toolResult" && message["toolName"] === "ask_user" && message["isError"] === false
+    && isRecord(details) && isRecord(details["ask"]);
 }
 
 /**

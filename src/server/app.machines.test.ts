@@ -155,6 +155,28 @@ describe("buildApp machine routes", () => {
     });
   });
 
+  it("proxies session naming reads, updates, unrelated saves, and resets", async () => {
+    const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
+    const remote = addResponse.json<{ id: string }>();
+    let persistedConfig: PiWebConfigValues = { ...fullPiWebConfig(), sessionNaming: { model: "provider/model", maxTokens: 32 } };
+    const requestJson = vi.fn<MachineClient["requestJson"]>((method, _path, body) => {
+      if (method === "PUT") persistedConfig = configFromMachineConfigWriteBody(body);
+      return Promise.resolve({ statusCode: 200, headers: { "content-type": "application/json" }, body: piWebConfigResponse(persistedConfig) });
+    });
+    appTestContext.remoteClient = fakeRemoteClient({ requestJson });
+    const url = `/api/machines/${remote.id}/config`;
+    const read = await appTestContext.app.inject({ method: "GET", url });
+    expect(read.statusCode).toBe(200);
+    expect(read.json<PiWebConfigResponse>().config.sessionNaming).toEqual(persistedConfig.sessionNaming);
+    for (const config of [{ spawnSessions: false }, { sessionNaming: { model: "other/model", maxTokens: 64 } }, { sessionNaming: {} }]) {
+      const expected = { ...persistedConfig, ...config };
+      const response = await appTestContext.app.inject({ method: "PUT", url, payload: { config } });
+      expect(response.statusCode).toBe(200);
+      expect(persistedConfig).toEqual(expected);
+      expect(response.json<PiWebConfigResponse>().config.sessionNaming).toEqual(expected.sessionNaming);
+    }
+  });
+
   it("saves selected-machine config on a target with no agent profile configured", async () => {
     const addResponse = await appTestContext.app.inject({ method: "POST", url: "/api/machines", payload: { name: "Remote", baseUrl: "https://remote.example.test/" } });
     const remote = addResponse.json<{ id: string }>();

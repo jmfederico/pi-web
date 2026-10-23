@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
-  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS,
+  pairedPluginBackendPath,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
   utf8ByteLength,
@@ -10,15 +11,15 @@ import { requestCancellation } from "../requestCancellation.js";
 
 interface PluginBackendProxyParams {
   pluginId: string;
-  projectId: string;
-  workspaceId: string;
+  projectId?: string;
+  workspaceId?: string;
   operation: string;
 }
 
 /** Browser-facing package-paired route; package and workspace authority stay in sessiond. */
 export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, daemon: SessionDaemonRequestClient): void {
-  app.post<{ Params: PluginBackendProxyParams; Body: unknown }>(
-    `/api${PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH}`,
+  for (const path of PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS) app.post<{ Params: PluginBackendProxyParams; Body: unknown }>(
+    `/api${path}`,
     { bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES },
     async (request, reply) => {
       const path = daemonPluginBackendPath(request.params);
@@ -66,15 +67,7 @@ export function registerPairedPluginBackendProxyRoutes(app: FastifyInstance, dae
 }
 
 function daemonPluginBackendPath(params: PluginBackendProxyParams): string {
-  return [
-    "/paired-plugin-backends",
-    encodeURIComponent(params.pluginId),
-    "projects",
-    encodeURIComponent(params.projectId),
-    "workspaces",
-    encodeURIComponent(params.workspaceId),
-    encodeURIComponent(params.operation),
-  ].join("/");
+  return pairedPluginBackendPath(params);
 }
 
 function daemonProtocolError(reply: FastifyReply, params: PluginBackendProxyParams, message: string): FastifyReply {

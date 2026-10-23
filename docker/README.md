@@ -1,6 +1,6 @@
-# PI WEB Docker (beta)
+# PI WEB Docker
 
-This Docker setup is beta. It is useful for trusted local/server testing and development, but it may still have rough edges and is intentionally documented only here for now.
+Run PI WEB in an Ubuntu 26.04 container with persistent configuration and agent-managed development tools. This setup is for trusted single-user or trusted-admin environments.
 
 PI WEB has two Docker modes:
 
@@ -72,6 +72,8 @@ From a production/runtime install directory, run `./pi-web-docker <command>`. Fr
 | Command | Runtime/default | Development | Notes |
 | --- | --- | --- | --- |
 | `install` | one-liner above or `./pi-web-docker install [installer args]` | Not available | Production bootstrap/install only; accepts the installer options below. |
+| `build` | `./pi-web-docker build` | `./docker/pi-web-docker --dev build` | Builds images without starting or recreating services. |
+| `validate` | `./pi-web-docker validate` | `./docker/pi-web-docker --dev validate` | Validates Compose and Docker build definitions without deploying. |
 | `start` | `./pi-web-docker start` | `./docker/pi-web-docker --dev start` | Starts the split `web` and `sessiond` stack. |
 | `stop` | `./pi-web-docker stop` | `./docker/pi-web-docker --dev stop` | Stops containers without deleting persistent data. |
 | `restart` | `./pi-web-docker restart` | `./docker/pi-web-docker --dev restart` | Restarts `web` and `sessiond`. |
@@ -81,7 +83,7 @@ From a production/runtime install directory, run `./pi-web-docker <command>`. Fr
 | `status` | `./pi-web-docker status` | `./docker/pi-web-docker --dev status` | Shows Docker Compose service status. |
 | `logs` | `./pi-web-docker logs [web\|sessiond]` | `./docker/pi-web-docker --dev logs [web\|sessiond\|data-init]` | Follows logs; omitting a target follows all services. |
 | `shell` | `./pi-web-docker shell [web\|sessiond]` | `./docker/pi-web-docker --dev shell [web\|sessiond]` | Opens Bash in `web` by default. |
-| `doctor` | `./pi-web-docker doctor` | `./docker/pi-web-docker --dev doctor` | Prints static Docker command diagnostics and generated asset paths. |
+| `doctor` | `./pi-web-docker doctor [--json]` | `./docker/pi-web-docker --dev doctor [--json]` | Reports configuration sources, paths, and available tooling diagnostics without printing credentials. |
 | `cli` | `./pi-web-docker cli <pi-web args...>` | `./docker/pi-web-docker --dev cli <pi-web args...>` | Proxies the existing `pi-web` CLI in the `web` container. |
 
 Do not run `docker compose down -v` unless you intentionally want to remove Compose-managed volumes. The default persistent PI WEB data is a bind mount, but avoiding `-v` keeps the update/stop flow conservative.
@@ -113,30 +115,94 @@ Common environment variables written to `.env`:
 | `PI_WEB_DOCKER_EXTRA_HOST_PATHS` | optional whitespace-separated existing absolute paths to bind-mount read/write at the same path |
 | `PI_WEB_BIND_ADDR`, `PI_WEB_PORT` | host bind address and port |
 | `PI_WEB_VERSION` | npm version/range for `@jmfederico/pi-web`; Pi Coding Agent resolves from PI WEB's npm peer dependency |
-| `PI_WEB_OPENSUSE_IMAGE` | openSUSE base image used for the runtime build |
-| `PI_WEB_NODEJS_MAJOR` | Node.js major package to install, defaulting to `22` |
-| `PI_WEB_NODEJS_REPO` | Node.js zypper repository URL, `auto`, or `disabled` |
-| `PI_WEB_EXTRA_ZYPPER_PACKAGES` | extra openSUSE packages installed during the image build |
+| `PI_WEB_UBUNTU_IMAGE` | Ubuntu base image, default `ubuntu:26.04`; may include a digest |
+| `PI_WEB_NODE_IMAGE` | Image-owned PI WEB Node.js source, default `node:22.22.2-bookworm-slim`; independent of project mise versions |
+| `PI_WEB_EXTRA_APT_PACKAGES` | Additional Ubuntu packages installed during the image build |
+| `PI_WEB_DOCKER_CLI_VERSION` | Official Docker CLI image selection, default `29-cli`, including Compose and Buildx |
+| `PI_WEB_MISE_VERSION` | mise release installed into the image, default `2026.10.17` |
+| `PI_WEB_GIT_VERSION` | Optional exact Git package version from the Git maintainers' stable PPA |
 | `PI_WEB_IMAGE` | local image tag to build and run |
 | `COMPOSE_PROJECT_NAME` | Docker Compose project name used by host-side lifecycle commands and detached update/restart helpers; defaults to `pi-web` and is not exported to the long-lived services |
 | `HOSTEXEC_IMAGE` | helper image used by `hostexec` |
 
 Host-derived IDs and the Docker host facts are refreshed on every rerun **on the host** unless you explicitly override the IDs. A rerun from inside a container reuses the recorded values instead; see [Updating](#runtime-installupdate). User-facing values such as data directory, bind address, port, image names, upload limit, extra host paths, base image, Node.js settings, extra packages, and npm package selection are preserved from an existing `.env` unless you pass a flag or environment override.
 
-The installer also writes a generated `compose.override.yml` in the install directory. `pi-web-docker` loads the generated `.env` and Compose override explicitly for runtime commands and passes the generated `COMPOSE_PROJECT_NAME` to Docker Compose, so an unrelated ambient Compose project name cannot redirect lifecycle commands. The project name stays scoped to this lifecycle control path instead of entering web, terminal, or agent environments. Re-run `pi-web-docker install` or `pi-web-docker update` instead of editing generated files by hand. Extra environment variables for the containers go in `container.env` instead; see [Container environment](#container-environment).
+The installer also writes a generated `compose.override.yml` in the install directory. `pi-web-docker` loads the generated `.env` and Compose override explicitly for runtime commands and passes the generated `COMPOSE_PROJECT_NAME` to Docker Compose, so an unrelated ambient Compose project name cannot redirect lifecycle commands. The project name stays scoped to this lifecycle control path instead of entering web, terminal, or agent environments. Re-run `pi-web-docker install` or `pi-web-docker update` instead of editing generated Compose files. Supported build/deployment values in `.env` are preserved by the installer. Extra environment variables for the containers go in `container.env`; see [Container environment](#container-environment).
 
 ### Base image and tooling
 
-The Docker runtime and development images are openSUSE Tumbleweed based by default. They install Node.js 22, npm, `npx`, and Corepack through zypper, using the openSUSE Node.js build service repository when needed for the selected architecture. The image's `pi-web` account is created with `PI_WEB_UID:PI_WEB_GID` and `/data/home` as its home directory, so shells have a passwd entry instead of showing `I have no name!` while user config stays in the persistent `/data` mount. The image also includes common agent/development tools such as Git/Git LFS, GitHub CLI, OpenSSH, Python with pip/virtualenv and headers, native build tooling, `jq`, `ripgrep`, `fd`, `fzf`, `bat`, `vim`, ShellCheck, archive tools, network utilities, and the Docker CLI with Compose and Buildx plugins.
+Both images use Ubuntu 26.04. Git comes from the Git maintainers' stable PPA, and Docker CLI, Compose, and Buildx come from the official Docker CLI image. The image contains native build tools and common command-line utilities. The `pi-web` account uses `PI_WEB_UID:PI_WEB_GID` and `/data/home` as its home directory.
 
-Install extra distro packages without writing a hook by setting a whitespace-delimited package list:
+Docker launches PI WEB using the image-owned Node executable without changing PATH. Project Node, Python, and other language versions belong to mise; changing them does not select the service's Node runtime. PI WEB itself needs no Docker- or mise-specific environment handling. Docker commands use the mounted host daemon; installing a newer client does not upgrade that daemon.
+
+### Configuration decision table
+
+| Need | Edit or run | Persistence and application |
+| --- | --- | --- |
+| Project language versions | Project `mise.toml`, then `mise trust` and `mise install` | Config in the project; installs under `/data`; no service restart |
+| User-wide tool defaults | `mise use --global node@<version> python@<version>` | `/data/config/mise/config.toml`; no rebuild |
+| Native OS packages | `PI_WEB_EXTRA_APT_PACKAGES` in runtime `.env` or dev `.local.env` | Rebuild image and recreate services |
+| Repositories/specialist tools | `custom-image.d/*.sh` | Preserved across updates; rebuild and recreate |
+| Credentials/process variables | Shared `container.env` or dev-only container env file | Preserved; recreate affected containers |
+| Mounts/service options | Runtime `compose.local.yml` or dev `.pi-web/docker-compose-dev.local.yml` | Preserved; loaded last; recreate affected containers |
+| PI WEB application settings | `/data/config/pi-web/config.json` | Persistent; apply according to each setting's reload contract |
+
+Generated Compose overrides are not user configuration files. Local Compose overrides are trusted administrator input and can change mounts, commands, and security settings.
+
+For runtime installation, pass additional packages to the installer:
 
 ```bash
-PI_WEB_EXTRA_ZYPPER_PACKAGES="go rustup kubernetes-client" \
-  curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh \
+  | sh -s -- --extra-apt-packages "libpq-dev libssl-dev"
 ```
 
-You can also pass installer flags such as `--opensuse-image`, `--nodejs-major`, `--nodejs-repo`, and `--extra-zypper-packages`, or edit the generated `.env` and rerun the installer.
+Every successful `pi-web-docker update` (runtime and development) reconciles global mise tools after recreating the services, using the new image as the service's nonroot user. Missing exact pins are installed without changing their requested versions; `latest` and version ranges are refreshed within their configured requests, bypassing the local remote-version cache. Older installs are retained. Project configuration and trust are not loaded or changed, and an empty global tool configuration is safe.
+
+Reconciliation failures appear in update output and make the update exit nonzero. The services have already been recreated at that point; fix the reported tool/configuration or network problem and rerun the update. Direct installer runs and `start` do not reconcile tools.
+
+### Agent tool setup with mise
+
+The image supplies mise in `/usr/local/bin` and a ready-to-use, mise-managed GitHub CLI (`gh`), including with a fresh `/data` mount. `/etc/mise/config.toml` defaults to `gh@latest` with tool-level `minimum_release_age = "0s"`; other tools retain their release-age policy. Override this default with a persistent user pin (`mise use --global gh@<version>`) or a trusted project pin.
+
+Image installs and fallback shims are root-owned under `/usr/local/share/pi-web/mise`, outside `/data` and `/opt`. User installs and shims live under `/data/home/.local/share/mise`; their shim directory precedes the image shim directory on the inherited PATH for both agent commands and terminals. Updates install newer `gh` versions under `/data` as the service user, without sudo or modifying image installs; exact user pins remain exact. There is no apt-installed `gh` fallback. Installation does not depend on interactive shell activation. Missing tools do not automatically install themselves or silently fall back through a shim to a different system version. Paranoid trust mode requires explicit review and trust of project configuration, including after its contents change.
+
+For a project, create a `mise.toml` with explicit versions, for example:
+
+```toml
+[tools]
+node = "22.22.0"
+python = "3.13.11"
+```
+
+Review the file before trusting it; mise configuration can execute code. From that project directory:
+
+```bash
+mise trust
+mise install
+node --version
+python --version
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Use versions required by the project rather than copying these examples unconditionally. Do not globally trust all directories. Use `mise exec -- <command>` when project environment variables are needed and `mise run <task>` for configured tasks; shims select executables but do not activate the full environment. Use `mise reshim` when a tool adds executables that need shims.
+
+Do not install Python application packages into system Python. Native libraries still belong in the image's apt package list or hooks. Tools installed into the unmounted container filesystem during a session are ephemeral.
+
+### Prepare without deploying
+
+```bash
+pi-web-docker build
+pi-web-docker validate
+pi-web-docker doctor --json
+# Development checkout:
+./docker/pi-web-docker --dev build
+./docker/pi-web-docker --dev validate
+```
+
+`build` and `validate` do not start or recreate services. `doctor` reports selected configuration paths/sources and tooling availability without dumping environment files. It may report unavailable runtime checks when no container is running. The image tool manifest at `/usr/local/share/pi-web/image-manifest.json` records the versions baked into an image; mise-installed user tools are separate. Run `pi-web-image-doctor` inside the container for the manifest and current tool resolution.
+
+Applying an image or container configuration change requires recreation. Recreating sessiond interrupts active sessions; ask for approval and schedule that operation separately.
 
 ### Custom image hooks
 
@@ -155,9 +221,9 @@ mkdir -p ~/.local/share/pi-web-docker/custom-image.d
 cat >~/.local/share/pi-web-docker/custom-image.d/10-extra-tools.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-zypper --gpg-auto-import-keys --non-interactive refresh
-zypper --non-interactive install --no-recommends glab kubernetes-client
-zypper clean --all
+apt-get update
+apt-get install -y --no-install-recommends libpq-dev libssl-dev
+rm -rf /var/lib/apt/lists/*
 EOF
 chmod +x ~/.local/share/pi-web-docker/custom-image.d/10-extra-tools.sh
 curl -fsSL https://raw.githubusercontent.com/jmfederico/pi-web/main/docker/install.sh | sh
@@ -178,7 +244,7 @@ Files in that development hook directory are ignored by Git except for the place
 Sessions started by a PI WEB Docker deployment get one short block of environment facts appended to their system prompt, after any `SYSTEM.md` / `APPEND_SYSTEM.md` content of your own. The block exists because a Docker deployment changes what is true about the machine an agent works on, in ways nothing in the working directory reveals:
 
 - shell commands, edits, and tool installs happen in the container, not on the Docker host;
-- the container filesystem is discarded on the next image build, so tools installed mid-session disappear, while `PI_WEB_EXTRA_ZYPPER_PACKAGES` and `custom-image.d/*.sh` hooks persist;
+- the container filesystem is discarded on recreation, while mise tool installations under `/data`, `PI_WEB_EXTRA_APT_PACKAGES` configuration, and `custom-image.d/*.sh` hooks persist;
 - `/data` persists, selected host paths are mounted read/write at identical absolute paths, and the host root is mounted read-only at `/host`;
 - the Docker socket is mounted, and `hostexec` is either available or explicitly disabled for this host profile;
 - in development mode, the checkout is bind-mounted at `/workspace` and `/workspace/node_modules` is a separate container-managed mount rather than the host directory.
@@ -255,7 +321,7 @@ The values PI WEB sets for a container stay authoritative: `HOME`, `XDG_CONFIG_H
 
 The generated `.env` and `.pi-web/docker-compose-dev.generated.env` files serve a different purpose: Docker Compose reads them to fill in placeholders in the Compose files, so keys added there configure Compose itself and do not reach the container process environment.
 
-Interactive terminals and agent tools resolve the same commands. Web terminals start login shells, and openSUSE's `/etc/profile` resets `PATH` to a minimal value, so the image ships `/etc/profile.d/pi-web-path-parity.sh`, which merges back the inherited entries the reset dropped. Terminals therefore settle on the same `PATH` that agent sessions inherit from the session daemon, including image-level entries such as development mode's `/workspace/node_modules/.bin` and any `PATH` override from `container.env`.
+Interactive terminals and agent tools receive the mise shim path in the inherited environment. Login-shell setup preserves the tooling PATH; no `.bashrc` activation or interactive prompt is needed. When overriding `PATH` in a container environment file, include the mise shim directory and required image binaries. Use `mise exec -- <command>` for project environment variables beyond executable selection.
 
 ## Localhost binding and remote access
 
@@ -288,8 +354,7 @@ Run it from a PI WEB session, a PI WEB terminal, or by execing into the runtime 
 ```bash
 hostexec uname -a
 hostexec systemctl status docker
-hostexec --root zypper refresh
-hostexec --root sh -lc 'zypper refresh && zypper dup -y'
+# Only on a host that uses apt (not Flatcar):
 hostexec --root apt-get update
 ```
 
@@ -329,7 +394,7 @@ Values used by the command are resolved in this order:
 
 `COMPOSE_PROJECT_NAME`, `PI_WEB_UID`, and `PI_WEB_GID` are the exceptions to runtime-env reuse. Development mode defaults the Compose project to `pi-web-dev` and defaults the container user/group to the current host user, unless you set values in the shell or `.pi-web/docker-compose-dev.local.env`. This keeps development and runtime stacks from accidentally sharing one Docker Compose project and prevents bind-mounted checkout files from being written as root or as a different runtime service user.
 
-If you already ran the runtime installer, dev mode therefore reuses shared defaults such as Docker group, data directory, extra host paths, image build inputs, upload limit, and bind address unless you set a more specific value in the shell or `.local.env`. If an older `.pi-web/docker-compose-dev.env` exists, the first run copies its dev bind/port values into `.local.env` so previous local exposure settings are easy to see and edit.
+Dev mode can reuse shared defaults from the runtime installer, such as Docker group, data directory, extra host paths, image build inputs, upload limit, and bind address. Set persistent development-specific values in `.local.env`.
 
 To expose the dev API and Vite UI beyond localhost persistently, edit `.pi-web/docker-compose-dev.local.env`:
 
@@ -376,7 +441,7 @@ Restart `sessiond` manually after changes that affect `src/server/sessiond.ts`, 
 
 The dev setup intentionally has the same Docker socket and profile-specific host mounts as the runtime setup. The same trust warnings apply. The command refuses to run development mode as UID 0, or to generate a dev env with `PI_WEB_UID=0`, unless you pass `--allow-root`; use that override only when root-owned checkout writes are intentional.
 
-On startup, a short `data-init` service creates the shared `/data` subdirectories and gives them to `PI_WEB_UID:PI_WEB_GID`. This handles the common Flatcar/Docker case where a missing bind-mount directory is created as root by the Docker daemon. Because the image also builds its `pi-web` account with those IDs, rebuild the image if you change `PI_WEB_UID` or `PI_WEB_GID`.
+On startup, a short `data-init` service creates the shared `/data` directories and assigns their ownership without recursively walking installed toolchains and caches. The dependency synchronizer manages its own volume. Because the image also builds its `pi-web` account with the configured IDs, rebuild the image if you change `PI_WEB_UID` or `PI_WEB_GID`. Changing ownership of existing files after an ID change is a separate administrative task.
 
 ### Sharing runtime and development state
 

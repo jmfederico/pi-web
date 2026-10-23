@@ -1,45 +1,62 @@
 # syntax=docker/dockerfile:1.7
 
-ARG OPENSUSE_IMAGE=opensuse/tumbleweed
+ARG UBUNTU_IMAGE=ubuntu:26.04
+ARG NODE_IMAGE=node:22.22.2-bookworm-slim
 ARG DOCKER_CLI_VERSION=29-cli
 
 FROM docker:${DOCKER_CLI_VERSION} AS docker-cli
+FROM ${NODE_IMAGE} AS node-runtime
+FROM ${UBUNTU_IMAGE} AS dev
 
-FROM ${OPENSUSE_IMAGE} AS dev
-
-ARG NODEJS_MAJOR=22
-ARG NODEJS_REPO=auto
-ARG PI_WEB_EXTRA_ZYPPER_PACKAGES=""
+ARG UBUNTU_IMAGE
+ARG NODE_IMAGE
+ARG DOCKER_CLI_VERSION
+ARG MISE_VERSION=2026.10.17
+ARG GIT_VERSION=""
+ARG PI_WEB_EXTRA_APT_PACKAGES=""
 ARG PI_WEB_UID=1000
 ARG PI_WEB_GID=1000
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ENV PATH=/workspace/node_modules/.bin:$PATH \
-  NPM_CONFIG_UPDATE_NOTIFIER=false \
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
+  NPM_CONFIG_PREFIX=/usr/local \
   NPM_CONFIG_CACHE=/data/npm-cache \
   HOME=/data/home \
   XDG_CONFIG_HOME=/data/config \
+  MISE_CONFIG_DIR=/data/config/mise \
+  MISE_DATA_DIR=/data/home/.local/share/mise \
+  MISE_SHARED_INSTALL_DIRS=/usr/local/share/pi-web/mise/installs \
+  MISE_CACHE_DIR=/data/home/.cache/mise \
+  MISE_STATE_DIR=/data/home/.local/state/mise \
+  MISE_AUTO_INSTALL=false \
+  MISE_NOT_FOUND_SYSTEM_FALLBACK=false \
+  MISE_PARANOID=true \
+  MISE_YES=false \
   PI_WEB_DATA_DIR=/data/pi-web \
-  PI_WEB_SESSIOND_SOCKET=/data/pi-web/sessiond.sock \
+  PI_WEB_SESSIOND_SOCKET=/data/pi-web/sessiond-dev.sock \
   PI_CODING_AGENT_DIR=/data/pi-agent \
   HOSTEXEC_IMAGE=alpine:3.22 \
   LANG=C.UTF-8 \
   SHELL=/bin/bash \
   TERM=xterm-256color
+ENV PATH=/workspace/node_modules/.bin:/data/home/.local/share/mise/shims:/usr/local/share/pi-web/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-COPY docker/internal/image/install-opensuse-base /usr/local/sbin/install-pi-web-opensuse-base
-RUN chmod 0755 /usr/local/sbin/install-pi-web-opensuse-base \
-  && install-pi-web-opensuse-base
+COPY --from=node-runtime /usr/local/ /usr/local/lib/pi-web-node/
+RUN ln -s /usr/local/lib/pi-web-node/bin/node /usr/local/bin/node \
+  && ln -s /usr/local/lib/pi-web-node/bin/npm /usr/local/bin/npm \
+  && ln -s /usr/local/lib/pi-web-node/bin/npx /usr/local/bin/npx
+COPY --chmod=0755 docker/internal/image/install-ubuntu-base /usr/local/sbin/install-pi-web-ubuntu-base
+RUN install-pi-web-ubuntu-base
 
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
 COPY scripts/install-git-hooks.mjs scripts/install-git-hooks.mjs
-# Keep an immutable dependency seed outside /workspace, which is hidden by the
-# checkout bind mount at runtime. A cached generation is added after custom
-# image hooks so it identifies the final dependency tree.
+# /opt is intentionally only the dependency seed used by data-init, not a
+# runtime tool path. Stamp its generation after custom hooks have completed.
 RUN npm ci \
+  && node node_modules/playwright/cli.js install-deps \
   && install -d -m 0755 /opt/pi-web-dev-dependencies \
   && cp package.json package-lock.json /opt/pi-web-dev-dependencies/ \
   && chmod -R a+rwX /workspace/node_modules \
@@ -50,35 +67,38 @@ RUN npm ci \
   && chmod -R a+rwX /data \
   && chmod 0777 /workspace
 
-COPY --chmod=0755 docker/internal/dev/sync-node-modules /usr/local/sbin/pi-web-dev-sync-node-modules
+# Runtime npm uses the selected Node installation's prefix, including mise.
+ENV NPM_CONFIG_PREFIX=""
 
+COPY --chmod=0755 docker/internal/dev/sync-node-modules /usr/local/sbin/pi-web-dev-sync-node-modules
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
-COPY docker/internal/bin/hostexec /usr/local/bin/hostexec
-COPY docker/pi-web-docker /usr/local/bin/pi-web-docker
-RUN chmod 0755 /usr/local/bin/hostexec /usr/local/bin/pi-web-docker
+COPY --chmod=0755 docker/internal/bin/hostexec docker/internal/bin/pi-web-service docker/internal/bin/pi-web-image-doctor /usr/local/bin/
+COPY --chmod=0755 docker/internal/bin/pi-web-reconcile-mise /usr/local/bin/
+COPY --chmod=0755 docker/pi-web-docker /usr/local/bin/pi-web-docker
+COPY --chmod=0755 docker/internal/image/write-manifest /usr/local/sbin/pi-web-write-image-manifest
 
 COPY docker/custom-image.d/ /tmp/pi-web-custom-image.d/
-# Image hooks use the temporary /workspace/node_modules symlink. Leave an empty
-# directory afterward so Compose can mount and populate the dependency volume.
-RUN bash -euxo pipefail -c '\
+# Hooks may change the dependency seed through this temporary symlink.
+RUN set -eux; \
   shopt -s nullglob; \
   for script in /tmp/pi-web-custom-image.d/*.sh; do \
     echo "Running PI WEB custom image hook: ${script}"; \
     bash "${script}"; \
   done; \
   rm -rf /tmp/pi-web-custom-image.d; \
+  find /opt/pi-web-dev-dependencies/node_modules \( -type d ! -perm -0007 -o -type f ! -perm -0006 \) -exec chmod a+rwX {} +; \
   test -L /workspace/node_modules; \
   rm /workspace/node_modules; \
   install -d -m 0777 /workspace/node_modules; \
-  zypper clean --all; \
-  rm -rf /var/cache/zypp/* \
-'
-# Cache the generation with the completed seed. Changes to any preceding layer,
-# including custom image hooks, rerun this step and refresh the named volume.
-RUN node -e 'process.stdout.write(`${require("node:crypto").randomUUID()}\n`)' > /opt/pi-web-dev-dependencies/generation
+  apt-get clean; \
+  rm -rf /var/lib/apt/lists/*; \
+  pi-web-write-image-manifest
+RUN /usr/local/lib/pi-web-node/bin/node -e 'process.stdout.write(`${require("node:crypto").randomUUID()}\n`)' > /opt/pi-web-dev-dependencies/generation
+
+USER pi-web
 
 EXPOSE 8504 8505
 
 ENTRYPOINT ["tini", "--"]
-CMD ["npm", "run", "dev"]
+CMD ["bash", "-c", "trap 'kill 0' EXIT; pi-web-service scripts/dev-sessiond.mjs --watch & (pi-web-service node_modules/typescript/bin/tsc -p tsconfig.plugins.json && pi-web-service scripts/dev-web.mjs) & pi-web-service node_modules/vite/bin/vite.js --host 0.0.0.0 & wait"]

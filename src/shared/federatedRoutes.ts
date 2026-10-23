@@ -1,12 +1,13 @@
 import {
-  PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
-  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+  PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS,
+  PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS,
   PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
   PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
   PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
 } from "./pluginBackendProtocol.js";
 import { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
 import { MAX_INLINE_PREVIEW_BYTES } from "./workspaceFiles.js";
+import { NAVIGATION_PREFERENCE_ROUTES } from "./navigationPreferences.js";
 
 export { PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS } from "./pluginBackendProtocol.js";
 export { WORKSPACE_REMOVAL_FEDERATION_TIMEOUT_MS } from "./workspaceRemovalProtocol.js";
@@ -48,6 +49,10 @@ export const MCP_HTTP_ROUTES = [
 
 export const FEDERATED_HTTP_ROUTES = [
   ...MCP_HTTP_ROUTES,
+  ...NAVIGATION_PREFERENCE_ROUTES.flatMap((path) => [
+    { method: "GET", path },
+    { method: "PUT", path },
+  ] satisfies FederatedHttpRouteSpec[]),
   { method: "GET", path: "/pi-web/status" },
   { method: "GET", path: "/config" },
   { method: "PUT", path: "/config" },
@@ -56,19 +61,25 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/pi-packages/install", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
   { method: "POST", path: "/pi-packages/remove", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
   { method: "POST", path: "/pi-packages/update", timeoutMs: PI_PACKAGE_MUTATION_PROXY_TIMEOUT_MS },
+  { method: "GET", path: "/plugin-catalog/projects", propagateCancellation: true },
+  { method: "GET", path: "/plugin-catalog/projects/:projectId", propagateCancellation: true },
+  { method: "GET", path: "/plugin-catalog/projects/:projectId/workspaces", propagateCancellation: true },
+  { method: "GET", path: "/plugin-catalog/projects/:projectId/workspaces/:workspaceId", propagateCancellation: true },
+  { method: "GET", path: "/plugin-catalog/projects/:projectId/workspaces/:workspaceId/sessions", propagateCancellation: true },
+  { method: "GET", path: "/plugin-catalog/projects/:projectId/workspaces/:workspaceId/sessions/:sessionId", propagateCancellation: true },
   { method: "GET", path: "/projects" },
   { method: "POST", path: "/projects" },
   { method: "DELETE", path: "/projects/:projectId" },
   { method: "GET", path: "/project-directories" },
   { method: "GET", path: "/projects/:projectId/workspaces" },
-  {
+  ...PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATHS.map((path): FederatedHttpRouteSpec => ({
     method: "POST",
-    path: PAIRED_PLUGIN_BACKEND_REQUEST_ROUTE_PATH,
+    path,
     timeoutMs: PLUGIN_BACKEND_FEDERATION_TIMEOUT_MS,
     bodyLimit: PLUGIN_BACKEND_REQUEST_BODY_MAX_BYTES,
     responseBodyLimit: PLUGIN_BACKEND_RESPONSE_BODY_MAX_BYTES,
     propagateCancellation: true,
-  },
+  })),
   {
     method: "DELETE",
     path: "/projects/:projectId/workspaces/:workspaceId",
@@ -156,6 +167,7 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "GET", path: "/sessions/:sessionId/commands" },
   { method: "POST", path: "/sessions/:sessionId/prompt" },
   { method: "POST", path: "/sessions/:sessionId/queue/clear" },
+  { method: "POST", path: "/sessions/:sessionId/queue/message" },
   { method: "POST", path: "/sessions/:sessionId/ask/submit" },
   { method: "POST", path: "/sessions/:sessionId/ask/cancel" },
   { method: "POST", path: "/sessions/:sessionId/dialogs/answer" },
@@ -163,6 +175,8 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/warnings/dismiss" },
   { method: "POST", path: "/sessions/:sessionId/attachments" },
   { method: "POST", path: "/sessions/:sessionId/shell" },
+  { method: "GET", path: "/sessions/:sessionId/mcp/auth/servers" },
+  { method: "POST", path: "/sessions/:sessionId/mcp/auth" },
   { method: "POST", path: "/sessions/:sessionId/commands/run" },
   { method: "POST", path: "/sessions/:sessionId/commands/respond" },
   { method: "POST", path: "/sessions/:sessionId/tree/navigate", timeoutMs: SESSION_TREE_NAVIGATION_PROXY_TIMEOUT_MS },
@@ -174,17 +188,21 @@ export const FEDERATED_HTTP_ROUTES = [
   { method: "POST", path: "/sessions/:sessionId/restore" },
   { method: "POST", path: "/sessions/:sessionId/reload" },
   { method: "POST", path: "/sessions/:sessionId/detach-parent" },
+  { method: "GET", path: "/models" },
   { method: "GET", path: "/auth/providers" },
   { method: "POST", path: "/auth/api-key/interactive" },
   { method: "POST", path: "/auth/logout" },
   { method: "POST", path: "/auth/oauth" },
+  { method: "GET", path: "/auth/mcp/:flowId" },
+  { method: "POST", path: "/auth/mcp/:flowId/respond" },
+  { method: "POST", path: "/auth/mcp/:flowId/cancel" },
   { method: "GET", path: "/auth/oauth/:flowId" },
   { method: "POST", path: "/auth/oauth/:flowId/respond" },
   { method: "POST", path: "/auth/oauth/:flowId/cancel" },
 ] as const satisfies readonly FederatedHttpRouteSpec[];
 
 export const FEDERATED_WEBSOCKET_ROUTES = [
-  PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATH,
+  ...PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS,
   "/events",
   "/sessions/events",
   "/sessions/:sessionId/events",

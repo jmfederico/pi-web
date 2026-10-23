@@ -1,4 +1,6 @@
 import type { IncomingMessage } from "node:http";
+import { piWebRuntimeIdentity } from "../shared/piWebRuntime.js";
+import { createSocketPayloadLimiter } from "./webSocketPayloadLimit.js";
 import { WebSocket, type Data, type RawData, type WebSocketServer } from "ws";
 import {
   boundedPluginBackendChannelCloseReason,
@@ -12,8 +14,11 @@ import {
   utf8ByteLength,
 } from "../shared/pluginBackendProtocol.js";
 
+const limitSocketPayload = createSocketPayloadLimiter(piWebRuntimeIdentity().name === "bun");
 const pluginChannelLimitedServers = new WeakSet<WebSocketServer>();
 const pendingPluginBackendChannelUpgrades = new WeakSet<IncomingMessage>();
+const socketTeardownErrorGuards = new WeakSet<WebSocket>();
+const consumeSocketTeardownError = (): void => undefined;
 
 export class PluginBackendChannelTransportFrameError extends Error {
   override name = "PluginBackendChannelTransportFrameError";
@@ -362,17 +367,11 @@ async function propagatePluginChannelClose(
  * `@fastify/websocket` owns one ws server for unrelated routes, so its public
  * maxPayload option cannot express this route's smaller protocol bound. Update
  * the ws receiver before route listeners run, then tighten it after the larger
- * first open frame. Keep this compatibility seam isolated and fail loudly if a
- * future ws version changes the receiver shape.
+ * first open frame. The selected adapter also recognizes native Bun sockets;
+ * both transports enforce phase-specific application bounds in their decoders.
  */
 export function setPluginBackendChannelSocketPayloadLimit(socket: WebSocket, maxPayload: number): void {
-  const receiver: unknown = Reflect.get(socket, "_receiver");
-  if (typeof receiver !== "object" || receiver === null || typeof Reflect.get(receiver, "_maxPayload") !== "number") {
-    throw new Error("Plugin backend channel transport cannot apply its payload limit");
-  }
-  if (!Reflect.set(receiver, "_maxPayload", maxPayload)) {
-    throw new Error("Plugin backend channel transport cannot apply its payload limit");
-  }
+  limitSocketPayload(socket, maxPayload);
 }
 
 function transportFrameCloseCode(error: unknown): number {
@@ -406,16 +405,22 @@ export function closePluginBackendChannelWebSocket(
   reason: string,
   options: PluginBackendChannelWebSocketCloseOptions = {},
 ): Promise<void> {
+  // Native transports can publish an expected connection error after marking
+  // the socket closed. Keep a non-capturing guard for the disposable socket's
+  // remaining lifetime; removing it on close can crash the process on a late
+  // error. Active bridge listeners still receive and report transport failures.
+  if (!socketTeardownErrorGuards.has(socket)) {
+    socketTeardownErrorGuards.add(socket);
+    socket.on("error", consumeSocketTeardownError);
+  }
   if (socket.readyState === WebSocket.CLOSED) return Promise.resolve();
   return new Promise<void>((resolve) => {
     let settled = false;
-    const consumeExpectedError = (): void => undefined;
     const finish = (): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       socket.off("close", finish);
-      socket.off("error", consumeExpectedError);
       resolve();
     };
     const timer = setTimeout(() => {
@@ -423,7 +428,6 @@ export function closePluginBackendChannelWebSocket(
     }, options.teardownTimeoutMs ?? PLUGIN_BACKEND_CHANNEL_TEARDOWN_TIMEOUT_MS);
     timer.unref();
     socket.once("close", finish);
-    socket.once("error", consumeExpectedError);
 
     if (options.terminateImmediately === true || socket.readyState === WebSocket.CONNECTING) {
       socket.terminate();

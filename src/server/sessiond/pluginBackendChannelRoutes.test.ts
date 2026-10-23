@@ -43,6 +43,46 @@ afterEach(async () => {
 });
 
 describe("session daemon plugin backend channels", () => {
+  it("opens v5 machine/project channels and rejects contradictory wire authority before dispatch", async () => {
+    const opened: string[] = [];
+    const close = vi.fn();
+    const projects = { requireProject: vi.fn(() => Promise.resolve(project)) };
+    const registry = new PluginBackendRegistry({
+      contributions: [{ ...contribution(({ scope }) => {
+        opened.push(scope.kind);
+        return { receive() { /* no incoming frames */ }, close };
+      }), apiVersion: 5 }],
+      workspaces: { resolve: () => Promise.reject(new Error("Workspace resolution must not run")) },
+    });
+    registerPluginBackendChannelRoutes(app, { projects, backends: registry });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    for (const scope of ["machine", "project"] as const) {
+      const authority = scope === "machine" ? "" : `/projects/${encodeURIComponent(project.id)}`;
+      const socket = new WebSocket(`${serverUrl(app)}/paired-plugin-backends/pi-web.terminal${authority}/channels/terminal.attach`);
+      sockets.push(socket);
+      const messages = socketMessages(socket);
+      await waitForOpen(socket);
+      socket.send(serializePluginBackendChannelOpenEnvelope("terminal-r1", null, { scope }));
+      expect(parsePluginBackendChannelServerEnvelope(await messages.next())).toEqual({ version: 1, kind: "ready" });
+      const closed = nextClose(socket);
+      socket.close();
+      await closed;
+      await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });
+    }
+    const socket = new WebSocket(`${serverUrl(app)}/paired-plugin-backends/pi-web.terminal/projects/${encodeURIComponent(project.id)}/channels/terminal.attach`);
+    sockets.push(socket);
+    const messages = socketMessages(socket);
+    await waitForOpen(socket);
+    const closed = nextClose(socket);
+    socket.send(serializePluginBackendChannelOpenEnvelope("terminal-r1", null, { scope: "project", projectId: "spoof" }));
+    expect(parsePluginBackendChannelServerEnvelope(await messages.next())).toMatchObject({ kind: "error", code: "invalid-scope" });
+    expect((await closed).code).toBe(1008);
+    await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });
+    expect(opened).toEqual(["machine", "project"]);
+    expect(projects.requireProject).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledTimes(2);
+    await registry.closeAll();
+  });
   it("opens after scope resolution, preserves ready ordering, exchanges data, and cleans up once", async () => {
     const workspaces = workspaceRegistry();
     const workspaceId = (await workspaces.resolve(project)).workspaces[0]?.id;
@@ -248,11 +288,15 @@ describe("session daemon plugin backend channels", () => {
   });
 
   it("enforces open and post-open data payload limits in the WebSocket receiver", async () => {
+    const receiverError = vi.fn();
+    app.websocketServer.on("connection", (socket) => { socket.on("error", receiverError); });
+    const receive = vi.fn();
+    const openChannel = vi.fn(() => ({ receive }));
     const workspaces = workspaceRegistry();
     const workspaceId = (await workspaces.resolve(project)).workspaces[0]?.id;
     if (workspaceId === undefined) throw new Error("Expected workspace");
     const registry = new PluginBackendRegistry({
-      contributions: [contribution(() => ({ receive: () => undefined }))],
+      contributions: [contribution(openChannel)],
       workspaces,
     });
     registerPluginBackendChannelRoutes(app, { projects: projectReader(), backends: registry });
@@ -265,7 +309,13 @@ describe("session daemon plugin backend channels", () => {
     const oversizedOpenClose = nextClose(oversizedOpen);
     await waitForOpen(oversizedOpen);
     oversizedOpen.send("x".repeat(PLUGIN_BACKEND_CHANNEL_OPEN_FRAME_MAX_BYTES + 1));
-    await expect(oversizedOpenClose).resolves.toMatchObject({ code: 1009 });
+    // The receiver rejects the frame header before consuming the whole payload.
+    // Windows can reset TCP with unread bytes, so the peer may observe 1006
+    // instead of receiving ws's 1009 close frame. Assert rejection at its owner.
+    expect([1009, 1006]).toContain((await oversizedOpenClose).code);
+    expect(receiverError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }));
+    expect(openChannel).not.toHaveBeenCalled();
+    await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });
 
     const oversizedData = connect(workspaceId);
     const messages = socketMessages(oversizedData);
@@ -274,7 +324,11 @@ describe("session daemon plugin backend channels", () => {
     expect(parsePluginBackendChannelServerEnvelope(await messages.next())).toMatchObject({ kind: "ready" });
     const oversizedDataClose = nextClose(oversizedData);
     oversizedData.send("x".repeat(PLUGIN_BACKEND_CHANNEL_DATA_FRAME_MAX_BYTES + 1));
-    await expect(oversizedDataClose).resolves.toMatchObject({ code: 1009 });
+    expect([1009, 1006]).toContain((await oversizedDataClose).code);
+    expect(receiverError).toHaveBeenCalledTimes(2);
+    expect(receiverError).toHaveBeenNthCalledWith(2, expect.objectContaining({ code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" }));
+    expect(openChannel).toHaveBeenCalledOnce();
+    expect(receive).not.toHaveBeenCalled();
     await vi.waitFor(() => { expect(registry.activeChannelCount()).toBe(0); });
 
     const unrelated = new WebSocket(`${serverUrl(app)}/unrelated-session-socket`);

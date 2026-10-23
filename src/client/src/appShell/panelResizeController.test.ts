@@ -19,10 +19,16 @@ describe("panel resize behavior", () => {
   });
 
   it("clamps panel widths to broad fallback bounds", () => {
-    expect(clampPanelWidth("navigation", 50)).toBe(180);
+    expect(clampPanelWidth("navigation", 50)).toBe(260);
     expect(clampPanelWidth("navigation", 9000)).toBe(4096);
     expect(clampPanelWidth("workspace", 50)).toBe(240);
     expect(clampPanelWidth("workspace", 9000)).toBe(4096);
+  });
+
+  it("keeps dragging and keyboard resizing above the navigation minimum", () => {
+    expect(panelWidthFromDrag("navigation", 340, 340, 0)).toBe(260);
+    expect(panelWidthFromKeyboard("navigation", 270, "ArrowLeft")).toBe(260);
+    expect(panelWidthFromKeyboard("navigation", 340, "Home")).toBe(260);
   });
 
   it("supports narrower viewport-aware constraints", () => {
@@ -66,6 +72,14 @@ describe("panel resize behavior", () => {
     });
 
     expect(readStoredPanelSizes(storage)).toEqual({ navigationPanelWidth: 4096 });
+  });
+
+  it("raises previously saved narrow navigation widths to the usable minimum", () => {
+    const storage = new FakeStorage({
+      [PANEL_SIZE_STORAGE_KEY]: JSON.stringify({ version: 1, navigationPanelWidth: 180 }),
+    });
+
+    expect(readStoredPanelSizes(storage)).toEqual({ navigationPanelWidth: 260 });
   });
 
   it("ignores storage failures", () => {

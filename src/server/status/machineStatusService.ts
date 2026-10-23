@@ -19,12 +19,15 @@ export interface ActiveCwdActivity {
  * Entries without activity are already filtered out by the recorder.
  */
 interface MachineStatusActivitySource {
-  snapshot(): { workspaces: readonly ActiveCwdActivity[] };
+  snapshot(): {
+    workspaces: readonly ActiveCwdActivity[];
+    sessions: readonly { sessionId: string; cwd: string }[];
+  };
 }
 
-/** Unread completions, read for their cwds only; the catalog itself is unchanged. */
+/** Unread completions; the catalog itself is unchanged. */
 interface MachineStatusUnreadSource {
-  catalogSnapshot(): { sessions: readonly { cwd: string }[] };
+  catalogSnapshot(): { sessions: readonly { sessionId: string; cwd: string }[] };
 }
 
 interface MachineStatusPublisher {
@@ -44,7 +47,8 @@ export interface MachineStatusServiceDependencies {
 }
 
 /** The part of a snapshot that carries status; the rest is identity and ordering. */
-type MachineStatusTree = Pick<MachineStatusSnapshot, "machine" | "projects" | "workspaces" | "unattributed">;
+type MachineStatusTree = Pick<MachineStatusSnapshot, "machine" | "projects" | "workspaces" | "unattributed">
+  & { sessions: Readonly<Record<string, StatusFlags>> };
 
 /**
  * Owns this daemon's per-machine status projection.
@@ -67,6 +71,7 @@ export class MachineStatusService {
       machine: {},
       projects: {},
       workspaces: {},
+      sessions: {},
       unattributed: {},
       generatedAt: new Date().toISOString(),
     };
@@ -136,7 +141,16 @@ export class MachineStatusService {
   }
 
   private async computeTree(): Promise<MachineStatusTree> {
-    const flagsByCwd = this.flagsByCwd();
+    const activity = this.dependencies.activity.snapshot();
+    const unread = this.dependencies.unread.catalogSnapshot();
+    const flagsByCwd = this.flagsByCwd(activity.workspaces, unread.sessions);
+    const sessions = new FlagAccumulator();
+    for (const session of activity.sessions) {
+      sessions.add(session.sessionId, { [CORE_STATUS_FLAGS.working]: true });
+    }
+    for (const session of unread.sessions) {
+      sessions.add(session.sessionId, { [CORE_STATUS_FLAGS.unread]: true });
+    }
     const attributions = await this.dependencies.attribution.attribute(flagsByCwd.keys());
 
     const projects = new FlagAccumulator();
@@ -163,6 +177,7 @@ export class MachineStatusService {
       ]),
       projects: rolledProjects,
       workspaces: rolledWorkspaces,
+      sessions: sessions.rollUp(),
       unattributed: rolledUnattributed,
     };
   }
@@ -172,7 +187,10 @@ export class MachineStatusService {
    * cwd that stops being active disappears instead of turning into empty flags,
    * which is what makes structural comparison a sound change test.
    */
-  private flagsByCwd(): Map<string, StatusFlags> {
+  private flagsByCwd(
+    activities: readonly ActiveCwdActivity[],
+    unreadSessions: readonly { cwd: string }[],
+  ): Map<string, StatusFlags> {
     const flagsByCwd = new Map<string, Record<string, boolean>>();
     const setFlag = (cwd: string, flagId: string): void => {
       if (cwd === "") return;
@@ -180,11 +198,11 @@ export class MachineStatusService {
       flags[flagId] = true;
       flagsByCwd.set(cwd, flags);
     };
-    for (const activity of this.dependencies.activity.snapshot().workspaces) {
+    for (const activity of activities) {
       if (activity.hasSessionActivity) setFlag(activity.cwd, CORE_STATUS_FLAGS.working);
       if (activity.hasTerminalActivity) setFlag(activity.cwd, CORE_STATUS_FLAGS.terminal);
     }
-    for (const session of this.dependencies.unread.catalogSnapshot().sessions) {
+    for (const session of unreadSessions) {
       setFlag(session.cwd, CORE_STATUS_FLAGS.unread);
     }
     return flagsByCwd;
@@ -208,11 +226,12 @@ class FlagAccumulator {
   }
 }
 
-function isSameStatusTree(left: MachineStatusTree, right: MachineStatusTree): boolean {
+function isSameStatusTree(left: MachineStatusTree, right: MachineStatusSnapshot): boolean {
   return isSameFlags(left.machine, right.machine)
     && isSameFlags(left.unattributed, right.unattributed)
     && isSameNodes(left.projects, right.projects)
-    && isSameNodes(left.workspaces, right.workspaces);
+    && isSameNodes(left.workspaces, right.workspaces)
+    && isSameNodes(left.sessions, right.sessions ?? {});
 }
 
 function isSameNodes(left: Readonly<Record<string, StatusFlags>>, right: Readonly<Record<string, StatusFlags>>): boolean {

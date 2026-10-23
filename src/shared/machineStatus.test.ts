@@ -47,6 +47,34 @@ describe("parseMachineStatusSnapshot", () => {
     });
   });
 
+  it("preserves absence for older daemons and accepts complete session maps", () => {
+    expect(parseMachineStatusSnapshot(snapshotWire())).not.toHaveProperty("sessions");
+    expect(parseMachineStatusSnapshot(snapshotWire({ sessions: {} }))?.sessions).toEqual({});
+    expect(parseMachineStatusSnapshot(snapshotWire({
+      sessions: { "child-1": { [CORE_STATUS_FLAGS.working]: true, "core:future": false } },
+    }))?.sessions).toEqual({ "child-1": { [CORE_STATUS_FLAGS.working]: true, "core:future": false } });
+  });
+
+  it.each([undefined, null, [], "busy", 3, { "child-1": null }, { "child-1": [] }, { "child-1": "busy" }])(
+    "rejects malformed sessions when the optional field is present: %j",
+    (sessions) => {
+      expect(parseMachineStatusSnapshot(snapshotWire({ sessions }))).toBeUndefined();
+    },
+  );
+
+  it("tolerates unknown and non-boolean session flags without dropping session nodes", () => {
+    expect(parseMachineStatusSnapshot(snapshotWire({
+      sessions: { "child-1": { "core:future": true, invalid: "busy" } },
+    }))?.sessions).toEqual({ "child-1": { "core:future": true } });
+  });
+
+  it("treats prototype-shaped session ids as ordinary own properties", () => {
+    const sessions: unknown = JSON.parse('{"__proto__":{"core:working":true}}');
+    const parsed = parseMachineStatusSnapshot(snapshotWire({ sessions }));
+    expect(Object.getPrototypeOf(parsed?.sessions)).toBe(Object.prototype);
+    expect(Object.entries(parsed?.sessions ?? {})).toEqual([["__proto__", { [CORE_STATUS_FLAGS.working]: true }]]);
+  });
+
   it("rejects a payload that cannot be ordered or rendered", () => {
     expect(parseMachineStatusSnapshot(undefined)).toBeUndefined();
     expect(parseMachineStatusSnapshot(snapshotWire({ epochId: "" }))).toBeUndefined();

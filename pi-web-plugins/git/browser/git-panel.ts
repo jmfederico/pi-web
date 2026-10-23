@@ -5,6 +5,7 @@ import type {
   PluginContributions,
   PluginRuntimeContext,
   SvgTemplateTag,
+  StylesheetIntegrationCapabilityV1,
   Workspace,
   WorkspacePanelContext,
   WorkspacePanelContribution,
@@ -74,13 +75,14 @@ export function createGitBrowserContributions(
   runtimePluginId: string,
   html: HtmlTemplateTag,
   svg: SvgTemplateTag,
+  stylesheetIntegration: () => StylesheetIntegrationCapabilityV1 | undefined,
 ): PluginContributions {
   const panelId = `${runtimePluginId}:${GIT_PANEL_LOCAL_ID}`;
   const controller = new GitUiController(sourcePluginId, createGitDiffRoute(panelId));
   defineGitPanelActivityElement();
   return {
     actions: createGitActions(panelId, controller),
-    workspacePanels: [createGitPanel(html, svg, controller)],
+    workspacePanels: [createGitPanel(html, svg, controller, stylesheetIntegration)],
   };
 }
 
@@ -96,8 +98,9 @@ class GitUiController {
     private readonly route: GitDiffRoute,
   ) {}
 
-  isOwnedWorkspace(workspace: Workspace | undefined): boolean {
-    return workspace?.provider?.pluginId === this.sourcePluginId;
+  canInspectWorkspace(workspace: Workspace | undefined): boolean {
+    return workspace !== undefined &&
+      (workspace.provider === undefined || workspace.provider.pluginId === this.sourcePluginId);
   }
 
   state(context: WorkspacePanelContext): GitWorkspaceUiState {
@@ -135,7 +138,7 @@ class GitUiController {
   }
 
   invalidate(context: WorkspacePanelContext): Promise<void> {
-    if (!this.isOwnedWorkspace(context.workspace)) return Promise.resolve();
+    if (!this.canInspectWorkspace(context.workspace)) return Promise.resolve();
     const state = this.stateFor(context);
     state.stale = state.status !== undefined;
     this.requestRender(state);
@@ -363,7 +366,7 @@ class GitUiController {
 }
 
 function createGitActions(panelId: string, controller: GitUiController): PluginAction[] {
-  const hasGitWorkspace = (context: PluginRuntimeContext): boolean => controller.isOwnedWorkspace(context.state.selectedWorkspace);
+  const hasGitWorkspace = (context: PluginRuntimeContext): boolean => controller.canInspectWorkspace(context.state.selectedWorkspace);
   return [
     {
       id: "view.git",
@@ -390,6 +393,7 @@ function createGitPanel(
   html: HtmlTemplateTag,
   svg: SvgTemplateTag,
   controller: GitUiController,
+  stylesheetIntegration: () => StylesheetIntegrationCapabilityV1 | undefined,
 ): WorkspacePanelContribution {
   return {
     id: GIT_PANEL_LOCAL_ID,
@@ -405,10 +409,9 @@ function createGitPanel(
       </svg>
     `,
     order: 20,
-    routeAliases: ["git", "core:workspace.git"],
-    visible: (context) => controller.isOwnedWorkspace(context.workspace),
+    visible: (context) => controller.canInspectWorkspace(context.workspace),
     onInvalidate: (context) => controller.invalidate(context),
-    render: (context) => renderGitPanel(html, controller, context),
+    render: (context) => renderGitPanel(html, controller, context, stylesheetIntegration()),
   };
 }
 
@@ -419,25 +422,25 @@ function requestGitBackend(context: WorkspacePanelContext, operation: string, in
   return context.peer.request(operation, input);
 }
 
-function renderGitPanel(html: HtmlTemplateTag, controller: GitUiController, context: WorkspacePanelContext) {
+function renderGitPanel(html: HtmlTemplateTag, controller: GitUiController, context: WorkspacePanelContext, stylesheetIntegration: StylesheetIntegrationCapabilityV1 | undefined) {
   const state = controller.state(context);
   const viewState = controller.viewState(state);
   return html`
     <section class="git-panel">
-      <style .textContent=${gitPanelStyles}></style>
-      <pi-web-git-panel-activity .controller=${controller} .context=${context}></pi-web-git-panel-activity>
-      <section class="git-toolbar">
+      <style data-git-styles .textContent=${gitPanelStyles}></style>
+      <pi-web-git-panel-activity .stylesheetIntegration=${stylesheetIntegration} .controller=${controller} .context=${context}></pi-web-git-panel-activity>
+      <section class="ui-toolbar git-toolbar">
         <strong>Git</strong>
         ${state.stale ? html`<span class="git-stale">stale</span>` : null}
-        <div class="git-toolbar-actions">
+        <div class="ui-toolbar-group git-toolbar-actions">
           ${viewState.expandablePaths.length === 0 ? null : renderExpandCollapseAll(html, controller, context, state, viewState.expandablePaths)}
           ${renderViewToggle(html, controller, context)}
-          <button type="button" ?disabled=${state.statusLoading} @click=${() => { void controller.refresh(context); }}>Refresh</button>
+          <button type="button" class="ui-button" ?disabled=${state.statusLoading} @click=${() => { void controller.refresh(context); }}>Refresh</button>
         </div>
       </section>
       ${state.error === undefined ? null : html`<div class="git-error" role="alert">${state.error}</div>`}
       <section class="git-split">
-        <div class="git-file-list">${renderFileList(html, controller, context, state, viewState)}</div>
+        <div class="ui-file-list git-file-list">${renderFileList(html, controller, context, state, viewState)}</div>
         <div class="git-viewer">${renderDiffViewer(html, state)}</div>
       </section>
     </section>
@@ -446,7 +449,7 @@ function renderGitPanel(html: HtmlTemplateTag, controller: GitUiController, cont
 
 function renderViewToggle(html: HtmlTemplateTag, controller: GitUiController, context: WorkspacePanelContext) {
   return html`
-    <div class="git-view-toggle" role="group" aria-label="Changed files view">
+    <div class="ui-toolbar-group" role="group" aria-label="Changed files view">
       ${renderViewToggleButton(html, controller, context, "list", "List")}
       ${renderViewToggleButton(html, controller, context, "tree", "Tree")}
     </div>
@@ -455,7 +458,7 @@ function renderViewToggle(html: HtmlTemplateTag, controller: GitUiController, co
 
 function renderViewToggleButton(html: HtmlTemplateTag, controller: GitUiController, context: WorkspacePanelContext, view: GitFileView, label: string) {
   const active = controller.currentView() === view;
-  return html`<button type="button" class=${active ? "is-selected" : ""} aria-pressed=${String(active)} @click=${() => { controller.setView(context, view); }}>${label}</button>`;
+  return html`<button type="button" class="ui-button" aria-pressed=${String(active)} @click=${() => { controller.setView(context, view); }}>${label}</button>`;
 }
 
 function renderExpandCollapseAll(
@@ -466,7 +469,7 @@ function renderExpandCollapseAll(
   expandablePaths: readonly string[],
 ) {
   const allExpanded = expandablePaths.every((path) => state.expandedDirectories.has(path));
-  return html`<button type="button" @click=${() => { controller.toggleExpandAll(context, expandablePaths, allExpanded); }}>${allExpanded ? "Collapse all" : "Expand all"}</button>`;
+  return html`<button type="button" class="ui-button" @click=${() => { controller.toggleExpandAll(context, expandablePaths, allExpanded); }}>${allExpanded ? "Collapse all" : "Expand all"}</button>`;
 }
 
 function renderFileList(
@@ -509,9 +512,9 @@ function renderSubmoduleGroup(
 ) {
   const expanded = state.expandedDirectories.has(group.path);
   return html`
-    <button type="button" class="git-row" style="--depth:0" aria-expanded=${String(expanded)} @click=${() => { controller.toggleDirectory(context, group.path); }}>
-      <span class="git-twisty">${expanded ? "▾" : "▸"}</span>
-      <span>${group.name}${submoduleBadge(html)}</span>
+    <button type="button" class="ui-button ui-file-row" style="--depth:0" title=${group.path} aria-expanded=${String(expanded)} @click=${() => { controller.toggleDirectory(context, group.path); }}>
+      <span class="ui-file-leading" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+      <span class="ui-file-label">${group.name}${submoduleBadge(html)}</span>
     </button>
     ${expanded ? html`
       ${group.pointer === undefined ? null : renderSelectableRow(html, controller, context, state, group.path, group.pointer.name, group.pointer.file, 1)}
@@ -541,9 +544,9 @@ function renderTreeNode(
   if (node.kind === "directory") {
     const expanded = state.expandedDirectories.has(node.path);
     return html`
-      <button type="button" class="git-row" style=${`--depth:${String(depth)}`} aria-expanded=${String(expanded)} @click=${() => { controller.toggleDirectory(context, node.path); }}>
-        <span class="git-twisty">${expanded ? "▾" : "▸"}</span>
-        <span>${node.name}${node.isSubmodule === true ? submoduleBadge(html) : null}</span>
+      <button type="button" class="ui-button ui-file-row" style=${`--depth:${String(depth)}`} title=${node.path} aria-expanded=${String(expanded)} @click=${() => { controller.toggleDirectory(context, node.path); }}>
+        <span class="ui-file-leading" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+        <span class="ui-file-label">${node.name}${node.isSubmodule === true ? submoduleBadge(html) : null}</span>
       </button>
       ${expanded ? node.children.map((child) => renderTreeNode(html, controller, context, state, child, depth + 1)) : null}
     `;
@@ -573,9 +576,10 @@ function renderSelectableRow(
 ) {
   const selected = state.selectedDiffPath === path;
   return html`
-    <button type="button" class=${selected ? "git-row is-selected" : "git-row"} style=${`--depth:${String(depth)}`} @click=${() => { controller.selectDiff(context, path); }}>
-      <span>${stateLabel(file.index, file.workingTree)}</span>
-      <span>${label}</span>
+    <button type="button" class=${selected ? "ui-button ui-file-row selected" : "ui-button ui-file-row"} style=${`--depth:${String(depth)}`} title=${path} aria-current=${selected ? "page" : "false"} @click=${() => { controller.selectDiff(context, path); }}>
+      <span class="ui-file-leading" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path></svg></span>
+      <span class="ui-file-label">${label}</span>
+      <span class="ui-file-meta">${stateLabel(file.index, file.workingTree)}</span>
     </button>
   `;
 }
@@ -638,6 +642,23 @@ function defineGitPanelActivityElement(): void {
     private controllerValue: GitUiController | undefined;
     private contextValue: WorkspacePanelContext | undefined;
     private pollTimer: number | undefined;
+    private integration: StylesheetIntegrationCapabilityV1 | undefined;
+    private releaseStyles: (() => void) | undefined;
+
+    set stylesheetIntegration(value: StylesheetIntegrationCapabilityV1 | undefined) {
+      if (this.integration === value) return;
+      this.releaseStyles?.();
+      this.releaseStyles = undefined;
+      this.integration = value;
+      this.registerStyles();
+    }
+
+    private registerStyles(): void {
+      if (!this.isConnected || this.releaseStyles !== undefined) return;
+      const root = this.getRootNode();
+      // The activity element shares the host panel's root; it owns only this opt-in.
+      if (root instanceof ShadowRoot) this.releaseStyles = this.integration?.registerRoot(root, { sharedUi: true });
+    }
 
     set controller(value: GitUiController | undefined) {
       if (this.controllerValue === value) return;
@@ -652,11 +673,14 @@ function defineGitPanelActivityElement(): void {
     }
 
     connectedCallback(): void {
+      this.registerStyles();
       window.addEventListener("popstate", this.onPopState);
       this.restart();
     }
 
     disconnectedCallback(): void {
+      this.releaseStyles?.();
+      this.releaseStyles = undefined;
       window.removeEventListener("popstate", this.onPopState);
       if (this.controllerValue !== undefined && this.contextValue !== undefined) this.controllerValue.disconnect(this.contextValue);
       this.stopTimer();
@@ -720,28 +744,20 @@ function errorMessage(error: unknown): string {
 }
 
 const gitPanelStyles = `
-  .git-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--pi-text); background: var(--pi-bg); font: 13px system-ui, sans-serif; }
+  .git-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; color: var(--pi-text); background: var(--pi-bg); font: 13px var(--pi-font, system-ui, sans-serif); }
   .git-panel ${activityElementTag} { display: none; }
-  .git-panel button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pi-border); border-radius: 7px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 7px; cursor: pointer; }
-  .git-panel button:disabled { cursor: wait; opacity: .65; }
   .git-panel small, .git-panel .git-muted { color: var(--pi-muted); }
   .git-panel p { margin: 10px; }
-  .git-panel .git-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); }
-  .git-panel .git-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-  .git-panel .git-view-toggle { display: inline-flex; }
-  .git-panel .git-view-toggle button { border-radius: 0; }
-  .git-panel .git-view-toggle button:first-child { border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
-  .git-panel .git-view-toggle button:last-child { margin-left: -1px; border-top-right-radius: 7px; border-bottom-right-radius: 7px; }
-  .git-panel .git-view-toggle button.is-selected { position: relative; z-index: 1; border-color: var(--pi-accent); background: var(--pi-selection-bg); }
-  .git-panel .git-stale { border: 1px solid var(--pi-warning-border); border-radius: 999px; color: var(--pi-warning); padding: 1px 6px; font-size: 12px; }
+  .git-panel .git-toolbar { flex: 0 0 auto; border-bottom: 1px solid var(--pi-border-muted); font-size: 12px; color: var(--pi-muted); }
+  .git-panel .git-toolbar-actions { margin-left: auto; }
+  .git-panel .git-toolbar > strong { display: flex; align-items: center; padding-inline: 10px; font-weight: 500; }
+  .git-panel .git-toolbar .ui-button { white-space: nowrap; }
+  .git-panel .git-toolbar .ui-button[aria-pressed="true"] { background: var(--pi-surface-hover); color: var(--pi-text); }
+  .git-panel .git-stale { border: 1px solid var(--pi-warning-border); border-radius: 999px; color: var(--pi-warning); padding: 1px 6px; font-size: 12px; align-self: center; }
   .git-panel .git-error { flex: 0 0 auto; margin: 8px; border: 1px solid var(--pi-danger); border-radius: 7px; color: var(--pi-danger); padding: 8px; }
   .git-panel .git-split { flex: 1 1 auto; min-height: 0; display: grid; grid-template-rows: minmax(160px, 34%) minmax(0, 1fr); }
-  .git-panel .git-file-list { min-height: 0; overflow: auto; border-bottom: 1px solid var(--pi-border); padding: 6px; }
-  .git-panel .git-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 4px; width: 100%; border: 0; border-radius: 5px; background: transparent; text-align: left; padding: 4px 6px 4px calc(6px + var(--depth, 0) * 14px); }
-  .git-panel .git-row:hover, .git-panel .git-row.is-selected { background: var(--pi-selection-bg); }
-  .git-panel .git-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .git-panel .git-twisty { color: var(--pi-dim, var(--pi-muted)); }
-  .git-panel .git-summary { margin: 4px 6px 8px; color: var(--pi-muted); }
+  .git-panel .git-file-list { border-bottom: 1px solid var(--pi-border); }
+  .git-panel .git-summary { margin: 10px 12px 8px; color: var(--pi-muted); }
   .git-panel .submodule-badge { display: inline-block; margin-left: 6px; border: 1px solid var(--pi-border); border-radius: 999px; color: var(--pi-muted); padding: 0 5px; font-size: 11px; font-weight: 400; vertical-align: baseline; }
   .git-panel .git-viewer { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
   .git-panel .git-diffs { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; grid-template-rows: minmax(120px, 1fr) minmax(120px, 1fr); }
@@ -751,7 +767,7 @@ const gitPanelStyles = `
   .git-panel .git-viewer-header { position: sticky; top: 0; display: flex; justify-content: space-between; gap: 8px; padding: 8px; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
   .git-panel .git-viewer-header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .git-panel .git-diff-scroller { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--pi-bg); }
-  .git-panel .git-diff-grid { display: grid; grid-template-columns: max-content max-content 2ch max-content; width: max-content; min-width: 100%; padding: 6px 0; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.45; }
+  .git-panel .git-diff-grid { display: grid; grid-template-columns: max-content max-content 2ch max-content; width: max-content; min-width: 100%; padding: 6px 0; font: 12px var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); line-height: 1.45; }
   .git-panel .git-diff-line { display: contents; }
   .git-panel .git-diff-cell { min-height: 1.45em; white-space: pre; }
   .git-panel .git-line-number { min-width: 4ch; padding: 0 8px; border-right: 1px solid var(--pi-border-muted); color: var(--pi-dim); text-align: right; user-select: none; }

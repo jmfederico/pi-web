@@ -9,7 +9,7 @@
  */
 
 /**
- * Status of a single node (machine, project, workspace, or the unattributed
+ * Status of a single node (machine, project, workspace, session, or the unattributed
  * bucket), as an open map keyed by qualified flag id.
  *
  * The map is open because PI WEB federates across machines running different
@@ -38,6 +38,8 @@ export interface MachineStatusSnapshot {
   projects: Readonly<Record<string, StatusFlags>>;
   /** Keyed by workspace id. */
   workspaces: Readonly<Record<string, StatusFlags>>;
+  /** Complete flagged-session map keyed by session id; absent on older daemons. */
+  sessions?: Readonly<Record<string, StatusFlags>>;
   /** Roll-up of active cwds that map to no known workspace. */
   unattributed: StatusFlags;
   generatedAt: string;
@@ -100,7 +102,13 @@ export function parseMachineStatusSnapshot(value: unknown): MachineStatusSnapsho
   if (typeof generatedAt !== "string" || generatedAt === "") return undefined;
   if (machine === undefined || unattributed === undefined) return undefined;
   if (projects === undefined || workspaces === undefined) return undefined;
-  return { epochId, revision, machine, projects, workspaces, unattributed, generatedAt };
+  const snapshot: MachineStatusSnapshot = { epochId, revision, machine, projects, workspaces, unattributed, generatedAt };
+  if (Object.hasOwn(value, "sessions")) {
+    const sessions = parseStatusFlagsByNodeId(value["sessions"], true);
+    if (sessions === undefined) return undefined;
+    snapshot.sessions = sessions;
+  }
+  return snapshot;
 }
 
 /**
@@ -117,11 +125,12 @@ function parseStatusFlags(value: unknown): StatusFlags | undefined {
   return Object.fromEntries(flags);
 }
 
-function parseStatusFlagsByNodeId(value: unknown): Readonly<Record<string, StatusFlags>> | undefined {
+function parseStatusFlagsByNodeId(value: unknown, strictNodes = false): Readonly<Record<string, StatusFlags>> | undefined {
   if (!isRecord(value)) return undefined;
   const nodes = new Map<string, StatusFlags>();
   for (const [nodeId, nodeFlags] of Object.entries(value)) {
     const parsed = parseStatusFlags(nodeFlags);
+    if (parsed === undefined && strictNodes) return undefined;
     if (parsed !== undefined) nodes.set(nodeId, parsed);
   }
   return Object.fromEntries(nodes);

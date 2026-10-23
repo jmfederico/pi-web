@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findArchiveCandidateByIdOrPrefix, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
+import { findArchiveCandidateByExactId, planSessionArchiveTree, type SessionArchiveTreeCandidate } from "./sessionArchiveTree.js";
 
 function candidate(id: string, options: Partial<SessionArchiveTreeCandidate> = {}): SessionArchiveTreeCandidate {
   return {
@@ -11,12 +11,14 @@ function candidate(id: string, options: Partial<SessionArchiveTreeCandidate> = {
 }
 
 describe("session archive tree planning", () => {
-  it("finds candidates by exact id before falling back to a prefix", () => {
+  it("finds candidates only by full id equality", () => {
     const candidates = [candidate("abcdef"), candidate("abc"), candidate("xyz")];
 
-    expect(findArchiveCandidateByIdOrPrefix(candidates, "abc")?.id).toBe("abc");
-    expect(findArchiveCandidateByIdOrPrefix(candidates, "abcd")?.id).toBe("abcdef");
-    expect(findArchiveCandidateByIdOrPrefix(candidates, "missing")).toBeUndefined();
+    expect(findArchiveCandidateByExactId(candidates, "abc")?.id).toBe("abc");
+    expect(findArchiveCandidateByExactId(candidates, "abcdef")?.id).toBe("abcdef");
+    expect(findArchiveCandidateByExactId(candidates, "abcd")).toBeUndefined();
+    expect(findArchiveCandidateByExactId(candidates, "")).toBeUndefined();
+    expect(findArchiveCandidateByExactId(candidates, "missing")).toBeUndefined();
   });
 
   it("plans recursive descendants and separates already archived targets", () => {

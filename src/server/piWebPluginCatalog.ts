@@ -3,7 +3,7 @@ import { existsSync, type Dirent } from "node:fs";
 import { open, opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { DefaultPackageManager, SettingsManager } from "../piSdk.js";
 import { loadPiWebConfig, piWebDataDir, type PiWebConfig } from "../config.js";
 import type { PiWebPluginScope, PiWebPluginSettings } from "../shared/apiTypes.js";
 import { isPiWebBundledPluginId, isPiWebPluginId, isReservedPiWebPluginId } from "../shared/pluginIds.js";

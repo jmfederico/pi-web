@@ -1,5 +1,5 @@
 import { textMessage } from "./chatMessages";
-import type { ChatLine } from "./components/shared";
+import type { ChatLine } from "./chatTypes";
 import type { SessionUiEvent } from "./sessionSocket";
 
 export function shellStartMessage(command: string, excludeFromContext?: boolean): ChatLine {
