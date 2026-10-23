@@ -6,7 +6,7 @@
     <title>Install PI WEB — web UI for Pi Coding Agent</title>
     <meta
       name="description"
-      content="Install PI WEB, the web UI for Pi Coding Agent, on Linux, macOS, or Windows WSL with persistent user services."
+      content="Install PI WEB, the web UI for Pi Coding Agent, on Linux, macOS, or Windows with persistent user services."
     />
     <link rel="canonical" href="https://pi-web.dev/install" />
     <meta property="og:type" content="website" />
@@ -144,6 +144,29 @@
               <p>Then open <a href="http://127.0.0.1:8504">http://127.0.0.1:8504</a>.</p>
               <p>If preflight fails, no config or existing services are changed. Follow the detected shell guidance: zsh services read <code>~/.zprofile</code>, not interactive-only <code>~/.zshrc</code>; bash uses <code>~/.bash_profile</code> or <code>~/.profile</code>.</p>
               <p>On Linux servers, also consider <code>sudo loginctl enable-linger "$USER"</code> so user services survive logout/reboot.</p>
+            </section>
+
+            <section id="windows">
+              <h2>Windows supervised user tasks</h2>
+              <p>Run <code>pi-web install</code> from an ordinary external Windows terminal after installing the package (or building a checkout). Windows PowerShell 5.1 and Task Scheduler must be available. No administrator account or stored account password is required; local policy must permit registering tasks for your own user.</p>
+              <p>Two hidden tasks supervise the web server and session daemon independently in your logged-in user session. Child processes restart after either successful or failed exit, with a two-second retry delay. A repeating scheduler trigger recovers a missing supervisor within approximately one minute; running instances are not duplicated.</p>
+              <p>Tasks start at sign-in, continue while the desktop is locked, and can resume after sleep or hibernation. They stop at sign-out and cannot serve requests before login after a reboot. Wake-on-LAN support depends on the machine and network, not PI WEB. Existing SSH agents, credential helpers, and network resources still need validation from a task: an interactive user token does not recreate a terminal's startup scripts or environment.</p>
+              <pre><code>pi-web status
+pi-web doctor
+pi-web logs
+pi-web restart sessiond
+pi-web restart web
+pi-web stop
+pi-web start
+pi-web uninstall</code></pre>
+              <p><code>start</code>, <code>stop</code>, and <code>restart</code> accept an optional <code>sessiond</code> or <code>web</code> target. Stop disables the selected tasks, including their sign-in and recovery triggers, until Start enables them again. Restarting the web task leaves daemon-owned work alone. Stopping or restarting the daemon forcefully terminates its active sessions, terminals, and descendants; automatic recovery restores availability, not in-flight execution. Run lifecycle commands outside hosted PI WEB sessions.</p>
+              <h3>Launch settings and upgrades</h3>
+              <p>Installation captures the Node executable, built package entrypoints, home working directory, config/data paths, PATH, SHELL, explicit web host/port and daemon port, and Pi profile/session directory overrides. An explicit <code>PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT</code> is also preserved. Other environment values come from Windows when the task launches; arbitrary terminal environment variables and secrets are not copied into task definitions. Configure durable PI WEB settings in the usual config file, and configure credentials separately.</p>
+              <p>The daemon listens on loopback TCP (port 8505 by default); the web server defaults to loopback port 8504. Use <code>pi-web install --host 0.0.0.0</code> for a new LAN-facing configuration, with appropriate authentication, allowed hosts, and firewall rules. Existing config files are preserved. Explicit environment overrides take precedence.</p>
+              <p>Package and Node paths are pinned: before moving or upgrading a package, run <code>pi-web uninstall</code>, update it with its original package manager, then run <code>pi-web install</code> with the same launch overrides. This is particularly important for pnpm's versioned store paths and custom host-Pi overrides; resolve those again after upgrading. Windows <code>pi-web update</code> is not supported yet. Config, logs, and session data survive uninstall. Development watch-mode installation (<code>--dev</code>) remains Linux/macOS-only.</p>
+              <p>Logs are under the data directory's <code>logs</code> folder. Each component's log rotates between process generations when it exceeds 10 MiB, retaining two older files; a continuously running generation can exceed that size. <code>status</code> and <code>doctor</code> check endpoint readiness as well as task state, so a running supervisor alone is not reported as a healthy server.</p>
+              <h3>Migration from Startup scripts or older tasks</h3>
+              <p>Record your existing launch settings first. During a planned interruption, disable the old Startup entry and stop its processes before installing these tasks; do not run both launchers against the same data directory or ports. Older PI WEB tasks must be uninstalled before installation. The installer refuses to overwrite existing task names. Keep the original launcher for rollback, but re-enable it only after stopping and uninstalling the new tasks.</p>
             </section>
 
             <section id="one-line">
