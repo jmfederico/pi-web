@@ -1,10 +1,16 @@
-import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
+import { css, html, LitElement, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { api, type McpAuthServerOption, type SessionRef } from "../../api";
+import { live } from "lit/directives/live.js";
+import { api, type McpAuthServerOption, type SessionRef, mcpApi, type Machine, type McpCheckResponse, type McpServerInfo, type McpServersResponse, type McpWorkspaceTarget, type Workspace } from "../../api";
+import { HttpRequestError } from "../../api/http";
+import { friendlySelectedMachineSettingsErrorMessage, settingsMachineTarget, settingsMachineTargetLabel } from "./settingsMachineTarget";
 import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { uiButtonStyles } from "../ui/controlStyles";
 import { uiSettingsStyles } from "../ui/settingsStyles";
+import { uiFormStyles } from "../ui/formStyles";
+import { uiNoticeStyles } from "../ui/noticeStyles";
 import "./SettingsPanelFrame";
+import type { SettingsNotice } from "./SettingsPanelFrame";
 
 export interface McpAuthContext {
   session: SessionRef;
@@ -12,6 +18,8 @@ export interface McpAuthContext {
 }
 
 export type McpAuthHandler = (mode: "login" | "logout", serverName: string, context: McpAuthContext) => void | Promise<void>;
+
+type Operation = "load" | "save" | "check";
 
 @customElement("settings-mcp-panel")
 export class SettingsMcpPanel extends LitElement {
@@ -28,24 +36,92 @@ export class SettingsMcpPanel extends LitElement {
   @property({ attribute: false }) onMcpAuth?: McpAuthHandler;
   @state() private servers: McpAuthServerOption[] = [];
   @state() private loading = false;
-  @state() private error = "";
+  @state() private authError = "";
   private generation = 0;
+
+  @property({ attribute: false }) machine: Machine | undefined;
+  @property({ attribute: false }) workspace: Workspace | undefined;
+  @property({ attribute: false }) apiClient: typeof mcpApi = mcpApi;
+  @state() private selection: "machine" | "workspace" = "machine";
+  @state() private response: McpServersResponse | undefined;
+  @state() private checkResponse: McpCheckResponse | undefined;
+  @state() private operation: Operation | undefined;
+  @state() private error = "";
+  @state() private savedMessage = "";
+  private activeTargetKey = "";
+  private requestSeq = 0;
 
   override connectedCallback(): void {
     super.connectedCallback();
-    if (this.hasUpdated) void this.reload();
+    this.requestUpdate();
+    if (this.hasUpdated) void this.reloadAuth();
   }
 
   override disconnectedCallback(): void {
+    ++this.requestSeq;
+    this.activeTargetKey = "";
     this.generation += 1;
     this.servers = [];
-    this.error = "";
+    this.authError = "";
     this.loading = false;
     super.disconnectedCallback();
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
-    if (changed.has("context")) void this.reload();
+    if (!this.isConnected) return;
+    if (changed.has("context")) void this.reloadAuth();
+    if (this.workspace === undefined) this.selection = "machine";
+    const key = this.targetKey();
+    if (key === this.activeTargetKey && !changed.has("apiClient")) return;
+    ++this.requestSeq;
+    this.activeTargetKey = key;
+    this.response = undefined;
+    this.checkResponse = undefined;
+    this.operation = undefined;
+    this.error = "";
+    this.savedMessage = "";
+    void this.load();
+  }
+
+  override render(): TemplateResult {
+    const busy = this.operation !== undefined;
+    return html`
+      <settings-panel-frame
+        heading="MCP servers"
+        .description=${`MCP adds service tools to Pi and is not required for ordinary coding. Configuration on ${settingsMachineTargetLabel(settingsMachineTarget(this.machine))}.`}
+        actionLabel="Refresh configuration"
+        .actionDisabled=${busy}
+        .onAction=${() => this.load()}
+        .notices=${this.notices()}
+      >
+        <section class="ui-settings-section">
+          <label class="ui-form-field">Configuration scope
+            <select class="ui-select" aria-label="MCP configuration scope" .value=${live(this.selection)} @change=${(event: Event) => { this.selectScope(event); }}>
+              <option value="machine">Machine-wide</option>
+              ${this.workspace === undefined ? nothing : html`<option value="workspace">Selected workspace</option>`}
+            </select>
+          </label>
+          ${this.selection === "workspace" ? html`<p>Selected workspace: ${this.workspace?.label}</p>` : nothing}
+          <div class="ui-settings-actions">
+            <button type="button" class="ui-button ui-button--action" aria-describedby="mcp-check-help" ?disabled=${busy || this.response === undefined} @click=${() => { void this.check(); }}>
+              ${this.operation === "check" ? "Checking connections…" : "Check connections"}
+            </button>
+          </div>
+          <p id="mcp-check-help" class="ui-notice warning">Check connections temporarily starts enabled local servers or connects to their services. Check only configurations you trust. This does not show live session status.</p>
+          <p class="help">New sessions pick up saved configuration. Run <code>/reload</code> in each idle session to reload it there. Disabling configuration does not stop connections in other already-running sessions.</p>
+        </section>
+        ${this.renderConfiguration()}
+        ${this.renderCheck()}
+        <details class="ui-settings-section help">
+          <summary>Setup and connection checks</summary>
+          <p>Credentials remain in Pi files. To add, edit, or remove servers, use <code>pi mcp add</code> / <code>pi mcp remove</code> on this machine or edit those files; this panel only saves enabled flags.</p>
+          <p>Use <code>/mcp</code> to inspect session status, or <code>/mcp reconnect &lt;name&gt;</code> to reconnect.</p>
+          <p>Check connections is an explicit, temporary test, not live session status. It may start configured servers; check only configurations you trust. Detailed errors stay on the machine: run <code>pi mcp list</code> there to inspect them.</p>
+          <p>Pi CLI checks do not use <code>auth.provider</code> credentials; verify those servers with <code>/mcp</code> inside a session instead.</p>
+        </details>
+      </settings-panel-frame>
+      ${this.renderAuthentication()}
+    `;
   }
 
   private isCurrent(generation: number, context: McpAuthContext): boolean {
@@ -55,10 +131,10 @@ export class SettingsMcpPanel extends LitElement {
       && context.session.cwd === this.context.session.cwd;
   }
 
-  private async reload(): Promise<void> {
+  private async reloadAuth(): Promise<void> {
     const generation = ++this.generation;
     this.servers = [];
-    this.error = "";
+    this.authError = "";
     this.loading = false;
     if (!this.isConnected || this.context === undefined) return;
     const context = { machineId: this.context.machineId, session: { ...this.context.session } };
@@ -67,7 +143,7 @@ export class SettingsMcpPanel extends LitElement {
       const response = await api.mcpAuthServers(context.session, context.machineId);
       if (this.isCurrent(generation, context)) this.servers = response.servers;
     } catch (error) {
-      if (this.isCurrent(generation, context)) this.error = `Could not load MCP servers: ${errorMessage(error)}`;
+      if (this.isCurrent(generation, context)) this.authError = `Could not load MCP servers: ${errorMessage(error)}`;
     } finally {
       if (this.isCurrent(generation, context)) this.loading = false;
     }
@@ -75,25 +151,26 @@ export class SettingsMcpPanel extends LitElement {
 
   private async authenticate(mode: "login" | "logout", serverName: string, context: McpAuthContext): Promise<void> {
     const generation = this.generation;
+    if (!this.isCurrent(generation, context)) return;
     try {
       await this.onMcpAuth?.(mode, serverName, context);
     } catch (error) {
-      if (this.isCurrent(generation, context)) this.error = `Could not open MCP authentication: ${errorMessage(error)}`;
+      if (this.isCurrent(generation, context)) this.authError = `Could not open MCP authentication: ${errorMessage(error)}`;
     }
   }
 
-  override render(): TemplateResult {
+  private renderAuthentication(): TemplateResult {
     const context = this.context === undefined ? undefined : {
       machineId: this.context.machineId, session: { ...this.context.session },
     };
     return html`
       <settings-panel-frame
-        heading="MCP"
+        heading="MCP authentication"
         .description=${"Manage authentication for enabled MCP servers that support OAuth in the selected session."}
         actionLabel="Refresh servers"
         .actionDisabled=${context === undefined || this.loading}
-        .onAction=${() => this.reload()}
-        .notices=${this.error === "" ? [] : [{ type: "error", content: this.error }]}
+        .onAction=${() => this.reloadAuth()}
+        .notices=${this.authError === "" ? [] : [{ type: "error", content: this.authError }]}
       >
         <section class="ui-settings-section">
           ${context === undefined ? html`
@@ -106,7 +183,7 @@ export class SettingsMcpPanel extends LitElement {
               <span><strong>Workspace:</strong> ${context.session.cwd}</span>
             </div>
             <p>Logout removes local Pi credentials. It does not disable the server or revoke permission at the provider. Other sessions using those credentials are also affected.</p>
-            ${this.loading ? html`<p role="status">Loading MCP servers…</p>` : this.error !== "" ? null : this.servers.length === 0 ? html`
+            ${this.loading ? html`<p role="status">Loading MCP servers…</p>` : this.authError !== "" ? null : this.servers.length === 0 ? html`
               <p role="status">No enabled MCP servers with OAuth support are available in this session.</p>
             ` : html`
               <ul class="ui-settings-list server-list" aria-label="MCP servers">
@@ -117,8 +194,8 @@ export class SettingsMcpPanel extends LitElement {
                       ${server.description === undefined ? null : html`<p class="server-description">${server.description}</p>`}
                     </div>
                     <div class="ui-settings-actions">
-                      <button class="ui-button ui-button--action" aria-label=${`Login to ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("login", server.name, context); }}>Login</button>
-                      <button class="ui-button ui-button--action" aria-label=${`Logout from ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("logout", server.name, context); }}>Logout</button>
+                      <button type="button" class="ui-button ui-button--action" aria-label=${`Login to ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("login", server.name, context); }}>Login</button>
+                      <button type="button" class="ui-button ui-button--action" aria-label=${`Logout from ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("logout", server.name, context); }}>Logout</button>
                     </div>
                   </li>
                 `)}
@@ -130,19 +207,171 @@ export class SettingsMcpPanel extends LitElement {
     `;
   }
 
-  static override styles = [uiButtonStyles, uiSettingsStyles, css`
+  private notices(): readonly SettingsNotice[] {
+    const notices: SettingsNotice[] = [];
+    if (this.error !== "") notices.push({ type: "error", content: this.error });
+    if (this.savedMessage !== "") notices.push({ type: "success", content: this.savedMessage });
+    for (const error of this.response?.errors ?? []) notices.push({ type: "error", content: error });
+    if (this.response?.projectTrusted === false) {
+      notices.push({ type: "security", title: "Untrusted project configuration", content: "Project MCP servers can run code or access services. Review the Pi configuration and trust the project in a session only if you trust its servers. Saved/default trust here is not a running session's trust decision." });
+    }
+    return notices;
+  }
+
+  private renderConfiguration(): TemplateResult {
+    if (this.response === undefined) {
+      return html`<section class="ui-settings-section"><p role="status">${this.operation === "load" ? "Loading MCP configuration…" : "MCP configuration unavailable. Refresh configuration to try again."}</p></section>`;
+    }
+    return html`
+      <section class="ui-settings-list" aria-label="MCP configuration">
+        <div class="ui-settings-section">
+          <div class="ui-settings-path"><span>User config:</span> <code>${this.response.userConfigPath}</code></div>
+          ${this.response.projectConfigPath === undefined ? nothing : html`<div class="ui-settings-path"><span>Project config:</span> <code>${this.response.projectConfigPath}</code></div>`}
+          ${this.response.servers.length === 0 ? html`<p>No MCP servers configured.</p>` : nothing}
+        </div>
+        ${this.response.servers.map((server) => this.renderServer(server))}
+      </section>
+    `;
+  }
+
+  private renderServer(server: McpServerInfo): TemplateResult {
+    return html`
+      <article class="ui-settings-section" aria-label=${`${server.scope} MCP server ${server.name}`}>
+        <div class="server-heading">
+          <div class="ui-settings-heading"><h3>${server.name}</h3></div>
+          <label class="ui-checkbox-field"><input type="checkbox" aria-label=${`Enabled: ${server.scope} MCP server ${server.name}`}
+            .checked=${live(server.enabled)}
+            ?disabled=${this.operation !== undefined || !canToggle(server)}
+            @change=${(event: Event) => { if (event.currentTarget instanceof HTMLInputElement) void this.setEnabled(server, event.currentTarget.checked); }}
+          > Enabled</label>
+        </div>
+        <p>Scope: ${server.scope} · ${server.enabled ? "Enabled" : "Disabled"} · Transport: ${server.transport}</p>
+        <div class="ui-settings-path"><span>Source:</span> <code>${server.source}</code></div>
+        ${server.description === undefined ? nothing : html`<p>${server.description}</p>`}
+        <p>Exposure: ${server.exposure}</p>
+        ${server.overridden ? html`<p class="ui-notice warning">Overridden by project configuration; this user entry is not effective and cannot be toggled here.</p>` : nothing}
+        ${server.error === undefined ? nothing : html`<p class="ui-notice error" role="alert">${server.error}</p>`}
+        ${server.transport === "unknown" && server.error === undefined ? html`<p class="ui-notice error" role="alert">Invalid or unknown transport; fix the Pi configuration before toggling.</p>` : nothing}
+        <p>Inspect status with <code>/mcp</code> in a session. To reconnect: <code>${`/mcp reconnect ${server.name}`}</code></p>
+      </article>
+    `;
+  }
+
+  private renderCheck(): TemplateResult | typeof nothing {
+    if (this.checkResponse === undefined) return nothing;
+    return html`
+      <section class="ui-settings-list" aria-label="Temporary MCP connection test" aria-live="polite">
+        <div class="ui-settings-section">
+          <div class="ui-settings-heading"><h3>Temporary connection test — not live session status</h3></div>
+          <p>Checked: ${this.checkResponse.checkedAt}</p>
+          ${this.checkResponse.note === undefined ? nothing : html`<p>${this.checkResponse.note}</p>`}
+          ${this.checkResponse.errors.map((error) => html`<p class="ui-notice error" role="alert">${error}</p>`)}
+          ${this.checkResponse.servers.length === 0 ? html`<p>No connections tested.</p>` : nothing}
+        </div>
+        ${this.checkResponse.servers.map((server) => html`
+          <article class="ui-settings-section">
+            <div class="ui-settings-heading"><h3>${server.name}</h3></div>
+            <p>Scope: ${server.scope} · Status: ${server.state}</p>
+            ${server.error === undefined ? nothing : html`<p class="ui-notice error" role="alert">${server.error}</p>`}
+            <p>Tools (${server.tools.length}): ${server.tools.length === 0 ? "None" : nothing}</p>
+            <ul>${server.tools.map((tool) => html`<li><code>${tool}</code></li>`)}</ul>
+            ${server.state === "needs-auth" ? html`<p>Inspect session status with <code>/mcp</code> inside a session.</p>` : nothing}
+            ${server.state === "failed" || server.state === "disconnected" ? html`<p>Reconnect inside a session: <code>${`/mcp reconnect ${server.name}`}</code></p>` : nothing}
+          </article>
+        `)}
+      </section>
+    `;
+  }
+
+  private selectScope(event: Event): void {
+    if (!(event.currentTarget instanceof HTMLSelectElement)) return;
+    this.selection = event.currentTarget.value === "workspace" && this.workspace !== undefined ? "workspace" : "machine";
+  }
+
+  private workspaceTarget(): McpWorkspaceTarget | undefined {
+    return this.selection === "workspace" && this.workspace !== undefined
+      ? { projectId: this.workspace.projectId, workspaceId: this.workspace.id }
+      : undefined;
+  }
+
+  private targetKey(): string {
+    // Include workspace identity even in machine-wide view so changing the
+    // selected workspace clears prior diagnostics, as changing machines does.
+    return JSON.stringify([settingsMachineTarget(this.machine).id, this.workspace?.projectId, this.workspace?.id, this.selection]);
+  }
+
+  private async load(): Promise<void> {
+    if (this.operation !== undefined) return;
+    this.checkResponse = undefined;
+    const machineId = settingsMachineTarget(this.machine).id;
+    const workspace = this.workspaceTarget();
+    await this.runRequest("load", () => this.apiClient.list(machineId, workspace), (response) => { this.response = response; });
+  }
+
+  private async setEnabled(server: McpServerInfo, enabled: boolean): Promise<void> {
+    if (this.operation !== undefined || this.activeTargetKey !== this.targetKey() || !canToggle(server)) return;
+    // A save changes only durable configuration, never running connections.
+    // Clear diagnostics even on failure: a failed request may have reached Pi.
+    this.checkResponse = undefined;
+    const machineId = settingsMachineTarget(this.machine).id;
+    const workspace = this.workspaceTarget();
+    await this.runRequest("save", () => this.apiClient.setEnabled(server.name, server.scope, enabled, machineId, workspace), (response) => {
+      this.response = response;
+      this.savedMessage = "Configuration saved. New sessions pick it up; run /reload in each idle session.";
+    });
+  }
+
+  private async check(): Promise<void> {
+    if (this.operation !== undefined || this.response === undefined || this.activeTargetKey !== this.targetKey()) return;
+    this.checkResponse = undefined;
+    const machineId = settingsMachineTarget(this.machine).id;
+    const workspace = this.workspaceTarget();
+    await this.runRequest("check", () => this.apiClient.check(machineId, workspace), (response) => { this.checkResponse = response; });
+  }
+
+  private async runRequest<T>(operation: Operation, request: () => Promise<T>, accept: (response: T) => void): Promise<void> {
+    const key = this.targetKey();
+    const seq = ++this.requestSeq;
+    const current = () => this.isConnected && seq === this.requestSeq && key === this.targetKey();
+    this.operation = operation;
+    this.error = "";
+    this.savedMessage = "";
+    try {
+      const response = await request();
+      if (current()) accept(response);
+    } catch (error) {
+      if (current()) {
+        const target = settingsMachineTarget(this.machine);
+        const message = error instanceof Error ? error.message : String(error);
+        this.error = error instanceof HttpRequestError && error.status === 404
+          ? `MCP settings are not available on ${target.name}. If it runs an older PI WEB version, update PI WEB on that machine and restart its web/API service and session daemon, then retry. Also verify the selected workspace still exists. No gateway fallback is used.`
+          : `Failed to ${operation === "load" ? "load MCP configuration" : operation === "save" ? "save MCP configuration" : "check MCP connections"} on ${target.name}: ${friendlySelectedMachineSettingsErrorMessage(message, target)}`;
+      }
+    } finally {
+      if (current()) this.operation = undefined;
+    }
+  }
+
+  static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, uiNoticeStyles, css`
     :host { display: block; }
-    p { line-height: 1.45; }
-    .ui-settings-section > p { margin: 0; }
     .session-context { overflow-wrap: anywhere; }
     .server-list { margin: 0; padding: 0; list-style: none; }
     .server-copy { flex: 1 1 240px; min-width: 0; }
     .server-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .server-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+    .help { color: var(--pi-muted); }
+    p, ul { margin: 0; line-height: 1.45; }
+    article { overflow-wrap: anywhere; }
+    code { overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   `];
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function canToggle(server: McpServerInfo): boolean {
+  return !server.overridden && server.error === undefined && server.transport !== "unknown";
 }
 
 declare global {

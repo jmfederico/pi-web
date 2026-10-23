@@ -60,6 +60,14 @@ describe("settings route helpers", () => {
     expect(pushed).toEqual(["http://localhost/app?project=p1&settings=mcp#bottom"]);
   });
 
+  it("preserves nested deployment and target fields in MCP deep links", () => {
+    const { pushed } = installWindow("https://pi.example.test/team/pi/?machine=remote&project=p1&workspace=w1#bottom");
+
+    writeSettingsSection("mcp");
+
+    expect(pushed).toEqual(["https://pi.example.test/team/pi/?machine=remote&project=p1&workspace=w1&settings=mcp#bottom"]);
+  });
+
   it("removes settings deep links with replace when closing", () => {
     const { replaced } = installWindow("http://localhost/app?project=p1&settings=general#bottom");
 

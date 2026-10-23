@@ -4,7 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { cache } from "lit/directives/cache.js";
 import { live } from "lit/directives/live.js";
 import type { AppAction } from "../actions";
-import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type SessionModel, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
+import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type SessionModel, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse, type Workspace } from "../api";
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
 import "./settings/SettingsMcpPanel";
 import type { SettingsSection } from "../settingsRoute";
@@ -45,6 +45,7 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) mcpContext: McpAuthContext | undefined;
   @property({ attribute: false }) onMcpAuth?: McpAuthHandler;
   @property({ attribute: false }) machine: Machine | undefined;
+  @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) machineRuntime: MachineRuntime | undefined;
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) machineStatuses: Record<string, MachineHealth> = {};
@@ -154,7 +155,7 @@ export class SettingsDialog extends LitElement {
             ${this.renderNavButton("sessiond", "Session daemon", "Selected machine")}
             ${this.renderNavButton("packages", "Pi packages", "Selected machine")}
             ${this.renderNavButton("plugins", "PI WEB plugins", "Selected machine")}
-            ${this.renderNavButton("mcp", "MCP", "Selected session")}
+            ${this.renderNavButton("mcp", "MCP servers", "Selected machine + workspace")}
             ${this.renderNavButton("shortcuts", "Keyboard shortcuts", "This gateway")}
           </nav>
           <main class="settings-main">
@@ -244,8 +245,11 @@ export class SettingsDialog extends LitElement {
     // scraping this template's markup.
     if (this.section === "mcp") {
       const target = this.settingsTarget();
+      const machine = this.selectedSettingsMachine(this.machines, this.machine, this.settingsMachineId);
       return html`
         <settings-mcp-panel
+          .machine=${machine}
+          .workspace=${target.id === settingsMachineTarget(this.machine).id ? this.workspace : undefined}
           .context=${this.mcpContext?.machineId === target.id ? this.mcpContext : undefined}
           .targetLabel=${settingsMachineTargetLabel(target)}
           .onMcpAuth=${this.onMcpAuth}
@@ -854,8 +858,8 @@ export type SettingsPanelTag =
   | "settings-sessiond-panel"
   | "settings-packages-panel"
   | "settings-plugins-panel"
-  | "settings-shortcuts-panel"
-  | "settings-mcp-panel";
+  | "settings-mcp-panel"
+  | "settings-shortcuts-panel";
 
 /**
  * The single custom-element panel the settings dialog renders for a section.
@@ -873,10 +877,10 @@ export function activeSettingsPanelTag(section: SettingsSection): SettingsPanelT
       return "settings-packages-panel";
     case "plugins":
       return "settings-plugins-panel";
-    case "shortcuts":
-      return "settings-shortcuts-panel";
     case "mcp":
       return "settings-mcp-panel";
+    case "shortcuts":
+      return "settings-shortcuts-panel";
     case "general":
       return "settings-general-panel";
   }

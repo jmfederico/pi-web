@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from "vitest";
 import { pluginStyles } from "../plugins/styles";
+import { mcpApi } from "../api";
 import { ActionPalette } from "./ActionPalette";
 import type { ModalSurface } from "./ModalSurface";
 import { SettingsThemePanel } from "./settings/SettingsThemePanel";
@@ -36,6 +37,7 @@ it("shares contributed sheets across host and nested modal roots and releases th
   // Components connected after the file loads receive the same compiled sheet.
   const themePanel = new SettingsThemePanel();
   const mcpPanel = new SettingsMcpPanel();
+  mcpPanel.apiClient = { ...mcpApi, list: () => Promise.resolve({ servers: [], errors: [], userConfigPath: "/agent/mcp.json" }) };
   const text = new FormattedText();
   document.body.append(themePanel, mcpPanel, text);
   await Promise.all([themePanel.updateComplete, mcpPanel.updateComplete, text.updateComplete]);

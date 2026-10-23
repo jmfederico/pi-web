@@ -85,6 +85,7 @@ import { installPluginBackendChannelWebSocketPayloadLimit } from "./webSocketBri
 import { registerPairedPluginBackendRoutes } from "./sessiond/pluginBackendRoutes.js";
 import { registerWorkspaceRemovalRoutes } from "./sessiond/workspaceRemovalRoutes.js";
 import { createWorkspaceProviderRuntimeSnapshot } from "./workspaces/workspaceCatalog.js";
+import { registerSessionDaemonMcpRoutes } from "./sessiond/mcpRuntime.js";
 import { WorkspaceRemovalService } from "./workspaces/workspaceRemovalService.js";
 
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
@@ -465,6 +466,7 @@ function registerSessionDaemonRoutes({ eventHub, machineStatus, statusAttributio
   registerAuthRoutes(app, auth);
   registerMcpAuthRoutes(app, sessions);
   registerSessionRoutes(app, sessions, eventHub);
+  registerSessionDaemonMcpRoutes(app, { agentDir: activeAgentProfile.dir, projects, workspaces: workspaceProviders });
   registerWorkspaceCatalogRoutes(app, {
     projects,
     workspaces: workspaceProviders,

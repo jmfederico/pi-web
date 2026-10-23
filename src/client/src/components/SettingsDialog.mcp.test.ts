@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, configApi, piPackagesApi, pluginsApi } from "../api";
+import { api, configApi, mcpApi, piPackagesApi, pluginsApi } from "../api";
 import { SettingsDialog } from "./SettingsDialog";
 import { configResponse, pluginsResponse, remoteMachine, secondRemoteMachine } from "./SettingsDialog.testSupport";
 import type { SettingsMcpPanel } from "./settings/SettingsMcpPanel";
@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.spyOn(pluginsApi, "plugins").mockResolvedValue(pluginsResponse([]));
   vi.spyOn(piPackagesApi, "packages").mockResolvedValue({ packages: [] });
   vi.spyOn(api, "mcpAuthServers").mockResolvedValue({ servers: [{ name: "docs" }] });
+  vi.spyOn(mcpApi, "list").mockResolvedValue({ servers: [], errors: [], userConfigPath: "/home/pi/.pi/agent/mcp.json" });
 });
 
 afterEach(() => {
@@ -45,7 +46,7 @@ async function mount(): Promise<SettingsDialog> {
   document.body.append(dialog);
   await settle(dialog);
   const nav = Array.from(dialog.shadowRoot?.querySelectorAll("nav button") ?? [])
-    .find((button) => button.querySelector("strong")?.textContent === "MCP");
+    .find((button) => button.querySelector("strong")?.textContent === "MCP servers");
   if (!(nav instanceof HTMLButtonElement)) throw new Error("Missing MCP navigation");
   nav.click();
   await settle(dialog);
@@ -83,6 +84,30 @@ describe("settings MCP integration", () => {
     expect(dialog.machine).toBe(remoteMachine);
     await selectMachine(dialog, remoteMachine.id);
     expect(api.mcpAuthServers).toHaveBeenCalledExactlyOnceWith(dialog.mcpContext?.session, remoteMachine.id);
+  });
+
+  it("configures the chosen machine without carrying another machine's workspace scope", async () => {
+    const dialog = await mount();
+    const workspace = { id: "w1", projectId: "p1", path: "/workspace/a", label: "Repo", isMain: true, effectiveConfig: {} };
+    dialog.workspace = workspace;
+    await settle(dialog);
+    const scope = panel(dialog).shadowRoot?.querySelector<HTMLSelectElement>('select[aria-label="MCP configuration scope"]');
+    if (!scope) throw new Error("Missing configuration scope");
+    scope.value = "workspace";
+    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle(dialog);
+    expect(mcpApi.list).toHaveBeenLastCalledWith(remoteMachine.id, { projectId: "p1", workspaceId: "w1" });
+
+    await selectMachine(dialog, secondRemoteMachine.id);
+    expect(panel(dialog).machine).toBe(secondRemoteMachine);
+    expect(panel(dialog).workspace).toBeUndefined();
+    expect(panel(dialog).shadowRoot?.querySelector('option[value="workspace"]')).toBeNull();
+    expect(mcpApi.list).toHaveBeenLastCalledWith(secondRemoteMachine.id, undefined);
+    expect(dialog.workspace).toBe(workspace);
+
+    await selectMachine(dialog, remoteMachine.id);
+    expect(panel(dialog).workspace).toBe(workspace);
+    expect(mcpApi.list).toHaveBeenLastCalledWith(remoteMachine.id, undefined);
   });
 
   it("removes controls when the parent withdraws an archived or missing session", async () => {
