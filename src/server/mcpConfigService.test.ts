@@ -16,7 +16,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({ ...(await importOrigina
 // them only as test oracles, without starting servers or evaluating secrets.
 interface InstalledMcpConfig {
   loadMcpConfig: (options: { agentDir: string; cwd: string; projectTrusted: boolean }) => {
-    servers: { name: string; scope: "global" | "project" }[];
+    servers: { name: string; scope: "global" | "project"; config: Record<string, unknown>; override?: string }[];
     errors: string[];
   };
   addMcpServerConfig: (path: string, name: string, config: { command: string }) => boolean;
@@ -155,6 +155,69 @@ describe("MCP configuration metadata and trust", () => {
     expect(pi.servers.map(({ name }) => name)).toEqual(["same_name"]);
     expect(response.errors).toHaveLength(1);
     expect(pi.errors).toHaveLength(1);
+  });
+
+  it.each([true, false])("lists and toggles enabled-only overrides without copying inherited credentials (trusted=%s)", async (trusted) => {
+    new ProjectTrustStore(agentDir).set(cwd, trusted);
+    const secret = "secret-inherited-credential";
+    const user = { url: "https://example.test/mcp", headers: { Authorization: secret }, auth: { provider: secret }, exposure: "direct", enabled: false };
+    await config(userPath, { target: user });
+    const userText = await readFile(userPath, "utf8");
+    const project = { future: { keep: true }, mcpServers: { target: { enabled: true } } };
+    await writeFile(projectPath, JSON.stringify(project));
+
+    const response = await service.list(cwd);
+    expect(response.errors).toEqual([]);
+    expect(response.servers[0]?.overridden).toBe(trusted);
+    expect(response.servers[1]).toMatchObject({ scope: "project", enabled: true, transport: "http", exposure: "direct" });
+    expect(loadMcpConfig({ agentDir, cwd, projectTrusted: trusted }).servers).toMatchObject([
+      { scope: "global", config: { ...user, enabled: trusted }, ...(trusted ? { override: projectPath } : {}) },
+    ]);
+
+    for (const enabled of [false, true]) {
+      const toggled = await service.setEnabled("target", "project", enabled, cwd);
+      expect(toggled.errors).toEqual([]);
+      expect(JSON.stringify(toggled)).not.toContain(secret);
+      expect(await readFile(userPath, "utf8")).toBe(userText);
+      expect(JSON.parse(await readFile(projectPath, "utf8"))).toEqual({ ...project, mcpServers: { target: { enabled } } });
+      const pi = loadMcpConfig({ agentDir, cwd, projectTrusted: true });
+      expect(pi.errors).toEqual([]);
+      expect(pi.servers[0]).toMatchObject({ scope: "global", config: { ...user, enabled }, override: projectPath });
+    }
+  });
+
+  it("inherits enabled and transport for exposure-only project overrides", async () => {
+    new ProjectTrustStore(agentDir).set(cwd, true);
+    await config(userPath, { target: { command: "unused", enabled: false } });
+    await config(projectPath, { target: { exposure: "hidden", toolExposure: { search: "direct" } } });
+    const response = await service.list(cwd);
+    expect(response.errors).toEqual([]);
+    expect(response.servers[0]?.overridden).toBe(true);
+    expect(response.servers[1]).toMatchObject({ enabled: false, transport: "stdio", exposure: "hidden" });
+    expect(loadMcpConfig({ agentDir, cwd, projectTrusted: true }).errors).toEqual([]);
+  });
+
+  it.each([
+    { base: undefined, override: { enabled: false } },
+    { base: { command: "unused", enabled: "secret-invalid" }, override: { enabled: false } },
+    { base: { command: "unused" }, override: { enabled: "secret-invalid" } },
+    { base: { command: "unused" }, override: { enabled: false, headers: { Authorization: "secret-invalid" } } },
+    { base: { command: "unused" }, override: { exposure: "secret-invalid" } },
+    { base: { command: "unused" }, override: { toolExposure: { search: "secret-invalid" } } },
+  ])("rejects invalid or orphan project overrides without rewriting them: %j", async ({ base, override }) => {
+    new ProjectTrustStore(agentDir).set(cwd, true);
+    await config(userPath, base === undefined ? {} : { target: base });
+    await config(projectPath, { target: override });
+    const original = await readFile(projectPath, "utf8");
+    const response = await service.list(cwd);
+    expect(response.servers.find((server) => server.scope === "project")?.error).toBeDefined();
+    expect(response.servers.find((server) => server.scope === "user")?.overridden).not.toBe(true);
+    expect(JSON.stringify(response)).not.toContain("secret-invalid");
+    expect(loadMcpConfig({ agentDir, cwd, projectTrusted: true }).errors.length).toBeGreaterThan(0);
+    const toggle = service.setEnabled("target", "project", true, cwd);
+    await expect(toggle).rejects.toMatchObject({ statusCode: 400 });
+    await expect(toggle).rejects.toThrow(expect.not.stringContaining("secret-invalid"));
+    expect(await readFile(projectPath, "utf8")).toBe(original);
   });
 
   it("honors inherited saved trust and does not let an invalid project entry override", async () => {
@@ -422,6 +485,40 @@ describe("MCP invalid configuration and requests", () => {
     expect(response.errors.length).toBeGreaterThan(0);
     expect(JSON.stringify(response)).not.toMatch(/secret-[a-z-]+/u);
     expect(await readFile(projectPath, "utf8")).toBe(text);
+  });
+
+  it.each([
+    { oauth: {}, valid: true },
+    { oauth: { clientRegistration: "dcr", clientId: "secret-client", clientName: "Client" }, valid: true },
+    { oauth: { clientRegistration: "cimd" }, valid: true },
+    { oauth: { clientRegistration: "cimd", callbackUrl: "http://localhost:1234/callback", callbackPort: 1234 }, valid: true },
+    { oauth: { clientRegistration: "cimd", callbackUrl: "http://127.0.0.1/callback", clientSecret: "secret-client" }, valid: true },
+    { oauth: { clientRegistration: "secret-registration" }, valid: false },
+    { oauth: { clientRegistration: 42 }, valid: false },
+    { oauth: { clientRegistration: "cimd", clientId: "secret-client" }, valid: false },
+    { oauth: { clientRegistration: "cimd", clientId: "" }, valid: false },
+    { oauth: { clientRegistration: "cimd", clientName: "secret-client" }, valid: false },
+    { oauth: { clientRegistration: "cimd", callbackUrl: "http://[::1]/callback" }, valid: false },
+    { oauth: { clientRegistration: "cimd", callbackUrl: "http://localhost/secret-path" }, valid: false },
+    { oauth: { clientName: "  " }, valid: false },
+    { oauth: { clientRegistration: "dcr", callbackUrl: "http://[::1]/other-path" }, valid: true },
+  ])("matches Pi OAuth registration validation and keeps values private: %j", async ({ oauth, valid }) => {
+    const entry = { url: "https://example.test/mcp", oauth };
+    await config(userPath, { target: entry });
+    const original = await readFile(userPath, "utf8");
+    const response = await service.list();
+    expect(response.errors.length === 0).toBe(valid);
+    expect(loadMcpConfig({ agentDir, cwd, projectTrusted: false }).errors.length === 0).toBe(valid);
+    expect(JSON.stringify(response)).not.toContain("secret-");
+    if (valid) {
+      await service.setEnabled("target", "user", false);
+      expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({ mcpServers: { target: { ...entry, enabled: false } } });
+    } else {
+      const toggle = service.setEnabled("target", "user", false);
+      await expect(toggle).rejects.toMatchObject({ statusCode: 400 });
+      await expect(toggle).rejects.toThrow(expect.not.stringContaining("secret-"));
+      expect(await readFile(userPath, "utf8")).toBe(original);
+    }
   });
 
   it.each(["", "bad.name", "../target", "__proto__", "constructor", "prototype"])("rejects unsafe server name %s", async (name) => {

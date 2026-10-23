@@ -24,6 +24,7 @@ interface ConfigFile {
   text?: string;
   root?: Record<string, unknown>;
   entries: Record<string, unknown>;
+  acceptedConfigs: Map<string, Record<string, unknown>>;
   servers: McpServerInfo[];
   errors: string[];
 }
@@ -51,7 +52,7 @@ export class FileMcpConfigService implements McpConfigService {
     const namespaces = projectTrusted
       ? new Map(user.servers.filter((server) => server.error === undefined).map((server) => [server.name.replace(/-/gu, "_"), server.name]))
       : undefined;
-    const project = await readConfig(join(cwd, ".pi", "mcp.json"), "project", namespaces);
+    const project = await readConfig(join(cwd, ".pi", "mcp.json"), "project", namespaces, user.acceptedConfigs);
     return responseFor(user, project, projectTrusted);
   }
 
@@ -66,7 +67,8 @@ export class FileMcpConfigService implements McpConfigService {
       // Join Pi's canonical-path queue used by session edit/write tools, while
       // retaining our same-instance queue (including its rejection recovery).
       await withFileMutationQueue(path, async () => {
-        const file = await readConfig(path, scope);
+        const user = scope === "project" ? await readConfig(this.userConfigPath, "user") : undefined;
+        const file = await readConfig(path, scope, undefined, user?.acceptedConfigs);
         // Never rewrite malformed documents, but a broken sibling must not stop
         // the user disabling a valid server. Unrelated invalid values stay intact.
         if (file.root === undefined && file.text !== undefined) throw new McpConfigError(file.errors[0] ?? "Invalid MCP configuration", 400);
@@ -112,8 +114,13 @@ function requireCwd(cwd: string): void {
   if (typeof cwd !== "string" || cwd.trim() === "") throw new McpConfigError("MCP workspace directory must be non-empty", 400);
 }
 
-async function readConfig(path: string, scope: McpConfigScope, namespaces = new Map<string, string>()): Promise<ConfigFile> {
-  const file: ConfigFile = { path, scope, entries: {}, servers: [], errors: [] };
+async function readConfig(
+  path: string,
+  scope: McpConfigScope,
+  namespaces = new Map<string, string>(),
+  baseConfigs = new Map<string, Record<string, unknown>>(),
+): Promise<ConfigFile> {
+  const file: ConfigFile = { path, scope, entries: {}, acceptedConfigs: new Map(baseConfigs), servers: [], errors: [] };
   try {
     file.text = await readFile(path, "utf8");
   } catch (error) {
@@ -144,12 +151,25 @@ async function readConfig(path: string, scope: McpConfigScope, namespaces = new 
       file.errors.push(`${scope} MCP configuration contains an invalid server name`);
       continue;
     }
-    let error = validateServer(raw, scope);
+    // Pi merges transport-less project entries into the accepted global config.
+    // Keep that effective view separate from entries: writes must only change enabled.
+    const override = scope === "project" && isRecord(raw)
+      && raw["command"] === undefined && raw["url"] === undefined && raw["type"] === undefined;
+    const base = file.acceptedConfigs.get(name);
+    const effective = override && base !== undefined ? { ...base, ...raw } : raw;
+    let error = override && base === undefined
+      ? "Project override requires a valid user MCP server with the same name"
+      : override && Object.keys(raw).some((key) => !["enabled", "exposure", "toolExposure"].includes(key))
+        ? "Project override can only set enabled, exposure, and toolExposure"
+        : validateServer(effective, override ? "user" : scope);
     const namespace = name.replace(/-/gu, "_");
     const acceptedName = namespaces.get(namespace);
     if (error === undefined && acceptedName !== undefined && acceptedName !== name) error = "Server names must have distinct tool namespaces";
-    if (error === undefined) namespaces.set(namespace, name);
-    const value = isRecord(raw) ? raw : {};
+    if (error === undefined && isRecord(effective)) {
+      namespaces.set(namespace, name);
+      file.acceptedConfigs.set(name, effective);
+    }
+    const value = isRecord(effective) ? effective : {};
     file.servers.push({
       name,
       scope,
@@ -223,6 +243,10 @@ function validateServer(raw: unknown, scope: McpConfigScope): string | undefined
       for (const key of ["clientId", "clientSecret", "scope", "clientName"]) {
         if (oauth[key] !== undefined && typeof oauth[key] !== "string") return "OAuth client fields must be strings";
       }
+      if (typeof oauth["clientName"] === "string" && oauth["clientName"].trim() === "") return "oauth.clientName must be a non-empty string";
+      const registration = oauth["clientRegistration"];
+      if (registration !== undefined && registration !== "dcr" && registration !== "cimd") return 'oauth.clientRegistration must be "dcr" or "cimd"';
+      if (registration === "cimd" && (oauth["clientId"] !== undefined || oauth["clientName"] !== undefined)) return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
       const port = oauth["callbackPort"];
       if (port !== undefined && (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)) return "oauth.callbackPort must be a valid port";
       const callback = oauth["callbackUrl"];
@@ -230,6 +254,7 @@ function validateServer(raw: unknown, scope: McpConfigScope): string | undefined
         const callbackUrl = httpUrl(callback);
         if (callbackUrl?.protocol !== "http:" || !isLoopback(callbackUrl) || callbackUrl.search !== "" || callbackUrl.hash !== "") return "oauth.callbackUrl must be an HTTP loopback URL without query or fragment";
         if (callbackUrl.port !== "" && port !== undefined && Number(callbackUrl.port) !== port) return "OAuth callback ports must match";
+        if (registration === "cimd" && (callbackUrl.hostname === "[::1]" || callbackUrl.pathname !== "/callback")) return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback';
       }
       const metadata = oauth["authServerMetadataUrl"];
       if (metadata !== undefined) {

@@ -79,7 +79,7 @@ function text(panel: SettingsMcpPanel): string {
 }
 
 function checkButton(panel: SettingsMcpPanel): HTMLButtonElement {
-  return required(panel.shadowRoot?.querySelector("button"));
+  return required(panel.shadowRoot?.querySelector('button[aria-describedby="mcp-check-help"]'));
 }
 
 function toggle(panel: SettingsMcpPanel, index = 0): HTMLInputElement {
@@ -450,6 +450,56 @@ function action(panel: SettingsMcpPanel, label: string): HTMLButtonElement {
 }
 
 describe("MCP settings DOM", () => {
+  it("names the independent sections and links the connection action to its safety warning", async () => {
+    const panel = await mount();
+    expect(frame(panel).heading).toBe("MCP servers");
+    expect(authFrame(panel).heading).toBe("MCP authentication");
+    const descriptionId = required(checkButton(panel).getAttribute("aria-describedby"));
+    const warning = required(panel.shadowRoot?.getElementById(descriptionId));
+    expect(warning.textContent).toContain("temporarily starts enabled local servers");
+    expect(warning.textContent).toContain("Check only configurations you trust");
+    expect(warning.closest("details")).toBeNull();
+    expect(panel.shadowRoot?.querySelector('select[aria-label="MCP configuration scope"]')?.closest("label")?.textContent).toContain("Configuration scope");
+  });
+
+  it("keeps scoped configuration usable while session authentication loads and fails", async () => {
+    const authRequest = deferred<{ servers: { name: string }[] }>();
+    vi.mocked(api.mcpAuthServers).mockReturnValueOnce(authRequest.promise);
+    const apiClient = client();
+    const panel = await mount(apiClient);
+    panel.context = context;
+    await settle(panel);
+    expect(refresh(panel).disabled).toBe(true);
+    expect(checkButton(panel).disabled).toBe(false);
+    await selectScope(panel, "workspace");
+    toggle(panel).click();
+    await settle(panel);
+    expect(apiClient.setEnabled).toHaveBeenCalledExactlyOnceWith("catalog", "user", false, "remote-a", { projectId: "p1", workspaceId: "w1" });
+    expect(api.mcpAuthServers).toHaveBeenCalledExactlyOnceWith(context.session, context.machineId);
+
+    authRequest.reject(new Error("Session unavailable"));
+    await settle(panel);
+    expect(authFrame(panel).shadowRoot?.querySelector('[role="alert"]')?.textContent).toContain("Session unavailable");
+    expect(frame(panel).shadowRoot?.querySelector('[role="alert"]')).toBeNull();
+    expect(text(panel)).toContain("Configuration saved.");
+    checkButton(panel).click();
+    await settle(panel);
+    expect(apiClient.check).toHaveBeenCalledExactlyOnceWith("remote-a", { projectId: "p1", workspaceId: "w1" });
+    expect(authFrame(panel).notices[0]?.content).toContain("Session unavailable");
+  });
+
+  it("does not send authentication from stale controls before a context change renders", async () => {
+    vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs" }] });
+    const panel = await mountAuth();
+    panel.context = { ...context, session: { id: "new-session", cwd: "/new" } };
+    action(panel, "Login to docs").click();
+    action(panel, "Logout from docs").click();
+    expect(panel.onMcpAuth).not.toHaveBeenCalled();
+    await settle(panel);
+    action(panel, "Login to docs").click();
+    expect(panel.onMcpAuth).toHaveBeenCalledExactlyOnceWith("login", "docs", panel.context);
+  });
+
   it("keeps configuration checks and session authentication independent", async () => {
     vi.mocked(api.mcpAuthServers).mockResolvedValue({ servers: [{ name: "docs" }] });
     const apiClient = client();

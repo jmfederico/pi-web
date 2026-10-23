@@ -128,13 +128,21 @@ describe("Pi MCP diagnostics integration", () => {
     const marker = join(root, "started");
     await writeFile(join(workspace, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { project_tools: { command: process.execPath, args: ["-e", `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started'); process.exit(1)`] } } }));
     const checker = new McpCheckService({ agentDir: profile });
-    const ignored = await checker.check(workspace);
-    expect(ignored.servers).toEqual([]);
-    expect(ignored.note).toContain("no saved trust decision");
-    await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    // CLI requires saved trust even when sessions default to trusting projects.
+    await writeFile(join(profile, "settings.json"), JSON.stringify({ defaultProjectTrust: "always" }));
+    for (const saved of [null, false]) {
+      if (saved !== null) new ProjectTrustStore(profile).set(workspace, saved);
+      const ignored = await checker.check(workspace);
+      expect(ignored.servers).toEqual([]);
+      expect(ignored.note).toContain("Pi CLI does not consider this workspace trusted");
+      expect(ignored.note).not.toContain("no saved trust decision");
+      expect(ignored.note).not.toContain(workspace);
+      await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    }
     new ProjectTrustStore(profile).set(workspace, true);
     const checked = await checker.check(workspace);
     expect(checked.servers).toEqual([expect.objectContaining({ name: "project_tools", scope: "project", state: "failed" })]);
+    expect(checked.note).not.toContain("workspace trusted");
     expect(await readFile(marker, "utf8")).toBe("started");
   }, 15_000);
 });

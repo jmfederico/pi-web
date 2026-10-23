@@ -7,6 +7,8 @@ import { friendlySelectedMachineSettingsErrorMessage, settingsMachineTarget, set
 import { stylesheetIntegrationCapability } from "../../plugins/styles";
 import { uiButtonStyles } from "../ui/controlStyles";
 import { uiSettingsStyles } from "../ui/settingsStyles";
+import { uiFormStyles } from "../ui/formStyles";
+import { uiNoticeStyles } from "../ui/noticeStyles";
 import "./SettingsPanelFrame";
 import type { SettingsNotice } from "./SettingsPanelFrame";
 
@@ -36,7 +38,6 @@ export class SettingsMcpPanel extends LitElement {
   @state() private loading = false;
   @state() private authError = "";
   private generation = 0;
-
 
   @property({ attribute: false }) machine: Machine | undefined;
   @property({ attribute: false }) workspace: Workspace | undefined;
@@ -93,22 +94,25 @@ export class SettingsMcpPanel extends LitElement {
         .onAction=${() => this.load()}
         .notices=${this.notices()}
       >
-        <div class="toolbar">
-          <label>Configuration scope
-            <select aria-label="MCP configuration scope" .value=${this.selection} @change=${(event: Event) => { this.selectScope(event); }}>
+        <section class="ui-settings-section">
+          <label class="ui-form-field">Configuration scope
+            <select class="ui-select" aria-label="MCP configuration scope" .value=${live(this.selection)} @change=${(event: Event) => { this.selectScope(event); }}>
               <option value="machine">Machine-wide</option>
               ${this.workspace === undefined ? nothing : html`<option value="workspace">Selected workspace</option>`}
             </select>
           </label>
-          <button title="Temporarily start enabled local servers or connect to their services" ?disabled=${busy || this.response === undefined} @click=${() => { void this.check(); }}>
-            ${this.operation === "check" ? "Checking connections…" : "Check connections"}
-          </button>
-        </div>
-        ${this.selection === "workspace" ? html`<p>Selected workspace: ${this.workspace?.label}</p>` : nothing}
-        <p class="help">New sessions pick up saved configuration. Run <code>/reload</code> in each idle session to reload it there. Disabling configuration does not stop connections in other already-running sessions.</p>
+          ${this.selection === "workspace" ? html`<p>Selected workspace: ${this.workspace?.label}</p>` : nothing}
+          <div class="ui-settings-actions">
+            <button type="button" class="ui-button ui-button--action" aria-describedby="mcp-check-help" ?disabled=${busy || this.response === undefined} @click=${() => { void this.check(); }}>
+              ${this.operation === "check" ? "Checking connections…" : "Check connections"}
+            </button>
+          </div>
+          <p id="mcp-check-help" class="ui-notice warning">Check connections temporarily starts enabled local servers or connects to their services. Check only configurations you trust. This does not show live session status.</p>
+          <p class="help">New sessions pick up saved configuration. Run <code>/reload</code> in each idle session to reload it there. Disabling configuration does not stop connections in other already-running sessions.</p>
+        </section>
         ${this.renderConfiguration()}
         ${this.renderCheck()}
-        <details class="help">
+        <details class="ui-settings-section help">
           <summary>Setup and connection checks</summary>
           <p>Credentials remain in Pi files. To add, edit, or remove servers, use <code>pi mcp add</code> / <code>pi mcp remove</code> on this machine or edit those files; this panel only saves enabled flags.</p>
           <p>Use <code>/mcp</code> to inspect session status, or <code>/mcp reconnect &lt;name&gt;</code> to reconnect.</p>
@@ -147,6 +151,7 @@ export class SettingsMcpPanel extends LitElement {
 
   private async authenticate(mode: "login" | "logout", serverName: string, context: McpAuthContext): Promise<void> {
     const generation = this.generation;
+    if (!this.isCurrent(generation, context)) return;
     try {
       await this.onMcpAuth?.(mode, serverName, context);
     } catch (error) {
@@ -160,7 +165,7 @@ export class SettingsMcpPanel extends LitElement {
     };
     return html`
       <settings-panel-frame
-        heading="MCP"
+        heading="MCP authentication"
         .description=${"Manage authentication for enabled MCP servers that support OAuth in the selected session."}
         actionLabel="Refresh servers"
         .actionDisabled=${context === undefined || this.loading}
@@ -189,8 +194,8 @@ export class SettingsMcpPanel extends LitElement {
                       ${server.description === undefined ? null : html`<p class="server-description">${server.description}</p>`}
                     </div>
                     <div class="ui-settings-actions">
-                      <button class="ui-button ui-button--action" aria-label=${`Login to ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("login", server.name, context); }}>Login</button>
-                      <button class="ui-button ui-button--action" aria-label=${`Logout from ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("logout", server.name, context); }}>Logout</button>
+                      <button type="button" class="ui-button ui-button--action" aria-label=${`Login to ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("login", server.name, context); }}>Login</button>
+                      <button type="button" class="ui-button ui-button--action" aria-label=${`Logout from ${server.name}`} ?disabled=${this.onMcpAuth === undefined} @click=${() => { void this.authenticate("logout", server.name, context); }}>Logout</button>
                     </div>
                   </li>
                 `)}
@@ -215,35 +220,38 @@ export class SettingsMcpPanel extends LitElement {
 
   private renderConfiguration(): TemplateResult {
     if (this.response === undefined) {
-      return html`<p role="status">${this.operation === "load" ? "Loading MCP configuration…" : "MCP configuration unavailable. Refresh configuration to try again."}</p>`;
+      return html`<section class="ui-settings-section"><p role="status">${this.operation === "load" ? "Loading MCP configuration…" : "MCP configuration unavailable. Refresh configuration to try again."}</p></section>`;
     }
     return html`
-      <section aria-label="MCP configuration">
-        <p>User config: <code>${this.response.userConfigPath}</code></p>
-        ${this.response.projectConfigPath === undefined ? nothing : html`<p>Project config: <code>${this.response.projectConfigPath}</code></p>`}
-        ${this.response.servers.length === 0 ? html`<p>No MCP servers configured.</p>` : this.response.servers.map((server) => this.renderServer(server))}
+      <section class="ui-settings-list" aria-label="MCP configuration">
+        <div class="ui-settings-section">
+          <div class="ui-settings-path"><span>User config:</span> <code>${this.response.userConfigPath}</code></div>
+          ${this.response.projectConfigPath === undefined ? nothing : html`<div class="ui-settings-path"><span>Project config:</span> <code>${this.response.projectConfigPath}</code></div>`}
+          ${this.response.servers.length === 0 ? html`<p>No MCP servers configured.</p>` : nothing}
+        </div>
+        ${this.response.servers.map((server) => this.renderServer(server))}
       </section>
     `;
   }
 
   private renderServer(server: McpServerInfo): TemplateResult {
     return html`
-      <article class="card" aria-label=${`${server.scope} MCP server ${server.name}`}>
-        <div class="toolbar">
-          <strong>${server.name}</strong>
-          <label><input type="checkbox" aria-label=${`Enabled: ${server.scope} MCP server ${server.name}`}
+      <article class="ui-settings-section" aria-label=${`${server.scope} MCP server ${server.name}`}>
+        <div class="server-heading">
+          <div class="ui-settings-heading"><h3>${server.name}</h3></div>
+          <label class="ui-checkbox-field"><input type="checkbox" aria-label=${`Enabled: ${server.scope} MCP server ${server.name}`}
             .checked=${live(server.enabled)}
             ?disabled=${this.operation !== undefined || !canToggle(server)}
             @change=${(event: Event) => { if (event.currentTarget instanceof HTMLInputElement) void this.setEnabled(server, event.currentTarget.checked); }}
           > Enabled</label>
         </div>
         <p>Scope: ${server.scope} · ${server.enabled ? "Enabled" : "Disabled"} · Transport: ${server.transport}</p>
-        <p>Source: <code>${server.source}</code></p>
+        <div class="ui-settings-path"><span>Source:</span> <code>${server.source}</code></div>
         ${server.description === undefined ? nothing : html`<p>${server.description}</p>`}
         <p>Exposure: ${server.exposure}</p>
-        ${server.overridden ? html`<p class="warning">Overridden by project configuration; this user entry is not effective and cannot be toggled here.</p>` : nothing}
-        ${server.error === undefined ? nothing : html`<p role="alert">${server.error}</p>`}
-        ${server.transport === "unknown" && server.error === undefined ? html`<p role="alert">Invalid or unknown transport; fix the Pi configuration before toggling.</p>` : nothing}
+        ${server.overridden ? html`<p class="ui-notice warning">Overridden by project configuration; this user entry is not effective and cannot be toggled here.</p>` : nothing}
+        ${server.error === undefined ? nothing : html`<p class="ui-notice error" role="alert">${server.error}</p>`}
+        ${server.transport === "unknown" && server.error === undefined ? html`<p class="ui-notice error" role="alert">Invalid or unknown transport; fix the Pi configuration before toggling.</p>` : nothing}
         <p>Inspect status with <code>/mcp</code> in a session. To reconnect: <code>${`/mcp reconnect ${server.name}`}</code></p>
       </article>
     `;
@@ -252,16 +260,19 @@ export class SettingsMcpPanel extends LitElement {
   private renderCheck(): TemplateResult | typeof nothing {
     if (this.checkResponse === undefined) return nothing;
     return html`
-      <section aria-label="Temporary MCP connection test" aria-live="polite">
-        <h3>Temporary connection test — not live session status</h3>
-        <p>Checked: ${this.checkResponse.checkedAt}</p>
-        ${this.checkResponse.note === undefined ? nothing : html`<p>${this.checkResponse.note}</p>`}
-        ${this.checkResponse.errors.map((error) => html`<p role="alert">${error}</p>`)}
-        ${this.checkResponse.servers.length === 0 ? html`<p>No connections tested.</p>` : this.checkResponse.servers.map((server) => html`
-          <article class="card">
-            <strong>${server.name}</strong>
+      <section class="ui-settings-list" aria-label="Temporary MCP connection test" aria-live="polite">
+        <div class="ui-settings-section">
+          <div class="ui-settings-heading"><h3>Temporary connection test — not live session status</h3></div>
+          <p>Checked: ${this.checkResponse.checkedAt}</p>
+          ${this.checkResponse.note === undefined ? nothing : html`<p>${this.checkResponse.note}</p>`}
+          ${this.checkResponse.errors.map((error) => html`<p class="ui-notice error" role="alert">${error}</p>`)}
+          ${this.checkResponse.servers.length === 0 ? html`<p>No connections tested.</p>` : nothing}
+        </div>
+        ${this.checkResponse.servers.map((server) => html`
+          <article class="ui-settings-section">
+            <div class="ui-settings-heading"><h3>${server.name}</h3></div>
             <p>Scope: ${server.scope} · Status: ${server.state}</p>
-            ${server.error === undefined ? nothing : html`<p role="alert">${server.error}</p>`}
+            ${server.error === undefined ? nothing : html`<p class="ui-notice error" role="alert">${server.error}</p>`}
             <p>Tools (${server.tools.length}): ${server.tools.length === 0 ? "None" : nothing}</p>
             <ul>${server.tools.map((tool) => html`<li><code>${tool}</code></li>`)}</ul>
             ${server.state === "needs-auth" ? html`<p>Inspect session status with <code>/mcp</code> inside a session.</p>` : nothing}
@@ -341,23 +352,16 @@ export class SettingsMcpPanel extends LitElement {
     }
   }
 
-  static override styles = [uiButtonStyles, uiSettingsStyles, css`
+  static override styles = [uiButtonStyles, uiFormStyles, uiSettingsStyles, uiNoticeStyles, css`
     :host { display: block; }
     .session-context { overflow-wrap: anywhere; }
     .server-list { margin: 0; padding: 0; list-style: none; }
     .server-copy { flex: 1 1 240px; min-width: 0; }
     .server-description { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-    label { display: flex; align-items: center; gap: 8px; }
-    button, select { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; font: inherit; }
-    button { cursor: pointer; }
-    button:disabled, input:disabled { opacity: .55; cursor: not-allowed; }
+    .server-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
     .help { color: var(--pi-muted); }
-    p { margin: 8px 0; line-height: 1.45; }
-    .card { border: 1px solid var(--pi-border); border-radius: 10px; padding: 12px; margin: 12px 0; }
-    .warning { background: var(--pi-warning-surface); border: 1px solid var(--pi-warning-border); border-radius: 8px; padding: 8px; }
-    [role="alert"] { color: var(--pi-danger); }
-    h3 { font-size: 15px; }
+    p, ul { margin: 0; line-height: 1.45; }
+    article { overflow-wrap: anywhere; }
     code { overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   `];
 }

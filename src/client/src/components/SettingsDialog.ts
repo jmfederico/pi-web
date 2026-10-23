@@ -6,6 +6,7 @@ import { live } from "lit/directives/live.js";
 import type { AppAction } from "../actions";
 import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type SessionModel, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse, type Workspace } from "../api";
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
+import "./settings/SettingsMcpPanel";
 import type { SettingsSection } from "../settingsRoute";
 import "./ModalSurface";
 import type { ModalSurface } from "./ModalSurface";
@@ -81,9 +82,6 @@ export class SettingsDialog extends LitElement {
   @state() private savedMessage = "";
   @state() private savedSection: SettingsSection | undefined;
   @state() private packageMessage = "";
-  @state() private mcpPanelReady = false;
-  @state() private mcpPanelError = "";
-  private mcpPanelLoading = false;
   private savedMessageTimer: number | undefined;
   private loadRequestSeq = 0;
   private accessLoadRequestSeq = 0;
@@ -109,7 +107,6 @@ export class SettingsDialog extends LitElement {
   }
 
   protected override updated(changed: PropertyValues<this>): void {
-    if (this.section === "mcp") void this.loadMcpPanel();
     if (changed.has("section")) {
       // The surface must render its slot before the mobile tab row has layout.
       const surface = this.renderRoot.querySelector<ModalSurface>("modal-surface");
@@ -247,8 +244,6 @@ export class SettingsDialog extends LitElement {
     // `activeSettingsPanelTag` seam below, which tests assert against instead of
     // scraping this template's markup.
     if (this.section === "mcp") {
-      if (this.mcpPanelError !== "") return html`<p role="alert">${this.mcpPanelError}</p>`;
-      if (!this.mcpPanelReady) return html`<p role="status">Loading MCP settings…</p>`;
       const target = this.settingsTarget();
       const machine = this.selectedSettingsMachine(this.machines, this.machine, this.settingsMachineId);
       return html`
@@ -356,19 +351,6 @@ export class SettingsDialog extends LitElement {
         ></settings-theme-panel>
       </settings-general-panel>
     `;
-  }
-
-  private async loadMcpPanel(): Promise<void> {
-    if (this.mcpPanelReady || this.mcpPanelLoading || this.mcpPanelError !== "") return;
-    this.mcpPanelLoading = true;
-    try {
-      await import("./settings/SettingsMcpPanel");
-      this.mcpPanelReady = true;
-    } catch (error) {
-      this.mcpPanelError = `Failed to load MCP settings: ${errorMessage(error)}`;
-    } finally {
-      this.mcpPanelLoading = false;
-    }
   }
 
   private renderNavButton(section: SettingsSection, label: string, detail: string): TemplateResult {

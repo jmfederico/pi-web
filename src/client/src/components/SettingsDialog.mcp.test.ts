@@ -25,7 +25,6 @@ afterEach(() => {
 async function settle(dialog: SettingsDialog): Promise<void> {
   await dialog.updateComplete;
   await dialog.updateComplete;
-  if (dialog.section === "mcp") await vi.waitFor(() => { expect(dialog.shadowRoot?.querySelector("settings-mcp-panel")).not.toBeNull(); });
   const panel = dialog.shadowRoot?.querySelector("settings-mcp-panel");
   await panel?.updateComplete;
   await panel?.updateComplete;
@@ -85,6 +84,30 @@ describe("settings MCP integration", () => {
     expect(dialog.machine).toBe(remoteMachine);
     await selectMachine(dialog, remoteMachine.id);
     expect(api.mcpAuthServers).toHaveBeenCalledExactlyOnceWith(dialog.mcpContext?.session, remoteMachine.id);
+  });
+
+  it("configures the chosen machine without carrying another machine's workspace scope", async () => {
+    const dialog = await mount();
+    const workspace = { id: "w1", projectId: "p1", path: "/workspace/a", label: "Repo", isMain: true, effectiveConfig: {} };
+    dialog.workspace = workspace;
+    await settle(dialog);
+    const scope = panel(dialog).shadowRoot?.querySelector<HTMLSelectElement>('select[aria-label="MCP configuration scope"]');
+    if (!scope) throw new Error("Missing configuration scope");
+    scope.value = "workspace";
+    scope.dispatchEvent(new Event("change", { bubbles: true }));
+    await settle(dialog);
+    expect(mcpApi.list).toHaveBeenLastCalledWith(remoteMachine.id, { projectId: "p1", workspaceId: "w1" });
+
+    await selectMachine(dialog, secondRemoteMachine.id);
+    expect(panel(dialog).machine).toBe(secondRemoteMachine);
+    expect(panel(dialog).workspace).toBeUndefined();
+    expect(panel(dialog).shadowRoot?.querySelector('option[value="workspace"]')).toBeNull();
+    expect(mcpApi.list).toHaveBeenLastCalledWith(secondRemoteMachine.id, undefined);
+    expect(dialog.workspace).toBe(workspace);
+
+    await selectMachine(dialog, remoteMachine.id);
+    expect(panel(dialog).workspace).toBe(workspace);
+    expect(mcpApi.list).toHaveBeenLastCalledWith(remoteMachine.id, undefined);
   });
 
   it("removes controls when the parent withdraws an archived or missing session", async () => {

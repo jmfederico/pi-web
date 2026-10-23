@@ -67,7 +67,7 @@ function parseCheckReport(text: string, checkedAt: string): McpCheckResponse {
   if (note !== undefined && typeof note !== "string") throw new Error("Invalid MCP connection check note");
   const errors = value["errors"].length === 0 ? [] : ["Pi reported MCP configuration errors. Run pi mcp list on this machine for detailed diagnostics."];
   const notes = [
-    ...(note === undefined ? [] : ["Project MCP configuration was skipped because Pi has no saved trust decision for this workspace."]),
+    ...(note === undefined ? [] : ["Project MCP configuration was skipped because Pi CLI does not consider this workspace trusted."]),
     "Pi CLI checks do not use auth.provider credentials. Provider-auth servers may report needs-auth even when they work in a session; use /mcp in that session to verify them.",
   ];
   return { checkedAt, servers, errors, note: notes.join(" ") };

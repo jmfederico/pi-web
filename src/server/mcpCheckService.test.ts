@@ -38,7 +38,7 @@ describe("McpCheckService", () => {
         { name: "sentry", scope: "project", state: "needs-auth", tools: [], error: "Authentication required for this temporary check." },
       ],
       errors: [],
-      note: "Project MCP configuration was skipped because Pi has no saved trust decision for this workspace. Pi CLI checks do not use auth.provider credentials. Provider-auth servers may report needs-auth even when they work in a session; use /mcp in that session to verify them.",
+      note: "Project MCP configuration was skipped because Pi CLI does not consider this workspace trusted. Pi CLI checks do not use auth.provider credentials. Provider-auth servers may report needs-auth even when they work in a session; use /mcp in that session to verify them.",
     });
     expect(JSON.stringify(response)).not.toContain("secret");
     expect(JSON.stringify(response)).not.toContain("/mcp login");
@@ -54,12 +54,15 @@ describe("McpCheckService", () => {
     expect(response.errors).toEqual(["Pi reported MCP configuration errors. Run pi mcp list on this machine for detailed diagnostics."]);
     expect(response.servers[0]?.error).toContain("Connection failed");
     expect(response.note).toContain("do not use auth.provider credentials");
+    expect(response.note).toContain("Pi CLI does not consider this workspace trusted");
+    expect(response.note).not.toContain("no saved trust decision");
   });
 
   it("checks user-wide configuration from a neutral profile cwd", async () => {
     const execute = vi.fn<(request: ServerPluginExecFileRequest) => Promise<ServerPluginExecFileResult>>(() => Promise.resolve(result(JSON.stringify({ servers: [], errors: [] }))));
-    await new McpCheckService({ agentDir: "/profile", execute }).check();
+    const response = await new McpCheckService({ agentDir: "/profile", execute }).check();
     expect(execute.mock.calls[0]?.[0]).toMatchObject({ cwd: "/profile" });
+    expect(response.note).not.toContain("workspace trusted");
   });
 
   it.each([
