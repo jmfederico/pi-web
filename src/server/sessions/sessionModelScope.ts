@@ -125,15 +125,18 @@ export function applyEnabledModelToggle(
 }
 
 /**
- * pi's persist normalization (`onPersist`): "everything enabled" collapses to
- * `undefined` (no scope). The comparison is exact — a list that covers the
- * whole catalog but also carries stale patterns stays a list, so those
- * patterns survive the edit.
+ * Persist normalization: "everything enabled" (the null state) collapses to
+ * `undefined` (no scope). A concrete list is always persisted as-is, even when
+ * it happens to cover the whole *current* catalog: the catalog churns between
+ * edits (models are added and removed upstream on every refresh), so treating
+ * accidental full coverage as "all enabled" silently deletes the user's
+ * selection and enables every model a later refresh discovers. Explicit
+ * "expose every model" intent reaches us as `null` via the scope endpoint and
+ * still collapses.
  */
-export function persistedEnabledModelPatterns(enabledIds: readonly string[] | null, availableIds: readonly string[]): string[] | undefined {
+export function persistedEnabledModelPatterns(enabledIds: readonly string[] | null): string[] | undefined {
   if (enabledIds === null) return undefined;
-  const allEnabled = enabledIds.length === availableIds.length && enabledIds.every((id) => availableIds.includes(id));
-  return allEnabled ? undefined : [...enabledIds];
+  return [...enabledIds];
 }
 
 /**

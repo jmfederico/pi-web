@@ -1905,12 +1905,12 @@ export class PiSessionService implements SessionRouteService {
     available: readonly AgentModel[],
     enabledIds: readonly string[] | null,
   ): void {
-    const availableIds = available.map(modelScopeId);
-    const persisted = persistedEnabledModelPatterns(enabledIds, availableIds);
+    const persisted = persistedEnabledModelPatterns(enabledIds);
     const nextState: ModelScopeSnapshot = {
-      // Pi normalizes a scope covering the complete current catalog to an
-      // omitted setting, which is the global canonical all-enabled state.
-      enabledIds: persisted === undefined ? null : enabledIds === null ? [] : [...enabledIds],
+      // The explicit all-enabled intent (`null`) collapses to the omitted
+      // setting; a concrete list is persisted verbatim so catalog churn cannot
+      // silently widen the selection.
+      enabledIds: persisted === undefined || enabledIds === null ? null : [...enabledIds],
       revision: ++this.modelScopeRevision,
     };
     session.settingsManager.setEnabledModels(persisted);
