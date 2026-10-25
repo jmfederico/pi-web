@@ -2156,6 +2156,7 @@ export class PiWebApp extends LitElement {
     focusNavigationTarget: (target: NavigationFocusTarget) => { void this.focusNavigationTarget(target); },
     cancelKeyboardNavigation: () => { void this.openChatAndFocusComposer(); },
     moveProject: (project: Project, direction: -1 | 1) => { this.moveNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, direction); },
+    reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => { this.reorderNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, neighbor.id, position); },
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => { this.moveNavigationItem({ kind: "workspaces", machineId: selectedMachineId(this.state), projectId: workspace.projectId }, workspace.id, direction); },
     pinSession: (session: SessionInfo) => { this.changeSessionPin(session, "pin"); },
     unpinSession: (session: SessionInfo) => { this.changeSessionPin(session, "unpin"); },
@@ -2181,12 +2182,22 @@ export class PiWebApp extends LitElement {
 
   private moveNavigationItem(scope: NavigationOrderScope, id: string, direction: -1 | 1): void {
     const items = scope.kind === "projects" ? this.state.projects : this.state.workspaces;
-    const visibleIds = items.map((item) => item.id);
-    void this.navigationOrder.mutate(scope, (ids) => {
-      const displayed = orderItems(visibleIds.map((id) => ({ id })), ids).map((item) => item.id);
-      const neighbor = displayed[displayed.indexOf(id) + direction];
-      return neighbor === undefined ? ids : moveOrderedId(ids, displayed, id, neighbor, direction < 0 ? "before" : "after");
-    }).catch(() => undefined);
+    const displayed = this.displayedNavigationIds(this.navigationOrder.ids(scope), items.map((item) => item.id));
+    const neighbor = displayed[displayed.indexOf(id) + direction];
+    if (neighbor === undefined) return;
+    this.reorderNavigationItem(scope, id, neighbor, direction < 0 ? "before" : "after");
+  }
+
+  /** Saved order first, then newcomers in their default order — matching what the sidebar shows. */
+  private displayedNavigationIds(savedIds: readonly string[], visibleIds: readonly string[]): string[] {
+    return orderItems(visibleIds.map((id) => ({ id })), savedIds).map((item) => item.id);
+  }
+
+  private reorderNavigationItem(scope: NavigationOrderScope, id: string, neighborId: string, placement: "before" | "after"): void {
+    const visibleIds = scope.kind === "projects"
+      ? this.state.projects.map((project) => project.id)
+      : this.state.workspaces.map((workspace) => workspace.id);
+    void this.navigationOrder.mutate(scope, (ids) => moveOrderedId(ids, this.displayedNavigationIds(ids, visibleIds), id, neighborId, placement)).catch(() => undefined);
   }
 
   private changeSessionPin(session: SessionInfo, action: "pin" | "unpin" | -1 | 1): void {
@@ -2255,6 +2266,7 @@ export class PiWebApp extends LitElement {
         .onSelectProject=${this.navigationActions.selectProject}
         .onCloseProject=${this.navigationActions.closeProject}
         .onMoveProject=${this.navigationActions.moveProject}
+        .onReorderProject=${this.navigationActions.reorderProject}
         .onMoveWorkspace=${this.navigationActions.moveWorkspace}
         .onPinSession=${this.navigationActions.pinSession}
         .onUnpinSession=${this.navigationActions.unpinSession}

@@ -162,10 +162,14 @@ export const listStyles = css`
   .section-toggle .section-selected { display: block; color: var(--pi-text); font-size: 12px; font-weight: 600; line-height: 1.25; text-transform: none; }
   .section-toggle .section-count { flex: 0 0 auto; display: inline; color: var(--pi-muted); font-size: inherit; }
   .section-toggle small { display: inline; color: inherit; font-size: inherit; }
-  .action-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: 6px 0; cursor: pointer; }
+  .action-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: 6px 0; cursor: pointer; -webkit-touch-callout: none; }
   .action-row:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; border-radius: 8px; }
   .action-row.selected .action-main { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
   .action-row.archived .action-main { color: var(--pi-muted); }
+  .action-row.dragging { opacity: 0.55; user-select: none; cursor: grabbing; }
+  .action-row.drop-before::before, .action-row.drop-after::after { content: ""; position: absolute; inset-inline: 0; z-index: 2; height: 2px; background: var(--pi-accent); pointer-events: none; }
+  .action-row.drop-before::before { top: 0; }
+  .action-row.drop-after::after { bottom: 0; }
   .action-main { position: relative; box-sizing: border-box; min-width: 0; width: 100%; border: 1px solid var(--pi-border); border-top-right-radius: 0; border-bottom-right-radius: 0; border-top-left-radius: 8px; border-bottom-left-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 22px 7px calc(9px + var(--depth, 0) * 16px); text-align: left; }
   .action-name { display: -webkit-box; max-height: 2.5em; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .action-row:not(.selected):hover .action-main { background: var(--pi-surface-hover); }

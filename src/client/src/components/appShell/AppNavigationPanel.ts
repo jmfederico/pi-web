@@ -74,6 +74,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onSelectProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onCloseProject?: (project: Project) => void | Promise<void>;
   @property({ attribute: false }) onMoveProject?: (project: Project, direction: -1 | 1) => void;
+  @property({ attribute: false }) onReorderProject?: (project: Project, neighbor: Project, position: "before" | "after") => void;
   @property({ attribute: false }) onMoveWorkspace?: (workspace: Workspace, direction: -1 | 1) => void;
   @property({ attribute: false }) onPinSession?: (session: SessionInfo) => void;
   @property({ attribute: false }) onUnpinSession?: (session: SessionInfo) => void;
@@ -169,6 +170,7 @@ export class AppNavigationPanel extends LitElement {
     selectProject: (project: Project) => this.onSelectProject?.(project),
     closeProject: (project: Project) => this.onCloseProject?.(project),
     moveProject: (project: Project, direction: -1 | 1) => this.onMoveProject?.(project, direction),
+    reorderProject: (project: Project, neighbor: Project, position: "before" | "after") => this.onReorderProject?.(project, neighbor, position),
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => this.onMoveWorkspace?.(workspace, direction),
     pinSession: (session: SessionInfo) => this.onPinSession?.(session),
     unpinSession: (session: SessionInfo) => this.onUnpinSession?.(session),
@@ -258,6 +260,7 @@ export class AppNavigationPanel extends LitElement {
         .onSelect=${this.childCallbacks.selectProject}
         .onClose=${this.childCallbacks.closeProject}
         .onMove=${this.childCallbacks.moveProject}
+        .onReorder=${this.childCallbacks.reorderProject}
         .onFocusPreviousSection=${this.childCallbacks.previousFromProjects}
         .onFocusNextSection=${this.childCallbacks.nextFromProjects}
         .onCancelKeyboardNavigation=${this.childCallbacks.cancelKeyboardNavigation}
