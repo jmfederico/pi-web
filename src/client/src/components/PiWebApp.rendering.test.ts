@@ -72,6 +72,11 @@ function panelToggle(app: PiWebApp, label: string): HTMLButtonElement {
   throw new Error(`Expected ${label}`);
 }
 
+function chatView(app: PiWebApp): ChatView | null {
+  const element = app.shadowRoot?.querySelector("chat-view");
+  return element instanceof ChatView ? element : null;
+}
+
 afterEach(async () => {
   document.body.replaceChildren();
   vi.useRealTimers();
@@ -289,8 +294,54 @@ describe("application rendering boundaries", () => {
     expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector("header")).not.toBeNull();
   });
 
+  it("floats the chrome while the transcript is on screen, even when a collapsed panel waits in it", async () => {
+    const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], selectedSession: session, mainView: "chat" }, () => html`<p>Tool content</p>`);
+    const shell: unknown = Reflect.get(app, "appShell");
+    if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
+    shell.isDesktopSideBySideLayout = true;
+    shell.isMobileNavigationLayout = false;
+    app.requestUpdate();
+    await settle(app);
+    // The expanded panel shows the tabs in its own header, so the top chrome may float away.
+    expect(chatView(app)?.chromePinned).toBe(false);
+
+    // The tabs move into the chrome, but the transcript stays on screen and an
+    // upward scroll brings them back, so the bar keeps following the reader.
+    panelToggle(app, "Collapse workspace panel").click();
+    await settle(app);
+    expect(app.shadowRoot?.querySelector("app-mobile-main-tabs")?.hasAttribute("panel-controls")).toBe(true);
+    expect(chatView(app)?.chromePinned).toBe(false);
+
+    panelToggle(app, "Expand workspace panel").click();
+    await settle(app);
+    expect(chatView(app)?.chromePinned).toBe(false);
+  });
+
+  it("pins the chrome only where the workspace view replaces the transcript", async () => {
+    const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], selectedSession: session, mainView: "chat" }, () => html`<p>Tool content</p>`);
+    const shell: unknown = Reflect.get(app, "appShell");
+    if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
+    shell.isDesktopSideBySideLayout = false;
+    shell.isMobileNavigationLayout = false;
+    app.requestUpdate();
+    await settle(app);
+    const layout = () => app.shadowRoot?.querySelector(".shell");
+    const tabs = () => [...app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot?.querySelectorAll<HTMLButtonElement>(".mobile-tabs button") ?? []];
+
+    // Reading the transcript: scrolling must stay in charge of the chrome.
+    expect(chatView(app)?.chromePinned).toBe(false);
+    tabs().find((button) => button.title === "Test")?.click();
+    await settle(app);
+    expect(layout()?.classList.contains("workspace-view")).toBe(true);
+    // The workspace view has no transcript to scroll the chrome back, so it stays.
+    expect(chatView(app)?.chromePinned).toBe(true);
+    tabs().find((button) => button.title === "Chat")?.click();
+    await settle(app);
+    expect(chatView(app)?.chromePinned).toBe(false);
+  });
+
   it.each([false, true])("uses only the shared tool tabs in a narrow layout (mobile: %s)", async (mobile) => {
-    const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], mainView: "workspace" }, () => html`<p>Tool content</p>`);
+    const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], selectedSession: session, mainView: "workspace" }, () => html`<p>Tool content</p>`);
     const shell: unknown = Reflect.get(app, "appShell");
     if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
     shell.isDesktopSideBySideLayout = false;
@@ -299,8 +350,29 @@ describe("application rendering boundaries", () => {
     await settle(app);
 
     expect(app.shadowRoot?.querySelector("app-mobile-main-tabs")?.shadowRoot?.querySelector('button[title="Test"]')).not.toBeNull();
+    // The strip is the only route to the tools in this layout, so the chrome
+    // must stay with it instead of following the transcript away.
+    const pinsChrome: unknown = Reflect.get(app, "pinsChatChrome");
+    if (typeof pinsChrome !== "function") throw new Error("Expected pinsChatChrome");
+    expect(pinsChrome.call(app)).toBe(true);
     expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.querySelector("header")).toBeNull();
     expect(app.shadowRoot?.querySelector("workspace-panel")?.shadowRoot?.textContent).toContain("Tool content");
+  });
+
+  it("leaves the chrome free to float when the mobile layout drops the strip", async () => {
+    const app = await mountApp({ selectedWorkspace: workspace, workspaces: [workspace], selectedSession: session, mainView: "chat" }, () => html`<p>Tool content</p>`);
+    const shell: unknown = Reflect.get(app, "appShell");
+    if (!(shell instanceof AppShellController)) throw new Error("Expected shell controller");
+    const preferences: unknown = Reflect.get(app, "navigationPreferences");
+    if (typeof preferences !== "object" || preferences === null) throw new Error("Expected navigation preferences");
+    shell.isDesktopSideBySideLayout = false;
+    shell.isMobileNavigationLayout = true;
+    Reflect.set(preferences, "mobileCollapsed", true);
+    app.requestUpdate();
+    await settle(app);
+
+    expect(app.shadowRoot?.querySelector("app-mobile-main-tabs")).toBeNull();
+    expect(chatView(app)?.chromePinned).toBe(false);
   });
 
   it("moves navigation collapse and expand actions between top bars without leaving buttons in resize rails", async () => {
@@ -712,12 +784,13 @@ describe("application rendering boundaries", () => {
     const chat = app.shadowRoot?.querySelector("chat-view");
     expect(chat?.hasAttribute("inert")).toBe(false);
     expect(chat?.shadowRoot?.textContent).not.toContain("Recently active in another PI-WEB instance");
-    expect(chat?.shadowRoot?.textContent).toContain("Ordinary runtime warning");
+    // Session warnings ride in the shell's auto-hiding top chrome, not the transcript.
+    expect(app.shadowRoot?.querySelector(".top-notices .session-warning")?.textContent).toContain("Ordinary runtime warning");
     const statusBar = app.shadowRoot?.querySelector<StatusBar>("status-bar");
     expect(statusBar?.warningCount).toBe(1);
     statusBar?.shadowRoot?.querySelector<HTMLButtonElement>(".warning-toggle")?.click();
     await settle(app);
-    expect(chat?.shadowRoot?.textContent).not.toContain("Ordinary runtime warning");
+    expect(app.shadowRoot?.querySelector(".top-notices .session-warning")).toBeNull();
     expect(app.shadowRoot?.querySelector(".composer-activity-notice")).toBe(notice);
     expect(editor.disabled).toBe(true);
 

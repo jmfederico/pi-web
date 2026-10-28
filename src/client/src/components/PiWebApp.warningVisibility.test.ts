@@ -5,13 +5,15 @@ import type { SessionInfo, SessionStatus } from "../api";
 import { initialAppState, type AppState } from "../appState";
 // Template inspection is proportionate here because this test verifies only the
 // sibling-component callback/property wiring in the existing unmounted harness.
-import { templateValueAfterMarker } from "../templateInspection.testSupport";
+import { templateText, templateValueAfterMarker } from "../templateInspection.testSupport";
 import { PiWebApp } from "./PiWebApp";
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+const warningText = "subscription auth is active";
 
 describe("PiWebApp session-warning visibility wiring", () => {
   it("keeps the warning control present and toggles the warning area from the status bar", () => {
@@ -20,47 +22,44 @@ describe("PiWebApp session-warning visibility wiring", () => {
     setAppState(app, state);
     syncWarningVisibility(app);
 
-    const visibleStatusBar = renderStatusBar(app, state);
-    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(true);
-    expect(templateValueAfterMarker(visibleStatusBar, ".warningCount=")).toBe(2);
-    expect(templateValueAfterMarker(visibleStatusBar, ".warningsExpanded=")).toBe(true);
+    expect(warningAreaRendered(app)).toBe(true);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningsExpanded=")).toBe(true);
 
-    const toggle = templateCallbackAfterMarker(visibleStatusBar, ".onToggleWarnings=");
-    toggle();
+    templateCallbackAfterMarker(renderStatusBar(app, state), ".onToggleWarnings=")();
 
-    const collapsedStatusBar = renderStatusBar(app, state);
-    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(false);
-    expect(templateValueAfterMarker(collapsedStatusBar, ".warningCount=")).toBe(2);
-    expect(templateValueAfterMarker(collapsedStatusBar, ".warningsExpanded=")).toBe(false);
+    expect(warningAreaRendered(app)).toBe(false);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningsExpanded=")).toBe(false);
 
+    // A session without status keeps the visibility it was last given, so the
+    // control must not flip to expanded just because no warnings arrived yet.
     const otherState = stateWithWarnings("session-2");
     setAppState(app, otherState);
     syncWarningVisibility(app);
-    expect(templateValueAfterMarker(renderChatView(app, otherState), ".warningsVisible=")).toBe(true);
+    expect(warningAreaRendered(app)).toBe(true);
+    expect(warningsCollapsed(app)).toBe(false);
 
     const returningState = { ...state, status: undefined };
     setAppState(app, returningState);
     syncWarningVisibility(app);
-    expect(templateValueAfterMarker(renderChatView(app, returningState), ".warningsVisible=")).toBe(true);
+    expect(warningsCollapsed(app)).toBe(false);
     expect(templateValueAfterMarker(renderStatusBar(app, returningState), ".warningCount=")).toBe(0);
 
     setAppState(app, state);
     syncWarningVisibility(app);
-    const returnedStatusBar = renderStatusBar(app, state);
-    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(false);
-    expect(templateValueAfterMarker(returnedStatusBar, ".warningCount=")).toBe(2);
-    expect(templateValueAfterMarker(returnedStatusBar, ".warningsExpanded=")).toBe(false);
+    expect(warningAreaRendered(app)).toBe(false);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningsExpanded=")).toBe(false);
 
-    templateCallbackAfterMarker(returnedStatusBar, ".onToggleWarnings=")();
+    templateCallbackAfterMarker(renderStatusBar(app, state), ".onToggleWarnings=")();
 
-    const restoredStatusBar = renderStatusBar(app, state);
-    expect(templateValueAfterMarker(renderChatView(app, state), ".warningsVisible=")).toBe(true);
-    expect(templateValueAfterMarker(restoredStatusBar, ".warningCount=")).toBe(2);
-    expect(templateValueAfterMarker(restoredStatusBar, ".warningsExpanded=")).toBe(true);
+    expect(warningAreaRendered(app)).toBe(true);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningCount=")).toBe(2);
+    expect(templateValueAfterMarker(renderStatusBar(app, state), ".warningsExpanded=")).toBe(true);
   });
 });
 
-type RenderChatView = (this: PiWebApp, state: AppState, session: SessionInfo) => TemplateResult;
 type RenderStatusBar = (this: PiWebApp, state: AppState) => TemplateResult;
 type SyncWarningVisibility = (this: PiWebApp) => void;
 type WarningVisibilityCallback = () => void;
@@ -103,7 +102,7 @@ function warningStatus(sessionId: string): SessionStatus {
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
     warnings: [
-      { severity: "warning", message: "subscription auth is active" },
+      { severity: "warning", message: warningText },
       { severity: "error", message: "skill failed to load" },
     ],
   };
@@ -119,12 +118,24 @@ function syncWarningVisibility(app: PiWebApp): void {
   method.call(app);
 }
 
-function renderChatView(app: PiWebApp, state: AppState): TemplateResult {
-  const method: unknown = Reflect.get(app, "renderChatView");
-  if (!isRenderChatView(method)) throw new Error("PiWebApp.renderChatView is not callable");
-  const session = state.selectedSession;
-  if (session === undefined) throw new Error("Expected a selected session");
-  return method.call(app, state, session);
+/** The warnings ride in the app's own top chrome, so the shell render owns them. */
+function warningAreaRendered(app: PiWebApp): boolean {
+  return renderApp(app).includes(warningText);
+}
+
+function warningsCollapsed(app: PiWebApp): boolean {
+  const visibility: unknown = Reflect.get(app, "sessionWarningVisibility");
+  const collapsed: unknown = typeof visibility === "object" && visibility !== null
+    ? Reflect.get(visibility, "collapsed")
+    : undefined;
+  if (typeof collapsed !== "boolean") throw new Error("PiWebApp.sessionWarningVisibility is not readable");
+  return collapsed;
+}
+
+function renderApp(app: PiWebApp): string {
+  const render: unknown = Reflect.get(app, "render");
+  if (typeof render !== "function") throw new Error("PiWebApp.render is not callable");
+  return templateText(render.call(app));
 }
 
 function renderStatusBar(app: PiWebApp, state: AppState): TemplateResult {
@@ -137,10 +148,6 @@ function templateCallbackAfterMarker(template: TemplateResult, marker: string): 
   const value = templateValueAfterMarker(template, marker);
   if (!isWarningVisibilityCallback(value)) throw new Error(`Expected callback after ${marker}`);
   return value;
-}
-
-function isRenderChatView(value: unknown): value is RenderChatView {
-  return typeof value === "function";
 }
 
 function isRenderStatusBar(value: unknown): value is RenderStatusBar {

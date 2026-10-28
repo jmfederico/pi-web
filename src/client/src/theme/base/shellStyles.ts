@@ -10,19 +10,21 @@ export const scrollBoundaryShadow = css`0 8px 18px -8px var(--pi-shadow-soft)`;
 
 export const appStyles = css`
   @layer pi-web-base {
-  /* Mobile browsers already subtract browser controls from 100dvh; reserve bottom safe area only in standalone PWA modes. */
-  :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px var(--pi-font, system-ui, sans-serif); }
-  :host([pwa-display-mode]) { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
-  @media (display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui) {
-    :host { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); }
-  }
+  /* Size the root from the live viewport height and reserve the OS safe-area insets so the
+     lower chrome clears the Android system bar / iOS home indicator. The height is driven by
+     JS from window.innerHeight (--pi-app-height) because 100dvh can resolve to a stale value on
+     first paint and only correct itself after a real viewport resize (backgrounding/resuming the
+     app). The bottom inset is env(safe-area-inset-bottom) (--pi-app-safe-area-bottom); some
+     Android Chrome builds report 0 until the first resize, so PiWebApp re-applies it as soon as
+     it is measured and on every viewport change. */
+  :host { --pi-app-safe-area-bottom: env(safe-area-inset-bottom); --pi-app-height: 100dvh; position: fixed; top: 0; right: 0; left: 0; display: block; height: var(--pi-app-height); box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px var(--pi-font, system-ui, sans-serif); }
   .shell { --navigation-panel-size: 340px; --workspace-panel-size: minmax(360px, 42vw); --navigation-panel-width: var(--navigation-panel-size); --workspace-panel-width: var(--workspace-panel-size); display: grid; grid-template-columns: var(--navigation-panel-width) 1px minmax(320px, 1fr) 1px var(--workspace-panel-width); height: 100%; min-height: 0; }
   aside { grid-column: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   aside app-navigation-panel { flex: 1 1 auto; min-height: 0; }
   header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--pi-border); }
   .header-actions { display: flex; align-items: center; gap: 8px; }
-  main { grid-column: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-  .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: none; align-items: center; gap: 0; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); }
+  main { grid-column: 3; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+  .context-bar { position: relative; flex: 0 0 auto; min-width: 0; display: none; align-items: center; gap: 0; padding: 6px 0; border-bottom: 1px solid var(--pi-border-muted); background: var(--pi-bg); max-height: 200px; transition: max-height .2s ease, opacity .2s ease, padding .2s ease, border-width .2s ease; }
   .context-bar::before, .context-bar::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
   .context-bar::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .context-bar::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
@@ -41,7 +43,7 @@ export const appStyles = css`
   .context-value { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; }
   app-mobile-main-tabs { display: none; }
   app-mobile-main-tabs[panel-controls] { display: block; }
-  .mobile-tabs-frame { position: relative; display: none; flex: 0 0 auto; min-width: 0; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg); }
+  .mobile-tabs-frame { position: relative; display: none; flex: 0 0 auto; min-width: 0; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg); max-height: 200px; transition: max-height .2s ease, opacity .2s ease, padding .2s ease, border-width .2s ease; }
   .mobile-tabs-frame::before, .mobile-tabs-frame::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 2; width: 20px; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
   .mobile-tabs-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .mobile-tabs-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
@@ -66,6 +68,11 @@ export const appStyles = css`
   .two-column-layout app-mobile-main-tabs { display: block; flex: 0 0 auto; min-width: 0; }
   .two-column-layout .mobile-tabs-frame { display: flex; }
   .shell.two-column-layout.workspace-view main { grid-row: 1; min-height: auto; }
+  /* The workspace view replaces the transcript, so the floating top chrome has
+     nothing left to float over. Keep it in flow: an absolutely positioned strip
+     in this clipped, content-height column would be shaved off with the only
+     tab strip the layout has. */
+  .shell.two-column-layout.workspace-view main .top-chrome { position: static; }
   .shell.two-column-layout.workspace-view > workspace-panel { grid-column: 3; grid-row: 2; display: flex; border-left: 0; }
   .shell.two-column-layout:not(.workspace-view) > workspace-panel { display: none; }
   .two-column-layout main.workspace-view conversation-layout,
@@ -79,7 +86,7 @@ export const appStyles = css`
     .mobile-navigation-tab { display: block; }
     main.navigation-view conversation-layout,
     main.navigation-view .empty { display: none; }
-    main.navigation-view .mobile-navigation-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    main.navigation-view .mobile-navigation-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding-top: var(--pi-chat-top-inset, 0px); }
     main.navigation-view .mobile-navigation-panel app-navigation-panel { flex: 1 1 auto; min-height: 0; }
   }
   status-bar { flex: 0 0 auto; }
@@ -92,6 +99,44 @@ export const appStyles = css`
   .composer-activity-notice-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
   .composer-activity-notice p { margin: 0; }
   .composer-activity-notice button { flex: 0 0 auto; }
+  /* Session warnings and notifications ride inside the floating top chrome, so the
+     scroll that slides the app bar away takes them along instead of parking them
+     underneath it. The chrome box height depends on its content, so these caps are
+     viewport-relative rather than percentages of an indefinite parent. */
+  .top-notices { box-sizing: border-box; flex: 0 0 auto; max-height: 40vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-bottom: 1px solid var(--pi-border); background: var(--pi-bg-overlay); }
+  /* Empty notification hosts retain live regions without leaving a visible stack boundary. */
+  .top-notices:not(:has(> .session-warnings)):has(> session-notification-tray[empty]) { border-bottom: 0; }
+  .top-notices:has(> session-notification-tray[empty]) > .session-warnings { flex: 1 1 auto; max-height: 40vh; border-bottom: 0; }
+  .session-warnings { flex: 0 1 auto; display: grid; gap: 0; max-height: 20vh; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 0; border-bottom: 1px solid var(--pi-border-muted); }
+  .session-warnings:only-child { flex: 1 1 auto; max-height: 40vh; border-bottom: 0; }
+  .session-warnings-controls { display: flex; justify-content: flex-end; padding-inline: 16px; }
+  .session-warnings-collapse-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .session-warning { --ui-transcript-bg: var(--pi-warning-surface); --warning-colour: var(--pi-warning); position: relative; display: grid; gap: 4px; box-sizing: border-box; border: 0; border-radius: 0; background: var(--ui-transcript-bg, transparent); min-height: 44px; padding-block: 10px; padding-inline: 16px 44px; color: var(--pi-text); }
+  .session-warning.error { --ui-transcript-bg: color-mix(in srgb, var(--pi-danger) 12%, var(--pi-surface)); --warning-colour: var(--pi-danger); }
+  .session-warning.info { --ui-transcript-bg: var(--pi-selection-bg); --warning-colour: var(--pi-accent); }
+  .session-warning-head { display: flex; align-items: center; gap: 8px; min-height: 16px; color: var(--warning-colour); }
+  .session-warning-icon { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .session-warning-body { min-width: 0; display: grid; gap: 3px; }
+  .session-warning-message { margin: 0; overflow-wrap: anywhere; }
+  .session-warning-path { margin: 0; color: var(--pi-muted); font-size: 12px; font-family: var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); overflow-wrap: anywhere; }
+  .session-warning-source { min-width: 0; overflow-wrap: anywhere; color: var(--pi-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .session-warning-dismiss { position: absolute; inset-block-start: 6px; inset-inline-end: 6px; font-size: 18px; }
+  /* Scroll-direction chrome toggle, driven by a single class and animated by CSS
+     so no per-frame JS runs during scrolling. Both groups float over the
+     transcript: it keeps its full height and reserves each group's height as
+     padding, so it reaches the matching border as the group slides away. */
+  main .top-chrome {
+    position: absolute; left: 0; right: var(--pi-chat-scrollbar-gutter, 0px); top: 0; z-index: 5;
+    display: flex; flex-direction: column; min-width: 0;
+    transition: transform .18s ease;
+    will-change: transform;
+  }
+  main.chrome-hidden .top-chrome { transform: translateY(-100%); }
+  /* Once the floating top chrome slides away it no longer covers the top of
+     the transcript, so its reserved inset must stop lifting the sticky chat
+     headers too -- otherwise they park at that inset and float mid-screen. */
+  main { --pi-chat-hidden-sticky-shift: 0px; }
+  main.chrome-hidden { --pi-chat-hidden-sticky-shift: var(--pi-chat-top-inset, 0px); }
   button { border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-surface); color: var(--pi-text); padding: 7px 9px; cursor: pointer; }
   .empty { margin: auto; color: var(--pi-muted); }
   .error { display: flex; gap: 8px; align-items: flex-start; padding: 10px 16px; border-bottom: 1px solid var(--pi-border); color: var(--pi-danger); }
@@ -250,7 +295,7 @@ export const promptEditorLayoutStyles = css`
   ${uiToolbarStyles}
   ${chatNavigationStyles}
   @layer pi-web-base {
-  :host { position: relative; display: block; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); }
+  :host { position: relative; display: block; max-height: 480px; color: var(--pi-text); font: 14px var(--pi-font, system-ui, sans-serif); transition: max-height .2s ease, opacity .2s ease, transform .2s ease, padding .2s ease, border-width .2s ease; }
   footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0; border-top: 1px solid var(--pi-border); }
   footer.shell-mode { border-top-color: var(--pi-success); background: var(--pi-success-bg); }
   .editor-wrap, .editor-input { position: relative; min-width: 0; }

@@ -37,7 +37,7 @@ export function renderSessionWarnings(rows: readonly ChatSessionWarningRow[], on
         </div>
       `}
       ${rows.map((row) => html`
-        <div class=${`${row.severityClass} ui-transcript-surface`}>
+        <div class=${row.severityClass}>
           <div class="session-warning-head">
             ${renderSessionWarningIcon(row.severity, "session-warning-icon")}
             ${row.source === undefined ? null : html`<span class="session-warning-source" dir="auto">${row.source}</span>`}

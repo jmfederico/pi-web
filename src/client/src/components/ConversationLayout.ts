@@ -55,18 +55,24 @@ export class ConversationLayout extends LitElement {
   @property({ attribute: false }) activity: SessionActivity | undefined;
   @property({ type: Boolean }) sending = false;
   @property({ type: Boolean }) visualEffects = true;
+  /** Float the composer and status chrome over the transcript instead of stacking below it. */
+  @property({ type: Boolean, attribute: "chrome-floating" }) chromeFloating = false;
+  /** Slide the floating bottom chrome out of the way. */
+  @property({ type: Boolean, attribute: "chrome-hidden" }) chromeHidden = false;
 
   override render() {
     const activity = conversationActivityText(this.status, this.activity, this.sending);
     return html`
       <div class="transcript"><slot></slot></div>
-      <div class="composer-boundary">
-        <slot name="composer"></slot>
-        <div class=${this.visualEffects ? "activity-region" : "activity-region plain"} aria-live="polite">${activity === undefined ? nothing : html`
-          <div class="activity-dock"><span class="dot"></span><span class="activity-text">${activity}</span></div>
-        `}</div>
+      <div class=${this.chromeFloating ? "bottom-chrome floating" : "bottom-chrome"}>
+        <div class="composer-boundary">
+          <slot name="composer"></slot>
+          <div class=${this.visualEffects ? "activity-region" : "activity-region plain"} aria-live="polite">${activity === undefined ? nothing : html`
+            <div class="activity-dock"><span class="dot"></span><span class="activity-text">${activity}</span></div>
+          `}</div>
+        </div>
+        <slot name="status"></slot>
       </div>
-      <slot name="status"></slot>
     `;
   }
 
