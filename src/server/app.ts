@@ -188,7 +188,7 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
     runtimeProvider: daemonWorkspaces,
     recoveryProvider: () => loadServerPluginRecoveryConfig(),
   });
-  const piPackages = deps.piPackages ?? createActiveProfilePiPackageService(agentProfileProvider);
+  const piPackages = deps.piPackages ?? createActiveProfilePiPackageService(agentProfileProvider, process.cwd(), undefined, app.log);
   const piWebStatusCache = deps.piWebStatusCache ?? createPiWebStatusCache(
     async ({ force }) => {
       const activeAgentProfile = await agentProfileProvider.getActiveAgentProfile();

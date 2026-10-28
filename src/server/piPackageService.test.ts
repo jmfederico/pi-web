@@ -1,8 +1,8 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { PiPackageInfo } from "../shared/apiTypes.js";
 import { type ActiveAgentProfileProvider } from "./activeAgentProfileProvider.js";
-import { ActiveProfilePiPackageService, DefaultPiPackageService, type PiPackageManagerPort, type PiPackageService } from "./piPackageService.js";
+import { ActiveProfilePiPackageService, DefaultPiPackageService, type PiPackageManagerPort, type PiPackageService, type PiPackageSourceCanonicalizer } from "./piPackageService.js";
 
 function fakeManager(packages: PiPackageInfo[] = []) {
   const listConfiguredPackages = vi.fn<PiPackageManagerPort["listConfiguredPackages"]>(() => packages);
@@ -432,3 +432,93 @@ function fakePiPackageService(source: string) {
     update: vi.fn((updatedSource?: string) => Promise.resolve({ action: "update" as const, ...(updatedSource === undefined ? {} : { source: updatedSource }), packages })),
   } satisfies PiPackageService;
 }
+
+function fakeCanonicalizer(
+  fallback: string,
+  identityKey?: (pkg: PiPackageInfo) => string,
+) {
+  return {
+    canonicalIdentity: async (pkg: PiPackageInfo) => {
+      if (identityKey !== undefined) return identityKey(pkg);
+      if (pkg.installedPath !== undefined) return pkg.installedPath;
+      return resolve(pkg.source);
+    },
+  } satisfies PiPackageSourceCanonicalizer;
+}
+
+
+describe("DefaultPiPackageService — duplicate deduplication", () => {
+  it("collapses two configured sources resolving to the same installed package into one entry", async () => {
+    const fake = fakeManager([
+      { source: "npm:@acme/global-tools", scope: "user", filtered: false, installedPath: "/opt/pi/packages/tools" },
+      { source: "/home/dev/projects/tools", scope: "project", filtered: false, installedPath: "/opt/pi/packages/tools" },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer("/opt/pi/packages/tools"));
+
+    const result = await service.list();
+
+    expect(result.packages).toEqual([{ source: "npm:@acme/global-tools", scope: "user", filtered: false, installedPath: "/opt/pi/packages/tools" }]);
+    expect(fake.installAndPersist).not.toHaveBeenCalled();
+  });
+
+  it("keeps the first configured entry and drops later duplicates", async () => {
+    const fake = fakeManager([
+      { source: "a", scope: "user", filtered: false, installedPath: "/shared" },
+      { source: "b", scope: "user", filtered: false, installedPath: "/shared" },
+      { source: "c", scope: "project", filtered: false, installedPath: "/shared" },
+      { source: "d", scope: "user", filtered: false, installedPath: "/other" },
+    ]);
+    const dropped: string[] = [];
+    const service = new DefaultPiPackageService(
+      fake.manager,
+      fakeCanonicalizer("/shared"),
+      { onDuplicateDropped: (drop) => { dropped.push(drop.source); } },
+    );
+
+    await service.list();
+
+    expect(dropped).toEqual(["b", "c"]);
+  });
+
+  it("does not collapse entries at different scopes when installed paths differ", async () => {
+    const fake = fakeManager([
+      { source: "npm:@acme/tools", scope: "user", filtered: false, installedPath: "/home/.pi/packages/tools" },
+      { source: "../tools", scope: "project", filtered: false, installedPath: "/proj/tools" },
+    ]);
+    // Different installed paths => different identities (default canonicalizer uses installedPath)
+    const service = new DefaultPiPackageService(fake.manager);
+
+    const result = await service.list();
+
+    expect(result.packages).toHaveLength(2);
+  });
+
+  it("deduplicates sources without installed paths by resolved source path", async () => {
+    const fake = fakeManager([
+      { source: "../tools", scope: "user", filtered: false },
+      { source: "../tools", scope: "project", filtered: false },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager);
+
+    const result = await service.list();
+
+    // Both have the same resolved source path => collapsed
+    expect(result.packages).toHaveLength(1);
+  });
+
+  it("includes deduplicated packages in mutation responses", async () => {
+    const fake = fakeManager([
+      { source: "npm:@acme/a", scope: "user", filtered: false, installedPath: "/shared" },
+      { source: "npm:@acme/b", scope: "project", filtered: false, installedPath: "/shared" },
+    ]);
+    const service = new DefaultPiPackageService(fake.manager, fakeCanonicalizer("/shared"));
+
+    const response = await service.install("npm:@acme/c");
+
+    expect(response).toEqual({
+      action: "install",
+      source: "npm:@acme/c",
+      packages: [{ source: "npm:@acme/a", scope: "user", filtered: false, installedPath: "/shared" }],
+    });
+  });
+});
