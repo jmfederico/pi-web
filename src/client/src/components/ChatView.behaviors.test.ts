@@ -373,7 +373,7 @@ describe("composable normal chat", () => {
     view.messageStart = 98;
     await view.updateComplete;
     const mergedGroup = required(view.renderRoot, ".event-group");
-    expect(mergedGroup).not.toBe(oldGroup);
+    expect(mergedGroup).toBe(oldGroup);
     mergedGroup.getBoundingClientRect = () => new DOMRect(0, 430 - chat.scrollTop, 600, 50);
     flushFrames();
     expect(write).toHaveBeenCalledExactlyOnceWith(320);

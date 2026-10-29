@@ -3,6 +3,8 @@ export interface ChatRenderItem {
   slot: string;
   /** Authoritative identity, once the message has been committed. */
   identity?: string;
+  /** Group members let prepends/growth retain the owner even when an edge changes. */
+  identities?: readonly string[];
 }
 
 interface RenderKey extends ChatRenderItem {
@@ -21,14 +23,20 @@ export class ChatRenderKeys {
       this.previous = [];
       this.sequence = 0;
     }
-    const identities = new Map(this.previous.filter((item) => item.identity !== undefined).map((item) => [item.identity, item.key]));
+    const identities = new Map<string, string>();
+    for (const item of this.previous) {
+      for (const identity of item.identities ?? (item.identity === undefined ? [] : [item.identity])) identities.set(identity, item.key);
+    }
     const provisional = new Map(this.previous.filter((item) => item.identity === undefined).map((item) => [item.slot, item.key]));
-    this.previous = items.map((item) => ({
-      ...item,
-      key: (item.identity === undefined ? undefined : identities.get(item.identity))
-        ?? provisional.get(item.slot)
-        ?? `render:${String(this.sequence++)}`,
-    }));
+    const used = new Set<string>();
+    this.previous = items.map((item) => {
+      const candidates = item.identities ?? (item.identity === undefined ? [] : [item.identity]);
+      const inherited = candidates.map((identity) => identities.get(identity)).find((key) => key !== undefined && !used.has(key));
+      const fallback = provisional.get(item.slot);
+      const key = inherited ?? (fallback !== undefined && !used.has(fallback) ? fallback : `render:${String(this.sequence++)}`);
+      used.add(key);
+      return { ...item, key };
+    });
     // Retain only the rendered window, not every message ever visited.
     return this.previous.map((item) => item.key);
   }

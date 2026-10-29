@@ -3,6 +3,9 @@ import { localizedArgumentSummary, localizedChatText } from "../localizedChatPre
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
 import { live } from "lit/directives/live.js";
 import { cache } from "lit/directives/cache.js";
+import { repeat } from "lit/directives/repeat.js";
+import { guard } from "lit/directives/guard.js";
+import { ChatRenderKeys } from "../chatRenderKeys";
 import { MessageActionsMenu } from "./chat/MessageActionsMenu";
 import { renderSessionWarningIcon } from "./shared";
 import { chatToolOutputLabel, chatMessageGroupClassName, chatMessageGroupLabel, localizedChatGroupSummary } from "./chat/transcriptLabels";
@@ -24,11 +27,12 @@ export interface TranscriptGroupDisclosure {
 
 /** Data and narrow interaction boundaries; templates share ChatView's shadow root. */
 export interface TranscriptRenderContext {
+  /** Inputs outside an individual message that affect its presentation. */
+  renderInputs: readonly unknown[];
   machineId: string;
   sessionId: string;
   session: SessionRef;
-  messages: readonly ChatLine[];
-  messageStart: number;
+  sourceMessage: (index: number) => ChatLine | undefined;
   behaviors: ChatBehaviors;
   contentRendering: ChatContentRendering | undefined;
   workspaceContext: MarkdownWorkspaceContext | undefined;
@@ -47,8 +51,8 @@ export interface TranscriptRenderContext {
   };
   actions: ChatMessageActionController;
   openQuestionId: () => string | undefined;
-  questionOutcomes: ReadonlyMap<string, AskUserOutcome[]>;
-  questionIds: ReadonlySet<string>;
+  questionOutcomes: (id: string) => readonly AskUserOutcome[];
+  hasQuestion: (id: string) => boolean;
   askDraftSessionId: string;
   onSubmitAsk: ((askId: string, submission: AskUserSubmission) => void | Promise<void>) | undefined;
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
@@ -122,7 +126,7 @@ function isToolExecutionOnlyMessage(message: ChatLine): boolean {
 // Inline question forms remain standalone readable messages, outside these groups.
 // `live` distinguishes the growing tail group; the disclosure object owns the
 // expanded state so quiet mode can collapse the same group without relabeling it.
-export function renderMessageGroup(context: TranscriptRenderContext, group: Extract<ChatGroup, { kind: "group" }>, live: boolean, entryActionHeaders: ReadonlySet<ChatLine>, disclosure: TranscriptGroupDisclosure) {
+export function renderMessageGroup(context: TranscriptRenderContext, group: Extract<ChatGroup, { kind: "group" }>, live: boolean, entryActionHeaders: ReadonlySet<ChatLine>, disclosure: TranscriptGroupDisclosure, renderKeys: ChatRenderKeys) {
     const { messages, startIndex } = group;
     const { open, anchor, toggle } = disclosure;
     return html`
@@ -131,22 +135,32 @@ export function renderMessageGroup(context: TranscriptRenderContext, group: Extr
           <span class="label">${chatMessageGroupLabel(live)}</span>
           <span>${summarizeChatGroup(messages.map((event) => event.message), localizedChatGroupSummary)}</span>
         </summary>
-        ${cache(open ? renderMessageGroupBody(context, group, entryActionHeaders) : nothing)}
+        ${cache(open ? renderMessageGroupBody(context, group, entryActionHeaders, renderKeys) : nothing)}
       </details>
     `;
   }
 
 
-export function renderMessageGroupBody(context: TranscriptRenderContext, { messages, startIndex }: Extract<ChatGroup, { kind: "group" }>, entryActionHeaders: ReadonlySet<ChatLine> = new Set()) {
+export function renderMessageGroupBody(context: TranscriptRenderContext, { messages, startIndex }: Extract<ChatGroup, { kind: "group" }>, entryActionHeaders: ReadonlySet<ChatLine>, renderKeys: ChatRenderKeys) {
+    const occurrences = new Map<string, number>();
+    const keys = renderKeys.reconcile("activity", messages.map(({ message, index }) => {
+      const identity = context.anchors.event(index, message);
+      const occurrence = identity === undefined ? 0 : occurrences.get(identity) ?? 0;
+      if (identity !== undefined) occurrences.set(identity, occurrence + 1);
+      return {
+        slot: JSON.stringify([index, message.role]),
+        ...(identity === undefined ? {} : { identity: JSON.stringify([identity, occurrence]) }),
+      };
+    }));
     return html`
       <div class="group-body">
-        ${messages.map(({ message, index }, offset) => {
-          return html`
-            <section class=${`group-msg ${message.role} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.event(index, message) ?? nothing}>
-              ${chatMessageHasHeader(message) ? html`<div class="transcript-content">${renderMessageHeader(context, message, `${String(startIndex)}:${String(offset)}`, index, entryActionHeaders)}</div>` : null}
-              ${renderGroupedParts(context, message, index)}
-            </section>`;
-        })}
+        ${repeat(messages, (_message, index) => keys[index], ({ message, index }, offset) => guard([
+          message, index, startIndex, offset, ...context.renderInputs, entryActionHeaders.has(message),
+        ], () => html`
+          <section class=${`group-msg ${message.role} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.event(index, message) ?? nothing}>
+            ${chatMessageHasHeader(message) ? html`<div class="transcript-content">${renderMessageHeader(context, message, `${String(startIndex)}:${String(offset)}`, index, entryActionHeaders)}</div>` : null}
+            ${renderGroupedParts(context, message, index)}
+          </section>`))}
       </div>
     `;
   }
@@ -181,7 +195,7 @@ export function renderMessageHeader(context: TranscriptRenderContext, message: C
         <span class=${conversation ? "visually-hidden" : "label"}>${heading}</span>
         <pi-message-actions-menu>
           <div class="msg-actions-strip">
-            ${renderMessageActions(context, message, key, context.messages[index - context.messageStart] ?? message, entryActionHeaders.has(message))}
+            ${renderMessageActions(context, message, key, context.sourceMessage(index) ?? message, entryActionHeaders.has(message))}
             <button type="button" class="msg-meta ui-button ui-button--icon ui-button--small" title=${meta} aria-label=${messages.t("information")} aria-controls=${detailId} aria-expanded=${String(expanded)} @click=${(event: MouseEvent) => {
               context.metadata.expand(expanded ? undefined : key);
               const menu = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest("pi-message-actions-menu") : null;
@@ -240,7 +254,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       return html`<ask-user-card
         class=${open ? "part open-question-card" : "part closed-question-card"}
         .ask=${part.ask} .open=${open}
-        .outcomes=${context.questionOutcomes.get(part.ask.askId) ?? []}
+        .outcomes=${context.questionOutcomes(part.ask.askId)}
         .draftSessionId=${context.askDraftSessionId}
         .onSubmit=${open ? context.onSubmitAsk : undefined}
       ></ask-user-card>`;
@@ -249,7 +263,7 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       <ask-user-card
         class="part"
         .outcome=${part.outcome}
-        .compact=${context.questionIds.has(part.outcome.askId)}
+        .compact=${context.hasQuestion(part.outcome.askId)}
         .draftSessionId=${context.askDraftSessionId}
       ></ask-user-card>
     `;

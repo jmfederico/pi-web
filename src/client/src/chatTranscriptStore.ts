@@ -25,11 +25,22 @@ const browserChatHistoryCache: ChatHistoryCacheAdapter = {
   remove: removeChatHistoryCache,
 };
 
-export class ChatTranscriptStore {
-  private readonly rawHistoryPages = new Map<string, RawMessagePage>();
-  private readonly historyRevisions = new Map<string, number>();
+export interface ChatHistoryMemoryLimits {
+  maxSessions: number;
+  maxBytes: number;
+}
 
-  constructor(private readonly cache: ChatHistoryCacheAdapter = browserChatHistoryCache) {}
+const DEFAULT_MEMORY_LIMITS: ChatHistoryMemoryLimits = { maxSessions: 8, maxBytes: 16 * 1024 * 1024 };
+
+export class ChatTranscriptStore {
+  private readonly rawHistoryPages = new Map<string, { page: RawMessagePage; bytes: number }>();
+  private readonly historyRevisions = new Map<string, number>();
+  private retainedBytes = 0;
+
+  constructor(
+    private readonly cache: ChatHistoryCacheAdapter = browserChatHistoryCache,
+    private readonly memoryLimits: ChatHistoryMemoryLimits = DEFAULT_MEMORY_LIMITS,
+  ) {}
 
   cachedView(sessionId: string): ChatTranscriptView {
     return transcriptViewFromHistory(this.rawHistoryPage(sessionId));
@@ -53,7 +64,7 @@ export class ChatTranscriptStore {
   }
 
   private storeHistory(sessionId: string, history: RawMessagePage): ChatTranscriptView {
-    this.rawHistoryPages.set(sessionId, history);
+    this.retainHistory(sessionId, history);
     this.cache.write(sessionId, history);
     return transcriptViewFromHistory(history);
   }
@@ -78,23 +89,65 @@ export class ChatTranscriptStore {
 
   discard(sessionId: string): void {
     this.historyRevisions.set(sessionId, this.historyRevision(sessionId) + 1);
-    this.rawHistoryPages.delete(sessionId);
+    this.releaseHistory(sessionId);
     this.cache.remove?.(sessionId);
   }
 
   rawHistoryPage(sessionId: string): RawMessagePage | undefined {
-    const cached = this.rawHistoryPages.get(sessionId) ?? this.cache.read(sessionId);
-    if (cached !== undefined) this.rawHistoryPages.set(sessionId, cached);
+    const cached = this.rawHistoryPages.get(sessionId)?.page ?? this.cache.read(sessionId);
+    if (cached !== undefined) this.retainHistory(sessionId, cached);
     return cached;
+  }
+
+  private retainHistory(sessionId: string, page: RawMessagePage): void {
+    const previous = this.rawHistoryPages.get(sessionId);
+    const bytes = previous?.page === page ? previous.bytes : estimateHistoryBytes(page);
+    this.releaseHistory(sessionId);
+    this.rawHistoryPages.set(sessionId, { page, bytes });
+    this.retainedBytes += bytes;
+    // Keep the most recently used page whole, even if it alone exceeds the
+    // budget. Trimming it would lose the reader's loaded older-history range.
+    while (this.rawHistoryPages.size > 1 && (
+      this.rawHistoryPages.size > this.memoryLimits.maxSessions || this.retainedBytes > this.memoryLimits.maxBytes
+    )) {
+      const oldest = this.rawHistoryPages.keys().next().value;
+      if (oldest !== undefined) this.releaseHistory(oldest);
+    }
+  }
+
+  private releaseHistory(sessionId: string): void {
+    const entry = this.rawHistoryPages.get(sessionId);
+    if (entry === undefined) return;
+    this.retainedBytes -= entry.bytes;
+    this.rawHistoryPages.delete(sessionId);
   }
 }
 
+// Estimate retained JSON data without allocating another full serialized copy.
+// This is a retention budget, not a measurement of the engine's heap overhead.
+function estimateHistoryBytes(value: unknown): number {
+  if (typeof value === "string") return value.length * 2 + 16;
+  if (Array.isArray(value)) return value.reduce<number>((bytes, item: unknown) => bytes + 8 + estimateHistoryBytes(item), 32);
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).reduce((bytes, [key, item]) => bytes + key.length * 2 + 16 + estimateHistoryBytes(item), 32);
+  }
+  return 8;
+}
+
+// Weak keys let eviction release both raw and normalized history. Raw pages are
+// immutable snapshots; live events produce separate display arrays.
+const historyViews = new WeakMap<RawMessagePage, ChatTranscriptView>();
+
 export function transcriptViewFromHistory(history: RawMessagePage | undefined): ChatTranscriptView {
+  const cached = history === undefined ? undefined : historyViews.get(history);
+  if (cached !== undefined) return cached;
   const start = history?.start ?? 0;
-  return {
+  const view = {
     messages: normalizeMessages(history?.messages ?? []),
     messagePageStart: start,
     messagePageEnd: start + (history?.messages.length ?? 0),
     messagePageTotal: history?.total ?? 0,
   };
+  if (history !== undefined) historyViews.set(history, view);
+  return view;
 }

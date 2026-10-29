@@ -1,9 +1,81 @@
-import { describe, expect, it } from "vitest";
-import { canMergeHistorySnapshot, isHistoryTailSlice, mergeChatHistory, type RawMessagePage } from "./chatHistoryCache";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { canMergeHistorySnapshot, isHistoryTailSlice, mergeChatHistory, readChatHistoryCache, writeChatHistoryCache, type RawMessagePage } from "./chatHistoryCache";
+import { ChatTranscriptStore } from "./chatTranscriptStore";
 
 function page(start: number, total: number, messages: unknown[]): RawMessagePage {
   return { start, total, messages };
 }
+
+describe("persisted chat history", () => {
+  beforeEach(() => {
+    const entries = new Map<string, string>();
+    const storage: Storage = {
+      get length() { return entries.size; },
+      clear: () => { entries.clear(); },
+      getItem: (key) => entries.get(key) ?? null,
+      key: (index) => [...entries.keys()][index] ?? null,
+      removeItem: (key) => { entries.delete(key); },
+      setItem: (key, value) => { entries.set(key, value); },
+    };
+    vi.stubGlobal("sessionStorage", storage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("persists a recent suffix without truncating the in-memory older reading range", () => {
+    const store = new ChatTranscriptStore();
+    const messages = Array.from({ length: 125 }, (_, index) => ({ role: "user", content: String(index) }));
+    store.mergeHistory("s1", page(50, 200, messages));
+
+    expect(readChatHistoryCache("s1")).toEqual(page(75, 200, messages.slice(25)));
+    expect(store.rawHistoryPage("s1")).toEqual(page(50, 200, messages));
+    expect(store.cachedView("s1").messages).toHaveLength(125);
+  });
+
+  it("bounds bytes as well as message count and removes stale data when the newest message cannot fit", () => {
+    const large = { role: "user", content: "x".repeat(70_000) };
+    writeChatHistoryCache("s1", page(5, 7, [large, large]));
+    expect(readChatHistoryCache("s1")).toEqual(page(6, 7, [large]));
+    expect((sessionStorage.getItem(sessionStorage.key(0) ?? "")?.length ?? 0) * 2).toBeLessThanOrEqual(256 * 1024);
+
+    writeChatHistoryCache("s1", page(6, 7, [{ role: "user", content: "x".repeat(140_000) }]));
+    expect(readChatHistoryCache("s1")).toBeUndefined();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("retains only eight recently written sessions without touching unrelated storage", () => {
+    vi.useFakeTimers();
+    sessionStorage.setItem("unrelated", "keep");
+    for (let index = 0; index < 8; index += 1) {
+      vi.setSystemTime(new Date(2026, 0, 1, 0, 0, index));
+      writeChatHistoryCache(String(index), page(0, 1, ["message"]));
+    }
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 1));
+    writeChatHistoryCache("0", page(0, 1, ["refreshed"]));
+    writeChatHistoryCache("8", page(0, 1, ["new"]));
+
+    expect(readChatHistoryCache("1")).toBeUndefined();
+    expect(readChatHistoryCache("0")?.messages).toEqual(["refreshed"]);
+    expect(sessionStorage.length).toBe(9);
+    expect(sessionStorage.getItem("unrelated")).toBe("keep");
+  });
+
+  it("treats oversized legacy entries and expired entries as cache misses", () => {
+    vi.useFakeTimers();
+    writeChatHistoryCache("s1", page(0, 1, ["old"]));
+    const key = sessionStorage.key(0) ?? "";
+    sessionStorage.setItem(key, JSON.stringify({ start: 0, total: 1, messages: ["x".repeat(140_000)], savedAt: Date.now() }));
+    expect(readChatHistoryCache("s1")).toBeUndefined();
+    expect(sessionStorage.length).toBe(0);
+
+    writeChatHistoryCache("s1", page(0, 1, ["old"]));
+    vi.advanceTimersByTime(31 * 60 * 1000);
+    expect(readChatHistoryCache("s1")).toBeUndefined();
+  });
+});
 
 describe("mergeChatHistory", () => {
   it("merges adjacent cached and incoming pages", () => {
