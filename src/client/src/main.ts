@@ -1,15 +1,7 @@
-import { PiWebApp } from "./components/PiWebApp";
-import { DEFAULT_CHAT_BEHAVIORS } from "./chatBehaviors";
+import "./components/PiWebApp";
 import { initializeLocalization, localizationPolicyFromConfig } from "./localization/browser.js";
 import { configureThemePolicy } from "./theme.js";
 import { configApi } from "./api.js";
-
-// Development-only canary for the before-paint windowing fix. Production and
-// independently mounted components retain their shared defaults.
-if (import.meta.env.DEV) {
-  const app = document.querySelector("pi-web-app");
-  if (app instanceof PiWebApp) app.chatBehaviors = { ...DEFAULT_CHAT_BEHAVIORS, mountingWindow: true };
-}
 
 // Defaults belong to the gateway, not whichever machine/workspace is selected.
 // Browser-local preferences remain usable while the request is pending or fails.
