@@ -1,7 +1,15 @@
-import "./components/PiWebApp";
+import { PiWebApp } from "./components/PiWebApp";
+import { DEFAULT_CHAT_BEHAVIORS } from "./chatBehaviors";
 import { initializeLocalization, localizationPolicyFromConfig } from "./localization/browser.js";
 import { configureThemePolicy } from "./theme.js";
 import { configApi } from "./api.js";
+
+// Exercise windowing in the development app without changing production or
+// independently mounted components/fixtures. Refresh the browser to adopt it.
+if (import.meta.env.DEV) {
+  const app = document.querySelector("pi-web-app");
+  if (app instanceof PiWebApp) app.chatBehaviors = { ...DEFAULT_CHAT_BEHAVIORS, mountingWindow: true };
+}
 
 // Defaults belong to the gateway, not whichever machine/workspace is selected.
 // Browser-local preferences remain usable while the request is pending or fails.
