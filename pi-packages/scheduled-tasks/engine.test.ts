@@ -56,6 +56,45 @@ describe("task definitions and SQLite ledger", () => {
     ] });
   });
 
+  it("deletes only archived tasks at their current revision and removes all owned records", () => {
+    const store = memory();
+    const task = store.create(input(), NOW);
+    const other = store.create(input(), NOW);
+    const execution = required(store.claim(task.id, "manual", NOW));
+    store.confirmDispatch(execution.id, "preserved-conversation");
+    store.report(execution.id, "completed", "Done", NOW);
+    store.report(execution.id, "errored", "Correction", NOW);
+    const otherExecution = required(store.claim(other.id, "manual", NOW));
+    expect(() => { store.delete(task.id, task.revision); }).toThrow("Only archived tasks");
+    const archived = store.archive(task.id, task.revision, NOW);
+    expect(() => { store.delete(task.id, task.revision); }).toThrow("revision conflict");
+    expect(store.revisions(task.id)).toHaveLength(2);
+    expect(store.execution(execution.id).reports).toHaveLength(2);
+    store.delete(task.id, archived.revision);
+    expect(() => store.task(task.id)).toThrow("Task not found");
+    expect(store.revisions(task.id)).toEqual([]);
+    expect(store.executions(task.id)).toEqual([]);
+    expect(() => store.execution(execution.id)).toThrow("Execution not found");
+    expect(() => store.report(execution.id, "completed", "Late report", NOW)).toThrow("Execution not found");
+    expect(store.listTasks()).toEqual([other]);
+    expect(store.executions()).toEqual([otherExecution]);
+    expect(() => { store.delete(task.id, archived.revision); }).toThrow("Task not found");
+  });
+
+  it("rolls back every deletion if a durable write fails", () => {
+    const db = openSqlite(":memory:");
+    const store = new TaskStore(db);
+    stores.push(store);
+    const task = store.create(input(), NOW);
+    const execution = required(store.claim(task.id, "manual", NOW));
+    const archived = store.archive(task.id, task.revision, NOW);
+    db.exec("CREATE TRIGGER reject_delete BEFORE DELETE ON tasks BEGIN SELECT RAISE(ABORT, 'delete rejected'); END;");
+    expect(() => { store.delete(task.id, archived.revision); }).toThrow("delete rejected");
+    expect(store.task(task.id)).toEqual(archived);
+    expect(store.revisions(task.id)).toHaveLength(2);
+    expect(store.execution(execution.id)).toEqual(execution);
+  });
+
   it("rolls back task creation when saving the revision fails", () => {
     const db = openSqlite(":memory:");
     const store = new TaskStore(db);
@@ -146,6 +185,29 @@ describe("dispatch orchestration", () => {
     await scheduler.drain();
     expect(store.executions(task.id).map((execution) => execution.status)).toEqual(["dispatched", "dispatched"]);
     expect(store.executions(task.id).every((execution) => execution.reports.length === 0)).toBe(true);
+  });
+
+  it("rejects deletion during admission even after an early outcome report, then allows it", async () => {
+    const store = memory();
+    const task = store.create(input(), NOW);
+    const other = store.create(input(), NOW);
+    let admit: ((value: { sessionId: string }) => void) | undefined;
+    const scheduler = new TaskScheduler(store, {
+      dispatch: () => new Promise((resolve) => { admit = resolve; }),
+    }, () => NOW, vi.fn());
+    const dispatch = scheduler.dispatchManually(task.id);
+    const execution = required(store.executions(task.id)[0]);
+    store.report(execution.id, "completed", "Fast outcome", NOW);
+    const archived = store.archive(task.id, task.revision, NOW);
+    const otherArchived = store.archive(other.id, other.revision, NOW);
+    expect(() => scheduler.deleteTask(task.id, archived.revision)).toThrow("dispatch is in progress");
+    expect(scheduler.deleteTask(other.id, otherArchived.revision)).toEqual({ taskId: other.id, deleted: true });
+    if (admit === undefined) throw new Error("Missing dispatch");
+    admit({ sessionId: "preserved-conversation" });
+    await dispatch;
+    expect(scheduler.deleteTask(task.id, archived.revision)).toEqual({ taskId: task.id, deleted: true });
+    scheduler.tick();
+    expect(store.executions()).toEqual([]);
   });
 
   it("records proven pre-publication failures separately from uncertain launches, without retries", async () => {

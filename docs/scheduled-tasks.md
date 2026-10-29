@@ -48,7 +48,7 @@ Or request a one-off investigation with a specific date, time, and timezone. The
 
 The package includes a small `scheduled-tasks` discovery skill. Its `scheduled_tasks_*` tools are **deferred**: their full schemas are not automatically added to every conversation. Agents find them through `tool_search` or codemode `searchTools` and inspect the `scheduled_tasks` namespace before use. Tool discovery may succeed while backend calls remain unavailable if the web plugin is disabled, not yet activated, or unhealthy. The backend requires a supporting PI WEB-hosted session; it does not fall back to a standalone HTTP scheduler.
 
-Agents can discover registered project/workspace IDs, create and inspect tasks, replace definitions, pause/resume, archive, manually dispatch, inspect history and exact execution context, and report outcomes. There is no additional plugin-specific approval gate, including for task-dispatched agents. Normal session permissions and instructions still apply.
+Agents can discover registered project/workspace IDs, create and inspect tasks, replace definitions, pause/resume, archive, permanently delete archived tasks, manually dispatch, inspect history and exact execution context, and report outcomes. There is no additional plugin-specific approval gate, including for task-dispatched agents. Normal session permissions and instructions still apply.
 
 Edits use the current task revision to avoid silently overwriting another change. Agents should inspect first and preserve unchanged fields when replacing a definition.
 
@@ -61,6 +61,8 @@ Edits use the current task revision to avoid silently overwriting another change
 The scheduler runs without an open browser while its owning session daemon and machine are running. It cannot wake a sleeping machine or dispatch while the daemon is stopped. On startup, it skips missed recurring occurrences and dispatches an overdue one-off once. Each recurring occurrence is independent: an earlier execution without an outcome report does not block the next.
 
 Pausing stops future scheduled dispatches. Archiving also prevents manual dispatch. Neither action changes conversations already started. Manual dispatch is allowed while paused and does not consume the next scheduled occurrence. Editing a consumed one-off's prompt does not schedule it again; explicitly changing its schedule does.
+
+To permanently remove a task, archive it first, then ask an agent to delete it. Deletion requires the archived task's current revision and removes the task, every saved definition revision, and all execution history and outcome reports. It cannot be undone. Existing conversations and their transcripts remain intact and are not stopped; reporting outcomes for deleted executions fails. Deletion is temporarily rejected while a dispatch is being admitted; wait for it to settle and inspect the task again before retrying.
 
 There are no automatic execution retries. A scheduled occurrence is consumed even if launch fails or cannot be confirmed. Inspect its history and existing conversations before asking for another dispatch, especially when the result is uncertain.
 

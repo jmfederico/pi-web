@@ -74,6 +74,17 @@ export class TaskStore {
     return this.change(id, revision, now, (task) => ({ ...task, archived: true, nextDue: null }));
   }
 
+  delete(id: string, revision: number): void {
+    this.transaction(() => {
+      const task = this.task(id);
+      if (task.revision !== revision) throw new Error("Task revision conflict; inspect the current task before deleting");
+      if (!task.archived) throw new Error("Only archived tasks can be deleted; archive the task first");
+      this.db.prepare("DELETE FROM executions WHERE task_id = ?").run(id);
+      this.db.prepare("DELETE FROM revisions WHERE task_id = ?").run(id);
+      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    });
+  }
+
   private change(id: string, revision: number, now: string, change: (task: Task) => Task): Task {
     return this.transaction(() => {
       const old = this.task(id);

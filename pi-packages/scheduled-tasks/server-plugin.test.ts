@@ -208,7 +208,8 @@ describe("scheduled task daemon integration", () => {
     // Backend discovery must happen at execution, never at extension factory load.
     expect(discoveries).not.toHaveBeenCalled();
     const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()].map((tool) => tool.definition));
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(12);
+    expect(tools.find((tool) => tool.name === "scheduled_tasks_delete")?.annotations).toMatchObject({ destructiveHint: true, readOnlyHint: false });
     expect(tools.every((tool) => tool.exposure === "deferred" && tool.namespace?.name === "scheduled_tasks")).toBe(true);
     const call = async (operation: string, input: JsonValue = {}, signal?: AbortSignal) => {
       const tool = tools.find((tool) => tool.name === `scheduled_tasks_${operation}`);
@@ -246,8 +247,14 @@ describe("scheduled task daemon integration", () => {
     await call("report", { executionId: execution.id, outcome: "completed", summary: "Done" });
     await call("report", { executionId: execution.id, outcome: "errored", summary: "Corrected" });
     await expect(call("history", { taskId: task.id })).resolves.toMatchObject({ details: { executions: [{ status: "errored", latestReport: { summary: "Corrected" } }] } });
+    await expect(call("delete", { taskId: task.id, revision: 3 })).rejects.toThrow("Only archived tasks");
     await call("archive", { taskId: task.id, revision: 3 });
     await expect(call("dispatch", { taskId: task.id })).rejects.toThrow(/archived/iu);
+    await expect(call("delete", { taskId: task.id, revision: 3 })).rejects.toThrow("revision conflict");
+    await expect(call("delete", { taskId: task.id, revision: 4 })).resolves.toMatchObject({ details: { taskId: task.id, deleted: true } });
+    await expect(call("overview")).resolves.toMatchObject({ details: { tasks: [] } });
+    await expect(call("history")).resolves.toMatchObject({ details: { executions: [] } });
+    await expect(call("execution", { executionId: execution.id })).rejects.toThrow("Execution not found");
     const aborted = new AbortController(); aborted.abort();
     requests.mockClear();
     await expect(call("overview", {}, aborted.signal)).rejects.toThrow();

@@ -31,9 +31,9 @@ export default function scheduledTasksExtension(pi: ExtensionAPI): void {
       namespace: {
         name: "scheduled_tasks",
         description: "Create and manage machine-local scheduled agent tasks and explicit execution outcomes.",
-        instructions: "Use targets for registered project/workspace IDs. Inspect before revision-checked edits. Ask for timezone if no configured default exists. Pause/archive affect only future scheduling. Dispatch creates an ordinary independent conversation. Never infer an execution outcome from session activity; use report explicitly. Do not blindly repeat a dispatch after an error or uncertainty; inspect history first.",
+        instructions: "Use targets for registered project/workspace IDs. Inspect before revision-checked edits. Ask for timezone if no configured default exists. Pause/archive affect only future scheduling. Delete requires an archived task and permanently removes it and all its history, not conversations. Dispatch creates an ordinary independent conversation. Never infer an execution outcome from session activity; use report explicitly. Do not blindly repeat a dispatch after an error or uncertainty; inspect history first.",
       },
-      annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: !readOnly, idempotentHint: readOnly },
+      annotations: { readOnlyHint: readOnly, destructiveHint: operation === "delete", openWorldHint: !readOnly, idempotentHint: readOnly },
       parameters,
       async execute(_toolCallId, input, signal) {
         signal?.throwIfAborted();
@@ -53,6 +53,7 @@ export default function scheduledTasksExtension(pi: ExtensionAPI): void {
   register("update", "Replace a task definition at its current revision. Preserve unchanged fields from inspect. Changes affect future dispatches, not existing conversations.", object({ taskId, revision, definition }), false);
   register("pause", "Pause or resume future scheduled dispatches. Does not pause or resume any existing conversation.", object({ taskId, revision, paused: Type.Boolean() }), false);
   register("archive", "Archive a task, preventing future scheduled and manual dispatches. Preserve history and existing conversations.", object({ taskId, revision }), false);
+  register("delete", "Permanently delete a task and all its revisions, execution history and outcome reports. Only archived tasks can be deleted; archive first and use its new revision. Existing conversations and their transcripts are not deleted or stopped. Rejects while dispatch admission is in progress; inspect again before retrying.", object({ taskId, revision }), false);
   register("dispatch", "Manually dispatch one execution as a normal independent conversation, including for a paused task. Does not consume its scheduled occurrence. Inspect history before retrying any ambiguous result; no automatic retries.", object({ taskId }), false);
   register("history", "Read paged execution history and conversation IDs, optionally limited to one task. Outcomes are explicit reports, not session status.", object({ taskId: Type.Optional(taskId), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })), offset: Type.Optional(Type.Integer({ minimum: 0 })) }), true);
   register("execution", "Retrieve an execution's dispatched task revision, instructions, shared context paths, conversation identity and full outcome correction history.", object({ executionId }), true);

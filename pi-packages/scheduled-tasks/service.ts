@@ -64,6 +64,9 @@ export class TaskService {
       case "archive":
         only(args, ["taskId", "revision"]);
         return this.store.archive(identifier(args, "taskId"), revision(args), this.now());
+      case "delete":
+        only(args, ["taskId", "revision"]);
+        return this.scheduler.deleteTask(identifier(args, "taskId"), revision(args));
       case "dispatch":
         only(args, ["taskId"]);
         return this.scheduler.dispatchManually(identifier(args, "taskId"));
