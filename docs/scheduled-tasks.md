@@ -93,9 +93,16 @@ The plugin does not pause, resume, cancel, supervise, or change the capabilities
 
 ## Read-only dashboard
 
-The **Scheduled tasks** tab shows task state, schedule and timezone, next due time, and the latest execution outcome and summary. Open a task's history to review executions and follow available conversation links. Use **Refresh** to reload the overview and history; use pagination to browse older executions.
+The **Scheduled tasks** tab opens a read-only overview grouped by what needs review:
 
-This is a review surface, not an editor. Create, change, pause/resume, archive, or manually dispatch tasks by asking an agent. Workspace Tasks' separate **Tasks** tab runs terminal commands; it does not manage these schedules.
+- **Needs attention:** non-archived tasks whose latest execution is `failed`, `errored`, or `uncertain`.
+- **Recent results:** up to five non-archived tasks whose latest run reported completion, ordered by run creation time, not completion time.
+- **Up next:** up to five active, unpaused, non-archived tasks with a next due time, soonest first.
+- **Awaiting an outcome:** executions marked `dispatching` or `dispatched`. This does not mean their conversations are still running; status is never inferred from session activity.
+
+The collapsed **All tasks** section contains every task, including paused and archived tasks. Overview cards show shortened reports. Select a task to open its dedicated detail view with the full report, next due time, paginated execution history, and available conversation links. Native **Technical details** disclosures hold exact schedules, timezones, target IDs, execution revisions, session IDs, and diagnostics. Open the separate **All history** view on demand to browse history across tasks.
+
+The dashboard has no task-editing controls. Its collapsed help directs you to ask an agent in a conversation to create, change, pause, reschedule, or archive tasks. Agents also support manual dispatch. Workspace Tasks' separate **Tasks** tab runs terminal commands; it does not manage these schedules.
 
 ## Persistence and disabling
 

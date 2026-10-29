@@ -11,7 +11,7 @@ import { ScheduledTasksPanel } from "./panel.js";
 const task = { id: "task", name: "Review <script>", revision: 3, projectId: "stored-project", workspaceId: "stored-workspace", schedule: { kind: "cron", expression: "0 9 * * *" }, timezone: "Europe/Madrid", paused: true, archived: false, nextDue: "2026-10-02T07:00:00Z" };
 const execution = { id: "execution", task, status: "dispatched", trigger: "manual", createdAt: "2026-10-01T07:00:00Z", sessionId: "stored-conversation", dispatchError: null, latestReport: null };
 const cleanup: (() => void)[] = [];
-afterEach(() => { cleanup.splice(0).forEach((dispose) => { dispose(); }); document.body.replaceChildren(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup.splice(0).forEach((dispose) => { dispose(); }); document.body.replaceChildren(); localStorage.clear(); vi.restoreAllMocks(); });
 
 function setup(request = vi.fn<(operation: string, input: JsonValue, options?: PluginPeerRequestOptions) => Promise<JsonValue>>((operation) => Promise.resolve(operation === "overview" ? { tasks: [{ ...task, latestExecution: execution }] } : { executions: [execution], nextOffset: 20 }))) {
   const lifetime = new AbortController();
@@ -39,6 +39,12 @@ function setup(request = vi.fn<(operation: string, input: JsonValue, options?: P
   return { element, root, request, forScope, context, mount, service, lifetime, navigate };
 }
 const nothingTemplate = html``;
+function deferred() {
+  let resolve!: (value: JsonValue) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<JsonValue>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
 function button(root: ShadowRoot, name: string): HTMLButtonElement {
   const control = [...root.querySelectorAll("button")].find((candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent.trim()) === name);
   if (!control) throw new Error(`Missing button ${name}`);
@@ -47,34 +53,113 @@ function button(root: ShadowRoot, name: string): HTMLButtonElement {
 async function ready(target: ReturnType<typeof setup>): Promise<void> { await vi.waitFor(() => { expect(target.root.querySelector("article")).not.toBeNull(); }); }
 
 describe("Scheduled tasks dashboard", () => {
-  it("loads machine-wide read models without a workspace, escapes user content, and opens stored conversation targets", async () => {
+  it("initially loads only the machine overview, escapes task names, and opens stored conversation targets", async () => {
     const target = setup(); await ready(target);
     expect(target.forScope).toHaveBeenCalledWith({ kind: "machine" });
-    expect(target.request.mock.calls.map(([operation]) => operation)).toEqual(["overview", "history"]);
-    expect(target.root.textContent).toContain(task.name);
+    expect(target.request).toHaveBeenCalledExactlyOnceWith("overview", {}, expect.anything());
+    expect(target.request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    expect(button(target.root, `View task: ${task.name}`).textContent).toBe(task.name);
     expect(target.root.querySelector("script")).toBeNull();
     // A retained due timestamp is not an upcoming dispatch while the task is paused.
-    expect(target.root.querySelector(".next")?.textContent).not.toContain("2026");
-    expect(target.root.querySelectorAll('[data-status="dispatched"]')).toHaveLength(2);
+    expect(target.root.querySelector('[aria-labelledby="upcoming-title"] article')).toBeNull();
+    expect(target.root.querySelector('[aria-labelledby="awaiting-title"] [data-status="dispatched"]')).not.toBeNull();
+    expect(target.root.querySelector('[aria-labelledby="results-title"]')).toBeNull();
     button(target.root, "Open conversation").click();
     await vi.waitFor(() => { expect(target.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "captured-machine", projectId: "stored-project", workspaceId: "stored-workspace", sessionId: "stored-conversation", view: "chat" }); });
     expect(target.context.prompt.getText()).toBe("draft");
     target.mount({ ...target.context, state: { mainView: "workspace" } }); await target.element.updateComplete;
-    expect(target.request).toHaveBeenCalledTimes(2);
+    expect(target.request).toHaveBeenCalledTimes(1);
   });
-  it("filters and pages history, then refreshes explicit corrections without deriving outcomes from sessions", async () => {
-    const target = setup(); await ready(target);
-    button(target.root, `View history for ${task.name}`).click();
+  it("opens full task reports and technical disclosures with lazy task-filtered, paginated history", async () => {
+    const summary = `First line <script>\n${"Full report detail. ".repeat(40)}\nFinal finding <failure>`;
+    const reported = { ...execution, status: "errored", dispatchError: "Diagnostic <failure>", latestReport: { summary } };
+    const target = setup(vi.fn((operation) => Promise.resolve(operation === "overview"
+      ? { tasks: [{ ...task, latestExecution: reported }] }
+      : { executions: [reported], nextOffset: 20 })));
+    await ready(target);
+    button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { taskId: "task", limit: 20, offset: 0 }, expect.anything()); });
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe(summary); });
+    expect(target.root.querySelector("script, failure")).toBeNull();
+    const disclosures = [...target.root.querySelectorAll<HTMLDetailsElement>("details")].filter((details) => details.querySelector("summary")?.textContent === "Technical details");
+    expect(disclosures).toHaveLength(2);
+    const runDetails = disclosures.find((details) => details.textContent.includes(execution.id));
+    if (!runDetails) throw new Error("Missing execution technical disclosure");
+    expect(runDetails.open).toBe(false);
+    runDetails.open = true;
+    for (const value of [task.projectId, task.workspaceId, task.schedule.expression, task.timezone, execution.sessionId, "Diagnostic <failure>"]) {
+      expect(runDetails.textContent).toContain(value);
+    }
     await vi.waitFor(() => { expect(button(target.root, "Next").disabled).toBe(false); });
+    expect(button(target.root, "Previous").disabled).toBe(true);
     button(target.root, "Next").click();
     await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { taskId: "task", limit: 20, offset: 20 }, expect.anything()); });
     await vi.waitFor(() => { expect(button(target.root, "Refresh").disabled).toBe(false); });
-    target.request.mockImplementation((operation) => Promise.resolve(operation === "overview" ? { tasks: [{ ...task, latestExecution: { ...execution, status: "errored", latestReport: { summary: "Corrected <failure>" } } }] } : { executions: [], nextOffset: null }));
+    button(target.root, "Previous").click();
+    await vi.waitFor(() => { expect(target.request.mock.calls.at(-1)?.[1]).toEqual({ taskId: "task", limit: 20, offset: 0 }); });
+    await vi.waitFor(() => { expect(button(target.root, "Refresh").disabled).toBe(false); });
+    target.request.mockImplementation((operation) => Promise.resolve(operation === "overview"
+      ? { tasks: [{ ...task, latestExecution: { ...execution, status: "completed", latestReport: { summary: "Corrected result" } } }] }
+      : { executions: [{ ...execution, status: "completed", latestReport: { summary: "Corrected result" } }], nextOffset: null }));
     button(target.root, "Refresh").click();
-    await vi.waitFor(() => { expect(target.root.textContent).toContain("Corrected <failure>"); });
-    expect(target.root.querySelector("failure")).toBeNull();
+    await vi.waitFor(() => { expect(target.root.querySelector('.history-entry [data-status="completed"]')).not.toBeNull(); });
+    expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe("Corrected result");
+    expect(target.root.querySelector(".pages")).toBeNull();
     expect(target.request.mock.calls.every(([operation]) => ["overview", "history"].includes(operation))).toBe(true);
+  });
+  it("opens global history on demand and returns to the overview without loading history again", async () => {
+    const target = setup(); await ready(target);
+    button(target.root, "All history").click();
+    await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { limit: 20, offset: 0 }, expect.anything()); });
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    expect(target.root.querySelector(".history-entry h3")?.textContent).toBe(task.name);
+    const historyCalls = target.request.mock.calls.filter(([operation]) => operation === "history").length;
+    button(target.root, "Overview").click();
+    await vi.waitFor(() => { expect(target.root.querySelector('[aria-labelledby="awaiting-title"]')).not.toBeNull(); });
+    expect(target.root.querySelector(".history-entry")).toBeNull();
+    expect(target.request.mock.calls.at(-1)?.[0]).toBe("overview");
+    expect(target.request.mock.calls.filter(([operation]) => operation === "history")).toHaveLength(historyCalls);
+  });
+  it("ignores an obsolete overview refresh after opening task details", async () => {
+    const target = setup(); await ready(target);
+    const stale = deferred();
+    target.request.mockImplementationOnce(() => stale.promise);
+    button(target.root, "Refresh").click();
+    const staleSignal = target.request.mock.calls.at(-1)?.[2]?.signal;
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    expect(staleSignal?.aborted).toBe(true);
+    stale.resolve({ tasks: [{ ...task, name: "Obsolete task", latestExecution: execution }] });
+    await stale.promise; await target.element.updateComplete;
+    expect(target.root.querySelector(".view-title")?.textContent).toBe(task.name);
+    expect(target.root.textContent).not.toContain("Obsolete task");
+    expect(target.root.querySelector(".history-entry")).not.toBeNull();
+  });
+  it("ignores late history failures after returning to the overview", async () => {
+    const target = setup(); await ready(target);
+    const stale = deferred();
+    target.request.mockImplementation((operation) => operation === "overview"
+      ? Promise.resolve({ tasks: [{ ...task, latestExecution: execution }] }) : stale.promise);
+    button(target.root, `View task: ${task.name}`).click();
+    await target.element.updateComplete;
+    const historySignal = target.request.mock.calls.find(([operation]) => operation === "history")?.[2]?.signal;
+    button(target.root, "Overview").click();
+    await vi.waitFor(() => { expect(button(target.root, "Refresh").disabled).toBe(false); });
+    expect(historySignal?.aborted).toBe(true);
+    stale.reject(new Error("Obsolete history failure"));
+    await stale.promise.catch(() => undefined); await target.element.updateComplete;
+    expect(target.root.querySelector('[role="alert"]')).toBeNull();
+    expect(target.root.querySelector(".history-entry")).toBeNull();
+    expect(button(target.root, `View task: ${task.name}`)).toBeDefined();
+  });
+  it("keeps conversation navigation failures visible without losing the stored recovery identity", async () => {
+    const target = setup(); await ready(target);
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    target.navigate.mockRejectedValueOnce(new Error("Missing conversation"));
+    button(target.root, "Open conversation").click();
+    await vi.waitFor(() => { expect(target.root.querySelector('[role="alert"]')).not.toBeNull(); });
+    expect(target.root.querySelector(".history-entry details")?.textContent).toContain(execution.sessionId);
   });
   it("discards stale results on machine changes and aborts requests on disconnect", async () => {
     let resolve: (value: JsonValue) => void = () => undefined;
@@ -108,7 +193,7 @@ describe("Scheduled tasks dashboard", () => {
     await target.element.updateComplete;
     expect(target.root.querySelector(".panel")?.getAttribute("dir")).toBe("rtl");
     expect(target.root.querySelector("header")?.textContent).not.toBe(originalTitle);
-    expect(target.request).toHaveBeenCalledTimes(2);
+    expect(target.request).toHaveBeenCalledTimes(1);
     target.lifetime.abort();
     expect(target.request.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);
   });

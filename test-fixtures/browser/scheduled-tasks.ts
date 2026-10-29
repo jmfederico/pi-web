@@ -14,8 +14,14 @@ activation.start({ signal: lifetime.signal, capabilities: { resolve: (token) => 
 const task = { id: "review", name: "Daily issue classification and compatibility review", revision: 2, projectId: "project-with-a-long-registered-id", workspaceId: "main-workspace", schedule: { kind: "cron", expression: "0 9 * * *" }, timezone: "Europe/Madrid", paused: false, archived: false, nextDue: "2026-10-02T07:00:00Z" };
 const execution = { id: "execution-review", task, trigger: "scheduled", createdAt: "2026-10-01T07:00:00Z", status: "completed", sessionId: "review-conversation", dispatchError: null, latestReport: { summary: "Reviewed 18 issues. Classified 4 new reports and recorded compatibility findings.\nShared notes: docs/compatibility.md" } };
 const request = (operation: string, input: JsonValue): Promise<JsonValue> => {
-  if (operation === "overview") return Promise.resolve({ tasks: [{ ...task, latestExecution: execution }, { ...task, id: "paused", name: "One-off investigation", schedule: { kind: "once", at: "2026-10-03T08:00:00Z" }, paused: true, nextDue: null, latestExecution: null }] });
-  if (operation === "history") return Promise.resolve({ executions: [{ ...execution, id: JSON.stringify(input) }], nextOffset: null });
+  if (operation === "overview") return Promise.resolve({ tasks: [
+    { ...task, latestExecution: execution },
+    { ...task, id: "backup", name: "Check the nightly backup", latestExecution: { ...execution, status: "errored", sessionId: "backup-conversation", latestReport: { summary: "The backup could not be verified. The storage service needs your attention before tonight’s run." } } },
+    { ...task, id: "pending", name: "Weekly dependency review", latestExecution: { ...execution, status: "dispatched", latestReport: null } },
+    { ...task, id: "paused", name: "One-off investigation", schedule: { kind: "once", at: "2026-10-03T08:00:00Z" }, paused: true, nextDue: null, latestExecution: null },
+    { ...task, id: "archived", name: "Archived compatibility check", archived: true, latestExecution: null },
+  ] });
+  if (operation === "history") return Promise.resolve({ executions: [{ ...execution, id: JSON.stringify(input), latestReport: { summary: execution.latestReport.summary + "\n" + "Detailed findings are available in the conversation. ".repeat(35) } }], nextOffset: null });
   throw new Error(`Dashboard attempted non-read operation ${operation}`);
 };
 const context: ApplicationPanelContextV5 = {
