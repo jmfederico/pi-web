@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Add the SQLite-backed scheduling engine for optional scheduled agent tasks.
+Add an optional, disabled-by-default scheduled agent tasks package with a SQLite execution ledger and background conversation dispatch.

@@ -113,6 +113,8 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay/SKILL.md");
     expect(builtPackageFiles).toContain("dist/pi-packages/relays/skills/relay-runner/SKILL.md");
     expect(builtPackageFiles).toEqual(expect.arrayContaining([
+      "dist/pi-packages/scheduled-tasks/package.json",
+      "dist/pi-packages/scheduled-tasks/server-plugin.js",
       "dist/pi-packages/workflows/package.json",
       "dist/pi-packages/workflows/browser/pi-web-plugin.js",
       "dist/pi-packages/workflows/browser/worktreeDialog.js",
@@ -131,6 +133,43 @@ describe("plugin delivery artifacts", () => {
     if (!isRecord(builtRelaysPackage)) throw new Error("Built relays package metadata was not an object");
     expect(builtRelaysPackage["name"]).toBe("@jmfederico/pi-relay");
   });
+  it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
+    const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
+    const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+    expect(metadata).toMatchObject({ piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false }] } });
+    // Execute outside PI WEB's dependency tree: the server bundle must carry cron and public host API values.
+    const standalone = join(tempDir, "scheduler");
+    await mkdir(standalone);
+    await cp(join(source, "server-plugin.js"), join(standalone, "server-plugin.mjs"));
+    const probe = join(standalone, "probe.mjs");
+    await writeFile(probe, `
+      import plugin from "./server-plugin.mjs";
+      const signal = new AbortController().signal;
+      const activation = await plugin.activate({ settings: { defaultTimezone: "UTC" },
+        lifetimeSignal: signal, dataDirectory: new URL(".", import.meta.url).pathname,
+        logger: { error: console.error },
+      });
+      const project = { id: "p", name: "Project", path: "/project" };
+      const workspace = { id: "w", projectId: "p", label: "Main", path: "/project", isMain: true };
+      await activation.start({ capabilities: { resolve(capability) {
+        return capability.parse(capability.id === "workspaces"
+          ? { version: 1, resolve: async () => ({ project, workspace }) }
+          : { version: 1, create: async () => ({ sessionId: "unused" }), run: async () => ({
+            sessionId: "conversation", completion: Promise.resolve({ status: "completed" }),
+          }) });
+      } } });
+      const request = (operation, input) => activation.peer.request({ scope: { kind: "machine" }, operation, input, signal });
+      try {
+        const task = await request("create", { name: "Review", projectId: "p", workspaceId: "w",
+          prompt: "Review the project", schedule: { kind: "cron", expression: "0 9 * * *" } });
+        const execution = await request("dispatch", { taskId: task.id });
+        if (execution.sessionId !== "conversation" || execution.status !== "dispatched") throw new Error("Dispatch not confirmed");
+        console.log("standalone scheduler passed");
+      } finally { await activation.dispose(); }
+    `);
+    expect(await execUtf8(process.execPath, [probe], standalone, 10_000)).toContain("standalone scheduler passed");
+  });
+
   it("ships a standalone Git notification helper that fails open", async () => {
     const helperName = "workspace-discovery-notify.cjs";
     const builtHelper = join(repoRoot, "dist", "pi-web-plugins", "git", helperName);

@@ -86,10 +86,10 @@ export class TaskStore {
     });
   }
 
-  executions(taskId?: string): Execution[] {
+  executions(taskId?: string, limit = -1, offset = 0): Execution[] {
     const rows = taskId === undefined
-      ? this.db.prepare("SELECT body FROM executions ORDER BY rowid DESC").all()
-      : this.db.prepare("SELECT body FROM executions WHERE task_id = ? ORDER BY rowid DESC").all(taskId);
+      ? this.db.prepare("SELECT body FROM executions ORDER BY rowid DESC LIMIT ? OFFSET ?").all(limit, offset)
+      : this.db.prepare("SELECT body FROM executions WHERE task_id = ? ORDER BY rowid DESC LIMIT ? OFFSET ?").all(taskId, limit, offset);
     return rows.map((row) => decode<Execution>(row));
   }
 
