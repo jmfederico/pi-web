@@ -1,3 +1,4 @@
+import { backgroundTaskPresentation } from "./backgroundTaskNotification";
 import { argumentSummaryPresentation, summarizeArgs } from "./chatPresentation";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes";
 import { parseAskUserOutcome, parseAskUserRequest } from "./api/parsers";
@@ -75,7 +76,12 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   if (getString(message, "role") === "bashExecution") return [withMessageMeta(normalizeBashExecution(message), message)];
   const rawRole = getString(message, "role");
   const role = normalizeRole(rawRole);
+  const notification = backgroundTaskPresentation(message);
   const contentParts = normalizeContent(getProperty(message, "content"), message);
+  // Preserve the original text for copy/export; presentation is browser-only.
+  if (notification !== undefined && contentParts.length === 1 && contentParts[0]?.type === "text") {
+    contentParts[0] = { ...contentParts[0], presentation: notification };
+  }
   const supersededRecord = rawRole === "toolResult"
     ? askUserRecordFromToolDetails(getString(message, "toolName") ?? "", getProperty(message, "details"))
     : undefined;

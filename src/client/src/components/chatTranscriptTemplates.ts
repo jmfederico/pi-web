@@ -199,6 +199,9 @@ function renderMessageMetadata(context: TranscriptRenderContext, message: ChatLi
 }
 
 export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
+    if (part.type === "text" && part.presentation?.kind === "backgroundTask") {
+      return html`<background-task-notice class="part" .task=${part.presentation} .raw=${part.text}></background-task-notice>`;
+    }
     const intentKey = JSON.stringify([context.machineId, context.sessionId, message.entryId ?? messageIndex, partIndex]);
     if (part.type === "text" || part.type === "thinking") {
       const text = part.type === "text" && part.presentation !== undefined ? localizedChatText(part.presentation) : part.displayText ?? part.text;

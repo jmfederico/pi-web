@@ -1,3 +1,4 @@
+import type { BackgroundTaskPresentation } from "./backgroundTaskNotification";
 import type { CommandResultPresentation } from "../../shared/commandResultPresentation";
 import type { CommandOutputPresentation } from "../../shared/commandOutputPresentation";
 
@@ -5,6 +6,7 @@ import type { CommandOutputPresentation } from "../../shared/commandOutputPresen
 export type ChatTextPresentation =
   | CommandOutputPresentation
   | CommandResultPresentation
+  | BackgroundTaskPresentation
   | { kind: "modelError"; detail: string }
   | { kind: "imagePlaceholder" }
   | ArgumentSummaryPresentation

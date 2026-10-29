@@ -36,6 +36,7 @@ import type { ImageGalleryDialog } from "./ImageGalleryDialog";
 import "./FormattedText";
 import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import "./ToolExecutionView";
+import "./BackgroundTaskNotice";
 import { transcriptImageSource } from "./TranscriptImage";
 import type { ImageOpenDetail } from "./ImagePresentation";
 

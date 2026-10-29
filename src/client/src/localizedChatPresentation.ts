@@ -17,6 +17,7 @@ export function localizedChatText(presentation: ChatTextPresentation): string {
     case "modelAuthRemoved": return messages.t("modelAuthRemoved", { provider: presentation.provider, model: presentation.model });
     case "sessionNamingFailed": return messages.t("sessionNamingFailed", { detail: presentation.detail });
     case "arguments": return localizedArgumentSummary(presentation);
+    case "backgroundTask": return `${messages.t("backgroundTaskStatus", { status: presentation.status })} · ${presentation.name} (${presentation.id})`;
     case "imagePlaceholder": return messages.t("imagePlaceholder");
     case "modelError": return messages.t("modelFailure", { detail: presentation.detail, detailed: presentation.detail === "" ? "no" : "yes" });
     case "liveShell": {
