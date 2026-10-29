@@ -26,7 +26,7 @@ Pi owns durable session history and model context. PI WEB projects that history 
 
 The daemon caches SDK token/cost/context statistics by committed entry count, branch leaf, session identity and model limits. Volatile activity and queue state remain live. SDKs without a constant-time entry-count API retain uncached reads for compatibility; SDK-provided context usage avoids a duplicate computation.
 
-The selected transcript and its mounted content are not yet viewport-windowed. Loaded history and previously opened cached bodies can still grow during a long visit; these optimizations do not establish a fixed browser memory or layout bound.
+The selected transcript and its mounted content are not yet viewport-windowed. Loaded history and previously opened cached bodies can still grow during a long visit; these optimizations do not establish a fixed browser memory or layout bound. The [bounded transcript design](transcript-flow.md) defines the next ownership, addressing, viewport, and retention milestones; it is not implemented behavior.
 
 ## Following live
 
