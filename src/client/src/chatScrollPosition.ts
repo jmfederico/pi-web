@@ -149,6 +149,12 @@ export class ChatScrollController {
   }
 }
 
+/** Preserve local bookmarks; ambiguous legacy remote bookmarks are not migrated. */
+export function chatScrollScopeKey(machineId: string, sessionId: string): string {
+  if (sessionId === "" || machineId === "local") return sessionId;
+  return JSON.stringify(["machine", machineId, sessionId]);
+}
+
 export function chatScrollStorageKey(sessionId: string): string {
   return `${SCROLL_STORAGE_PREFIX}${sessionId}`;
 }

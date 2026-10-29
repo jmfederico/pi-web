@@ -1,6 +1,6 @@
 # Bounded transcript flow
 
-Status: staged design. The first-round reuse/cache improvements and the source-address/interaction-state foundation described in [chat behavior](chat-behaviors.md#long-session-work-boundaries) are implemented. Viewport consolidation, windowing, qualified history reads, and active eviction remain future milestones. This document is not a claim that active browser history, rendering, or network payloads are already bounded.
+Status: staged design. The first-round reuse/cache improvements, source-address/interaction-state foundation, and viewport authority described in [chat behavior](chat-behaviors.md#long-session-work-boundaries) are implemented. Windowing, qualified history reads, and active eviction remain future milestones. This document is not a claim that active browser history, rendering, or network payloads are already bounded.
 
 ## Goal
 
@@ -30,7 +30,7 @@ A fetch page size is not a residency limit. A residency limit is not a mounted-c
 
 `SessionController` remains the transport/session orchestrator. Transcript range and replay logic should move behind a selected-transcript boundary rather than acquiring more unrelated flags there.
 
-`ChatScrollFlows` remains the migration boundary for viewport behavior. Its public integration can stay while its independently scheduled scroll effects move into one ordered viewport transaction. Do not introduce another scroll writer beside it.
+`ChatScrollFlows` owns viewport behavior through one scheduled transaction and one commit boundary. Tail-follow tracks navigation intent without scheduling or writing. Earlier-history loading schedules requests independently but cannot move the viewport. Do not introduce another scroll writer beside this boundary.
 
 ## Addresses before windows
 
@@ -46,7 +46,7 @@ Normalized indexes, projected part indexes, raw offsets, and current group edges
 
 Normalization now carries original `content:N` provenance through filtering and coalescing; tool calls use their semantic call IDs. Optional indexed text/thinking deltas preserve the same part key as saved history. Tab-owned, bounded identifier aliases join stream and entry owners without retaining transcript bodies. Disclosures use the committed key after finalization; remote-machine disclosure storage is isolated while existing local storage remains readable. Repeated ask answers retain distinct entry identities.
 
-The current `ChatRenderKeys` reconciler preserves mounted owners across adjacent updates; it is not a durable address book for evicted content. Legacy unindexed streams/manual lines retain local-slot fallback behavior, not a fabricated original-part identity. Projection generations and machine-scoped scroll-bookmark migration remain part of the qualified-read/viewport milestones.
+The current `ChatRenderKeys` reconciler preserves mounted owners across adjacent updates; it is not a durable address book for evicted content. Legacy unindexed streams/manual lines retain local-slot fallback behavior, not a fabricated original-part identity. Projection generations remain part of the qualified-read milestone. Scroll bookmarks now use machine/session scope: local keys remain compatible, while remote keys are separate. Legacy remote bookmarks were not machine-qualified, so migrating them could adopt another machine's position; remote sessions deliberately start without those ambiguous bookmarks.
 
 ## One viewport transaction
 
@@ -64,7 +64,9 @@ For a content, disclosure, range, or layout change:
 4. Measure changed rows.
 5. Make one coalesced scroll adjustment, then record its baseline.
 
-Formatting, image geometry, previews, prepends, and window shifts all enter this transaction. A resize observer reports geometry; it does not decide navigation. User input cancels obsolete restoration. Programmatic adjustment must not be mistaken for an upward reading gesture. Keep Safari rebound normalization and the explicit native-anchoring policy.
+The implemented transaction chooses one pending target per frame: remembered restoration, otherwise the original pre-prepend anchor, otherwise coalesced tail/form alignment. Consecutive renders retain the first prepend snapshot until commit. Explicit top/end navigation retires queued targets and commits synchronously through the same boundary. Native user interaction retires obsolete restoration/prepend work; programmatic corrections record a fresh follow baseline. Persistence timers and history requests do not own scroll writes.
+
+Formatting, image geometry and previews already notify this owner. The measured-row/window stages above are future work; paused reading views retain the existing layout behavior outside explicit prepend/restoration correction. Window shifts must enter this transaction too. A resize observer reports geometry; it does not decide navigation. User input cancels obsolete restoration. Programmatic adjustment must not be mistaken for an upward reading gesture. Keep Safari rebound normalization and the explicit native-anchoring policy.
 
 Anchor resolution must distinguish:
 
@@ -95,7 +97,7 @@ Focused rows, selection-intersecting rows, composition targets, and popup owners
 
 Active ask/extension requests and in-flight submission state have request-scoped ownership outside recycled history. Render one active form, not a second copy in another window. Historical question records remain history; eviction of a closing record must never reopen a question. Determine active-request facts from authoritative conversation state, not the mounted or retained historical tail. Current placement is unchanged. `PiWebApp` now owns the injected `PendingFormState`: ask buffers are memory-first with the existing best-effort draft persistence, extension inputs are memory-only, and concurrent sends share a synchronous operation lock. Only an accepted controller response clears ask memory; authoritative dialog snapshots/closures remove extension buffers. Startup handoff moves the existing request owner before selection replacement. Component removal does not cancel transport or clear its draft. Idle request buffers are LRU-bounded; mounted active forms and pending operations stay pinned until unbinding or settlement. This is tab-instance protection, not reload/cross-tab deduplication.
 
-`TranscriptUiState` separately holds bounded tool disclosure/full-diff intent. Copy feedback, countdown timers and sensitive closed-answer reveal remain local to their component lifetime. The viewport milestone must still protect focus/selection and keep one active form mounted; no recycling is enabled yet.
+`TranscriptUiState` separately holds bounded tool disclosure/full-diff intent. Copy feedback, countdown timers and sensitive closed-answer reveal remain local to their component lifetime. The mounting milestone must still protect focus/selection and keep one active form mounted; no recycling is enabled yet.
 
 ## Data residency and synchronization
 

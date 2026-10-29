@@ -26,6 +26,7 @@ import { canonicalEntryActionHeaders, type ChatDisplayGroup, type ChatGroup } fr
 import { ChatGroupProjection } from "../chatGroupProjection";
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
 import { ChatScrollFlows } from "../ChatScrollFlows";
+import { chatScrollScopeKey } from "../chatScrollPosition";
 import { ChatRenderKeys, type ChatRenderItem } from "../chatRenderKeys";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, PendingExtensionDialog, QueuedSessionMessage, SessionActivity, SessionRef, SessionStatus } from "../api";
@@ -187,7 +188,7 @@ export class ChatView extends LitElement {
     getScroller: () => this.chat ?? undefined,
     onFollowingChange: (following) => { this.followingLive = following; },
     getAnchors: () => this.scrollAnchorElements(),
-    getSessionId: () => this.sessionId,
+    getScopeKey: () => chatScrollScopeKey(this.machineId, this.sessionId),
     getBehaviors: () => this.behaviors,
     hasMore: () => this.hasMore,
     isHistoryReady: () => this.historyReady,
@@ -238,6 +239,20 @@ export class ChatView extends LitElement {
     this.touchY = y;
   };
   private readonly handleTouchEnd = () => { this.touchY = undefined; };
+  private readonly handlePointerDown = () => { this.scrollFlows.onInteraction(); };
+  private readonly handleScrollKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    const space = event.key === " ";
+    const upward = ["ArrowUp", "PageUp", "Home"].includes(event.key) || (space && event.shiftKey);
+    if (!upward && !space && !["ArrowDown", "PageDown", "End"].includes(event.key)) return;
+    // Let editors and native controls own caret/selection and activation keys.
+    if (event.composedPath().some((node) => node instanceof HTMLElement && (
+      node.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(node.tagName)
+      || (space && (node.matches("button, a, summary, [role=button]")))
+    ))) return;
+    if (upward) this.scrollFlows.onUpIntent();
+    else this.scrollFlows.onInteraction();
+  };
   private readonly handleJumpTop = () => { this.scrollFlows.jumpToTop(); };
   private readonly handleJumpEnd = () => { this.scrollFlows.jumpToEnd(); };
   private readonly openImageZoom = (image: ImageOpenDetail): void => {
@@ -320,9 +335,12 @@ export class ChatView extends LitElement {
 
   protected override update(changed: Map<string, unknown>): void {
     const previousStart = changed.get("messageStart");
+    const previousSessionId = changed.has("sessionId") ? changed.get("sessionId") : this.sessionId;
+    const previousMachineId = changed.has("machineId") ? changed.get("machineId") : this.machineId;
     this.scrollFlows.beforeRender({
       sessionChanged: changed.has("sessionId") || changed.has("machineId"),
-      previousSessionId: changed.get("sessionId"),
+      previousScopeKey: typeof previousSessionId === "string" && typeof previousMachineId === "string"
+        ? chatScrollScopeKey(previousMachineId, previousSessionId) : undefined,
       prepend: typeof previousStart === "number" && this.messageStart < previousStart,
     });
     super.update(changed);
@@ -401,6 +419,8 @@ export class ChatView extends LitElement {
           @toggle=${this.behaviors.followTail ? this.handleDisclosureToggle : undefined}
           @content-layout-changed=${this.onContentLayoutChanged}
           @wheel=${this.handlesScrollIntent ? this.handleWheel : undefined}
+          @pointerdown=${this.handlesScrollIntent ? this.handlePointerDown : undefined}
+          @keydown=${this.handlesScrollIntent ? this.handleScrollKeyDown : undefined}
           @touchstart=${this.handlesScrollIntent ? this.handleTouchStart : undefined}
           @touchmove=${this.handlesScrollIntent ? this.handleTouchMove : undefined}
           @touchend=${this.handlesScrollIntent ? this.handleTouchEnd : undefined}
@@ -746,7 +766,7 @@ export class ChatView extends LitElement {
   }
 
   private get handlesScrollIntent(): boolean {
-    return this.behaviors.followTail || this.behaviors.rememberPosition;
+    return this.behaviors.followTail || this.behaviors.rememberPosition || this.behaviors.anchorPrepends;
   }
 
   private scrollContentChanged(changed: Map<string, unknown>): boolean {
@@ -776,13 +796,13 @@ export class ChatView extends LitElement {
     return typeof previousOldest !== "object" || previousOldest === null || Reflect.get(previousOldest, "dialogId") !== oldest.dialogId;
   }
 
-  /** Public navigation hooks; the position-memory flow owns their effects. */
+  /** Public navigation hooks delegate to the viewport owner. */
   restoreScrollPosition(): void {
     this.scrollFlows.restorePosition();
   }
 
   saveScrollPosition(sessionId = this.sessionId): void {
-    this.scrollFlows.savePosition(sessionId);
+    this.scrollFlows.savePosition(chatScrollScopeKey(this.machineId, sessionId));
   }
 
   private scrollAnchorElements(): HTMLElement[] {
