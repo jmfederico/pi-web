@@ -196,6 +196,27 @@ describe("ChatScrollFlows composition", () => {
     expect(f.state.top).toBe(1300);
   });
 
+  it.each([false, true])("joins mounted renders before paint and respects cancellation (cancel: %s)", async (cancel) => {
+    const f = fixture();
+    let finish: () => void = () => undefined;
+    const rendered = new Promise<void>((resolve) => { finish = resolve; });
+    const whenRendered = vi.fn(() => rendered);
+    Object.assign(f.host, { whenRendered });
+    f.state.top = 100;
+    f.start();
+    f.state.height = 1300;
+    f.update();
+    expect(f.writeTop).not.toHaveBeenCalled();
+    expect(whenRendered).toHaveBeenCalledOnce();
+    if (cancel) f.flows.onUpIntent();
+    finish();
+    await rendered;
+    // No later animation frame is required to repair already-rendered geometry.
+    expect(f.frames.pending).toBe(0);
+    if (cancel) expect(f.writeTop).not.toHaveBeenCalled();
+    else expect(f.state.top).toBe(1000);
+  });
+
   it("restores an anchor with the existing codec and does not replace it with a tail jump", () => {
     const f = fixture();
     f.state.top = 0;
@@ -440,6 +461,30 @@ describe("position flow", () => {
       f.state.anchors = [f.element(contentTop, "reading")];
       f.update(); f.frames.flush();
       expect(Math.abs(contentTop - f.state.top + 17)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("carries pixel precision across native movement and a different reader anchor", () => {
+    const f = fixture({ ...MANUAL_CHAT_BEHAVIORS, rememberPosition: true }, true);
+    f.state.height = 3000;
+    let contentTop = 400.625;
+    let idealTop = contentTop + 17;
+    f.state.anchors = [f.element(contentTop, "initial")];
+    f.storage.seed("s1", { mode: "anchor", anchorId: "initial", offset: -17 });
+    f.start(); f.frames.flush();
+    for (let step = 0; step < 5; step++) {
+      f.flows.onUpIntent();
+      f.state.top -= 4;
+      idealTop -= 4;
+      f.flows.onScroll();
+      const id = `reader-${String(step)}`;
+      f.state.anchors = [f.element(contentTop, id)];
+      f.flows.beforeMountChange();
+      contentTop += 100.625;
+      idealTop += 100.625;
+      f.state.anchors = [f.element(contentTop, id)];
+      f.update(); f.frames.flush();
+      expect(Math.abs(f.state.top - idealTop)).toBeLessThan(1);
     }
   });
 

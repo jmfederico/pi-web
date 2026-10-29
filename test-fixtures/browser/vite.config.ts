@@ -14,6 +14,7 @@ export default defineConfig({
         overlays: fileURLToPath(new URL("overlays.html", import.meta.url)),
         viewport: fileURLToPath(new URL("viewport.html", import.meta.url)),
         mountingWindow: fileURLToPath(new URL("mounting-window.html", import.meta.url)),
+        scrollStability: fileURLToPath(new URL("scroll-stability.html", import.meta.url)),
         compoundMounting: fileURLToPath(new URL("compound-mounting.html", import.meta.url)),
         terminal: fileURLToPath(new URL("terminal.html", import.meta.url)),
         localization: fileURLToPath(new URL("localization.html", import.meta.url)),

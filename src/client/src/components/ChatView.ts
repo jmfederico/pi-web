@@ -29,6 +29,7 @@ import { ChatScrollFlows } from "../ChatScrollFlows";
 import { chatScrollScopeKey } from "../chatScrollPosition";
 import { TranscriptMountWindow, type TranscriptMountRow } from "../transcriptMountWindow";
 import { TranscriptMountLists } from "../transcriptMountLists";
+import { transcriptRenderComplete } from "../transcriptRenderComplete";
 import { hasRenderedModal } from "./modalLayerRegistry";
 import { THUMBNAIL_HEIGHT } from "../thumbnailGeometry";
 import { ChatRenderKeys, type ChatRenderItem } from "../chatRenderKeys";
@@ -220,6 +221,8 @@ export class ChatView extends LitElement {
     getScopeKey: () => chatScrollScopeKey(this.machineId, this.sessionId),
     requestAnchorMount: (anchorId) => this.behaviors.mountingWindow && (this.mountWindow.requestAnchor(anchorId) || this.childMounts.requestAnchor(anchorId)),
     resolveHiddenAnchor: (anchorId) => this.behaviors.mountingWindow ? this.hiddenAnchorOwner(anchorId) : undefined,
+    whenRendered: () => this.behaviors.mountingWindow
+      ? this.updateComplete.then(() => transcriptRenderComplete(this.renderRoot)) : undefined,
     getBehaviors: () => this.behaviors,
     hasMore: () => this.hasMore,
     isHistoryReady: () => this.historyReady,

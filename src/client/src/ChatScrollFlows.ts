@@ -15,6 +15,8 @@ export interface ChatScrollFlowsHost {
   onFollowingChange?(following: boolean): void;
   requestAnchorMount?(anchorId: string): boolean;
   resolveHiddenAnchor?(anchorId: string): string | undefined;
+  /** A mounted render boundary that settles before paint; absent on the full-mounting path. */
+  whenRendered?(): Promise<void> | undefined;
 }
 
 export interface ChatScrollFrameScheduler {
@@ -194,11 +196,12 @@ export class ChatScrollFlows {
   private readonly tail: TailFollowState;
   private readonly history: HistoryFlow;
   private frame: number | undefined;
+  private renderCommit: object | undefined;
   private restoration: { scopeKey: string; position: ChatScrollPosition } | undefined;
   private requestedHistory = false;
   private correction: { position: ChatAnchorScrollPosition; source: "history" | "mount"; scrollTop: number } | undefined;
   private follow: { form: FormAlignment } | undefined;
-  private anchorRounding: { anchorId: string; error: number; scrollTop: number } | undefined;
+  private scrollRounding = 0;
   private started = false;
   private disposed = false;
 
@@ -238,9 +241,7 @@ export class ChatScrollFlows {
     const anchor = findScrollAnchor(scroller, this.host.getAnchors());
     if (anchor === undefined) return;
     const position = captureScrollPosition(scroller, anchor);
-    if (this.anchorRounding?.anchorId === position.anchorId && this.anchorRounding.scrollTop === scroller.scrollTop) {
-      position.offset -= this.anchorRounding.error;
-    }
+    position.offset -= this.scrollRounding;
     this.correction = { position, source, scrollTop: scroller.scrollTop };
   }
 
@@ -278,7 +279,6 @@ export class ChatScrollFlows {
 
   onScroll(): void {
     if (this.disposed) return;
-    if (this.anchorRounding !== undefined && this.host.getScroller()?.scrollTop !== this.anchorRounding.scrollTop) this.anchorRounding = undefined;
     if (this.restoration === undefined) this.tail.onScroll();
     if (!this.tail.followingLive) this.cancelFollow();
     this.scheduleSave();
@@ -287,7 +287,6 @@ export class ChatScrollFlows {
 
   onInteraction(): void {
     if (this.disposed) return;
-    this.anchorRounding = undefined;
     if (this.restoration !== undefined) {
       this.resetRestoration();
       this.tail.recordScrollBaseline();
@@ -376,6 +375,26 @@ export class ChatScrollFlows {
   }
 
   private scheduleViewport(): void {
+    if (this.renderCommit !== undefined) return;
+    const rendered = this.host.whenRendered?.();
+    if (rendered !== undefined) {
+      this.cancelFrame();
+      const commit = {};
+      this.renderCommit = commit;
+      // A measurement-driven render may already be inside an animation frame.
+      // Joining its Lit updates keeps the correction in this paint, rather than
+      // showing changed spacers now and compensating in the next frame.
+      void rendered.then(() => {
+        if (this.renderCommit !== commit || this.disposed) return;
+        this.renderCommit = undefined;
+        this.flushViewport();
+      }, (cause: unknown) => {
+        if (this.renderCommit !== commit) return;
+        this.renderCommit = undefined;
+        console.error("[chat viewport] Could not complete the mounted render", cause);
+      });
+      return;
+    }
     if (this.frame !== undefined) return;
     this.frame = this.frames.request(() => {
       this.frame = undefined;
@@ -441,13 +460,11 @@ export class ChatScrollFlows {
     const scroller = this.host.getScroller();
     const anchor = this.host.getAnchors().find((element) => element.dataset["scrollAnchorId"] === position.anchorId && element.getBoundingClientRect().height > 0);
     if (scroller === undefined || anchor === undefined) return;
-    // Keep the logical reading offset across repeated corrections, rather than
-    // accumulating browser scrollTop rounding in each newly captured snapshot.
-    this.anchorRounding = {
-      anchorId: position.anchorId,
-      error: captureScrollPosition(scroller, anchor).offset - position.offset,
-      scrollTop: scroller.scrollTop,
-    };
+    // Pixel precision belongs to the shared viewport coordinate, not one row
+    // or gesture. Native movement and a new visible anchor must not reset it.
+    // An unreachable destination at a range boundary is clamping, not rounding.
+    const error = captureScrollPosition(scroller, anchor).offset - position.offset;
+    this.scrollRounding = Math.abs(error) < 1 ? error : 0;
   }
 
   /** The only application-owned transcript scroll-write boundary. */
@@ -491,6 +508,7 @@ export class ChatScrollFlows {
   }
 
   private cancelFrame(): void {
+    this.renderCommit = undefined;
     if (this.frame !== undefined) this.frames.cancel(this.frame);
     this.frame = undefined;
   }
@@ -500,7 +518,7 @@ export class ChatScrollFlows {
     this.resetRestoration();
     this.correction = undefined;
     this.follow = undefined;
-    this.anchorRounding = undefined;
+    this.scrollRounding = 0;
   }
 
   dispose(): void {

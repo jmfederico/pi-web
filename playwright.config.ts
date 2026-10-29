@@ -10,6 +10,7 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    { name: "webkit-phone", testMatch: "**/scroll-stability.spec.ts", use: { ...devices["iPhone 14"] } },
     { name: "touch", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
