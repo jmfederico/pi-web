@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import {
-  PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY,
+  PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY,
   type JsonValue, type PiWebServerPluginV5, type ServerPluginActivationContextV5,
   type ServerPluginStartContext, type ServerPluginPeerRequestContextV5,
 } from "@jmfederico/pi-web/server-plugin-api";
@@ -11,7 +11,7 @@ import { TaskStore } from "./store.js";
 const plugin: PiWebServerPluginV5 = {
   apiVersion: 5,
   name: "Scheduled agent tasks",
-  requires: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY],
+  requires: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY],
   activate(context) { return activateTasks(context); },
 };
 export default plugin;
@@ -39,6 +39,7 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
       context.lifetimeSignal.throwIfAborted();
       const workspaces = capabilities.resolve(PI_WEB_HOST_WORKSPACES_CAPABILITY);
       const sessions = capabilities.resolve(PI_WEB_HOST_PI_SESSIONS_CAPABILITY);
+      const catalog = capabilities.resolve(PI_WEB_HOST_CATALOG_CAPABILITY);
       const validateTarget = async (task: { projectId: string; workspaceId: string }) => {
         context.lifetimeSignal.throwIfAborted();
         await workspaces.resolve({ projectId: task.projectId, workspaceId: task.workspaceId });
@@ -63,7 +64,7 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
           return { sessionId: run.sessionId };
         },
       }, now, logError);
-      service = new TaskService(store, scheduler, validateTarget, defaultTimezone, now);
+      service = new TaskService(store, scheduler, validateTarget, defaultTimezone, now, catalog);
       const tick = () => {
         try { scheduler?.tick(); } catch (error) { logError(error); }
       };
@@ -77,7 +78,7 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
         context.lifetimeSignal.throwIfAborted();
         if (scope.kind !== "machine") throw new Error("Scheduled tasks requires machine scope");
         if (service === undefined) throw new Error("Scheduled tasks has not started");
-        const result = await service.request(operation, input);
+        const result = await service.request(operation, input, signal);
         // Domain records contain JSON only; detach them at the transport boundary.
         // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Plugin-owned domain output, not external input.
         return JSON.parse(JSON.stringify(result)) as JsonValue;

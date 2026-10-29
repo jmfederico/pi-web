@@ -7,7 +7,14 @@
   "keywords": [
     "pi-package"
   ],
-  "pi": {},
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/index.js"],
+    "skills": ["./skills"]
+  },
   "piWeb": {
     "plugins": [
       {

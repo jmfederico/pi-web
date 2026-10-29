@@ -1,3 +1,4 @@
+import type { PluginCatalogV1 } from "@jmfederico/pi-web/server-plugin-api";
 import type { Execution, Task, TaskInput } from "./domain.js";
 import { text, validateTask } from "./domain.js";
 import type { TaskScheduler } from "./scheduler.js";
@@ -11,11 +12,19 @@ export class TaskService {
     private readonly validateTarget: (task: TaskInput) => Promise<void>,
     private readonly defaultTimezone: string | undefined,
     private readonly now: () => string,
+    private readonly catalog: PluginCatalogV1,
   ) {}
 
-  async request(operation: string, input: unknown): Promise<unknown> {
+  async request(operation: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
     const args = object(input ?? {});
     switch (operation) {
+      case "targets": {
+        only(args, ["projectId"]);
+        const options = signal === undefined ? {} : { signal };
+        return args["projectId"] === undefined
+          ? { projects: await this.catalog.projects.list(options) }
+          : { workspaces: await this.catalog.workspaces.list(identifier(args, "projectId"), options) };
+      }
       case "overview":
         only(args, []);
         return { defaultTimezone: this.defaultTimezone ?? null, tasks: this.store.listTasks().map((task) => ({
@@ -138,8 +147,8 @@ export function dispatchPrompt(execution: Execution): string {
   return [
     "This conversation was dispatched by the Scheduled agent tasks plugin.",
     `Task ID: ${execution.taskId}; execution ID: ${execution.id}; task revision: ${String(execution.task.revision)}.`,
-    "Discover scheduled-task tools through tool_search or codemode searchTools. Retrieve this execution's context with the execution operation.",
-    "After doing the work, explicitly report completed or errored with a summary for this execution ID. You may correct an earlier report; reports never stop the conversation.",
+    "Discover scheduled_tasks tools through tool_search or codemode searchTools. Retrieve this execution's context with scheduled_tasks_execution.",
+    "After doing the work, use scheduled_tasks_report to explicitly report completed or errored with a summary for this execution ID. You may correct an earlier report; reports never stop the conversation.",
     "You have the same task-management authority as an ordinary session. Do not infer an execution outcome from session activity.",
     ...(execution.task.contextPaths.length === 0 ? [] : [
       `Read these workspace-relative shared context files before starting (their contents may have changed): ${JSON.stringify(execution.task.contextPaths)}`,

@@ -136,7 +136,19 @@ describe("plugin delivery artifacts", () => {
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
     const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
-    expect(metadata).toMatchObject({ piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false }] } });
+    expect(metadata).toMatchObject({ pi: { extensions: ["./extensions/index.js"], skills: ["./skills"] }, piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false }] } });
+    const loader = new DefaultResourceLoader({
+      cwd: tempDir, agentDir: tempDir,
+      settingsManager: SettingsManager.inMemory({ packages: [source] }),
+      noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    expect(loader.getSkills().diagnostics).toEqual([]);
+    expect(loader.getSkills().skills).toEqual(expect.arrayContaining([expect.objectContaining({ name: "scheduled-tasks" })]));
+    const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()]);
+    expect(tools.map((tool) => tool.definition.name)).toContain("scheduled_tasks_report");
+    expect(tools.every((tool) => tool.definition.exposure === "deferred")).toBe(true);
     // Execute outside PI WEB's dependency tree: the server bundle must carry cron and public host API values.
     const standalone = join(tempDir, "scheduler");
     await mkdir(standalone);
@@ -152,6 +164,11 @@ describe("plugin delivery artifacts", () => {
       const project = { id: "p", name: "Project", path: "/project" };
       const workspace = { id: "w", projectId: "p", label: "Main", path: "/project", isMain: true };
       await activation.start({ capabilities: { resolve(capability) {
+        if (capability.id === "catalog") return capability.parse({ version: 1,
+          projects: { list: async () => [project], get: async () => project },
+          workspaces: { list: async () => [workspace], get: async () => workspace },
+          sessions: { list: async () => [], get: async () => { throw new Error("Unused"); } },
+        });
         return capability.parse(capability.id === "workspaces"
           ? { version: 1, resolve: async () => ({ project, workspace }) }
           : { version: 1, create: async () => ({ sessionId: "unused" }), run: async () => ({

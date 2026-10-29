@@ -64,8 +64,12 @@ async function buildAll() {
       await buildMermaidPackage(mermaidPluginSourceDir, mermaidPluginOutputDir);
       await buildFilesBrowserPackage(codeHighlightSourceDir, codeHighlightOutputDir);
     } else {
-      for (const packageName of ["workflows", "scheduled-tasks"]) await viteBuild({
-        configFile: resolve(target.rootDir, packageName, "vite.config.mjs"),
+      for (const [packageName, config] of [
+        ["workflows", "vite.config.mjs"],
+        ["scheduled-tasks", "vite.config.mjs"],
+        ["scheduled-tasks", "vite.companion.config.mjs"],
+      ]) await viteBuild({
+        configFile: resolve(target.rootDir, packageName, config),
         logLevel: "silent",
         // Map the public entry to its source for checkout builds, including cold
         // dev startup before dist exists. Plugin code still imports only the

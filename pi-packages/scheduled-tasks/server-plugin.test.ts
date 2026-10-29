@@ -3,8 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
-  JsonValue, PiWebHostPiSessionRunCompletion, PiWebHostPiSessionsV1, ServerPluginActivationContextV5,
+  createCompanionBackend, JsonValue, PiWebHostPiSessionRunCompletion, PiWebHostPiSessionsV1, ServerPluginActivationContextV5,
 } from "@jmfederico/pi-web/server-plugin-api";
+import { createEventBus, DefaultResourceLoader, SettingsManager, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import scheduledTasksExtension from "./extensions/index.js";
 import { activateTasks } from "./server-plugin.js";
 import { TaskStore } from "./store.js";
 import type { Execution } from "./domain.js";
@@ -40,6 +42,11 @@ async function fixture(options: { root?: string; timezone?: string; startTime?: 
   const activation = activateTasks(context, () => now);
   activation.start({ signal, capabilities: {
     resolve(capability) {
+      if (capability.id === "catalog") return capability.parse({ version: 1,
+        projects: { list: () => Promise.resolve([project]), get: () => Promise.resolve(project) },
+        workspaces: { list: () => Promise.resolve([workspace]), get: () => Promise.resolve(workspace) },
+        sessions: { list: () => Promise.resolve([]), get: () => Promise.reject(new Error("Unused")) },
+      });
       return capability.parse(capability.id === "workspaces"
         ? { version: 1, resolve }
         : { version: 1, run, create: () => Promise.reject(new Error("Unused")) });
@@ -93,6 +100,8 @@ describe("scheduled task daemon integration", () => {
 
   it("asks for missing timezone, validates current targets, and rejects stale/invalid writes", async () => {
     const f = await fixture();
+    await expect(f.request("targets")).resolves.toEqual({ projects: [project] });
+    await expect(f.request("targets", { projectId: project.id })).resolves.toEqual({ workspaces: [workspace] });
     await expect(f.request("create", definition)).rejects.toThrow("Ask the user");
     await expect(f.request("create", { ...definition, timezone: "UTC", surprise: true })).rejects.toThrow("Unexpected");
     await expect(f.request("create", { ...definition, timezone: "UTC", contextPaths: ["../escape"] })).rejects.toThrow("workspace-relative");
@@ -181,5 +190,69 @@ describe("scheduled task daemon integration", () => {
     });
     await vi.advanceTimersByTimeAsync(2000);
     expect(restarted.run).toHaveBeenCalledOnce();
+  });
+
+  it("loads deferred companion tools and manages a task through the paired backend", async () => {
+    const f = await fixture({ timezone: "UTC" });
+    const events = createEventBus();
+    const discoveries = vi.fn();
+    events.on("pi-web:companion-backend:discover", discoveries);
+    const requests = vi.fn(async (operation: string, input: JsonValue) => f.request(operation, input));
+    const loader = new DefaultResourceLoader({
+      cwd: f.root, agentDir: f.root, eventBus: events,
+      settingsManager: SettingsManager.inMemory({}), extensionFactories: [scheduledTasksExtension],
+      noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true,
+    });
+    await loader.reload();
+    expect(loader.getExtensions().errors).toEqual([]);
+    // Backend discovery must happen at execution, never at extension factory load.
+    expect(discoveries).not.toHaveBeenCalled();
+    const tools = loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.values()].map((tool) => tool.definition));
+    expect(tools).toHaveLength(11);
+    expect(tools.every((tool) => tool.exposure === "deferred" && tool.namespace?.name === "scheduled_tasks")).toBe(true);
+    const call = async (operation: string, input: JsonValue = {}, signal?: AbortSignal) => {
+      const tool = tools.find((tool) => tool.name === `scheduled_tasks_${operation}`);
+      if (tool === undefined) throw new Error("Tool missing");
+      // The adapter does not use the extension context; real Pi supplies it in hosted sessions.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      return tool.execute("call", input, signal, undefined, {} as ExtensionToolContext);
+    };
+    await expect(call("overview")).rejects.toThrow("hosted PI WEB");
+    events.on("pi-web:companion-backend:discover", (data) => {
+      // This fixture is the host side of the documented in-process discovery envelope.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      const envelope = data as { pluginId: string; accept: (discover: () => ReturnType<typeof createCompanionBackend>) => void };
+      expect(envelope.pluginId).toBe("scheduled-tasks");
+      envelope.accept(() => ({ machineId: "local", forScope(scope) {
+        expect(scope).toEqual({ kind: "machine" });
+        return { request: requests };
+      } }));
+    });
+    await expect(call("targets")).resolves.toMatchObject({ details: { projects: [project] } });
+    await call("create", definition);
+    const taskDb = TaskStore.open(join(f.root, "tasks.sqlite"));
+    const task = taskDb.listTasks()[0]; taskDb.close();
+    if (task === undefined) throw new Error("Missing task");
+    await call("pause", { taskId: task.id, revision: 1, paused: true });
+    await expect(call("update", { taskId: task.id, revision: 1, definition })).rejects.toThrow("revision conflict");
+    await call("update", { taskId: task.id, revision: 2, definition: { ...definition, prompt: "Updated" } });
+    await expect(call("inspect", { taskId: task.id })).resolves.toMatchObject({ details: { revision: 3, prompt: "Updated", paused: true } });
+    await call("dispatch", { taskId: task.id });
+    const db = TaskStore.open(join(f.root, "tasks.sqlite"));
+    let execution: Execution | undefined;
+    try { execution = db.executions(task.id)[0]; } finally { db.close(); }
+    if (execution === undefined) throw new Error("Missing execution");
+    await expect(call("execution", { executionId: execution.id })).resolves.toMatchObject({ details: { sessionId: "normal-conversation", task: { prompt: "Updated" } } });
+    await call("report", { executionId: execution.id, outcome: "completed", summary: "Done" });
+    await call("report", { executionId: execution.id, outcome: "errored", summary: "Corrected" });
+    await expect(call("history", { taskId: task.id })).resolves.toMatchObject({ details: { executions: [{ status: "errored", latestReport: { summary: "Corrected" } }] } });
+    await call("archive", { taskId: task.id, revision: 3 });
+    await expect(call("dispatch", { taskId: task.id })).rejects.toThrow(/archived/iu);
+    const aborted = new AbortController(); aborted.abort();
+    requests.mockClear();
+    await expect(call("overview", {}, aborted.signal)).rejects.toThrow();
+    expect(requests).not.toHaveBeenCalled();
+    await f.dispose();
+    await expect(call("overview")).rejects.toThrow();
   });
 });

@@ -313,6 +313,20 @@ async function smokePiPackageExtension(packageRoot, host) {
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0].type, "info", notifications[0].message);
     assert.ok(notifications[0].message.includes("PI WEB version"), notifications[0].message);
+    const scheduled = new DefaultResourceLoader({
+      cwd: ${JSON.stringify(agentDir)}, agentDir: ${JSON.stringify(agentDir)},
+      settingsManager: SettingsManager.inMemory({ packages: [${JSON.stringify(join(packageRoot, "dist/pi-packages/scheduled-tasks"))}] }),
+      noPromptTemplates: true, noThemes: true,
+    });
+    await scheduled.reload();
+    const scheduledExtensions = scheduled.getExtensions();
+    assert.deepEqual(scheduledExtensions.errors, [], "Scheduled tasks companion must load through Pi");
+    assert.deepEqual(scheduledExtensions.warnings ?? [], [], "No scheduled tasks dependency warnings");
+    assert.deepEqual(scheduled.getSkills().diagnostics, []);
+    assert.ok(scheduled.getSkills().skills.some(skill => skill.name === "scheduled-tasks"));
+    const scheduledTools = scheduledExtensions.extensions.flatMap(extension => [...extension.tools.values()].map(tool => tool.definition));
+    assert.equal(scheduledTools.length, 11);
+    assert.ok(scheduledTools.every(tool => tool.exposure === "deferred"));
   `);
   // No systemctl/launchctl on PATH, no live D-Bus, socket or HTTP endpoint.
   // Invalid port makes version reporting explain unavailable config, not probe localhost.
