@@ -14,6 +14,7 @@ export interface ChatScrollFlowsHost {
   getOpenForm(kind?: "ask" | "dialog"): HTMLElement | undefined;
   onFollowingChange?(following: boolean): void;
   requestAnchorMount?(anchorId: string): boolean;
+  resolveHiddenAnchor?(anchorId: string): string | undefined;
 }
 
 export interface ChatScrollFrameScheduler {
@@ -403,6 +404,12 @@ export class ChatScrollFlows {
         this.tail.recordScrollBaseline();
         // A retained address outside the mounted window is not missing history.
         if (this.host.requestAnchorMount?.(result.position.anchorId) === true) return;
+        const visibleOwner = this.host.resolveHiddenAnchor?.(result.position.anchorId);
+        if (visibleOwner !== undefined && visibleOwner !== result.position.anchorId) {
+          this.restoration = { ...restoration, position: { ...result.position, anchorId: visibleOwner } };
+          this.scheduleViewport();
+          return;
+        }
         if (this.host.isHistoryReady() && !this.host.hasMore()) this.restoration = undefined;
         else if (this.host.isHistoryReady() && !this.requestedHistory && canLoadEarlier(this.host)) {
           this.requestedHistory = true;

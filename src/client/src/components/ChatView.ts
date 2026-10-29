@@ -27,7 +27,10 @@ import { ChatGroupProjection } from "../chatGroupProjection";
 import { openTranscriptQuestion, transcriptQuestionOutcomes } from "../chatQuestions";
 import { ChatScrollFlows } from "../ChatScrollFlows";
 import { chatScrollScopeKey } from "../chatScrollPosition";
-import { TranscriptMountWindow } from "../transcriptMountWindow";
+import { TranscriptMountWindow, type TranscriptMountRow } from "../transcriptMountWindow";
+import { TranscriptMountLists } from "../transcriptMountLists";
+import { hasRenderedModal } from "./modalLayerRegistry";
+import { THUMBNAIL_HEIGHT } from "../thumbnailGeometry";
 import { ChatRenderKeys, type ChatRenderItem } from "../chatRenderKeys";
 import { DEFAULT_CHAT_BEHAVIORS, type ChatBehaviors } from "../chatBehaviors";
 import type { AskUserSubmission, PendingExtensionDialog, QueuedSessionMessage, SessionActivity, SessionRef, SessionStatus } from "../api";
@@ -191,10 +194,21 @@ export class ChatView extends LitElement {
   @state() private mountRevision = 0;
   private mountLayoutRevision = 0;
   private mountPresentationInputs: readonly unknown[] = [];
+  private readonly childMounts: TranscriptMountLists = new TranscriptMountLists({
+    getRoot: () => this.renderRoot,
+    getScroller: () => this.chat ?? undefined,
+    getRequestedAnchor: () => this.scrollFlows.requiredAnchor,
+    protectMountedRows: () => hasRenderedModal(this.ownerDocument),
+    beforeChange: () => { this.scrollFlows.beforeMountChange(); },
+    requestRender: () => { this.mountRevision++; },
+    geometryChanged: () => { this.scrollFlows.onViewportResize(); },
+  });
   private readonly mountWindow: TranscriptMountWindow = new TranscriptMountWindow({
     getScroller: () => this.chat ?? undefined,
-    getRows: () => Array.from(this.renderRoot.querySelectorAll<HTMLElement>("[data-transcript-row]")),
+    getOrigin: () => this.renderRoot.querySelector<HTMLElement>("[data-transcript-origin]") ?? undefined,
+    getRows: () => Array.from(this.renderRoot.querySelectorAll<HTMLElement>(".chat > [data-transcript-row]")),
     getRequestedAnchor: () => this.scrollFlows.requiredAnchor,
+    protectMountedRows: () => hasRenderedModal(this.ownerDocument),
     beforeChange: () => { this.scrollFlows.beforeMountChange(); },
     requestRender: () => { this.mountRevision++; },
     geometryChanged: () => { this.scrollFlows.onViewportResize(); },
@@ -204,7 +218,8 @@ export class ChatView extends LitElement {
     onFollowingChange: (following) => { this.followingLive = following; },
     getAnchors: () => this.scrollAnchorElements(),
     getScopeKey: () => chatScrollScopeKey(this.machineId, this.sessionId),
-    requestAnchorMount: (anchorId) => this.behaviors.mountingWindow && this.mountWindow.requestAnchor(anchorId),
+    requestAnchorMount: (anchorId) => this.behaviors.mountingWindow && (this.mountWindow.requestAnchor(anchorId) || this.childMounts.requestAnchor(anchorId)),
+    resolveHiddenAnchor: (anchorId) => this.behaviors.mountingWindow ? this.hiddenAnchorOwner(anchorId) : undefined,
     getBehaviors: () => this.behaviors,
     hasMore: () => this.hasMore,
     isHistoryReady: () => this.historyReady,
@@ -230,15 +245,20 @@ export class ChatView extends LitElement {
   private loadMoreRequested = false;
   private readonly onViewportResize = () => {
     this.scrollFlows.onViewportResize();
-    if (this.behaviors.mountingWindow) this.mountWindow.schedule();
+    this.scheduleMounts();
   };
   // Formatting completes independently of message updates. Reuse the existing
   // layout/restore flow without making content loading wait for enhancement.
-  private readonly onContentLayoutChanged = () => { this.scrollFlows.onViewportResize(); };
+  private readonly onContentLayoutChanged = () => { this.onViewportResize(); };
   private readonly handleScroll = () => {
     this.scrollFlows.onScroll();
-    if (this.behaviors.mountingWindow) this.mountWindow.schedule();
+    this.scheduleMounts();
   };
+  private scheduleMounts(): void {
+    if (!this.behaviors.mountingWindow) return;
+    this.mountWindow.schedule();
+    this.childMounts.schedule();
+  }
   // Native details toggles do not bubble; capture layout changes independently
   // of the listener that remembers a group's disclosure choice.
   private readonly handleDisclosureToggle = {
@@ -305,6 +325,7 @@ export class ChatView extends LitElement {
   override disconnectedCallback(): void {
     this.scrollFlows.dispose();
     this.mountWindow.dispose();
+    this.childMounts.clear();
     this.messageActionController.reset();
     window.removeEventListener("resize", this.onViewportResize);
     window.removeEventListener("pagehide", this.onPageHide);
@@ -338,6 +359,7 @@ export class ChatView extends LitElement {
     if (changed.has("sessionId") || changed.has("machineId") || (changed.has("behaviors") && !this.behaviors.loadImages)) this.imageGalleryDialog?.close();
     if (changed.has("sessionId") || changed.has("machineId")) {
       this.groupProjection = new ChatGroupProjection();
+      this.childMounts.clear();
       this.eventRenderKeys.clear();
       this.transientDisclosures.clear();
       this.pendingDisclosureAliases.clear();
@@ -354,6 +376,7 @@ export class ChatView extends LitElement {
       this.scrollFlows.configure();
       if (!this.behaviors.mountingWindow) {
         this.mountWindow.suspend();
+        this.childMounts.clear();
         this.mountPresentationInputs = [];
       }
       if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId, this.machineId);
@@ -392,7 +415,10 @@ export class ChatView extends LitElement {
       delete owner.pendingChoice;
     }
     const openQuestionId = this.openQuestion()?.askId;
-    if (this.behaviors.mountingWindow) this.mountWindow.afterRender();
+    if (this.behaviors.mountingWindow) {
+      this.mountWindow.afterRender();
+      this.childMounts.afterRender();
+    }
     this.scrollFlows.afterRender({
       sessionChanged: changed.has("sessionId") || changed.has("machineId"),
       contentChanged: this.scrollContentChanged(changed),
@@ -469,7 +495,7 @@ export class ChatView extends LitElement {
               const live = this.isLiveTailGroup(groups, index);
               // Historical templates do not depend on the growing transcript array.
               // Canonical header ownership can change when another slice arrives.
-              return guard([group, live, ...presentationInputs, ...messages.map((message) => entryActionHeaders.has(message))], () => {
+              return guard([group, live, this.behaviors.mountingWindow ? this.mountRevision : 0, ...presentationInputs, ...messages.map((message) => entryActionHeaders.has(message))], () => {
                 // Cached group bodies must not retain a historical whole-transcript set.
                 const headers = new Set(messages.filter((message) => entryActionHeaders.has(message)));
                 if (group.kind === "group") return this.renderMessageGroup(group, live, headers, keys[index] ?? String(index));
@@ -496,15 +522,27 @@ export class ChatView extends LitElement {
       this.mountLayoutRevision++;
     }
     const openAsk = this.openQuestion()?.askId;
-    const plan = this.mountWindow.plan(scope, groups.map((group, index) => ({
-      key: keys[index] ?? String(index),
-      revision: group,
-      layoutRevision: this.mountLayoutRevision,
-      estimate: group.kind === "group" ? 48 : 160,
-      anchors: group.kind === "message" ? [chatMessageAnchorKey(group.index, group.message)].filter((id): id is string => id !== undefined) : [],
-      // Compound activity/gallery rows are deliberately not recycled by this pilot.
-      keepMounted: group.kind !== "message" || group.message.parts.some((part) => part.type === "askUserQuestion" && part.ask.askId === openAsk),
-    })));
+    const plan = this.mountWindow.plan(scope, groups.map((group, index) => {
+      const key = keys[index] ?? String(index);
+      let estimate = 160;
+      let anchors: (string | undefined)[];
+      if (group.kind === "group") {
+        const live = this.isLiveTailGroup(groups, index);
+        const { open } = this.groupDisclosureState(group, live, key);
+        estimate = 32 + (open ? group.messages.length * 160 : 0);
+        anchors = [this.groupAnchorKey(group, live), ...group.messages.map((entry) => chatEventAnchorKey(entry.index, entry.message))];
+      } else if (group.kind === "tool-images") {
+        const sourcesOpen = this.isDisclosureOpen(transcript.toolImageSourcesKey(this.machineId, this.sessionId, group), false);
+        estimate = 64 + group.outputs.reduce((count, output) => count + output.message.parts.filter((part) => part.type === "image").length, 0) * THUMBNAIL_HEIGHT
+          + (sourcesOpen ? group.outputs.length * 64 : 0);
+        anchors = group.outputs.map((output) => chatMessageAnchorKey(output.index, output.message));
+      } else anchors = [chatMessageAnchorKey(group.index, group.message)];
+      return {
+        key, revision: group, layoutRevision: this.mountLayoutRevision, estimate,
+        anchors: anchors.filter((id): id is string => id !== undefined),
+        keepMounted: group.kind === "message" && group.message.parts.some((part) => part.type === "askUserQuestion" && part.ask.askId === openAsk),
+      };
+    }));
     return plan.flatMap<MountedTranscriptRow>((segment) => segment.kind === "rows" ? rows.slice(segment.start, segment.end)
       : [{ kind: "spacer" as const, key: `spacer:${segment.key}`, height: segment.height }]);
   }
@@ -681,6 +719,11 @@ export class ChatView extends LitElement {
   private transcriptRenderContext(): TranscriptRenderContext {
     return {
       renderInputs: this.transcriptPresentationInputs(),
+      ...(this.behaviors.mountingWindow ? { mounting: {
+        layoutRevision: this.mountLayoutRevision,
+        width: (key: string) => this.childMounts.width(key),
+        plan: (key: string, rows: readonly TranscriptMountRow[]) => this.childMounts.plan(machineSessionKey(this.machineId, this.sessionId), key, rows),
+      } } : {}),
       machineId: this.machineId,
       sessionId: this.sessionId,
       session: this.transcriptSession(),
@@ -758,7 +801,7 @@ export class ChatView extends LitElement {
     return transcript.renderToolImageOutputs(this.transcriptRenderContext(), group, entryActionHeaders, mountKey);
   }
 
-  private renderMessageGroup(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean, entryActionHeaders: ReadonlySet<ChatLine>, renderKey: string) {
+  private groupDisclosureState(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean, renderKey: string) {
     // Quiet mode keeps the live group expanded-on-demand: it is the one group a
     // reader opens while work is running, so its identity must not change as it grows.
     const defaultOpen = liveTail && !this.quietMode;
@@ -776,6 +819,11 @@ export class ChatView extends LitElement {
     owner.disclosureKey = disclosureKey;
     owner.defaultOpen = defaultOpen;
     const open = owner.pendingChoice ?? this.isDisclosureOpen(disclosureKey, defaultOpen);
+    return { owner, open, disclosureKey, defaultOpen };
+  }
+
+  private renderMessageGroup(group: Extract<ChatGroup, { kind: "group" }>, liveTail: boolean, entryActionHeaders: ReadonlySet<ChatLine>, renderKey: string) {
+    const { owner, open, disclosureKey, defaultOpen } = this.groupDisclosureState(group, liveTail, renderKey);
     return transcript.renderMessageGroup(this.transcriptRenderContext(), group, liveTail, entryActionHeaders, {
       open,
       anchor: this.groupAnchorKey(group, liveTail),
@@ -870,6 +918,17 @@ export class ChatView extends LitElement {
       : `${this.sessionId}:${chatLineIdentity(group.endIndex, group.messages.at(-1)?.message)}`;
   }
 
+
+  private hiddenAnchorOwner(anchorId: string): string | undefined {
+    const groups = this.renderKeyGroups ?? [];
+    for (const [index, group] of groups.entries()) {
+      if (group.kind !== "group" || !group.messages.some((entry) => chatEventAnchorKey(entry.index, entry.message) === anchorId)) continue;
+      const owner = Array.from(this.renderRoot.querySelectorAll<HTMLDetailsElement>(".chat > details[data-transcript-row]"))
+        .find((element) => element.dataset["transcriptRow"] === this.currentRenderKeys[index]);
+      return owner?.open === false ? owner.dataset["scrollAnchorId"] : undefined;
+    }
+    return undefined;
+  }
 
   private groupAnchorKey(group: Extract<ChatGroup, { kind: "group" }>, live: boolean): string | undefined {
     // Historical groups can absorb earlier events; live groups grow at the end.

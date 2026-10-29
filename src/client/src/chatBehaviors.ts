@@ -10,7 +10,7 @@ export interface ChatBehaviors {
   readonly codeBlocks: CodeBlockPolicy;
   readonly rememberDisclosures: boolean;
   readonly visualEffects: boolean;
-  /** Mounting pilot; compound rows remain mounted until child windowing is ready. */
+  /** Windowing pilot; remains disabled until browser/interaction acceptance is complete. */
   readonly mountingWindow: boolean;
 }
 

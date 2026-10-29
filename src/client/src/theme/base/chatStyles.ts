@@ -36,7 +36,7 @@ export const chatStyles = css`
   .msg.event-group > summary .label { flex: 0 1 auto; margin: 0; color: inherit; font-weight: 600; }
   .msg.event-group > summary > span { min-width: 0; overflow-wrap: anywhere; }
   .group-body { --ui-activity-edge-width: 0px; padding: 0; }
-  .group-msg + .group-msg { border-block-start: 1px solid var(--pi-muted); }
+  .group-msg + .group-msg, .group-msg[data-mount-separator] { border-block-start: 1px solid var(--pi-muted); }
   /* Section surfaces meet without exterior gaps; their children own body padding. */
   .transcript-section { min-width: 0; }
   .transcript-content { min-width: 0; padding: 8px 12px; }
@@ -45,7 +45,7 @@ export const chatStyles = css`
   .tool-image-thumbnails { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0; }
   .image-output-sources { margin-top: 4px; }
   .image-output-source { padding: 4px 12px; }
-  .image-output-source + .image-output-source { border-top: 1px solid var(--pi-border-muted); }
+  .image-output-source + .image-output-source, .image-output-source[data-mount-separator] { border-top: 1px solid var(--pi-border-muted); }
   .group-msg { display: flow-root; max-width: 100%; min-width: 0; padding: 0; color: var(--pi-text); overflow: visible; }
   .group-msg.system { color: var(--pi-text-secondary); }
   .history-boundary { position: relative; z-index: 5; display: grid; gap: 3px; justify-items: center; margin: 0 0 14px; color: var(--pi-muted); font-size: 12px; text-align: center; }

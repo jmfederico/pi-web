@@ -98,6 +98,7 @@ function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS, roundScroll 
     getOpenForm: vi.fn(() => state.openForm),
     onFollowingChange: vi.fn(),
     requestAnchorMount: vi.fn(() => false),
+    resolveHiddenAnchor: vi.fn<() => string | undefined>(() => undefined),
   };
   const flows = new ChatScrollFlows(host, frames, { storage, saveScheduler: saves });
   function element(contentTop: number, anchorId?: string): HTMLElement {
@@ -363,6 +364,21 @@ describe("position flow", () => {
     f.update(); f.frames.flush();
     expect(f.state.top).toBe(410);
     expect(f.flows.restorationAnchor).toBeUndefined();
+    expect(f.host.requestEarlier).not.toHaveBeenCalled();
+  });
+
+  it("resolves a retained hidden child to its visible owner without requesting history", () => {
+    const f = fixture();
+    f.state.hasMore = true;
+    f.state.anchors = [f.element(400, "summary")];
+    f.storage.seed("s1", { mode: "anchor", anchorId: "hidden-child", offset: -10 });
+    f.host.resolveHiddenAnchor.mockReturnValue("summary");
+    f.start(); f.frames.flush();
+    expect(f.flows.requiredAnchor).toBe("summary");
+    expect(f.host.requestEarlier).not.toHaveBeenCalled();
+    f.frames.flush();
+    expect(f.state.top).toBe(410);
+    expect(f.flows.requiredAnchor).toBeUndefined();
     expect(f.host.requestEarlier).not.toHaveBeenCalled();
   });
 

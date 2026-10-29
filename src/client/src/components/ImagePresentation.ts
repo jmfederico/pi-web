@@ -6,6 +6,7 @@ import { customElement, property } from "lit/decorators.js";
 import { styleMap } from "lit/directives/style-map.js";
 import { validImageDimensions, type ImageDimensions } from "../../../shared/sessionMedia";
 import { uiButtonStyles } from "./ui/controlStyles";
+import { THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT } from "../thumbnailGeometry";
 
 export interface ImageOpenDetail {
   src: string;
@@ -99,8 +100,8 @@ export class ImagePresentation extends LitElement {
     /* A definite width plus the declared ratio reserves the final, height-capped
        footprint before lazy loading. CSS still handles narrow viewports. */
     img[width][height] { width: min(var(--image-width), calc(var(--pi-image-max-height, var(--image-height)) * var(--image-ratio))); }
-    :host([thumbnail]) .frame { width: 128px; height: 96px; }
-    :host([thumbnail]) button { box-sizing: border-box; width: 100%; height: 96px; min-height: 96px; border-radius: 0; padding: 6px; background: var(--pi-surface); }
+    :host([thumbnail]) .frame { width: ${THUMBNAIL_WIDTH}px; height: ${THUMBNAIL_HEIGHT}px; }
+    :host([thumbnail]) button { box-sizing: border-box; width: 100%; height: ${THUMBNAIL_HEIGHT}px; min-height: ${THUMBNAIL_HEIGHT}px; border-radius: 0; padding: 6px; background: var(--pi-surface); }
     :host([thumbnail]) .image-button:hover { background: var(--pi-surface-hover); }
     :host([thumbnail]) .placeholder code { display: none; }
     :host([thumbnail]) img { width: 100%; height: 100%; max-height: none; border-radius: 0; }

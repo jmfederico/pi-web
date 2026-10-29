@@ -20,6 +20,10 @@ import type { ImageOpenDetail } from "./ImagePresentation";
 import type { ChatMessageActionController } from "./ChatMessageActionController";
 import type { TranscriptUiState } from "../transcriptUiState";
 import type { PendingFormState } from "../pendingFormState";
+import type { TranscriptMountRow } from "../transcriptMountWindow";
+import type { TranscriptMountSegment } from "../transcriptMountPlan";
+import { planGalleryBands } from "../galleryMountBands";
+import { THUMBNAIL_HEIGHT } from "../thumbnailGeometry";
 
 export interface TranscriptGroupDisclosure {
   open: boolean;
@@ -31,6 +35,11 @@ export interface TranscriptGroupDisclosure {
 export interface TranscriptRenderContext {
   /** Inputs outside an individual message that affect its presentation. */
   renderInputs: readonly unknown[];
+  mounting?: {
+    layoutRevision: number;
+    width(key: string): number;
+    plan(key: string, rows: readonly TranscriptMountRow[]): TranscriptMountSegment[];
+  };
   machineId: string;
   sessionId: string;
   session: SessionRef;
@@ -65,6 +74,22 @@ export interface TranscriptRenderContext {
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
 }
 
+type MountedItem<T> = { kind: "row"; key: string; index: number; value: T } | { kind: "spacer"; key: string; height: number };
+
+function mountedItems<T>(items: readonly T[], keys: readonly string[], plan?: readonly TranscriptMountSegment[]): MountedItem<T>[] {
+  const rows = items.map((value, index) => ({ kind: "row" as const, key: keys[index] ?? String(index), index, value }));
+  return plan === undefined ? rows : plan.flatMap<MountedItem<T>>((segment) => segment.kind === "rows"
+    ? rows.slice(segment.start, segment.end) : [{ kind: "spacer", key: `spacer:${segment.key}`, height: segment.height }]);
+}
+
+function mountOrigin(key: string) {
+  return html`<div data-mount-origin=${key} style="height:0;width:100%;flex:0 0 100%" aria-hidden="true"></div>`;
+}
+
+function mountSpacer(height: number) {
+  return html`<div style=${`height:${String(height)}px;flex:0 0 100%`} aria-hidden="true"></div>`;
+}
+
 export function renderMessage(context: TranscriptRenderContext, message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>, mountKey?: string) {
     const key = context.rowKey(message, index);
     const toolOnly = isToolExecutionOnlyMessage(message);
@@ -88,36 +113,73 @@ export function renderMessage(context: TranscriptRenderContext, message: ChatLin
   }
 
 
+export function toolImageSourcesKey(machineId: string, sessionId: string, group: Extract<ChatDisplayGroup, { kind: "tool-images" }>): string {
+  const first = group.outputs[0];
+  return `image-sources:${JSON.stringify([machineId, sessionId, first.message.entryId ?? first.index])}`;
+}
+
 export function renderToolImageOutputs(context: TranscriptRenderContext, group: Extract<ChatDisplayGroup, { kind: "tool-images" }>, entryActionHeaders: ReadonlySet<ChatLine>, mountKey?: string) {
     const { outputs } = group;
     const first = outputs[0];
-    const sourcesKey = `image-sources:${JSON.stringify([context.machineId, context.sessionId, first.message.entryId ?? first.index])}`;
+    const sourcesKey = toolImageSourcesKey(context.machineId, context.sessionId, group);
     const sourcesOpen = context.disclosure.isOpen(sourcesKey, false);
     const label = chatToolOutputLabel(outputs.every((output) => output.toolName === first.toolName) ? first.toolName : undefined);
     const parts = outputs.flatMap((output, outputIndex) => output.message.parts.flatMap((part, partIndex) => part.type !== "image" ? [] : [{
-      part, output, anchor: outputIndex > 0 && partIndex === 0 ? context.anchors.message(output.index, output.message) : undefined,
+      part, partIndex, output, anchor: outputIndex > 0 && partIndex === 0 ? context.anchors.message(output.index, output.message) : undefined,
     }]));
     const images = parts.map((image, imageIndex) => ({ ...image,
+      key: `image:${context.partKeys(image.output.message, image.part, image.output.index, image.partIndex).owner}`,
       description: () => messages.t("toolImage", { name: image.output.toolName ?? "", named: image.output.toolName === undefined || image.output.toolName === "" ? "no" : "yes", index: imageIndex + 1, total: parts.length }),
     }));
+    const listKey = JSON.stringify(["gallery", mountKey ?? first.index]);
+    const sourceListKey = JSON.stringify(["gallery-sources", mountKey ?? first.index]);
+    const bands = context.mounting === undefined ? undefined : planGalleryBands(images.map((image) => ({
+      key: image.key, ...(image.anchor === undefined ? {} : { anchor: image.anchor }),
+    })), context.mounting.width(listKey));
+    const plan = bands === undefined ? undefined : context.mounting?.plan(listKey, bands.map((band) => ({
+      key: band.key, members: band.members, anchors: band.anchors, revision: group,
+      layoutRevision: context.mounting?.layoutRevision ?? 0, estimate: THUMBNAIL_HEIGHT, keepMounted: false,
+    })));
+    type GalleryCell = { kind: "image"; key: string; index: number; bandKey: string | undefined } | { kind: "spacer"; key: string; height: number };
+    const cells: GalleryCell[] = bands === undefined
+      ? images.map((image, index) => ({ kind: "image", key: image.key, index, bandKey: undefined }))
+      : mountedItems(bands, bands.map((band) => band.key), plan).flatMap<GalleryCell>((row) => row.kind === "spacer" ? [row]
+        : images.slice(row.value.start, row.value.end).map((image, offset) => ({ kind: "image", key: image.key, index: row.value.start + offset, bandKey: row.key })));
+    const sourceKeys = outputs.map((output) => `image-source:${context.rowKey(output.message, output.index)}`);
+    const sourcePlan = sourcesOpen ? context.mounting?.plan(sourceListKey, outputs.map((output, index) => ({
+      key: sourceKeys[index] ?? String(index), revision: output.message, layoutRevision: context.mounting?.layoutRevision ?? 0,
+      estimate: 64, anchors: [], keepMounted: false,
+    }))) : undefined;
+    const sources = repeat(mountedItems(outputs, sourceKeys, sourcePlan), (row) => row.key, (row) => row.kind === "spacer" ? mountSpacer(row.height) : html`
+      <section class="image-output-source" aria-label=${messages.t("output", { index: row.index + 1 })}
+        data-transcript-row=${context.mounting === undefined ? nothing : row.key} data-mount-list=${context.mounting === undefined ? nothing : sourceListKey}
+        ?data-mount-separator=${context.mounting !== undefined && row.index > 0}>
+        ${renderMessageHeader(context, row.value.message, row.key, row.value.index, entryActionHeaders, messages.t("sourceHeader", { name: row.value.toolName ?? "", named: row.value.toolName === undefined || row.value.toolName === "" ? "no" : "yes", index: row.index + 1 }))}
+      </section>`);
     return html`
       <article class="msg tool-image-output conversation-message ui-transcript-surface" data-index=${first.index} data-transcript-row=${mountKey ?? nothing} data-scroll-anchor-id=${context.anchors.message(first.index, first.message) ?? nothing}>
         ${outputs.length === 1 ? renderMessageHeader(context, first.message, context.rowKey(first.message, first.index), first.index, entryActionHeaders, label) : html`<div class="msg-header"><span class="label">${label}</span></div>`}
         <div class="tool-image-thumbnails">
-          ${images.map((image, imageIndex) => html`
-            <pi-web-transcript-image .imagePart=${image.part} .thumbnail=${true} .description=${image.description}
-              data-index=${image.output.index} data-scroll-anchor-id=${image.anchor ?? nothing}
-              .loadingDisabled=${!context.behaviors.loadImages} .session=${context.session} .machineId=${context.machineId}
-              @image-open=${(event: CustomEvent<ImageOpenDetail>) => { event.stopPropagation(); context.openImageGallery(images, imageIndex); }}
-            ></pi-web-transcript-image>
-          `)}
+          ${context.mounting === undefined ? nothing : mountOrigin(listKey)}
+          ${repeat(cells, (cell) => cell.key, (cell) => {
+            if (cell.kind === "spacer") return mountSpacer(cell.height);
+            const image = images[cell.index];
+            if (image === undefined) throw new Error("Gallery mounting index is outside retained images");
+            return html`
+              <pi-web-transcript-image .imagePart=${image.part} .thumbnail=${true} .description=${image.description}
+                data-index=${image.output.index} data-scroll-anchor-id=${image.anchor ?? nothing}
+                data-transcript-row=${cell.bandKey ?? nothing} data-mount-item=${context.mounting === undefined ? nothing : image.key}
+                data-mount-list=${context.mounting === undefined ? nothing : listKey}
+                .loadingDisabled=${!context.behaviors.loadImages} .session=${context.session} .machineId=${context.machineId}
+                @image-open=${(event: CustomEvent<ImageOpenDetail>) => { event.stopPropagation(); context.openImageGallery(images, cell.index); }}
+              ></pi-web-transcript-image>`;
+          })}
         </div>
         ${outputs.length === 1 ? null : html`
           <details class="image-output-sources" ?open=${live(sourcesOpen)} @toggle=${(event: Event) => { context.disclosure.toggle(sourcesKey, event, false); }}>
             <summary class="ui-transcript-disclosure">${messages.t("sources", { count: outputs.length })}</summary>
-            ${sourcesOpen ? outputs.map((output, outputIndex) => html`<section class="image-output-source" aria-label=${messages.t("output", { index: outputIndex + 1 })}>
-              ${renderMessageHeader(context, output.message, `image-source:${context.rowKey(output.message, output.index)}`, output.index, entryActionHeaders, messages.t("sourceHeader", { name: output.toolName ?? "", named: output.toolName === undefined || output.toolName === "" ? "no" : "yes", index: outputIndex + 1 }))}
-            </section>`) : nothing}
+            ${!sourcesOpen ? nothing : context.mounting === undefined ? sources : html`
+              <div>${mountOrigin(sourceListKey)}${sources}</div>`}
           </details>
         `}
       </article>
@@ -130,7 +192,8 @@ function isToolExecutionOnlyMessage(message: ChatLine): boolean {
   }
 
 
-// Detached cached bodies retain nested native/tool state without rendering while closed.
+// Normal chat retains cached bodies. The mounting pilot disposes closed bodies;
+// explicit interaction intent already lives outside these elements.
 // Inline question forms remain standalone readable messages, outside these groups.
 // `live` distinguishes the growing tail group; the disclosure object owns the
 // expanded state so quiet mode can collapse the same group without relabeling it.
@@ -143,13 +206,15 @@ export function renderMessageGroup(context: TranscriptRenderContext, group: Extr
           <span class="label">${chatMessageGroupLabel(live)}</span>
           <span>${summarizeChatGroup(messages.map((event) => event.message), localizedChatGroupSummary)}</span>
         </summary>
-        ${cache(open ? renderMessageGroupBody(context, group, entryActionHeaders, renderKeys) : nothing)}
+        ${context.mounting === undefined
+          ? cache(open ? renderMessageGroupBody(context, group, entryActionHeaders, renderKeys) : nothing)
+          : open ? renderMessageGroupBody(context, group, entryActionHeaders, renderKeys, mountKey) : nothing}
       </details>
     `;
   }
 
 
-export function renderMessageGroupBody(context: TranscriptRenderContext, { messages }: Extract<ChatGroup, { kind: "group" }>, entryActionHeaders: ReadonlySet<ChatLine>, renderKeys: ChatRenderKeys) {
+export function renderMessageGroupBody(context: TranscriptRenderContext, { messages, startIndex }: Extract<ChatGroup, { kind: "group" }>, entryActionHeaders: ReadonlySet<ChatLine>, renderKeys: ChatRenderKeys, mountKey?: string) {
     const occurrences = new Map<string, number>();
     const keys = renderKeys.reconcile("activity", messages.map(({ message, index }) => {
       const identities = context.rowIdentities(message);
@@ -162,15 +227,29 @@ export function renderMessageGroupBody(context: TranscriptRenderContext, { messa
         ...(addresses[0] === undefined ? {} : { identity: addresses[0], identities: addresses }),
       };
     }));
+    const listKey = JSON.stringify(["activity", mountKey ?? startIndex]);
+    const plan = context.mounting?.plan(listKey, messages.map(({ message, index }, position) => ({
+      key: keys[position] ?? String(position), revision: message, layoutRevision: context.mounting?.layoutRevision ?? 0,
+      estimate: 160, keepMounted: false,
+      anchors: [context.anchors.event(index, message)].filter((anchor): anchor is string => anchor !== undefined),
+    })));
     return html`
       <div class="group-body">
-        ${repeat(messages, (_message, index) => keys[index], ({ message, index }) => guard([
+        ${context.mounting === undefined ? nothing : mountOrigin(listKey)}
+        ${repeat(mountedItems(messages, keys, plan), (row) => row.key, (row) => {
+          if (row.kind === "spacer") return mountSpacer(row.height);
+          const { message, index } = row.value;
+          return guard([
           message, index, ...context.renderInputs, entryActionHeaders.has(message),
         ], () => html`
-          <section class=${`group-msg ${message.role} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.event(index, message) ?? nothing}>
+          <section class=${`group-msg ${message.role} ui-transcript-surface`} data-index=${index}
+            data-transcript-row=${context.mounting === undefined ? nothing : row.key} data-mount-list=${context.mounting === undefined ? nothing : listKey}
+            ?data-mount-separator=${context.mounting !== undefined && row.index > 0}
+            data-scroll-anchor-id=${context.anchors.event(index, message) ?? nothing}>
             ${chatMessageHasHeader(message) ? html`<div class="transcript-content">${renderMessageHeader(context, message, context.rowKey(message, index), index, entryActionHeaders)}</div>` : null}
             ${renderGroupedParts(context, message, index)}
-          </section>`))}
+          </section>`);
+        })}
       </div>
     `;
   }
