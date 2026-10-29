@@ -77,6 +77,7 @@ describe("plugin delivery artifacts", () => {
     expect(distFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles.filter(isTestArtifact)).toEqual([]);
     expect(packagedFiles).toEqual(expect.arrayContaining([
+      "docs/scheduled-tasks.md",
       "dist/cli.js", "dist/server/app.js", "dist/server/index.js", "dist/server/sessiond.js",
       "dist/bin/pi-web.sh", "dist/bin/pi-web-server.sh", "dist/bin/pi-web-sessiond.sh", "dist/runtimePreflight.js",
       "dist/plugin-api.d.ts", "dist/server-plugin-api.d.ts", "dist/server-plugin-api.js",
@@ -115,6 +116,7 @@ describe("plugin delivery artifacts", () => {
     expect(builtPackageFiles).toEqual(expect.arrayContaining([
       "dist/pi-packages/scheduled-tasks/package.json",
       "dist/pi-packages/scheduled-tasks/server-plugin.js",
+      "dist/pi-packages/scheduled-tasks/browser/pi-web-plugin.js",
       "dist/pi-packages/workflows/package.json",
       "dist/pi-packages/workflows/browser/pi-web-plugin.js",
       "dist/pi-packages/workflows/browser/worktreeDialog.js",
@@ -136,7 +138,10 @@ describe("plugin delivery artifacts", () => {
   it("ships an optional disabled scheduler with standalone SQLite and cron dispatch", async () => {
     const source = join(repoRoot, "dist", "pi-packages", "scheduled-tasks");
     const metadata = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
-    expect(metadata).toMatchObject({ pi: { extensions: ["./extensions/index.js"], skills: ["./skills"] }, piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false }] } });
+    expect(metadata).toMatchObject({ pi: { extensions: ["./extensions/index.js"], skills: ["./skills"] }, piWeb: { plugins: [{ id: "scheduled-tasks", defaultEnabled: false, browserRoot: "browser", module: "browser/pi-web-plugin.js" }] } });
+    const browserEntry = await readFile(join(source, "browser", "pi-web-plugin.js"), "utf8");
+    expect(moduleSpecifiers(browserEntry)).toEqual([]);
+    expect(await readdir(join(source, "browser"))).toEqual(["pi-web-plugin.js"]);
     const loader = new DefaultResourceLoader({
       cwd: tempDir, agentDir: tempDir,
       settingsManager: SettingsManager.inMemory({ packages: [source] }),

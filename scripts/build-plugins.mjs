@@ -68,6 +68,7 @@ async function buildAll() {
         ["workflows", "vite.config.mjs"],
         ["scheduled-tasks", "vite.config.mjs"],
         ["scheduled-tasks", "vite.companion.config.mjs"],
+        ["scheduled-tasks", "vite.browser.config.mjs"],
       ]) await viteBuild({
         configFile: resolve(target.rootDir, packageName, config),
         logLevel: "silent",
@@ -75,7 +76,7 @@ async function buildAll() {
         // dev startup before dist exists. Plugin code still imports only the
         // published API; standalone builds use the installed public export.
         resolve: { alias: { "@jmfederico/pi-web/server-plugin-api": resolve("src/server-plugin-api.ts") } },
-        build: { outDir: resolve(target.outDir, packageName) },
+        build: { outDir: resolve(target.outDir, packageName, ...(config === "vite.browser.config.mjs" ? ["browser"] : [])) },
       });
     }
     const suffix = result.transpiled === 1 ? "file" : "files";

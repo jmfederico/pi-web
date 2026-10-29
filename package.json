@@ -40,6 +40,7 @@
     "!examples/**/node_modules",
     "!examples/**/dist",
     "docs/plugins.md",
+    "docs/scheduled-tasks.md",
     "docs/config.md",
     "docs/assets",
     "plugin-api.d.ts",

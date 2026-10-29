@@ -1,0 +1,46 @@
+import type { MessageDefinition } from "@jmfederico/pi-web/plugin-api";
+
+function text<Values extends Record<string, string | number> = Record<string, never>>(message: string, description: string): MessageDefinition<Values> {
+  return { message, description };
+}
+
+export default {
+  title: text("Scheduled tasks", "Application panel title, distinct from workspace terminal tasks"),
+  refresh: text("Refresh", "Reload tasks and the current execution history page"),
+  guidance: text("Ask an agent to create or change tasks. Pausing only affects future dispatches, not existing conversations.", "Read-only dashboard guidance"),
+  tasks: text("Tasks", "Task overview heading"),
+  emptyTasks: text("No scheduled tasks yet. Describe the work and when to run it in a conversation.", "Empty task list"),
+  loading: text("Loading scheduled tasks…", "Loading indicator"),
+  unavailable: text("Scheduled tasks backend is unavailable. Check plugin status in Settings.", "Missing paired backend"),
+  loadFailed: text("Could not load scheduled tasks. Try Refresh.", "Read request failure with retry guidance"),
+  invalidResponse: text("Invalid response from scheduled tasks.", "Browser validation failure"),
+  enabled: text("Enabled", "Task scheduling state"),
+  paused: text("Paused", "Task scheduling state; no effect on existing sessions"),
+  archived: text("Archived", "Task scheduling state"),
+  once: text<{ at: string }>("Once: {at}", "One-off schedule; timestamp formatted in task timezone"),
+  next: text<{ at: string }>("Next dispatch: {at}", "Next due time in task timezone"),
+  noNext: text("No future dispatch scheduled", "No next occurrence, including consumed one-off tasks"),
+  noExecution: text("No executions yet", "Task without any execution"),
+  history: text("Execution history", "Execution history section heading"),
+  taskHistory: text<{ name: string }>("History: {name}", "Filtered history heading; task name is user data"),
+  viewHistory: text("View history", "Button showing a task’s execution history"),
+  viewTaskHistory: text<{ name: string }>("View history for {name}", "Accessible history button name; includes the visible View history label"),
+  allHistory: text("All tasks", "Clear history filter"),
+  emptyHistory: text("No executions on this page.", "Empty execution history page"),
+  previous: text("Previous", "Previous execution history page"),
+  nextPage: text("Next", "Next execution history page"),
+  openConversation: text("Open conversation", "Navigate to the exact conversation and target stored on an execution"),
+  navigationFailed: text("Could not open the conversation. Find its ID in Sessions.", "Navigation failed after a user followed an execution link"),
+  target: text<{ project: string; workspace: string }>("Project {project} · Workspace {workspace}", "Exact target IDs, not current browser selection"),
+  execution: text<{ id: string; revision: number }>("Execution {id} · Revision {revision}", "Dispatch identity and immutable task revision"),
+  conversation: text<{ id: string }>("Conversation {id}", "Stored session ID for recovery"),
+  dispatchedAt: text<{ at: string }>("Recorded: {at}", "Execution creation time, not inferred completion time"),
+  scheduled: text("Scheduled", "Automatic dispatch trigger"),
+  manual: text("Manual", "Manual dispatch trigger"),
+  dispatching: text("Dispatching", "Launch in progress, not yet confirmed"),
+  dispatched: text("Dispatched · no outcome reported", "Confirmed launch with no explicit outcome"),
+  completed: text("Completed · reported", "Explicit completed outcome"),
+  errored: text("Errored · reported", "Explicit errored outcome"),
+  failed: text("Dispatch failed", "Known failure before admission"),
+  uncertain: text("Dispatch uncertain", "Launch could not be confirmed; never automatically retried"),
+};
