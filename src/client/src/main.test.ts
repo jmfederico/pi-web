@@ -22,11 +22,11 @@ vi.mock("./localization/browser.js", () => ({
 beforeEach(() => { vi.resetModules(); });
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllEnvs(); });
 
-it.each([false, true])("enables live-app windowing only for a development build (DEV=%s)", async (development) => {
+it.each([false, true])("keeps live-app windowing disabled pending the jump regression fix (DEV=%s)", async (development) => {
   vi.stubEnv("DEV", development);
   const app = new PiWebApp();
   document.body.append(app);
   await import("./main");
-  expect(app.chatBehaviors).toEqual({ ...DEFAULT_CHAT_BEHAVIORS, mountingWindow: development });
+  expect(app.chatBehaviors).toBe(DEFAULT_CHAT_BEHAVIORS);
   expect(DEFAULT_CHAT_BEHAVIORS.mountingWindow).toBe(false);
 });
