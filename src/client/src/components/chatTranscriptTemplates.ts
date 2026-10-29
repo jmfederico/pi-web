@@ -65,14 +65,14 @@ export interface TranscriptRenderContext {
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
 }
 
-export function renderMessage(context: TranscriptRenderContext, message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
+export function renderMessage(context: TranscriptRenderContext, message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>, mountKey?: string) {
     const key = context.rowKey(message, index);
     const toolOnly = isToolExecutionOnlyMessage(message);
     const hasHeader = chatMessageHasHeader(message);
     const shellClass = toolOnly ? "msg tool-execution-shell" : "msg ask-user-record-shell";
     const conversationClass = hasHeader && (message.role === "user" || message.role === "assistant") ? " conversation-message conversation-layout" : "";
     return html`
-      <article class=${`${hasHeader ? `msg ${message.role}${conversationClass}` : shellClass} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.message(index, message) ?? nothing}>
+      <article class=${`${hasHeader ? `msg ${message.role}${conversationClass}` : shellClass} ui-transcript-surface`} data-index=${index} data-transcript-row=${mountKey ?? nothing} data-scroll-anchor-id=${context.anchors.message(index, message) ?? nothing}>
         ${conversationClass !== "" ? html`
           <div class="conversation-content">
             ${renderMessageHeader(context, message, key, index, entryActionHeaders, undefined, true)}
@@ -88,7 +88,7 @@ export function renderMessage(context: TranscriptRenderContext, message: ChatLin
   }
 
 
-export function renderToolImageOutputs(context: TranscriptRenderContext, group: Extract<ChatDisplayGroup, { kind: "tool-images" }>, entryActionHeaders: ReadonlySet<ChatLine>) {
+export function renderToolImageOutputs(context: TranscriptRenderContext, group: Extract<ChatDisplayGroup, { kind: "tool-images" }>, entryActionHeaders: ReadonlySet<ChatLine>, mountKey?: string) {
     const { outputs } = group;
     const first = outputs[0];
     const sourcesKey = `image-sources:${JSON.stringify([context.machineId, context.sessionId, first.message.entryId ?? first.index])}`;
@@ -101,7 +101,7 @@ export function renderToolImageOutputs(context: TranscriptRenderContext, group: 
       description: () => messages.t("toolImage", { name: image.output.toolName ?? "", named: image.output.toolName === undefined || image.output.toolName === "" ? "no" : "yes", index: imageIndex + 1, total: parts.length }),
     }));
     return html`
-      <article class="msg tool-image-output conversation-message ui-transcript-surface" data-index=${first.index} data-scroll-anchor-id=${context.anchors.message(first.index, first.message) ?? nothing}>
+      <article class="msg tool-image-output conversation-message ui-transcript-surface" data-index=${first.index} data-transcript-row=${mountKey ?? nothing} data-scroll-anchor-id=${context.anchors.message(first.index, first.message) ?? nothing}>
         ${outputs.length === 1 ? renderMessageHeader(context, first.message, context.rowKey(first.message, first.index), first.index, entryActionHeaders, label) : html`<div class="msg-header"><span class="label">${label}</span></div>`}
         <div class="tool-image-thumbnails">
           ${images.map((image, imageIndex) => html`
@@ -134,11 +134,11 @@ function isToolExecutionOnlyMessage(message: ChatLine): boolean {
 // Inline question forms remain standalone readable messages, outside these groups.
 // `live` distinguishes the growing tail group; the disclosure object owns the
 // expanded state so quiet mode can collapse the same group without relabeling it.
-export function renderMessageGroup(context: TranscriptRenderContext, group: Extract<ChatGroup, { kind: "group" }>, live: boolean, entryActionHeaders: ReadonlySet<ChatLine>, disclosure: TranscriptGroupDisclosure, renderKeys: ChatRenderKeys) {
+export function renderMessageGroup(context: TranscriptRenderContext, group: Extract<ChatGroup, { kind: "group" }>, live: boolean, entryActionHeaders: ReadonlySet<ChatLine>, disclosure: TranscriptGroupDisclosure, renderKeys: ChatRenderKeys, mountKey?: string) {
     const { messages, startIndex } = group;
     const { open, anchor, toggle } = disclosure;
     return html`
-      <details class=${`${chatMessageGroupClassName(live)} ui-transcript-surface ui-transcript-activity`} data-index=${startIndex} data-scroll-anchor-id=${anchor ?? nothing} ?open=${open} @toggle=${toggle}>
+      <details class=${`${chatMessageGroupClassName(live)} ui-transcript-surface ui-transcript-activity`} data-index=${startIndex} data-transcript-row=${mountKey ?? nothing} data-scroll-anchor-id=${anchor ?? nothing} ?open=${open} @toggle=${toggle}>
         <summary class="ui-transcript-disclosure ui-transcript-heading">
           <span class="label">${chatMessageGroupLabel(live)}</span>
           <span>${summarizeChatGroup(messages.map((event) => event.message), localizedChatGroupSummary)}</span>

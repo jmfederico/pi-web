@@ -13,6 +13,7 @@ export interface ChatScrollFlowsHost {
   canRequestEarlier(): boolean;
   getOpenForm(kind?: "ask" | "dialog"): HTMLElement | undefined;
   onFollowingChange?(following: boolean): void;
+  requestAnchorMount?(anchorId: string): boolean;
 }
 
 export interface ChatScrollFrameScheduler {
@@ -194,8 +195,9 @@ export class ChatScrollFlows {
   private frame: number | undefined;
   private restoration: { scopeKey: string; position: ChatScrollPosition } | undefined;
   private requestedHistory = false;
-  private prepend: ChatAnchorScrollPosition | undefined;
+  private correction: { position: ChatAnchorScrollPosition; source: "history" | "mount"; scrollTop: number } | undefined;
   private follow: { form: FormAlignment } | undefined;
+  private anchorRounding: { anchorId: string; error: number; scrollTop: number } | undefined;
   private started = false;
   private disposed = false;
 
@@ -211,6 +213,36 @@ export class ChatScrollFlows {
 
   get followingLive(): boolean { return this.tail.followingLive; }
 
+  get restorationAnchor(): string | undefined {
+    const position = this.restoration?.position;
+    return position?.mode === "anchor" ? position.anchorId : undefined;
+  }
+
+  /** A pending measured correction protects its anchor even if estimates move it offscreen. */
+  get requiredAnchor(): string | undefined {
+    return this.restorationAnchor ?? this.correction?.position.anchorId;
+  }
+
+  /** Mounting changes layout, not navigation; preserve the reader through this owner. */
+  beforeMountChange(): void {
+    if (this.disposed || this.restoration !== undefined || this.tail.followingLive) return;
+    this.captureAnchor("mount");
+    this.history.cancel();
+  }
+
+  private captureAnchor(source: "history" | "mount"): void {
+    if (this.correction !== undefined) return;
+    const scroller = this.host.getScroller();
+    if (scroller === undefined) return;
+    const anchor = findScrollAnchor(scroller, this.host.getAnchors());
+    if (anchor === undefined) return;
+    const position = captureScrollPosition(scroller, anchor);
+    if (this.anchorRounding?.anchorId === position.anchorId && this.anchorRounding.scrollTop === scroller.scrollTop) {
+      position.offset -= this.anchorRounding.error;
+    }
+    this.correction = { position, source, scrollTop: scroller.scrollTop };
+  }
+
   beforeRender(change: ChatScrollBeforeRender): void {
     if (this.disposed) return;
     if (change.sessionChanged) {
@@ -222,13 +254,7 @@ export class ChatScrollFlows {
       this.history.cancel();
       this.follow = undefined;
       // Keep the first pre-render anchor until commit, even across several renders.
-      if (this.host.getBehaviors().anchorPrepends && this.prepend === undefined) {
-        const scroller = this.host.getScroller();
-        if (scroller !== undefined) {
-          const anchor = findScrollAnchor(scroller, this.host.getAnchors());
-          if (anchor !== undefined) this.prepend = captureScrollPosition(scroller, anchor);
-        }
-      }
+      if (this.host.getBehaviors().anchorPrepends) this.captureAnchor("history");
       this.cancelFrame();
     }
   }
@@ -241,7 +267,7 @@ export class ChatScrollFlows {
     } else if (this.restoration !== undefined) {
       if (change.historyChanged) this.requestedHistory = false;
       if (change.contentChanged || change.historyChanged) this.scheduleViewport();
-    } else if (this.prepend !== undefined) {
+    } else if (this.correction !== undefined) {
       this.scheduleViewport();
     } else if (change.contentChanged || change.openedForm !== false) {
       this.scheduleFollow(change.openedForm);
@@ -251,6 +277,7 @@ export class ChatScrollFlows {
 
   onScroll(): void {
     if (this.disposed) return;
+    if (this.anchorRounding !== undefined && this.host.getScroller()?.scrollTop !== this.anchorRounding.scrollTop) this.anchorRounding = undefined;
     if (this.restoration === undefined) this.tail.onScroll();
     if (!this.tail.followingLive) this.cancelFollow();
     this.scheduleSave();
@@ -259,11 +286,12 @@ export class ChatScrollFlows {
 
   onInteraction(): void {
     if (this.disposed) return;
+    this.anchorRounding = undefined;
     if (this.restoration !== undefined) {
       this.resetRestoration();
       this.tail.recordScrollBaseline();
     }
-    this.prepend = undefined;
+    this.correction = undefined;
     if (this.follow === undefined) this.cancelFrame();
   }
 
@@ -275,14 +303,14 @@ export class ChatScrollFlows {
   }
 
   onContentLayoutChanged(): void {
-    if (this.disposed || this.restoration !== undefined || this.prepend !== undefined) return;
+    if (this.disposed || this.restoration !== undefined || this.correction !== undefined) return;
     this.scheduleFollow();
   }
 
   onViewportResize(): void {
     if (this.disposed) return;
     if (this.restoration !== undefined) this.scheduleViewport();
-    else if (this.prepend === undefined) {
+    else if (this.correction === undefined) {
       this.scheduleFollow();
       this.scheduleHistory();
     }
@@ -295,8 +323,8 @@ export class ChatScrollFlows {
     if (!behaviors.followTail) this.cancelFollow();
     if (!behaviors.rememberPosition) this.resetRestoration();
     if (!behaviors.automaticHistory) this.history.reset();
-    if (!behaviors.anchorPrepends) this.prepend = undefined;
-    if (this.restoration === undefined && this.prepend === undefined && this.follow === undefined) this.cancelFrame();
+    if (!behaviors.anchorPrepends && this.correction?.source === "history") this.correction = undefined;
+    if (this.restoration === undefined && this.correction === undefined && this.follow === undefined) this.cancelFrame();
   }
 
   savePosition(scopeKey = this.host.getScopeKey()): void {
@@ -359,34 +387,60 @@ export class ChatScrollFlows {
     // One winner per frame. A remembered position outranks prepend compensation;
     // both outrank tail/form alignment. Measurement happens after child renders.
     const restoration = this.restoration;
-    const prepend = this.prepend;
+    const correction = this.correction;
     const follow = this.follow;
     this.follow = undefined;
-    this.prepend = undefined;
+    this.correction = undefined;
     if (restoration !== undefined) {
       if (restoration.scopeKey !== this.host.getScopeKey()) return;
       const result = this.commitViewport({ kind: "position", position: restoration.position });
       if (result.status === "restored" || result.status === "bottom") {
         this.restoration = undefined;
+        if (restoration.position.mode === "anchor") this.recordAnchorRounding(restoration.position);
         this.tail.syncFollowingAfterNavigation();
       } else if (result.status === "missing") {
         this.tail.pause();
         this.tail.recordScrollBaseline();
+        // A retained address outside the mounted window is not missing history.
+        if (this.host.requestAnchorMount?.(result.position.anchorId) === true) return;
         if (this.host.isHistoryReady() && !this.host.hasMore()) this.restoration = undefined;
         else if (this.host.isHistoryReady() && !this.requestedHistory && canLoadEarlier(this.host)) {
           this.requestedHistory = true;
           this.host.requestEarlier();
         }
       }
-    } else if (prepend !== undefined) {
-      const result = this.commitViewport({ kind: "position", position: prepend });
-      if (result.status === "restored") this.tail.recordScrollBaseline();
+    } else if (correction !== undefined) {
+      // Native scrolling can continue after input dispatch. Retire snapshots
+      // predating that movement, but not the browser's exact clamp to a shorter
+      // range: that is layout, and preserving the reader is still our job.
+      const scroller = this.host.getScroller();
+      const clampedTop = scroller === undefined ? undefined : Math.min(correction.scrollTop, Math.max(0, scroller.scrollHeight - scroller.clientHeight));
+      if (correction.source !== "mount" || scroller?.scrollTop === correction.scrollTop || scroller?.scrollTop === clampedTop) {
+        const result = this.commitViewport({ kind: "position", position: correction.position });
+        if (result.status === "restored") {
+          this.recordAnchorRounding(correction.position);
+          this.tail.recordScrollBaseline();
+        }
+      }
     } else if (follow !== undefined && this.tail.followingLive) {
       const result = this.commitViewport({ kind: "tail", form: follow.form });
       if (result.status === "restored") this.tail.syncFollowingAfterNavigation();
       else if (result.status === "bottom") this.tail.recordScrollBaseline();
     }
     this.scheduleHistory();
+  }
+
+  private recordAnchorRounding(position: ChatAnchorScrollPosition): void {
+    const scroller = this.host.getScroller();
+    const anchor = this.host.getAnchors().find((element) => element.dataset["scrollAnchorId"] === position.anchorId && element.getBoundingClientRect().height > 0);
+    if (scroller === undefined || anchor === undefined) return;
+    // Keep the logical reading offset across repeated corrections, rather than
+    // accumulating browser scrollTop rounding in each newly captured snapshot.
+    this.anchorRounding = {
+      anchorId: position.anchorId,
+      error: captureScrollPosition(scroller, anchor).offset - position.offset,
+      scrollTop: scroller.scrollTop,
+    };
   }
 
   /** The only application-owned transcript scroll-write boundary. */
@@ -408,7 +462,7 @@ export class ChatScrollFlows {
   }
 
   private scheduleHistory(): void {
-    if (this.restoration === undefined && this.prepend === undefined) this.history.schedule();
+    if (this.restoration === undefined && this.correction === undefined) this.history.schedule();
   }
 
   private scheduleSave(): void {
@@ -420,7 +474,7 @@ export class ChatScrollFlows {
 
   private cancelFollow(): void {
     this.follow = undefined;
-    if (this.restoration === undefined && this.prepend === undefined) this.cancelFrame();
+    if (this.restoration === undefined && this.correction === undefined) this.cancelFrame();
   }
 
   private resetRestoration(): void {
@@ -437,8 +491,9 @@ export class ChatScrollFlows {
   private resetViewport(): void {
     this.cancelFrame();
     this.resetRestoration();
-    this.prepend = undefined;
+    this.correction = undefined;
     this.follow = undefined;
+    this.anchorRounding = undefined;
   }
 
   dispose(): void {

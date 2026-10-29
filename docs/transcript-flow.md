@@ -1,6 +1,6 @@
 # Bounded transcript flow
 
-Status: staged design. The first-round reuse/cache improvements, source-address/interaction-state foundation, and viewport authority described in [chat behavior](chat-behaviors.md#long-session-work-boundaries) are implemented. Windowing, qualified history reads, and active eviction remain future milestones. This document is not a claim that active browser history, rendering, or network payloads are already bounded.
+Status: staged design. The first-round reuse/cache improvements, source-address/interaction-state foundation, and viewport authority described in [chat behavior](chat-behaviors.md#long-session-work-boundaries) are implemented. An ordinary-row mounting pilot is implemented but disabled in normal chat. Complete child-row windowing, qualified history reads, and active eviction remain future milestones. This document is not a claim that active browser history, rendering, or network payloads are already bounded.
 
 ## Goal
 
@@ -66,7 +66,7 @@ For a content, disclosure, range, or layout change:
 
 The implemented transaction chooses one pending target per frame: remembered restoration, otherwise the original pre-prepend anchor, otherwise coalesced tail/form alignment. Consecutive renders retain the first prepend snapshot until commit. Explicit top/end navigation retires queued targets and commits synchronously through the same boundary. Native user interaction retires obsolete restoration/prepend work; programmatic corrections record a fresh follow baseline. Persistence timers and history requests do not own scroll writes.
 
-Formatting, image geometry and previews already notify this owner. The measured-row/window stages above are future work; paused reading views retain the existing layout behavior outside explicit prepend/restoration correction. Window shifts must enter this transaction too. A resize observer reports geometry; it does not decide navigation. User input cancels obsolete restoration. Programmatic adjustment must not be mistaken for an upward reading gesture. Keep Safari rebound normalization and the explicit native-anchoring policy.
+Formatting, image geometry and previews already notify this owner. Complete measured-row/window integration remains gated by the pilot checkpoint below; paused reading views retain the existing layout behavior outside explicit prepend/restoration correction. Window shifts must enter this transaction too. A resize observer reports geometry; it does not decide navigation. User input cancels obsolete restoration. Programmatic adjustment must not be mistaken for an upward reading gesture. Keep Safari rebound normalization and the explicit native-anchoring policy.
 
 Anchor resolution must distinguish:
 
@@ -87,7 +87,15 @@ Use stable, variable-height presentation rows. Turns are semantic boundaries, no
 - Galleries must not make an unlimited collection one indivisible item.
 - A very large message/body needs a separate payload/presentation policy; mounting one item can still be expensive.
 
-For the first mounting milestone, retain the existing loaded data and use estimated/measured spacers for unmounted rows. This isolates mounting changes from network/replay changes. It bounds ordinary mounted history, not total browser memory. A whole-group prototype must not be reported as bounded rendering while expanded groups remain unlimited.
+### Ordinary-row pilot checkpoint
+
+The internal `mountingWindow` capability is disabled by default. When explicitly injected, `transcriptMountPlan` partitions retained rows into nearby mounted ranges, protected islands and aggregated height spacers. `TranscriptMountWindow` measures mounted roots with a resize observer, invalidates measurements by source revision and width, and releases metadata when its retained key disappears or the transcript scope changes. It owns neither authoritative history nor scroll position. Mounting invalidation captures the reader through the existing viewport owner; pending corrections keep their addressed row mounted until commit or cancellation. Native movement after capture retires an obsolete mounting correction, while an exact browser clamp to a shorter range remains a layout correction. Successive corrections preserve the logical reading offset rather than accumulating browser pixel rounding. Restoration first mounts a retained address rather than misclassifying it as missing history.
+
+This pilot keeps compound activity/gallery rows and active ask forms mounted. It protects focus, composition and popup owners; a native selection with content conservatively protects all currently mounted roots because cross-shadow selection can be opaque. Selection protection is sampled on selection changes, including WebKit selections whose public endpoints appear collapsed. Protection can exceed the ordinary neighborhood; there is no unconditional mounted-row or memory ceiling. The browser fixture verifies variable-height ordinary rows, live following versus reading, retained-anchor restoration, and selection/focus/draft preservation. This is not an enabled large-session fix.
+
+Before enabling normal chat, independently window expanded activity children and galleries, tighten selection islands where reliable, resolve retained hidden anchors to their owning summaries, and verify width changes, popup/composition ownership and geometry invalidation/navigation through the same transaction. Keep current retention and the public rendering templates; do not create a second transcript store or scroll authority.
+
+For the complete mounting milestone, retain the existing loaded data and use estimated/measured spacers for unmounted rows. This isolates mounting changes from network/replay changes. It bounds ordinary mounted history, not total browser memory. A whole-group prototype must not be reported as bounded rendering while expanded groups remain unlimited.
 
 Keep height metadata only for retained rows, keyed by address and invalidated by content, width/layout, and disclosure revisions. Once data eviction exists, do not retain a full-session height/identity index solely to offer an apparently proportional scrollbar. The historical reader has a local scroll range; missing intervals are navigation/load boundaries, not enormous fabricated spacers.
 
@@ -97,7 +105,7 @@ Focused rows, selection-intersecting rows, composition targets, and popup owners
 
 Active ask/extension requests and in-flight submission state have request-scoped ownership outside recycled history. Render one active form, not a second copy in another window. Historical question records remain history; eviction of a closing record must never reopen a question. Determine active-request facts from authoritative conversation state, not the mounted or retained historical tail. Current placement is unchanged. `PiWebApp` now owns the injected `PendingFormState`: ask buffers are memory-first with the existing best-effort draft persistence, extension inputs are memory-only, and concurrent sends share a synchronous operation lock. Only an accepted controller response clears ask memory; authoritative dialog snapshots/closures remove extension buffers. Startup handoff moves the existing request owner before selection replacement. Component removal does not cancel transport or clear its draft. Idle request buffers are LRU-bounded; mounted active forms and pending operations stay pinned until unbinding or settlement. This is tab-instance protection, not reload/cross-tab deduplication.
 
-`TranscriptUiState` separately holds bounded tool disclosure/full-diff intent. Copy feedback, countdown timers and sensitive closed-answer reveal remain local to their component lifetime. The mounting milestone must still protect focus/selection and keep one active form mounted; no recycling is enabled yet.
+`TranscriptUiState` separately holds bounded tool disclosure/full-diff intent. Copy feedback, countdown timers and sensitive closed-answer reveal remain local to their component lifetime. The complete mounting milestone must preserve these protections and keep one active form mounted; recycling remains disabled in normal chat.
 
 ## Data residency and synchronization
 
