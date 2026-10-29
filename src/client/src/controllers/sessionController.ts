@@ -75,6 +75,9 @@ export interface SessionControllerDependencies {
   automaticSessionCandidates?: (sessions: SessionInfo[]) => SessionInfo[];
   replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
   onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
+  onSessionIdentityResolved?: (machineId: string, previousId: string, sessionId: string) => void;
+  onAskResponseAccepted?: (machineId: string, sessionId: string, askId: string) => void;
+  onDialogSnapshot?: (machineId: string, sessionId: string, ids: readonly string[]) => void;
   /** Capture before reading; publish only an accepted authoritative runtime snapshot. */
   observeSessionSnapshot?: (machineId: string, sessionId: string) => (status: SessionStatus) => void;
   /** Selection can be restored without joining a transcript hidden by the shell. */
@@ -156,6 +159,9 @@ export class SessionController {
   private readonly automaticSessionCandidates: (sessions: SessionInfo[]) => SessionInfo[];
   private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
   private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
+  private readonly onSessionIdentityResolved: SessionControllerDependencies["onSessionIdentityResolved"];
+  private readonly onAskResponseAccepted: SessionControllerDependencies["onAskResponseAccepted"];
+  private readonly onDialogSnapshot: SessionControllerDependencies["onDialogSnapshot"];
   private readonly observeSessionSnapshot: SessionControllerDependencies["observeSessionSnapshot"];
   private readonly isChatVisible: () => boolean;
   private selectedSessionLoadDeferred = false;
@@ -211,6 +217,9 @@ export class SessionController {
     this.automaticSessionCandidates = deps.automaticSessionCandidates ?? ((sessions) => sessions);
     this.replacePromptEditorText = deps.replacePromptEditorText;
     this.onSelectedSessionReady = deps.onSelectedSessionReady;
+    this.onSessionIdentityResolved = deps.onSessionIdentityResolved;
+    this.onAskResponseAccepted = deps.onAskResponseAccepted;
+    this.onDialogSnapshot = deps.onDialogSnapshot;
     this.observeSessionSnapshot = deps.observeSessionSnapshot;
     this.isChatVisible = deps.isChatVisible ?? (() => true);
     this.onModelScopeChanged = deps.onModelScopeChanged;
@@ -1262,7 +1271,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setModel(session, provider, modelId, machineId));
+      this.applyStatus(await this.api.setModel(session, provider, modelId, machineId), machineId);
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1275,7 +1284,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleModel(session, direction, machineId));
+      this.applyStatus(await this.api.cycleModel(session, direction, machineId), machineId);
       await this.refreshAvailableThinkingLevels();
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1313,7 +1322,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.setThinkingLevel(session, level, machineId));
+      this.applyStatus(await this.api.setThinkingLevel(session, level, machineId), machineId);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1325,7 +1334,7 @@ export class SessionController {
     const machineId = selectedMachineId(this.getState());
     const errorOwner = this.captureSessionErrorOwner(session);
     try {
-      this.applyStatus(await this.api.cycleThinkingLevel(session, machineId));
+      this.applyStatus(await this.api.cycleThinkingLevel(session, machineId), machineId);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
     }
@@ -1474,6 +1483,7 @@ export class SessionController {
     try {
       const status = await send(session, machineId);
       clearAskDraft(machineSessionKey(machineId, session.id), askId);
+      this.onAskResponseAccepted?.(machineId, session.id, askId);
       if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.applyStatus(status);
     } catch (error) {
       this.reportSessionError(session, machineId, error, errorOwner);
@@ -1937,6 +1947,7 @@ export class SessionController {
     }
 
     rememberCachedNewSession(session, pending.machineId);
+    this.onSessionIdentityResolved?.(pending.machineId, tempId, session.id);
     moveDraft(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     moveStagedAttachments(machineSessionKey(pending.machineId, tempId), machineSessionKey(pending.machineId, session.id));
     const cachedSession = markCachedNewSessionInfo(session, pending.machineId);
@@ -2234,8 +2245,10 @@ export class SessionController {
     });
   }
 
-  private applyStatus(status: SessionStatus) {
+  private applyStatus(status: SessionStatus, machineId = selectedMachineId(this.getState())) {
+    this.onDialogSnapshot?.(machineId, status.sessionId, (status.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
     const state = this.getState();
+    if (selectedMachineId(state) !== machineId) return;
     const isSelected = state.selectedSession?.id === status.sessionId;
     const clearsStaleActivity = state.sessionActivities[status.sessionId]?.phase === "active" && !isSessionActive(status);
     this.setState({
@@ -2486,7 +2499,8 @@ export class SessionController {
    * truthful too — the readiness swap seeds the selected status from it.
    */
   private applyPendingStartStatus(pending: PendingSessionStart, status: SessionStatus): void {
-    this.applyStatus(status);
+    this.applyStatus(status, pending.machineId);
+    this.onDialogSnapshot?.(pending.machineId, pending.tempId, (status.pendingDialogs ?? []).map((dialog) => dialog.dialogId));
     if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
     this.setState({ pendingDialogs: status.pendingDialogs ?? [] });
   }

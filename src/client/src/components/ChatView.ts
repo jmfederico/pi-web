@@ -11,6 +11,10 @@ import { ChatMessageActionController } from "./ChatMessageActionController";
 import * as transcript from "./chatTranscriptTemplates";
 import type { TranscriptRenderContext } from "./chatTranscriptTemplates";
 import { ChatDisclosureController } from "../chatDisclosure";
+import { ChatPresentationOwners } from "../chatPresentationOwners";
+import { chatPartIdentity, chatLinePresentationIdentity } from "../chatPresentationIdentity";
+import { TranscriptUiState } from "../transcriptUiState";
+import { PendingFormState } from "../pendingFormState";
 import { writeClipboardText } from "../clipboard";
 import { type QueuedMessageAction, type QueuedMessageActionTarget } from "../queuedMessageActions";
 import { chatQueuedMessageSections, renderQueuedMessageSection, type QueuedMessageSection } from "./chat/QueuedMessages";
@@ -116,6 +120,9 @@ export class ChatView extends LitElement {
   }
 
   @property({ attribute: false }) messages: ChatLine[] = [];
+  @property({ attribute: false }) presentationOwners = new ChatPresentationOwners();
+  @property({ attribute: false }) uiState = new TranscriptUiState();
+  @property({ attribute: false }) formState = new PendingFormState();
   @property() sessionId = "";
   @property({ attribute: false }) onNavigationChange?: (controls: TemplateResult) => void;
   @property() sessionCwd = "";
@@ -175,6 +182,7 @@ export class ChatView extends LitElement {
   @state() private expandedMetaKey: string | undefined;
   private readonly disclosures = new ChatDisclosureController();
   private readonly transientDisclosures = new Map<string, boolean>();
+  private readonly pendingDisclosureAliases = new Map<string, string>();
   private readonly scrollFlows = new ChatScrollFlows({
     getScroller: () => this.chat ?? undefined,
     onFollowingChange: (following) => { this.followingLive = following; },
@@ -196,6 +204,7 @@ export class ChatView extends LitElement {
   private questionIds: ReadonlySet<string> = new Set();
   private questionPresentationRevision = 0;
   private groupProjection = new ChatGroupProjection();
+  private sourceLines = new WeakMap<ChatPart, ChatLine>();
   private messageMetaCache = new WeakMap<ChatLine, string>();
   private navigationLocalizationChanged = false;
   private transcriptPresentationRevision = 0;
@@ -266,12 +275,14 @@ export class ChatView extends LitElement {
   }
 
   private prepareSessionUiState(): void {
-    if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId);
+    if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId, this.machineId);
     this.loadMoreRequested = false;
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
     if (changed.has("messages")) {
+      this.sourceLines = new WeakMap();
+      for (const line of this.messages) for (const part of line.parts) this.sourceLines.set(part, line);
       const outcomes = transcriptQuestionOutcomes(this.messages);
       if (outcomes.size !== this.questionOutcomes.size || [...outcomes].some(([id, values]) => {
         const previous = this.questionOutcomes.get(id);
@@ -291,18 +302,19 @@ export class ChatView extends LitElement {
       this.groupProjection = new ChatGroupProjection();
       this.eventRenderKeys.clear();
       this.transientDisclosures.clear();
+      this.pendingDisclosureAliases.clear();
       this.lastOpenQuestionId = undefined;
       this.queuedCopyFailed = false;
     }
     if (changed.has("sessionId") || changed.has("machineId")) {
       this.messageActionController.reset();
     }
-    if (changed.has("sessionId")) {
+    if (changed.has("sessionId") || changed.has("machineId")) {
       this.prepareSessionUiState();
     }
     if (changed.has("behaviors")) {
       this.scrollFlows.configure();
-      if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId);
+      if (this.behaviors.rememberDisclosures) this.disclosures.syncSession(this.sessionId, this.machineId);
     }
   }
 
@@ -319,6 +331,14 @@ export class ChatView extends LitElement {
   protected override updated(changed: Map<string, unknown>): void {
     if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
     if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
+    for (const [target, source] of this.pendingDisclosureAliases) {
+      if (this.behaviors.rememberDisclosures) this.disclosures.transferChoice(source, target);
+      else if (this.transientDisclosures.has(source)) {
+        this.transientDisclosures.set(target, this.transientDisclosures.get(source) ?? false);
+        this.transientDisclosures.delete(source);
+      }
+    }
+    this.pendingDisclosureAliases.clear();
     for (const owner of this.eventRenderKeys.values()) {
       if (owner.pendingChoice === undefined) continue;
       if (this.behaviors.rememberDisclosures) this.disclosures.applyToggle(owner.disclosureKey, owner.pendingChoice, owner.defaultOpen);
@@ -422,8 +442,7 @@ export class ChatView extends LitElement {
     const messages = group.kind === "group" ? group.messages.map((event) => event.message)
       : group.kind === "tool-images" ? group.outputs.map((output) => output.message) : [group.message];
     const identities = messages.flatMap((message) => {
-      const identity = chatLineScrollIdentity(message);
-      return identity === undefined ? [] : [JSON.stringify([group.kind, identity])];
+      return this.linePresentationIdentities(message).map((identity) => JSON.stringify([group.kind, identity]));
     });
     const item = {
       slot: JSON.stringify([group.kind, index, messages[0]?.role]),
@@ -516,6 +535,8 @@ export class ChatView extends LitElement {
         (closed) => html`
           <extension-dialog-card
             class="closed-dialog-card"
+            .formState=${this.formState}
+            .formScope=${machineSessionKey(this.machineId, this.sessionId)}
             .outcome=${closed}
             .onDismiss=${this.onDismissClosedDialog}
           ></extension-dialog-card>
@@ -524,6 +545,8 @@ export class ChatView extends LitElement {
       ${open === undefined ? null : html`
         <extension-dialog-card
           class="open-dialog-card"
+          .formState=${this.formState}
+          .formScope=${machineSessionKey(this.machineId, this.sessionId)}
           .dialog=${open}
           .onAnswer=${this.onAnswerDialog}
           .onCancel=${this.onCancelDialog}
@@ -574,7 +597,7 @@ export class ChatView extends LitElement {
 
   private transcriptPresentationInputs(): unknown[] {
     return [
-      this.transcriptPresentationRevision, this.behaviors, this.quietMode, this.sessionCwd, this.workspaceContext,
+      this.transcriptPresentationRevision, this.presentationOwners, this.uiState, this.formState, this.behaviors, this.quietMode, this.sessionCwd, this.workspaceContext,
       this.contentRendering, this.messageActions, this.messageActionContext, this.onMessageAction, this.onDisplayedMessageAction,
       this.expandedMetaKey, this.questionPresentationRevision, this.askDraftSessionId, this.onSubmitAsk, this.openQuestion()?.askId,
     ];
@@ -587,7 +610,20 @@ export class ChatView extends LitElement {
       sessionId: this.sessionId,
       session: this.transcriptSession(),
       // Retained handlers must not pin the transcript array from their render.
-      sourceMessage: (index) => this.messages[index - this.messageStart],
+      sourceMessage: (message, index) => {
+        const first = message.parts[0];
+        return (first === undefined ? undefined : this.sourceLines.get(first)) ?? this.messages[index - this.messageStart];
+      },
+      partKeys: (message, part, index, partIndex) => this.partPresentationKeys(message, part, index, partIndex),
+      rowIdentities: (message) => this.linePresentationIdentities(message),
+      rowKey: (message, index) => {
+        const first = message.parts[0];
+        return first === undefined || chatPartIdentity(message, first) === undefined
+          ? JSON.stringify(["legacy-row", index, message.role, first?.type])
+          : JSON.stringify(["row", message.role, this.partPresentationKeys(message, first, index, 0).owner]);
+      },
+      uiState: this.uiState,
+      formState: this.formState,
       behaviors: this.behaviors,
       contentRendering: this.contentRendering,
       workspaceContext: this.workspaceContext,
@@ -609,6 +645,34 @@ export class ChatView extends LitElement {
       onSubmitAsk: this.onSubmitAsk,
       openImageGallery: (images, index) => { this.openToolImageGallery(images, index); },
     };
+  }
+
+  private linePresentationIdentities(message: ChatLine): string[] {
+    // Older delta protocols cannot address original parts. Keep their existing
+    // provisional slot reconciliation instead of declaring a false durable key.
+    if ((message.entryId ?? "") === "" && message.parts[0]?.sourcePart?.startsWith("delta:") === true) return [];
+    const primary = chatLinePresentationIdentity(message) ?? chatLineScrollIdentity(message);
+    if (primary === undefined) return [];
+    const provisional = message.streamId === undefined ? undefined
+      : chatLinePresentationIdentity({ ...message, entryId: "" });
+    return provisional === undefined || provisional === primary ? [primary] : [primary, provisional];
+  }
+
+  private partPresentationKeys(message: ChatLine, part: ChatPart, index: number, partIndex: number): { owner: string; canonical: string } {
+    const identity = chatPartIdentity(message, part);
+    if (identity === undefined) {
+      // Legacy/manual content has no reloadable provenance; retain its local slot.
+      const slot = JSON.stringify([this.machineId, this.sessionId, message.entryId ?? index, partIndex]);
+      return { owner: slot, canonical: slot };
+    }
+    const provisional = message.streamId === undefined ? undefined : chatPartIdentity({ ...message, entryId: "" }, part);
+    const keys = this.presentationOwners.resolve(machineSessionKey(this.machineId, this.sessionId), identity, provisional);
+    if (keys.owner !== keys.canonical) {
+      for (const prefix of ["thinking", "skill", "tool-result"]) {
+        this.pendingDisclosureAliases.set(`${prefix}:${keys.canonical}`, `${prefix}:${keys.owner}`);
+      }
+    }
+    return keys;
   }
 
   private renderMessage(message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
@@ -660,6 +724,10 @@ export class ChatView extends LitElement {
   }
 
   private isDisclosureOpen(key: string, defaultOpen: boolean): boolean {
+    const source = this.pendingDisclosureAliases.get(key);
+    if (source !== undefined && (this.behaviors.rememberDisclosures ? this.disclosures.hasChoice(source) : this.transientDisclosures.has(source))) {
+      return this.behaviors.rememberDisclosures ? this.disclosures.isOpen(source, defaultOpen) : this.transientDisclosures.get(source) ?? defaultOpen;
+    }
     return this.behaviors.rememberDisclosures
       ? this.disclosures.isOpen(key, defaultOpen)
       : this.transientDisclosures.get(key) ?? defaultOpen;

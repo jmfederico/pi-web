@@ -3,6 +3,8 @@ import { LocalizationController, localization } from "../localization/browser";
 import { toolExecutionMessages as messages } from "../toolExecutionMessages";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
 import { LitElement, css, html, type PropertyValues } from "lit";
+import { live } from "lit/directives/live.js";
+import type { TranscriptUiState, ToolUiIntent } from "../transcriptUiState";
 import { customElement, property, state } from "lit/decorators.js";
 import { writeClipboardText } from "../clipboard";
 import type { ToolExecutionPart } from "../chatTypes";
@@ -26,6 +28,10 @@ export class ToolExecutionView extends LitElement {
   }
 
   @property({ attribute: false }) execution: ToolExecutionPart | undefined;
+  @property({ attribute: false }) uiState: TranscriptUiState | undefined;
+  @property({ attribute: false }) stateKey: string | undefined;
+  private identityVersion = 0;
+  private copyVersion = 0;
   @state() private showFullDiff = false;
   @state() private copied = false;
   @state() private diffOpen = true;
@@ -34,8 +40,32 @@ export class ToolExecutionView extends LitElement {
   private diffStats: { added: number; removed: number; lines: number } | undefined;
 
   protected override willUpdate(changed: PropertyValues<ToolExecutionView>): void {
+    const rebound = !this.hasUpdated || changed.has("uiState") || changed.has("stateKey");
+    if (rebound) {
+      const intent = this.stateKey === undefined ? undefined : this.uiState?.getTool(this.stateKey);
+      this.textOpen = intent?.textOpen;
+      this.diffOpen = intent?.diffOpen ?? true;
+      this.showFullDiff = intent?.showFullDiff ?? false;
+      this.copied = false;
+      this.identityVersion++;
+      this.copyVersion++;
+    }
     const previous = changed.get("execution");
-    if (changed.has("execution") && this.execution?.status === "error" && previous?.status !== "error") this.textOpen = true;
+    if (changed.has("execution") && this.execution?.status === "error" && previous?.status !== "error"
+      && (!rebound || this.textOpen === undefined)) this.setIntent({ textOpen: true });
+  }
+
+  private setIntent(patch: ToolUiIntent): void {
+    if (patch.textOpen !== undefined) this.textOpen = patch.textOpen;
+    if (patch.diffOpen !== undefined) this.diffOpen = patch.diffOpen;
+    if (patch.showFullDiff !== undefined) this.showFullDiff = patch.showFullDiff;
+    if (this.stateKey !== undefined) this.uiState?.setTool(this.stateKey, patch);
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.copyVersion++;
+    this.copied = false;
   }
 
   override render() {
@@ -99,8 +129,9 @@ export class ToolExecutionView extends LitElement {
     if ((text === undefined || text === "") && target === undefined) return null;
     const expanded = this.textOpen ?? open;
     return html`
-      <details class="text-body" ?open=${expanded} @toggle=${(event: Event) => {
-        if (event.currentTarget instanceof HTMLDetailsElement) this.textOpen = event.currentTarget.open;
+      <details class="text-body" .open=${live(expanded)} @toggle=${(event: Event) => {
+        const details = event.currentTarget;
+        if (details instanceof HTMLDetailsElement && details.open !== expanded) this.setIntent({ textOpen: details.open });
       }}>
         <summary class="ui-transcript-disclosure">${messages.t("details")}</summary>
         ${expanded ? html`${this.renderExpandedTarget(target)}
@@ -117,7 +148,7 @@ export class ToolExecutionView extends LitElement {
   private renderDiffBody(diff: string, label: string, target: ToolTarget | undefined) {
     const lineCount = this.diffStats?.lines ?? 0;
     return html`
-      <details class="diff-details" ?open=${this.diffOpen} @toggle=${(event: Event) => { this.onDiffToggle(event); }}>
+      <details class="diff-details" .open=${live(this.diffOpen)} @toggle=${(event: Event) => { this.onDiffToggle(event); }}>
         <summary class="ui-transcript-disclosure">
           <span>${label}</span>
           <small>${messages.t("lines", { count: lineCount })}</small>
@@ -139,7 +170,7 @@ export class ToolExecutionView extends LitElement {
         </div>
         <pre class="diff" dir="ltr" aria-label=${label}><code class="diff-content">${visibleLines.map((line) => html`<span class=${diffLineClass(line)}>${line}</span>`)}</code></pre>
         ${truncated ? html`
-          <button class="show-more ui-button ui-button--compact" type="button" @click=${() => { this.showFullDiff = true; }}>
+          <button class="show-more ui-button ui-button--compact" type="button" @click=${() => { this.setIntent({ showFullDiff: true }); }}>
             ${messages.t("showAll", { count: lines.length })}
           </button>
         ` : null}
@@ -148,17 +179,22 @@ export class ToolExecutionView extends LitElement {
 
   private onDiffToggle(event: Event): void {
     const details = event.currentTarget;
-    if (details instanceof HTMLDetailsElement) this.diffOpen = details.open;
+    if (details instanceof HTMLDetailsElement && details.open !== this.diffOpen) this.setIntent({ diffOpen: details.open });
   }
 
   private async copyDiff(diff: string): Promise<void> {
+    const identity = this.identityVersion;
+    const copy = ++this.copyVersion;
     const copied = await writeClipboardText(diff);
+    if (identity !== this.identityVersion || copy !== this.copyVersion) return;
     if (!copied) {
       this.copied = false;
       return;
     }
     this.copied = true;
-    window.setTimeout(() => { this.copied = false; }, 1200);
+    window.setTimeout(() => {
+      if (identity === this.identityVersion && copy === this.copyVersion) this.copied = false;
+    }, 1200);
   }
 
   static override styles = [uiButtonStyles, uiTranscriptStyles, css`

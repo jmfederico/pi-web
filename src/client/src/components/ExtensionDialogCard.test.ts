@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PendingExtensionDialog } from "../../../shared/apiTypes";
+import { PendingFormState } from "../pendingFormState";
 import type { ClosedExtensionDialog } from "../appState";
 import {
   ExtensionDialogCard,
@@ -16,6 +17,63 @@ afterEach(() => {
   vi.useRealTimers();
   document.body.replaceChildren();
   localStorage.clear();
+});
+
+describe("extension-dialog-card external lifetime", () => {
+  it("keeps input in memory across remounts, deduplicates sends, and isolates scope rebinding", async () => {
+    const state = new PendingFormState();
+    let finish!: () => void;
+    const answer = vi.fn<ExtensionDialogAnswerCallback>(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const dialog = openDialog({ kind: "input" });
+    const mount = async (scope = "machine:session"): Promise<ExtensionDialogCard> => {
+      const card = await mountOpenDialog(dialog, { onAnswer: answer });
+      card.formState = state;
+      card.formScope = scope;
+      await card.updateComplete;
+      return card;
+    };
+    const first = await mount();
+    const input = requiredElement(renderRoot(first).querySelector("input"), "input");
+    input.value = "private draft";
+    input.dispatchEvent(new Event("input"));
+    first.remove();
+    const second = await mount();
+    expect(renderRoot(second).querySelector("input")?.value).toBe("private draft");
+    buttonWithText(renderRoot(second), "Send").click();
+    expect(answer).toHaveBeenCalledWith("dlg-1", "private draft");
+    second.remove();
+    const third = await mount();
+    expect(renderRoot(third).querySelector("input")?.disabled).toBe(true);
+    renderRoot(third).querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(answer).toHaveBeenCalledOnce();
+    third.formScope = "other-machine:session";
+    await third.updateComplete;
+    expect(renderRoot(third).querySelector("input")?.value).toBe("");
+    finish();
+    await flushClose(third);
+    expect(renderRoot(third).querySelector("input")?.value).toBe("");
+    const retry = await mount();
+    expect(renderRoot(retry).querySelector("input")?.value).toBe("private draft");
+    buttonWithText(renderRoot(retry), "Send").click();
+    expect(answer).toHaveBeenCalledTimes(2);
+    finish();
+    await flushClose(retry);
+    retry.remove();
+    state.syncDialogs("machine:session", []);
+    const cleared = await mount();
+    expect(renderRoot(cleared).querySelector("input")?.value).toBe("");
+  });
+
+  it("invokes the captured callback synchronously before properties can be rebound", async () => {
+    const answer = vi.fn<ExtensionDialogAnswerCallback>();
+    const card = await mountOpenDialog(openDialog(), { onAnswer: answer });
+    buttonWithText(renderRoot(card), "Yes").click();
+    card.onAnswer = vi.fn<ExtensionDialogAnswerCallback>();
+    card.formScope = "changed";
+    expect(answer).toHaveBeenCalledWith("dlg-1", true);
+    expect(card.onAnswer).not.toHaveBeenCalled();
+    await flushClose(card);
+  });
 });
 
 describe("extension-dialog-card confirm dialog", () => {

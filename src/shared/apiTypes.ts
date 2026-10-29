@@ -1461,8 +1461,8 @@ export type SessionUiEvent = SessionUiEventBody & { seq?: number };
 type SessionUiEventBody =
   | { type: "message.append"; message: unknown }
   | { type: "assistant.start"; message: unknown }
-  | { type: "assistant.delta"; text: string; streamId?: string }
-  | { type: "assistant.thinking.delta"; text: string; streamId?: string }
+  | { type: "assistant.delta"; text: string; streamId?: string; contentIndex?: number }
+  | { type: "assistant.thinking.delta"; text: string; streamId?: string; contentIndex?: number }
   | { type: "tool.start"; toolName: string; toolCallId: string; summary: string; args?: unknown }
   | { type: "tool.update"; toolName: string; toolCallId: string; text: string; content?: unknown; details?: unknown }
   | { type: "tool.end"; toolName: string; toolCallId: string; text: string; isError: boolean; content?: unknown; details?: unknown }

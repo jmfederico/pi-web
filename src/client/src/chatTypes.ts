@@ -8,7 +8,12 @@ export interface ToolPreview {
   error?: string;
 }
 
-export interface ToolExecutionPart {
+/** Original content address, assigned before filtering or presentation splitting. */
+export interface ChatPartProvenance {
+  sourcePart?: string;
+}
+
+export interface ToolExecutionPart extends ChatPartProvenance {
   type: "toolExecution";
   toolCallId?: string;
   toolName: string;
@@ -27,7 +32,7 @@ export type ChatImagePart =
   | ({ type: "image"; mimeType: string; data: string; mediaId?: never; byteSize?: never } & Partial<ImageDimensions>)
   | (SessionMediaReference & { data?: never });
 
-export type ChatPart =
+export type ChatPart = ChatPartProvenance & (
   | { type: "text"; text: string; displayText?: string; presentation?: ChatTextPresentation }
   | ChatImagePart
   | { type: "thinking"; text: string; displayText?: string }
@@ -40,7 +45,7 @@ export type ChatPart =
   | { type: "toolCall"; toolCallId?: string; toolName: string; summary: string; summaryPresentation?: ArgumentSummaryPresentation; args?: unknown }
   | ToolExecutionPart
   | { type: "toolResult"; toolCallId?: string; toolName: string; text: string; isError: boolean; content?: unknown; details?: unknown }
-  | { type: "empty" };
+  | { type: "empty" });
 
 export interface ChatLine {
   /** Identity of one live assistant message, retained through finalization. */

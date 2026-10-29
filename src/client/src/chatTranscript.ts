@@ -55,8 +55,8 @@ export function applyTranscriptEvent(messages: ChatLine[], event: SessionUiEvent
   if (event.type === "assistant.start") return seedStreamingPartial(messages, event.message);
   if (event.type === "assistant.delta" || event.type === "assistant.thinking.delta") {
     const append = event.type === "assistant.delta"
-      ? (lines: ChatLine[]) => appendText(lines, "assistant", event.text)
-      : (lines: ChatLine[]) => appendThinking(lines, event.text);
+      ? (lines: ChatLine[]) => appendText(lines, "assistant", event.text, event.contentIndex)
+      : (lines: ChatLine[]) => appendThinking(lines, event.text, event.contentIndex);
     return appendAssistantStream(messages, event.streamId, append);
   }
   if (event.type === "tool.start") return appendToolExecutionStart(messages, event);

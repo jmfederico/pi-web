@@ -13,6 +13,7 @@ describe("SessionController pending starts", () => {
     const started: SessionInfo = { ...oldSession, id: "started-session", path: "/tmp/started-session.jsonl" };
     const startRequest = deferred<SessionInfo>();
     const snapshotCalls: string[] = [];
+    const promoted: { machineId: string; from: string; to: string; selectedAtHandoff: string | undefined }[] = [];
     let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [] };
     const api: typeof defaultApi = {
       ...defaultApi,
@@ -27,7 +28,9 @@ describe("SessionController pending starts", () => {
       (patch) => { state = { ...state, ...patch }; },
       () => undefined,
       undefined,
-      { api, socket: new FakeSocket() },
+      { api, socket: new FakeSocket(), onSessionIdentityResolved: (machineId, from, to) => {
+        promoted.push({ machineId, from, to, selectedAtHandoff: state.selectedSession?.id });
+      } },
     );
 
     const start = controller.startSession();
@@ -45,6 +48,7 @@ describe("SessionController pending starts", () => {
     expect(state.sessions.map((session) => session.id)).toEqual(["started-session"]);
     expect(state.selectedSession?.id).toBe("started-session");
     expect(snapshotCalls).toEqual(["started-session"]);
+    expect(promoted).toEqual([{ machineId: "local", from: temporarySession?.id, to: started.id, selectedAtHandoff: temporarySession?.id }]);
   });
 
   it("publishes the stable session id before replacing a pending rendered selection", async () => {

@@ -1,3 +1,5 @@
+import { machineSessionKey } from "./machineKeys";
+
 export interface ChatDisclosureSnapshot {
   open: string[];
   closedDefaultOpen: string[];
@@ -39,10 +41,12 @@ export class ChatDisclosureController {
 
   constructor(private readonly storage: ChatDisclosureStorage = browserChatDisclosureStorage) {}
 
-  syncSession(sessionId: string): void {
-    if (this.sessionId === sessionId) return;
-    this.sessionId = sessionId;
-    const snapshot = sessionId === "" ? undefined : this.storage.read(sessionId);
+  syncSession(sessionId: string, machineId = "local"): void {
+    // Keep existing local bookmarks; remote machines get a distinct namespace.
+    const scope = sessionId === "" || machineId === "local" ? sessionId : machineSessionKey(machineId, sessionId);
+    if (this.sessionId === scope) return;
+    this.sessionId = scope;
+    const snapshot = scope === "" ? undefined : this.storage.read(scope);
     this.openGroupKeys = new Set(snapshot?.open ?? []);
     this.closedDefaultOpenGroupKeys = new Set(snapshot?.closedDefaultOpen ?? []);
   }
@@ -74,6 +78,23 @@ export class ChatDisclosureController {
     this.closedDefaultOpenGroupKeys = nextClosedDefaultOpenKeys;
     this.persist();
     return true;
+  }
+
+  hasChoice(key: string): boolean {
+    return this.openGroupKeys.has(key) || this.closedDefaultOpenGroupKeys.has(key);
+  }
+
+  /** Move an explicit provisional choice to its committed address. */
+  transferChoice(from: string, to: string): void {
+    if (from === to) return;
+    const open = this.openGroupKeys.delete(from);
+    const closed = this.closedDefaultOpenGroupKeys.delete(from);
+    if (!open && !closed) return;
+    this.openGroupKeys.delete(to);
+    this.closedDefaultOpenGroupKeys.delete(to);
+    if (open) this.openGroupKeys.add(to);
+    else this.closedDefaultOpenGroupKeys.add(to);
+    this.persist();
   }
 
   snapshot(): ChatDisclosureSnapshot {

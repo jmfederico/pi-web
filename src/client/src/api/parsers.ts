@@ -41,6 +41,13 @@ function optionalString(record: Record<string, unknown>, key: string): string | 
   return value;
 }
 
+function optionalContentIndex(record: Record<string, unknown>): number | undefined {
+  const value = record["contentIndex"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new Error("Expected non-negative integer field: contentIndex");
+  return value;
+}
+
 function requireNumber(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   if (typeof value !== "number") throw new Error(`Expected number field: ${key}`);
@@ -703,9 +710,9 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
     case "assistant.start":
       return { type: "assistant.start", message: requirePresent(record, "message") };
     case "assistant.delta":
-      return { type: "assistant.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")) };
+      return { type: "assistant.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")), ...optionalField("contentIndex", optionalContentIndex(record)) };
     case "assistant.thinking.delta":
-      return { type: "assistant.thinking.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")) };
+      return { type: "assistant.thinking.delta", text: requireString(record, "text"), ...optionalField("streamId", optionalString(record, "streamId")), ...optionalField("contentIndex", optionalContentIndex(record)) };
     case "tool.start":
       return {
         type: "tool.start",

@@ -1,4 +1,5 @@
 import { argumentSummaryPresentation, summarizeArgs } from "./chatPresentation";
+import { withSourcePart } from "./chatPresentationIdentity";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes";
 import { parseAskUserOutcome, parseAskUserRequest } from "./api/parsers";
 import { isSessionMediaId, validImageDimensions } from "../../shared/sessionMedia";
@@ -39,40 +40,48 @@ export function withMessageMeta(line: ChatLine, rawMessage: unknown): ChatLine {
   };
 }
 
-export function appendText(messages: ChatLine[], role: ChatLine["role"], text: string): ChatLine[] {
+export function appendText(messages: ChatLine[], role: ChatLine["role"], text: string, originalContentIndex?: number): ChatLine[] {
   if (text === "") return messages;
+  const sourcePart = indexedStreamPartKey(originalContentIndex);
   const last = messages.at(-1);
   const lastPart = last?.parts.at(-1);
-  if (last?.role === role && lastPart?.type === "text") {
+  if (last?.role === role && lastPart?.type === "text" && (sourcePart === undefined || lastPart.sourcePart === sourcePart)) {
     return [
       ...messages.slice(0, -1),
-      { ...last, parts: [...last.parts.slice(0, -1), { type: "text", text: lastPart.text + text }] },
+      { ...last, parts: [...last.parts.slice(0, -1), { type: "text", text: lastPart.text + text, ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
     ];
   }
-  if (last?.role === role) return [...messages.slice(0, -1), { ...last, parts: [...last.parts, { type: "text", text }] }];
-  return [...messages, textMessage(role, text)];
+  const part: ChatPart = { type: "text", text, ...(sourcePart === undefined ? {} : { sourcePart }) };
+  if (last?.role === role) return [...messages.slice(0, -1), { ...last, parts: [...last.parts, withSourcePart(part, last, nextStreamPartKey(last))] }];
+  return [...messages, { role, parts: [part] }];
 }
 
-export function appendThinking(messages: ChatLine[], text: string): ChatLine[] {
+export function appendThinking(messages: ChatLine[], text: string, originalContentIndex?: number): ChatLine[] {
   if (text === "") return messages;
+  const sourcePart = indexedStreamPartKey(originalContentIndex);
   const last = messages.at(-1);
   const lastPart = last?.parts.at(-1);
-  if (last?.role === "assistant" && lastPart?.type === "thinking") {
+  if (last?.role === "assistant" && lastPart?.type === "thinking" && (sourcePart === undefined || lastPart.sourcePart === sourcePart)) {
     return [
       ...messages.slice(0, -1),
-      { ...last, parts: [...last.parts.slice(0, -1), { type: "thinking", text: lastPart.text + text }] },
+      { ...last, parts: [...last.parts.slice(0, -1), { type: "thinking", text: lastPart.text + text, ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
     ];
   }
-  if (last?.role === "assistant") return [...messages.slice(0, -1), { ...last, parts: [...last.parts, { type: "thinking", text }] }];
-  return [...messages, { role: "assistant", parts: [{ type: "thinking", text }] }];
+  const part: ChatPart = { type: "thinking", text, ...(sourcePart === undefined ? {} : { sourcePart }) };
+  if (last?.role === "assistant") return [...messages.slice(0, -1), { ...last, parts: [...last.parts, withSourcePart(part, last, nextStreamPartKey(last))] }];
+  return [...messages, { role: "assistant", parts: [part] }];
 }
 
 export function normalizeMessage(message: unknown): ChatLine[] {
   if (isChatLine(message)) {
     if (!message.parts.some((part) => getString(part, "type") === "image")) return [message];
-    return [{ ...message, parts: message.parts.flatMap((part) => getString(part, "type") === "image" ? normalizeImage(part) : [part]) }];
+    return [{ ...message, parts: message.parts.flatMap((part) => getString(part, "type") === "image"
+      ? normalizeImage(part).map((image) => ({ ...image, ...(part.sourcePart === undefined ? {} : { sourcePart: part.sourcePart }) })) : [part]) }];
   }
-  if (getString(message, "role") === "bashExecution") return [withMessageMeta(normalizeBashExecution(message), message)];
+  if (getString(message, "role") === "bashExecution") {
+    const line = normalizeBashExecution(message);
+    return [withMessageMeta({ ...line, parts: line.parts.map((part) => sourcePart(part, message, "bash")) }, message)];
+  }
   const rawRole = getString(message, "role");
   const role = normalizeRole(rawRole);
   const contentParts = normalizeContent(getProperty(message, "content"), message);
@@ -85,7 +94,7 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   // Every tool result needs a result part, even when its output is empty or
   // image-only, so coalescing can finish the call without losing chronology.
   const resultParts = rawRole === "toolResult" && !contentParts.some((part) => part.type === "toolResult")
-    ? [toolResultPartFromText(contentParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), message), ...contentParts.filter((part) => part.type === "image")]
+    ? [sourcePart(toolResultPartFromText(contentParts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), message), message, "tool-result"), ...contentParts.filter((part) => part.type === "image")]
     : contentParts;
   const parts = [...resultParts, ...(supersededRecord === undefined ? [] : [supersededRecord]), ...(question === undefined ? [] : [question])];
   const skillLines = role === "user" ? normalizeSkillInvocation(parts) : undefined;
@@ -100,11 +109,30 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   return errorLine === undefined ? lines : [...lines, withMessageMeta(errorLine, message)];
 }
 
+function indexedStreamPartKey(index: number | undefined): string | undefined {
+  return index !== undefined && Number.isInteger(index) && index >= 0 ? `content:${String(index)}` : undefined;
+}
+
+// Older daemons omit the raw content index. Allocate a live-only key once,
+// then preserve it on every append without guessing a durable content address.
+function nextStreamPartKey(line: ChatLine): string {
+  let next = 0;
+  for (const part of line.parts) {
+    const match = /^delta:(\d+)$/.exec(part.sourcePart ?? "");
+    if (match !== null) next = Math.max(next, Number(match[1]) + 1);
+  }
+  return `delta:${String(next)}`;
+}
+
+function sourcePart<T extends ChatPart>(part: T, rawMessage: unknown, key: string): T {
+  return withSourcePart(part, { entryId: getString(rawMessage, "entryId"), streamId: getString(rawMessage, "streamId") }, key);
+}
+
 function assistantErrorLine(message: unknown): ChatLine | undefined {
   if (getString(message, "role") !== "assistant" || getString(message, "stopReason") !== "error") return undefined;
   const errorMessage = getString(message, "errorMessage")?.trim();
   const detail = errorMessage === undefined || errorMessage === "" ? "The model returned an error." : errorMessage;
-  return { role: "system", parts: [{ type: "text", text: `Model response failed: ${detail}`, presentation: { kind: "modelError", detail: errorMessage ?? "" } }] };
+  return { role: "system", parts: [sourcePart({ type: "text", text: `Model response failed: ${detail}`, presentation: { kind: "modelError", detail: errorMessage ?? "" } }, message, "model-error")] };
 }
 
 function isChatLine(message: unknown): message is ChatLine {
@@ -118,8 +146,8 @@ function normalizeSkillInvocation(parts: ChatPart[]): ChatLine[] | undefined {
   const skill = parseSkillBlock(parts[0].text);
   if (skill === undefined) return undefined;
   return [
-    { role: "user", parts: [{ type: "skillInvocation", name: skill.name, location: skill.location, content: skill.content }] },
-    ...(skill.userMessage === undefined ? [] : [{ role: "user" as const, parts: [{ type: "text" as const, text: skill.userMessage }] }]),
+    { role: "user", parts: [{ type: "skillInvocation", name: skill.name, location: skill.location, content: skill.content, ...(parts[0].sourcePart === undefined ? {} : { sourcePart: `${parts[0].sourcePart}:skill` }) }] },
+    ...(skill.userMessage === undefined ? [] : [{ role: "user" as const, parts: [{ type: "text" as const, text: skill.userMessage, ...(parts[0].sourcePart === undefined ? {} : { sourcePart: `${parts[0].sourcePart}:user` }) }] }]),
   ];
 }
 
@@ -205,11 +233,11 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
   if (askUserRecord !== undefined) return [askUserRecord];
   if (typeof content === "string") {
     const displayText = getString(message, "displayText");
-    return content !== "" ? [{ type: "text", text: content, ...(displayText === undefined ? {} : { displayText }) }] : [];
+    return content !== "" ? [sourcePart({ type: "text", text: content, ...(displayText === undefined ? {} : { displayText }) }, message, "content:0")] : [];
   }
-  if (!Array.isArray(content)) return objectFallback(content);
+  if (!Array.isArray(content)) return objectFallback(content).map((part) => sourcePart(part, message, "content:0"));
 
-  return content.flatMap((part): ChatPart[] => {
+  const normalizePart = (part: unknown): ChatPart[] => {
     const type = getString(part, "type");
     const text = getString(part, "text");
     const displayText = getString(part, "displayText");
@@ -229,9 +257,11 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
     }
     if (type === "image") return normalizeImage(part);
     return objectFallback(part);
-  }).map((part) => part.type === "text" && getString(message, "role") === "toolResult"
-    ? toolResultPartFromText(part.text, message)
-    : part);
+  };
+  return content.flatMap((rawPart, index) => normalizePart(rawPart).map((part) => sourcePart(
+    part.type === "text" && getString(message, "role") === "toolResult" ? toolResultPartFromText(part.text, message) : part,
+    message, `content:${String(index)}`,
+  )));
 }
 
 function normalizeImage(part: unknown): ChatPart[] {
@@ -367,6 +397,7 @@ function coalesceToolExecutions(lines: ChatLine[]): ChatLine[] {
 function toolExecutionFromCall(part: Extract<ChatPart, { type: "toolCall" }>): ToolExecutionPart {
   return {
     type: "toolExecution",
+    ...(part.sourcePart === undefined ? {} : { sourcePart: part.sourcePart }),
     ...(part.toolCallId === undefined ? {} : { toolCallId: part.toolCallId }),
     toolName: part.toolName,
     summary: part.summary,

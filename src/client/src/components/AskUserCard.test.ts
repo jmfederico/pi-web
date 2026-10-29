@@ -2,12 +2,69 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AskUserOutcome, AskUserQuestion, AskUserRequest } from "../../../shared/apiTypes";
+import { PendingFormState } from "../pendingFormState";
 import { loadAskDraft, saveAskDraft } from "../askDrafts";
 import { AskUserCard, type AskUserSubmitCallback } from "./AskUserCard";
 
 afterEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
+});
+
+describe("ask-user-card external lifetime", () => {
+  it("restores memory drafts and partial confirmation without storage and shares in-flight sends across remounts", async () => {
+    const unavailable = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
+    const unreadable = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
+    const state = new PendingFormState();
+    let finish!: () => void;
+    const submit = vi.fn<AskUserSubmitCallback>(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const ask = openAsk([question("text", "Text?", []), question("later", "Later?", [])]);
+    const mount = async (scope = "machine:session"): Promise<AskUserCard> => {
+      const card = await mountOpenAsk(ask, submit);
+      card.formState = state;
+      card.draftSessionId = scope;
+      await card.updateComplete;
+      return card;
+    };
+    try {
+      const first = await mount();
+      const text = requiredElement(renderRoot(first).querySelector("textarea"), "text");
+      text.value = "memory draft";
+      text.dispatchEvent(new Event("input"));
+      await first.updateComplete;
+      buttonWithText(renderRoot(first), "Send answers").click();
+      await first.updateComplete;
+      first.remove();
+      const second = await mount();
+      expect(renderRoot(second).querySelector("textarea")?.value).toBe("memory draft");
+      const send = requiredElement(renderRoot(second).querySelector<HTMLButtonElement>(".send-anyway"), "confirmation");
+      send.click();
+      expect(submit).toHaveBeenCalledOnce();
+      second.remove();
+      const third = await mount();
+      expect(renderRoot(third).querySelector<HTMLButtonElement>(".send-anyway")?.disabled).toBe(true);
+      expect(renderRoot(third).querySelector("fieldset")?.disabled).toBe(true);
+      renderRoot(third).querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+      expect(submit).toHaveBeenCalledOnce();
+      const isolated = await mount("other-machine:session");
+      expect(renderRoot(isolated).querySelector("textarea")?.value).toBe("");
+      third.draftSessionId = "rebound";
+      await third.updateComplete;
+      finish();
+      await Promise.resolve();
+      await Promise.resolve();
+      await third.updateComplete;
+      expect(renderRoot(third).querySelector("textarea")?.value).toBe("");
+      const retry = await mount();
+      expect(renderRoot(retry).querySelector("textarea")?.value).toBe("memory draft");
+      buttonWithText(renderRoot(retry), "Send anyway").click();
+      expect(submit).toHaveBeenCalledTimes(2);
+      finish();
+    } finally {
+      unavailable.mockRestore();
+      unreadable.mockRestore();
+    }
+  });
 });
 
 describe("ask-user-card live form", () => {

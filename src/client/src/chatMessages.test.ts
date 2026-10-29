@@ -191,7 +191,7 @@ describe("chat message normalization", () => {
   it("preserves references without copying base64 or server-supplied URLs", () => {
     const raw = { role: "user", entryId: "image-entry", content: [{ ...imageReference, data: "QUJD", url: "https://remote.test/not-the-proxy" }] };
     const normalized = normalizeMessages([raw]);
-    expect(normalized).toEqual([{ role: "user", entryId: "image-entry", parts: [imageReference] }]);
+    expect(normalized).toEqual([{ role: "user", entryId: "image-entry", parts: [{ ...imageReference, sourcePart: "content:0" }] }]);
     expect(normalizeMessages(normalized)).toEqual(normalized);
   });
 
@@ -342,6 +342,21 @@ describe("chat message normalization", () => {
     })).toEqual([
       { role: "bash", parts: [{ type: "text", text: "excluded from context\n\n$ npm test\n\nok\n\nexit 0\n\noutput truncated\n\nfull output: /tmp/out.log", presentation: { kind: "bash", command: "npm test", output: "ok", excluded: true, cancelled: false, truncated: true, exitCode: "0", fullOutputPath: "/tmp/out.log" } }] },
     ]);
+  });
+});
+
+describe("indexed assistant appends", () => {
+  it.each(["text", "thinking"] as const)("keeps distinct indexed %s blocks separate", (type) => {
+    const append = (messages: ChatLine[], text: string, index?: number) => type === "text"
+      ? appendText(messages, "assistant", text, index) : appendThinking(messages, text, index);
+    let messages = append([], "first", 0);
+    messages = append(messages, " more", 0);
+    messages = append(messages, "second", 2);
+    expect(messages).toEqual([{ role: "assistant", parts: [
+      { type, text: "first more", sourcePart: "content:0" },
+      { type, text: "second", sourcePart: "content:2" },
+    ] }]);
+    expect(append(messages, "", 3)).toBe(messages);
   });
 });
 
