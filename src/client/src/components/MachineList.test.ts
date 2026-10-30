@@ -25,7 +25,9 @@ it("offers name editing only for remote machines", async () => {
   const edited: Machine[] = [];
   list.onEdit = (machine) => { edited.push(machine); };
   await list.updateComplete;
-  expect(rowFor(list, "local").querySelector(".action-menu-toggle")).toBeNull();
+  rowFor(list, "local").querySelector<HTMLButtonElement>(".action-menu-toggle")?.click();
+  await list.updateComplete;
+  expect([...list.shadowRoot?.querySelectorAll(".ui-menu-item") ?? []].some((button) => button.textContent === "Edit display name")).toBe(false);
   rowFor(list, "remote-a").querySelector<HTMLButtonElement>(".action-menu-toggle")?.click();
   await list.updateComplete;
   const edit = [...(list.shadowRoot?.querySelectorAll<HTMLButtonElement>(".ui-menu-item") ?? [])].find((button) => button.textContent === "Edit display name");

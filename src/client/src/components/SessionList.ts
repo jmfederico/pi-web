@@ -11,6 +11,7 @@ import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPe
 import { normalizeSessionPath } from "../sessionPaths";
 import { isSessionActive } from "../../../shared/activity";
 import { CORE_STATUS_FLAGS, type StatusFlags } from "../../../shared/machineStatus";
+import { renderCopyIdAction } from "./copyIdAction";
 import { createActionMenuController } from "./actionMenu";
 import { interventionRequiredLabel, renderActionActivityIndicator, type ActivityIndicatorKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
@@ -555,6 +556,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
               ${session.parentSessionPath !== undefined ? html`<button class="ui-button ui-menu-item" title=${sessionNavigationMessages.t("detach")} @click=${() => { this.openMenuSessionId = undefined; this.onDetachParent?.(session); }}>${sessionNavigationMessages.t("detach")}</button>` : null}
               ${canArchive ? html`<button class="ui-button ui-menu-item" title=${isWorking ? sessionNavigationMessages.t("stopBeforeReload") : sessionNavigationMessages.t("reloadTitle")} ?disabled=${isWorking} @click=${() => { this.openMenuSessionId = undefined; this.onReload?.(session); }}>${sessionNavigationMessages.t("reload")}</button>` : null}
             `}
+        ${renderCopyIdAction("session", session.id, () => { this.openMenuSessionId = undefined; })}
       </div>
     `;
   }
