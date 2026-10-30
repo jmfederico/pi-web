@@ -186,6 +186,7 @@ export const listStyles = css`
   .action-activity .activity-indicator { margin: 0; vertical-align: 0; }
   .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; margin-right: 6px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; vertical-align: 1px; }
   .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
+  .activity-indicator.intervention-required { box-sizing: border-box; border: 1.5px solid var(--pi-warning); border-radius: 50%; background: transparent; animation: none; }
   .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
   /* Client-side sending (upload in flight); distinct from server activity, which propagates to workspace/machine rows. */
   .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }

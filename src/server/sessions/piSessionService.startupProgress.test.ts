@@ -34,6 +34,7 @@ function recordingWorkspaceActivity() {
   return {
     calls,
     workspaceActivity: {
+      applySessionIntervention: () => { calls.push("applySessionIntervention"); },
       applySessionStatus: () => { calls.push("applySessionStatus"); },
       applySessionActivity: () => { calls.push("applySessionActivity"); },
       removeSession: () => { calls.push("removeSession"); },

@@ -99,6 +99,8 @@ import { parsePersistedChildSubsessionLink, parsePersistedParentSubsessionLink, 
 import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
+import { createRequestHumanInterventionToolDefinition } from "./requestHumanInterventionTool.js";
+import { requestsHumanIntervention, SESSION_INTERVENTION_CUSTOM_TYPE, sessionInterventionRequired } from "./sessionIntervention.js";
 import { createAskUserOutcome, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
@@ -343,6 +345,7 @@ export interface PiSessionListEntry {
   messageCount: number;
   firstMessage: string;
   allMessagesText: string;
+  interventionRequired?: boolean;
   agentSubsession?: boolean;
   metadata?: SessionUiMetadata;
   name?: string;
@@ -810,6 +813,7 @@ export function createPiWebCustomToolDefinitions(
 ) {
   return [
     createPiWebEditToolDefinition(cwd),
+    createRequestHumanInterventionToolDefinition(),
     // Messaging does not grant delegation or child-management capabilities.
     ...(messaging === undefined ? [] : [createSendSessionMessageToolDefinition(cwd, messaging)]),
     ...(delegationEnabled && spawn !== undefined ? [createSpawnSessionToolDefinition(cwd, { spawn })] : []),
@@ -1131,7 +1135,7 @@ export interface PiSessionServiceDependencies {
   createAgentRuntime?: CreateAgentRuntime;
   modelRuntime: ModelRuntime;
   heartbeatIntervalMs?: number;
-  workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity">;
+  workspaceActivity?: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention">;
   /**
    * When provided, `spawn_session` is available to sessions whose creation
    * provenance permits delegation, scoped to the project's workspaces.
@@ -1231,6 +1235,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly extensionCommandExecution = new AsyncLocalStorage<ExtensionCommandExecution>();
   readonly mcpAuthFlows = new McpAuthFlowService();
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
+  private readonly interventionStates = new WeakMap<PiAgentSession, boolean>();
   private readonly snapshotMessageCounts = new WeakMap<readonly unknown[], number>();
   private readonly pendingPromptEchoes = new WeakMap<PiAgentSession, { userIndex: number; message: ReturnType<typeof userMessage> }[]>();
   private readonly publishedAssistantPartials = new WeakMap<PiAgentSession, unknown>();
@@ -1277,7 +1282,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly createRuntime: PiWebCreateAgentSessionRuntimeFactory;
   private readonly createAgentRuntime: CreateAgentRuntime;
   private readonly modelRuntime: ModelRuntime;
-  private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity"> | undefined;
+  private readonly workspaceActivity: Pick<WorkspaceActivityService, "applySessionStatus" | "applySessionActivity" | "removeSession" | "reconcileSessionActivity" | "applySessionIntervention"> | undefined;
   private readonly spawnTargets: SpawnTargetResolver | undefined;
   private readonly messageTargets: SpawnTargetResolver | undefined;
   private readonly logger: PiSessionLogger;
@@ -1545,6 +1550,16 @@ export class PiSessionService implements SessionRouteService {
     await this.publishUnreadMutations([]);
   }
 
+  /** Recover cold-session intervention flags without opening agent runtimes. */
+  async restoreInterventionState(): Promise<void> {
+    const [sessions, archives] = await Promise.all([this.sessionManager.listAll(), this.archiveStore.list()]);
+    const archived = new Set(archives.map((record) => record.sessionId));
+    for (const session of sessions) {
+      if (archived.has(session.id) || this.active.has(session.id)) continue;
+      this.workspaceActivity?.applySessionIntervention(session.cwd, session.id, session.interventionRequired === true);
+    }
+  }
+
   async list(cwd: string): Promise<ClientSession[]> {
     const [sessions, archivedRecords] = await Promise.all([this.sessionManager.list(cwd), this.archiveStore.list()]);
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
@@ -1565,16 +1580,23 @@ export class PiSessionService implements SessionRouteService {
       if (listed !== undefined) {
         // Match the file too: a clone with the same id must not inherit a
         // live runtime's classification. Disk rows otherwise use the scanner.
-        if (tracked && session.sessionFile !== undefined && sessionPathsEqual(listed.path, session.sessionFile)) listed.agentSubsession = true;
+        if (session.sessionFile !== undefined && sessionPathsEqual(listed.path, session.sessionFile)) {
+          if (tracked) listed.agentSubsession = true;
+          listed.interventionRequired = this.statusFromSession(session).interventionRequired === true;
+        }
         continue;
       }
       const info = clientSessionFromActiveSession(session);
+      info.interventionRequired = this.statusFromSession(session).interventionRequired === true;
       if (tracked) info.agentSubsession = true;
       unarchivedById.set(session.sessionId, info);
     }
     const unarchivedSessions = [...unarchivedById.values()].sort((a, b) => Date.parse(b.modified) - Date.parse(a.modified));
     const reconcilableSessionIds = this.reconcilableSessionIds(cwd, unarchivedSessions.map((session) => session.id), archivedById);
     this.workspaceActivity?.reconcileSessionActivity(cwd, reconcilableSessionIds);
+    for (const session of unarchivedSessions) {
+      if (!this.active.has(session.id)) this.workspaceActivity?.applySessionIntervention(cwd, session.id, session.interventionRequired === true);
+    }
     await this.publishUnreadMutations(this.unreadStore.reconcileCwd(canonicalizeStoredCwd(cwd), reconcilableSessionIds));
     const archivedSessions = archivedForCwd
       .map((record) => clientSessionFromArchivedRecord(record, sessionsById.get(record.sessionId)))
@@ -3577,6 +3599,7 @@ export class PiSessionService implements SessionRouteService {
         const archiveInput = await this.archiveInputForSession(session);
         await this.closeActive(session.sessionId, { kind: "clear", reason: "archive" });
         await this.archiveStore.archive(archiveInput);
+        this.workspaceActivity?.removeSession(archiveInput.sessionId, archiveInput.cwd);
         await this.forgetUnreadSessions([archiveInput]);
       },
     );
@@ -3657,7 +3680,8 @@ export class PiSessionService implements SessionRouteService {
           if (target.archived) this.publishNotificationMutations(this.notificationStore.clearSession(target.id, "archive"));
         }
         for (const input of archiveInputs) await this.closeActive(input.sessionId, { kind: "clear", reason: "archive" });
-        await this.archiveStoreArchiveMany(archiveInputs);
+        const archived = await this.archiveStoreArchiveMany(archiveInputs);
+        for (const record of archived) this.workspaceActivity?.removeSession(record.sessionId, record.cwd);
       },
     );
     await this.forgetUnreadSessions(plan.targets.map((target) => ({ sessionId: target.id, cwd: target.cwd })));
@@ -3680,6 +3704,8 @@ export class PiSessionService implements SessionRouteService {
       async () => {
         await this.closeActive(archived.sessionId, { kind: "clear", reason: "restore" });
         await this.archiveStore.restore(archived.sessionId);
+        const restored = (await this.sessionManager.list(archived.cwd)).find((entry) => entry.id === archived.sessionId);
+        this.workspaceActivity?.applySessionIntervention(archived.cwd, archived.sessionId, restored?.interventionRequired === true);
         await this.forgetUnreadSessions([archived]);
       },
     );
@@ -3991,6 +4017,7 @@ export class PiSessionService implements SessionRouteService {
       } catch (error: unknown) {
         for (const item of ready) result.failures.push({ sessionId: item.sessionId, error: errorMessage(error) });
       }
+      for (const item of result.successes) this.workspaceActivity?.removeSession(item.sessionId, item.cwd);
       await this.forgetUnreadSessions(result.successes);
     });
     return result;
@@ -4127,7 +4154,14 @@ export class PiSessionService implements SessionRouteService {
     this.active.delete(sessionId);
     this.events.mediaIndex.forgetSession({ id: sessionId, cwd: active.runtime.session.sessionManager.getCwd() });
     this.activities.delete(sessionId);
-    this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
+    const session = active.runtime.session;
+    const cwd = session.sessionManager.getCwd();
+    this.workspaceActivity?.removeSession(sessionId, cwd);
+    // Closing a runtime ends work and dialogs, not persisted execution state.
+    // Successful archive/delete paths remove this cold-session record afterward.
+    if (sessionFileExists(session.sessionFile) && this.interventionRequired(session)) {
+      this.workspaceActivity?.applySessionIntervention(cwd, sessionId, true);
+    }
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
     // Disarm subsession notification before teardown so the abort below cannot
@@ -4832,11 +4866,13 @@ export class PiSessionService implements SessionRouteService {
     }
     this.restoreSubsessionReceipts(session);
     this.reconcileRuntimeMessageCount(session);
+    this.interventionStates.set(session, sessionInterventionRequired(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch()));
     const unsubscribe = session.subscribe((event) => {
       const eventType = getString(event, "type");
       const message = getProperty(event, "message");
       const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
       if (eventType === "agent_start") {
+        this.setInterventionRequired(session, false);
         this.restoreSubsessionReceipts(session, false);
         this.subsessionStoppedParents.delete(session);
       }
@@ -4848,6 +4884,7 @@ export class PiSessionService implements SessionRouteService {
       // Regular message_end precedes persistence; boundary drafts instead emit
       // entry_appended. Only message entries contribute to the transcript count.
       const role = getString(message, "role");
+      if (eventType === "message_end" && requestsHumanIntervention(message)) this.setInterventionRequired(session, true);
       if ((eventType === "message_end" && (role === "user" || role === "assistant" || role === "toolResult" || role === "system"))
         || (eventType === "entry_appended" && getString(entry, "type") === "message")) {
         this.runtimeMessageCounts.set(session, this.runtimeMessageCount(session) + 1);
@@ -5325,6 +5362,25 @@ export class PiSessionService implements SessionRouteService {
     }
   }
 
+  private interventionRequired(session: PiAgentSession): boolean {
+    return this.interventionStates.get(session)
+      ?? sessionInterventionRequired(session.sessionManager.getEntries?.() ?? session.sessionManager.getBranch());
+  }
+
+  private setInterventionRequired(session: PiAgentSession, required: boolean): void {
+    const previous = this.interventionRequired(session);
+    if (previous === required) return;
+    if (session.sessionManager.appendCustomEntry === undefined) throw new Error("Session manager cannot persist intervention state");
+    // Update before append: the SDK emits entry_appended synchronously.
+    this.interventionStates.set(session, required);
+    try {
+      session.sessionManager.appendCustomEntry(SESSION_INTERVENTION_CUSTOM_TYPE, { version: 1, required });
+    } catch (error: unknown) {
+      this.interventionStates.set(session, previous);
+      throw error;
+    }
+  }
+
   private publishStatus(session: PiAgentSession): void {
     void this.refreshActivityMarker(session);
     const status = this.statusFromSession(session);
@@ -5380,6 +5436,7 @@ export class PiSessionService implements SessionRouteService {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
       recentlyActiveElsewhere: this.activityMarker.isActiveElsewhere(session.sessionFile),
+      interventionRequired: this.interventionRequired(session) || pendingDialogs.length > 0,
       ...(model === undefined ? {} : { model }),
       thinkingLevel: session.thinkingLevel,
       isStreaming: session.isStreaming,
@@ -5551,6 +5608,7 @@ function clientSessionFromListEntry(session: PiSessionListEntry): ClientSession 
     modified: session.modified.toISOString(),
     messageCount: session.messageCount,
     firstMessage: clientSessionFirstMessagePreview(session.firstMessage),
+    ...(session.interventionRequired === true ? { interventionRequired: true } : {}),
     ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
   };
 }

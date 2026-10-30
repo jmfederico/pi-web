@@ -5,7 +5,7 @@ import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { Project } from "../api";
-import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
+import { CORE_STATUS_FLAGS, type MachineStatusSnapshot } from "../../../shared/machineStatus";
 import { createActionMenuController } from "./actionMenu";
 import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
@@ -84,7 +84,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                   data-current=${String(current)}
                   aria-current=${current ? "true" : nothing}
                   data-activity=${kind ?? "idle"}
-                  data-busy=${String(kind === "session" || kind === "sending")}
+                  data-busy=${String(flags?.[CORE_STATUS_FLAGS.working] === true)}
                   data-unread=${String(unread)}
                   tabindex="0"
                   data-project-id=${project.id}

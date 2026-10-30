@@ -346,6 +346,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     }
     .activity-indicator { flex: 0 0 auto; display: inline-block; width: 7px; height: 7px; background: var(--pi-success); animation: pulse 1s ease-in-out infinite; }
     .activity-indicator.session { border-radius: 50%; background: var(--pi-success); }
+    .activity-indicator.intervention-required { box-sizing: border-box; border: 1.5px solid var(--pi-warning); border-radius: 50%; background: transparent; animation: none; }
     .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
     .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
     .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }

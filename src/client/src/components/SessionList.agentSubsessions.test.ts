@@ -166,6 +166,25 @@ describe("SessionList agent subsession controls", () => {
     expect(candidates()).toEqual([]);
   });
 
+  it("rolls nested intervention above working siblings while preserving unread", async () => {
+    const parent = session("parent");
+    const agent = child("agent", parent, true);
+    const nested = { ...child("nested", agent, true), interventionRequired: true };
+    const sibling = child("sibling", parent, true);
+    const list = await mount([parent, agent, nested, sibling]);
+    list.sessionFlags = { sibling: { "core:working": true }, nested: { "core:intervention-required": true } };
+    list.unreadSessionIds = new Set([nested.id]);
+    await settle(list);
+    const toggle = agentToggle(list, parent.id);
+    expect(toggle.querySelector(".unread-ring .intervention-required")).not.toBeNull();
+    expect(toggle.querySelector(".unread-ring")?.getAttribute("aria-label")).toContain("Needs input");
+
+    toggle.click();
+    await settle(list);
+    expect(toggle.querySelector(".action-activity")).toBeNull();
+    expect(agentToggle(list, agent.id).querySelector(".intervention-required")).not.toBeNull();
+  });
+
   it("updates collapsed chips for nested activity, sending, and unread completions", async () => {
     const parent = session("parent");
     const agent = child("agent", parent, true);
