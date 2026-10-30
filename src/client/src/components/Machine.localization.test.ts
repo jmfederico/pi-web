@@ -91,7 +91,7 @@ it("updates machine menus, statuses, accessible labels and counts without changi
   }
   list.collapsible = true;
   await list.updateComplete;
-  requiredElement(list.shadowRoot?.querySelector<HTMLButtonElement>(".action-menu-toggle"), "list actions").click();
+  requiredElement(list.shadowRoot?.querySelector<HTMLButtonElement>(`[data-machine-id="${remote.id}"] .action-menu-toggle`), "remote list actions").click();
   requiredElement(switcher.shadowRoot?.querySelector<HTMLButtonElement>(".machine-switcher-button"), "switcher").click();
   await Promise.all([list.updateComplete, switcher.updateComplete]);
   requiredElement(switcher.shadowRoot?.querySelector<HTMLButtonElement>(".machine-option-actions-toggle"), "switcher actions").click();
@@ -105,7 +105,8 @@ it("updates machine menus, statuses, accessible labels and counts without changi
       expect(element.shadowRoot?.textContent).toContain(remote.name);
       expect(element.shadowRoot?.querySelector("b")).toBeNull();
       expect(element.shadowRoot?.textContent).toContain(messages.t("offline"));
-      expect(element.shadowRoot?.querySelector("[aria-label]")?.getAttribute("aria-label")).toContain(remote.name);
+      const actionLabels = Array.from(element.shadowRoot?.querySelectorAll("[aria-controls][aria-label]") ?? [], (toggle) => toggle.getAttribute("aria-label"));
+      expect(actionLabels).toContain(messages.t("actionsFor", { name: remote.name }));
     }
     expect(switcher.shadowRoot?.querySelector(".machine-option-actions-panel")?.textContent).toContain(messages.t("edit"));
     expect(onSelect).not.toHaveBeenCalled();
