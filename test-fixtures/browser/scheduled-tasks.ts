@@ -22,6 +22,8 @@ const request = (operation: string, input: JsonValue): Promise<JsonValue> => {
     { ...task, id: "archived", name: "Archived compatibility check", archived: true, latestExecution: null },
   ] });
   if (operation === "history") return Promise.resolve({ executions: [{ ...execution, id: JSON.stringify(input), latestReport: { summary: execution.latestReport.summary + "\n" + "Detailed findings are available in the conversation. ".repeat(35) } }], nextOffset: null });
+  if (operation === "inspect") return Promise.resolve({ ...task, prompt: "Review new issues.\n" + "LongReference".repeat(60) });
+  if (operation === "execution") return Promise.resolve({ ...execution, task: { ...task, prompt: "Review the issues saved for this run.\nRecord the findings." } });
   throw new Error(`Dashboard attempted non-read operation ${operation}`);
 };
 const context: ApplicationPanelContextV5 = {

@@ -30,6 +30,9 @@ export interface ExecutionView {
 export interface TaskOverview extends TaskView { latestExecution: ExecutionView | null }
 export interface HistoryPage { executions: ExecutionView[]; nextOffset: number | null }
 
+export function readTaskPrompt(value: unknown): string { return string(record(value)["prompt"]); }
+export function readExecutionPrompt(value: unknown): string { return readTaskPrompt(record(value)["task"]); }
+
 /** Validate the paired transport at the browser boundary; never render opaque objects as markup. */
 export function readOverview(value: unknown): TaskOverview[] {
   const tasks = record(value)["tasks"];

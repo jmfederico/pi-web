@@ -65,11 +65,14 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.root.querySelector('[aria-labelledby="upcoming-title"] article')).toBeNull();
     expect(target.root.querySelector('[aria-labelledby="awaiting-title"] [data-status="dispatched"]')).not.toBeNull();
     expect(target.root.querySelector('[aria-labelledby="results-title"]')).toBeNull();
+    expect(target.root.querySelector(".conversation, .summary")).toBeNull();
+    target.mount({ ...target.context, state: { mainView: "workspace" } }); await target.element.updateComplete;
+    expect(target.request).toHaveBeenCalledTimes(1);
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
     button(target.root, "Open conversation").click();
     await vi.waitFor(() => { expect(target.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "captured-machine", projectId: "stored-project", workspaceId: "stored-workspace", sessionId: "stored-conversation", view: "chat" }); });
     expect(target.context.prompt.getText()).toBe("draft");
-    target.mount({ ...target.context, state: { mainView: "workspace" } }); await target.element.updateComplete;
-    expect(target.request).toHaveBeenCalledTimes(1);
   });
   it("opens full task reports and technical disclosures with lazy task-filtered, paginated history", async () => {
     const summary = `First line <script>\n${"Full report detail. ".repeat(40)}\nFinal finding <failure>`;
@@ -78,6 +81,8 @@ describe("Scheduled tasks dashboard", () => {
       ? { tasks: [{ ...task, latestExecution: reported }] }
       : { executions: [reported], nextOffset: 20 })));
     await ready(target);
+    expect(target.root.textContent).not.toContain(summary);
+    expect(target.root.querySelector(".summary, .conversation, .run-warning")).toBeNull();
     button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { taskId: "task", limit: 20, offset: 0 }, expect.anything()); });
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe(summary); });
@@ -118,17 +123,66 @@ describe("Scheduled tasks dashboard", () => {
     await ready(target);
     const result = target.root.querySelector('[aria-labelledby="results-title"] article');
     expect(result?.querySelector('[data-status="completed"]')).not.toBeNull();
-    expect(result?.querySelector(".run-warning")?.textContent).toContain(notice);
+    expect(result?.querySelector(".run-warning")).toBeNull();
     expect(result?.querySelector("details")).toBeNull();
     button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .run-warning")?.textContent).toContain(notice); });
-    const details = target.root.querySelector(".history-entry details");
+    const details = target.root.querySelector(".history-entry .technical");
     expect(details?.textContent).toContain("Requested model: provider/requested");
     expect(details?.textContent).toContain("Effective model: provider/fallback");
     expect(details?.textContent).toContain("Requested thinking level: high");
     expect(details?.textContent).toContain("Effective thinking level: low");
     expect(target.root.querySelector("fallback")).toBeNull();
     expect(target.request.mock.calls.every(([operation]) => ["overview", "history"].includes(operation))).toBe(true);
+  });
+  it("loads current and saved prompts only on disclosure, escapes their content, and retries failures", async () => {
+    const current = "Current instructions\n<script>Do not render markup</script>";
+    const saved = "Original instructions\nFor this run only";
+    const target = setup(vi.fn((operation) => {
+      if (operation === "inspect") return Promise.resolve({ ...task, prompt: current });
+      if (operation === "execution") return Promise.resolve({ ...execution, task: { ...task, revision: 1, prompt: saved } });
+      return Promise.resolve(operation === "overview" ? { tasks: [{ ...task, latestExecution: execution }] } : { executions: [execution], nextOffset: null });
+    }));
+    await ready(target);
+    expect(target.root.querySelector(".prompt")).toBeNull();
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    expect(target.request.mock.calls.some(([operation]) => ["inspect", "execution"].includes(operation))).toBe(false);
+    const currentDisclosure = target.root.querySelector<HTMLDetailsElement>(".detail-heading .prompt");
+    const savedDisclosure = target.root.querySelector<HTMLDetailsElement>(".history-entry .prompt");
+    if (!currentDisclosure || !savedDisclosure) throw new Error("Missing prompt disclosures");
+    expect(currentDisclosure.open).toBe(false);
+    expect(savedDisclosure.open).toBe(false);
+    target.request.mockRejectedValueOnce(new Error("Offline"));
+    currentDisclosure.open = true;
+    currentDisclosure.dispatchEvent(new Event("toggle"));
+    await vi.waitFor(() => { expect(currentDisclosure.querySelector('[role="alert"]')).not.toBeNull(); });
+    button(target.root, "Try again").click();
+    await vi.waitFor(() => { expect(currentDisclosure.querySelector(".prompt-text")?.textContent).toBe(current); });
+    savedDisclosure.open = true;
+    savedDisclosure.dispatchEvent(new Event("toggle"));
+    await vi.waitFor(() => { expect(savedDisclosure.querySelector(".prompt-text")?.textContent).toBe(saved); });
+    expect(target.request).toHaveBeenCalledWith("inspect", { taskId: task.id }, expect.anything());
+    expect(target.request).toHaveBeenCalledWith("execution", { executionId: execution.id }, expect.anything());
+    expect(target.root.querySelector("script")).toBeNull();
+  });
+  it("aborts a pending prompt when leaving details and rejects malformed prompt content", async () => {
+    const target = setup(); await ready(target);
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
+    const disclosure = target.root.querySelector<HTMLDetailsElement>(".detail-heading .prompt");
+    if (!disclosure) throw new Error("Missing prompt disclosure");
+    target.request.mockResolvedValueOnce({ prompt: { unexpected: "markup" } });
+    disclosure.open = true; disclosure.dispatchEvent(new Event("toggle"));
+    await vi.waitFor(() => { expect(disclosure.querySelector('[role="alert"]')).not.toBeNull(); });
+    expect(disclosure.querySelector(".prompt-text")).toBeNull();
+    const pending = deferred(); target.request.mockImplementationOnce(() => pending.promise);
+    button(target.root, "Try again").click();
+    const signal = target.request.mock.calls.at(-1)?.[2]?.signal;
+    button(target.root, "Overview").click();
+    expect(signal?.aborted).toBe(true);
+    pending.resolve({ prompt: "Stale prompt" }); await pending.promise; await target.element.updateComplete;
+    expect(target.root.textContent).not.toContain("Stale prompt");
   });
   it("opens global history on demand and returns to the overview without loading history again", async () => {
     const target = setup(); await ready(target);
@@ -182,7 +236,7 @@ describe("Scheduled tasks dashboard", () => {
     target.navigate.mockRejectedValueOnce(new Error("Missing conversation"));
     button(target.root, "Open conversation").click();
     await vi.waitFor(() => { expect(target.root.querySelector('[role="alert"]')).not.toBeNull(); });
-    expect(target.root.querySelector(".history-entry details")?.textContent).toContain(execution.sessionId);
+    expect(target.root.querySelector(".history-entry .technical")?.textContent).toContain(execution.sessionId);
   });
   it("discards stale results on machine changes and aborts requests on disconnect", async () => {
     let resolve: (value: JsonValue) => void = () => undefined;

@@ -1,8 +1,9 @@
 import { css, html, LitElement, nothing } from "lit";
+import { keyed } from "lit/directives/keyed.js";
 import type { ApplicationPanelContextV5, LocalizedMessages, PluginLocalization, StylesheetIntegrationCapabilityV1 } from "@jmfederico/pi-web/plugin-api";
 import definitions from "./messages.js";
 import { needsAttention, overviewGroups } from "./overview.js";
-import { readHistory, readOverview, type ExecutionView, type HistoryPage, type TaskOverview, type TaskView } from "./responses.js";
+import { readTaskPrompt, readExecutionPrompt, readHistory, readOverview, type ExecutionView, type HistoryPage, type TaskOverview, type TaskView } from "./responses.js";
 
 export const panelTag = "pi-web-scheduled-tasks-panel";
 export interface PanelContent {
@@ -28,7 +29,12 @@ export class ScheduledTasksPanel extends LitElement {
   private loaded = false;
   private issue: "unavailable" | "loadFailed" | "invalidResponse" | "navigationFailed" | undefined;
   private diagnostic: string | undefined;
-  private readonly stop = () => { this.pending?.abort(); };
+  private readonly prompts = new Map<string, { controller: AbortController; text?: string; error?: "loadFailed" | "invalidResponse" }>();
+  private clearPrompts(): void {
+    for (const prompt of this.prompts.values()) prompt.controller.abort();
+    this.prompts.clear();
+  }
+  private readonly stop = () => { this.pending?.abort(); this.clearPrompts(); };
 
   set content(value: PanelContent) {
     if (value === this.contentValue) return;
@@ -42,6 +48,7 @@ export class ScheduledTasksPanel extends LitElement {
     this.contextValue = value;
     if (previous?.machine.id === value.machine.id && !!previous.backend === !!value.backend) return;
     this.pending?.abort();
+    this.clearPrompts();
     this.tasks = []; this.history = { executions: [], nextOffset: null }; this.taskId = undefined; this.view = "overview"; this.offset = 0; this.allTasksExpanded = false; this.loaded = false;
     if (this.isConnected) void this.load();
   }
@@ -63,6 +70,7 @@ export class ScheduledTasksPanel extends LitElement {
     content.lifetimeSignal.addEventListener("abort", this.stop, { once: true });
   }
   private detach(): void {
+    this.clearPrompts();
     this.releaseStyles?.(); this.releaseStyles = undefined;
     this.releaseLocalization?.(); this.releaseLocalization = undefined;
     this.contentValue?.lifetimeSignal.removeEventListener("abort", this.stop);
@@ -98,6 +106,7 @@ export class ScheduledTasksPanel extends LitElement {
     }
   }
   private showHistory(taskId?: string): void {
+    this.clearPrompts();
     this.taskId = taskId; this.view = taskId === undefined ? "history" : "task";
     this.offset = 0; this.history = { executions: [], nextOffset: null };
     void this.load();
@@ -110,6 +119,7 @@ export class ScheduledTasksPanel extends LitElement {
     if (body) body.scrollTop = 0;
   }
   private async showOverview(): Promise<void> {
+    this.clearPrompts();
     const previous = this.taskId;
     this.view = "overview"; this.taskId = undefined; this.offset = 0;
     void this.load();
@@ -147,6 +157,44 @@ export class ScheduledTasksPanel extends LitElement {
     if (!messages) return nothing;
     return execution.notices?.map((notice) => html`<p class="run-warning">${messages.t("runWarning", { notice })}</p>`) ?? nothing;
   }
+  private async loadPrompt(key: string, execution: boolean, id: string): Promise<void> {
+    if (this.prompts.has(key)) return;
+    const context = this.contextValue;
+    if (!context?.backend) return;
+    const state: { controller: AbortController; text?: string; error?: "loadFailed" | "invalidResponse" } = { controller: new AbortController() };
+    this.prompts.set(key, state);
+    this.requestUpdate();
+    try {
+      const peer = context.backend.forScope({ kind: "machine" });
+      if (!peer.request) throw new Error("Scheduled tasks backend does not support requests");
+      const response = await peer.request(
+        execution ? "execution" : "inspect", execution ? { executionId: id } : { taskId: id }, { signal: state.controller.signal },
+      );
+      if (state.controller.signal.aborted) return;
+      try { state.text = execution ? readExecutionPrompt(response) : readTaskPrompt(response); }
+      catch { state.error = "invalidResponse"; }
+    } catch {
+      if (state.controller.signal.aborted) return;
+      state.error = "loadFailed";
+    } finally {
+      if (!state.controller.signal.aborted) this.requestUpdate();
+    }
+  }
+  private renderPrompt(task: TaskView, execution?: ExecutionView) {
+    const messages = this.contentValue?.messages;
+    if (!messages) return nothing;
+    const key = execution ? `execution:${execution.id}` : `task:${task.id}:${String(task.revision)}`;
+    const state = this.prompts.get(key);
+    const load = () => { void this.loadPrompt(key, !!execution, execution?.id ?? task.id); };
+    return keyed(key, html`<details class="prompt" @toggle=${(event: Event) => {
+      if (event.currentTarget instanceof HTMLDetailsElement && event.currentTarget.open && event.currentTarget.isConnected) load();
+    }}><summary>${messages.t(execution ? "promptUsed" : "prompt")}</summary>
+      ${state?.error ? html`<div role="alert"><p class="meta">${messages.t("promptLoadFailed")}</p>
+        <button type="button" class="ui-button ui-button--action" @click=${() => { this.prompts.delete(key); load(); }}>${messages.t("retryPrompt")}</button></div>`
+        : state?.text !== undefined ? html`<p class="prompt-text" dir="auto">${state.text}</p>`
+        : html`<p class="meta" role="status">${messages.t("loadingPrompt")}</p>`}
+    </details>`);
+  }
   private renderTechnical(task: TaskView, execution?: ExecutionView) {
     const content = this.contentValue;
     if (!content) return nothing;
@@ -177,6 +225,7 @@ export class ScheduledTasksPanel extends LitElement {
       ${execution.status === "uncertain" || execution.status === "failed" || execution.status === "errored"
         ? html`<p class="meta">${messages.t(execution.status === "uncertain" ? "uncertainHelp" : execution.status === "failed" ? "failedHelp" : "erroredHelp")}</p>` : nothing}
       ${this.renderNotices(execution)}
+      ${this.renderPrompt(execution.task, execution)}
       ${this.renderTechnical(execution.task, execution)}
     </div>`;
   }
@@ -196,10 +245,6 @@ export class ScheduledTasksPanel extends LitElement {
       ${upcoming ? html`<p class="next meta">${this.renderNext(task)}</p>` : execution ? html`
         <div class="heading"><span class="outcome" data-status=${execution.status}>${messages.t(execution.status)}</span>
           <span class="meta">${this.time(execution.createdAt)}</span></div>
-        ${execution.latestReport ? html`<p class="summary preview">${execution.latestReport.summary}</p>` : nothing}
-        ${this.renderNotices(execution)}
-        ${execution.status === "uncertain" ? html`<p class="meta">${messages.t("uncertainHelp")}</p>` : nothing}
-        ${execution.sessionId !== null ? html`<button type="button" class="ui-button ui-button--action conversation" @click=${() => this.openConversation(execution)}>${messages.t("openConversation")}</button>` : nothing}
       ` : nothing}
     </article>`;
   }
@@ -232,7 +277,7 @@ export class ScheduledTasksPanel extends LitElement {
     const selected = this.tasks.find((task) => task.id === this.taskId);
     return html`
       <div class="detail-heading"><h2 class="view-title" tabindex="-1">${selected?.name ?? messages.t("history")}</h2>
-        ${selected ? html`<p class="next meta">${this.renderNext(selected)}</p>${this.renderTechnical(selected)}` : nothing}</div>
+        ${selected ? html`<p class="next meta">${this.renderNext(selected)}</p>${this.renderPrompt(selected)}${this.renderTechnical(selected)}` : nothing}</div>
       <section aria-label=${messages.t("history")}>
         ${selected ? html`<h2>${messages.t("history")}</h2>` : nothing}
         ${this.history.executions.length === 0 && !this.busy ? html`<p class="quiet">${messages.t(selected && this.offset === 0 ? "noExecution" : "emptyHistory")}</p>` : nothing}
@@ -283,8 +328,8 @@ export class ScheduledTasksPanel extends LitElement {
     .execution, .detail-stack { display: grid; gap: 10px; min-width: 0; }
     .outcome { font-size: 12px; font-weight: 500; }
     .run-warning { font-size: 12px; white-space: pre-wrap; }
+    .prompt-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-block: 4px 12px; }
     .summary, .diagnostic { white-space: pre-wrap; line-height: 1.5; }
-    .preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .diagnostic, code { font: 12px var(--pi-mono, monospace); }
     .error { color: var(--pi-danger); margin-bottom: 16px; }
     .error p { margin-block: 8px; }
