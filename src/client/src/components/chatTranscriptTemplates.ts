@@ -1,4 +1,4 @@
-import { html, nothing } from "lit";
+import { html, nothing, type TemplateResult } from "lit";
 import { localizedArgumentSummary, localizedChatText } from "../localizedChatPresentation";
 import { chatTranscriptMessages as messages } from "../chatTranscriptMessages";
 import { live } from "lit/directives/live.js";
@@ -15,6 +15,8 @@ import type { MarkdownWorkspaceContext } from "../formatting/workspaceLinks";
 import type { ChatLine, ChatPart } from "../chatTypes";
 import type { ImageOpenDetail } from "./ImagePresentation";
 import type { ChatMessageActionController } from "./ChatMessageActionController";
+import type { RegisteredTranscriptRenderer } from "../plugins/transcriptRenderers";
+import type { TranscriptRendererScope } from "../../../plugin-api";
 
 export interface TranscriptGroupDisclosure {
   open: boolean;
@@ -31,6 +33,8 @@ export interface TranscriptRenderContext {
   messageStart: number;
   behaviors: ChatBehaviors;
   contentRendering: ChatContentRendering | undefined;
+  transcriptRenderers: readonly RegisteredTranscriptRenderer[];
+  rendererScope: TranscriptRendererScope;
   workspaceContext: MarkdownWorkspaceContext | undefined;
   anchors: {
     message: (index: number, message: ChatLine) => string | undefined;
@@ -199,8 +203,15 @@ function renderMessageMetadata(context: TranscriptRenderContext, message: ChatLi
   return html`<div id=${`message-meta-${key}`} class="msg-meta-details chat-message-meta" ?hidden=${context.metadata.expandedKey !== key}>${context.metadata.label(message)}</div>`;
 }
 
-export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
+export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number): TemplateResult | null {
     const intentKey = JSON.stringify([context.machineId, context.sessionId, message.entryId ?? messageIndex, partIndex]);
+    if (part.type === "customMessage") {
+      const fallback = part.parts.map((fallbackPart, index) => renderPart(context, fallbackPart, message, messageIndex, index));
+      const renderer = context.transcriptRenderers.find((candidate) => candidate.target === "custom-message" && candidate.customType === part.customType);
+      if (renderer?.target !== "custom-message") return html`${fallback}`;
+      return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
+        .entryId=${message.entryId} .request=${{ kind: "custom-message", renderer, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+    }
     if (part.type === "text" || part.type === "thinking") {
       const text = part.type === "text" && part.presentation !== undefined ? localizedChatText(part.presentation) : part.displayText ?? part.text;
       if (text === "") return null;
@@ -260,7 +271,12 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       ></pi-web-transcript-image>`;
     }
     if (part.type === "toolCall") return html`<div class="part tool-line ui-transcript-surface ui-transcript-activity ui-transcript-tool"><div class="ui-transcript-heading"><span aria-hidden="true">▶</span> ${part.toolName}<span class="summary">${part.summaryPresentation === undefined ? part.summary : localizedArgumentSummary(part.summaryPresentation)}</span></div></div>`;
-    if (part.type === "toolExecution") return html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
+    if (part.type === "toolExecution") {
+      const fallback = html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
+      if (!context.transcriptRenderers.some((candidate) => candidate.target === "tool")) return fallback;
+      return html`<pi-web-transcript-renderer class="part" .itemKey=${intentKey} .scope=${context.rendererScope}
+        .request=${{ kind: "tool", renderers: context.transcriptRenderers, entry: part }}>${fallback}</pi-web-transcript-renderer>`;
+    }
     if (part.type === "toolResult") {
       const key = `tool-result:${intentKey}`;
       const open = context.disclosure.isOpen(key, part.isError);

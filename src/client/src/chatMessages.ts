@@ -2,7 +2,7 @@ import { argumentSummaryPresentation, summarizeArgs } from "./chatPresentation";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes";
 import { parseAskUserOutcome, parseAskUserRequest } from "./api/parsers";
 import { isSessionMediaId, validImageDimensions } from "../../shared/sessionMedia";
-import type { ChatLine, ChatPart, ToolExecutionPart, ToolPreview } from "./chatTypes";
+import type { ChatFallbackPart, ChatLine, ChatPart, ToolExecutionPart, ToolPreview } from "./chatTypes";
 
 export { summarizeArgs } from "./chatPresentation";
 
@@ -68,6 +68,7 @@ export function appendThinking(messages: ChatLine[], text: string): ChatLine[] {
 }
 
 export function normalizeMessage(message: unknown): ChatLine[] {
+  if (getString(message, "role") === "custom" && getBoolean(message, "display") === false) return [];
   if (isChatLine(message)) {
     if (!message.parts.some((part) => getString(part, "type") === "image")) return [message];
     return [{ ...message, parts: message.parts.flatMap((part) => getString(part, "type") === "image" ? normalizeImage(part) : [part]) }];
@@ -75,7 +76,19 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   if (getString(message, "role") === "bashExecution") return [withMessageMeta(normalizeBashExecution(message), message)];
   const rawRole = getString(message, "role");
   const role = normalizeRole(rawRole);
-  const contentParts = normalizeContent(getProperty(message, "content"), message);
+  const content = getProperty(message, "content");
+  const contentParts = normalizeContent(content, message);
+  const customType = getString(message, "customType");
+  // Preserve every typed custom message; specialized host presentation stays
+  // in the fallback without restricting plugin selection.
+  if (rawRole === "custom" && customType !== undefined) {
+    const details = getProperty(message, "details");
+    return [withMessageMeta({ role: "system", parts: [{
+      type: "customMessage", customType, content,
+      ...(details === undefined ? {} : { details }),
+      parts: contentParts.filter((part) => part.type !== "empty"),
+    }] }, message)];
+  }
   const supersededRecord = rawRole === "toolResult"
     ? askUserRecordFromToolDetails(getString(message, "toolName") ?? "", getProperty(message, "details"))
     : undefined;
@@ -200,7 +213,7 @@ function normalizeRole(role: unknown): ChatLine["role"] {
   return "system";
 }
 
-function normalizeContent(content: unknown, message: unknown): ChatPart[] {
+function normalizeContent(content: unknown, message: unknown): ChatFallbackPart[] {
   const askUserRecord = askUserRecordPart(message);
   if (askUserRecord !== undefined) return [askUserRecord];
   if (typeof content === "string") {
@@ -209,7 +222,7 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
   }
   if (!Array.isArray(content)) return objectFallback(content);
 
-  return content.flatMap((part): ChatPart[] => {
+  return content.flatMap((part): ChatFallbackPart[] => {
     const type = getString(part, "type");
     const text = getString(part, "text");
     const displayText = getString(part, "displayText");
@@ -234,7 +247,7 @@ function normalizeContent(content: unknown, message: unknown): ChatPart[] {
     : part);
 }
 
-function normalizeImage(part: unknown): ChatPart[] {
+function normalizeImage(part: unknown): ChatFallbackPart[] {
   const mimeType = getString(part, "mimeType");
   const mediaId = getProperty(part, "mediaId");
   const dimensions = validImageDimensions(getProperty(part, "width"), getProperty(part, "height"));
@@ -407,7 +420,7 @@ export function previewFromDetails(details: unknown): ToolPreview | undefined {
   };
 }
 
-function objectFallback(value: unknown): ChatPart[] {
+function objectFallback(value: unknown): ChatFallbackPart[] {
   if (value == null) return [];
   if (typeof value === "object") return [{ type: "text", text: summarizeArgs(value), presentation: { kind: "arguments", args: value } }];
   return [{ type: "text", text: stringifyPrimitive(value) }];

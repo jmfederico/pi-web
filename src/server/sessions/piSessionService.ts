@@ -6086,7 +6086,9 @@ function toClientEvent(event: unknown, thinkingLevel?: string, streamId?: string
   if (eventType === "agent_end") return { type: "agent.end" };
   if (eventType === "message_end") {
     const message = getProperty(event, "message");
-    if (message === undefined) return { type: "message.end" };
+    if (message === undefined || (getString(message, "role") === "custom" && getBoolean(message, "display") !== true)) {
+      return { type: "message.end" };
+    }
     return { type: "message.end", message: annotateAssistantStreamId(annotateAssistantThinkingLevel(message, thinkingLevel), streamId) };
   }
   return { type: "pi.event", eventType: eventType ?? "unknown" };

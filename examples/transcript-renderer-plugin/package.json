@@ -1,0 +1,22 @@
+{
+  "name": "pi-web-example-transcript-renderer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-styles.mjs"
+  },
+  "devDependencies": {
+    "@jmfederico/pi-web": "*",
+    "typescript": "^6.0.3"
+  },
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "example-transcript-renderer",
+        "browserRoot": "browser",
+        "module": "browser/index.js"
+      }
+    ]
+  }
+}

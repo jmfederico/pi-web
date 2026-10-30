@@ -27,7 +27,18 @@ export type ChatImagePart =
   | ({ type: "image"; mimeType: string; data: string; mediaId?: never; byteSize?: never } & Partial<ImageDimensions>)
   | (SessionMediaReference & { data?: never });
 
-export type ChatPart =
+export interface CustomMessagePart {
+  type: "customMessage";
+  customType: string;
+  content: unknown;
+  details?: unknown;
+  /** Original normalized presentation, without nested custom messages. */
+  parts: ChatFallbackPart[];
+}
+
+export type ChatPart = ChatFallbackPart | CustomMessagePart;
+
+export type ChatFallbackPart =
   | { type: "text"; text: string; displayText?: string; presentation?: ChatTextPresentation }
   | ChatImagePart
   | { type: "thinking"; text: string; displayText?: string }
@@ -41,6 +52,11 @@ export type ChatPart =
   | ToolExecutionPart
   | { type: "toolResult"; toolCallId?: string; toolName: string; text: string; isError: boolean; content?: unknown; details?: unknown }
   | { type: "empty" };
+
+/** The host presentation and conversation facts, independent of renderer choice. */
+export function chatFallbackParts(parts: readonly ChatPart[]): ChatFallbackPart[] {
+  return parts.flatMap((part): ChatFallbackPart[] => part.type === "customMessage" ? part.parts : [part]);
+}
 
 export interface ChatLine {
   /** Identity of one live assistant message, retained through finalization. */

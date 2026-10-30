@@ -1,5 +1,5 @@
 import type { DisplayedMessageActionAvailabilityContext, DisplayedMessageActionMessage, MessageActionAvailabilityContextV5 as MessageActionAvailabilityContext, MessageActionContribution, MessageActionMessageV5 as MessageActionMessage } from "../../../plugin-api";
-import type { ChatLine } from "../chatTypes";
+import { chatFallbackParts, type ChatLine, type ChatPart } from "../chatTypes";
 import type { WorkspacePluginBinding } from "./types";
 
 export type RegisteredMessageAction = MessageActionContribution & {
@@ -19,7 +19,7 @@ export function messageActionMessage(message: ChatLine, role = message.role): Me
     entryId: message.entryId,
     ...(message.parts.some((part) => part.type === "askUserQuestion") ? { isQuestion: true } : {}),
     role,
-    text: message.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n\n"),
+    text: originalTexts(message.parts).join("\n\n"),
   });
 }
 
@@ -27,8 +27,12 @@ export function displayedMessageActionMessage(message: ChatLine): DisplayedMessa
   return Object.freeze({
     ...(message.entryId === undefined ? {} : { entryId: message.entryId }),
     role: message.role,
-    text: message.parts.filter((part) => part.type === "text").map((part) => part.text.trim()).filter(Boolean).join("\n\n"),
+    text: originalTexts(message.parts).map((text) => text.trim()).filter(Boolean).join("\n\n"),
   });
+}
+
+function originalTexts(parts: readonly ChatPart[]): string[] {
+  return chatFallbackParts(parts).flatMap((part) => part.type === "text" ? [part.text] : []);
 }
 
 export function availableMessageActions(
