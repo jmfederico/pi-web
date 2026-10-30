@@ -5,6 +5,7 @@ import { LitElement, css, html, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
+import { renderCopyIdAction } from "./copyIdAction";
 import { createActionMenuController } from "./actionMenu";
 import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
@@ -65,10 +66,9 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   private renderMachine(machine: Machine) {
     const status = this.statuses[machine.id]?.status ?? machine.status ?? "unknown";
     const statusLabel = messages.t(status);
-    const hasRemoveAction = canRemoveMachine(machine) && (this.onRemove !== undefined || this.onEdit !== undefined);
     return html`
       <div
-        class=${`action-row machine-row ${this.selected?.id === machine.id ? "selected" : ""} ${hasRemoveAction ? "" : "no-actions"}`}
+        class=${`action-row machine-row ${this.selected?.id === machine.id ? "selected" : ""} `}
         tabindex="0"
         title=${machine.baseUrl ?? machine.name}
         data-machine-id=${machine.id}
@@ -79,7 +79,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
           <span class="action-name machine-primary"><span class="machine-primary-label"><bdi>${machine.name}</bdi></span></span><small>${messages.t("subtitle", { location: machine.kind === "local" ? messages.t("local") : machine.baseUrl ?? messages.t("remote"), status: statusLabel })}</small>
           ${this.renderActivity(machine)}
         </div>
-        ${hasRemoveAction ? this.renderMachineMenu(machine) : null}
+        ${this.renderMachineMenu(machine)}
       </div>
     `;
   }
@@ -109,8 +109,9 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
         >⋯</button>
         ${open ? html`
           <div popover="auto" class="action-menu-panel machine-menu-panel ui-menu ui-popup-panel" data-ui-context="machine-actions" id=${menuId} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
-            ${this.onEdit === undefined ? null : html`<button class="ui-button ui-menu-item" @click=${() => { this.openMenuMachineId = undefined; this.onEdit?.(machine); }}>${messages.t("edit")}</button>`}
-            ${this.onRemove === undefined ? null : html`<button class="danger ui-button ui-menu-item" title=${messages.t("removeNamed", { name: machine.name })} @click=${() => { this.removeMachine(machine); }}>${messages.t("remove")}</button>`}
+            ${!canRemoveMachine(machine) || this.onEdit === undefined ? null : html`<button class="ui-button ui-menu-item" @click=${() => { this.openMenuMachineId = undefined; this.onEdit?.(machine); }}>${messages.t("edit")}</button>`}
+            ${!canRemoveMachine(machine) || this.onRemove === undefined ? null : html`<button class="danger ui-button ui-menu-item" title=${messages.t("removeNamed", { name: machine.name })} @click=${() => { this.removeMachine(machine); }}>${messages.t("remove")}</button>`}
+            ${renderCopyIdAction("machine", machine.id, () => { this.openMenuMachineId = undefined; })}
           </div>
         ` : null}
       </div>

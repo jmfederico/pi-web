@@ -6,6 +6,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { Project } from "../api";
 import type { MachineStatusSnapshot } from "../../../shared/machineStatus";
+import { renderCopyIdAction } from "./copyIdAction";
 import { createActionMenuController } from "./actionMenu";
 import { hasStatusUnread, renderActionActivityIndicator, statusActivityKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
@@ -107,6 +108,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                           <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
                         `}
                         <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("close")}</button>
+                        ${renderCopyIdAction("project", project.id, () => { this.openMenuProjectId = undefined; })}
                       </div>
                     ` : null}
                   </div>
