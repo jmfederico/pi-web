@@ -19,6 +19,7 @@ export default defineConfig({
         themes: fileURLToPath(new URL("themes.html", import.meta.url)),
         recovery: fileURLToPath(new URL("recovery.html", import.meta.url)),
         filePreviews: fileURLToPath(new URL("file-previews.html", import.meta.url)),
+        scheduledTasks: fileURLToPath(new URL("scheduled-tasks.html", import.meta.url)),
       },
     },
   },

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { PI_WEB_HOST_PI_SESSIONS_CAPABILITY } from "../../server-plugin-api.js";
+import { PI_WEB_HOST_PI_SESSIONS_CAPABILITY, type PiWebHostPiSessionRunInput } from "../../server-plugin-api.js";
 import type { WorkspaceListing } from "../../shared/apiTypes.js";
 import type { Project } from "../types.js";
 import { PendingExtensionDialogStore } from "../sessions/pendingExtensionDialogStore.js";
@@ -51,7 +51,8 @@ function harness(options: {
     cwd: string,
     prompt: string,
     signal: AbortSignal,
-  ) => Promise<{ id: string; completion: Promise<void> }>;
+    settings?: Pick<PiWebHostPiSessionRunInput, "model" | "thinkingLevel">,
+  ) => Promise<{ id: string; completion: Promise<void>; model?: string; thinkingLevel?: NonNullable<PiWebHostPiSessionRunInput["thinkingLevel"]> }>;
 } = {}) {
   let currentWorkspace = workspace();
   let sessionSequence = 0;
@@ -116,6 +117,25 @@ function harness(options: {
 }
 
 describe("server plugin PI sessions capability", () => {
+  it("forwards overrides and effective settings without adding fallback to session admission", async () => {
+    const fixture = harness({ startOneShotRun: (_cwd, _prompt, _signal, settings) => Promise.resolve({
+      id: "configured", completion: Promise.resolve(), ...settings,
+    }) });
+    const settings = { model: "provider/model", thinkingLevel: "high" as const };
+    const run = await fixture.capability.run({ ...fixture.input, ...settings });
+    expect(fixture.sessions.startOneShotRun).toHaveBeenCalledWith(resolve("/repo/worktree"), fixture.input.prompt, expect.any(AbortSignal), settings);
+    expect(run).toMatchObject(settings);
+    await run.completion;
+    await fixture.instance.dispose?.(AbortSignal.timeout(1_000));
+  });
+
+  it.each(["PI_SESSION_MODEL_UNAVAILABLE", "PI_SESSION_THINKING_UNAVAILABLE"])("preserves safe pre-prompt rejection code %s without retrying", async (code) => {
+    const fixture = harness({ startOneShotRun: () => Promise.reject(Object.assign(new Error("unavailable"), { code })) });
+    await expect(fixture.capability.run({ ...fixture.input, model: "missing/model" })).rejects.toMatchObject({ code });
+    expect(fixture.sessions.startOneShotRun).toHaveBeenCalledTimes(1);
+    await fixture.instance.dispose?.(AbortSignal.timeout(1_000));
+  });
+
   it("creates without prompting in current workspace authority and releases admission on publication", async () => {
     const fixture = harness({ maxConcurrentRunsPerPlugin: 1 });
     const selection = { projectId: fixture.input.projectId, workspaceId: fixture.input.workspaceId };
@@ -180,12 +200,14 @@ describe("server plugin PI sessions capability", () => {
       resolve("/repo/worktree"),
       fixture.input.prompt,
       expect.any(AbortSignal),
+      {},
     );
     expect(fixture.sessions.startOneShotRun).toHaveBeenNthCalledWith(
       2,
       resolve("/repo/moved-worktree"),
       fixture.input.prompt,
       expect.any(AbortSignal),
+      {},
     );
     expect(fixture.runCompletion).toHaveBeenCalledTimes(2);
     expect(fixture.sessions.stop).not.toHaveBeenCalled();
