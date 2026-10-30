@@ -10,7 +10,7 @@ import { TaskStore } from "./store.js";
 
 const plugin: PiWebServerPluginV5 = {
   apiVersion: 5,
-  name: "Scheduled agent tasks",
+  name: "Scheduled agent tasks (beta)",
   requires: [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY],
   activate(context) { return activateTasks(context); },
 };

@@ -5,7 +5,7 @@ function text<Values extends Record<string, string | number> = Record<string, ne
 }
 
 export default {
-  title: text("Scheduled tasks", "Application panel title, distinct from workspace terminal tasks"),
+  title: text("Scheduled tasks (beta)", "Application panel title, distinct from workspace terminal tasks"),
   refresh: text("Refresh", "Reload the current view"),
   overview: text("Overview", "Return from details or history"),
   attention: text("Needs attention", "Latest runs with errors or an unconfirmed launch"),

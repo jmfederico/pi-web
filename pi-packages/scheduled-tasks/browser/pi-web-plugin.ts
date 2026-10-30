@@ -16,7 +16,7 @@ const stylesCapability: PluginCapability<StylesheetIntegrationCapabilityV1, 1> =
 
 const plugin = {
   apiVersion: 5,
-  name: "Scheduled agent tasks",
+  name: "Scheduled agent tasks (beta)",
   requires: [stylesCapability],
   activate({ localization, lifetimeSignal, html, svg }) {
     if (!localization) throw new Error("Scheduled tasks requires a localization-capable host");

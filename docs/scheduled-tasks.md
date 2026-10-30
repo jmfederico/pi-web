@@ -1,6 +1,8 @@
-# Scheduled agent tasks
+# Scheduled agent tasks (beta)
 
-Schedule agent work from an ordinary PI WEB conversation. At each due time, the plugin starts a normal conversation in the chosen workspace and records the dispatch. Use the read-only **Scheduled tasks** tab to review schedules and execution history; ask an agent to make changes.
+This optional plugin is in beta.
+
+Schedule agent work from an ordinary PI WEB conversation. At each due time, the plugin starts a normal conversation in the chosen workspace and records the dispatch. Use the read-only **Scheduled tasks (beta)** tab to review schedules and execution history; ask an agent to make changes.
 
 This is separate from [Workspace Tasks](plugins.md#workspace-tasks), which runs project commands in terminals from `.pi-web/tasks.json`.
 
@@ -8,7 +10,7 @@ This is separate from [Workspace Tasks](plugins.md#workspace-tasks), which runs 
 
 Scheduled agent tasks ships with PI WEB as an optional package, `@jmfederico/pi-web-scheduled-tasks`. It is not installed automatically, and its web plugin is disabled by default.
 
-1. On the machine that will run the schedules, open **Settings → Pi packages → Available packages** and install **Scheduled agent tasks**. Use the shipped package offered there; no separate npm publication is required.
+1. On the machine that will run the schedules, open **Settings → Pi packages → Available packages** and install **Scheduled agent tasks (beta)**. Use the shipped package offered there; no separate npm publication is required.
 2. Open **Settings → PI WEB plugins** and enable `scheduled-tasks`.
 3. Optionally configure the default timezone below.
 4. When safe, manually restart that machine's session daemon, then reload the browser. For an existing idle conversation, run `/reload` to load the package's extension and discovery skill, or start a new conversation.
