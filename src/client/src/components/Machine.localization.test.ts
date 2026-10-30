@@ -105,10 +105,8 @@ it("updates machine menus, statuses, accessible labels and counts without changi
       expect(element.shadowRoot?.textContent).toContain(remote.name);
       expect(element.shadowRoot?.querySelector("b")).toBeNull();
       expect(element.shadowRoot?.textContent).toContain(messages.t("offline"));
-      const namedControl = element === list
-        ? element.shadowRoot?.querySelector(`[data-machine-id="${remote.id}"] .action-menu-toggle`)
-        : element.shadowRoot?.querySelector(".machine-switcher-button");
-      expect(namedControl?.getAttribute("aria-label")).toContain(remote.name);
+      const actionLabels = Array.from(element.shadowRoot?.querySelectorAll("[aria-controls][aria-label]") ?? [], (toggle) => toggle.getAttribute("aria-label"));
+      expect(actionLabels).toContain(messages.t("actionsFor", { name: remote.name }));
     }
     expect(switcher.shadowRoot?.querySelector(".machine-option-actions-panel")?.textContent).toContain(messages.t("edit"));
     expect(onSelect).not.toHaveBeenCalled();
