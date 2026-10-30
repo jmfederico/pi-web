@@ -48,13 +48,16 @@ import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import { serverNoticeMessage } from "../serverNoticeMessages";
 import { ServerNoticesController, visibleServerNotices } from "../serverNotices";
 import type { ServerNotice } from "../../../shared/apiTypes";
-import type { ApplicationPanelContext, MaintenanceTerminal, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, PluginRuntimeContext, SessionLabelContext, SessionLabelItem, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
-import { CLASSIC_THEME_ID, applyPiWebTheme, clearStoredThemePreference, configureThemePolicy, effectiveThemePreference, getThemePolicy, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
+import type { ApplicationPanelContext, MaintenanceTerminal, PluginNavigationPatchDestination, PluginNavigationOptions, ContributionQueryValue, PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, PluginRuntimeContext, SessionLabelContext, SessionLabelItem, WorkspaceFilesCapabilityV1, WorkspaceHost, WorkspaceInvalidation, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext, WorkspacePanelNavigationV1, WorkspacePanelTerminal, WorkspacePluginBinding, WorkspaceTerminalCommandInput } from "../plugins/types";
+import { applyPiWebTheme, clearPiWebTheme, clearStoredThemePreference, configureThemePolicy, effectiveThemePreference, getThemePolicy, readStoredThemePreference, resolveThemePreference, writeStoredThemePreference, type ThemePreference, type ThemePreferenceResolution } from "../theme";
 import { corePlugin } from "../plugins/core";
-import { themePackPlugin } from "../plugins/themes";
+import { localizeBuiltInThemeMetadata, themePackPlugin } from "../plugins/themes";
+import { cancelInitialTheme, claimStartupDocument, revealApplication, themeStartup } from "../themeStartup";
+import { bootstrapPreference, loadThemeBootstrap, mergeThemeCatalog, type BrowserThemeCatalog } from "../themeCatalog";
 import { FileIconService, fileIconsCapabilityToken } from "../fileIconService";
 import { NO_FILE_ICONS, readStoredFileIconPreference, writeStoredFileIconPreference } from "../fileIconPreferences";
 import { pluginStyles, PluginStyleRuntime, stylesheetIntegrationCapability } from "../plugins/styles";
+import { addThemeStylesheets } from "../plugins/styleSources";
 import { loadExternalPlugins, type ExternalPluginLoadResult } from "../plugins/external";
 import { publicPluginSelection, publicPluginSession } from "../plugins/publicContext";
 import type { DisplayedMessageActionAvailabilityContext, MessageActionAvailabilityContext, MessageActionContext, MessageActionResult } from "../../../plugin-api";
@@ -364,6 +367,7 @@ export class PiWebApp extends LitElement {
   private readonly dismissedRequiredPluginFailureByMachine = new Map<string, () => string>();
   private machineNavigationRestoreSeq = 0;
   private navigationSelectionSeq = 0;
+  @state() private pendingProjectNavigation: { seq: number; target: NavigationSection | undefined; cancelled: boolean } | undefined;
   private modelDialogInstanceId = 0;
   private routeRestoreSeq = 0;
   private routeSelectionRestoreSeq = 0;
@@ -382,9 +386,13 @@ export class PiWebApp extends LitElement {
   private remoteRouteRestoreTimer: number | undefined;
   private remoteRouteRestoreAttempt = 0;
   private remoteRouteRestoreInProgress = false;
-  private readonly stylesheetRuntime = new PluginStyleRuntime(pluginStyles, (error) => {
-    console.error("Failed to apply plugin stylesheets", error);
-  });
+  private readonly stylesheetRuntime = new PluginStyleRuntime(pluginStyles,
+    (error) => { console.error("Failed to apply plugin stylesheets", error); },
+    (error) => {
+      console.error("Failed to apply theme stylesheets", error);
+      this.revealAfterRender();
+    },
+  );
   private readonly fileIcons = new FileIconService();
   @state() private fileIconPreference: string | undefined = readStoredFileIconPreference();
   private readonly plugins = new PluginRegistry({
@@ -401,18 +409,36 @@ export class PiWebApp extends LitElement {
     if (this.isConnected) this.applyPreferredTheme(false);
     this.invalidateWorkspaceSurface();
   });
+  private declarativeThemes: BrowserThemeCatalog | undefined;
+  private requestedThemeId: string | undefined;
+  private themeRequest: AbortController | undefined;
+  private readonly declarativeThemesReady = themeStartup.catalog.then((catalog) => {
+    if (catalog !== undefined) {
+      // Settings may already have supplied a newer, complete inventory while
+      // fallback HTML data was loading. That snapshot must remain authoritative.
+      if (this.declarativeThemes === undefined) this.registerThemeCatalog(catalog);
+      // The server has already resolved its intended default, even when only
+      // the fallback is declarative and the intended theme needs legacy activation.
+      this.requestedThemeId ??= bootstrapPreference(catalog, undefined).themeId;
+    }
+    return catalog;
+  });
   private readonly loadedMachinePluginIds = new Set<string>();
   private readonly machinePluginLoadPromises = new Map<string, Promise<void>>();
   private gatewayPluginLoadPromise: Promise<void> | undefined;
   private gatewayPluginLoadAttemptComplete = false;
+  private themeConfigReady = false;
+  private themePolicyFromApplication = false;
+  private activeThemeColorScheme: "light" | "dark" = this.startupColorScheme();
   @state() private localThemePreference: ThemePreference | undefined = readStoredThemePreference();
   @state() private configuredThemePreference: ThemePreference | undefined;
   private get themePreference(): ThemePreference {
     return effectiveThemePreference(this.localThemePreference, this.configuredThemePreference);
   }
-  @state() private activeThemeId: QualifiedContributionId = CLASSIC_THEME_ID;
+  @state() private activeThemeId = "";
   @state() private isRefreshingApp = false;
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
+  private sessionCleanupRequestEpoch = 0;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private defaultStreamingBehavior: "steer" | "followUp" = "steer";
@@ -657,6 +683,24 @@ export class PiWebApp extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this.stylesheetRuntime.connect(this.ownerDocument);
+    claimStartupDocument();
+    void this.declarativeThemesReady.then(async (catalog) => {
+      await themeStartup.ready;
+      if (!this.isConnected || !themeStartup.started) return;
+      // The startup snapshot must not overwrite a newer application config response.
+      if (!this.themePolicyFromApplication && catalog !== undefined) this.applyThemeCatalogPolicy(catalog);
+      this.themeConfigReady = true;
+      this.activeThemeId = this.ownerDocument.documentElement.dataset["piWebTheme"] ?? "";
+      const deliveredScheme = this.ownerDocument.documentElement.style.colorScheme;
+      if (this.activeThemeId !== "" && (deliveredScheme === "light" || deliveredScheme === "dark")) {
+        this.activeThemeColorScheme = deliveredScheme;
+        this.syncFileIcons();
+      }
+      this.applyPreferredTheme(false);
+      // The delivered palette is usable now. A browser override or legacy
+      // activation can finish without keeping the rendered application hidden.
+      this.revealAfterRender();
+    });
     this.navigationOrderConnected = true;
     this.syncNavigationOrder();
     this.unreadConnected = true;
@@ -677,7 +721,14 @@ export class PiWebApp extends LitElement {
   }
 
   override disconnectedCallback(): void {
-    this.stylesheetRuntime.disconnect();
+    cancelInitialTheme();
+    this.themeRequest?.abort();
+    this.stylesheetRuntime.disconnect(() => {
+      if (this.activeThemeId === "") return;
+      this.activeThemeId = "";
+      clearPiWebTheme();
+      this.activeThemeColorScheme = this.startupColorScheme();
+    });
     this.navigationOrderConnected = false;
     this.unreadConnected = false;
     this.committedChatIdentity = undefined;
@@ -720,6 +771,13 @@ export class PiWebApp extends LitElement {
     if (!patchChangesState(this.state, patch)) return;
     const previous = this.state;
     this.state = { ...this.state, ...patch };
+    const pending = this.pendingProjectNavigation;
+    if (pending?.seq === this.navigationSelectionSeq && !pending.cancelled && pending.target === undefined
+      && previous.isLoadingWorkspaces && !this.state.isLoadingWorkspaces && this.state.workspaceResolution !== undefined) {
+      // Decide the mobile destination from topology, without waiting for sessions.
+      pending.target = this.state.workspaceResolution.status !== "degraded" && this.state.workspaces.length === 1 ? "sessions" : "workspaces";
+      void this.focusNavigationTarget(pending.target, () => pending.seq === this.navigationSelectionSeq && !pending.cancelled);
+    }
     if (workspaceDeletionScopeKey(previous) !== workspaceDeletionScopeKey(this.state)) {
       this.cancelWorkspaceDeletionRefresh();
       if (Object.keys(this.state.workspaceDeletionRuns).length > 0) this.state = { ...this.state, workspaceDeletionRuns: {} };
@@ -872,10 +930,23 @@ export class PiWebApp extends LitElement {
       this.applyClientConfig(response.effectiveConfig);
     } catch (error) {
       console.warn("Failed to load PI WEB config", error);
+    } finally {
+      this.themeConfigReady = true;
+      this.applyPreferredTheme(false);
     }
   }
 
+  private applyThemeCatalogPolicy(catalog: BrowserThemeCatalog): void {
+    configureThemePolicy({
+      effectiveConfig: { ...(catalog.defaultTheme === undefined ? {} : { defaultTheme: catalog.defaultTheme }) },
+      ...(catalog.enforcedBy === undefined ? {} : { enforcedSettings: { "/defaultTheme": catalog.enforcedBy } }),
+    });
+    this.configuredThemePreference = catalog.defaultTheme;
+  }
+
   private applyClientConfig(config: PiWebConfigValues): void {
+    this.themeConfigReady = true;
+    this.themePolicyFromApplication = true;
     this.configuredThemePreference = config.defaultTheme;
     this.applyPreferredTheme(false);
     this.shortcutConfig = config.shortcuts ?? {};
@@ -1834,6 +1905,7 @@ export class PiWebApp extends LitElement {
         if (selectedMachineId(this.state) === machineId) void this.workspaces.refreshSelectedProjectTopology();
         void this.sessionUnread.refresh(machineId);
         void this.serverNotices.refresh(machineId);
+        void this.navigationOrder.refreshSessionPins(machineId).catch(() => undefined);
       },
       machineId,
     );
@@ -1851,7 +1923,10 @@ export class PiWebApp extends LitElement {
       const socket = new RealtimeSocket();
       socket.connect(
         (event) => { this.handleMachineActivityEvent(machineId, event); },
-        () => { void this.sessionUnread.refresh(machineId); },
+        () => {
+          void this.sessionUnread.refresh(machineId);
+          void this.navigationOrder.refreshSessionPins(machineId).catch(() => undefined);
+        },
         machineId,
       );
       this.machineRealtimeSockets.set(machineId, socket);
@@ -1872,17 +1947,21 @@ export class PiWebApp extends LitElement {
   }
 
   private handleMachineActivityEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    if (event.type === "session-pins.changed") {
+      void this.navigationOrder.load({ kind: "sessionPins", machineId, projectId: event.projectId, workspaceId: event.workspaceId }).catch(() => undefined);
+    } else if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
     else if (event.type === "machine.status") this.machineStatus.apply(machineId, event.status);
   }
 
   private handleRealtimeEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    if (event.type === "session-pins.changed") this.handleMachineActivityEvent(machineId, event);
+    else if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
     else if (event.type === "notices.updated") this.serverNotices.applyEvent(machineId, event);
     else if (event.type === "machine.status") this.machineStatus.apply(machineId, event.status);
     else if (event.type === "workspaces.changed") {
       if (selectedMachineId(this.state) === machineId && this.state.selectedProject?.id === event.projectId) {
         void this.workspaces.refreshSelectedProjectTopology();
+        void this.sessions.refreshCurrentWorkspaceSessions(machineId, { recoverNetwork: true });
       }
     } else {
       if (event.type === "status.update" || event.type === "activity.update") {
@@ -1918,7 +1997,7 @@ export class PiWebApp extends LitElement {
     this.sessions.clearActiveSession();
     this.realtime.close();
     this.connectRealtime();
-    this.sessionCleanupDialog = undefined;
+    this.closeSessionCleanupDialog();
     this.setState({ piWebStatus: undefined });
     void this.loadPluginsForSelectedMachine();
   }
@@ -2099,53 +2178,68 @@ export class PiWebApp extends LitElement {
   }
 
   private openSessionCleanupDialog(): void {
+    this.sessionCleanupRequestEpoch += 1;
     this.sessionCleanupDialog = { error: "" };
   }
 
   private closeSessionCleanupDialog(): void {
+    this.sessionCleanupRequestEpoch += 1;
     this.sessionCleanupDialog = undefined;
   }
 
+  private isCurrentSessionCleanupRequest(epoch: number, machineId: string): boolean {
+    return this.sessionCleanupDialog !== undefined
+      && this.sessionCleanupRequestEpoch === epoch
+      && selectedMachineId(this.state) === machineId;
+  }
+
   private async previewSessionCleanup(request: SessionCleanupRequest): Promise<void> {
+    if (this.sessionCleanupDialog === undefined) return;
     const machineId = selectedMachineId(this.state);
-    this.sessionCleanupDialog = { ...(this.sessionCleanupDialog ?? {}), loading: true, error: "", preview: undefined, previewRequest: undefined, result: undefined };
+    const epoch = ++this.sessionCleanupRequestEpoch;
+    this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: true, running: false, error: "", preview: undefined, previewRequest: undefined, result: undefined };
     try {
       const preview = await sessionsApi.cleanupPreview(request, machineId);
-      if (selectedMachineId(this.state) !== machineId) return;
+      if (!this.isCurrentSessionCleanupRequest(epoch, machineId)) return;
       this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview, previewRequest: request, result: undefined, loading: false, error: "" };
     } catch (error) {
-      if (selectedMachineId(this.state) === machineId) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: false, error: () => sessionCleanupMessages.t("previewFailed", { error: errorMessage(error) }) };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: false, error: () => sessionCleanupMessages.t("previewFailed", { error: errorMessage(error) }) };
     }
   }
 
   private async runSessionCleanup(request: SessionCleanupRequest): Promise<void> {
     const dialog = this.sessionCleanupDialog;
-    if (dialog?.preview === undefined || sessionCleanupRequestKey(dialog.previewRequest) !== sessionCleanupRequestKey(request)) {
-      this.sessionCleanupDialog = { ...(dialog ?? {}), error: () => sessionCleanupMessages.t("previewRequired") };
+    if (dialog === undefined || dialog.running === true) return;
+    if (dialog.preview === undefined || sessionCleanupRequestKey(dialog.previewRequest) !== sessionCleanupRequestKey(request)) {
+      this.sessionCleanupDialog = { ...dialog, error: () => sessionCleanupMessages.t("previewRequired") };
       return;
     }
     const machineId = selectedMachineId(this.state);
+    const epoch = ++this.sessionCleanupRequestEpoch;
     this.sessionCleanupDialog = { ...dialog, running: true, error: "" };
     try {
       const result = await sessionsApi.cleanup(request, machineId);
       if (selectedMachineId(this.state) !== machineId) return;
-      this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview: result, previewRequest: request, result, running: false, error: "" };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) {
+        this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview: undefined, previewRequest: undefined, result, running: false, error: "" };
+      }
+      // Closing or replacing the dialog must not skip reconciliation of completed work.
       await this.sessions.applySessionCleanupResult(result, machineId);
     } catch (error) {
-      if (selectedMachineId(this.state) === machineId) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, running: false, error: () => sessionCleanupMessages.t("runFailed", { error: errorMessage(error) }) };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, running: false, error: () => sessionCleanupMessages.t("runFailed", { error: errorMessage(error) }) };
     }
   }
 
   // Stable callback inputs let navigation children update for their own data,
   // rather than for every transcript delta rendered by the application shell.
   private readonly navigationActions = {
-    toggleMachines: () => { this.navigationSections.toggle("machines"); },
+    toggleMachines: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("machines"); },
     selectMachine: (machine: Machine) => this.selectNavigationItem("machines", "projects", () => this.selectMachineWithMemory(machine)),
     removeMachine: (machine: Machine) => { void this.removeMachine(machine); },
     showActions: () => { this.setState({ actionPaletteOpen: true }); },
-    toggleProjects: () => { this.navigationSections.toggle("projects"); },
-    toggleWorkspaces: () => { this.navigationSections.toggle("workspaces"); },
-    toggleSessions: () => { this.navigationSections.toggle("sessions"); },
+    toggleProjects: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("projects"); },
+    toggleWorkspaces: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("workspaces"); },
+    toggleSessions: () => { this.cancelAutomaticProjectNavigation(); this.navigationSections.toggle("sessions"); },
     selectProject: (project: Project) => this.selectNavigationItem("projects", "workspaces", () => this.selectProjectFromNavigation(project)),
     closeProject: (project: Project) => this.projects.closeProject(project.id),
     selectWorkspace: (workspace: Workspace) => this.selectNavigationItem("workspaces", "sessions", () => this.selectWorkspaceFromNavigation(workspace)),
@@ -2169,8 +2263,8 @@ export class PiWebApp extends LitElement {
     detachParentSession: (session: SessionInfo) => this.sessions.detachParent(session),
     reloadSession: (session: SessionInfo) => this.sessions.reloadSession(session),
     cleanupSessions: () => { this.openSessionCleanupDialog(); },
-    focusNavigationTarget: (target: NavigationFocusTarget) => { void this.focusNavigationTarget(target); },
-    cancelKeyboardNavigation: () => { void this.openChatAndFocusComposer(); },
+    focusNavigationTarget: (target: NavigationFocusTarget) => { this.cancelAutomaticProjectNavigation(); void this.focusNavigationTarget(target); },
+    cancelKeyboardNavigation: () => { this.cancelAutomaticProjectNavigation(); void this.openChatAndFocusComposer(); },
     moveProject: (project: Project, direction: -1 | 1) => { this.moveNavigationItem({ kind: "projects", machineId: selectedMachineId(this.state) }, project.id, direction); },
     moveWorkspace: (workspace: Workspace, direction: -1 | 1) => { this.moveNavigationItem({ kind: "workspaces", machineId: selectedMachineId(this.state), projectId: workspace.projectId }, workspace.id, direction); },
     pinSession: (session: SessionInfo) => { this.changeSessionPin(session, "pin"); },
@@ -2232,7 +2326,6 @@ export class PiWebApp extends LitElement {
       <app-navigation-panel
         .machines=${this.state.machines}
         .selectedMachine=${this.state.selectedMachine}
-        .locationIndicator=${this.appShell.isPwaDisplayMode}
         .machineStatuses=${this.state.machineStatuses}
         .machineStatusSnapshots=${this.state.machineStatusSnapshots}
         .machinesCollapsed=${this.navigationSections.isCollapsed("machines")}
@@ -2246,6 +2339,8 @@ export class PiWebApp extends LitElement {
         .selectedWorkspace=${this.state.selectedWorkspace}
         .deletingWorkspaceIds=${this.deletingWorkspaceIds}
         .sessions=${this.state.sessions}
+        .projectSelectionLoading=${this.pendingProjectNavigation?.seq === this.navigationSelectionSeq && this.state.isLoadingWorkspaces}
+        .sessionsLoading=${this.pendingProjectNavigation?.seq === this.navigationSelectionSeq && this.state.selectedWorkspace !== undefined && this.state.sessions.length === 0}
         .pinnedRootIds=${guard([this.navigationOrderVersion, selectedMachineId(this.state), this.state.selectedWorkspace?.id], () => sessionScope ? [...this.navigationOrder.ids(sessionScope)] : [])}
         .sessionStatuses=${this.state.sessionStatuses}
         .sessionActivities=${this.state.sessionActivities}
@@ -2299,7 +2394,12 @@ export class PiWebApp extends LitElement {
     `;
   }
 
+  private cancelAutomaticProjectNavigation(): void {
+    if (this.pendingProjectNavigation !== undefined) this.pendingProjectNavigation.cancelled = true;
+  }
+
   private openNavigationSection(section: NavigationSection): void {
+    this.cancelAutomaticProjectNavigation();
     this.navigationSections.open(section, () => { this.selectMainView("navigation"); });
   }
 
@@ -2308,17 +2408,24 @@ export class PiWebApp extends LitElement {
     const isCurrentSelection = () => seq === this.navigationSelectionSeq;
     let navigationAccepted: boolean | undefined;
 
-    await this.withChatScrollTransition(async () => {
-      this.navigationSections.advanceAfterSelection(section);
-      navigationAccepted = await action();
-    }, isCurrentSelection);
+    const pending: typeof this.pendingProjectNavigation = this.appShell.isMobileNavigationLayout && section === "projects"
+      ? { seq, target: undefined, cancelled: false } : undefined;
+    this.pendingProjectNavigation = pending;
+    try {
+      await this.withChatScrollTransition(async () => {
+        if (pending !== undefined) this.navigationSections.expand("projects");
+        else this.navigationSections.advanceAfterSelection(section);
+        navigationAccepted = await action();
+      }, isCurrentSelection);
 
-    if (!isCurrentSelection() || navigationAccepted === false) return;
-    // Only skip the automatic mobile step, after the new project's workspaces
-    // have loaded. Explicitly opening Workspaces must remain available.
-    const skipWorkspaceSelection = this.appShell.isMobileNavigationLayout && section === "projects" && nextTarget === "workspaces"
-      && this.state.workspaces.length === 1 && this.state.selectedWorkspace?.id === this.state.workspaces[0]?.id;
-    await this.focusNavigationTarget(skipWorkspaceSelection ? "sessions" : nextTarget, isCurrentSelection);
+      if (!isCurrentSelection() || navigationAccepted === false) return;
+      // Topology resolution already opened the destination. Never re-open it
+      // after session loading, which could override an explicit section choice.
+      if (pending !== undefined && (pending.target !== undefined || pending.cancelled)) return;
+      await this.focusNavigationTarget(nextTarget, isCurrentSelection);
+    } finally {
+      if (this.pendingProjectNavigation === pending) this.pendingProjectNavigation = undefined;
+    }
   }
 
   private async startSessionFromNavigation(): Promise<void> {
@@ -2915,8 +3022,9 @@ export class PiWebApp extends LitElement {
     const existing = this.gatewayPluginLoadPromise;
     if (existing !== undefined) return existing;
     this.gatewayPluginLoadAttemptComplete = false;
-    const load = this.builtInPluginsReady.then(() => this.loadExternalPlugins()).then((complete) => {
+    const load = Promise.all([this.builtInPluginsReady, this.declarativeThemesReady]).then(() => this.loadExternalPlugins()).then((complete) => {
       this.gatewayPluginLoadAttemptComplete = true;
+      this.applyPreferredTheme(false);
       if (!complete && this.gatewayPluginLoadPromise === load) this.gatewayPluginLoadPromise = undefined;
     });
     this.gatewayPluginLoadPromise = load;
@@ -3614,23 +3722,87 @@ export class PiWebApp extends LitElement {
     if (getThemePolicy().enforcedBy !== undefined) return;
     if (!this.plugins.getThemes().some((theme) => theme.id === preference.themeId)) return;
     this.localThemePreference = { ...preference };
+    cancelInitialTheme();
     this.applyPreferredTheme(true);
   }
 
   private useDefaultTheme(): void {
     if (getThemePolicy().enforcedBy !== undefined) return;
     this.localThemePreference = undefined;
+    cancelInitialTheme();
     clearStoredThemePreference();
     this.applyPreferredTheme(false);
   }
 
+  private registerThemeCatalog(catalog: BrowserThemeCatalog, append = false): void {
+    if (!append) {
+      this.themeRequest?.abort();
+      this.themeRequest = undefined;
+    }
+    this.declarativeThemes = append && this.declarativeThemes !== undefined ? mergeThemeCatalog(this.declarativeThemes, catalog) : catalog;
+    this.plugins.setDeclarativeThemes(
+      this.declarativeThemes.themes.map((theme) => localizeBuiltInThemeMetadata(theme)),
+      this.declarativeThemes.themePairs.map((pair) => localizeBuiltInThemeMetadata(pair)),
+    );
+    this.requestUpdate();
+  }
+
+  private loadPreferredThemeIfNeeded(themes: readonly QualifiedThemeContribution[]): void {
+    const preference = this.themePreference;
+    const available = themes.some((theme) => theme.id === preference.themeId);
+    if (this.requestedThemeId !== preference.themeId || available) {
+      this.themeRequest?.abort();
+      this.themeRequest = undefined;
+      if (this.requestedThemeId === preference.themeId) return;
+      this.requestedThemeId = preference.themeId;
+      if (available || (this.declarativeThemes !== undefined && preference.themeId === bootstrapPreference(this.declarativeThemes, undefined).themeId)) return;
+      const controller = new AbortController();
+      this.themeRequest = controller;
+      void loadThemeBootstrap(preference, controller.signal).then((response) => {
+        if (controller.signal.aborted || !this.isConnected) return;
+        this.registerThemeCatalog(response.catalog, true);
+        addThemeStylesheets(response.stylesheets);
+      }).catch((error: unknown) => {
+        if (!controller.signal.aborted) console.warn("Could not load the preferred theme; keeping the available palette", error);
+      }).finally(() => {
+        if (this.themeRequest === controller) {
+          this.themeRequest = undefined;
+          this.requestUpdate();
+        }
+      });
+    }
+  }
+
   private syncPluginStylesheets(): void {
     if (!this.isConnected) return;
-    const theme = this.resolveCurrentThemePreference().activeTheme;
-    this.stylesheetRuntime.update([
-      ...this.plugins.getStylesheets(selectedMachineId(this.state)),
-      ...(theme?.stylesheets ?? []),
-    ]);
+    this.stylesheetRuntime.update(this.plugins.getStylesheets(selectedMachineId(this.state)));
+    if (themeStartup.pending) return;
+    const themes = this.plugins.getThemes();
+    if (this.activeThemeId !== "" && !themes.some((theme) => theme.id === this.activeThemeId)) {
+      this.stylesheetRuntime.clearTheme(() => {
+        this.activeThemeId = "";
+        clearPiWebTheme();
+        this.activeThemeColorScheme = this.startupColorScheme();
+        this.syncFileIcons();
+      });
+    }
+    if (this.themeConfigReady) this.loadPreferredThemeIfNeeded(themes);
+    if (this.themeRequest !== undefined) {
+      this.stylesheetRuntime.suspendTheme();
+      return;
+    }
+    const theme = this.themeConfigReady ? this.resolveCurrentThemePreference(themes).activeTheme : undefined;
+    if (theme === undefined) {
+      this.stylesheetRuntime.suspendTheme();
+      return;
+    }
+    this.stylesheetRuntime.updateTheme(theme, () => {
+      this.activeThemeId = theme.id;
+      this.activeThemeColorScheme = theme.colorScheme;
+      applyPiWebTheme(theme);
+      this.syncFileIcons();
+      this.revealAfterRender();
+    });
   }
 
   private selectFileIconTheme(id: string | undefined): void {
@@ -3641,17 +3813,12 @@ export class PiWebApp extends LitElement {
   }
 
   private syncFileIcons(): void {
-    this.fileIcons.update(this.plugins.getFileIconThemes(), this.fileIconPreference, this.resolveCurrentThemePreference().activeTheme?.colorScheme ?? "dark");
+    this.fileIcons.update(this.plugins.getFileIconThemes(), this.fileIconPreference, this.activeThemeColorScheme);
   }
 
   private applyPreferredTheme(persist: boolean): void {
-    this.syncFileIcons();
-    this.syncPluginStylesheets();
-    const theme = this.resolveCurrentThemePreference().activeTheme;
-    if (theme === undefined) return;
-    this.activeThemeId = theme.id;
-    applyPiWebTheme(theme);
     if (persist) writeStoredThemePreference(this.themePreference);
+    this.syncPluginStylesheets();
   }
 
   private resolveCurrentThemePreference(themes = this.plugins.getThemes()): ThemePreferenceResolution {
@@ -3660,7 +3827,18 @@ export class PiWebApp extends LitElement {
       themePairs: this.plugins.getThemePairs(),
       preference: this.themePreference,
       prefersLight: this.systemPrefersLight(),
+      // Missing choices keep the already committed palette; they do not select
+      // a different fallback or rewrite the browser's preference.
+      pending: true,
     });
+  }
+
+  private revealAfterRender(): void {
+    void this.updateComplete.then(() => { if (this.isConnected) revealApplication(); });
+  }
+
+  private startupColorScheme(): "light" | "dark" {
+    return this.systemPrefersLight() ? "light" : "dark";
   }
 
   private systemPrefersLight(): boolean {
@@ -4048,7 +4226,6 @@ export class PiWebApp extends LitElement {
       <app-context-bar
         .machines=${this.state.machines}
         .machine=${this.state.selectedMachine}
-        .locationIndicator=${this.appShell.isPwaDisplayMode}
         .project=${this.state.selectedProject}
         .workspaceSelectionVisible=${shouldShowWorkspaceSelection(this.state.workspaceResolution)}
         .workspace=${this.state.selectedWorkspace}
@@ -4225,7 +4402,7 @@ export class PiWebApp extends LitElement {
         ${state.projectDialogOpen ? html`<project-dialog .machineId=${selectedMachineId(state)} .onSubmit=${(path: string, create: boolean, trust: ProjectTrustChoice | undefined) => this.projects.addProject(path, create, trust)} .onCancel=${() => { this.setState({ projectDialogOpen: false }); }}></project-dialog>` : null}
         ${state.machineDialogOpen ? html`<machine-dialog .machine=${this.machineNameEditTarget} .error=${state.error} .onSubmit=${(input: MachineDialogSubmit) => this.submitMachineDialog(input)} .onCancel=${() => { this.setState({ machineDialogOpen: false }); }}></machine-dialog>` : null}
         ${this.sessionCleanupDialog !== undefined ? html`<session-cleanup-dialog .preview=${this.sessionCleanupDialog.preview} .previewRequest=${this.sessionCleanupDialog.previewRequest} .result=${this.sessionCleanupDialog.result} .loading=${this.sessionCleanupDialog.loading === true} .running=${this.sessionCleanupDialog.running === true} .error=${typeof this.sessionCleanupDialog.error === "string" ? this.sessionCleanupDialog.error : ""} .errorMessage=${typeof this.sessionCleanupDialog.error === "function" ? this.sessionCleanupDialog.error : undefined} .onPreview=${(request: SessionCleanupRequest) => { void this.previewSessionCleanup(request); }} .onRun=${(request: SessionCleanupRequest) => { void this.runSessionCleanup(request); }} .onClose=${() => { this.closeSessionCleanupDialog(); }}></session-cleanup-dialog>` : null}
-        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
+        ${this.settingsSection !== undefined ? html`<settings-dialog .section=${this.settingsSection} .mcpContext=${state.selectedSession !== undefined && state.selectedSession.archived !== true ? { session: { id: state.selectedSession.id, cwd: state.selectedSession.cwd }, machineId: selectedMachineId(state) } : undefined} .onMcpAuth=${(mode: "login" | "logout", serverName: string, context: { session: { id: string; cwd: string }; machineId: string }) => { this.closeSettings(); void this.auth.openMcpAuth(mode, serverName, context); }} .machine=${state.selectedMachine} .machineRuntime=${this.selectedMachineRuntime()} .machines=${state.machines} .machineStatuses=${state.machineStatuses} .machineRuntimes=${state.machineRuntimes} .actions=${this.getDefaultActions()} .themes=${this.plugins.getThemes()} .onThemeCatalogLoaded=${(catalog: BrowserThemeCatalog) => { this.registerThemeCatalog(catalog); }} .fileIconThemes=${this.plugins.getFileIconThemes()} .fileIconPreference=${this.fileIconPreference} .onSelectFileIconTheme=${(id: string) => { this.selectFileIconTheme(id); }} .onResetFileIconTheme=${() => { this.selectFileIconTheme(undefined); }} .themePreference=${this.themePreference} .activeThemeId=${this.activeThemeId} .hasLocalThemeOverride=${this.localThemePreference !== undefined} .onUseLocalTheme=${(preference: ThemePreference) => { this.pickTheme(preference); }} .onUseDefaultTheme=${() => { this.useDefaultTheme(); }} .onNavigate=${(section: SettingsSection) => { this.navigateSettings(section); }} .onClose=${() => { this.closeSettings(); }} .onMachineConfigSaved=${(machineId: string) => { void this.machines.refreshMachineIdentity(machineId); }} .onConfigSaved=${(config: PiWebConfigValues) => { this.applyClientConfig(config); }} .onRefreshMachineRuntime=${async (machineId: string) => { await this.machines.refreshMachineRuntime(machineId); }}></settings-dialog>` : null}
       </div>
     `;
   }

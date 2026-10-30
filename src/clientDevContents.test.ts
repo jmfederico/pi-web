@@ -52,7 +52,7 @@ describe("manual-refresh development client", () => {
       // WebSocket handshakes, leaving status badges stale despite working HTTP.
       expect(server.config.server.hmr).toBe(false);
       expect(server.config.server.ws).toBe(false);
-      expect(html).toContain('src="/src/main.ts"');
+      expect(html).toContain('src="/src/startup.ts"');
       // The plugin loader's variable import needs Vite's injectQuery helper,
       // so removing only the HTML script still imports and starts the client.
       const loader = await server.transformRequest("/src/plugins/external.ts");

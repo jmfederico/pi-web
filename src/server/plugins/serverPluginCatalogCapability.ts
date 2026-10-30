@@ -15,9 +15,12 @@ import type { ServerPluginHostCapabilityContext, ServerPluginHostCapabilityFacto
 export interface CreateServerPluginCatalogCapabilityOptions {
   readonly projects: Pick<ProjectService, "list" | "requireProject">;
   readonly workspaces: Pick<WorkspaceProviderRegistry, "resolve">;
+  readonly pins: {
+    readonly pinnedSessionIds: () => Promise<readonly string[]>;
+  };
   readonly sessions: {
     /** Read disk/archive records and already-hosted runtimes only; never reconcile or open a runtime. */
-    readonly listCatalogSessions: (cwd: string, signal?: AbortSignal) => Promise<readonly PluginSessionSnapshot[]>;
+    readonly listCatalogSessions: (cwd: string, signal?: AbortSignal) => Promise<readonly Omit<PluginSessionSnapshot, "pinned">[]>;
   };
 }
 
@@ -77,11 +80,16 @@ export function createServerPluginCatalogCapabilityFactory(
       }
       async function sessions(selection: PluginWorkspaceSelection, signal: AbortSignal): Promise<readonly PluginSessionSnapshot[]> {
         const selected = await workspace(selection, signal);
-        const rows = await options.sessions.listCatalogSessions(selected.path, signal);
+        const [rows, pinnedSessionIds] = await Promise.all([
+          options.sessions.listCatalogSessions(selected.path, signal),
+          options.pins.pinnedSessionIds(),
+        ]);
         assertActive(signal);
         // A reader must not supply records from a different workspace, even for get-by-id.
         if (rows.some((row) => absolutePath(row.cwd) !== selected.path)) throw new Error("Catalog session is outside selected workspace");
-        return rows;
+        // Match native cleanup: a pin in any retained scope protects this identity.
+        const pinnedIds = new Set(pinnedSessionIds);
+        return rows.map((row) => ({ ...row, pinned: pinnedIds.has(row.id) }));
       }
       const value = PI_WEB_HOST_CATALOG_CAPABILITY.parse({
         version: 1,

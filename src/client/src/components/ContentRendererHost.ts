@@ -212,12 +212,12 @@ export class ContentRendererHost extends LitElement {
     const sourceClass = this.codeBlocks?.overflow === "wrap" ? "source-wrap" : "source-scroll";
     return html`<div class=${this.externalControls ? "" : "code-block-frame"}>
       ${this.externalControls ? null : html`<div class="controls code-block-header" role="group" aria-label=${messages.t("controls")}>
-        <div class="views">
+        <div class="views" data-ui-context="content-views">
           ${repeat(this.choices, ({ id }) => id, ({ id, label, renderer }) => html`
-            <button type="button" class="ui-button ui-button--compact" aria-controls="content" aria-pressed=${id === this.selectedId && !showingRaw} @click=${() => { this.selectRenderer(id); }}>${renderer.title ?? label}</button>
+            <button type="button" class="ui-button ui-button--compact ui-choice" aria-controls="content" data-selected=${id === this.selectedId && !showingRaw} aria-pressed=${id === this.selectedId && !showingRaw} @click=${() => { this.selectRenderer(id); }}>${renderer.title ?? label}</button>
           `)}
           ${this.renderer === undefined ? null : html`
-            <button type="button" class="ui-button ui-button--compact" aria-controls="content" aria-pressed=${showingRaw} @click=${() => { this.setRaw(true); }}>${messages.t("raw")}</button>
+            <button type="button" class="ui-button ui-button--compact ui-choice" aria-controls="content" data-selected=${showingRaw} aria-pressed=${showingRaw} @click=${() => { this.setRaw(true); }}>${messages.t("raw")}</button>
           `}
         </div>
         ${this.codeBlocks?.copy === false ? null : html`
@@ -237,23 +237,25 @@ export class ContentRendererHost extends LitElement {
   }
 
   static override styles = [codeBlockFrameStyles, css`
-    /* Keep natural height so the surrounding flex viewer owns the scroll range. */
-    :host { display: block; flex-shrink: 0; margin: 0 0 10px; min-width: 0; color: var(--pi-text); }
-    :host([external-controls]) { margin: 0; background: var(--pi-bg); }
-    #content { border-radius: 0 0 7px 7px; }
-    .code-block-header { flex-wrap: nowrap; padding-inline-start: 0; }
-    .views { display: flex; flex: 1 1 0; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
-    .views > button { flex: 0 0 auto; white-space: nowrap; }
-    .ui-button[aria-pressed="true"] { color: var(--pi-text); background: var(--pi-surface-hover); }
-    :is(button, pre, .plain-code-block, .preview):focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
-    pre { overflow: auto; white-space: pre; text-align: left; direction: ltr; padding: 12px; margin: 0; }
-    /* Raw-source policy must not restyle elements produced by a plugin preview. */
-    #content > .plain-code-block { padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-    #content > pre.source-wrap { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
-    #content > .plain-code-block.source-scroll { overflow: auto; white-space: pre; overflow-wrap: normal; }
-    code { font: 13px/1.5 var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
-    .preview { overflow: auto; padding: 12px; }
-    p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 var(--pi-font, system-ui, sans-serif); }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    @layer pi-web-base {
+      /* Keep natural height so the surrounding flex viewer owns the scroll range. */
+      :host { display: block; flex-shrink: 0; margin: 0 0 10px; min-width: 0; color: var(--pi-text); }
+      :host([external-controls]) { margin: 0; background: var(--pi-bg); }
+      #content { border-radius: 0 0 7px 7px; }
+      .code-block-header { flex-wrap: nowrap; padding-inline-start: 0; }
+      .views { display: flex; flex: 1 1 0; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
+      .views > button { flex: 0 0 auto; white-space: nowrap; }
+      .ui-button[aria-pressed="true"] { color: var(--pi-text); background: var(--pi-surface-hover); }
+      :is(button, pre, .plain-code-block, .preview):focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -2px; }
+      pre { overflow: auto; white-space: pre; text-align: left; direction: ltr; padding: 12px; margin: 0; }
+      /* Raw-source policy must not restyle elements produced by a plugin preview. */
+      #content > .plain-code-block { padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #content > pre.source-wrap { overflow: visible; white-space: pre-wrap; overflow-wrap: anywhere; }
+      #content > .plain-code-block.source-scroll { overflow: auto; white-space: pre; overflow-wrap: normal; }
+      code { font: 13px/1.5 var(--pi-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); }
+      .preview { overflow: auto; padding: 12px; }
+      p { color: var(--pi-muted); margin: 0; padding: 10px 12px; font: 12px/1.5 var(--pi-font, system-ui, sans-serif); }
+      .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    }
   `];
 }

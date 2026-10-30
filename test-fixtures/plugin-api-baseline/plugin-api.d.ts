@@ -17,6 +17,8 @@ import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse
 export type { FileContentMediaType, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonObject, JsonPrimitive, JsonValue, PluginBackend, PluginBackendScope, PluginPeer, PluginPeerRequestOptions, PluginPeerChannelOptions, PluginPeerChannelClose, PluginPeerChannel, MachineKind, PiWebComponentStatus, PiWebRuntimeIdentity, PiWebDockerMode, PiWebInstallationInfo, PiWebInstallationKind, PiWebReleaseStatus, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, PiWebVersionResponse, PluginCapability, PluginCapabilityProvision, SessionUiMetadata, AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, TerminalCommandRunHandle, TerminalCommandRunStatus, WorkspaceProviderCapabilities, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, } from "./shared/pluginApiTypes.js";
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
 /** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
 export interface PiWebPluginV5 {
@@ -35,8 +37,13 @@ export type PluginActivationResultV5 = Omit<PluginActivationResult, "contributio
 export interface PluginCatalog extends PluginCatalogV1 {
     readonly machineId: string;
 }
+export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
+    readonly machineId: string;
+}
 export interface PluginDiscoveryContext {
     readonly catalog: PluginCatalog;
+    /** Explicit lifecycle commands for this captured machine. Omitted by older hosts. Call from event handlers, not render callbacks. */
+    readonly sessions?: PluginSessionLifecycle;
     readonly backend?: PluginBackend;
 }
 export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext;
@@ -58,6 +65,7 @@ export interface PluginContributionsV5 extends Omit<PluginContributions, "action
     syntaxHighlighters?: SyntaxHighlighterContribution[];
     filePreviewers?: FilePreviewerContribution[];
     contentRenderers?: ContentRendererContributionV5[];
+    /** @deprecated Declare static themes in package.json piWeb.plugins[].themes with browserRoot and stylesheet paths. */
     themes?: ThemeContributionV5[];
     fileIconThemes?: FileIconThemeContribution[];
     actions?: PluginActionV5[];
@@ -340,7 +348,9 @@ export interface PluginContributions {
     workspacePanels?: WorkspacePanelContribution[];
     workspaceLabels?: WorkspaceLabelContribution[];
     sessionLabels?: SessionLabelContribution[];
+    /** @deprecated Declare static themes in package.json piWeb.plugins[].themes instead. */
     themes?: ThemeContribution[];
+    /** @deprecated Declare static pairs in package.json piWeb.plugins[].themePairs instead. */
     themePairs?: ThemePairContribution[];
 }
 export interface PluginMachine {
@@ -855,7 +865,10 @@ export interface FileIconsCapability {
 }
 export type ThemeColorScheme = "dark" | "light";
 export type ThemeTokens = Record<string, string>;
-/** Legacy v4 palette contract. V5 themes contribute CSS files instead. */
+/**
+ * Legacy v4 palette contract.
+ * Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes instead.
+ */
 export interface ThemeContribution {
     id: LocalContributionId;
     name: string;
@@ -864,9 +877,11 @@ export interface ThemeContribution {
     colorScheme: ThemeColorScheme;
     tokens: ThemeTokens;
 }
+/** Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes with stylesheet paths instead. */
 export interface ThemeContributionV5 extends Omit<ThemeContribution, "tokens"> {
     stylesheets?: StylesheetContribution[];
 }
+/** Deprecated runtime contribution; declare static pairs in package.json piWeb.plugins[].themePairs instead. */
 export interface ThemePairContribution {
     id: LocalContributionId;
     name: string;

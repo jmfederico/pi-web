@@ -85,6 +85,8 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
  */
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
+  sessionCleanupPinnedExclusions: "sessions.cleanup.pinnedExclusions",
+  sessionPinsDaemonOwned: "sessions.pins.daemonOwned",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -218,6 +220,8 @@ export interface PiWebConfigValues {
   };
   /** When true, LLMs can start new sessions via the spawn_session tool. */
   spawnSessions?: boolean;
+  /** When true, LLMs can send messages to other sessions. On by default; independent of spawning. */
+  sessionMessages?: boolean;
   /**
    * When true, LLMs can start, inspect, stop, resume, and archive tracked
    * child sessions through the subsession tools.
@@ -386,6 +390,7 @@ export interface PiWebConfigEnvOverrides {
   port: boolean;
   allowedHosts: boolean;
   spawnSessions: boolean;
+  sessionMessages: boolean;
   subsessions: boolean;
   askUser: boolean;
 }
@@ -741,6 +746,8 @@ export interface SessionBulkDeleteArchivedResponse {
 }
 
 export interface SessionCleanupRequest {
+  /** Exclude sessions pinned in navigation preferences. Omit/false to retain existing cleanup behavior. */
+  skipPinned?: boolean;
   /** Archive non-archived sessions whose modified time is older than this many days. Omit/null to disable. */
   archiveIdleDays?: number | null;
   /** Permanently delete archived sessions whose archivedAt time is older than this many days. Omit/null to disable. */
@@ -771,6 +778,7 @@ export interface SessionCleanupPreviewResponse {
   projects: SessionCleanupProjectSummary[];
   totals: SessionCleanupTotals;
   skippedBusySessionIds?: string[];
+  skippedPinnedSessionIds?: string[];
 }
 
 export interface SessionCleanupExecuteResponse extends SessionCleanupPreviewResponse {
@@ -1526,6 +1534,14 @@ export interface WorkspaceChangedEvent {
   projectId: string;
 }
 
+/** Scoped invalidation; consumers reload the current daemon-owned pin preference. */
+export interface SessionPinsChangedEvent {
+  type: "session-pins.changed";
+  projectId: string;
+  workspaceId: string;
+  revision: number;
+}
+
 export type GlobalSessionEvent =
   | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
   | SessionNotificationSummaryEvent
@@ -1533,6 +1549,7 @@ export type GlobalSessionEvent =
   | SessionStartupProgressEvent
   | ModelScopeChangedEvent
   | WorkspaceChangedEvent
+  | SessionPinsChangedEvent
   | SessionOpenAskChangedEvent
   | ServerNoticeEvent;
 export type RealtimeEvent = GlobalSessionEvent | MachineStatusUiEvent;

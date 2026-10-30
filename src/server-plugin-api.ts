@@ -1,3 +1,4 @@
+import { isKnownThinkingLevel, type ThinkingLevel } from "./shared/thinkingLevels.js";
 import type { ServerNoticePresentation } from "./shared/serverNoticePresentation.js";
 export type { ServerNoticePresentation } from "./shared/serverNoticePresentation.js";
 export type { TerminalTitlePresentation } from "./shared/terminalTitlePresentation.js";
@@ -33,6 +34,13 @@ export {
   type PluginCatalogReadOptions,
   type PluginCatalogV1,
 } from "./shared/pluginCatalogTypes.js";
+
+export {
+  PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  type PluginSessionLifecycleV1,
+  type PluginSessionLifecycleState,
+  type PluginSessionLifecycleOptions,
+} from "./shared/pluginSessionLifecycleTypes.js";
 
 /** Discover this package's local v5 backend on a hosted pi.events bus.
  * Throws synchronously outside PI WEB or when the paired backend is unavailable.
@@ -216,6 +224,10 @@ export interface PiWebHostPiSessionRunInput {
   readonly workspaceId: string;
   /** Non-empty initial prompt, limited to 64 KiB of UTF-8. */
   readonly prompt: string;
+  /** Exact provider/model-id; omission uses normal session defaults. */
+  readonly model?: string;
+  /** Omission uses normal session defaults. Unsupported levels reject before prompting. */
+  readonly thinkingLevel?: ThinkingLevel;
 }
 
 /** Detached final outcome for one host-owned Pi session run. */
@@ -237,6 +249,9 @@ export interface PiWebHostPiSessionCreated {
 export interface PiWebHostPiSessionRun extends PiWebHostPiSessionCreated {
   /** Initial submission outcome, including final provider errors; not later user turns. */
   readonly completion: Promise<PiWebHostPiSessionRunCompletion>;
+  /** Effective startup settings, when reported by the host. */
+  readonly model?: string;
+  readonly thinkingLevel?: ThinkingLevel;
 }
 
 /** Bounded initial-run admission. Plugin revocation cancels only unpublished startup. */
@@ -244,7 +259,10 @@ export interface PiWebHostPiSessionsV1 {
   readonly version: 1;
   /** Publish an observed session without a prompt; connect separately before companion kickoff. */
   readonly create: (input: PiWebHostWorkspaceSelection) => Promise<PiWebHostPiSessionCreated>;
-  /** Re-resolve current authority, start one session, and admit its initial prompt. */
+  /** Re-resolve current authority, start one session, and admit its initial prompt.
+   * No implicit model/thinking fallback. Errors with code PI_SESSION_MODEL_UNAVAILABLE
+   * or PI_SESSION_THINKING_UNAVAILABLE guarantee no initial prompt was submitted.
+   */
   readonly run: (input: PiWebHostPiSessionRunInput) => Promise<PiWebHostPiSessionRun>;
 }
 
@@ -596,7 +614,7 @@ function snapshotPiWebHostPiSessionsV1(value: unknown): PiWebHostPiSessionsV1 {
 
 function snapshotPiWebHostPiSessionRunInput(value: unknown): PiWebHostPiSessionRunInput {
   if (!isPublicJsonObject(value)) throw new Error("PI WEB host PI sessions capability v1 run input must be an object");
-  const supportedKeys = new Set(["projectId", "workspaceId", "prompt"]);
+  const supportedKeys = new Set(["projectId", "workspaceId", "prompt", "model", "thinkingLevel"]);
   for (const key of Reflect.ownKeys(value)) {
     if (typeof key !== "string" || !supportedKeys.has(key)) {
       throw new Error(`Unsupported PI WEB host PI sessions capability v1 run input field: ${String(key)}`);
@@ -608,7 +626,8 @@ function snapshotPiWebHostPiSessionRunInput(value: unknown): PiWebHostPiSessionR
   const projectId = requiredBoundedPiSessionString(Reflect.get(value, "projectId"), "projectId", 512);
   const workspaceId = requiredBoundedPiSessionString(Reflect.get(value, "workspaceId"), "workspaceId", 512);
   const prompt = requiredBoundedPiSessionUtf8String(Reflect.get(value, "prompt"), "prompt", 64 * 1024);
-  return Object.freeze({ projectId, workspaceId, prompt });
+  const settings = snapshotPiSessionSettings(value);
+  return Object.freeze({ projectId, workspaceId, prompt, ...settings });
 }
 
 function snapshotPiWebHostPiSessionRun(value: unknown): PiWebHostPiSessionRun {
@@ -619,7 +638,20 @@ function snapshotPiWebHostPiSessionRun(value: unknown): PiWebHostPiSessionRun {
     throw new Error("PI WEB host PI sessions capability v1 run must expose completion");
   }
   const completion = Promise.resolve(completionValue).then(snapshotPiWebHostPiSessionRunCompletion);
-  return Object.freeze({ sessionId, completion });
+  return Object.freeze({ sessionId, completion, ...snapshotPiSessionSettings(value) });
+}
+
+function snapshotPiSessionSettings(value: Record<string, unknown>): { readonly model?: string; readonly thinkingLevel?: ThinkingLevel } {
+  const modelValue = Reflect.get(value, "model");
+  const thinkingValue = Reflect.get(value, "thinkingLevel");
+  const model = modelValue === undefined ? undefined : requiredBoundedPiSessionString(modelValue, "model", 512);
+  if (thinkingValue !== undefined && (typeof thinkingValue !== "string" || !isKnownThinkingLevel(thinkingValue))) {
+    throw new Error("Invalid PI WEB host PI sessions thinkingLevel");
+  }
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(thinkingValue === undefined ? {} : { thinkingLevel: thinkingValue }),
+  };
 }
 
 function snapshotPiWebHostPiSessionRunCompletion(value: unknown): PiWebHostPiSessionRunCompletion {

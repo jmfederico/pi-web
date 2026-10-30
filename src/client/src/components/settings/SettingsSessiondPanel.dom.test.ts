@@ -18,7 +18,7 @@ function configResponse(): PiWebConfigResponse {
     exists: true,
     config: { spawnSessions: false, subsessions: true, askUser: false },
     effectiveConfig: { spawnSessions: true, subsessions: true, askUser: true },
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
   };
 }
 
@@ -70,6 +70,7 @@ describe("SettingsSessiondPanel DOM", () => {
     for (const [id, label, tool] of [
       ["spawn-sessions", "Allow agents to start sessions", "spawn_session"],
       ["subsessions", "Allow agents to track child sessions", "spawn_subsession"],
+      ["session-messages", "Allow agents to message other sessions", "send_session_message"],
       ["ask-user", "Allow agents to ask you questions", "ask_user"],
     ] as const) {
       const input = toggle(panel, id);
@@ -114,7 +115,7 @@ describe("SettingsSessiondPanel DOM", () => {
     expect(help(panel, toggle(panel, "subsessions"))).toContain("Enable “Allow agents to start sessions” first.");
     panel.saving = true;
     await panel.updateComplete;
-    for (const id of ["spawn-sessions", "subsessions", "ask-user"]) {
+    for (const id of ["spawn-sessions", "subsessions", "session-messages", "ask-user"]) {
       expect(toggle(panel, id).disabled).toBe(true);
     }
   });
@@ -128,7 +129,41 @@ describe("SettingsSessiondPanel DOM", () => {
     expect(summary?.getAttribute("aria-describedby")).toBe("restart-summary-help");
     expect(summary?.querySelector("h3")?.textContent).toBe("After the next daemon restart");
     expect(summary?.querySelector("small")?.textContent).toContain("This does not show the running daemon’s active settings.");
-    expect(Array.from(summary?.querySelectorAll("dd") ?? [], (item) => item.textContent)).toEqual(["Disabled", "Disabled", "Enabled"]);
+    expect(Array.from(summary?.querySelectorAll("dd") ?? [], (item) => item.textContent)).toEqual(["Disabled", "Disabled", "Enabled", "Enabled"]);
+  });
+
+  it("keeps messaging independent of spawning, saves explicit choices, and resets saved overrides", async () => {
+    const config = configResponse();
+    config.effectiveConfig.spawnSessions = false;
+    config.config.sessionMessages = false;
+    config.effectiveConfig.sessionMessages = true;
+    config.configSources = { "/sessionMessages": "defaults" };
+    const panel = await mount(config);
+    const onSave = vi.fn();
+    const onReset = vi.fn();
+    panel.onSave = onSave;
+    panel.onReset = onReset;
+    await panel.updateComplete;
+    const messages = toggle(panel, "session-messages");
+    expect(messages.checked).toBe(true);
+    expect(messages.disabled).toBe(false);
+    messages.click();
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ sessionMessages: false });
+    const reset = panel.shadowRoot?.querySelector<HTMLButtonElement>('button[aria-label="Reset saved override for /sessionMessages"]');
+    expect(reset).not.toBeNull();
+    reset?.click();
+    expect(onReset).toHaveBeenCalledExactlyOnceWith(["/sessionMessages"]);
+
+    panel.configResponse = { ...config, enforcedSettings: { "/sessionMessages": "PI_WEB_SESSION_MESSAGES" }, effectiveConfig: { ...config.effectiveConfig, sessionMessages: false } };
+    await panel.updateComplete;
+    expect(messages.checked).toBe(false);
+    expect(messages.disabled).toBe(true);
+    expect(help(panel, messages)).toContain("PI_WEB_SESSION_MESSAGES");
+    expect(reset?.disabled).toBe(true);
+    messages.click();
+    reset?.click();
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onReset).toHaveBeenCalledOnce();
   });
 
   it("separates saved naming values and immediate-effect help from restart permissions", async () => {

@@ -4,6 +4,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import { cache } from "lit/directives/cache.js";
 import { live } from "lit/directives/live.js";
 import type { AppAction } from "../actions";
+import { loadThemeCatalog, type BrowserThemeCatalog } from "../themeCatalog";
 import { configApi, piPackagesApi, pluginsApi, type Machine, type MachineHealth, type MachineRuntime, type SessionModel, type PiPackageMutationResponse, type PiPackageScope, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
 import type { McpAuthContext, McpAuthHandler } from "./settings/SettingsMcpPanel";
 import "./settings/SettingsMcpPanel";
@@ -47,6 +48,10 @@ export class SettingsDialog extends LitElement {
   @property({ attribute: false }) section: SettingsSection = "general";
   @property({ attribute: false }) actions: AppAction[] = [];
   @property({ attribute: false }) themes: readonly QualifiedThemeContribution[] = [];
+  @property({ attribute: false }) onThemeCatalogLoaded: (catalog: BrowserThemeCatalog) => void = () => undefined;
+  @state() private themeCatalogLoading = false;
+  @state() private themeCatalogError = "";
+  private themeCatalogRequested = false;
   @property({ attribute: false }) fileIconThemes: readonly QualifiedFileIconThemeContribution[] = [];
   @property({ attribute: false }) fileIconPreference: string | undefined;
   @property({ attribute: false }) onSelectFileIconTheme?: (id: string) => void;
@@ -123,6 +128,7 @@ export class SettingsDialog extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.loadThemeCatalogForGeneral();
     void this.loadConfig();
     void this.loadAccessConfigForTarget();
     void this.reloadSessiondState();
@@ -138,6 +144,7 @@ export class SettingsDialog extends LitElement {
 
   protected override updated(changed: PropertyValues<this>): void {
     if (changed.has("section")) {
+      this.loadThemeCatalogForGeneral();
       // The surface must render its slot before the mobile tab row has layout.
       const surface = this.renderRoot.querySelector<ModalSurface>("modal-surface");
       void surface?.updateComplete.then(() => {
@@ -170,6 +177,25 @@ export class SettingsDialog extends LitElement {
     if (!this.pluginLifecycleSupportNeedsReload(previousRuntime, currentTarget)) return;
     this.resetPluginStateForTargetChange();
     if (this.isConnected) void this.loadPluginsForTarget(currentTarget);
+  }
+
+  private loadThemeCatalogForGeneral(): void {
+    if (this.isConnected && this.section === "general" && !this.themeCatalogRequested) void this.loadThemeInventory();
+  }
+
+  private async loadThemeInventory(): Promise<void> {
+    if (this.themeCatalogLoading) return;
+    this.themeCatalogRequested = true;
+    this.themeCatalogLoading = true;
+    this.themeCatalogError = "";
+    try {
+      const catalog = await loadThemeCatalog();
+      if (this.isConnected) this.onThemeCatalogLoaded(catalog);
+    } catch (error) {
+      if (this.isConnected) this.themeCatalogError = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.themeCatalogLoading = false;
+    }
   }
 
   override render(): TemplateResult {
@@ -370,6 +396,9 @@ export class SettingsDialog extends LitElement {
         <settings-theme-panel
           slot="appearance"
           .themes=${this.themes}
+          .catalogLoading=${this.themeCatalogLoading}
+          .catalogError=${this.themeCatalogError}
+          .onRetryCatalog=${() => this.loadThemeInventory()}
           .configResponse=${this.configResponse}
           .onReset=${(paths: string[]) => this.saveConfig({}, paths)}
           .preference=${this.themePreference}

@@ -19,6 +19,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     agentDir: AGENT_DIR,
     sessionEvents: new PiSessionEventConnections(),
     archiveStore: emptyArchiveStore(),
+    sessionPins: { pinnedSessionIds: () => Promise.resolve([]) },
     modelRuntime: testModelRuntime,
     sessionManager: sessionGateway([]),
     workspaceActivity: new WorkspaceActivityService(),
@@ -29,6 +30,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     catalogRefreshStatus: { isRefreshInFlight: () => false },
     config: { read: () => Promise.reject(new Error("config read not expected in this test")) },
     subsessionsEnabled: false,
+    sessionMessagesEnabled: true,
     messageTargets: { resolveSpawnTarget: () => Promise.reject(new Error("messaging not expected in this test")) },
     askUserEnabled: true,
     appendSystemPromptSections: [],
@@ -107,6 +109,14 @@ describe("sessiond session service dependency assembly", () => {
   it("passes session-local event and companion bindings through to the session service", () => {
     const sessionEvents = new PiSessionEventConnections();
     expect(sessionServiceDependencies(daemonCollaborators({ sessionEvents })).sessionEvents).toBe(sessionEvents);
+  });
+
+  it("passes the messaging preference independently of spawning", () => {
+    const spawnTargets = { resolveSpawnTarget: () => Promise.reject(new Error("not used")) };
+    const deps = sessionServiceDependencies(daemonCollaborators({ sessionMessagesEnabled: false, spawnTargets }));
+    expect(deps.sessionMessagesEnabled).toBe(false);
+    expect(deps.spawnTargets).toBe(spawnTargets);
+    expect(sessionServiceDependencies(daemonCollaborators()).sessionMessagesEnabled).toBe(true);
   });
 
   it("passes the ask-user preference through to the session service", () => {

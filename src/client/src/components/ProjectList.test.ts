@@ -13,6 +13,117 @@ afterEach(() => {
   localStorage.clear();
 });
 
+describe("project sidebar styling contract", () => {
+  it("adds anatomy hooks to existing elements and keeps menu activation independent", async () => {
+    const first = project("first");
+    const second = project("second / special");
+    const list = await mountProjectList([first, second], undefined);
+    list.selected = first;
+    list.onSelect = vi.fn();
+
+    await list.updateComplete;
+
+    const root = list.shadowRoot;
+    if (root === null) throw new Error("Expected a shadow root");
+    const section = root.querySelector("section");
+    const row = rowFor(list, second.name);
+    expect(section?.getAttribute("data-ui-context")).toBe("projects");
+    expect(section?.getAttribute("data-collapsed")).toBe("false");
+    expect(section?.querySelector(".ui-nav-list")).not.toBeNull();
+    expect(row.matches(".ui-nav-row")).toBe(true);
+    expect(row.querySelector(":scope > .ui-nav-row-main")).not.toBeNull();
+    expect(row.querySelector(".ui-nav-row-label")).not.toBeNull();
+    expect(row.querySelector(".ui-nav-row-meta")).not.toBeNull();
+    const actions = row.querySelector(":scope > .ui-nav-row-actions");
+    expect(actions?.parentElement).toBe(row);
+    const trigger = actions?.querySelector<HTMLButtonElement>(".ui-nav-row-action");
+    if (!trigger) throw new Error("Expected a row action");
+    expect(trigger.classList.contains("ui-popup-trigger")).toBe(true);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    trigger.click();
+    await list.updateComplete;
+
+    const panel = root.getElementById(trigger.getAttribute("aria-controls") ?? "");
+    expect(panel).not.toBeNull();
+    expect(panel?.matches(".ui-nav-row-menu.ui-menu.ui-popup-panel[popover]")).toBe(true);
+    expect(panel?.getAttribute("data-ui-context")).toBe("project-actions");
+    expect(trigger.getAttribute("aria-controls")).toBe(panel?.id);
+    expect(panel?.id).not.toBe("");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(list.onSelect).not.toHaveBeenCalled();
+    expect(list.selected).toBe(first);
+    expect(row.getAttribute("data-current")).toBe("false");
+    expect(row.hasAttribute("aria-current")).toBe(false);
+    trigger.click();
+    await list.updateComplete;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(row.querySelector(".ui-nav-row-menu")).toBeNull();
+    const main = row.querySelector<HTMLElement>(".ui-nav-row-main");
+    if (main === null) throw new Error("Expected row content");
+    main.click();
+    expect(list.onSelect).toHaveBeenCalledExactlyOnceWith(second);
+  });
+
+  it("refreshes current, activity, busy and unread hooks without replacing the row", async () => {
+    const first = project("first");
+    const second = project("second");
+    const list = await mountProjectList([first, second], undefined);
+    const row = rowFor(list, "first");
+    expect(row.getAttribute("data-current")).toBe("false");
+    expect(row.hasAttribute("aria-current")).toBe(false);
+    expect(row.getAttribute("data-activity")).toBe("idle");
+    expect(row.getAttribute("data-busy")).toBe("false");
+    expect(row.getAttribute("data-unread")).toBe("false");
+    list.selected = { ...first };
+    list.statusSnapshot = machineStatusSnapshot({ projects: { first: { "core:working": true, "core:unread": true } } });
+    await list.updateComplete;
+    expect(rowFor(list, "first")).toBe(row);
+    expect(row.getAttribute("data-current")).toBe("true");
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(row.getAttribute("data-activity")).toBe("session");
+    expect(row.getAttribute("data-busy")).toBe("true");
+    expect(row.getAttribute("data-unread")).toBe("true");
+
+    list.selected = second;
+    list.statusSnapshot = machineStatusSnapshot({ revision: 2, projects: { first: { "core:terminal": true } } });
+    await list.updateComplete;
+    expect(row.getAttribute("data-current")).toBe("false");
+    expect(row.hasAttribute("aria-current")).toBe(false);
+    expect(rowFor(list, "second").getAttribute("aria-current")).toBe("true");
+    expect(row.getAttribute("data-activity")).toBe("terminal");
+    expect(row.getAttribute("data-busy")).toBe("false");
+    expect(row.getAttribute("data-unread")).toBe("false");
+    list.statusSnapshot = undefined;
+    await list.updateComplete;
+    expect(row.getAttribute("data-activity")).toBe("idle");
+    expect(row.getAttribute("data-busy")).toBe("false");
+  });
+
+  it("exposes collapse hooks on the existing section and toggle", async () => {
+    const first = project("first");
+    const second = project("second");
+    const list = await mountProjectList([first, second], undefined);
+    list.collapsible = true;
+    list.onToggleCollapsed = vi.fn(() => { list.collapsed = !list.collapsed; });
+    await list.updateComplete;
+    const section = list.shadowRoot?.querySelector("section");
+    const toggle = section?.querySelector<HTMLButtonElement>(".ui-nav-section-toggle");
+    if (!section || !toggle) throw new Error("Expected a collapsible section");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    toggle.click();
+    await list.updateComplete;
+    expect(list.onToggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(section.getAttribute("data-collapsed")).toBe("true");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(section.querySelector(".ui-nav-list")).toBeNull();
+    toggle.click();
+    await list.updateComplete;
+    expect(section.getAttribute("data-collapsed")).toBe("false");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(section.querySelectorAll(".ui-nav-list > .ui-nav-row")).toHaveLength(2);
+  });
+});
+
 describe("project move actions", () => {
   it.each([0, 1, 2])("disables only boundary moves for row %i in parent order", async (index) => {
     const projects = [project("z"), project("a"), project("m")];

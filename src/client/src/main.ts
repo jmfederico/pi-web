@@ -1,14 +1,10 @@
 import "./components/PiWebApp";
 import { initializeLocalization, localizationPolicyFromConfig } from "./localization/browser.js";
-import { configureThemePolicy } from "./theme.js";
 import { configApi } from "./api.js";
 
 // Defaults belong to the gateway, not whichever machine/workspace is selected.
 // Browser-local preferences remain usable while the request is pending or fails.
-const config = configApi.config().then((response) => {
-  configureThemePolicy(response);
-  return response;
-}).catch((cause: unknown) => {
+const config = configApi.config().catch((cause: unknown) => {
   console.warn("[i18n] Could not load gateway localization defaults; using browser preferences", cause);
   return undefined;
 });

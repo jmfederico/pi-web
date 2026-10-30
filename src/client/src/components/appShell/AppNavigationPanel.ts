@@ -35,8 +35,6 @@ export class AppNavigationPanel extends LitElement {
 
   @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selectedMachine?: Machine;
-  /** PWA display mode: surfaces the single-machine identity in the header. */
-  @property({ type: Boolean }) locationIndicator = false;
   @property({ attribute: false }) machineStatuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) machineStatusSnapshots: Record<string, MachineStatusSnapshot> = {};
   @property({ attribute: false }) projects: Project[] = [];
@@ -45,6 +43,8 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) workspaces: Workspace[] = [];
   @property({ attribute: false }) selectedWorkspace?: Workspace;
   @property({ attribute: false }) sessions: SessionInfo[] = [];
+  @property({ type: Boolean }) projectSelectionLoading = false;
+  @property({ type: Boolean }) sessionsLoading = false;
   @property({ attribute: false }) selectedSession?: SessionInfo;
   @property({ attribute: false }) pinnedRootIds: string[] = [];
   @property({ attribute: false }) sessionActivities: Record<string, SessionActivity> = {};
@@ -210,7 +210,6 @@ export class AppNavigationPanel extends LitElement {
           .machines=${this.machines}
           .selected=${this.selectedMachine}
           .onEdit=${this.onEditMachine}
-          .locationIndicator=${this.locationIndicator}
           .statuses=${this.machineStatuses}
           .statusSnapshots=${this.machineStatusSnapshots}
           .onSelect=${(machine: Machine) => this.onSelectMachine?.(machine)}
@@ -251,6 +250,7 @@ export class AppNavigationPanel extends LitElement {
         ?data-manual-size=${!this.compact && this.sectionSizes.height("projects") !== undefined}
         .projects=${this.projects}
         .selected=${this.selectedProject}
+        .selectionLoading=${this.projectSelectionLoading}
         .statusSnapshot=${this.selectedMachineStatusSnapshot()}
         .collapsible=${this.collapsible}
         .collapsed=${this.projectsCollapsed}
@@ -286,6 +286,7 @@ export class AppNavigationPanel extends LitElement {
       ${this.workspacesCollapsed ? null : this.renderSectionResizeHandle("workspaces")}` : null}
       <session-list
         .sessions=${this.sessions}
+        .loading=${this.sessionsLoading}
         .pinnedRootIds=${this.pinnedRootIds}
         .onPin=${this.childCallbacks.pinSession}
         .onUnpin=${this.childCallbacks.unpinSession}

@@ -308,55 +308,42 @@ describe("persistedSubsessionCompletions", () => {
 });
 
 describe("renderSubsessionCompletions", () => {
-  it("returns completed output with a no-other-children status", () => {
-    expect(renderSubsessionCompletions([completion()], [])).toBe([
-      "Subsession child-1 stopped working (idle).",
-      "",
-      "--- SUBSESSION OUTPUT: child-1 ---",
-      "all done",
-      "",
-      "No other tracked subsessions are working.",
-    ].join("\n"));
+  it("reports idle without forwarding output or claiming task completion", () => {
+    const rendered = renderSubsessionCompletions([completion()], []);
+    expect(rendered).toContain("Subsession child-1 is now idle.");
+    expect(rendered).toContain("No other tracked subsessions are working.");
+    expect(rendered).not.toContain("all done");
+    expect(rendered).not.toContain("SUBSESSION OUTPUT");
   });
 
   it("identifies errors separately from output and names children still working without polling", () => {
     const failed = completion({ completionId: "child-2:run-1", sessionId: "child-2", status: "error", finalText: "partial answer", errorDetail: "provider failed" });
-    expect(renderSubsessionCompletions([completion({ finalText: "" }), failed], ["child-3", "child-4"])).toBe([
-      "Subsession child-1 stopped working (idle).",
-      "",
-      "--- SUBSESSION OUTPUT: child-1 ---",
-      "(no output)",
-      "",
-      "Subsession child-2 stopped working (error).",
-      "",
-      "Error: provider failed",
-      "",
-      "--- SUBSESSION OUTPUT: child-2 ---",
-      "partial answer",
-      "",
-      "Still working: child-3, child-4. Continue working, or call yield_to_subsessions alone and last at the next join point. Further unread results arrive automatically; do not poll.",
-    ].join("\n"));
+    const rendered = renderSubsessionCompletions([completion({ finalText: "" }), failed], ["child-3", "child-4"]);
+    expect(rendered).toContain("Subsession child-2 stopped with error.");
+    expect(rendered).toContain("Still working: child-3, child-4");
+    expect(rendered).not.toContain("partial answer");
+    expect(rendered).not.toContain("provider failed");
   });
 
-  it("applies the 2000-character notice limit to each result, not the whole batch", () => {
+  it("withholds every child's output regardless of size", () => {
     const first = completion({ finalText: "x".repeat(2000) });
     const second = completion({ completionId: "child-2:run-1", sessionId: "child-2", finalText: "y".repeat(2000) });
     const rendered = renderSubsessionCompletions([first, second], []);
-    expect(rendered).toContain(`--- SUBSESSION OUTPUT: child-1 ---\n${first.finalText}`);
-    expect(rendered).toContain(`--- SUBSESSION OUTPUT: child-2 ---\n${second.finalText}`);
+    expect(rendered).not.toContain(first.finalText);
+    expect(rendered).not.toContain(second.finalText);
     expect(rendered).not.toContain("was omitted");
   });
 
-  it("omits oversized output entirely, preserves errors, and retains the full result for explicit retrieval", () => {
+  it("withholds output and error detail while retaining the full snapshot after receipt", () => {
     const inbox = new SubsessionCompletionInbox();
     const result = completion({ finalText: `ANSWER${"x".repeat(1995)}`, status: "error", errorDetail: "provider failed" });
     inbox.record(result);
     const delivery = inbox.claim();
     const rendered = renderSubsessionCompletions(delivery, []);
 
-    expect(rendered).toContain("Subsession child-1 stopped working (error).");
-    expect(rendered).toContain("Error: provider failed");
-    expect(rendered).toContain('Output from subsession child-1 was too long for this completion notice and was omitted. Call check_subsession with sessionId "child-1" to retrieve the final output.');
+    expect(rendered).toContain("Subsession child-1 stopped with error.");
+    expect(rendered).not.toContain("provider failed");
+    expect(rendered).not.toContain("Use check_subsession");
     expect(rendered).not.toContain("--- SUBSESSION OUTPUT:");
     expect(rendered).not.toContain("ANSWER");
     inbox.receive(delivery.map(({ completionId }) => completionId));

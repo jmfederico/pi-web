@@ -235,6 +235,23 @@ describe("public server plugin API", () => {
       .rejects.toThrow("completion status is invalid");
   });
 
+  it("snapshots optional run settings and rejects invalid thinking before host admission", async () => {
+    const run = vi.fn((input: PiWebHostPiSessionRunInput) => Promise.resolve({
+      sessionId: "configured", completion: Promise.resolve({ status: "completed" }),
+      model: input.model, thinkingLevel: input.thinkingLevel,
+    }));
+    const sessions = PI_WEB_HOST_PI_SESSIONS_CAPABILITY.parse({
+      version: 1, create: () => ({ sessionId: "created" }), run,
+    });
+    const input = { projectId: "project", workspaceId: "workspace", prompt: "work", model: "provider/model", thinkingLevel: "high" as const };
+    const result = await sessions.run(input);
+    expect(run).toHaveBeenCalledWith(input);
+    expect(result).toMatchObject({ model: input.model, thinkingLevel: "high" });
+    await expect(Reflect.apply(sessions.run, sessions, [{ ...input, thinkingLevel: "invalid" }])).rejects.toThrow("thinkingLevel");
+    await expect(sessions.run({ ...input, model: "" })).rejects.toThrow("model");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("snapshots prompt-free creation", async () => {
     const selection = { projectId: "project", workspaceId: "workspace" };
     const create = vi.fn((input: PiWebHostWorkspaceSelection) => {
@@ -296,8 +313,8 @@ describe("public server plugin API", () => {
     expectTypeOf<keyof PiWebHostWorkspaceSelection>().toEqualTypeOf<"projectId" | "workspaceId">();
     expectTypeOf<keyof PiWebHostWorkspaceAuthority>().toEqualTypeOf<"project" | "workspace">();
     expectTypeOf<keyof PiWebHostWorkspacesV1>().toEqualTypeOf<"version" | "resolve">();
-    expectTypeOf<keyof PiWebHostPiSessionRunInput>().toEqualTypeOf<"projectId" | "workspaceId" | "prompt">();
-    expectTypeOf<keyof PiWebHostPiSessionRun>().toEqualTypeOf<"sessionId" | "completion">();
+    expectTypeOf<keyof PiWebHostPiSessionRunInput>().toEqualTypeOf<"projectId" | "workspaceId" | "prompt" | "model" | "thinkingLevel">();
+    expectTypeOf<keyof PiWebHostPiSessionRun>().toEqualTypeOf<"sessionId" | "completion" | "model" | "thinkingLevel">();
     expectTypeOf<keyof PiWebHostPiSessionRunCompletion>().toEqualTypeOf<"status">();
     expectTypeOf<keyof Extract<PiWebHostPiSessionRunCompletion, { status: "failed" }>>()
       .toEqualTypeOf<"status" | "error">();

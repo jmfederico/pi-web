@@ -54,5 +54,5 @@ export function hasStatusUnread(flags: StatusFlags | undefined): boolean {
 export function renderActionActivityIndicator(kind: ActivityIndicatorKind | undefined, label = "Active", unreadLabel?: string): TemplateResult | undefined {
   const indicator = renderActivityIndicator(kind, label, unreadLabel);
   if (indicator === undefined) return undefined;
-  return html`<span class="action-activity">${indicator}</span>`;
+  return html`<span class="action-activity ui-nav-row-leading">${indicator}</span>`;
 }

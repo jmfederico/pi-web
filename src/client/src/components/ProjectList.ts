@@ -1,7 +1,7 @@
 import { LocalizationController, localization } from "../localization/browser";
 import { projectWorkspaceMessages as messages } from "../projectWorkspaceMessages";
 import { stylesheetIntegrationCapability } from "../plugins/styles";
-import { LitElement, html, type PropertyValues } from "lit";
+import { LitElement, html, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
 import type { Project } from "../api";
@@ -23,6 +23,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
 
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selected?: Project;
+  @property({ type: Boolean }) selectionLoading = false;
   /** Status tree of the machine these projects belong to; absent means no indicators. */
   @property({ attribute: false }) statusSnapshot: MachineStatusSnapshot | undefined;
   @property({ type: Boolean, reflect: true }) collapsible = false;
@@ -68,39 +69,50 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
 
   override render() {
     return html`
-      <section>
+      <section data-ui-context="projects" data-collapsed=${String(this.collapsed)}>
         <h2 class="ui-toolbar">${this.renderHeading()}</h2>
         ${this.collapsed ? null : html`
-          <div class="list-body">
-            ${repeat(this.projects, (project) => project.id, (project, index) => html`
-              <div
-                class=${`action-row ${this.selected?.id === project.id ? "selected" : ""}`}
-                tabindex="0"
-                data-project-id=${project.id}
-                @focusin=${(event: FocusEvent) => { this.focusedControl = event.target instanceof HTMLElement ? event.target : undefined; }}
-                @focusout=${() => { this.focusedControl = undefined; }}
-                title=${project.path}
-                @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(project)); }}
-                @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
-              >
-                <div class="action-main">
-                  <span class="workspace-primary"><span class="workspace-primary-label"><bdi>${project.name}</bdi></span></span><small><bdi dir="ltr">${project.path}</bdi></small>
-                  ${this.renderActivity(project)}
+          <div class="list-body ui-nav-list" aria-busy=${String(this.selectionLoading)}>
+            ${repeat(this.projects, (project) => project.id, (project, index) => {
+              const flags = this.statusSnapshot?.projects[project.id];
+              const kind = statusActivityKind(flags);
+              const unread = hasStatusUnread(flags);
+              const current = this.selected?.id === project.id;
+              return html`
+                <div
+                  class=${`action-row ui-nav-row ${current ? "selected" : ""}`}
+                  data-current=${String(current)}
+                  aria-current=${current ? "true" : nothing}
+                  data-activity=${kind ?? "idle"}
+                  data-busy=${String(kind === "session" || kind === "sending")}
+                  data-unread=${String(unread)}
+                  tabindex="0"
+                  data-project-id=${project.id}
+                  @focusin=${(event: FocusEvent) => { this.focusedControl = event.target instanceof HTMLElement ? event.target : undefined; }}
+                  @focusout=${() => { this.focusedControl = undefined; }}
+                  title=${project.path}
+                  @click=${(event: MouseEvent) => { activateSelectableRow(event, () => this.onSelect?.(project)); }}
+                  @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
+                >
+                  <div class="action-main ui-nav-row-main">
+                    <span class="workspace-primary"><span class="workspace-primary-label ui-nav-row-label"><bdi>${project.name}</bdi></span></span><small class="ui-nav-row-meta"><bdi dir="ltr">${project.path}</bdi></small>
+                    ${this.renderActivity(kind, unread)}
+                  </div>
+                  <div class="action-menu ui-nav-row-actions">
+                    <button class="ui-button ui-button--icon action-menu-toggle ui-nav-row-action ui-popup-trigger" aria-expanded=${String(this.openMenuProjectId === project.id)} aria-controls=${`project-menu-${encodeURIComponent(project.id)}`} title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id); }}>⋯</button>
+                    ${this.openMenuProjectId === project.id ? html`
+                      <div popover="auto" class="action-menu-panel ui-menu ui-nav-row-menu ui-popup-panel" data-ui-context="project-actions" id=${`project-menu-${encodeURIComponent(project.id)}`} @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
+                        ${this.onMove === undefined ? null : html`
+                          <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
+                          <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
+                        `}
+                        <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("close")}</button>
+                      </div>
+                    ` : null}
+                  </div>
                 </div>
-                <div class="action-menu">
-                  <button class="ui-button ui-button--icon action-menu-toggle" title=${messages.t("projectActions")} aria-label=${messages.t("actionsFor", { name: project.name })} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(project.id); }}>⋯</button>
-                  ${this.openMenuProjectId === project.id ? html`
-                    <div popover="auto" class="action-menu-panel ui-menu" @click=${(event: MouseEvent) => { event.stopPropagation(); }}>
-                      ${this.onMove === undefined ? null : html`
-                        <button class="ui-button ui-menu-item" data-move ?disabled=${index === 0} @click=${() => { this.onMove?.(project, -1); }}>${messages.t("moveUp")}</button>
-                        <button class="ui-button ui-menu-item" data-move ?disabled=${index === this.projects.length - 1} @click=${() => { this.onMove?.(project, 1); }}>${messages.t("moveDown")}</button>
-                      `}
-                      <button class="ui-button ui-menu-item" title=${messages.t("closeProject")} @click=${() => { this.close(project); }}>${messages.t("close")}</button>
-                    </div>
-                  ` : null}
-                </div>
-              </div>
-            `)}
+              `;
+            })}
           </div>
         `}
       </section>
@@ -120,13 +132,11 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
     if (!this.collapsible) return html`<span>${messages.t("projects")}</span>`;
     const selectedSummary = this.selected?.name ?? messages.t("noProject");
     const selectedTitle = this.selected?.path ?? selectedSummary;
-    return html`<button class="ui-button ui-toolbar-title section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${messages.t("projects")}</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${localization.number(this.projects.length)}</small></button>`;
+    return html`<button class="ui-button ui-toolbar-title section-toggle ui-nav-section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${messages.t("projects")}</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count" role=${this.selectionLoading ? "status" : nothing}>${this.selectionLoading ? messages.t("openingProject") : localization.number(this.projects.length)}</small></button>`;
   }
 
-  private renderActivity(project: Project) {
-    const flags = this.statusSnapshot?.projects[project.id];
-    const kind = statusActivityKind(flags);
-    const unreadLabel = hasStatusUnread(flags) ? messages.t("projectUnread") : undefined;
+  private renderActivity(kind: ReturnType<typeof statusActivityKind>, unread: boolean) {
+    const unreadLabel = unread ? messages.t("projectUnread") : undefined;
     return renderActionActivityIndicator(kind, kind === "terminal" ? messages.t("projectTerminal") : messages.t("projectActive"), unreadLabel);
   }
 

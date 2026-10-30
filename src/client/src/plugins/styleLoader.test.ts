@@ -75,6 +75,27 @@ inline: url("data:image/svg+xml,<svg/>");
 });
 
 describe("createPluginStylesheetLoader", () => {
+  it("compiles document-delivered CSS without fetching, resolving assets against its revisioned URL", async () => {
+    const fixture = sheetFixture();
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const load = createPluginStylesheetLoader({ fetch, createSheet: fixture.createSheet, source: (url) => url === fileUrl ? "x { background: url(icon.png) }" : undefined });
+    expect(await load(fileUrl, new AbortController().signal)).toBe(fixture.sheet);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fixture.replaceSync).toHaveBeenCalledWith("x { background: url(https://example.test/plugins/palettes/icon.png) }");
+  });
+
+  it.each([
+    { source: "@import 'other.css';", maxBytes: 100, error: "bundle imports" },
+    { source: "x{}", maxBytes: 2, error: "exceeds 2 bytes" },
+  ])("keeps document-delivered CSS within the same policy and size limits: $error", async ({ source, maxBytes, error }) => {
+    const fixture = sheetFixture();
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const load = createPluginStylesheetLoader({ fetch, createSheet: fixture.createSheet, source: () => source, maxBytes });
+    await expect(load(fileUrl, new AbortController().signal)).rejects.toThrow(error);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fixture.replaceSync).not.toHaveBeenCalled();
+  });
+
   it("fetches once and compiles rewritten URLs using the final redirected file location", async () => {
     const fixture = sheetFixture();
     const response = cssResponse("x { background: url(icon.png) }");

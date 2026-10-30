@@ -5,8 +5,9 @@ import { extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig, normalizePath } from "vite";
 import { effectivePiWebConfig } from "./src/config";
-import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
+import { DEPLOYMENT_MANIFEST_CONTENT_TYPE, DEPLOYMENT_MANIFEST_PATH, createDeploymentFlavorResolver, deploymentHtmlForFlavor, deploymentIdentityAssetForPath, deploymentManifestForFlavor, isDeploymentIdentityAssetPath } from "./src/server/deploymentIdentity";
 import { detectPiWebInstallation } from "./src/server/piWebStatus";
+import { fetchThemeBootstrap, injectThemeBootstrap } from "./src/server/themeBootstrap";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
@@ -158,10 +159,17 @@ async function serveDevDeploymentIdentity(request: IncomingMessage, response: Se
   createReadStream(serving.filePath).pipe(response);
 }
 
-function devDeploymentIdentityPlugin(): Plugin {
+export function devDeploymentIdentityPlugin(flavor = deploymentFlavor): Plugin {
   return {
     name: "pi-web-dev-deployment-identity",
     apply: "serve",
+    transformIndexHtml: {
+      order: "pre",
+      async handler(html, context) {
+        if (context.originalUrl === undefined) return html;
+        return deploymentHtmlForFlavor(html, await flavor());
+      },
+    },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         void serveDevDeploymentIdentity(request, response, next);
@@ -198,8 +206,23 @@ function manualRefreshPlugin(): Plugin {
   };
 }
 
+export function devThemeBootstrapPlugin(load = () => fetchThemeBootstrap(`http://localhost:${String(apiPort)}/api/theme-bootstrap`)): Plugin {
+  return {
+    name: "pi-web-dev-theme-bootstrap",
+    apply: "serve",
+    transformIndexHtml: {
+      order: "pre",
+      async handler(html, context) {
+        // Direct transforms/build checks do not represent an initial HTTP response.
+        if (context.originalUrl === undefined || !html.includes("pi-web-theme-data")) return html;
+        try { return injectThemeBootstrap(html, await load()); } catch { return html; }
+      },
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin()],
+  plugins: [devDocsPlugin(), devDeploymentIdentityPlugin(), manualRefreshPlugin(), devThemeBootstrapPlugin()],
   root: "src/client",
   base: "./",
   build: {
@@ -232,6 +255,7 @@ export default defineConfig({
     proxy: {
       "/api": { target: `http://localhost:${String(apiPort)}`, ws: true },
       "/pi-web-plugins": { target: `http://localhost:${String(apiPort)}` },
+      "/pi-web-theme-assets": { target: `http://localhost:${String(apiPort)}` },
     },
   },
 });

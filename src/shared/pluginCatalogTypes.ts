@@ -20,6 +20,14 @@ export interface PluginSessionSnapshot {
   readonly name?: string;
   readonly metadata?: SessionUiMetadata;
   readonly archived: boolean;
+  /** ISO timestamp for creation, or null when unknown. */
+  readonly created: string | null;
+  /** ISO timestamp for last session-file modification, matching native idle-age rules; null when unknown. */
+  readonly modified: string | null;
+  /** ISO archive-entry timestamp, or null when not archived or unknown. Not the archive file's modification time. */
+  readonly archivedAt: string | null;
+  /** True when any durable pin protects this ID from native cleanup, including retained scopes. */
+  readonly pinned: boolean;
   readonly runtime: "not-hosted" | "idle" | "busy";
 }
 export interface PluginWorkspaceSelection {
@@ -139,11 +147,22 @@ function snapshotSession(value: unknown): PluginSessionSnapshot {
     metadata = Object.freeze(Object.fromEntries(Object.entries(record(row["metadata"])).map(([key, data]) => [key, jsonObject(data)])));
   }
   if (row["name"] !== undefined && typeof row["name"] !== "string") throw invalid();
+  if (typeof row["pinned"] !== "boolean") throw invalid();
+  const created = nullableTimestamp(row["created"]);
+  const modified = nullableTimestamp(row["modified"]);
+  const archivedAt = nullableTimestamp(row["archivedAt"]);
+  if (archivedAt !== null && !row["archived"]) throw invalid();
   return Object.freeze({
     id: text(row["id"]), cwd: text(row["cwd"]), archived: row["archived"], runtime,
+    created, modified, archivedAt, pinned: row["pinned"],
     ...(row["name"] === undefined ? {} : { name: row["name"] }),
     ...(metadata === undefined ? {} : { metadata }),
   });
+}
+function nullableTimestamp(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw invalid();
+  return value;
 }
 function snapshotSelection(value: unknown): PluginWorkspaceSelection;
 function snapshotSelection(value: unknown, session: true): PluginSessionSelection;

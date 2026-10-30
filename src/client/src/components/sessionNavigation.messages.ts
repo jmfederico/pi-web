@@ -2,6 +2,7 @@ import { message } from "../localization/service";
 
 export default {
   sessions: message("Sessions", "Session list section heading"),
+  loadingSessions: message("Loading sessions…", "Session navigation while the selected project's sessions load"),
   pinned: message("Pinned", "Pinned session group heading"),
   recent: message("Recent", "Unpinned session group heading"),
   archived: message("Archived", "Archived session group heading"),

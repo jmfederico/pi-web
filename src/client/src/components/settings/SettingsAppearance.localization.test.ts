@@ -41,7 +41,7 @@ async function shortcuts(actions = [action], nested = false): Promise<SettingsSh
   const panel = new SettingsShortcutsPanel();
   panel.actions = actions;
   panel.configResponse = {
-    path: "/raw/<img>/config.json", exists: true, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false }, config: {}, effectiveConfig: {},
+    path: "/raw/<img>/config.json", exists: true, envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false }, config: {}, effectiveConfig: {},
   } satisfies PiWebConfigResponse;
   if (nested) document.body.appendChild(document.createElement("div")).attachShadow({ mode: "open" }).append(panel);
   else document.body.append(panel);

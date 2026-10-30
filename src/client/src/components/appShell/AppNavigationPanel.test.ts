@@ -169,11 +169,6 @@ describe("header identity", () => {
     expect(panel.onShowActions).toHaveBeenCalledOnce();
   });
 
-  it("forwards the location-indicator flag to the machine switcher", async () => {
-    const panel = await mountHeaderPanel([machine("local")], true);
-
-    expect(section(panel, "machine-switcher", MachineSwitcher).locationIndicator).toBe(true);
-  });
 });
 
 describe("machine status wiring", () => {
@@ -264,7 +259,7 @@ describe("stable list inputs", () => {
     // Render counts are the regression contract, not a proxy for visible output.
     const renders = lists.map((list) => vi.spyOn(list, "render"));
     const panelRender = vi.spyOn(panel, "render");
-    panel.locationIndicator = true;
+    panel.selectedMachine = { ...machine("local"), name: "Renamed machine" };
     await settle();
     expect(panelRender).toHaveBeenCalledOnce();
     for (const render of renders) expect(render).not.toHaveBeenCalled();
@@ -393,10 +388,9 @@ function section<T>(panel: AppNavigationPanel, selector: string, type: abstract 
   return element;
 }
 
-async function mountHeaderPanel(machines: Machine[], locationIndicator = false): Promise<AppNavigationPanel> {
+async function mountHeaderPanel(machines: Machine[]): Promise<AppNavigationPanel> {
   const panel = new AppNavigationPanel();
   panel.machines = machines;
-  panel.locationIndicator = locationIndicator;
   document.body.append(panel);
   await panel.updateComplete;
   return panel;

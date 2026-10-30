@@ -267,6 +267,8 @@ After upgrading PI WEB for this API, restart the affected session daemon when sa
 
 A server plugin can create a normal, visible Pi conversation, with or without an initial prompt. A companion Pi extension can exchange messages with the backend and use Pi's own APIs to do agent work.
 
+The host PI sessions capability's `run()` accepts optional `model` (an exact `provider/model-id`) and `thinkingLevel` overrides. Omit either to use normal session defaults. Returned handles include effective startup settings when available. The host does not substitute defaults for unavailable overrides: errors with `code: "PI_SESSION_MODEL_UNAVAILABLE"` or `code: "PI_SESSION_THINKING_UNAVAILABLE"` guarantee that no initial prompt was submitted. A caller may explicitly remove the rejected override and try again; other startup errors and completion failures do not provide that guarantee. Scheduled agent tasks uses this contract for its [recorded settings fallback](scheduled-tasks.md#model-and-thinking-overrides).
+
 **The conversation belongs to the user once it is published.** Finishing the initial task, closing the browser, or disposing the initiating plugin does not discard it or stop later user work. Users can continue it like any other conversation.
 
 A messaging connection targets a session already hosted on that machine; it does not open saved sessions automatically. Sending a message is not proof that a companion is installed or that its work succeeded. Integrations must report their own progress and results. Connections have no startup-message replay, and closing a connection does not stop agent work.
@@ -335,7 +337,7 @@ Relays and Workflows are managed bundled packages, not independently versioned i
 
 | Change | What to do next |
 | --- | --- |
-| Install or edit a browser-only plugin | Reload the browser page |
+| Install or edit a browser-only plugin or declarative theme-only package | Reload the browser page |
 | Install, update, configure, enable, or disable a server-backed plugin | Restart the target session daemon, then reload the browser |
 | Change ordinary Pi resources such as extensions, skills, or prompts | Run `/reload` in each idle session |
 | Change an extension that registers model providers | Follow the separate [provider restart guidance](https://pi-web.dev/config#pi-extension-provider-baseline) |
@@ -398,6 +400,7 @@ Keep gateways and targets compatible. During this plugin API transition, upgrade
 - **Info** displays machine and PI WEB status without requiring a workspace, adds workspace details when selected, and provides copyable diagnostics.
 - **Updates** shows update/restart guidance when relevant and offers a manual update check. Run uses the selected machine's maintenance terminal in `$PI_WEB_DATA_DIR/maintenance` (default `~/.pi-web/maintenance`), whether or not a workspace is selected. It requires an available Terminal provider on that machine; guidance and Copy remain available without one.
 - **Workspace Tasks** turns project commands into runnable buttons.
+- **Scheduled agent tasks (beta)** is an optional, disabled-by-default package for agent-managed schedules and a read-only **Scheduled tasks** dashboard. See [installation, timezone settings, and execution behavior](scheduled-tasks.md).
 - **Spanish / Español** and **Swedish / Svenska** are optional interface language packs, included but disabled by default. See [Language packs](#language-packs) to enable them.
 
 ### Language packs
@@ -432,7 +435,7 @@ Create `.pi-web/tasks.json` in a project:
 }
 ```
 
-Open the **Tasks** tab to run a command in a workspace terminal. Tasks can also have a `description`. Review commands before running them, especially in shared repositories. Disabling the plugin hides the tab without changing the project file.
+Open the **Tasks** tab to run a command in a workspace terminal. These command buttons are separate from [scheduled agent tasks](scheduled-tasks.md), which dispatch conversations. Tasks can also have a `description`. Review commands before running them, especially in shared repositories. Disabling the plugin hides the tab without changing the project file.
 
 ### Workflows
 
@@ -502,7 +505,7 @@ The current browser and server contracts are both **API v5**. Browser v4 and ser
 
 ### Host-provided UI styles
 
-**Styling is experimental.** Shared classes, theme properties, visual design, and layout may change between releases. There is no stable styling contract yet; test custom styling when upgrading PI WEB.
+**Styling is mostly experimental.** The [initial theme styling contract](theme-styling-contract.md) supports specific conversation, choice, navigation-row, composer-control, and popup/menu hooks. Other shared classes, theme properties, visual design, and layout may change between releases; test custom styling when upgrading PI WEB.
 
 Plugins can reuse the host's button, select, toolbar, tab, and file/tree-row styles without receiving CSS text or creating stylesheet elements. Request `{ pluginId: "pi-web", id: "stylesheet-integration", version: 1 }`, resolve it in `start`, and opt each participating shadow root into the single shared UI bundle. See [integrating plugin components](#integrating-plugin-components) for the complete capability setup.
 
@@ -555,7 +558,7 @@ Stylesheet integration works with supported browser APIs v4 and v5. Its capabili
 
 ### CSS files and shadow roots
 
-Contribute CSS files to customize the document and participating host or plugin shadow roots. This builds on the shared UI patterns above and inherited `--pi-*` custom properties; it does not require a separate option for each styling choice. Internal host classes, component names, and markup are **not stable selectors**: you may target them, but test your CSS when upgrading PI WEB. CSS changes presentation, not behavior or component structure.
+Contribute CSS files to customize the document and participating host or plugin shadow roots. This builds on the shared UI patterns above and inherited `--pi-*` custom properties; it does not require a separate option for each styling choice. Only the hooks listed in the [theme styling contract](theme-styling-contract.md) are supported selectors. Other internal host classes, component names, and markup are **not stable selectors**: you may target them, but test your CSS when upgrading PI WEB. CSS changes presentation, not behavior or component structure.
 
 With browser API v5, add `stylesheets` to the object returned by `activate().contributions`:
 
@@ -590,13 +593,13 @@ For example, `controls.css` can style native controls inside integrated roots:
 }
 ```
 
-Each file has an `id` unique among its plugin's contribution IDs (or within its theme's stylesheet list), an absolute HTTP(S) `url`, and optional finite numeric `order` (default `1000`). Lower orders are adopted first; ties sort lexically by qualified ID (`plugin:file` or `plugin:theme:file`), independently of network completion. Normal CSS cascade, specificity, layers, and importance still apply. Contributed sheets follow a root's own adopted sheets; this is not a promise that every selector wins.
+Each runtime file has an `id` unique among its plugin's contribution IDs (or within its theme's stylesheet list), an absolute HTTP(S) `url`, and optional finite numeric `order` (default `1000`). [Declarative themes](#css-first-themes) use browser-root-relative `path` values instead; the gateway supplies their URLs. Lower orders are adopted first; ties sort lexically by qualified ID, independently of network completion. Normal CSS cascade, specificity, layers, and importance still apply. Contributed sheets follow a root's own adopted sheets; this is not a promise that every selector wins.
 
 Ship the CSS and referenced assets under the plugin's browser-public root. Use module-relative URLs rather than hard-coded PI WEB routes so nested deployments work. Configure your bundler to emit a CSS **file**, not a JavaScript CSS module or data URL; with Vite, `new URL("./controls.css?no-inline", import.meta.url).href` prevents small files from becoming data URLs. Inline CSS contributions and runtime `@import` are unsupported: bundle imports into each contributed file before shipping. Relative resource URLs resolve against the final CSS response URL, including redirects. Fragment-only references such as `url(#filter)` remain local SVG references. Cross-origin files need the usual browser CORS permissions.
 
 Plugin-level files apply while the plugin is active and eligible on the selected machine, after successful `start`. Files inside a theme apply only to the resolved selected theme. Theme changes, automatic light/dark switching, and plugin unload remove inactive sheets from every registered root; pending obsolete loads are cancelled. Each active URL is fetched and compiled once, shared across roots, and released when no active contribution references it. Existing and later-registered roots receive the same sheets.
 
-Loading is asynchronous. Requests require a successful HTTP response with `Content-Type: text/css`, are limited to **15 seconds and 2 MiB per file**, and reject runtime imports or invalid resource URL syntax. Failures appear in the browser console as **Failed to apply plugin stylesheets**, with the contribution ID and URL in the error chain. Failed files do not prevent successful files, including the selected theme, from applying. The next publication retries failed files without reloading successful active files. Standard browser CSS parsing still governs individual invalid declarations.
+Loading is asynchronous. Requests require a successful HTTP response with `Content-Type: text/css`, are limited to **15 seconds and 2 MiB per file**, and reject runtime imports or invalid resource URL syntax. Failures appear in the browser console with the contribution ID and URL in the error chain; ordinary plugin and selected-theme failures are reported separately. Ordinary plugin files publish independently; a failed plugin file does not block the selected theme. A theme's files publish together only when all are ready, keeping the previous committed palette on failure. The next publication retries failed files without reloading successful active files. Standard browser CSS parsing still governs individual invalid declarations.
 
 #### Integrating plugin components
 
@@ -736,30 +739,54 @@ Like colour themes, icon themes are app-wide and only gateway contributions are 
 
 ### CSS-first themes
 
-Themes extend the built-in base theme: they can supply layout and control rules as well as palette properties. The base provides the default shell, responsive layout, shared controls, and transcript presentation in the `pi-web-base` cascade layer. Normal unlayered theme rules override those defaults. This separation is in place before a stable layout-selector contract; specialised local component/plugin styles are still being migrated. See [theme architecture](theme-architecture.md) for composition, examples, and current limits.
+Themes extend the built-in base theme: they can supply layout and control rules as well as palette properties. The base provides the default shell, responsive layout, shared controls, and transcript presentation in the `pi-web-base` cascade layer. Normal unlayered theme rules override those defaults. A supported contract covers conversation, choice, project/workspace/session navigation-row, composer-control, and popup/menu hooks; specialised local component/plugin styles outside that boundary are still being migrated. See [theme architecture](theme-architecture.md) for composition, examples, and current limits.
 
-V5 themes declare CSS files, not TypeScript `tokens`. V4 themes retain their required `tokens: ThemeTokens` palette contract for compatibility; they cannot declare stylesheet contributions. Their original palette properties still style the current UI, while newer semantic properties use fallbacks. Switching away from a v4 theme clears its palette overrides. The built-in Dark, Light, and Classic palettes use this same contribution API. Put palette custom properties on `:root` so they inherit into shadow trees; use ordinary selectors in the same file when you need direct rules in participating roots.
+Declare new themes as static package metadata. A theme-only package ships CSS and assets without browser JavaScript or a server module. The gateway reads themes without evaluating package code and includes its default-theme details and CSS in the initial page. Details include the associated light/dark pair; both variants' CSS are included for Auto. The app can show that palette while a different browser preference loads through an ordinary request. General settings fetch the full inventory once per dialog, with explicit retry on failure and HTTP caching across requests. Built-in palettes use the same declarative mechanism and retain their `themes:*` IDs.
 
-```ts
-import type { PiWebPlugin } from "@jmfederico/pi-web/plugin-api";
+For example, ship this `package.json` alongside `assets/dark.css` and `assets/light.css`:
 
-export default {
-  apiVersion: 5,
-  name: "Ocean themes",
-  activate: () => ({
-    contributions: {
-      themes: [{
-        id: "ocean-dark", name: "Ocean Dark", colorScheme: "dark",
-        stylesheets: [{ id: "palette", url: new URL("./dark.css", import.meta.url).href }],
+```json
+{
+  "name": "pi-web-ocean-themes",
+  "version": "1.0.0",
+  "files": ["assets"],
+  "piWeb": {
+    "plugins": [{
+      "id": "ocean-themes",
+      "browserRoot": "assets",
+      "themes": [{
+        "id": "ocean-dark",
+        "name": "Ocean Dark",
+        "colorScheme": "dark",
+        "stylesheets": [{ "id": "palette", "path": "dark.css" }]
       }, {
-        id: "ocean-light", name: "Ocean Light", colorScheme: "light",
-        stylesheets: [{ id: "palette", url: new URL("./light.css", import.meta.url).href }],
+        "id": "ocean-light",
+        "name": "Ocean Light",
+        "colorScheme": "light",
+        "stylesheets": [{ "id": "palette", "path": "light.css" }]
       }],
-      themePairs: [{ id: "ocean", name: "Ocean", light: "ocean-light", dark: "ocean-dark" }],
-    },
-  }),
-} satisfies PiWebPlugin;
+      "themePairs": [{
+        "id": "ocean",
+        "name": "Ocean",
+        "light": "ocean-light",
+        "dark": "ocean-dark"
+      }]
+    }]
+  }
+}
 ```
+
+Theme and pair declarations require `id` and `name`, and accept optional `description` and finite numeric `order`. Themes also require `colorScheme` (`light` or `dark`) and a nonempty `stylesheets` list. Each stylesheet requires a local `id` and a `path` relative to `browserRoot`, with optional finite numeric `order`. Local IDs begin with a lowercase letter and contain only lowercase letters, digits, dots, or hyphens. Theme and pair IDs must be distinct within an entry; stylesheet IDs must be distinct within each theme. Pair members must reference local themes with matching light/dark schemes.
+
+Keep paths inside the browser-public root, without leading slashes, backslashes, empty segments, `.` or `..` segments. Everything in `browserRoot` is public; ship only intended assets. The gateway supplies qualified theme IDs such as `ocean-themes:ocean-dark` and default/enforced policy. Initial delivery contains only the default selection, or Classic while a legacy runtime default awaits browser activation. `GET api/theme?themeId=…&auto=…` supplies another selection on demand, and General settings use `GET api/themes` for the complete enabled picker inventory. Metadata responses support private HTTP caching with ETag revalidation. It supplies revision-path stylesheet URLs so relative CSS fonts and images use the same immutable asset revision. Keep those assets under the same root, and bundle CSS imports before shipping. Theme-only changes need a browser reload, not a session-daemon restart.
+
+#### Migrating runtime themes
+
+Browser `activate().contributions.themes` and `themePairs` are deprecated but remain supported, with a browser-console deprecation warning. V5 runtime themes still use CSS stylesheet URLs; v4 themes retain their required `tokens: ThemeTokens` contract and cannot declare stylesheet contributions. Existing token palettes continue to work through semantic-property fallbacks, and switching away clears their overrides. Runtime themes require browser activation and cannot benefit from early static discovery.
+
+Move theme and pair metadata into the same entry's `piWeb.plugins[]` declaration. Replace stylesheet `url` expressions with `path` values relative to `browserRoot`, and ship the CSS and referenced assets there. Convert v4 tokens into CSS custom properties. Preserve the plugin ID and local theme/pair IDs to keep saved choices valid, and remove the old runtime registrations rather than registering the same themes twice. Remove `module` only if the browser entry has no other work; remove `serverModule` only if no backend is needed.
+
+Put palette custom properties on `:root` so they inherit into shadow trees; use ordinary selectors in the same file for direct rules in participating roots.
 
 `dark.css` might start with:
 
@@ -788,7 +815,7 @@ Themes can override these properties independently of the base palette:
 
 Define these on `:root`, alongside the base palette. Font properties accept font-family stacks, not complete `font` shorthands; keep `--pi-mono` monospaced for code alignment. The terminal's xterm grid and copy-selection overlay retain their configured font so cell geometry stays aligned. Existing themes may omit them: components fall back to base palette colours, existing colour mixes, and system fonts. Built-in themes declare them explicitly; most colours alias or mix base palette properties. Syntax deletions default to `--pi-danger`; the legacy `--pi-error` property remains a fallback for older external themes. Theme properties control appearance; direct CSS rules can also customise migrated base layouts. Components retain interaction and scroll controllers, while the base theme supplies default responsive CSS and visual accessibility treatments. These properties, like shared UI classes, remain experimental.
 
-The example above is a partial palette. Use the [built-in palette files](https://github.com/jmfederico/pi-web/tree/main/src/client/src/plugins/themes) as a reference for the shared `--pi-*` vocabulary. `colorScheme` remains required metadata for native controls and browser appearance; declaring CSS alone does not set it. Theme pair `light` and `dark` values are local theme IDs from the same plugin. Auto mode follows the device preference within the pair; unpaired themes stay selected. See [theme selection and defaults](config.md#theme-default-and-device-choices) for device choices, fallback, and the preserved built-in IDs. Machine-bound remote theme contributions remain ignored; themes are app-wide.
+The example above is a partial palette. Use the [built-in palette files](https://github.com/jmfederico/pi-web/tree/main/pi-web-plugins/themes/assets) as a reference for the shared `--pi-*` vocabulary. `colorScheme` remains required metadata for native controls and browser appearance; declaring CSS alone does not set it. Theme pair `light` and `dark` values are local theme IDs from the same plugin. Auto mode follows the device preference within the pair; unpaired themes stay selected. See [theme selection and defaults](config.md#theme-default-and-device-choices) for device choices, fallback, and the preserved built-in IDs. Machine-bound remote theme contributions remain ignored; themes are app-wide.
 
 ### Read-only catalogs and scoped backends (v5)
 
@@ -815,13 +842,25 @@ export default {
 };
 ```
 
-Components and event handlers can call `catalog.projects.list()` / `get(projectId)`, `catalog.workspaces.list(projectId)` / `get({ projectId, workspaceId })`, and `catalog.sessions.list({ projectId, workspaceId })` / `get({ projectId, workspaceId, sessionId })`. Reads accept an optional abort signal. Session snapshots include public metadata and `runtime` (`not-hosted`, `idle`, or `busy`); discovery does not open a saved session or expose its transcript/private file path.
+Components and event handlers can call `catalog.projects.list()` / `get(projectId)`, `catalog.workspaces.list(projectId)` / `get({ projectId, workspaceId })`, and `catalog.sessions.list({ projectId, workspaceId })` / `get({ projectId, workspaceId, sessionId })`. Reads accept an optional abort signal. Session snapshots include public metadata, durable `pinned` state, and `runtime` (`not-hosted`, `idle`, or `busy`). Every snapshot includes `created`, `modified` (last session-file modification, used by native idle-age rules), and `archivedAt` (when the session entered the archive). Each is an ISO timestamp or `null` when unknown; `archivedAt` is also `null` for non-archived sessions. `pinned` is always a boolean. Discovery does not open a saved session or expose its transcript/private file path.
+
+These fields let plugins implement their own age filters, estimated summaries, and lifecycle policies without a cleanup-specific API. Use `modified` for idle age and `archivedAt` for time in the archive—not the archive file's modification time. `pinned` reflects protection by any retained pin scope, matching core cleanup, not just the workspace being listed. Dates may be `null` for incomplete legacy records or hosted-only conversations. A null date means **unknown**, not an old date. Skip records whose required dates are unknown. Plugins using this metadata require an updated PI WEB host; there is no separate capability gate or fallback for older catalog responses. For example:
+
+```ts
+const rows = await context.catalog.sessions.list({ projectId, workspaceId });
+const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+const archiveCandidates = rows.filter((session) =>
+  !session.archived && session.pinned === false && session.runtime !== "busy"
+  && session.modified !== null && Date.parse(session.modified) < cutoff);
+```
+
+A plugin can show those candidates or counts using its own interface, then use the [session lifecycle service](#session-lifecycle). Re-read eligibility and pins before executing a cleanup policy: explicit lifecycle commands intentionally do not enforce pin protection. Core cleanup remains built in.
 
 Paired plugins also receive `backend` in these browser contexts. `backend.forScope({ kind: "machine" })`, `{ kind: "project", projectId }`, or `{ kind: "workspace", projectId, workspaceId }` returns the package's paired request, channel, or resource interface on that context's machine. Portable browser-only plugins have no paired backend. Existing workspace `peer` helpers remain available.
 
 Server v5 peer callbacks receive `scope` instead of always requiring `project` and `workspace`. Machine scope carries no project; project scope contains host-resolved `project`; workspace scope contains host-resolved `project` and `workspace`. Browser/server package revisions, cancellation, and host authority checks still apply. Server v3 retains its workspace-only callback shape and cannot accept machine/project-scoped calls.
 
-Backend plugins declare `PI_WEB_HOST_CATALOG_CAPABILITY` in `requires`, then resolve it in `start({ capabilities })`. This provides the same read-only discovery locally to that daemon. Workspace providers must not depend on the catalog: it becomes available only after provider topology settles. No project, workspace, or session mutation methods are added.
+Backend plugins declare `PI_WEB_HOST_CATALOG_CAPABILITY` in `requires`, then resolve it in `start({ capabilities })`. This provides the same read-only discovery locally to that daemon. Workspace providers must not depend on the catalog: it becomes available only after provider topology settles. The catalog remains read-only; use the separate [session lifecycle service](#session-lifecycle) for session mutations.
 
 Machine-specific contributions are visible only on their owning machine; portable browser contributions follow selection. Switching machines does not stop backend work. Plugins must discard obsolete asynchronous UI results and clean up component-owned connections when their context changes.
 
@@ -833,6 +872,40 @@ A few design boundaries matter before implementation:
 - Use host helpers for machine/workspace operations and module-relative URLs for plugin assets. Avoid hard-coded application paths.
 - Rendering can happen repeatedly without a panel being mounted again. Own asynchronous state and use ordinary component lifecycle cleanup for connections, timers, and listeners.
 - Keep workspace discovery separate from session-backed features, and keep agent behavior in a Pi companion rather than importing host internals.
+
+## Session lifecycle
+
+Plugins can manage a saved session by its full `{ projectId, workspaceId, sessionId }` identity, without selecting it in the browser or opening its runtime. The host resolves the workspace; plugins do not supply session file paths.
+
+Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
+
+| Method | Effect |
+| --- | --- |
+| `get(target)` | Read `{ sessionId, pinned, archived }`. |
+| `pin(target)` | Persist a pin in the target workspace for an active or archived session. |
+| `unpin(target)` | Remove that workspace's pin; pins in other scopes remain in effect. |
+| `archive(target)` | Archive that session, without implicitly archiving descendants. |
+| `restore(target)` | Restore an archived session without starting its runtime. |
+| `delete(target)` | Permanently delete an already-archived session. |
+
+```ts
+// In a browser plugin's event handler, using IDs returned by context.catalog:
+const sessions = context.sessions;
+if (sessions === undefined) throw new Error("This host does not support session lifecycle operations");
+const target = { projectId, workspaceId, sessionId };
+await sessions.pin(target);
+const state = await sessions.get(target);
+```
+
+**Pins protect cleanup, not explicit plugin commands.** A plugin can explicitly archive a pinned session or delete it once archived; it does not need to unpin first. Native busy-session and archived-only deletion safeguards still apply. Plugins are trusted code and must decide when to request confirmation for destructive actions. Cleanup previews remain estimates: cleanup rechecks eligibility and pins when it runs, rather than freezing a session list.
+
+Calls accept an optional `{ signal }`. Cancellation or plugin disposal prevents new work; it does not undo a mutation already admitted by the host. Call mutations from event handlers or background work, not render or availability callbacks. Errors are reported to the caller; do not automatically retry a destructive operation after an ambiguous transport failure without checking the current state.
+
+### Pin-storage upgrade
+
+Session pins are daemon-owned managed state in `$PI_WEB_DATA_DIR/session-pins.json`. The updated daemon imports existing pin scopes, ordering, revisions, and cleared scopes from `navigation-preferences.json` once. Project and workspace ordering stays web/API-owned in the original file. Browser pin actions, plugin commands, and cleanup then use the same daemon-owned pins.
+
+Upgrade/restart the web/API process **before** starting the updated session daemon, then reload the browser. Do not keep an older web/API process writing pins after the daemon takes ownership. New web/API processes do not fall back to legacy pin writes if the daemon is unavailable or outdated. **Restarting sessiond interrupts active sessions and terminals**; schedule this cutover when they can be interrupted.
 
 ## Trust and recovery
 

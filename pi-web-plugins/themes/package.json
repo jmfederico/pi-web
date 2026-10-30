@@ -1,0 +1,21 @@
+{
+  "name": "@pi-web/themes-plugin",
+  "private": true,
+  "piWeb": {
+    "plugins": [{
+      "id": "themes",
+      "browserRoot": "assets",
+      "themes": [
+        { "id": "pi-web-dark", "name": "PI WEB Dark", "description": "Dark PI WEB palette.", "order": 10, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "pi-web-dark.css" }] },
+        { "id": "pi-web-light", "name": "PI WEB Light", "description": "Light PI WEB palette.", "order": 20, "colorScheme": "light", "stylesheets": [{ "id": "palette", "path": "pi-web-light.css" }] },
+        { "id": "classic", "name": "PI WEB Classic", "description": "The original PI WEB dark palette.", "order": 30, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "classic.css" }] },
+        { "id": "paper", "name": "Paper", "description": "White and neutral grays with restrained status colors.", "order": 40, "colorScheme": "light", "stylesheets": [{ "id": "palette", "path": "paper.css" }] },
+        { "id": "graphite", "name": "Graphite", "description": "Charcoal and neutral grays with restrained status colors.", "order": 50, "colorScheme": "dark", "stylesheets": [{ "id": "palette", "path": "graphite.css" }] }
+      ],
+      "themePairs": [
+        { "id": "pi-web", "name": "PI WEB", "order": 10, "light": "pi-web-light", "dark": "pi-web-dark" },
+        { "id": "paper-graphite", "name": "Paper / Graphite", "order": 20, "light": "paper", "dark": "graphite" }
+      ]
+    }]
+  }
+}

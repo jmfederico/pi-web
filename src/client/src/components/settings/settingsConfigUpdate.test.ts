@@ -3,7 +3,7 @@ import { enforcedSetting, explicitConfigUpdate, mergeSelectedSettingsResponse, r
 import type { PiWebConfigResponse } from "../../api";
 
 function response(): PiWebConfigResponse {
-  return { path: "/config.json", exists: true, config: { host: "saved", quietMode: true }, effectiveConfig: { host: "env", port: 9000, quietMode: true }, envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false }, enforcedSettings: { "/host": "PI_WEB_HOST" } };
+  return { path: "/config.json", exists: true, config: { host: "saved", quietMode: true }, effectiveConfig: { host: "env", port: 9000, quietMode: true }, envOverrides: { host: true, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false }, enforcedSettings: { "/host": "PI_WEB_HOST" } };
 }
 
 describe("explicit Settings updates", () => {

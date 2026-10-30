@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { WebSocket } from "ws";
+import { effectivePiWebCapabilities, PI_WEB_CAPABILITIES } from "../../shared/capabilities.js";
+import { parsePiWebRuntimeResponse } from "../../shared/piWebStatusParsing.js";
 import { FEDERATED_HTTP_ROUTES, FEDERATED_WEBSOCKET_ROUTES, WORKSPACE_FILE_PREVIEW_ROUTE_PATH, type FederatedHttpRouteSpec } from "../../shared/federatedRoutes.js";
 import {
   PAIRED_PLUGIN_BACKEND_CHANNEL_ROUTE_PATHS,
@@ -25,7 +27,7 @@ import { isSessionImageMimeType } from "../sessions/sessionMediaIndex.js";
 import { bridgeSockets, markPluginBackendChannelUpgradeRequest } from "../webSocketBridge.js";
 import { applyWorkspaceFilePreviewErrorResponsePolicy, applyWorkspaceFilePreviewResponsePolicy } from "../workspaces/filePreviewResponseHeaders.js";
 import { workspaceFilePreviewErrorResponsePolicy, workspaceFilePreviewResponsePolicy, type WorkspaceFilePreviewResponsePolicy } from "../workspaces/filePreviewResponsePolicy.js";
-import { DEFAULT_REMOTE_REQUEST_TIMEOUT_MS, RemoteMachineRequestError, type MachineClient, type MachineHttpResponse, type MachineJsonResponse, type MachineRequestOptions } from "./machineClient.js";
+import { DEFAULT_REMOTE_HEALTH_TIMEOUT_MS, DEFAULT_REMOTE_REQUEST_TIMEOUT_MS, RemoteMachineRequestError, type MachineClient, type MachineHttpResponse, type MachineJsonResponse, type MachineRequestOptions } from "./machineClient.js";
 import type { MachineService } from "./machineService.js";
 
 export const REMOTE_HTTP_ROUTES = FEDERATED_HTTP_ROUTES;
@@ -167,6 +169,21 @@ async function proxyHttpRequest(
 
   try {
     const remotePath = remoteApiPath(machineId, requestUrl);
+    if ((spec.path === "/sessions/cleanup/preview" || spec.path === "/sessions/cleanup") && isRecord(body)) {
+      const skipPinned = body["skipPinned"];
+      if (skipPinned !== undefined && typeof skipPinned !== "boolean") {
+        return await reply.code(400).send({ error: "skipPinned field must be a boolean" });
+      }
+      if (skipPinned === true) {
+        // Old remote web processes can ignore skipPinned even with an updated daemon.
+        // Read fresh support from both owners before forwarding any cleanup operation.
+        const response = await client.requestJson("GET", "/api/pi-web/runtime", undefined, { timeoutMs: DEFAULT_REMOTE_HEALTH_TIMEOUT_MS });
+        const runtime = response.statusCode >= 200 && response.statusCode < 300 ? parsePiWebRuntimeResponse(response.body) : undefined;
+        if (runtime === undefined || !effectivePiWebCapabilities(runtime.components).includes(PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions)) {
+          return await reply.code(503).send({ error: "Pinned-session cleanup protection is unavailable on the remote machine. Update and restart PI WEB and its session daemon there." });
+        }
+      }
+    }
     if (spec.path === "/config") {
       const response = await proxySelectedMachineConfigRequest(client, machineId, method, remotePath, body, reply);
       if ((method === "PUT" || method === "PATCH") && reply.statusCode < 300) machines.invalidateReportedName(machineId);

@@ -8,6 +8,8 @@ import { effectivePiWebConfig, piWebDataDir, type PiWebConfig } from "../config.
 import type { PiWebPluginScope, PiWebPluginSettings } from "../shared/apiTypes.js";
 import { isPiWebBundledPluginId, isPiWebPluginId, isReservedPiWebPluginId } from "../shared/pluginIds.js";
 import { REQUIRED_TERMINAL_PLUGIN_ID } from "../shared/requiredTerminalPlugin.js";
+import type { PiWebThemeMetadata, PiWebThemePairMetadata } from "../shared/themeCatalog.js";
+import { parseThemeMetadata } from "./themeMetadata.js";
 
 export interface ConfiguredPiPackage {
   source: string;
@@ -50,6 +52,10 @@ export interface PiWebPluginPackageEntry {
   browserRoot?: PiWebPluginCatalogBrowserRoot;
   browserModule?: PiWebPluginCatalogModule;
   serverModule?: PiWebPluginCatalogModule;
+  /** Static gateway metadata; independent of sessiond activation. */
+  themes?: PiWebThemeMetadata[];
+  themePairs?: PiWebThemePairMetadata[];
+  themeRevision?: string;
   source: string;
   scope: PiWebPluginScope;
   machineSpecific: boolean;
@@ -114,6 +120,8 @@ interface PiWebPluginMetadataEntry {
   browserRoot?: string;
   module?: string;
   serverModule?: string;
+  themes?: PiWebThemeMetadata[];
+  themePairs?: PiWebThemePairMetadata[];
   machineSpecific: boolean;
 }
 
@@ -363,8 +371,16 @@ async function discoverPluginEntries(
     const serverModule = entry.serverModule === undefined
       ? undefined
       : await discoverModule(packageRoot, entry.id, "server", entry.serverModule, revision, directoryEntryNamesProvider);
+    for (const theme of entry.themes ?? []) {
+      for (const sheet of theme.stylesheets) {
+        const sheetPath = browserRoot?.path === "." ? sheet.path : `${browserRoot?.path ?? ""}/${sheet.path}`;
+        await discoverModule(packageRoot, entry.id, "browser", sheetPath, revision, directoryEntryNamesProvider, browserRoot);
+      }
+    }
     plugins.push({
       id: entry.id,
+      ...(entry.themes === undefined ? {} : { themes: entry.themes, themeRevision: revision }),
+      ...(entry.themePairs === undefined ? {} : { themePairs: entry.themePairs }),
       packageRoot,
       ...(browserRoot === undefined ? {} : { browserRoot }),
       ...(browserModule === undefined ? {} : { browserModule }),
@@ -662,13 +678,15 @@ function parsePluginEntries(
     if (!isRecord(entry)) throw new Error(`PI WEB plugin entry ${String(index + 1)} must be an object in ${packagePath}`);
     const id = entry["id"];
     if (typeof id !== "string" || !isPiWebPluginId(id)) throw new Error(`Invalid PI WEB plugin id in ${packagePath}: ${String(id)}`);
-    if (isReservedPiWebPluginId(id) && !(allowPiWebBundledIds && isPiWebBundledPluginId(id))) {
+    if (isReservedPiWebPluginId(id) && !(allowPiWebBundledIds && (isPiWebBundledPluginId(id) || id === "themes"))) {
       throw new ReservedPiWebPluginIdError(id, packagePath);
     }
     const module = parseOptionalModule(entry["module"], "browser", packagePath, id);
     const serverModule = parseOptionalModule(entry["serverModule"], "server", packagePath, id);
-    if (module === undefined && serverModule === undefined) throw new Error(`PI WEB plugin ${id} must declare module or serverModule in ${packagePath}`);
-    const browserRoot = parseBrowserRoot(entry["browserRoot"], packagePath, id, module !== undefined);
+    const themeMetadata = parseThemeMetadata(entry, packagePath);
+    const hasThemes = (themeMetadata.themes?.length ?? 0) > 0;
+    if (module === undefined && serverModule === undefined && !hasThemes) throw new Error(`PI WEB plugin ${id} must declare module, serverModule, or themes in ${packagePath}`);
+    const browserRoot = parseBrowserRoot(entry["browserRoot"], packagePath, id, module !== undefined || hasThemes);
 
     const defaultEnabled = entry["defaultEnabled"];
     if (defaultEnabled !== undefined && typeof defaultEnabled !== "boolean") {
@@ -681,6 +699,7 @@ function parsePluginEntries(
     const machineSpecific = configuredMachineSpecific ?? (module !== undefined && serverModule !== undefined);
     return {
       id,
+      ...themeMetadata,
       ...(browserRoot === undefined ? {} : { browserRoot }),
       ...(module === undefined ? {} : { module }),
       ...(serverModule === undefined ? {} : { serverModule }),
@@ -704,12 +723,12 @@ function parseOptionalModule(value: unknown, kind: "browser" | "server", package
   return value;
 }
 
-function parseBrowserRoot(value: unknown, packagePath: string, pluginId: string, hasBrowserModule: boolean): string | undefined {
+function parseBrowserRoot(value: unknown, packagePath: string, pluginId: string, hasBrowserAssets: boolean): string | undefined {
   if (value === undefined) {
-    if (hasBrowserModule) throw new Error(`PI WEB plugin ${pluginId} with a browser module must declare browserRoot in ${packagePath}`);
+    if (hasBrowserAssets) throw new Error(`PI WEB plugin ${pluginId} with a browser module or themes must declare browserRoot in ${packagePath}`);
     return undefined;
   }
-  if (!hasBrowserModule) throw new Error(`PI WEB plugin ${pluginId} must not declare browserRoot without a browser module in ${packagePath}`);
+  if (!hasBrowserAssets) throw new Error(`PI WEB plugin ${pluginId} must not declare browserRoot without a browser module or themes in ${packagePath}`);
   if (typeof value !== "string" || value === "") throw new Error(`Invalid PI WEB plugin browserRoot for ${pluginId} in ${packagePath}`);
   if (!isSafeRelativeBrowserRootPath(value)) throw new Error(`Unsafe PI WEB plugin browser root for ${pluginId}: ${value}`);
   return value;

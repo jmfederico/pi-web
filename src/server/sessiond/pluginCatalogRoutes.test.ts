@@ -10,11 +10,13 @@ const workspace = { id: "w1", projectId: project.id, path: repositoryPath, label
 describe("browser plugin catalog routes", () => {
   it("lists/resolves core objects using host authority and excludes private session data", async () => {
     const app = Fastify();
-    const sessions = { listCatalogSessions: vi.fn(() => Promise.resolve([{ id: "s1", cwd: repositoryPath, archived: false, runtime: "not-hosted" as const, path: "/private", firstMessage: "private" }])) };
+    const dates = { created: "2026-01-01T00:00:00.000Z", modified: "2026-02-01T00:00:00.000Z", archivedAt: null };
+    const sessions = { listCatalogSessions: vi.fn(() => Promise.resolve([{ id: "s1", cwd: repositoryPath, ...dates, archived: false, runtime: "not-hosted" as const, path: "/private", firstMessage: "private" }])) };
     registerPluginCatalogRoutes(app, {
       projects: { list: () => Promise.resolve([project]), requireProject: () => Promise.resolve(project) },
       workspaces: { resolve: () => Promise.resolve({ projectId: project.id, status: "provider" as const, diagnostics: [], workspaces: [workspace] }) },
       sessions,
+      pins: { pinnedSessionIds: () => Promise.resolve(["s1"]) },
     });
     try {
       const projects = await app.inject({ method: "GET", url: "/plugin-catalog/projects" });
@@ -23,7 +25,7 @@ describe("browser plugin catalog routes", () => {
       const response = await app.inject({ method: "GET", url: "/plugin-catalog/projects/p1/workspaces/w1/sessions/s1" });
       expect(response.statusCode).toBe(200);
       expect(response.headers["cache-control"]).toBe("no-store");
-      expect(response.json()).toEqual({ id: "s1", cwd: repositoryPath, archived: false, runtime: "not-hosted" });
+      expect(response.json()).toEqual({ id: "s1", cwd: repositoryPath, ...dates, pinned: true, archived: false, runtime: "not-hosted" });
       expect(sessions.listCatalogSessions).toHaveBeenCalledTimes(1);
       const missing = await app.inject({ method: "GET", url: "/plugin-catalog/projects/p1/workspaces/stale/sessions" });
       expect(missing.statusCode).toBe(404);

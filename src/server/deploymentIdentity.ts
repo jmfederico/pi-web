@@ -35,6 +35,11 @@ export function createDeploymentFlavorResolver(
   };
 }
 
+/** Mark the initial document before paint, using the same identity as brand assets. */
+export function deploymentHtmlForFlavor(html: string, flavor: PiWebDeploymentFlavor): string {
+  return flavor === "dev" ? html.replace(/<html\b/iu, '<html data-pi-web-deployment="dev"') : html;
+}
+
 export interface DeploymentIdentityAssetFile {
   fileName: string;
   contentType: string;

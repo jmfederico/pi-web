@@ -9,7 +9,7 @@ export type NavigationPreferenceScope =
   | { kind: "workspaces"; projectId: string }
   | { kind: "session-pins"; projectId: string; workspaceId: string };
 
-interface PreferenceEntry extends NavigationPreference {
+export interface PreferenceEntry extends NavigationPreference {
   scope: NavigationPreferenceScope;
 }
 interface PreferenceFile {
@@ -82,6 +82,19 @@ export class NavigationPreferenceStore {
     await this.writes;
     const entry = (await this.read()).entries.find((entry) => scopeKey(entry.scope) === scopeKey(scope));
     return { ids: [...(entry?.ids ?? [])], revision: entry?.revision ?? 0 };
+  }
+
+  /** One-time migration input. Does not mutate or prune legacy state. */
+  async sessionPinSnapshot(): Promise<PreferenceEntry[]> {
+    await this.writes;
+    return (await this.read()).entries.filter((entry) => entry.scope.kind === "session-pins");
+  }
+
+  /** Union across all scopes, including offline/stale workspaces, for cleanup protection. */
+  async pinnedSessionIds(): Promise<string[]> {
+    await this.writes;
+    const data = await this.read();
+    return [...new Set(data.entries.filter((entry) => entry.scope.kind === "session-pins").flatMap((entry) => entry.ids))].sort();
   }
 
   async put(scope: NavigationPreferenceScope, value: NavigationPreferenceWrite): Promise<NavigationPreference> {

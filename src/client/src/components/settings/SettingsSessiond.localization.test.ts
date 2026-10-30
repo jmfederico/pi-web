@@ -25,7 +25,7 @@ function config(): PiWebConfigResponse {
     path: `/raw/<img>/${raw}/config.json`, exists: true,
     config: { sessionNaming: { model: "raw/model", maxTokens: 1200, timeoutMs: 30500 } },
     effectiveConfig: { spawnSessions: true, subsessions: true, askUser: true, sessionNaming: { model: "raw/model", maxTokens: 1200, timeoutMs: 30500 } },
-    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, askUser: false },
+    envOverrides: { host: false, port: false, allowedHosts: false, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
   };
 }
 function input(panel: SettingsSessiondPanel, id: string): HTMLInputElement {
@@ -72,7 +72,7 @@ it("localizes the whole panel live, with regional summaries and unchanged raw va
     expect(frame(panel).description).toBe(messages.t("description", { target: raw }));
     expect(frame(panel).actionLabel).toBe(messages.t("refresh"));
     expect(panel.shadowRoot?.querySelector("#session-naming-model-label")?.textContent).toBe(messages.t("model"));
-    expect(Array.from(panel.shadowRoot?.querySelectorAll("small code") ?? [], (node) => node.textContent)).toEqual(["spawn_session", "spawn_subsession", "list_subsessions", "check_subsession", "read_subsession", "ask_user"]);
+    expect(Array.from(panel.shadowRoot?.querySelectorAll("small code") ?? [], (node) => node.textContent)).toEqual(["spawn_session", "spawn_subsession", "list_subsessions", "check_subsession", "read_subsession", "send_session_message", "ask_user"]);
     expect(panel.shadowRoot?.querySelector("#restart-summary-help")?.textContent).toBe(messages.t("restartHelp"));
     expect(panel.shadowRoot?.querySelector("#naming-summary-help")?.textContent).toBe(messages.t("namingSummaryHelp"));
     expect(panel.shadowRoot?.querySelector(".config-path-card code")?.textContent).toBe(panel.configResponse?.path);
@@ -154,14 +154,14 @@ it("localizes environment locks, dependencies, model statuses, default values an
   const panel = await mount();
   const response = config();
   response.effectiveConfig.spawnSessions = false;
-  response.envOverrides = { ...response.envOverrides, spawnSessions: true, subsessions: true, askUser: true };
+  response.envOverrides = { ...response.envOverrides, spawnSessions: true, subsessions: true, sessionMessages: true, askUser: true };
   response.config.sessionNaming = {};
   response.effectiveConfig.sessionNaming = { timeoutMs: 1000 };
   panel.configResponse = response;
   panel.namingModels = [];
   for (const locale of ["en-XA", "ar-XB"]) {
     await language(panel, locale);
-    for (const [id, variable] of [["spawn-sessions", "PI_WEB_SPAWN_SESSIONS"], ["subsessions", "PI_WEB_SUBSESSIONS"], ["ask-user", "PI_WEB_ASK_USER"]]) {
+    for (const [id, variable] of [["spawn-sessions", "PI_WEB_SPAWN_SESSIONS"], ["subsessions", "PI_WEB_SUBSESSIONS"], ["session-messages", "PI_WEB_SESSION_MESSAGES"], ["ask-user", "PI_WEB_ASK_USER"]]) {
       const control = input(panel, required(id));
       expect(control.disabled).toBe(true);
       const help = required(panel.shadowRoot?.getElementById(required(control.getAttribute("aria-describedby"))));

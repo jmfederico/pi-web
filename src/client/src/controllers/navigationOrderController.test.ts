@@ -88,6 +88,22 @@ describe("NavigationOrderController", () => {
     expect(save).toHaveBeenLastCalledWith(projects, ["server", "new"], 4);
   });
 
+  it("recovers cached pins across visited workspaces only for the reconnected machine", async () => {
+    const load = vi.fn<NavigationOrderPort["load"]>().mockResolvedValue({ ids: [], revision: 0 });
+    const controller = new NavigationOrderController({ load, save: vi.fn() });
+    const pinScope: NavigationOrderScope = { kind: "sessionPins", machineId: "local", projectId: "p", workspaceId: "w" };
+    const otherWorkspace = { ...pinScope, workspaceId: "other" };
+    const otherMachine = { ...pinScope, machineId: "remote" };
+    await Promise.all([projects, pinScope, otherWorkspace, otherMachine].map((scope) => controller.ensure(scope)));
+    load.mockClear().mockResolvedValue({ ids: ["external-pin"], revision: 1 });
+    await controller.refreshSessionPins("local");
+    expect(load.mock.calls).toEqual([[pinScope], [otherWorkspace]]);
+    expect(controller.ids(pinScope)).toEqual(["external-pin"]);
+    expect(controller.ids(otherWorkspace)).toEqual(["external-pin"]);
+    expect(controller.ids(otherMachine)).toEqual([]);
+    expect(controller.ids(projects)).toEqual([]);
+  });
+
   it("serializes explicit refresh behind a save and distinguishes workspace scopes", async () => {
     const saving = deferred<NavigationOrderSnapshot>();
     const load = vi.fn().mockResolvedValue({ ids: ["a"], revision: 0 });

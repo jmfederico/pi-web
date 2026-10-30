@@ -2,7 +2,7 @@ import { chmod, lstat, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile 
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_ATTACHMENT_FOLDER, DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, sessionArchiveDirectory, spawnSessionsEnabled, subsessionsEnabled, applyPiWebConfigEnv, overlayPiWebConfig, piWebConfigSources, piWebConfigEnforcedSettings, resolveEffectivePiWebConfig } from "./config.js";
+import { DEFAULT_ATTACHMENT_FOLDER, DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_UPLOADS_FOLDER, AGENT_SESSION_DIR_ENV_KEYS, agentSessionDirEnvOverride, askUserEnabled, detectDeprecatedAgentInputs, effectiveAgentConfig, environmentFactsEnabled, effectivePiWebConfig, loadPiWebConfig, maxUploadBytes, offlineModeEnabled, savePiWebConfig, sessionArchiveDirectory, sessionMessagesEnabled, spawnSessionsEnabled, subsessionsEnabled, applyPiWebConfigEnv, overlayPiWebConfig, piWebConfigSources, piWebConfigEnforcedSettings, resolveEffectivePiWebConfig } from "./config.js";
 
 import { KNOWN_THINKING_LEVELS } from "./shared/thinkingLevels.js";
 
@@ -498,6 +498,37 @@ describe("extensionDialogsTimeoutMs", () => {
   });
 });
 
+describe("sessionMessages configuration", () => {
+  it("defaults on independently of spawnSessions and subsessions", () => {
+    expect(sessionMessagesEnabled({}, { spawnSessions: false, subsessions: false })).toBe(true);
+    expect(effectivePiWebConfig(testOptions()).config.sessionMessages).toBe(true);
+    expect(sessionMessagesEnabled({}, { sessionMessages: false, spawnSessions: true, subsessions: true })).toBe(false);
+  });
+
+  it("round-trips false and resolves defaults, writable config, then environment", async () => {
+    const defaultsPath = join(tempDir, "defaults.json");
+    await writeFile(defaultsPath, JSON.stringify({ sessionMessages: false }));
+    const options = { env: { ...testOptions().env, PI_WEB_DEFAULTS_CONFIG: defaultsPath } };
+    expect(effectivePiWebConfig(options).config.sessionMessages).toBe(false);
+    savePiWebConfig({ sessionMessages: true }, options);
+    expect(effectivePiWebConfig(options).config.sessionMessages).toBe(true);
+    const enforcedOptions = { env: { ...options.env, PI_WEB_SESSION_MESSAGES: "0" } };
+    expect(effectivePiWebConfig(enforcedOptions).config.sessionMessages).toBe(false);
+    expect(loadPiWebConfig(enforcedOptions).config.sessionMessages).toBe(true);
+    expect(piWebConfigSources(loadPiWebConfig(enforcedOptions), enforcedOptions)["/sessionMessages"]).toBe("PI_WEB_SESSION_MESSAGES");
+    savePiWebConfig({ sessionMessages: false }, options);
+    expect(loadPiWebConfig(options).config.sessionMessages).toBe(false);
+    savePiWebConfig({}, options);
+    expect(loadPiWebConfig(options).config).not.toHaveProperty("sessionMessages");
+    expect(effectivePiWebConfig(options).config.sessionMessages).toBe(false);
+  });
+
+  it.each([null, "false", 0, {}, []])("rejects nonboolean file value %j", async (sessionMessages) => {
+    await writeFile(configPath, JSON.stringify({ sessionMessages }));
+    expect(() => loadPiWebConfig(testOptions())).toThrow("sessionMessages must be a boolean");
+  });
+});
+
 describe("spawnSessionsEnabled", () => {
   it("is on by default when nothing is configured", () => {
     expect(spawnSessionsEnabled({}, {})).toBe(true);
@@ -686,7 +717,7 @@ describe("environment setting resolution", () => {
       quietMode: true, plugins: { git: { enabled: false, settings: { key: { value: 1 } } } },
       basePaths: [], pathAccess: { allowedPaths: ["/a,b"] }, uploads: {}, attachments: {},
       maxUploadBytes: 100, sessionNaming: { timeoutMs: 10 }, sessionArchive: { directory: "archive" },
-      spawnSessions: false, subsessions: false, askUser: false, environmentFacts: false, extensionDialogsTimeoutMs: 0,
+      spawnSessions: false, sessionMessages: false, subsessions: false, askUser: false, environmentFacts: false, extensionDialogsTimeoutMs: 0,
     };
     const env = Object.fromEntries(Object.entries(config).map(([key, value]) => [
       `PI_WEB_${key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase()}`,
@@ -735,6 +766,7 @@ describe("environment setting resolution", () => {
   });
 
   it.each([
+    ["PI_WEB_SESSION_MESSAGES", "yes"], ["PI_WEB_SESSION_MESSAGES", ""],
     ["PI_WEB_QUIET_MODE", "yes"], ["PI_WEB_SPAWN_SESSIONS", "no"], ["PI_WEB_SUBSESSIONS", "2"],
     ["PI_WEB_QUIET_MODE", ""], ["PI_WEB_SPAWN_SESSIONS", ""], ["PI_WEB_SUBSESSIONS", ""],
     ["PI_WEB_ASK_USER", ""], ["PI_WEB_ENVIRONMENT_FACTS", ""], ["PI_WEB_INSTALLATION_NAME", "bad\nname"],
@@ -750,6 +782,7 @@ describe("environment setting resolution", () => {
     const expected = /^(true|1)$/i.test(value);
     expect(applyPiWebConfigEnv({}, { PI_WEB_QUIET_MODE: value }).quietMode).toBe(expected);
     expect(spawnSessionsEnabled({ PI_WEB_SPAWN_SESSIONS: value })).toBe(expected);
+    expect(sessionMessagesEnabled({ PI_WEB_SESSION_MESSAGES: value }, { sessionMessages: !expected })).toBe(expected);
     expect(subsessionsEnabled({ PI_WEB_SUBSESSIONS: value })).toBe(expected);
     expect(askUserEnabled({ PI_WEB_ASK_USER: value })).toBe(expected);
     expect(environmentFactsEnabled({ PI_WEB_ENVIRONMENT_FACTS: value })).toBe(expected);

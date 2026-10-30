@@ -33,9 +33,9 @@ export class AutocompleteMenu extends LitElement {
   override render() {
     if (!this.items.length) return null;
     return html`
-      <div class="menu" popover="auto">
+      <div class="menu ui-popup-panel" data-ui-context="completions" popover="auto">
         ${this.items.map((item, index) => html`
-          <button class=${index === this.selectedIndex ? "selected" : ""} ${scrollWhenSelected(index === this.selectedIndex, item)} @mousedown=${(event: MouseEvent) => { event.preventDefault(); this.onPick?.(item); }}>
+          <button class=${index === this.selectedIndex ? "ui-choice selected" : "ui-choice"} data-selected=${index === this.selectedIndex} ${scrollWhenSelected(index === this.selectedIndex, item)} @mousedown=${(event: MouseEvent) => { event.preventDefault(); this.onPick?.(item); }}>
             <span class="label" dir="auto"><strong>${item.insertText}</strong>${item.argumentHint === undefined || item.argumentHint === "" ? null : html` <span class="argument-hint">${item.argumentHint}</span>`}</span>
             <span class="detail">${item.kind === "file" ? messages.t("fileKind", { kind: item.detail }) : item.detail}</span>
             ${item.description !== undefined && item.description !== "" ? html`<small>${item.description}</small>` : null}

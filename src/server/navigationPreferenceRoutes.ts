@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { NAVIGATION_PREFERENCE_ROUTES } from "../shared/navigationPreferences.js";
+import type { SessionPinStore } from "./storage/sessionPinStore.js";
 import { InvalidNavigationPreferenceError, NavigationPreferenceConflictError, parseNavigationPreference, type NavigationPreferenceScope, type NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
 
 interface PreferenceParams {
@@ -20,7 +21,35 @@ export function registerNavigationPreferenceRoutes(
   store: Pick<NavigationPreferenceStore, "get" | "put">,
   prefix = "/api",
 ): void {
-  NAVIGATION_PREFERENCE_ROUTES.forEach((path, index) => {
+  registerPreferenceRoutes(app, store, prefix, [0, 1]);
+}
+
+/** Only sessiond registers these handlers; the web/API exclusively proxies them. */
+export function registerSessionPinRoutes(
+  app: FastifyInstance,
+  pins: Pick<SessionPinStore, "get" | "put">,
+  prefix = "",
+): void {
+  registerPreferenceRoutes(app, {
+    get: (scope) => {
+      if (scope.kind !== "session-pins") throw new Error("Expected session pin scope");
+      return pins.get(scope);
+    },
+    put: (scope, value) => {
+      if (scope.kind !== "session-pins") throw new Error("Expected session pin scope");
+      return pins.put(scope, value);
+    },
+  }, prefix, [2]);
+}
+
+function registerPreferenceRoutes(
+  app: FastifyInstance,
+  store: Pick<NavigationPreferenceStore, "get" | "put">,
+  prefix: string,
+  indexes: readonly (0 | 1 | 2)[],
+): void {
+  indexes.forEach((index) => {
+    const path = NAVIGATION_PREFERENCE_ROUTES[index];
     app.get<{ Params: PreferenceParams }>(`${prefix}${path}`, async (request) => store.get(preferenceScope(index, request.params)));
     app.put<{ Params: PreferenceParams; Body: unknown }>(`${prefix}${path}`, async (request, reply) => {
       let preference;

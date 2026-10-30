@@ -8,7 +8,6 @@ registerAppTestHooks();
 const paths = [
   "/navigation/projects",
   "/navigation/projects/project%2Fone/workspaces",
-  "/navigation/projects/project%2Fone/workspaces/workspace%2Fone/session-pins",
 ];
 
 describe("navigation preference API", () => {
@@ -37,12 +36,16 @@ describe("navigation preference API", () => {
     expect((await app.inject({ method: "PUT", url: "/api/navigation/projects", payload: { ids: ["p1"] } })).statusCode).toBe(500);
   });
 
-  it("isolates workspace pins by project and workspace", async () => {
-    const { app } = appTestContext;
-    await app.inject({ method: "PUT", url: "/api/navigation/projects/p1/workspaces/w1/session-pins", payload: { ids: ["r1"] } });
-    for (const path of ["p1/workspaces/w2", "p2/workspaces/w1"]) {
-      expect((await app.inject({ method: "GET", url: `/api/navigation/projects/${path}/session-pins` })).json()).toEqual({ ids: [], revision: 0 });
+  it("exclusively proxies pin scopes on both local aliases without writing legacy preferences", async () => {
+    const { app, sessionDaemonRequests, tempDir } = appTestContext;
+    const path = "/navigation/projects/p%2Fone/workspaces/w%2Fone/session-pins";
+    for (const prefix of ["/api", "/api/machines/local"]) {
+      await app.inject({ method: "GET", url: `${prefix}${path}` });
+      expect(sessionDaemonRequests.at(-1)).toMatchObject({ method: "GET", path });
+      await app.inject({ method: "PUT", url: `${prefix}${path}`, payload: { ids: ["one"], revision: 0 } });
+      expect(sessionDaemonRequests.at(-1)).toMatchObject({ method: "PUT", path, body: { ids: ["one"], revision: 0 } });
     }
+    await expect(readFile(join(tempDir, "navigation-preferences.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it.each(paths)("forwards GET and PUT to the selected server for %s", async (path) => {

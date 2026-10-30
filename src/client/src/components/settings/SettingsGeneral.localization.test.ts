@@ -19,7 +19,7 @@ function required<T>(value: T | null | undefined): T {
 const config: PiWebConfigResponse = {
   path: "/raw/<img>/config.json", exists: true, config: { port: 8504 },
   effectiveConfig: { port: 8504, allowedHosts: ["a.local", "b.local", "c.local"], pathAccess: { allowedPaths: ["/a", "/b", "/c"] } },
-  envOverrides: { host: false, port: false, allowedHosts: true, spawnSessions: false, subsessions: false, askUser: false },
+  envOverrides: { host: false, port: false, allowedHosts: true, spawnSessions: false, subsessions: false, sessionMessages: false, askUser: false },
 };
 async function settle(panel: SettingsGeneralPanel): Promise<void> {
   await panel.updateComplete;

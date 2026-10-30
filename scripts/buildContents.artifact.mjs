@@ -9,9 +9,11 @@ const publicApiDeclarationPaths = [
   "server-plugin-api.d.ts",
   "shared/pluginApiTypes.d.ts",
   "shared/pluginCatalogTypes.d.ts",
+  "shared/pluginSessionLifecycleTypes.d.ts",
   "shared/localization.d.ts",
   "shared/serverNoticePresentation.d.ts",
   "shared/terminalTitlePresentation.d.ts",
+  "shared/thinkingLevels.d.ts",
   "shared/workspaceRemovalPresentation.d.ts",
 ];
 

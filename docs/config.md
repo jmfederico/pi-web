@@ -112,7 +112,7 @@ Process restarts depend on the key:
 
 - `host` / `port`: restart the gateway web/API service or process.
 - `maxUploadBytes`: restart both the web/API process and the session daemon on that machine.
-- `spawnSessions` / `subsessions` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
+- `spawnSessions` / `subsessions` / `sessionMessages` / `askUser` / `extensionDialogsTimeoutMs` / `environmentFacts`: restart the session daemon on that machine.
 - `sessionArchive.directory`: restart the session daemon on that machine; changes only the destination for new archives.
 - `sessionNaming`: saved model, token budget, thinking level, and timeout apply to the next naming request without a restart. Existing names and in-progress naming requests are unchanged.
 - `pathAccess`: applies on the next request; existing file views may need a browser refresh.
@@ -175,6 +175,7 @@ Turn it on in **Settings → General → Chat display → Quiet mode**. It is of
   },
   "spawnSessions": true,
   "subsessions": true,
+  "sessionMessages": true,
   "askUser": true,
   "extensionDialogsTimeoutMs": 300000,
   "plugins": {
@@ -248,6 +249,7 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 | Upload/body limit | `maxUploadBytes` | `PI_WEB_MAX_UPLOAD_BYTES` | Global | Not supported locally | Restart web/API and session daemon on that machine |
 | Agent can spawn sessions | `spawnSessions` | `PI_WEB_SPAWN_SESSIONS` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Tracked subsessions | `subsessions` | `PI_WEB_SUBSESSIONS` | Global/session daemon | Not supported locally; also requires `spawnSessions` | Restart session daemon on that machine |
+| Session messaging | `sessionMessages` | `PI_WEB_SESSION_MESSAGES` | Global/session daemon | Not supported locally; independent of spawning flags | Restart session daemon on that machine |
 | Agent can post question forms | `askUser` | `PI_WEB_ASK_USER` | Global/session daemon | Not supported locally | Restart session daemon on that machine |
 | Session archive directory | `sessionArchive.directory` | `PI_WEB_SESSION_ARCHIVE` (JSON object), `PI_WEB_SESSION_ARCHIVE_DIR` alias | Global/session daemon | Not supported locally | Restart session daemon on that machine; new archives only |
 | Session naming | `sessionNaming.model`, `sessionNaming.maxTokens`, `sessionNaming.thinkingLevel`, `sessionNaming.timeoutMs` | `PI_WEB_SESSION_NAMING` (JSON object) | Global/session daemon | Not supported locally | Next naming request; no restart |
@@ -463,11 +465,13 @@ This mirrors the Pi CLI: with `defaultProjectTrust: "never"`, an opened workspac
 
 `subsessions` controls whether agents receive the tracked-subsession tools: `spawn_subsession`, `list_subsessions`, `check_subsession`, `read_subsession`, `yield_to_subsessions`, and `manage_subsession`. It defaults to `true` and also requires `spawnSessions` to be enabled.
 
-Independent sessions run in a workspace of the same project without automatic result delivery to the initiating session. Tracked subsessions run in the parent's working directory and return results automatically; the parent can keep working or wait for them. Delivered results are not automatically repeated, but remain available for review.
+Independent sessions run in a workspace of the same project without granting management rights or sending automatic lifecycle notices to the initiating session. Tracked subsessions run in the parent's working directory and give the parent inspection and lifecycle controls. When a tracked child's run ends, the parent receives an idle or error notice—not the child's final answer or a claim that its task is complete. A working parent receives notices at the next safe turn boundary, without waiting for its run to finish. The parent can keep working or use `yield_to_subsessions` to suspend until a new notice arrives. Received notices are not automatically repeated; explicit inspection remains available through `check_subsession` and `read_subsession`.
+
+Both kinds of session use the same `send_session_message` tool for communication when messaging is enabled. What to communicate, when to reply, and whether a task is finished are decisions for the agents and their instructions, skills, or workflows.
 
 Parents use `manage_subsession` with a direct child's `sessionId` and an `action`: `stop` interrupts its current run, `resume` continues its conversation, and `archive` archives it. The optional `prompt` supplies new instructions for `resume` only; other actions reject it. Stop interrupts work rather than freezing a process or undoing changes; a later resume or message can start another run. Resume rejects a child that is already working. Archive requires the child to be idle; stop it first if needed. These controls do not extend to unrelated sessions or grandchildren.
 
-Every session, including tracked children, receives `send_session_message` independently of the spawning flags. It sends plain message content to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives a queued follow-up. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. The recipient is not given the sender's ID or relationship. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
+`sessionMessages` controls whether sessions, including tracked children, receive `send_session_message`. It defaults to `true`, independently of the spawning flags. Set it to `false` or set `PI_WEB_SESSION_MESSAGES=0` to remove the tool and block session-message delivery after restarting the session daemon. It sends a message to a known session ID in any workspace of the same registered project on the same machine. An idle recipient starts a turn; a busy recipient receives steering at the next safe agent boundary rather than after its run finishes. Messages do not interrupt an executing tool; delivery during compaction or standalone shell execution waits until that activity ends. Sending creates no parent/child relationship, grants no inspection or control rights, and subscribes to no results. Messages include the runtime-provided sender session ID so recipients can reply. Children also receive their parent's session ID in runtime context; neither identity implies additional permissions or a required collaboration workflow. The tool returns acceptance, not an answer or confirmation that the message was read. Queued messages use the runtime's normal queue and are not a durable mailbox; stopping or closing the recipient can discard pending work. Archived sessions cannot receive messages.
 
 Agent-created tracked subsessions are collapsed under their parent. Use **Agent subsessions** to expand them. User-created forks and clones, unknown-origin sessions, children without an available parent, and independent sessions remain visible.
 
@@ -620,7 +624,11 @@ In **Settings → General → Theme**, choose a theme and **Auto** mode, then:
 - **Set as default** shares a default without replacing existing device choices.
 - **Use the default** clears this browser's override.
 
-Unless `PI_WEB_DEFAULT_THEME` enforces the theme, device choices take precedence over the configured default, then the built-in default (PI WEB Dark with Auto on). Enforcement locks theme controls and preserves the saved device choice for when the policy is removed. Auto follows the device's light/dark preference for paired themes; unpaired themes stay selected. Unavailable themes temporarily fall back to Classic without erasing the choice.
+Unless `PI_WEB_DEFAULT_THEME` enforces the theme, device choices take precedence over the configured default, then the built-in default (PI WEB Dark with Auto on). Enforcement locks theme controls and preserves the saved device choice for when the policy is removed. Auto follows the device's light/dark preference for paired themes; unpaired themes stay selected.
+
+The initial page includes the gateway default's details and CSS, including associated pair details and both variants' CSS for Auto. Accepting that theme needs no additional theme request. If the default requires legacy browser activation, the backend supplies Classic while preserving the intended preference. The app appears with the delivered palette; the browser then requests another theme if its saved choice needs one, or applies a legacy theme when its plugin activates. A failed or unavailable choice leaves the current palette usable without erasing the saved choice. General settings load the complete inventory once per dialog, with explicit retry on failure and normal HTTP caching. The browser-native loading screen covers initial application startup, not later browser overrides.
+
+Device choices keep the existing localStorage key `pi-web-app-theme` and `{ themeId, auto }` format. Theme packages use declarative metadata and revision-qualified assets, not cached arbitrary CSS in localStorage or new config files. See [theme packages](plugins.md#css-first-themes) for authoring and migration.
 
 The default belongs to the gateway, not a project or remote machine. Changes apply after settings save or browser config refresh, with no service restart.
 
@@ -628,7 +636,7 @@ The default belongs to the gateway, not a project or remote machine. Changes app
 { "defaultTheme": { "themeId": "themes:pi-web-dark", "auto": true } }
 ```
 
-Use a theme contribution ID rather than a display name. Built-in IDs are `themes:pi-web-dark`, `themes:pi-web-light`, and `themes:classic`.
+Use a theme contribution ID rather than a display name. Built-in IDs remain `themes:pi-web-dark`, `themes:pi-web-light`, `themes:classic`, `themes:paper`, and `themes:graphite` after migration to declarative packages.
 
 ### File icon theme
 

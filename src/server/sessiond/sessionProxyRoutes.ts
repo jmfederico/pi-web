@@ -6,6 +6,8 @@ import {
   type SessionDaemonStreamResponse,
 } from "../../sessiond/sessionDaemonClient.js";
 import { requestCancellation } from "../requestCancellation.js";
+import { PI_WEB_CAPABILITIES, supportsPiWebCapability } from "../../shared/capabilities.js";
+import { parsePiWebRuntimeComponent } from "../../shared/piWebStatusParsing.js";
 
 export interface SessionProxyDaemon {
   request(
@@ -18,7 +20,11 @@ export interface SessionProxyDaemon {
   connectWebSocket(path: string): WebSocket;
 }
 
-export function registerSessionProxyRoutes(app: FastifyInstance, daemon: SessionProxyDaemon = new SessionDaemonClient(), prefix = "/api"): void {
+export function registerSessionProxyRoutes(
+  app: FastifyInstance,
+  daemon: SessionProxyDaemon = new SessionDaemonClient(),
+  prefix = "/api",
+): void {
   const proxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply) => {
     try {
       const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body);
@@ -31,6 +37,44 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
       return undefined;
     }
   };
+
+  const requireDaemonPins = async (reply: FastifyReply): Promise<boolean> => {
+    try {
+      const response = await daemon.request("GET", "/runtime");
+      const runtime = response.statusCode === 200 ? parsePiWebRuntimeComponent(parseJson(response.body)) : undefined;
+      if (runtime?.component === "sessiond" && runtime.available && supportsPiWebCapability(runtime, PI_WEB_CAPABILITIES.sessionPinsDaemonOwned)) return true;
+    } catch {
+      // Fail closed: never fall back to legacy web-owned pin state.
+    }
+    await reply.code(503).send({ error: "Daemon-owned session pins are unavailable. Update the web/API before restarting the updated session daemon." });
+    return false;
+  };
+
+  const pinPath = `${prefix}/navigation/projects/:projectId/workspaces/:workspaceId/session-pins`;
+  for (const method of ["GET", "PUT"] as const) {
+    app.route({ method, url: pinPath, handler: async (request, reply) => {
+      if (!await requireDaemonPins(reply)) return;
+      return proxy(request, reply);
+    } });
+  }
+
+  for (const path of ["/sessions/cleanup/preview", "/sessions/cleanup"]) {
+    app.post(`${prefix}${path}`, async (request, reply) => {
+      const body = request.body;
+      if (body !== undefined && !isRecord(body)) {
+        return reply.code(400).send({ error: "Request body must be an object" });
+      }
+      const record = body ?? {};
+      if (record["skipPinned"] !== undefined && typeof record["skipPinned"] !== "boolean") {
+        return reply.code(400).send({ error: "skipPinned field must be a boolean" });
+      }
+      // Only sessiond resolves exclusions, freshly for every preview/execute.
+      const forwarded = { ...record };
+      delete forwarded["excludedPinnedSessionIds"];
+      if (record["skipPinned"] === true && !await requireDaemonPins(reply)) return;
+      return proxy({ method: request.method, url: request.url, body: forwarded }, reply);
+    });
+  }
 
   // Image responses cross this boundary as bytes, never as JSON or UTF-8 text.
   app.get(`${prefix}/sessions/:sessionId/media/:mediaId`, async (request, reply) => {
@@ -69,11 +113,10 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.post(`${prefix}/projects`, (request, reply) => proxy(request, reply));
   app.delete(`${prefix}/projects/:projectId`, (request, reply) => proxy(request, reply));
 
-  // Catalog reads can include provider I/O; forward browser cancellation.
-  app.get(`${prefix}/plugin-catalog/*`, async (request, reply) => {
-    const cancellation = requestCancellation(request, reply);
+  // Authority resolution can include provider I/O; forward browser cancellation.
+  const cancellableProxy = async (request: { method: string; url: string; body?: unknown }, reply: FastifyReply, cancellation: ReturnType<typeof requestCancellation>) => {
     try {
-      const upstream = await daemon.request("GET", stripPrefix(request.url, prefix), undefined, { signal: cancellation.signal });
+      const upstream = await daemon.request(request.method, stripPrefix(request.url, prefix), request.body, { signal: cancellation.signal });
       reply.code(upstream.statusCode).header("cache-control", "no-store");
       return upstream.body === "" ? undefined : parseJson(upstream.body);
     } catch (error) {
@@ -82,7 +125,9 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
     } finally {
       cancellation.dispose();
     }
-  });
+  };
+  app.get(`${prefix}/plugin-catalog/*`, (request, reply) => cancellableProxy(request, reply, requestCancellation(request, reply)));
+  app.all(`${prefix}/plugin-sessions/*`, (request, reply) => cancellableProxy(request, reply, requestCancellation(request, reply)));
 
   app.all(`${prefix}/status`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/notices`, (request, reply) => proxy(request, reply));
@@ -92,6 +137,10 @@ export function registerSessionProxyRoutes(app: FastifyInstance, daemon: Session
   app.all(`${prefix}/auth/*`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions`, (request, reply) => proxy(request, reply));
   app.all(`${prefix}/sessions/*`, (request, reply) => proxy(request, reply));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function stripPrefix(url: string, prefix: string): string {

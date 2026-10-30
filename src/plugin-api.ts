@@ -63,6 +63,8 @@ export type {
 
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
 
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- The host intentionally accepts supported legacy entries.
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
@@ -83,8 +85,14 @@ export interface PluginCatalog extends PluginCatalogV1 {
   readonly machineId: string;
 }
 
+export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
+  readonly machineId: string;
+}
+
 export interface PluginDiscoveryContext {
   readonly catalog: PluginCatalog;
+  /** Explicit lifecycle commands for this captured machine. Omitted by older hosts. Call from event handlers, not render callbacks. */
+  readonly sessions?: PluginSessionLifecycle;
   readonly backend?: PluginBackend;
 }
 
@@ -108,6 +116,7 @@ export interface PluginContributionsV5 extends Omit<PluginContributions, "action
   syntaxHighlighters?: SyntaxHighlighterContribution[];
   filePreviewers?: FilePreviewerContribution[];
   contentRenderers?: ContentRendererContributionV5[];
+  /** @deprecated Declare static themes in package.json piWeb.plugins[].themes with browserRoot and stylesheet paths. */
   themes?: ThemeContributionV5[];
   fileIconThemes?: FileIconThemeContribution[];
   actions?: PluginActionV5[];
@@ -411,7 +420,9 @@ export interface PluginContributions {
   workspacePanels?: WorkspacePanelContribution[];
   workspaceLabels?: WorkspaceLabelContribution[];
   sessionLabels?: SessionLabelContribution[];
+  /** @deprecated Declare static themes in package.json piWeb.plugins[].themes instead. */
   themes?: ThemeContribution[];
+  /** @deprecated Declare static pairs in package.json piWeb.plugins[].themePairs instead. */
   themePairs?: ThemePairContribution[];
 }
 
@@ -977,7 +988,10 @@ export type ThemeColorScheme = "dark" | "light";
 
 export type ThemeTokens = Record<string, string>;
 
-/** Legacy v4 palette contract. V5 themes contribute CSS files instead. */
+/**
+ * Legacy v4 palette contract.
+ * Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes instead.
+ */
 export interface ThemeContribution {
   id: LocalContributionId;
   name: string;
@@ -987,10 +1001,12 @@ export interface ThemeContribution {
   tokens: ThemeTokens;
 }
 
+/** Deprecated runtime contribution; declare static themes in package.json piWeb.plugins[].themes with stylesheet paths instead. */
 export interface ThemeContributionV5 extends Omit<ThemeContribution, "tokens"> {
   stylesheets?: StylesheetContribution[];
 }
 
+/** Deprecated runtime contribution; declare static pairs in package.json piWeb.plugins[].themePairs instead. */
 export interface ThemePairContribution {
   id: LocalContributionId;
   name: string;

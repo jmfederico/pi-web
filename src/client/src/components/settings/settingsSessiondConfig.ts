@@ -9,10 +9,14 @@ export function subsessionsConfigPatch(enabled: boolean): PiWebConfigValues {
   return { subsessions: enabled };
 }
 
+export function sessionMessagesConfigPatch(enabled: boolean): PiWebConfigValues {
+  return { sessionMessages: enabled };
+}
+
 export function askUserConfigPatch(enabled: boolean): PiWebConfigValues {
   return { askUser: enabled };
 }
 
 export function mergeSelectedMachineSessiondConfig(base: PiWebConfigResponse, selectedMachine: PiWebConfigResponse): PiWebConfigResponse {
-  return mergeSelectedSettingsResponse(base, selectedMachine, ["spawnSessions", "subsessions", "askUser", "sessionNaming", "agent"]);
+  return mergeSelectedSettingsResponse(base, selectedMachine, ["spawnSessions", "subsessions", "sessionMessages", "askUser", "sessionNaming", "agent"]);
 }

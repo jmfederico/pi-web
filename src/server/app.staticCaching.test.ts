@@ -40,10 +40,36 @@ describe("client static caching", () => {
       expect(shell.statusCode).toBe(200);
       expect(shell.headers["content-type"]).toContain("text/html");
       expect(shell.body).toBe("<pi-web-app></pi-web-app>");
-      expect(shell.headers["cache-control"]).toBe("public, max-age=0");
+      expect(shell.headers["cache-control"]).toBe("private, no-cache");
     } finally {
       await app.close();
     }
+  });
+
+  it("delivers HTML when theme discovery fails and the dev bootstrap endpoint returns no content", async () => {
+    const source = '<script id="pi-web-theme-data" type="application/json"></script><pi-web-app></pi-web-app>';
+    await writeFile(join(clientDist, "index.html"), source);
+    const app = await buildApp({ clientDist, logger: false, themeCatalog: {
+      themes: () => Promise.reject(new Error("unavailable")), readAsset: () => Promise.resolve(undefined),
+    } });
+    try {
+      const shell = await app.inject("/");
+      expect(shell.statusCode).toBe(200);
+      expect(shell.body).toBe(source);
+      expect((await app.inject("/api/theme-bootstrap")).statusCode).toBe(204);
+    } finally { await app.close(); }
+  });
+
+  it.each(["stable", "dev"] as const)("delivers the %s deployment identity with the initial shell", async (flavor) => {
+    await writeFile(join(clientDist, "index.html"), "<html><body><pi-web-app></pi-web-app></body></html>");
+    const app = await buildApp({ clientDist, logger: false, deploymentFlavor: () => Promise.resolve(flavor) });
+    try {
+      for (const url of ["/", "/index.html", "/sessions/example"]) {
+        const shell = await app.inject(url);
+        expect(shell.statusCode).toBe(200);
+        expect(shell.body.includes('data-pi-web-deployment="dev"')).toBe(flavor === "dev");
+      }
+    } finally { await app.close(); }
   });
 
   it("keeps unhashed static files revalidating", async () => {

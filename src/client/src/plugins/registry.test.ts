@@ -12,7 +12,7 @@ import type { PiWebPlugin, PluginActivationResult, PluginCapability, PluginRunti
 import { createPluginPeer } from "./pluginPeer";
 import { adaptPublicPlugin, publicPluginState } from "./publicContext";
 import type { PluginBackendRequestTarget } from "../api/pluginBackends";
-import type { PluginCapability as PublicPluginCapability, StylesheetIntegrationCapabilityV1 } from "../../../plugin-api";
+import type { PluginCapability as PublicPluginCapability, PluginDiscoveryContext, StylesheetIntegrationCapabilityV1 } from "../../../plugin-api";
 import { stylesheetIntegrationCapability, stylesheetIntegrationCapabilityToken } from "./styles";
 
 it("keeps display getters live through v5 services, qualification, shortcuts and retained renderer choices", async () => {
@@ -139,6 +139,21 @@ function createContext(statePatch: Partial<AppState> = {}) {
 }
 
 describe("PluginRegistry v5 host services", () => {
+  it("keeps lifecycle services out of legacy v4 callbacks", async () => {
+    const registry = new PluginRegistry();
+    const run = vi.fn<(context: PluginRuntimeContext) => void>();
+    try {
+      await registry.register({ id: "legacy", plugin: { apiVersion: 4, name: "Legacy", activate: () => ({ contributions: {
+        actions: [{ id: "run", title: "Run", run }],
+      } }) } });
+      await registry.getActions(createContext().context)[0]?.run();
+      expect(run).toHaveBeenCalledOnce();
+      expect(run.mock.calls[0]?.[0]).not.toHaveProperty("sessions");
+    } finally {
+      await registry.dispose();
+    }
+  });
+
   it("propagates resource-only metadata to binding snapshots and lifetime-bound callback backends", async () => {
     const registry = new PluginRegistry();
     const render = vi.fn((context: WorkspacePanelContext) => html`${context.machine.id}`);
@@ -174,6 +189,7 @@ describe("PluginRegistry v5 host services", () => {
       expect(activate.mock.calls.map(([context]) => context.apiVersion)).toEqual([4, 4, 5]);
       expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining("deprecated API v4"));
       expect(activate.mock.calls[2]?.[0]).not.toHaveProperty("catalog");
+      expect(activate.mock.calls[2]?.[0]).not.toHaveProperty("sessions");
     } finally {
       await registry.dispose();
       warn.mockRestore();
@@ -182,7 +198,7 @@ describe("PluginRegistry v5 host services", () => {
 
   it("captures portable action catalogs per invocation across selection changes without a backend", async () => {
     const registry = new PluginRegistry();
-    const captured: PluginRuntimeContext[] = [];
+    const captured: (PluginRuntimeContext & Pick<PluginDiscoveryContext, "sessions">)[] = [];
     await registry.register({ id: "portable", backendRevision: "revision", pairedRequestVersion: 1, plugin: {
       apiVersion: 5, name: "Portable", activate: () => ({ contributions: {
         actions: [{ id: "run", title: "Run", run: (context) => { captured.push(context); } }],
@@ -193,14 +209,19 @@ describe("PluginRegistry v5 host services", () => {
     context.state = { ...context.state, selectedMachine: { id: "remote", name: "Remote", kind: "remote", baseUrl: "https://remote.test", createdAt: "now", updatedAt: "now" } };
     await registry.getActions(context)[0]?.run();
     expect(captured.map((value) => value.catalog?.machineId)).toEqual(["local", "remote"]);
+    expect(captured.map((value) => value.sessions?.machineId)).toEqual(["local", "remote"]);
     expect(captured.every((value) => value.backend === undefined)).toBe(true);
     expect(context).not.toHaveProperty("catalog");
+    expect(context).not.toHaveProperty("sessions");
     await registry.dispose();
+    for (const retained of captured) {
+      await expect(retained.sessions?.pin({ projectId: "p", workspaceId: "w", sessionId: "s" })).rejects.toThrow();
+    }
   });
 
   it("uses the scoped callback machine rather than selected machine and binds backend ownership", async () => {
     const registry = new PluginRegistry();
-    const render = vi.fn((context: WorkspacePanelContext) => html`${context.machine.id}`);
+    const render = vi.fn((context: WorkspacePanelContext & Pick<PluginDiscoveryContext, "sessions">) => html`${context.machine.id}`);
     for (const [id, machineId, machineSpecific] of [["portable", undefined, false], ["local", undefined, true], ["remote", "remote", false]] as const) {
       await registry.register({ id, ...(machineId === undefined ? {} : { machineId }), machineSpecific,
         backendRevision: "revision", pairedRequestVersion: 1,
@@ -212,6 +233,7 @@ describe("PluginRegistry v5 host services", () => {
     for (const panel of registry.getWorkspacePanels()) panel.render(context);
     const received = render.mock.calls.map(([value]) => value);
     expect(received.map((value) => value.catalog?.machineId)).toEqual(["remote", "remote"]);
+    expect(received.map((value) => value.sessions?.machineId)).toEqual(["remote", "remote"]);
     expect(received.map((value) => value.backend?.machineId)).toEqual([undefined, "remote"]);
     expect(context).not.toHaveProperty("catalog");
     await registry.dispose();

@@ -102,6 +102,12 @@ describe("settings config drafts", () => {
     expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty("defaultStreamingBehavior");
   });
 
+  it.each([true, false])("preserves sessionMessages %s during gateway edits", (sessionMessages) => {
+    const draft = gatewayServerDraftFromConfig({ host: "gateway.local" });
+    expect(gatewayServerConfigFromDraft(draft, { sessionMessages }).sessionMessages).toBe(sessionMessages);
+    expect(gatewayServerConfigFromDraft(draft)).not.toHaveProperty("sessionMessages");
+  });
+
   it.each([true, false])("preserves quietMode %s during gateway edits", (quietMode) => {
     const draft = gatewayServerDraftFromConfig({ host: "gateway.local" });
     expect(gatewayServerConfigFromDraft(draft, { quietMode }).quietMode).toBe(quietMode);

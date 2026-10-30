@@ -795,7 +795,7 @@ export function parseSessionStreamEvent(value: unknown): SessionUiEvent {
 }
 
 type RealtimeStreamEvent =
-  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" | "models.changed" | "workspaces.changed" | "notices.updated" | "session.openAsk.changed" }>
+  | Extract<GlobalSessionEvent, { type: "status.update" | "activity.update" | "session.name" | "session.created" | "models.changed" | "workspaces.changed" | "session-pins.changed" | "session.openAsk.changed" | "notices.updated" }>
   | MachineStatusUiEvent;
 
 export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
@@ -815,6 +815,13 @@ export function parseRealtimeStreamEvent(value: unknown): RealtimeStreamEvent {
       return { type: "models.changed", revision: requireNonNegativeSafeInteger(record, "revision") };
     case "workspaces.changed":
       return { type: "workspaces.changed", projectId: requireNonEmptyString(record, "projectId") };
+    case "session-pins.changed":
+      return {
+        type: "session-pins.changed",
+        projectId: requireNonEmptyString(record, "projectId"),
+        workspaceId: requireNonEmptyString(record, "workspaceId"),
+        revision: requireNonNegativeSafeInteger(record, "revision"),
+      };
     case "notices.updated":
       return parseServerNoticeEvent(record);
     case "machine.status":
@@ -1143,12 +1150,14 @@ function highestNotificationSeverity(notifications: readonly SessionNotification
 export function parseSessionCleanupPreviewResponse(value: unknown): SessionCleanupPreviewResponse {
   const record = requireRecord(value);
   const skippedBusySessionIds = record["skippedBusySessionIds"] === undefined ? undefined : arrayOfString(record["skippedBusySessionIds"], "skippedBusySessionIds");
+  const skippedPinnedSessionIds = record["skippedPinnedSessionIds"] === undefined ? undefined : arrayOfString(record["skippedPinnedSessionIds"], "skippedPinnedSessionIds");
   return {
     generatedAt: requireString(record, "generatedAt"),
     thresholds: parseSessionCleanupThresholds(record["thresholds"]),
     projects: arrayOf(parseSessionCleanupProjectSummary)(record["projects"]),
     totals: parseSessionCleanupTotals(record["totals"]),
     ...(skippedBusySessionIds === undefined ? {} : { skippedBusySessionIds }),
+    ...(skippedPinnedSessionIds === undefined ? {} : { skippedPinnedSessionIds }),
   };
 }
 
@@ -1555,6 +1564,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("agent", optionalAgent(record["agent"])),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
+    ...optionalField("sessionMessages", optionalBoolean(record, "sessionMessages")),
     ...optionalField("askUser", optionalBoolean(record, "askUser")),
     ...optionalField("environmentFacts", optionalBoolean(record, "environmentFacts")),
     ...optionalField("extensionDialogsTimeoutMs", optionalNumber(record, "extensionDialogsTimeoutMs")),
@@ -1673,6 +1683,7 @@ function parsePiWebConfigEnvOverrides(value: unknown): PiWebConfigEnvOverrides {
     allowedHosts: requireBoolean(record, "allowedHosts"),
     spawnSessions: requireBoolean(record, "spawnSessions"),
     subsessions: requireBoolean(record, "subsessions"),
+    sessionMessages: optionalBoolean(record, "sessionMessages") ?? false,
     askUser: requireBoolean(record, "askUser"),
   };
 }

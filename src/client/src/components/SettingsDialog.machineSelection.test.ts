@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
 import { configApi, piPackagesApi, pluginsApi, type Machine, type PiPackagesResponse, type PiWebConfigResponse, type PiWebConfigValues, type PiWebPluginsResponse } from "../api";
 import { PluginRegistry } from "../plugins/registry";
-import { themePackPlugin } from "../plugins/themes";
+import { builtInThemeCatalog } from "../themeCatalog.testSupport";
+import * as themeCatalog from "../themeCatalog";
 import type { SettingsSection } from "../settingsRoute";
 import { SettingsDialog } from "./SettingsDialog";
 import { configResponse, deferred, packageInfo, pluginInfo, pluginsResponse, remoteMachine, secondRemoteMachine } from "./SettingsDialog.testSupport";
@@ -23,6 +24,7 @@ const gatewayMachine: Machine = {
 const gatewayConfig = { host: "gateway.local", port: 8504, shortcuts: { "core:chat": "mod+1" } };
 
 beforeEach(() => {
+  vi.spyOn(themeCatalog, "loadThemeCatalog").mockResolvedValue(builtInThemeCatalog());
   vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => undefined);
   vi.spyOn(configApi, "config").mockImplementation((id) => Promise.resolve(configResponse(id === undefined ? gatewayConfig : {
     uploads: { defaultFolder: `${id}/uploads` }, spawnSessions: true, plugins: { info: { enabled: true } },
@@ -251,7 +253,8 @@ describe("settings-only machine selection DOM", () => {
     const dialog = await mount();
     const registry = new PluginRegistry();
     try {
-      await registry.registerBatch([{ id: "themes", plugin: themePackPlugin }]);
+      const catalog = builtInThemeCatalog();
+      registry.setDeclarativeThemes(catalog.themes, catalog.themePairs);
       dialog.themes = registry.getThemes();
       dialog.actions = [{ id: "core:chat", title: "Chat", shortcut: "mod+1", run: () => undefined }];
       dialog.onUseLocalTheme = vi.fn();

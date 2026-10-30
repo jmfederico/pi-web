@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { parse, walk } from "css-tree";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginRegistry } from "../registry";
-import { applyPiWebTheme, DEFAULT_THEME_PREFERENCE, resolveThemePreference } from "../../theme";
 import { themePackPlugin } from "./index";
 
 afterEach(() => {
@@ -12,41 +11,12 @@ afterEach(() => {
 });
 
 describe("built-in CSS themes", () => {
-  it("preserves theme identities, metadata, and automatic pairing through registration", async () => {
+  it("keeps file icons without duplicating statically discovered palettes or pairs", async () => {
     const registry = new PluginRegistry();
     await registry.register({ id: "themes", plugin: themePackPlugin });
-    const themes = registry.getThemes();
-    const themePairs = registry.getThemePairs();
-    expect(themes.map((theme) => ({ id: theme.id, colorScheme: theme.colorScheme }))).toEqual([
-      { id: "themes:pi-web-dark", colorScheme: "dark" },
-      { id: "themes:pi-web-light", colorScheme: "light" },
-      { id: "themes:classic", colorScheme: "dark" },
-      { id: "themes:paper", colorScheme: "light" },
-      { id: "themes:graphite", colorScheme: "dark" },
-    ]);
-    expect(themePairs.map((pair) => ({ id: pair.id, light: pair.light, dark: pair.dark }))).toEqual([
-      { id: "themes:pi-web", light: "themes:pi-web-light", dark: "themes:pi-web-dark" },
-      { id: "themes:paper-graphite", light: "themes:paper", dark: "themes:graphite" },
-    ]);
-    for (const prefersLight of [false, true]) {
-      const { activeTheme } = resolveThemePreference({ themes, themePairs, preference: DEFAULT_THEME_PREFERENCE, prefersLight });
-      expect(activeTheme?.stylesheets).toHaveLength(1);
-      expect(activeTheme?.stylesheets?.[0]?.id).toBe(`themes:pi-web-${prefersLight ? "light" : "dark"}:palette`);
-      expect(activeTheme?.stylesheets?.[0]?.url).toMatch(/^http:\/\/.*\/pi-web-(light|dark)\.css\?no-inline$/);
-    }
-    for (const prefersLight of [false, true]) {
-      const { activeTheme } = resolveThemePreference({
-        themes, themePairs, preference: { themeId: "themes:paper", auto: true }, prefersLight,
-      });
-      expect(activeTheme?.id).toBe(`themes:${prefersLight ? "paper" : "graphite"}`);
-      expect(activeTheme?.stylesheets?.[0]?.url).toMatch(/\/(paper|graphite)\.css\?no-inline$/);
-    }
-    const light = themes.find((theme) => theme.colorScheme === "light");
-    if (light === undefined) throw new Error("Missing built-in Light theme");
-    applyPiWebTheme(light);
-    expect(document.documentElement.dataset["piWebTheme"]).toBe("themes:pi-web-light");
-    expect(document.documentElement.style.colorScheme).toBe("light");
-    expect(document.documentElement.style.getPropertyValue("--pi-bg")).toBe("");
+    expect(registry.getThemes()).toEqual([]);
+    expect(registry.getThemePairs()).toEqual([]);
+    expect(registry.getFileIconThemes().map(({ id }) => id)).toEqual(["themes:material"]);
     await registry.dispose();
   });
 
@@ -60,7 +30,7 @@ describe("built-in CSS themes", () => {
     };
     let properties: string[] | undefined;
     for (const [id, colors] of Object.entries(expectedColors)) {
-      const css = await readFile(`src/client/src/plugins/themes/${id}.css`, "utf8");
+      const css = await readFile(`pi-web-plugins/themes/assets/${id}.css`, "utf8");
       const declarations = new Map<string, string>();
       walk(parse(css, { parseCustomProperty: false }), {
         visit: "Declaration",

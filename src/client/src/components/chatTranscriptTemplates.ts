@@ -54,17 +54,18 @@ export interface TranscriptRenderContext {
   openImageGallery: (images: readonly { part: Extract<ChatPart, { type: "image" }>; description: () => string }[], selectedIndex: number) => void;
 }
 
+/** Conversation hooks and child boundaries are supported by docs/theme-styling-contract.md. */
 export function renderMessage(context: TranscriptRenderContext, message: ChatLine, index: number, entryActionHeaders: ReadonlySet<ChatLine>) {
     const toolOnly = isToolExecutionOnlyMessage(message);
     const hasHeader = chatMessageHasHeader(message);
     const shellClass = toolOnly ? "msg tool-execution-shell" : "msg ask-user-record-shell";
-    const conversationClass = hasHeader && (message.role === "user" || message.role === "assistant") ? " conversation-message conversation-layout" : "";
+    const conversationClass = hasHeader && (message.role === "user" || message.role === "assistant") ? " conversation-message conversation-layout chat-message" : "";
     return html`
-      <article class=${`${hasHeader ? `msg ${message.role}${conversationClass}` : shellClass} ui-transcript-surface`} data-index=${index} data-scroll-anchor-id=${context.anchors.message(index, message) ?? nothing}>
+      <article class=${`${hasHeader ? `msg ${message.role}${conversationClass}` : shellClass} ui-transcript-surface`} data-speaker=${conversationClass !== "" ? message.role : nothing} data-index=${index} data-scroll-anchor-id=${context.anchors.message(index, message) ?? nothing}>
         ${conversationClass !== "" ? html`
-          <div class="conversation-content">
+          <div class="conversation-content chat-message-content">
             ${renderMessageHeader(context, message, String(index), index, entryActionHeaders, undefined, true)}
-            <div class="conversation-body">${message.parts.map((part, partIndex) => renderPart(context, part, message, index, partIndex))}</div>
+            <div class="conversation-body chat-message-body">${message.parts.map((part, partIndex) => renderPart(context, part, message, index, partIndex))}</div>
           </div>
           ${renderMessageMetadata(context, message, String(index))}
         ` : html`
@@ -177,7 +178,7 @@ export function renderMessageHeader(context: TranscriptRenderContext, message: C
     const conversation = label === undefined && (message.role === "user" || message.role === "assistant");
     const heading = label ?? messages.t("role", { role: message.role });
     return html`
-      <div class=${conversation ? "msg-header conversation-header" : "msg-header"}>
+      <div class=${conversation ? "msg-header conversation-header chat-message-header" : "msg-header"}>
         <span class=${conversation ? "visually-hidden" : "label"}>${heading}</span>
         <pi-message-actions-menu>
           <div class="msg-actions-strip">
@@ -195,7 +196,7 @@ export function renderMessageHeader(context: TranscriptRenderContext, message: C
   }
 
 function renderMessageMetadata(context: TranscriptRenderContext, message: ChatLine, key: string) {
-  return html`<div id=${`message-meta-${key}`} class="msg-meta-details" ?hidden=${context.metadata.expandedKey !== key}>${context.metadata.label(message)}</div>`;
+  return html`<div id=${`message-meta-${key}`} class="msg-meta-details chat-message-meta" ?hidden=${context.metadata.expandedKey !== key}>${context.metadata.label(message)}</div>`;
 }
 
 export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
