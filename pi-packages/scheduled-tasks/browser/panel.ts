@@ -129,6 +129,15 @@ export class ScheduledTasksPanel extends LitElement {
     else await this.focusView();
   }
   private page(offset: number): void { this.offset = offset; this.history = { executions: [], nextOffset: null }; void this.load(); }
+  private conversationUrl(execution: ExecutionView): string {
+    const url = new URL(window.location.href);
+    url.search = new URLSearchParams({
+      machine: this.contextValue?.machine.id ?? "", project: execution.task.projectId,
+      workspace: execution.task.workspaceId, session: execution.sessionId ?? "", view: "chat",
+    }).toString();
+    url.hash = "";
+    return url.href;
+  }
   private async openConversation(execution: ExecutionView): Promise<void> {
     const context = this.contextValue;
     if (!context || execution.sessionId === null) return;
@@ -220,8 +229,14 @@ export class ScheduledTasksPanel extends LitElement {
     return html`<div class="execution" data-status=${execution.status}>
       <div class="heading"><strong class="outcome">${messages.t(execution.status)}</strong>
         <span class="meta">${messages.t("recordedAt", { at: this.time(execution.createdAt) })}</span></div>
-      ${execution.sessionId !== null ? html`<button type="button" class="ui-button ui-button--action conversation" @click=${() => this.openConversation(execution)}>${messages.t("openConversation")}</button>` : nothing}
-      ${execution.latestReport ? html`<p class="summary">${execution.latestReport.summary}</p>` : nothing}
+      ${execution.sessionId !== null ? html`<a class="conversation" href=${this.conversationUrl(execution)} @click=${(event: MouseEvent) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        void this.openConversation(execution);
+      }}>${messages.t("openConversation")}</a>` : nothing}
+      ${execution.latestReport ? keyed(execution.id, html`<details class="result"><summary>${messages.t("result")}</summary>
+        <p class="summary">${execution.latestReport.summary}</p>
+      </details>`) : nothing}
       ${execution.status === "uncertain" || execution.status === "failed" || execution.status === "errored"
         ? html`<p class="meta">${messages.t(execution.status === "uncertain" ? "uncertainHelp" : execution.status === "failed" ? "failedHelp" : "erroredHelp")}</p>` : nothing}
       ${this.renderNotices(execution)}
@@ -329,11 +344,14 @@ export class ScheduledTasksPanel extends LitElement {
     .outcome { font-size: 12px; font-weight: 500; }
     .run-warning { font-size: 12px; white-space: pre-wrap; }
     .prompt-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-block: 4px 12px; }
+    .result .summary { padding-block: 4px 12px; }
     .summary, .diagnostic { white-space: pre-wrap; line-height: 1.5; }
     .diagnostic, code { font: 12px var(--pi-mono, monospace); }
     .error { color: var(--pi-danger); margin-bottom: 16px; }
     .error p { margin-block: 8px; }
-    .conversation { justify-self: start; max-width: 100%; }
+    .conversation { justify-self: start; max-width: 100%; color: var(--pi-text-secondary); text-decoration: underline; text-underline-offset: 3px; padding-block: 4px; line-height: 1.5; }
+    .conversation:hover { color: var(--pi-text); }
+    .conversation:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 2px; }
     .pages { display: flex; gap: 8px; padding-block: 16px; }
     .all-tasks { margin-top: 24px; }
     summary { cursor: pointer; padding-block: 10px; font-size: 12px; color: var(--pi-text-secondary); }

@@ -43,6 +43,7 @@ export default {
   effectiveModel: text<{ value: string }>("Effective model: {value}", "Model selected when this run was dispatched"),
   effectiveThinking: text<{ value: string }>("Effective thinking level: {value}", "Thinking level selected when this run was dispatched"),
   runWarning: text<{ notice: string }>("Run warning: {notice}", "Non-fatal execution warning; does not change the reported outcome"),
+  result: text("Result", "Collapsed disclosure of the full report for this run"),
   prompt: text("Prompt", "Collapsed disclosure of the current task instructions"),
   promptUsed: text("Prompt used", "Collapsed disclosure of the instructions saved on this execution"),
   loadingPrompt: text("Loading prompt…", "Prompt request in progress"),

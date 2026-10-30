@@ -60,7 +60,7 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     expect(button(target.root, `View task: ${task.name}`).textContent).toBe(task.name);
     expect(target.root.querySelector("script")).toBeNull();
-    expect(target.root.querySelector(".run-warning")).toBeNull();
+    expect(target.root.querySelector(".run-warning, .result")).toBeNull();
     // A retained due timestamp is not an upcoming dispatch while the task is paused.
     expect(target.root.querySelector('[aria-labelledby="upcoming-title"] article')).toBeNull();
     expect(target.root.querySelector('[aria-labelledby="awaiting-title"] [data-status="dispatched"]')).not.toBeNull();
@@ -70,7 +70,13 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.request).toHaveBeenCalledTimes(1);
     button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
-    button(target.root, "Open conversation").click();
+    const link = target.root.querySelector<HTMLAnchorElement>("a.conversation");
+    if (!link) throw new Error("Missing conversation link");
+    const destination = new URL(link.href);
+    expect(Object.fromEntries(destination.searchParams)).toEqual({ machine: "captured-machine", project: "stored-project", workspace: "stored-workspace", session: "stored-conversation", view: "chat" });
+    link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+    expect(target.navigate).not.toHaveBeenCalled();
+    link.click();
     await vi.waitFor(() => { expect(target.navigate).toHaveBeenCalledExactlyOnceWith({ machineId: "captured-machine", projectId: "stored-project", workspaceId: "stored-workspace", sessionId: "stored-conversation", view: "chat" }); });
     expect(target.context.prompt.getText()).toBe("draft");
   });
@@ -87,6 +93,9 @@ describe("Scheduled tasks dashboard", () => {
     await vi.waitFor(() => { expect(target.request).toHaveBeenCalledWith("history", { taskId: "task", limit: 20, offset: 0 }, expect.anything()); });
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe(summary); });
     expect(target.root.querySelector("script, failure")).toBeNull();
+    const result = target.root.querySelector<HTMLDetailsElement>(".history-entry .result");
+    expect(result?.open).toBe(false);
+    expect(result?.querySelector(".summary")?.textContent).toBe(summary);
     const disclosures = [...target.root.querySelectorAll<HTMLDetailsElement>("details")].filter((details) => details.querySelector("summary")?.textContent === "Technical details");
     expect(disclosures).toHaveLength(2);
     const runDetails = disclosures.find((details) => details.textContent.includes(execution.id));
@@ -234,7 +243,7 @@ describe("Scheduled tasks dashboard", () => {
     button(target.root, `View task: ${task.name}`).click();
     await vi.waitFor(() => { expect(target.root.querySelector(".history-entry")).not.toBeNull(); });
     target.navigate.mockRejectedValueOnce(new Error("Missing conversation"));
-    button(target.root, "Open conversation").click();
+    target.root.querySelector<HTMLAnchorElement>("a.conversation")?.click();
     await vi.waitFor(() => { expect(target.root.querySelector('[role="alert"]')).not.toBeNull(); });
     expect(target.root.querySelector(".history-entry .technical")?.textContent).toContain(execution.sessionId);
   });
