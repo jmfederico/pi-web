@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionInfo } from "../api";
 import { initialAppState } from "../appState";
 import { SessionController } from "./sessionController";
@@ -71,6 +71,46 @@ describe("SessionController archive and cleanup", () => {
       expect(controller.preferredSession(workspace.path, remaining, hidden.id)).toBe(hidden);
       controller.dispose();
     });
+  });
+
+  it.each([false, true])("retires the live binding after externally archiving the selected session (replacement: %s)", async (hasReplacement) => {
+    const selected = { ...oldSession, persisted: true };
+    const archived = { ...selected, archived: true };
+    const replacement = { ...oldSession, id: "replacement", path: "/tmp/replacement.jsonl", persisted: true };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [selected] };
+    const socket = new FakeSocket();
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      socket, api: { ...defaultApi,
+        sessions: () => Promise.resolve([archived, ...(hasReplacement ? [replacement] : [])]),
+        status: (session) => Promise.resolve(status(sessionLookupId(session))),
+      },
+    });
+    await controller.selectSession(selected, { updateUrl: false });
+    const close = vi.spyOn(socket, "close");
+    await controller.refreshCurrentWorkspaceSessions();
+    expect(close).toHaveBeenCalled();
+    expect(state.selectedSession?.id).toBe(hasReplacement ? replacement.id : undefined);
+    expect(state.sessions[0]?.archived).toBe(true);
+    controller.dispose();
+  });
+
+  it("rejoins the live binding after an externally restored selected archive", async () => {
+    const restored = { ...oldSession, persisted: true };
+    const archived = { ...restored, archived: true };
+    let state: AppState = { ...initialAppState(), selectedWorkspace: workspace, sessions: [archived] };
+    const socket = new FakeSocket();
+    const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
+      socket, api: { ...defaultApi,
+        sessions: () => Promise.resolve([restored]),
+        status: (session) => Promise.resolve(status(sessionLookupId(session))),
+      },
+    });
+    await controller.selectSession(archived, { updateUrl: false });
+    expect(socket.connectedSessionIds).toEqual([]);
+    await controller.refreshCurrentWorkspaceSessions();
+    expect(state.selectedSession).toEqual(restored);
+    expect(socket.connectedSessionIds).toEqual([restored.id]);
+    controller.dispose();
   });
 
   it("clears agent subsession classification when detaching from its parent", async () => {

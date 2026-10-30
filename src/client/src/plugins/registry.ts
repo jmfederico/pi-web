@@ -10,6 +10,7 @@ import type { LocalizationService } from "../localization/service";
 import { createPluginLocalization } from "./localization";
 import { createSyntaxHighlightingCapability, runSyntaxHighlighter, snapshotSyntaxHighlighter, syntaxHighlightingCapabilityToken, type RegisteredSyntaxHighlighter } from "../formatting/syntaxHighlighting";
 import { createPluginCatalog } from "./catalog";
+import { createPluginSessionLifecycle } from "./sessionLifecycle";
 import { stylesheetIntegrationCapability, stylesheetIntegrationCapabilityToken } from "./styles";
 import type { QualifiedStylesheetContribution, StylesheetContribution } from "./types";
 import { createPluginBackend } from "./pluginPeer";
@@ -1539,7 +1540,7 @@ function withV5Services(
     const machineId = context.machine?.id ?? context.state?.selectedMachine?.id ?? "local";
     const backend = ownerMachineId === machineId ? createPluginBackend(binding, machineId, lifetimeSignal) : undefined;
     // Never reuse a context's backend: it may belong to another plugin or machine.
-    return { ...context, catalog: createPluginCatalog(machineId, lifetimeSignal), backend };
+    return { ...context, catalog: createPluginCatalog(machineId, lifetimeSignal), sessions: createPluginSessionLifecycle(machineId, lifetimeSignal), backend };
   };
   const wrap = <Context extends MachineContext, Args extends unknown[], Result>(callback: (context: Context, ...args: Args) => Result) =>
     (context: Context, ...args: Args): Result => callback(services(context), ...args);

@@ -86,6 +86,7 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
   sessionCleanupPinnedExclusions: "sessions.cleanup.pinnedExclusions",
+  sessionPinsDaemonOwned: "sessions.pins.daemonOwned",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -1505,6 +1506,14 @@ export interface WorkspaceChangedEvent {
   projectId: string;
 }
 
+/** Scoped invalidation; consumers reload the current daemon-owned pin preference. */
+export interface SessionPinsChangedEvent {
+  type: "session-pins.changed";
+  projectId: string;
+  workspaceId: string;
+  revision: number;
+}
+
 export type GlobalSessionEvent =
   | Extract<SessionUiEventBody, { type: "status.update" | "activity.update" | "session.name" | "session.created" }>
   | SessionNotificationSummaryEvent
@@ -1512,5 +1521,6 @@ export type GlobalSessionEvent =
   | SessionStartupProgressEvent
   | ModelScopeChangedEvent
   | WorkspaceChangedEvent
+  | SessionPinsChangedEvent
   | ServerNoticeEvent;
 export type RealtimeEvent = GlobalSessionEvent | MachineStatusUiEvent;

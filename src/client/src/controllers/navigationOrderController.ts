@@ -19,6 +19,7 @@ export interface NavigationOrderControllerOptions {
 }
 
 interface ScopeState {
+  readonly scope: NavigationOrderScope;
   snapshot: NavigationOrderSnapshot | undefined;
   tail: Promise<void>;
   ensuring: Promise<void> | undefined;
@@ -66,6 +67,13 @@ export class NavigationOrderController {
     return this.enqueue(scope, async (state) => { state.snapshot = await this.port.load(scope); });
   }
 
+  /** Recover missed pin broadcasts for every visited workspace on this machine. */
+  async refreshSessionPins(machineId: string): Promise<void> {
+    await Promise.all([...this.states.values()]
+      .filter(({ scope }) => scope.kind === "sessionPins" && scope.machineId === machineId)
+      .map(({ scope }) => this.load(scope)));
+  }
+
   mutate(scope: NavigationOrderScope, mutation: (ids: readonly string[]) => readonly string[]): Promise<void> {
     scope = { ...scope };
     return this.enqueue(scope, async (state) => {
@@ -93,7 +101,7 @@ export class NavigationOrderController {
     const key = scopeKey(scope);
     let state = this.states.get(key);
     if (!state) {
-      state = { snapshot: undefined, tail: Promise.resolve(), ensuring: undefined, pending: 0 };
+      state = { scope: { ...scope }, snapshot: undefined, tail: Promise.resolve(), ensuring: undefined, pending: 0 };
       this.states.set(key, state);
     }
     return state;

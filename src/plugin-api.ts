@@ -63,6 +63,8 @@ export type {
 
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
 
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- The host intentionally accepts supported legacy entries.
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
@@ -83,8 +85,14 @@ export interface PluginCatalog extends PluginCatalogV1 {
   readonly machineId: string;
 }
 
+export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
+  readonly machineId: string;
+}
+
 export interface PluginDiscoveryContext {
   readonly catalog: PluginCatalog;
+  /** Explicit lifecycle commands for this captured machine. Omitted by older hosts. Call from event handlers, not render callbacks. */
+  readonly sessions?: PluginSessionLifecycle;
   readonly backend?: PluginBackend;
 }
 

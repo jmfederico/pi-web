@@ -238,6 +238,56 @@ describe("PiSessionService archive and cleanup", () => {
     await service.dispose();
   });
 
+  it("refuses to restore a busy archived runtime without aborting it", async () => {
+    const archived = { sessionId: "busy-archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/busy.jsonl" };
+    const busy = fakeRuntime("busy-archived", { isStreaming: true });
+    const restore = vi.fn(() => Promise.resolve());
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+      createAgentRuntime: runtimeCreator(busy.runtime), sessionManager: sessionGateway([]),
+      archiveStore: {
+        list: () => Promise.resolve([archived]), get: () => Promise.resolve(archived),
+        archive: () => Promise.reject(new Error("unexpected archive")), restore, isArchived: () => Promise.resolve(true),
+      },
+    });
+    await service.status(sessionRef("busy-archived"));
+    await expect(service.restore(sessionRef("busy-archived"))).rejects.toThrow("Stop current session activity");
+    expect(restore).not.toHaveBeenCalled();
+    expect(busy.calls.abort).toBe(0);
+    await service.dispose();
+  });
+
+  it.each(["restore", "delete"] as const)("reserves archived identity through %s persistence and releases it after failure", async (operation) => {
+    const archived = { sessionId: "archived", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z", archivePath: "/archive/archived.jsonl" };
+    let entered!: () => void;
+    const admitted = new Promise<void>((resolve) => { entered = resolve; });
+    let fail!: (error: Error) => void;
+    const pending = new Promise<never>((_resolve, reject) => { fail = reject; });
+    const persist = () => { entered(); return pending; };
+    const open = vi.fn(() => { throw new Error("must not open a runtime"); });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+      createAgentRuntime: open, sessionManager: sessionGateway([]),
+      archiveStore: {
+        list: () => Promise.resolve([archived]), get: () => Promise.resolve(archived),
+        archive: () => Promise.reject(new Error("unexpected archive")),
+        restore: persist, deleteArchivedMany: persist, isArchived: () => Promise.resolve(true),
+      },
+    });
+    const result = operation === "restore"
+      ? service.restore(sessionRef("archived")).then(() => undefined, (error: unknown) => error)
+      : service.deleteArchivedMany([sessionRef("archived")]);
+    await admitted;
+    await expect(service.navigateTree(sessionRef("archived"), { targetId: "target", expectedLeafId: null, summary: { mode: "none" } })).rejects.toThrow("Stop current session activity");
+    fail(new Error("persistence failed"));
+    const outcome = await result;
+    if (operation === "restore") expect(outcome).toBeInstanceOf(Error);
+    else expect(outcome).toMatchObject({ deletedSessionIds: [], failures: [{ sessionId: "archived", error: "persistence failed" }] });
+    await expect(service.navigateTree(sessionRef("archived"), { targetId: "target", expectedLeafId: null, summary: { mode: "none" } })).rejects.toThrow("Archived sessions are read-only");
+    expect(open).not.toHaveBeenCalled();
+    await service.dispose();
+  });
+
   it("bulk archives inactive sessions oldest activity first without opening runtimes", async () => {
     const recordsByCwd = new Map([
       ["/one", [
@@ -477,6 +527,7 @@ describe("PiSessionService archive and cleanup", () => {
     let listAllCalls = 0;
     const archived = { sessionId: "archived-old", cwd: "/old-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-old.jsonl" };
     const otherArchived = { sessionId: "archived-other", cwd: "/other-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/archived-other.jsonl" };
+    const pinnedSessionIds = vi.fn(() => Promise.resolve(["execute-only", "archived-old"]));
     const notificationStore = new SessionNotificationStore({ daemonInstanceId: "daemon-cleanup-test" });
     for (const sessionId of ["execute-only", "archived-old"]) {
       const registration = notificationStore.registerSession(sessionId, "/old-project");
@@ -486,6 +537,7 @@ describe("PiSessionService archive and cleanup", () => {
       agentDir: TEST_AGENT_DIR,
       modelRuntime: testModelRuntime,
       notificationStore,
+      sessionPins: { pinnedSessionIds },
       now: () => new Date("2026-06-25T00:00:00.000Z"),
       archiveStore: {
         list: () => Promise.resolve([archived, otherArchived]),
@@ -511,6 +563,7 @@ describe("PiSessionService archive and cleanup", () => {
           return Promise.resolve([
             listAllCalls === 1 ? sessionRecord("preview-only", "/old-project") : sessionRecord("execute-only", "/old-project"),
             listAllCalls === 1 ? sessionRecord("preview-other", "/other-project") : sessionRecord("execute-other", "/other-project"),
+            { ...sessionRecord("recent", "/old-project"), modified: new Date("2026-06-24T00:00:00.000Z") },
           ]);
         },
         invalidateSessionFile: () => undefined,
@@ -537,7 +590,7 @@ describe("PiSessionService archive and cleanup", () => {
     const protectedRequest = {
       thresholds: { archiveIdleDays: 30, deleteArchivedDays: 30 },
       projectCwds: ["/old-project"],
-      excludedPinnedSessionIds: ["execute-only", "archived-old"],
+      skipPinned: true,
     };
     const protectedPreview = await service.cleanupPreview(protectedRequest);
     const protectedExecution = await service.cleanup(protectedRequest);
@@ -545,11 +598,41 @@ describe("PiSessionService archive and cleanup", () => {
       expect(response.totals).toEqual({ archiveCount: 0, deleteCount: 0 });
       expect(response.skippedPinnedSessionIds).toEqual(["archived-old", "execute-only"]);
     }
+    expect(pinnedSessionIds).toHaveBeenCalledTimes(2);
     expect(protectedExecution.archivedSessionIds).toEqual([]);
     expect(protectedExecution.deletedSessionIds).toEqual([]);
     expect(archivedInputs).toEqual(["execute-only"]);
     expect(deletedSessionIds).toEqual(["archived-old"]);
 
+    await service.dispose();
+  });
+
+  it("fails closed without authoritative pins and resolves fresh pins for every plan", async () => {
+    const deps = {
+      agentDir: TEST_AGENT_DIR,
+      modelRuntime: testModelRuntime,
+      sessionManager: sessionGateway([sessionRecord("old")]),
+      archiveStore: {
+        list: () => Promise.resolve([]), get: () => Promise.resolve(undefined),
+        archive: () => Promise.reject(new Error("unexpected archive")),
+        restore: () => Promise.resolve(), isArchived: () => Promise.resolve(false),
+      },
+      now: () => new Date("2026-06-25T00:00:00.000Z"),
+    };
+    const missing = new PiSessionService(new CapturingSessionEventHub(), deps);
+    const request = { thresholds: { archiveIdleDays: 0 }, skipPinned: true };
+    await expect(missing.cleanupPreview(request)).rejects.toThrow("pin store is unavailable");
+    await expect(missing.cleanup(request)).rejects.toThrow("pin store is unavailable");
+    await missing.dispose();
+    const pinnedSessionIds = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["old"])
+      .mockRejectedValueOnce(new Error("pin storage failed"));
+    const service = new PiSessionService(new CapturingSessionEventHub(), { ...deps, sessionPins: { pinnedSessionIds } });
+    expect((await service.cleanupPreview(request)).totals.archiveCount).toBe(1);
+    expect((await service.cleanup(request)).skippedPinnedSessionIds).toEqual(["old"]);
+    await expect(service.cleanupPreview(request)).rejects.toThrow("pin storage failed");
+    expect(pinnedSessionIds).toHaveBeenCalledTimes(3);
     await service.dispose();
   });
 
@@ -595,6 +678,114 @@ describe("PiSessionService archive and cleanup", () => {
     expect(deleteArchivedMany).toHaveBeenCalledWith(["legacy-a", "legacy-b"]);
     expect(result.deletedSessionIds).toEqual(["legacy-a", "legacy-b"]);
 
+    await service.dispose();
+  });
+
+  it.each(["archive", "delete"] as const)("cleanup reserves unloaded identities throughout %s persistence and rejects failures without leaking reservations", async (operation) => {
+    const record = { sessionId: "target", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z" };
+    let entered!: () => void;
+    const admitted = new Promise<void>((resolve) => { entered = resolve; });
+    let fail!: (error: Error) => void;
+    const pending = new Promise<never>((_resolve, reject) => { fail = reject; });
+    let first = true;
+    const persist = () => {
+      if (!first) return Promise.resolve();
+      first = false;
+      entered();
+      return pending;
+    };
+    const open = vi.fn(() => { throw new Error("must not open runtime"); });
+    const archiveMany = vi.fn(async (inputs: readonly { sessionId: string; cwd: string }[]) => {
+      await persist();
+      return inputs.map((input) => ({ ...input, archivedAt: record.archivedAt }));
+    });
+    const deleteArchivedMany = vi.fn(async (ids: readonly string[]) => { await persist(); return [...ids]; });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+      now: () => new Date("2026-06-25T00:00:00.000Z"),
+      createAgentRuntime: open,
+      sessionManager: sessionGateway(operation === "archive" ? [sessionRecord("target")] : []),
+      archiveStore: {
+        list: () => Promise.resolve(operation === "delete" ? [record] : []),
+        get: () => Promise.resolve(operation === "delete" ? record : undefined),
+        archive: () => Promise.reject(new Error("must batch")), archiveMany,
+        deleteArchivedMany, restore: () => Promise.resolve(), isArchived: () => Promise.resolve(operation === "delete"),
+      },
+    });
+    const request = { thresholds: { archiveIdleDays: 1, deleteArchivedDays: 1 } };
+    const outcome = service.cleanup(request).catch((error: unknown) => error);
+    await admitted;
+    await expect(service.navigateTree(sessionRef("target"), { targetId: "entry", expectedLeafId: null, summary: { mode: "none" } })).rejects.toThrow("Stop current session activity");
+    // Native batches contend with the exact same reservation, even with no runtime.
+    const competing = operation === "archive"
+      ? await service.archiveMany([sessionRef("target")])
+      : await service.deleteArchivedMany([sessionRef("target")]);
+    expect(competing.failures).toHaveLength(1);
+    expect(competing.failures[0]?.sessionId).toBe("target");
+    expect(competing.failures[0]?.error).toContain("Stop current session activity");
+    fail(new Error("persistence failed"));
+    expect(await outcome).toEqual(new Error("target: persistence failed"));
+    const retried = await service.cleanup(request);
+    expect(operation === "archive" ? retried.archivedSessionIds : retried.deletedSessionIds).toEqual(["target"]);
+    expect(open).not.toHaveBeenCalled();
+    expect(operation === "archive" ? archiveMany : deleteArchivedMany).toHaveBeenCalledTimes(2);
+    await service.dispose();
+  });
+
+  it("cleanup rejects teardown failures, releases reservations, and validates deletion before archiving", async () => {
+    const fake = fakeRuntime("target");
+    fake.runtime.dispose = () => Promise.reject(new Error("teardown failed"));
+    const archiveMany = vi.fn((inputs: readonly { sessionId: string; cwd: string }[]) =>
+      Promise.resolve(inputs.map((input) => ({ ...input, archivedAt: "2026-06-25T00:00:00.000Z" }))));
+    let includeDelete = true;
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+      now: () => new Date("2026-06-25T00:00:00.000Z"),
+      createAgentRuntime: runtimeCreator(fake.runtime), sessionManager: sessionGateway([sessionRecord("target")]),
+      archiveStore: {
+        list: () => Promise.resolve(includeDelete ? [{ sessionId: "old-archive", cwd: "/workspace", archivedAt: "2026-01-01T00:00:00.000Z" }] : []),
+        get: () => Promise.resolve(undefined), archive: () => Promise.reject(new Error("must batch")), archiveMany,
+        restore: () => Promise.resolve(), isArchived: () => Promise.resolve(false),
+      },
+    });
+    await service.status(sessionRef("target"));
+    const request = { thresholds: { archiveIdleDays: 1, deleteArchivedDays: 1 } };
+    await expect(service.cleanup(request)).rejects.toThrow("does not support deletion");
+    expect(service.activeCount()).toBe(1);
+    expect(archiveMany).not.toHaveBeenCalled();
+    includeDelete = false;
+    await expect(service.cleanup(request)).rejects.toThrow("teardown failed");
+    expect(archiveMany).not.toHaveBeenCalled();
+    expect((await service.cleanup(request)).archivedSessionIds).toEqual(["target"]);
+    await service.dispose();
+  });
+
+  it.each(["archive", "delete"] as const)("cleanup skips %s candidates becoming busy after planning", async (operation) => {
+    const fake = fakeRuntime("late-busy");
+    const record = { sessionId: "late-busy", cwd: "/workspace", archivedAt: "2026-01-02T00:00:00.000Z" };
+    const archiveMany = vi.fn(() => Promise.resolve([]));
+    const deleteArchivedMany = vi.fn(() => Promise.resolve([]));
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime,
+      createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([sessionRecord("late-busy")]),
+      // cleanupPlan reads activity before asking for the current time.
+      now: () => { fake.session.isStreaming = true; return new Date("2026-06-25T00:00:00.000Z"); },
+      archiveStore: {
+        list: () => Promise.resolve(operation === "delete" ? [record] : []), get: () => Promise.resolve(undefined),
+        archive: () => Promise.reject(new Error("must batch")), archiveMany, deleteArchivedMany,
+        restore: () => Promise.resolve(), isArchived: () => Promise.resolve(false),
+      },
+    });
+    await service.status(sessionRef("late-busy"));
+    fake.session.isStreaming = false;
+    const result = await service.cleanup({ thresholds: { archiveIdleDays: 1, deleteArchivedDays: 1 } });
+    expect(result.skippedBusySessionIds).toEqual(["late-busy"]);
+    expect(result.archivedSessionIds).toEqual([]);
+    expect(result.deletedSessionIds).toEqual([]);
+    expect(archiveMany).not.toHaveBeenCalled();
+    expect(deleteArchivedMany).not.toHaveBeenCalled();
+    expect(fake.calls.abort).toBe(0);
     await service.dispose();
   });
 

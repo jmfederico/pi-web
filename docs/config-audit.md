@@ -114,7 +114,7 @@ Browser parsers commonly discard malformed stored data and tolerate unavailable 
 
 Prompt/ask drafts, transcript expansion/scroll state, cached sessions, image dimensions, tab navigation memory, and transcript caches are application state, not configuration. Exclude them from configuration reset.
 
-Gateway `navigation-preferences.json` separately stores versioned scoped ordering/pin arrays with revision-controlled writes. Classify it as shared application state or deliberately migrate its ownership; do not conflate it with browser tab preferences or silently remove cross-browser sharing.
+Gateway `navigation-preferences.json` stores versioned project/workspace ordering with revision-controlled writes. Session pins migrate once into daemon-owned `session-pins.json`, preserving scoped IDs and revisions; see [the pin-storage upgrade](plugins.md#pin-storage-upgrade). Both files are shared application state, not browser tab preferences or user-editable configuration.
 
 ## Runtime/bootstrap inventory
 

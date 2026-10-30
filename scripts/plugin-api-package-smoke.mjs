@@ -8,6 +8,7 @@ const publicApiDeclarationPaths = [
   "server-plugin-api.d.ts",
   "shared/pluginApiTypes.d.ts",
   "shared/pluginCatalogTypes.d.ts",
+  "shared/pluginSessionLifecycleTypes.d.ts",
   "shared/localization.d.ts",
   "shared/serverNoticePresentation.d.ts",
   "shared/terminalTitlePresentation.d.ts",
@@ -72,6 +73,7 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
       "dist/plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
       "dist/shared/pluginCatalogTypes.d.ts",
+      "dist/shared/pluginSessionLifecycleTypes.d.ts",
       "dist/shared/localization.d.ts",
       "dist/shared/terminalTitlePresentation.d.ts",
       "dist/shared/workspaceRemovalPresentation.d.ts",
@@ -80,6 +82,7 @@ export async function smokeInstalledPluginApi({ packageRoot, fixtureRoot, repoRo
       "dist/server-plugin-api.d.ts",
       "dist/shared/pluginApiTypes.d.ts",
       "dist/shared/pluginCatalogTypes.d.ts",
+      "dist/shared/pluginSessionLifecycleTypes.d.ts",
       "dist/shared/serverNoticePresentation.d.ts",
       "dist/shared/terminalTitlePresentation.d.ts",
       "dist/shared/workspaceRemovalPresentation.d.ts",
@@ -127,8 +130,9 @@ async function assertServerRuntimeApi(consumerRoot) {
       PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY,
       PI_WEB_HOST_WORKSPACES_CAPABILITY,
       PI_WEB_HOST_CATALOG_CAPABILITY,
+      PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
     } from "@jmfederico/pi-web/server-plugin-api";
-    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY];
+    export default [PI_WEB_HOST_WORKSPACES_CAPABILITY, PI_WEB_HOST_PI_SESSIONS_CAPABILITY, PI_WEB_HOST_PI_SESSION_EVENTS_CAPABILITY, PI_WEB_HOST_CATALOG_CAPABILITY, PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY];
   `, "utf8");
   const serverApi = await import(pathToFileURL(fixturePath).href);
   if (typeof serverApi.createCompanionBackend !== "function") throw new Error("Installed companion backend helper is missing");
@@ -136,7 +140,12 @@ async function assertServerRuntimeApi(consumerRoot) {
   if (serverApi.createCompanionBackend({ emit: (_channel, query) => query.accept(() => backend) }, "fixture.server") !== backend) {
     throw new Error("Installed companion helper did not return the hosted v5 backend");
   }
-  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability] = serverApi.default;
+  const [workspacesCapability, piSessionsCapability, sessionEventsCapability, catalogCapability, lifecycleCapability] = serverApi.default;
+  if (!Object.isFrozen(lifecycleCapability) || lifecycleCapability?.pluginId !== "pi-web.host"
+    || lifecycleCapability?.id !== "session-lifecycle" || lifecycleCapability?.version !== 1
+    || typeof lifecycleCapability?.parse !== "function") {
+    throw new Error("Installed server plugin API does not expose the exact pi-web.host/session-lifecycle v1 token");
+  }
   if (!Object.isFrozen(catalogCapability) || catalogCapability?.pluginId !== "pi-web.host"
     || catalogCapability?.id !== "catalog" || catalogCapability?.version !== 1
     || typeof catalogCapability?.parse !== "function") {

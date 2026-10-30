@@ -839,13 +839,25 @@ export default {
 };
 ```
 
-Components and event handlers can call `catalog.projects.list()` / `get(projectId)`, `catalog.workspaces.list(projectId)` / `get({ projectId, workspaceId })`, and `catalog.sessions.list({ projectId, workspaceId })` / `get({ projectId, workspaceId, sessionId })`. Reads accept an optional abort signal. Session snapshots include public metadata and `runtime` (`not-hosted`, `idle`, or `busy`); discovery does not open a saved session or expose its transcript/private file path.
+Components and event handlers can call `catalog.projects.list()` / `get(projectId)`, `catalog.workspaces.list(projectId)` / `get({ projectId, workspaceId })`, and `catalog.sessions.list({ projectId, workspaceId })` / `get({ projectId, workspaceId, sessionId })`. Reads accept an optional abort signal. Session snapshots include public metadata, durable `pinned` state, and `runtime` (`not-hosted`, `idle`, or `busy`). Every snapshot includes `created`, `modified` (last session-file modification, used by native idle-age rules), and `archivedAt` (when the session entered the archive). Each is an ISO timestamp or `null` when unknown; `archivedAt` is also `null` for non-archived sessions. `pinned` is always a boolean. Discovery does not open a saved session or expose its transcript/private file path.
+
+These fields let plugins implement their own age filters, estimated summaries, and lifecycle policies without a cleanup-specific API. Use `modified` for idle age and `archivedAt` for time in the archive—not the archive file's modification time. `pinned` reflects protection by any retained pin scope, matching core cleanup, not just the workspace being listed. Dates may be `null` for incomplete legacy records or hosted-only conversations. A null date means **unknown**, not an old date. Skip records whose required dates are unknown. Plugins using this metadata require an updated PI WEB host; there is no separate capability gate or fallback for older catalog responses. For example:
+
+```ts
+const rows = await context.catalog.sessions.list({ projectId, workspaceId });
+const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+const archiveCandidates = rows.filter((session) =>
+  !session.archived && session.pinned === false && session.runtime !== "busy"
+  && session.modified !== null && Date.parse(session.modified) < cutoff);
+```
+
+A plugin can show those candidates or counts using its own interface, then use the [session lifecycle service](#session-lifecycle). Re-read eligibility and pins before executing a cleanup policy: explicit lifecycle commands intentionally do not enforce pin protection. Core cleanup remains built in.
 
 Paired plugins also receive `backend` in these browser contexts. `backend.forScope({ kind: "machine" })`, `{ kind: "project", projectId }`, or `{ kind: "workspace", projectId, workspaceId }` returns the package's paired request, channel, or resource interface on that context's machine. Portable browser-only plugins have no paired backend. Existing workspace `peer` helpers remain available.
 
 Server v5 peer callbacks receive `scope` instead of always requiring `project` and `workspace`. Machine scope carries no project; project scope contains host-resolved `project`; workspace scope contains host-resolved `project` and `workspace`. Browser/server package revisions, cancellation, and host authority checks still apply. Server v3 retains its workspace-only callback shape and cannot accept machine/project-scoped calls.
 
-Backend plugins declare `PI_WEB_HOST_CATALOG_CAPABILITY` in `requires`, then resolve it in `start({ capabilities })`. This provides the same read-only discovery locally to that daemon. Workspace providers must not depend on the catalog: it becomes available only after provider topology settles. No project, workspace, or session mutation methods are added.
+Backend plugins declare `PI_WEB_HOST_CATALOG_CAPABILITY` in `requires`, then resolve it in `start({ capabilities })`. This provides the same read-only discovery locally to that daemon. Workspace providers must not depend on the catalog: it becomes available only after provider topology settles. The catalog remains read-only; use the separate [session lifecycle service](#session-lifecycle) for session mutations.
 
 Machine-specific contributions are visible only on their owning machine; portable browser contributions follow selection. Switching machines does not stop backend work. Plugins must discard obsolete asynchronous UI results and clean up component-owned connections when their context changes.
 
@@ -857,6 +869,40 @@ A few design boundaries matter before implementation:
 - Use host helpers for machine/workspace operations and module-relative URLs for plugin assets. Avoid hard-coded application paths.
 - Rendering can happen repeatedly without a panel being mounted again. Own asynchronous state and use ordinary component lifecycle cleanup for connections, timers, and listeners.
 - Keep workspace discovery separate from session-backed features, and keep agent behavior in a Pi companion rather than importing host internals.
+
+## Session lifecycle
+
+Plugins can manage a saved session by its full `{ projectId, workspaceId, sessionId }` identity, without selecting it in the browser or opening its runtime. The host resolves the workspace; plugins do not supply session file paths.
+
+Browser v5 invocation contexts expose optional `context.sessions`, bound to that context's machine. Check for its presence on older hosts. Server plugins declare `PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY` from `@jmfederico/pi-web/server-plugin-api` in `requires`, then resolve it in `start({ capabilities })`. The capability is local to that daemon and becomes available after workspace providers have settled; workspace providers must not depend on it.
+
+| Method | Effect |
+| --- | --- |
+| `get(target)` | Read `{ sessionId, pinned, archived }`. |
+| `pin(target)` | Persist a pin in the target workspace for an active or archived session. |
+| `unpin(target)` | Remove that workspace's pin; pins in other scopes remain in effect. |
+| `archive(target)` | Archive that session, without implicitly archiving descendants. |
+| `restore(target)` | Restore an archived session without starting its runtime. |
+| `delete(target)` | Permanently delete an already-archived session. |
+
+```ts
+// In a browser plugin's event handler, using IDs returned by context.catalog:
+const sessions = context.sessions;
+if (sessions === undefined) throw new Error("This host does not support session lifecycle operations");
+const target = { projectId, workspaceId, sessionId };
+await sessions.pin(target);
+const state = await sessions.get(target);
+```
+
+**Pins protect cleanup, not explicit plugin commands.** A plugin can explicitly archive a pinned session or delete it once archived; it does not need to unpin first. Native busy-session and archived-only deletion safeguards still apply. Plugins are trusted code and must decide when to request confirmation for destructive actions. Cleanup previews remain estimates: cleanup rechecks eligibility and pins when it runs, rather than freezing a session list.
+
+Calls accept an optional `{ signal }`. Cancellation or plugin disposal prevents new work; it does not undo a mutation already admitted by the host. Call mutations from event handlers or background work, not render or availability callbacks. Errors are reported to the caller; do not automatically retry a destructive operation after an ambiguous transport failure without checking the current state.
+
+### Pin-storage upgrade
+
+Session pins are daemon-owned managed state in `$PI_WEB_DATA_DIR/session-pins.json`. The updated daemon imports existing pin scopes, ordering, revisions, and cleared scopes from `navigation-preferences.json` once. Project and workspace ordering stays web/API-owned in the original file. Browser pin actions, plugin commands, and cleanup then use the same daemon-owned pins.
+
+Upgrade/restart the web/API process **before** starting the updated session daemon, then reload the browser. Do not keep an older web/API process writing pins after the daemon takes ownership. New web/API processes do not fall back to legacy pin writes if the daemon is unavailable or outdated. **Restarting sessiond interrupts active sessions and terminals**; schedule this cutover when they can be interrupted.
 
 ## Trust and recovery
 

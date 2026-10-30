@@ -54,7 +54,7 @@ import type { Project, WorkspaceEffectiveConfig, WorkspaceProviderResolution } f
 
 export interface AppDependencies {
   projects?: ProjectService;
-  navigationPreferences?: Pick<NavigationPreferenceStore, "get" | "put" | "pinnedSessionIds">;
+  navigationPreferences?: Pick<NavigationPreferenceStore, "get" | "put">;
   workspaceCatalog?: WorkspaceCatalog;
   machines?: MachineService;
   sessionDaemon?: SessionProxyDaemon;
@@ -265,9 +265,8 @@ export async function buildApp(deps: AppDependencies = {}): Promise<FastifyInsta
   registerLocalProjectRoutes(app, projects, workspaces, "/api", { config: configService });
   registerLocalProjectRoutes(app, projects, workspaces, "/api/machines/local", { config: configService });
 
-  const cleanupPreferences = { pinnedSessionIds: () => navigationPreferences.pinnedSessionIds() };
-  registerSessionProxyRoutes(app, sessionDaemon, "/api", cleanupPreferences);
-  registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local", cleanupPreferences);
+  registerSessionProxyRoutes(app, sessionDaemon, "/api");
+  registerSessionProxyRoutes(app, sessionDaemon, "/api/machines/local");
   registerPairedPluginBackendProxyRoutes(app, sessionDaemon);
   registerPluginBackendResourceProxyRoutes(app, sessionDaemon);
   registerPluginBackendResourceProxyRoutes(app, sessionDaemon, "/api/machines/local");

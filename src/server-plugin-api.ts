@@ -34,6 +34,13 @@ export {
   type PluginCatalogV1,
 } from "./shared/pluginCatalogTypes.js";
 
+export {
+  PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY,
+  type PluginSessionLifecycleV1,
+  type PluginSessionLifecycleState,
+  type PluginSessionLifecycleOptions,
+} from "./shared/pluginSessionLifecycleTypes.js";
+
 /** Discover this package's local v5 backend on a hosted pi.events bus.
  * Throws synchronously outside PI WEB or when the paired backend is unavailable.
  * Extensions are trusted in-process code, not a sandbox.

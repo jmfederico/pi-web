@@ -1905,6 +1905,7 @@ export class PiWebApp extends LitElement {
         if (selectedMachineId(this.state) === machineId) void this.workspaces.refreshSelectedProjectTopology();
         void this.sessionUnread.refresh(machineId);
         void this.serverNotices.refresh(machineId);
+        void this.navigationOrder.refreshSessionPins(machineId).catch(() => undefined);
       },
       machineId,
     );
@@ -1922,7 +1923,10 @@ export class PiWebApp extends LitElement {
       const socket = new RealtimeSocket();
       socket.connect(
         (event) => { this.handleMachineActivityEvent(machineId, event); },
-        () => { void this.sessionUnread.refresh(machineId); },
+        () => {
+          void this.sessionUnread.refresh(machineId);
+          void this.navigationOrder.refreshSessionPins(machineId).catch(() => undefined);
+        },
         machineId,
       );
       this.machineRealtimeSockets.set(machineId, socket);
@@ -1943,17 +1947,21 @@ export class PiWebApp extends LitElement {
   }
 
   private handleMachineActivityEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    if (event.type === "session-pins.changed") {
+      void this.navigationOrder.load({ kind: "sessionPins", machineId, projectId: event.projectId, workspaceId: event.workspaceId }).catch(() => undefined);
+    } else if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
     else if (event.type === "machine.status") this.machineStatus.apply(machineId, event.status);
   }
 
   private handleRealtimeEvent(machineId: string, event: BrowserRealtimeEvent): void {
-    if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
+    if (event.type === "session-pins.changed") this.handleMachineActivityEvent(machineId, event);
+    else if (event.type === "sessions.unread") this.sessionUnread.applyEvent(machineId, event);
     else if (event.type === "notices.updated") this.serverNotices.applyEvent(machineId, event);
     else if (event.type === "machine.status") this.machineStatus.apply(machineId, event.status);
     else if (event.type === "workspaces.changed") {
       if (selectedMachineId(this.state) === machineId && this.state.selectedProject?.id === event.projectId) {
         void this.workspaces.refreshSelectedProjectTopology();
+        void this.sessions.refreshCurrentWorkspaceSessions(machineId, { recoverNetwork: true });
       }
     } else {
       if (event.type === "status.update" || event.type === "activity.update") {

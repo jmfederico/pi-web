@@ -4,6 +4,7 @@ export type { TerminalTitlePresentation } from "./shared/terminalTitlePresentati
 import type { PluginBackend, JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation } from "./shared/pluginApiTypes.js";
 export type { JsonObject, JsonPrimitive, JsonValue, PluginCapability, PluginCapabilityProvision, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, };
 export { PI_WEB_HOST_CATALOG_CAPABILITY, type PluginCatalogProject, type PluginCatalogWorkspace, type PluginSessionSnapshot, type PluginWorkspaceSelection, type PluginSessionSelection, type PluginCatalogReadOptions, type PluginCatalogV1, } from "./shared/pluginCatalogTypes.js";
+export { PI_WEB_HOST_SESSION_LIFECYCLE_CAPABILITY, type PluginSessionLifecycleV1, type PluginSessionLifecycleState, type PluginSessionLifecycleOptions, } from "./shared/pluginSessionLifecycleTypes.js";
 /** Discover this package's local v5 backend on a hosted pi.events bus.
  * Throws synchronously outside PI WEB or when the paired backend is unavailable.
  * Extensions are trusted in-process code, not a sandbox.

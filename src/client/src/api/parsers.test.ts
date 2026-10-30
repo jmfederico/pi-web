@@ -1303,6 +1303,14 @@ describe("API parsers", () => {
     expect(() => parseRealtimeStreamEvent({ type: "models.changed", revision: -1 })).toThrow("safe integer");
   });
 
+  it("validates scoped pin invalidations without trusting extra wire fields", () => {
+    const event = { type: "session-pins.changed", projectId: "p", workspaceId: "w", revision: 2 };
+    expect(parseRealtimeStreamEvent({ ...event, ids: ["untrusted"] })).toEqual(event);
+    for (const malformed of [{ projectId: "" }, { workspaceId: null }, { revision: -1 }]) {
+      expect(() => parseRealtimeStreamEvent({ ...event, ...malformed })).toThrow();
+    }
+  });
+
   it("rebuilds global workspace invalidations from the validated project id", () => {
     expect(parseRealtimeStreamEvent({ type: "workspaces.changed", projectId: "project-1", workspaces: [], seq: 3 }))
       .toEqual({ type: "workspaces.changed", projectId: "project-1" });

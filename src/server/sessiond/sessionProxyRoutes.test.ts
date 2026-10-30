@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { WebSocket, WebSocketServer } from "ws";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerSessionProxyRoutes } from "./sessionProxyRoutes";
 import { PI_WEB_CAPABILITIES } from "../../shared/capabilities.js";
 
@@ -13,9 +13,8 @@ beforeEach(async () => {
   app = Fastify({ logger: false });
   await app.register(fastifyWebsocket);
   daemon = await FakeSessionDaemon.create();
-  const cleanupPreferences = { pinnedSessionIds: () => Promise.resolve(["pinned"]) };
-  registerSessionProxyRoutes(app, daemon, "/api/machines/local", cleanupPreferences);
-  registerSessionProxyRoutes(app, daemon, "/api", cleanupPreferences);
+  registerSessionProxyRoutes(app, daemon, "/api/machines/local");
+  registerSessionProxyRoutes(app, daemon, "/api");
 });
 
 afterEach(async () => {
@@ -57,7 +56,7 @@ describe.each(["/api", "/api/machines/local"])("project mutation proxy at %s", (
 describe("cleanup capability guard", () => {
   const supportedRuntime = {
     component: "sessiond", label: "Session daemon", available: true,
-    capabilities: [PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions],
+    capabilities: [PI_WEB_CAPABILITIES.sessionPinsDaemonOwned],
   };
 
   it.each(["/api/sessions/cleanup/preview", "/api/machines/local/sessions/cleanup"])("blocks an older daemon for %s", async (url) => {
@@ -68,6 +67,7 @@ describe("cleanup capability guard", () => {
   });
 
   it.each([
+    { statusCode: 200, body: JSON.stringify({ ...supportedRuntime, capabilities: [PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions] }) },
     { statusCode: 200, body: "not-json" },
     { statusCode: 500, body: JSON.stringify(supportedRuntime) },
     { statusCode: 200, body: JSON.stringify({ ...supportedRuntime, available: false }) },
@@ -91,7 +91,7 @@ describe("cleanup capability guard", () => {
     expect(preview.json()).toEqual({ error: "cleanup failed" });
     expect(daemon.requests).toEqual([
       { method: "GET", path: "/runtime", body: undefined },
-      { method: "POST", path: "/sessions/cleanup/preview", body: { skipPinned: true, excludedPinnedSessionIds: ["pinned"] } },
+      { method: "POST", path: "/sessions/cleanup/preview", body: { skipPinned: true } },
     ]);
     daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify({ ...supportedRuntime, capabilities: [] }) });
     expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload: { skipPinned: true } })).statusCode).toBe(503);
@@ -104,6 +104,38 @@ describe("cleanup capability guard", () => {
       expect((await app.inject({ method: "POST", url: "/api/sessions/cleanup", payload })).statusCode).toBe(200);
     }
     expect(daemon.requests.map((request) => request.path)).toEqual(["/sessions/cleanup", "/sessions/cleanup"]);
+  });
+});
+
+describe("daemon-owned session pin proxy", () => {
+  it.each(["GET", "PUT"] as const)("fails closed for %s when only legacy cleanup support exists", async (method) => {
+    daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify({ component: "sessiond", label: "Session daemon", available: true, capabilities: [PI_WEB_CAPABILITIES.sessionCleanupPinnedExclusions] }) });
+    const response = await app.inject({ method, url: "/api/navigation/projects/p/workspaces/w/session-pins", ...(method === "PUT" ? { payload: { ids: ["one"] } } : {}) });
+    expect(response.statusCode).toBe(503);
+    expect(daemon.requests).toEqual([{ method: "GET", path: "/runtime", body: undefined }]);
+  });
+
+  it("preserves daemon revisions/conflicts and encoded route segments", async () => {
+    daemon.respondWith({ statusCode: 200, headers: {}, body: JSON.stringify({ component: "sessiond", label: "Session daemon", available: true, capabilities: [PI_WEB_CAPABILITIES.sessionPinsDaemonOwned] }) });
+    daemon.respondWith({ statusCode: 409, headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ["current"], revision: 3 }) });
+    const path = "/navigation/projects/p%2Fone/workspaces/w%2Fone/session-pins";
+    const response = await app.inject({ method: "PUT", url: `/api/machines/local${path}`, payload: { ids: [], revision: 1 } });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ ids: ["current"], revision: 3 });
+    expect(daemon.requests.at(-1)).toEqual({ method: "PUT", path, body: { ids: [], revision: 1 } });
+  });
+});
+
+describe("plugin lifecycle proxy", () => {
+  it.each(["GET", "POST", "DELETE"] as const)("forwards %s with cancellation and no-store", async (method) => {
+    const request = vi.spyOn(daemon, "request");
+    const path = `/plugin-sessions/projects/p%2Fone/workspaces/w/sessions/s${method === "POST" ? "/pin" : ""}`;
+    daemon.respondWith({ statusCode: method === "GET" ? 200 : 204, headers: {}, body: method === "GET" ? '{"sessionId":"s","pinned":true,"archived":false}' : "" });
+    const response = await app.inject({ method, url: `/api/machines/local${path}` });
+    expect(response.statusCode).toBe(method === "GET" ? 200 : 204);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    const signal: unknown = expect.any(AbortSignal);
+    expect(request).toHaveBeenCalledWith(method, path, undefined, { signal });
   });
 });
 

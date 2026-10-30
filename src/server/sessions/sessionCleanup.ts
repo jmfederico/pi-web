@@ -27,8 +27,8 @@ export interface SessionCleanupPlan extends SessionCleanupPreviewResponse {
 
 export interface NormalizedSessionCleanupRequest {
   thresholds: SessionCleanupThresholds;
-  /** Resolved by the web/API boundary; sessiond must not load navigation preferences. */
-  excludedPinnedSessionIds?: string[];
+  /** Resolve exclusions from the authoritative daemon store at planning time. */
+  skipPinned?: boolean;
   /** Stored cwd paths to include. Undefined means all discovered projects/workspaces. */
   projectCwds?: string[];
 }
@@ -37,18 +37,10 @@ export function normalizeSessionCleanupRequest(record: Record<string, unknown>):
   const projectCwds = optionalProjectCwds(record);
   const skipPinned = record["skipPinned"];
   if (skipPinned !== undefined && typeof skipPinned !== "boolean") throw new Error("skipPinned field must be a boolean");
-  let excludedPinnedSessionIds: string[] | undefined;
-  if (skipPinned === true) {
-    const ids = record["excludedPinnedSessionIds"];
-    // A direct daemon request must not silently bypass protection without a web-owned snapshot.
-    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string" && id.trim() !== "")) {
-      throw new Error("skipPinned requires resolved excludedPinnedSessionIds");
-    }
-    excludedPinnedSessionIds = [...new Set(ids)];
-  }
+  // Legacy/browser snapshots are deliberately ignored, even on direct daemon requests.
   return {
     thresholds: normalizeSessionCleanupThresholds(record),
-    ...(excludedPinnedSessionIds === undefined ? {} : { excludedPinnedSessionIds }),
+    ...(skipPinned === true ? { skipPinned: true } : {}),
     ...(projectCwds === undefined ? {} : { projectCwds }),
   };
 }

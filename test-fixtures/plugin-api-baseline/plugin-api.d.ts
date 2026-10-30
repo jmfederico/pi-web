@@ -17,6 +17,8 @@ import type { DeleteWorkspaceFileResponse, FileContentResponse, FileTreeResponse
 export type { FileContentMediaType, FileContentResponse, FileTreeEntry, FileTreeResponse, JsonObject, JsonPrimitive, JsonValue, PluginBackend, PluginBackendScope, PluginPeer, PluginPeerRequestOptions, PluginPeerChannelOptions, PluginPeerChannelClose, PluginPeerChannel, MachineKind, PiWebComponentStatus, PiWebRuntimeIdentity, PiWebDockerMode, PiWebInstallationInfo, PiWebInstallationKind, PiWebReleaseStatus, PiWebServiceComponent, PiWebStatusMessage, PiWebStatusResponse, PiWebStatusSeverity, PiWebVersionResponse, PluginCapability, PluginCapabilityProvision, SessionUiMetadata, AnyTerminalCommandRun, MaintenanceTerminalCommandRun, TerminalCommandRun, TerminalCommandRunHandle, TerminalCommandRunStatus, WorkspaceProviderCapabilities, WorkspaceProviderMetadata, WorkspaceRemovalPresentation, WriteWorkspaceFileOptions, WriteWorkspaceFileResponse, DeleteWorkspaceFileResponse, MoveWorkspaceFileOptions, MoveWorkspaceFileResponse, } from "./shared/pluginApiTypes.js";
 export type { PluginCatalogV1, PluginCatalogProject, PluginCatalogWorkspace, PluginSessionSnapshot, PluginWorkspaceSelection, PluginSessionSelection, PluginCatalogReadOptions } from "./shared/pluginCatalogTypes.js";
 import type { PluginCatalogV1 } from "./shared/pluginCatalogTypes.js";
+export type { PluginSessionLifecycleV1, PluginSessionLifecycleState, PluginSessionLifecycleOptions } from "./shared/pluginSessionLifecycleTypes.js";
+import type { PluginSessionLifecycleV1 } from "./shared/pluginSessionLifecycleTypes.js";
 export type PiWebPlugin = LegacyPiWebPlugin | PiWebPluginV5;
 /** Current browser entrypoint. Existing contribution kinds and lifecycle behavior are unchanged. */
 export interface PiWebPluginV5 {
@@ -35,8 +37,13 @@ export type PluginActivationResultV5 = Omit<PluginActivationResult, "contributio
 export interface PluginCatalog extends PluginCatalogV1 {
     readonly machineId: string;
 }
+export interface PluginSessionLifecycle extends PluginSessionLifecycleV1 {
+    readonly machineId: string;
+}
 export interface PluginDiscoveryContext {
     readonly catalog: PluginCatalog;
+    /** Explicit lifecycle commands for this captured machine. Omitted by older hosts. Call from event handlers, not render callbacks. */
+    readonly sessions?: PluginSessionLifecycle;
     readonly backend?: PluginBackend;
 }
 export type PluginRuntimeContextV5 = PluginRuntimeContext & PluginDiscoveryContext;
