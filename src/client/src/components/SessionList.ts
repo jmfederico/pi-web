@@ -37,6 +37,8 @@ type SessionSelectionScope = "current" | "archived";
 interface AgentAttention {
   kind: ActivityIndicatorKind | undefined;
   unread: boolean;
+  /** A hidden child is blocked on the user, which outranks its work signal. */
+  awaitingAnswer: boolean;
 }
 
 @customElement("session-list")
@@ -200,7 +202,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       const kind = ownKind === "sending" || nested?.kind === "sending" || parent?.kind === "sending"
         ? "sending" : ownKind ?? nested?.kind ?? parent?.kind;
       const unread = sessionRowUnread(session, this.unreadSessionIds) || nested?.unread === true || parent?.unread === true;
-      if (kind !== undefined || unread) attention.set(parentId, { kind, unread });
+      const awaitingAnswer = sessionRowAwaitingAnswer(session, this.statuses[session.id])
+        || nested?.awaitingAnswer === true || parent?.awaitingAnswer === true;
+      if (kind !== undefined || unread || awaitingAnswer) attention.set(parentId, { kind, unread, awaitingAnswer });
     }
     this.agentAttentionCache = {
       rows, statuses: this.statuses, activities: this.activities, sessionFlags: this.sessionFlags, sending: this.sending,
@@ -475,10 +479,13 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const activity = this.activities[session.id];
     const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true, this.sessionFlags);
     const unread = sessionRowUnread(session, this.unreadSessionIds);
+    // Dialog-blocked sessions are still streaming and ask-blocked ones are idle,
+    // so without this the row would read as busy or finished.
+    const awaitingAnswer = sessionRowAwaitingAnswer(session, status);
     const labelItems = this.sessionLabelItems(session);
     return html`
       <div
-        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""} ${agentChildCount > 0 ? "has-agent-subsessions" : ""} ${linkedAgentChild ? "linked-agent-child" : ""}"
+        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""} ${awaitingAnswer ? "question" : ""} ${agentChildCount > 0 ? "has-agent-subsessions" : ""} ${linkedAgentChild ? "linked-agent-child" : ""}"
         style=${`--depth:${String(cappedDepth)};--agent-offset:${String(agentOffset)}px`}
         tabindex="0"
         data-session-id=${session.id}
@@ -492,13 +499,13 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${sessionNavigationMessages.t("selectSession", { label: sessionLabel(session) })} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name-line"><span class="action-name" dir="auto" title=${sessionLabel(session)}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span>
           <small class="session-secondary"><span class="session-meta">${sessionNavigationMessages.t("sessionMeta", { state: this.sessionMetaState(session, status, activity), count: session.messageCount })}</span>${labelItems.length === 0 ? null : html`<span class="session-label-separator" aria-hidden="true">·</span><span class="session-labels">${renderSessionLabelItems(labelItems)}</span>`}</small>
-          ${this.renderActivity(indicatorKind, unread)}
+          ${this.renderActivity(awaitingAnswer ? "question" : indicatorKind, unread)}
         </div>
         <div class="action-menu">
           <button class="ui-button ui-button--icon action-menu-toggle" title=${sessionNavigationMessages.t("actions")} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id); }}>⋯</button>
         </div>
       </div>
-      ${agentChildCount > 0 ? html`<button class="agent-subsession-toggle" style=${`--depth:${String(cappedDepth)};--agent-offset:${String(agentOffset)}px`} aria-expanded=${String(this.expandedAgentParents.has(session.id))} @click=${() => { this.toggleAgentParent(session.id); }}><span class="agent-subsession-label">${this.expandedAgentParents.has(session.id) ? "▾" : "▸"} ${sessionNavigationMessages.t("agentSubsessions", { count: agentChildCount })}</span>${!this.expandedAgentParents.has(session.id) && agentAttention !== undefined ? renderActionActivityIndicator(agentAttention.kind, agentAttention.kind === "sending" ? sessionNavigationMessages.t("sendingSubsession") : sessionNavigationMessages.t("activeSubsessions"), agentAttention.unread ? sessionNavigationMessages.t("unreadSubsession") : undefined) : null}</button>` : null}
+      ${agentChildCount > 0 ? html`<button class="agent-subsession-toggle" style=${`--depth:${String(cappedDepth)};--agent-offset:${String(agentOffset)}px`} aria-expanded=${String(this.expandedAgentParents.has(session.id))} @click=${() => { this.toggleAgentParent(session.id); }}><span class="agent-subsession-label">${this.expandedAgentParents.has(session.id) ? "▾" : "▸"} ${sessionNavigationMessages.t("agentSubsessions", { count: agentChildCount })}</span>${!this.expandedAgentParents.has(session.id) && agentAttention !== undefined ? this.renderSubsessionActivity(agentAttention) : null}</button>` : null}
     `;
   }
 
@@ -743,11 +750,27 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       return "new";
     }
     if (session.archived === true) return "archived";
+    if (sessionRowAwaitingAnswer(session, status)) return "waiting";
     return "other";
   }
 
+  /** The collapsed group's mark: a hidden child blocked on an answer outranks its work. */
+  private renderSubsessionActivity(attention: AgentAttention) {
+    const kind = attention.awaitingAnswer ? "question" : attention.kind;
+    const label = kind === "question"
+      ? sessionNavigationMessages.t("questionSubsession")
+      : kind === "sending"
+        ? sessionNavigationMessages.t("sendingSubsession")
+        : sessionNavigationMessages.t("activeSubsessions");
+    return renderActionActivityIndicator(kind, label, attention.unread ? sessionNavigationMessages.t("unreadSubsession") : undefined);
+  }
+
   private renderActivity(kind: ActivityIndicatorKind | undefined, unread: boolean) {
-    const label = kind === "sending" ? sessionNavigationMessages.t("sending") : sessionNavigationMessages.t("active");
+    const label = kind === "question"
+      ? sessionNavigationMessages.t("waitingForAnswer")
+      : kind === "sending"
+        ? sessionNavigationMessages.t("sending")
+        : sessionNavigationMessages.t("active");
     return renderActionActivityIndicator(kind, label, unread ? sessionNavigationMessages.t("unreadActivity") : undefined);
   }
 
@@ -765,6 +788,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .action-name, .section-selected { text-align: start; unicode-bidi: plaintext; }
     .action-name { display: block; max-height: none; line-height: normal; white-space: nowrap; text-overflow: ellipsis; }
     .action-row.unread .action-name { color: var(--pi-text-bright); font-weight: 650; }
+    /* Blocked on the user: the waiting state is the row's most relevant fact, so it outranks muted metadata. */
+    .action-row.question .session-meta { color: var(--pi-text); }
     .plain-heading { align-self: center; padding: 6px 10px; }
     .session-secondary { display: flex; align-items: baseline; gap: 5px; min-width: 0; margin-top: 3px; }
     .session-meta, .session-label-separator { flex: 0 0 auto; }
@@ -979,6 +1004,19 @@ export function sessionRowActivityKind(
 export function sessionRowUnread(session: SessionInfo, unreadSessionIds: ReadonlySet<string>): boolean {
   if (isCachedNewSessionInfo(session) || session.archived === true) return false;
   return unreadSessionIds.has(session.id);
+}
+
+/**
+ * Whether a session row is blocked on the user: either an extension dialog or a
+ * posted `ask_user` set is waiting for an answer. A dialog-blocked session is
+ * still streaming, and an ask-blocked one is idle, so this is the only signal
+ * that separates "working" or "finished" from "waiting for you". Cached-new and
+ * archived sessions can never be blocked: the former has no session yet, and
+ * the latter has no way to answer from the archived list.
+ */
+export function sessionRowAwaitingAnswer(session: SessionInfo, status: SessionStatus | undefined): boolean {
+  if (isCachedNewSessionInfo(session) || session.archived === true) return false;
+  return (status?.pendingDialogs?.length ?? 0) > 0 || session.openAsk !== undefined;
 }
 
 /**

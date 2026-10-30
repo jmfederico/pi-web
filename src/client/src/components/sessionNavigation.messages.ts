@@ -24,7 +24,7 @@ export default {
   selectAll: message("Select all", "Select all sessions in this section"),
   clearSelected: message<{ count: number }>("Clear selected ({count, number})", "Clear session selection; count includes hidden subsessions"),
   selectSession: message<{ label: string }>("Select {label}", "Session checkbox accessible name; label is user content"),
-  sessionMeta: message<{ state: string; count: number }>("{state, select, creating {creating · } error {error · } new {new · } archived {read-only · } other {}}{count, plural, one {# message} other {# messages}}", "Session state and message count; state is creating/error/new/archived/other"),
+  sessionMeta: message<{ state: string; count: number }>("{state, select, creating {creating · } error {error · } new {new · } waiting {Waiting for your answer · } archived {read-only · } other {}}{count, plural, one {# message} other {# messages}}", "Session state and message count; state is creating/error/new/waiting/archived/other"),
   actions: message("Session actions", "Open session action menu"),
   agentSubsessions: message<{ count: number }>("Agent subsessions ({count, number})", "Expand or collapse child sessions created by agents"),
   sendingSubsession: message("Sending subsession message", "Subsession activity accessibility label"),
@@ -59,4 +59,6 @@ export default {
   sending: message("Sending message", "Session activity accessibility label"),
   active: message("Session active", "Session activity accessibility label"),
   unreadActivity: message("Unread session activity", "Session unread accessibility label"),
+  waitingForAnswer: message("Waiting for your answer", "Session blocked-on-user accessibility label"),
+  questionSubsession: message("Agent subsession waiting for your answer", "Subsession blocked-on-user accessibility label"),
 };

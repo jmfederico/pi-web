@@ -19,7 +19,7 @@ import { fileCompletionInsertText } from "../promptCompletions";
 import { SessionSocket, type GlobalSessionEvent, type SessionConnectionState, type SessionUiEvent } from "../sessionSocket";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
 import { isSessionActive } from "../../../shared/activity";
-import type { PromptAttachmentDelivery, SessionNotificationInboxEvent, SessionStartupProgressEvent } from "../../../shared/apiTypes";
+import type { OpenAsk, PromptAttachmentDelivery, SessionNotificationInboxEvent, SessionStartupProgressEvent } from "../../../shared/apiTypes";
 import { InMemorySessionSelectionMemory, markSessionArchived, markSessionsArchived, selectPreferredSession, selectionAfterArchivingSession, selectionAfterArchivingSessions, shouldDeselectAfterArchivedCollapse, type SessionSelectionMemory } from "./sessionSelection";
 import { selectedMachineId, type GetState, type NavigationDestinationOptions, type NavigationFreshness, type NavigationScope, type NavigationSelection, type SetState, type UpdateUrl } from "./types";
 import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
@@ -224,6 +224,7 @@ export class SessionController {
     else if (event.type === "activity.update") this.queueActivityUpdate(event.activity);
     else if (event.type === "session.created") this.applyCreatedSession(event.session);
     else if (event.type === "session.name") this.applySessionName(event.sessionId, event.name);
+    else if (event.type === "session.openAsk.changed") this.applyOpenAskChanged(event.sessionId, event.openAsk);
     else if (event.type === "models.changed") this.onModelScopeChanged?.(event.revision);
     else if (event.type === "session.startup") this.queueStartupProgress(event);
   }
@@ -2298,6 +2299,30 @@ export class SessionController {
     this.setState({
       sessions: this.getState().sessions.map(rename),
       selectedSession: selectedSession === undefined ? undefined : rename(selectedSession),
+    });
+  }
+
+  /**
+   * Keep listed rows' blocked-on-user signal current between listings: the
+   * daemon broadcasts the tail ask as it opens and closes on a hosted session.
+   * Unlisted sessions are skipped — a later listing derives the value from
+   * the session file anyway.
+   */
+  private applyOpenAskChanged(sessionId: string, openAsk: OpenAsk | undefined) {
+    const apply = (session: SessionInfo): SessionInfo => {
+      if (session.id !== sessionId) return session;
+      const next = { ...session };
+      if (openAsk === undefined) delete next.openAsk;
+      else next.openAsk = openAsk;
+      return next;
+    };
+    const state = this.getState();
+    if (!state.sessions.some((session) => session.id === sessionId)
+      && state.selectedSession?.id !== sessionId) return;
+    const selectedSession = state.selectedSession;
+    this.setState({
+      sessions: state.sessions.map(apply),
+      selectedSession: selectedSession === undefined ? undefined : apply(selectedSession),
     });
   }
 

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SessionInfo } from "../api";
+import type { SessionInfo, SessionStatus } from "../api";
 import * as sessionPaths from "../sessionPaths";
 import { agentChildOffsets, agentSessionGroups, SessionList, sessionNavigationCandidates, sessionRowsForCurrentTree, visibleAgentSessionRows } from "./SessionList";
 
@@ -47,6 +47,20 @@ function button(root: ParentNode | null, selector: string): HTMLButtonElement {
   const result = root?.querySelector<HTMLButtonElement>(selector);
   if (!result) throw new Error(`Missing button: ${selector}`);
   return result;
+}
+
+function blockedOnQuestion(sessionId: string): SessionStatus {
+  return {
+    sessionId,
+    isStreaming: true,
+    isCompacting: false,
+    isBashRunning: false,
+    pendingMessageCount: 0,
+    queuedMessages: [],
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: 0,
+    pendingDialogs: [{ dialogId: "dialog-1", kind: "confirm", title: "Continue?", askedAt: "2026-06-09T00:00:00.000Z", runScoped: true }],
+  };
 }
 
 function agentToggle(list: SessionList, id: string): HTMLButtonElement {
@@ -195,6 +209,24 @@ describe("SessionList agent subsession controls", () => {
     list.unreadSessionIds = new Set();
     await settle(list);
     expect(toggle.querySelector(".action-activity")).toBeNull();
+  });
+
+  it("shows a collapsed chip when a hidden child is blocked on the user", async () => {
+    const parent = session("parent");
+    const agent = child("agent", parent, true);
+    const list = await mount([parent, agent]);
+    const toggle = agentToggle(list, "parent");
+
+    list.statuses = { agent: blockedOnQuestion(agent.id) };
+    await settle(list);
+
+    const indicator = toggle.querySelector(".activity-indicator.question");
+    expect(indicator?.getAttribute("title")).toBe("Agent subsession waiting for your answer");
+    expect(toggle.querySelector(".activity-indicator.session")).toBeNull();
+
+    list.statuses = {};
+    await settle(list);
+    expect(toggle.querySelector(".activity-indicator.question")).toBeNull();
   });
 
   it("clears completed child rows and collapsed chips from a recovered snapshot without selecting them", async () => {

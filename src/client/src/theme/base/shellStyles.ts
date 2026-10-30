@@ -188,6 +188,8 @@ export const listStyles = css`
   .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
   /* Client-side sending (upload in flight); distinct from server activity, which propagates to workspace/machine rows. */
   .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
+  /* Blocked on the user: a static hollow ring, so it reads as neither work nor unread. */
+  .activity-indicator.question { border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 2px var(--pi-accent); animation: none; }
   /* Unread is a stable state, not ongoing work: keep it static and accent-colored. */
   .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }
   /* Unread + ongoing work: a static accent ring wraps the still-pulsing work dot. */

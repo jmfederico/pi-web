@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  ASK_USER_ANSWERS_CUSTOM_TYPE,
   ASK_USER_COMMENT_MAX_LENGTH, ASK_USER_ID_MAX_LENGTH, ASK_USER_OPTION_LIMIT, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, ASK_USER_TEXT_MAX_LENGTH,
   type AskUserQuestion,
 } from "../../shared/apiTypes.js";
-import { AskUserValidationError, createAskUserOutcome, createAskUserRequest, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
+import { AskUserValidationError, createAskUserOutcome, createAskUserRequest, openAskInBranch, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 
 const askedAt = "2026-01-01T00:00:00.000Z";
 const closedAt = "2026-01-01T00:01:00.000Z";
@@ -85,6 +86,65 @@ describe("durable branch request resolution", () => {
 
   it("rejects IDs absent from the supplied active branch", () => {
     expect(() => resolveAskUserRequest([], "ask-abandoned")).toThrow(AskUserValidationError);
+  });
+});
+
+describe("open posted ask projection", () => {
+  function answersEntry(askId: string, reason: "submitted" | "cancelled" = "submitted") {
+    return { type: "custom_message", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, display: true, content: "answers", details: { askId, reason } };
+  }
+
+  it("reports the newest ask while it has no answers entry", () => {
+    const ask = request();
+
+    expect(openAskInBranch([resultEntry(ask)])).toEqual({ askId: "ask-1", askedAt, questionCount: 2 });
+    expect(openAskInBranch([{ type: "message", message: { role: "user", content: "hi" } }, resultEntry(ask)])).toEqual({
+      askId: "ask-1", askedAt, questionCount: 2,
+    });
+  });
+
+  it("reports nothing when the ask has been answered or skipped", () => {
+    const ask = request();
+
+    expect(openAskInBranch([resultEntry(ask), answersEntry(ask.askId, "submitted")])).toBeUndefined();
+    // A skip wakes the agent with the outcome, so it closes the ask too.
+    expect(openAskInBranch([resultEntry(ask), answersEntry(ask.askId, "cancelled")])).toBeUndefined();
+  });
+
+  it("reports nothing when the session has never posted an ask", () => {
+    expect(openAskInBranch([])).toBeUndefined();
+    expect(openAskInBranch([{ type: "message", message: { role: "assistant", content: "done" } }])).toBeUndefined();
+  });
+
+  it("keeps only the conversation tail open: an older form is history", () => {
+    const first = request();
+    const second = { ...request([question("q3")]), askId: "ask-2" };
+
+    // A newer ask supersedes the older form even when the older one was never answered.
+    expect(openAskInBranch([resultEntry(first), resultEntry(second)]))
+      .toEqual({ askId: "ask-2", askedAt, questionCount: 1 });
+    expect(openAskInBranch([resultEntry(first), answersEntry(first.askId), resultEntry(second)]))
+      .toEqual({ askId: "ask-2", askedAt, questionCount: 1 });
+  });
+
+  it("closes the form once the user types instead of answering", () => {
+    const ask = request();
+    const reply = { type: "message", message: { role: "user", content: "never mind, use Postgres" } };
+
+    expect(openAskInBranch([resultEntry(ask), reply])).toBeUndefined();
+    // Other conversation entries do not close it: only a reply or an outcome does.
+    expect(openAskInBranch([resultEntry(ask), { type: "session_info", name: "Renamed" }]))
+      .toEqual({ askId: "ask-1", askedAt, questionCount: 2 });
+  });
+
+  it("skips failed results, raw calls, and malformed payloads instead of failing status", () => {
+    const ask = request();
+
+    expect(openAskInBranch([resultEntry(ask, { isError: true })])).toBeUndefined();
+    expect(openAskInBranch([{ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "ask_user" }] } }])).toBeUndefined();
+    expect(openAskInBranch([resultEntry({ ...ask, questions: null })])).toBeUndefined();
+    // A newer ask closes the older form even when the newer payload is corrupt.
+    expect(openAskInBranch([resultEntry(ask), resultEntry({ ...ask, askId: "ask-broken", askedAt: "nope" })])).toBeUndefined();
   });
 });
 

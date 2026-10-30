@@ -297,6 +297,8 @@ describe("socket stream validation", () => {
       { type: "activity.update", activity: activityWire() },
       { type: "session.name", sessionId: "session-1", name: "rename" },
       { type: "session.created", session: sessionInfoWire() },
+      { type: "session.openAsk.changed", sessionId: "session-1", openAsk: { askId: "ask-1", askedAt: "2026-01-01T00:00:30.000Z", questionCount: 2 } },
+      { type: "session.openAsk.changed", sessionId: "session-1" },
       { type: "machine.status", status: machineStatusWire() },
     ];
     for (const frame of validFrames) expect(parseRealtimeSocketEvent(frame)).toEqual(frame);
@@ -325,6 +327,8 @@ describe("socket stream validation", () => {
     expect(parseRealtimeSocketEvent({ type: "activity.update", activity: { ...activityWire(), phase: "waiting" } })).toBeUndefined();
     expect(parseRealtimeSocketEvent({ type: "session.name", name: "rename" })).toBeUndefined();
     expect(parseRealtimeSocketEvent({ type: "session.created", session: {} })).toBeUndefined();
+    expect(parseRealtimeSocketEvent({ type: "session.openAsk.changed", sessionId: "", openAsk: { askId: "ask-1", askedAt: "2026-01-01T00:00:30.000Z", questionCount: 1 } })).toBeUndefined();
+    expect(parseRealtimeSocketEvent({ type: "session.openAsk.changed", sessionId: "session-1", openAsk: { askId: "ask-1", askedAt: "2026-01-01T00:00:30.000Z", questionCount: -1 } })).toBeUndefined();
     expect(parseRealtimeSocketEvent({ type: "terminal.created", terminal: { id: "terminal-1" } })).toBeUndefined();
     expect(parseRealtimeSocketEvent({ type: "terminal.exited", terminal: null })).toBeUndefined();
     expect(parseRealtimeSocketEvent({ type: "terminal.closed", terminalId: "terminal-1" })).toBeUndefined();

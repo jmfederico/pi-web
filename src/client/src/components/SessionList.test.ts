@@ -6,7 +6,7 @@ import { markCachedNewSessionInfo } from "../cachedNewSessions";
 import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPersistence";
 import { installPopoverFake } from "./anchoredPopup.testSupport";
 installPopoverFake();
-import { SessionList, sessionRowActivityKind, sessionRowsForCurrentTree, sessionRowUnread, unreadSessionCount } from "./SessionList";
+import { SessionList, sessionRowActivityKind, sessionRowAwaitingAnswer, sessionRowsForCurrentTree, sessionRowUnread, unreadSessionCount } from "./SessionList";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -62,6 +62,87 @@ describe("sessionRowUnread", () => {
   it("never flags archived or cached-new sessions, even when tracked as unread", () => {
     expect(sessionRowUnread({ ...session("s"), archived: true }, new Set(["s"]))).toBe(false);
     expect(sessionRowUnread(markCachedNewSessionInfo(session("s")), new Set(["s"]))).toBe(false);
+  });
+});
+
+describe("sessionRowAwaitingAnswer", () => {
+  it("flags a session whose open dialog is waiting for an answer", () => {
+    expect(sessionRowAwaitingAnswer(session("s"), sessionStatus("s", { pendingDialogs: [pendingDialog()] }))).toBe(true);
+  });
+
+  it("does not flag a session with no open dialog, no status, or only queued work", () => {
+    expect(sessionRowAwaitingAnswer(session("s"), sessionStatus("s"))).toBe(false);
+    expect(sessionRowAwaitingAnswer(session("s"), undefined)).toBe(false);
+    expect(sessionRowAwaitingAnswer(session("s"), sessionStatus("s", { isStreaming: true }))).toBe(false);
+  });
+
+  it("never flags archived or cached-new sessions", () => {
+    const blocked = { pendingDialogs: [pendingDialog()] };
+
+    expect(sessionRowAwaitingAnswer({ ...session("s"), archived: true }, sessionStatus("s", blocked))).toBe(false);
+    expect(sessionRowAwaitingAnswer(markCachedNewSessionInfo(session("s")), sessionStatus("s", blocked))).toBe(false);
+  });
+});
+
+describe("blocked-on-a-question rows", () => {
+  it("marks the row and shows the waiting state instead of plain streaming", async () => {
+    const blocked = session("blocked", { messageCount: 8 });
+    const busy = session("busy");
+    const list = new SessionList();
+    list.sessions = [blocked, busy];
+    list.statuses = {
+      blocked: sessionStatus("blocked", { isStreaming: true, pendingDialogs: [pendingDialog("Which color do you prefer?")] }),
+      busy: sessionStatus("busy", { isStreaming: true }),
+    };
+    document.body.append(list);
+    await list.updateComplete;
+
+    const row = actionRow(list, blocked.path);
+    expect(row.classList.contains("question")).toBe(true);
+    const indicator = actionRow(list, blocked.path).querySelector(".activity-indicator.question");
+    expect(indicator?.getAttribute("title")).toBe("Waiting for your answer");
+    expect(actionRow(list, blocked.path).querySelector(".activity-indicator.session")).toBeNull();
+    expect(actionRow(list, blocked.path).querySelector(".session-meta")?.textContent).toBe("Waiting for your answer · 8 messages");
+    // A session that is only busy keeps the ordinary work dot.
+    expect(actionRow(list, busy.path).classList.contains("question")).toBe(false);
+    expect(actionRow(list, busy.path).querySelector(".activity-indicator.session")).not.toBeNull();
+  });
+
+  it("clears the question state when the dialog is resolved", async () => {
+    const blocked = session("blocked");
+    const list = new SessionList();
+    list.sessions = [blocked];
+    list.statuses = { blocked: sessionStatus("blocked", { isStreaming: true, pendingDialogs: [pendingDialog()] }) };
+    document.body.append(list);
+    await list.updateComplete;
+    expect(actionRow(list, blocked.path).classList.contains("question")).toBe(true);
+
+    list.statuses = { blocked: sessionStatus("blocked", { isStreaming: true }) };
+    await list.updateComplete;
+
+    expect(actionRow(list, blocked.path).classList.contains("question")).toBe(false);
+    expect(actionRow(list, blocked.path).querySelector(".activity-indicator.session")).not.toBeNull();
+  });
+  it("treats an idle session whose conversation tail is an open ask as blocked too", async () => {
+    // A posted ask ends the run and is derived from the transcript tail, so the
+    // signal arrives on the listing entry rather than on the session status.
+    const asking = session("asking", { messageCount: 8, openAsk: { askId: "ask-1", askedAt: "2026-06-09T00:00:00.000Z", questionCount: 2 } });
+    const idle = session("idle");
+    const list = new SessionList();
+    list.sessions = [asking, idle];
+    list.statuses = { asking: sessionStatus("asking"), idle: sessionStatus("idle") };
+    document.body.append(list);
+    await list.updateComplete;
+
+    const row = actionRow(list, asking.path);
+    expect(row.classList.contains("question")).toBe(true);
+    expect(row.querySelector(".activity-indicator.question")?.getAttribute("title")).toBe("Waiting for your answer");
+    expect(row.querySelector(".session-meta")?.textContent).toBe("Waiting for your answer · 8 messages");
+    expect(actionRow(list, idle.path).classList.contains("question")).toBe(false);
+
+    list.sessions = [session("asking", { messageCount: 8 })];
+    await list.updateComplete;
+    expect(actionRow(list, asking.path).classList.contains("question")).toBe(false);
   });
 });
 
@@ -311,6 +392,16 @@ it("orders archived rows by activity immediately after archiving while preservin
   await list.updateComplete;
   expect([...root.querySelectorAll<HTMLElement>(".action-row.archived")].map((row) => row.title)).toEqual([newer.path, old.path, child.path]);
 });
+
+function actionRow(list: SessionList, path: string): HTMLElement {
+  const row = [...(list.shadowRoot?.querySelectorAll<HTMLElement>(".action-row") ?? [])].find((candidate) => candidate.title === path);
+  if (row === undefined) throw new Error(`Missing session row for ${path}`);
+  return row;
+}
+
+function pendingDialog(title = "Pick one"): NonNullable<SessionStatus["pendingDialogs"]>[number] {
+  return { dialogId: "dialog-1", kind: "select", title, options: ["a", "b"], askedAt: "2026-06-09T00:00:00.000Z", runScoped: true };
+}
 
 function rowSummaries(rows: ReturnType<typeof sessionRowsForCurrentTree>) {
   return rows.map((row) => ({ id: row.session.id, depth: row.depth, hasMissingParent: row.hasMissingParent }));

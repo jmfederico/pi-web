@@ -7,7 +7,7 @@ import { AGENT_SESSION_DIR_ENV_KEYS } from "../../config.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import { isNodeErrorWithCode } from "../workspaces/pathSafety.js";
 import { readSessionHeaderSummary, type SessionHeaderReader } from "./sessionFileHeader.js";
-import { tryParseEntry } from "./sessionFileFormat.js";
+import { deriveActiveBranchEntries, tryParseEntry } from "./sessionFileFormat.js";
 import { SessionSummaryScanner } from "./sessionSummaryScanner.js";
 import { TranscriptBranchCache, type TranscriptBranchSnapshot } from "./transcriptBranchCache.js";
 import type { PiSessionListEntry, PiSessionManager, PiSessionManagerGateway, ResolvedSessionFile } from "./piSessionService.js";
@@ -172,11 +172,11 @@ class SettingsAwarePiSessionManagerGateway implements PiSessionManagerGateway {
       const appended = await readAppendedEntries(path, previous.size, file.size, identity);
       if (appended !== undefined) {
         const entries = [...previous.entries, ...appended];
-        return { signature, identity, size: file.size, entries, branch: deriveTranscriptBranch(entries) };
+        return { signature, identity, size: file.size, entries, branch: deriveActiveBranchEntries(entries) };
       }
     }
     const entries = parseTranscriptEntries(await readFile(path, "utf8"));
-    return { signature, identity, size: file.size, entries, branch: deriveTranscriptBranch(entries) };
+    return { signature, identity, size: file.size, entries, branch: deriveActiveBranchEntries(entries) };
   }
 
   async listAll(): Promise<PiSessionListEntry[]> {
@@ -266,33 +266,6 @@ function parseTranscriptEntries(content: string): Record<string, unknown>[] {
     if (entry !== undefined && entry["type"] !== "session") entries.push(entry);
   }
   return entries;
-}
-
-/**
- * SDK-compatible active-branch projection with no migration or write side
- * effects: the walk from the last id-bearing entry through `parentId` links,
- * oldest first. Cheap enough to re-run over merged entries after an append.
- */
-function deriveTranscriptBranch(entries: readonly Record<string, unknown>[]): Record<string, unknown>[] {
-  const byId = new Map<string, Record<string, unknown>>();
-  let leafId: string | undefined;
-  for (const entry of entries) {
-    const id = entry["id"];
-    if (typeof id !== "string") continue;
-    byId.set(id, entry);
-    leafId = id;
-  }
-  const branch: Record<string, unknown>[] = [];
-  const visited = new Set<string>();
-  let currentId = leafId;
-  while (currentId !== undefined && !visited.has(currentId)) {
-    visited.add(currentId);
-    const entry = byId.get(currentId);
-    if (entry === undefined) break;
-    branch.push(entry);
-    currentId = typeof entry["parentId"] === "string" ? entry["parentId"] : undefined;
-  }
-  return branch.reverse();
 }
 
 export async function listSessionsInDir(sessionDir: string, scanner = new SessionSummaryScanner()): Promise<PiSessionListEntry[]> {

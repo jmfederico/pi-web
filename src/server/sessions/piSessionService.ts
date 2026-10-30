@@ -73,6 +73,7 @@ import type {
   ExtensionDialogCloseResponse,
   ExtensionDialogKind,
   ExtensionDialogOutcome,
+  OpenAsk,
   PiWebAttachmentsConfig,
   SavedPromptAttachment,
   SessionBulkArchiveResponse,
@@ -88,6 +89,7 @@ import type {
   SessionUnreadAcknowledgeRequest,
   SessionUnreadCatalogSnapshot,
   SessionWarning,
+  SessionOpenAskChangedEvent,
 } from "../../shared/apiTypes.js";
 import type { SessionDefaults, SessionDefaultsUpdate } from "../../shared/apiTypes.js";
 import { parseSessionDefaults, parseSessionDefaultsUpdate } from "../../shared/sessionDefaults.js";
@@ -99,7 +101,7 @@ import { parsePersistedChildSubsessionLink, parsePersistedParentSubsessionLink, 
 import { readSessionHeaderSummary } from "./sessionFileHeader.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
-import { createAskUserOutcome, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
+import { createAskUserOutcome, openAskInBranch, renderAskUserAnswersText, resolveAskUserRequest } from "./askUserDomain.js";
 import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
 import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
 import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS } from "../../config.js";
@@ -343,6 +345,8 @@ export interface PiSessionListEntry {
   messageCount: number;
   firstMessage: string;
   allMessagesText: string;
+  /** Open posted ask at the conversation tail, from the summary scan. */
+  openAsk?: OpenAsk;
   agentSubsession?: boolean;
   metadata?: SessionUiMetadata;
   name?: string;
@@ -1217,6 +1221,14 @@ export class PiSessionService implements SessionRouteService {
   readonly mcpAuthFlows = new McpAuthFlowService();
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
   private readonly snapshotMessageCounts = new WeakMap<readonly unknown[], number>();
+  /**
+   * Last broadcast tail-ask id per hosted session. An ask id is a sufficient
+   * change key because a projection is fixed once its ask is persisted, and
+   * the map is only consulted while the session stays hosted; a fresh listing
+   * re-derives the file's value from scratch. A missing entry means nothing
+   * has been broadcast for the session yet.
+   */
+  private readonly openAskIdsBySession = new Map<string, string | undefined>();
   private readonly pendingPromptEchoes = new WeakMap<PiAgentSession, { userIndex: number; message: ReturnType<typeof userMessage> }[]>();
   private readonly publishedAssistantPartials = new WeakMap<PiAgentSession, unknown>();
   private readonly assistantStreamIds = new WeakMap<PiAgentSession, string>();
@@ -4782,7 +4794,14 @@ export class PiSessionService implements SessionRouteService {
       }
       // Reconcile once after the run has actually settled, not per streamed
       // update or per message. Tree changes can replace the branch entirely.
-      if (eventType === "agent_settled" || eventType === "session_tree") this.reconcileRuntimeMessageCount(session);
+      // The tail-ask broadcast follows the same boundaries: a settled run
+      // persists any ask it posted and the reply that started or answered
+      // it, and a tree move can leave the ask behind. Per-event scans stay
+      // off the streaming path, so ordinary entry appends are not hooked.
+      if (eventType === "agent_settled" || eventType === "session_tree") {
+        this.reconcileRuntimeMessageCount(session);
+        this.publishOpenAskChanged(session);
+      }
       if (eventType === "entry_appended" && getString(entry, "type") === "custom_message"
         && getString(entry, "customType") === SUBSESSION_NOTIFICATION_CUSTOM_TYPE) {
         inbox.receive(completionReceiptIds(getProperty(entry, "details")));
@@ -5025,6 +5044,26 @@ export class PiSessionService implements SessionRouteService {
       ? { type: "session.name", sessionId: session.sessionId } as const
       : { type: "session.name", sessionId: session.sessionId, name: session.sessionName } as const;
     this.events.publish(session.sessionId, event);
+    this.events.publishGlobal(event);
+  }
+
+  /**
+   * Broadcast the tail-ask projection when it changes on a hosted session.
+   * An agent run posting `ask_user` opens it; its answers entry, a user
+   * reply, or a tree move closes it. The listing derives the same value from
+   * the session file, so the broadcast only has to keep already-listed rows
+   * current between listings. The first broadcast for a session is
+   * unconditional — nothing earlier can have told clients its state — and
+   * hosting itself never walks the branch.
+   */
+  private publishOpenAskChanged(session: PiAgentSession): void {
+    const openAsk = openAskInBranch(session.sessionManager.getBranch());
+    const sessionId = session.sessionId;
+    if (this.openAskIdsBySession.has(sessionId) && this.openAskIdsBySession.get(sessionId) === openAsk?.askId) return;
+    this.openAskIdsBySession.set(sessionId, openAsk?.askId);
+    const event: SessionOpenAskChangedEvent = openAsk === undefined
+      ? { type: "session.openAsk.changed", sessionId }
+      : { type: "session.openAsk.changed", sessionId, openAsk };
     this.events.publishGlobal(event);
   }
 
@@ -5478,6 +5517,7 @@ function clientSessionFromListEntry(session: PiSessionListEntry): ClientSession 
     modified: session.modified.toISOString(),
     messageCount: session.messageCount,
     firstMessage: clientSessionFirstMessagePreview(session.firstMessage),
+    ...(session.openAsk === undefined ? {} : { openAsk: session.openAsk }),
     ...(session.parentSessionPath === undefined ? {} : { parentSessionPath: session.parentSessionPath }),
   };
 }

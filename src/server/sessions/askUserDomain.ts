@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ASK_USER_ANSWERS_CUSTOM_TYPE,
   ASK_USER_COMMENT_MAX_LENGTH,
   ASK_USER_ID_MAX_LENGTH,
   ASK_USER_OPTION_LIMIT,
@@ -11,6 +12,7 @@ import {
   type AskUserQuestion,
   type AskUserQuestionRecord,
   type AskUserRequest,
+  type OpenAsk,
 } from "../../shared/apiTypes.js";
 
 export interface AskUserRequestOptions {
@@ -44,24 +46,93 @@ export function createAskUserRequest(questions: unknown, options: AskUserRequest
 export function resolveAskUserRequest(branch: readonly unknown[], askId: string): AskUserRequest {
   requireId(askId, "askId");
   for (const entry of [...branch].reverse()) {
-    if (!isRecord(entry) || entry["type"] !== "message") continue;
-    const message = entry["message"];
-    if (!isRecord(message) || message["role"] !== "toolResult" || message["toolName"] !== "ask_user" || message["isError"] !== false) continue;
-    const details = message["details"];
-    const ask = isRecord(details) ? details["ask"] : undefined;
-    if (!isRecord(ask) || ask["askId"] !== askId) continue;
+    const ask = askPayloadOfEntry(entry);
+    if (ask?.["askId"] !== askId) continue;
     try {
-      return {
-        askId: requireId(ask["askId"], "askId"),
-        askedAt: requireTimestamp(ask["askedAt"]),
-        questions: validateQuestions(ask["questions"]),
-      };
+      return parseAskPayload(ask);
     } catch (error: unknown) {
       if (!(error instanceof AskUserValidationError)) throw error;
       throw new AskUserValidationError(`Malformed ask_user request ${askId}: ${error.message}`);
     }
   }
   throw new AskUserValidationError(`Unknown ask ID ${askId} on the active session branch`);
+}
+
+/**
+ * The question set at the conversation's tail that is still awaiting a reply, as
+ * a small pointer for list-level display. Only the newest ask counts: once the
+ * conversation moved past an ask, it is a historical record rather than
+ * something the user owes an answer to. It is closed by any answers entry for
+ * its id — answered or skipped, because either outcome wakes the agent — and by
+ * any user message typed after it, which also voids the form.
+ *
+ * Deliberately lenient: this runs while listing a session and while watching a
+ * hosted one, so a corrupt persisted ask reports nothing rather than throwing,
+ * and a transcript that predates the current ask shape simply has no tail
+ * question.
+ */
+export function openAskInBranch(branch: readonly unknown[]): OpenAsk | undefined {
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const ask = askPayloadOfEntry(branch[index]);
+    if (ask === undefined) continue;
+    const askId = ask["askId"];
+    if (typeof askId !== "string" || conversationMovedOn(branch, index, askId)) return undefined;
+    try {
+      const parsed = parseAskPayload(ask);
+      return { askId: parsed.askId, askedAt: parsed.askedAt, questionCount: parsed.questions.length };
+    } catch (error: unknown) {
+      if (!(error instanceof AskUserValidationError)) throw error;
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Whether anything after this ask closed its form or moved the conversation on. */
+function conversationMovedOn(branch: readonly unknown[], askIndex: number, askId: string): boolean {
+  for (let index = askIndex + 1; index < branch.length; index += 1) {
+    const entry = branch[index];
+    if (askOutcomeIdOfEntry(entry) === askId) return true;
+    if (isUserMessageEntry(entry)) return true;
+  }
+  return false;
+}
+
+function isUserMessageEntry(entry: unknown): boolean {
+  if (!isRecord(entry) || entry["type"] !== "message") return false;
+  const message = entry["message"];
+  return isRecord(message) && message["role"] === "user";
+}
+
+/** The raw `ask` payload of a successful `ask_user` tool result entry. */
+function askPayloadOfEntry(entry: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(entry) || entry["type"] !== "message") return undefined;
+  const message = entry["message"];
+  if (!isRecord(message) || message["role"] !== "toolResult" || message["toolName"] !== "ask_user" || message["isError"] !== false) return undefined;
+  const details = message["details"];
+  const ask = isRecord(details) ? details["ask"] : undefined;
+  return isRecord(ask) ? ask : undefined;
+}
+
+/**
+ * The ask id an answers entry closes, if this entry records one. Answers are
+ * persisted as a `custom_message` entry (`sendCustomMessage`), so the outcome
+ * travels in its `details`.
+ */
+function askOutcomeIdOfEntry(entry: unknown): string | undefined {
+  if (!isRecord(entry)) return undefined;
+  if (entry["customType"] !== ASK_USER_ANSWERS_CUSTOM_TYPE) return undefined;
+  const details = entry["details"];
+  const askId = isRecord(details) ? details["askId"] : undefined;
+  return typeof askId === "string" && askId !== "" ? askId : undefined;
+}
+
+function parseAskPayload(ask: Record<string, unknown>): AskUserRequest {
+  return {
+    askId: requireId(ask["askId"], "askId"),
+    askedAt: requireTimestamp(ask["askedAt"]),
+    questions: validateQuestions(ask["questions"]),
+  };
 }
 
 /** A submission or skip is a new transcript outcome, never an open/close transition. */

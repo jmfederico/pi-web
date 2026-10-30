@@ -106,6 +106,69 @@ describe("session summary scanner parity with the SDK listing", () => {
   });
 });
 
+describe("session summary open posted ask", () => {
+  const ask = { askId: "ask-1", askedAt: "2026-01-01T00:00:30.000Z", questions: [{ id: "q1", question: "Which database?", options: [] }] };
+
+  function askResultLine(value: unknown = ask): string {
+    // The scanner reads persisted JSON, so the entry is written as raw fields
+    // rather than as an SDK message object.
+    return JSON.stringify({
+      type: "message", id: nextEntryId(), parentId: "root", timestamp: "2026-01-01T00:01:30.000Z",
+      message: { role: "toolResult", toolName: "ask_user", isError: false, content: textContent("Posted questions"), details: { ask: value } },
+    });
+  }
+
+  function answersLine(askId: string, reason = "submitted"): string {
+    return JSON.stringify({ type: "custom_message", id: nextEntryId(), parentId: "root", timestamp: "2026-01-01T00:03:00.000Z", customType: "pi-web.ask.answers", display: true, content: "answers", details: { askId, reason } });
+  }
+
+  async function listed(lines: readonly string[]): Promise<PiSessionListEntry | undefined> {
+    await writeSession("ask.jsonl", lines);
+    return (await new SessionSummaryScanner().scanSessionSummariesInDir(sessionDir)).find((entry) => entry.id === "ask");
+  }
+
+  it("reports the ask at the conversation tail", async () => {
+    const entry = await listed([headerLine({ id: "ask", cwd: WORKSPACE }), messageLine({ role: "user", content: textContent("hi") }), askResultLine()]);
+    expect(entry?.openAsk).toEqual({ askId: "ask-1", askedAt: ask.askedAt, questionCount: 1 });
+  });
+
+  it("reports nothing once the ask is answered, skipped, or the user typed instead", async () => {
+    for (const tail of [answersLine("ask-1"), answersLine("ask-1", "cancelled"), messageLine({ role: "user", content: textContent("never mind") })]) {
+      const entry = await listed([headerLine({ id: "ask", cwd: WORKSPACE }), askResultLine(), tail]);
+      expect(entry?.openAsk).toBeUndefined();
+    }
+  });
+
+  it("reports nothing for a session that never asked, and survives the memo", async () => {
+    expect((await listed([headerLine({ id: "ask", cwd: WORKSPACE }), messageLine({ role: "user", content: textContent("hi") })]))?.openAsk).toBeUndefined();
+    await expect(listed([headerLine({ id: "ask", cwd: WORKSPACE }), askResultLine()])).resolves.toMatchObject({ openAsk: { askId: "ask-1" } });
+  });
+
+  it("follows the active branch, not file order, past an abandoned ask", async () => {
+    // Tree navigation can resume from an earlier entry, leaving an unanswered
+    // ask on the abandoned tail while later file entries continue another
+    // branch. The SDK resumes at the newest entry, so that branch owns the
+    // tail even though the ask sits earlier in the file.
+    const chainLine = (id: string, parentId: string | null, entry: Record<string, unknown>) =>
+      JSON.stringify({ id, parentId, timestamp: "2026-01-01T00:02:00.000Z", ...entry });
+    const root = chainLine("root-entry", null, { type: "message", message: { role: "user", content: textContent("Which approach?") } });
+    const abandonedAsk = chainLine("ask-entry", "root-entry", {
+      type: "message",
+      message: { role: "toolResult", toolName: "ask_user", isError: false, content: textContent("Posted questions"), details: { ask } },
+    });
+    const resumedBranch = [
+      chainLine("reply-entry", "root-entry", { type: "message", message: { role: "assistant", content: textContent("Trying another approach") } }),
+      chainLine("bookkeeping-entry", "reply-entry", { type: "custom", customType: "note" }),
+    ];
+    const entry = await listed([headerLine({ id: "ask", cwd: WORKSPACE }), root, abandonedAsk, ...resumedBranch]);
+    expect(entry?.openAsk).toBeUndefined();
+    // The ask is still the abandoned branch's own tail: the same file without
+    // the resumed branch reports it, so the branch walk is what dismisses it.
+    const abandoned = await listed([headerLine({ id: "ask", cwd: WORKSPACE }), root, abandonedAsk]);
+    expect(abandoned?.openAsk).toEqual({ askId: "ask-1", askedAt: ask.askedAt, questionCount: 1 });
+  });
+});
+
 describe("session summary scanner public metadata", () => {
   it("keeps only explicit metadata across fast-path and foreign-format entries, memo reuse and chunk folding", async () => {
     const publicEntry = (leg: number) => ({ type: "custom", customType: SESSION_UI_METADATA_CUSTOM_TYPE,

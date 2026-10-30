@@ -2,10 +2,12 @@ import { html, type TemplateResult } from "lit";
 import { CORE_STATUS_FLAGS, type StatusFlags } from "../../../shared/machineStatus";
 
 /**
- * Work signals a row can show. At most one kind renders at a time; call sites
- * resolve precedence (sending > session > terminal) before rendering.
+ * Signals a row can show. At most one kind renders at a time; call sites
+ * resolve precedence before rendering. "question" is not work: a session
+ * blocked on the user outranks a merely busy one, so it wins the mark (then
+ * sending > session > terminal).
  */
-export type ActivityIndicatorKind = "session" | "terminal" | "sending";
+export type ActivityIndicatorKind = "session" | "terminal" | "sending" | "question";
 
 /**
  * Render the single indicator mark for a row.

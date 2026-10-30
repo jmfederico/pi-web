@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager, type AgentSession, type CustomMessageEntry } from "../../piSdk.js";
 import { describe, expect, it, vi } from "vitest";
-import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserRequest } from "../../shared/apiTypes.js";
+import { ASK_USER_ANSWERS_CUSTOM_TYPE, type AskUserRequest, type SessionOpenAskChangedEvent } from "../../shared/apiTypes.js";
 import { createPiWebCustomToolDefinitions, PiSessionService, type PiSessionRuntime, type PiSessionServiceDependencies } from "./piSessionService.js";
 import { AskUserValidationError, createAskUserRequest } from "./askUserDomain.js";
 import { createAskUserToolDefinition } from "./askUserTool.js";
@@ -48,6 +48,10 @@ function askService(branch: unknown[] = [{ type: "message", message: {
 
 function questionEvents(events: CapturingSessionEventHub) {
   return events.sessionEvents.filter(({ event }) => event.type.startsWith("ask."));
+}
+
+function openAskEvents(events: CapturingSessionEventHub) {
+  return events.globalEvents.filter((event): event is SessionOpenAskChangedEvent => event.type === "session.openAsk.changed");
 }
 
 describe("ask_user registration", () => {
@@ -213,6 +217,56 @@ describe("PiSessionService durable question replies", () => {
       manager.branch(resultId);
       await service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [] });
       expect(fake.calls.sendCustomMessage).toHaveLength(1);
+    } finally { await service.dispose(); }
+  });
+});
+
+describe("open posted ask broadcast", () => {
+  it("broadcasts the ask a settled run posts and clears it on the reply that closes it", async () => {
+    const { service, events, fake, branch } = askService([]);
+    try {
+      await service.status(sessionRef(SESSION_ID));
+      // Hosting never walks the branch, and the listing already carries the
+      // hosted session's value, so no event fires for it.
+      expect(openAskEvents(events)).toEqual([]);
+
+      const askEntry = { type: "message", message: { role: "toolResult", toolName: "ask_user", isError: false, details: { ask } } };
+      branch.push(askEntry);
+      fake.emit({ type: "agent_settled" });
+      expect(openAskEvents(events)).toEqual([{
+        type: "session.openAsk.changed",
+        sessionId: SESSION_ID,
+        openAsk: { askId: "ask-1", askedAt: ask.askedAt, questionCount: 1 },
+      }]);
+
+      // A settled run that leaves the tail unchanged broadcasts nothing.
+      fake.emit({ type: "agent_settled" });
+      expect(openAskEvents(events)).toHaveLength(1);
+
+      // A user reply voids the form, so the run it starts clears the ask when
+      // it settles.
+      branch.push({ type: "message", message: { role: "user", content: "Use Postgres" } });
+      fake.emit({ type: "agent_settled" });
+      expect(openAskEvents(events)).toHaveLength(2);
+      expect(openAskEvents(events)[1]).toEqual({ type: "session.openAsk.changed", sessionId: SESSION_ID });
+    } finally { await service.dispose(); }
+  });
+
+  it("broadcasts a cleared ask when its answers entry settles into the branch", async () => {
+    const { service, events, fake, branch } = askService();
+    try {
+      await service.status(sessionRef(SESSION_ID));
+      expect(openAskEvents(events)).toEqual([]);
+      // Delivery alone broadcasts nothing while the answers are still only
+      // queued for the agent: the projection follows the branch, not the API.
+      await service.submitAsk(sessionRef(SESSION_ID), "ask-1", { answers: [{ id: "db", values: ["pg"] }] });
+      expect(openAskEvents(events)).toEqual([]);
+      // The delivered answers are persisted as a custom message that wakes
+      // the agent; the settled run leaves them in the branch and they close
+      // the ask.
+      branch.push({ type: "custom_message", customType: ASK_USER_ANSWERS_CUSTOM_TYPE, display: true, content: "answers", details: { askId: "ask-1", reason: "submitted" } });
+      fake.emit({ type: "agent_settled" });
+      expect(openAskEvents(events)).toEqual([{ type: "session.openAsk.changed", sessionId: SESSION_ID }]);
     } finally { await service.dispose(); }
   });
 });

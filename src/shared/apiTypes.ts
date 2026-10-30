@@ -659,6 +659,19 @@ export interface SessionNotificationSummaryEvent {
   summary: SessionNotificationSummary;
 }
 
+/**
+ * The posted `ask_user` question set at the conversation's tail that is still
+ * waiting for a reply. A pointer, not a copy: the questions live in the
+ * transcript, which owns them. Derived while listing the session file, so it is
+ * an index of the conversation tail rather than daemon state, and it therefore
+ * survives a session-daemon restart.
+ */
+export interface OpenAsk {
+  askId: string;
+  askedAt: string;
+  questionCount: number;
+}
+
 export interface SessionInfo extends SessionRef {
   path: string;
   /** Only true for positively verified tracked agent subsessions; absent otherwise. */
@@ -672,9 +685,24 @@ export interface SessionInfo extends SessionRef {
   modified: string;
   messageCount: number;
   firstMessage: string;
+  /** The open question set at the conversation tail, when the tail is one. */
+  openAsk?: OpenAsk;
   parentSessionPath?: string;
   archived?: boolean;
   archivedAt?: string;
+}
+
+/**
+ * A hosted session's open posted ask changed: an agent run posted one, or its
+ * answers entry, a user reply, or tree navigation closed it. The listing
+ * derives the same projection from the session file; this broadcast keeps
+ * already-listed rows current between listings.
+ */
+export interface SessionOpenAskChangedEvent {
+  type: "session.openAsk.changed";
+  sessionId: string;
+  /** The new tail ask projection; absent when none is waiting. */
+  openAsk?: OpenAsk;
 }
 
 export interface ArchiveSessionsResponse {
@@ -1505,5 +1533,6 @@ export type GlobalSessionEvent =
   | SessionStartupProgressEvent
   | ModelScopeChangedEvent
   | WorkspaceChangedEvent
+  | SessionOpenAskChangedEvent
   | ServerNoticeEvent;
 export type RealtimeEvent = GlobalSessionEvent | MachineStatusUiEvent;

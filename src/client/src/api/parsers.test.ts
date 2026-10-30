@@ -695,6 +695,15 @@ describe("API parsers", () => {
     expect(() => parseSessionInfo({ id: "s1", path: "", cwd: "/repo", persisted: "yes", created: "now", modified: "now", messageCount: 0, firstMessage: "" })).toThrow("Expected optional boolean field: persisted");
   });
 
+  it("parses the open posted ask on session info and rejects malformed projections", () => {
+    const base = { id: "s1", path: "/sessions/s1.jsonl", cwd: "/repo", created: "2026-01-01T00:00:00.000Z", modified: "2026-01-01T00:01:00.000Z", messageCount: 3, firstMessage: "Fix the login bug" };
+    const openAsk = { askId: "ask-1", askedAt: "2026-01-01T00:00:30.000Z", questionCount: 2 };
+    expect(parseSessionInfo({ ...base, openAsk }).openAsk).toEqual(openAsk);
+    expect(parseSessionInfo(base).openAsk).toBeUndefined();
+    expect(() => parseSessionInfo({ ...base, openAsk: { ...openAsk, questionCount: -1 } })).toThrow("questionCount");
+    expect(() => parseSessionInfo({ ...base, openAsk: { ...openAsk, askId: "" } })).toThrow("askId");
+  });
+
   it("preserves only positive agent subsession signals and rejects malformed flags", () => {
     const session = { id: "s1", path: "", cwd: "/repo", created: "now", modified: "now", messageCount: 0, firstMessage: "" };
     expect(parseSessionInfo({ ...session, agentSubsession: true }).agentSubsession).toBe(true);

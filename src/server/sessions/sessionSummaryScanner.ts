@@ -2,10 +2,12 @@ import { open, readdir, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import { join, sep } from "node:path";
-import { isRecord, tryParseEntry } from "./sessionFileFormat.js";
+import { isRecord, tryParseEntry, deriveActiveBranchEntries } from "./sessionFileFormat.js";
 import type { PiSessionListEntry } from "./piSessionService.js";
 import type { SessionUiMetadata } from "../../shared/pluginApiTypes.js";
+import type { OpenAsk } from "../../shared/apiTypes.js";
 import { sessionUiMetadataFromEntry } from "./sessionMetadata.js";
+import { openAskInBranch } from "./askUserDomain.js";
 import { cwdPathsEqual } from "../workingDirectory.js";
 import { parsePersistedChildSubsessionLink, parsePersistedParentSubsessionLink, type PersistedChildSubsessionLink, type PersistedParentSubsessionLink } from "./subsessionProvenance.js";
 
@@ -69,6 +71,13 @@ const MAX_CONCURRENT_SESSION_SUMMARY_SCANS = 10;
 
 /** Default read chunk size for the streaming pass; see SessionSummaryScannerOptions. */
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/**
+ * How much of a session file's end is re-read to find an open posted ask. An
+ * open `ask_user` ends the run, so it sits at the conversation tail; a bounded
+ * window keeps this off the per-line path the rest of this scanner protects.
+ */
+const OPEN_ASK_TAIL_BYTES = 64 * 1024;
 
 /** Types longer than this fall back to a full parse instead of byte classification. */
 const MAX_CLASSIFIED_TYPE_LENGTH = 64;
@@ -244,6 +253,8 @@ interface SummaryFoldState {
   metadata?: SessionUiMetadata;
   childLinks?: PersistedChildSubsessionLink[];
   parentLinks?: PersistedParentSubsessionLink[];
+  /** Open posted ask at the conversation tail; absent when the tail is not one. */
+  openAsk?: OpenAsk;
 }
 
 function createEmptyFold(): SummaryFoldState {
@@ -295,6 +306,8 @@ async function scanWholeSessionFile(filePath: string, chunkBuffer: () => Buffer)
   try {
     const fold = createEmptyFold();
     const endOffset = await foldFileLines(file, fold, chunkBuffer());
+    const openAsk = await readOpenAsk(file, endOffset);
+    if (openAsk !== undefined) fold.openAsk = openAsk;
     // Rejection is final — the first parseable line decides it — so the fold
     // stops early and the observed file size, not the read offset, is what a
     // later listing must compare against to take the stat-only fast path.
@@ -352,6 +365,44 @@ async function foldFileLines(file: FileHandle, fold: SummaryFoldState, chunkBuff
   }
 }
 
+/**
+ * Read the file's tail and apply the conversation rule to its active branch,
+ * derived from the window's entries the way the SDK resumes a session: the
+ * walk from the last id-bearing entry through `parentId` links. File order
+ * alone would misread a branched file — tree navigation can leave an
+ * unanswered ask on an abandoned tail while later entries continue another
+ * branch — so only entries on the branch ending at the file's newest entry
+ * decide. Only the tail is decoded: everything after an ask is either its
+ * answers entry, a user reply that closes the form, or bookkeeping, so a
+ * handful of branch entries decides it. A window cut short of the branch's
+ * start still yields its tail suffix, which is all the rule reads; the one
+ * blind spot is a runtime that navigated away without appending yet, whose
+ * next append moves the file's newest branch past the abandoned ask.
+ */
+async function readOpenAsk(file: FileHandle, endOffset: number): Promise<OpenAsk | undefined> {
+  if (endOffset <= 0) return undefined;
+  const start = Math.max(0, endOffset - OPEN_ASK_TAIL_BYTES);
+  const buffer = Buffer.allocUnsafe(endOffset - start);
+  const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
+  if (bytesRead === 0) return undefined;
+  const data = buffer.subarray(0, bytesRead);
+  // A window that starts mid-file can begin inside a line. That fragment cannot
+  // parse as JSON, so it is fed through like any other line and dropped by the
+  // parser; skipping it by position would also discard a complete first line.
+  let lineStart = 0;
+  const entries: unknown[] = [];
+  let lineEnd = data.indexOf(NEWLINE, lineStart);
+  while (lineEnd !== -1) {
+    entries.push(tryParseEntry(data.toString("utf8", lineStart, lineEnd)));
+    lineStart = lineEnd + 1;
+    lineEnd = data.indexOf(NEWLINE, lineStart);
+  }
+  // A trailing line without its newline is either the last entry or a torn
+  // write; the parser rejects the torn one, matching the fold's tolerance.
+  if (lineStart < data.length) entries.push(tryParseEntry(data.toString("utf8", lineStart, data.length)));
+  return openAskInBranch(deriveActiveBranchEntries(entries));
+}
+
 /** The listing entry for a fold, or undefined when the file is not a usable session. */
 function buildSummaryFromFold(fold: SummaryFoldState, filePath: string, mtime: Date): PiSessionListEntry | undefined {
   if (fold.rejected || fold.header === undefined) return undefined;
@@ -371,6 +422,7 @@ function buildSummaryFromFold(fold: SummaryFoldState, filePath: string, mtime: D
     modified: mtime,
     messageCount: fold.messageCount,
     firstMessage: fold.firstMessageText ?? "(no messages)",
+    ...(fold.openAsk === undefined ? {} : { openAsk: fold.openAsk }),
     // Never built: see the listing contract above. Kept because SDK-built
     // entries (cleanup listing) still carry the field.
     allMessagesText: "",

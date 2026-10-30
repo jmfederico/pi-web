@@ -713,7 +713,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "selectAll": "Välj alla",
     "clearSelected": "Rensa val ({count, number})",
     "selectSession": "Välj {label}",
-    "sessionMeta": "{state, select, creating {skapas · } error {fel · } new {ny · } archived {skrivskyddad · } other {}}{count, plural, one {# meddelande} other {# meddelanden}}",
+    "sessionMeta": "{state, select, creating {skapas · } error {fel · } new {ny · } waiting {Väntar på ditt svar · } archived {skrivskyddad · } other {}}{count, plural, one {# meddelande} other {# meddelanden}}",
     "actions": "Sessionsåtgärder",
     "agentSubsessions": "Agentens undersessioner ({count, number})",
     "sendingSubsession": "Skickar meddelande till undersession",

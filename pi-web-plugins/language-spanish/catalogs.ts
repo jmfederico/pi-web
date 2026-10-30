@@ -405,7 +405,7 @@ const catalogs: Record<string, Record<string, string>> = {
     "selectAll": "Seleccionar todo",
     "clearSelected": "Quitar selección ({count, number})",
     "selectSession": "Seleccionar {label}",
-    "sessionMeta": "{state, select, creating {creando · } error {error · } new {nueva · } archived {solo lectura · } other {}}{count, plural, one {# mensaje} other {# mensajes}}",
+    "sessionMeta": "{state, select, creating {creando · } error {error · } new {nueva · } waiting {Esperando tu respuesta · } archived {solo lectura · } other {}}{count, plural, one {# mensaje} other {# mensajes}}",
     "actions": "Acciones de la sesión",
     "agentSubsessions": "Subsesiones del agente ({count, number})",
     "sendingSubsession": "Enviando mensaje a la subsesión",
