@@ -175,7 +175,7 @@ export class PiWebApp extends LitElement {
     super();
     new LocalizationController(this, localization, () => { this.invalidateWorkspaceSurface(); });
     stylesheetIntegrationCapability.createController(this);
-    new ShellViewportController(this, () => this.appShell.isMobileNavigationLayout || this.appShell.isPwaDisplayMode);
+    new ShellViewportController(this);
   }
 
   /** Page-scoped injection seam for independently composing chat behavior. */

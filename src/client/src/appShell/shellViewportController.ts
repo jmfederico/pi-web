@@ -7,11 +7,9 @@ const HEIGHT_PROPERTY = "--pi-app-viewport-height";
 export class ShellViewportController implements ReactiveController {
   private frame: number | undefined;
   private viewport: VisualViewport | null = null;
-  private enabled = false;
 
   constructor(
     private readonly host: ReactiveControllerHost & HTMLElement,
-    private readonly shouldManageViewport: () => boolean,
     private readonly repairer = new ViewportPositionRepairer(),
   ) {
     host.addController(this);
@@ -24,10 +22,6 @@ export class ShellViewportController implements ReactiveController {
     this.viewport?.addEventListener("resize", this.scheduleRefresh);
     this.viewport?.addEventListener("scroll", this.scheduleRefresh);
     this.scheduleRefresh();
-  }
-
-  hostUpdated(): void {
-    if (this.enabled !== this.shouldManageViewport()) this.scheduleRefresh();
   }
 
   hostDisconnected(): void {
@@ -51,11 +45,10 @@ export class ShellViewportController implements ReactiveController {
   };
 
   private refresh(): void {
-    this.enabled = this.shouldManageViewport();
     const viewport = this.viewport;
     // Pinch zoom must retain native panning. Keep the pre-zoom shell size.
-    if (this.enabled && viewport && viewport.scale !== 1) return;
-    if (!this.enabled || !viewport || viewport.height <= 0) {
+    if (viewport && viewport.scale !== 1) return;
+    if (!viewport || viewport.height <= 0) {
       this.host.style.removeProperty(HEIGHT_PROPERTY);
       return;
     }

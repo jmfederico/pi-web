@@ -63,11 +63,7 @@ export class AppShellController implements ReactiveController {
   }
 
   repairViewportPosition(): void {
-    this.viewportPositionRepairer.repair(this.shouldRepairViewportPosition());
-  }
-
-  private shouldRepairViewportPosition(): boolean {
-    return this.isMobileNavigationLayout || this.isPwaDisplayMode;
+    this.viewportPositionRepairer.repair(true);
   }
 
   private readonly onDesktopSideBySideMediaChange = (event: MediaQueryListEvent) => {

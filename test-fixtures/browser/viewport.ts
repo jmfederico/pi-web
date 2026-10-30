@@ -16,7 +16,7 @@ class ViewportShell extends LitElement {
 
   constructor() {
     super();
-    new ShellViewportController(this, () => true);
+    new ShellViewportController(this);
   }
 
   override render() {

@@ -1,13 +1,13 @@
 // @vitest-environment happy-dom
 import { LitElement } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AppShellController } from "./appShellController";
 import { ShellViewportController } from "./shellViewportController";
 import { ViewportPositionRepairer } from "./viewportPositionRepair";
 
 class ViewportHost extends LitElement {
-  enabled = true;
   readonly repairer = new ViewportPositionRepairer();
-  readonly viewportController = new ShellViewportController(this, () => this.enabled, this.repairer);
+  readonly viewportController = new ShellViewportController(this, this.repairer);
 }
 customElements.define("viewport-test-host", ViewportHost);
 
@@ -121,15 +121,23 @@ describe("ShellViewportController", () => {
     expect(frames.size).toBe(0);
   });
 
-  it("restores CSS sizing and stops repairing outside mobile or PWA layouts", async () => {
-    host.enabled = false;
-    host.requestUpdate();
+  it("uses CSS sizing when the visual viewport API is unavailable", async () => {
+    host.remove();
+    vi.stubGlobal("visualViewport", undefined);
+    host = new ViewportHost();
+    document.body.append(host);
     await host.updateComplete;
     flushFrame();
     expect(host.style.getPropertyValue("--pi-app-viewport-height")).toBe("");
-    viewport.offsetTop = 50;
-    viewport.dispatchEvent(new Event("scroll"));
-    flushFrame();
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+
+  it("repairs on resume even in wide, non-PWA layouts", () => {
+    const repair = vi.spyOn(host.repairer, "repair").mockImplementation(() => undefined);
+    const shell = new AppShellController(new ViewportHost(), { viewportPositionRepairer: host.repairer });
+    shell.isMobileNavigationLayout = false;
+    shell.isPwaDisplayMode = false;
+    shell.repairViewportPosition();
+    expect(repair).toHaveBeenCalledExactlyOnceWith(true);
   });
 });
