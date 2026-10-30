@@ -161,9 +161,10 @@ describe("plugin delivery artifacts", () => {
     const probe = join(standalone, "probe.mjs");
     await writeFile(probe, `
       import plugin from "./server-plugin.mjs";
+      import { fileURLToPath } from "node:url";
       const signal = new AbortController().signal;
       const activation = await plugin.activate({ settings: { defaultTimezone: "UTC" },
-        lifetimeSignal: signal, dataDirectory: new URL(".", import.meta.url).pathname,
+        lifetimeSignal: signal, dataDirectory: fileURLToPath(new URL(".", import.meta.url)),
         logger: { error: console.error },
       });
       const project = { id: "p", name: "Project", path: "/project" };
