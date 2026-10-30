@@ -10,9 +10,6 @@ const builtInThemeMessageKeys = {
   "themes:classic": ["classicName", "classicDescription"],
   "themes:paper": ["paperName", "paperDescription"],
   "themes:graphite": ["graphiteName", "graphiteDescription"],
-  "themes:playground-dark": ["playgroundDarkName", "playgroundDarkDescription"],
-  "themes:playground-light": ["playgroundLightName", "playgroundLightDescription"],
-  "themes:playground": ["playgroundPairName", "playgroundPairDescription"],
   "themes:pi-web": ["piWebPairName", "piWebPairDescription"],
   "themes:paper-graphite": ["neutralPairName", "neutralPairDescription"],
 } as const;

@@ -40,7 +40,7 @@ for (const scheme of ["dark", "light"] as const) {
     await expect(request.locator("formatted-text p").first()).toBeVisible();
     const baseline = await request.evaluate(messageGeometry);
     const border = await request.evaluate((element) => getComputedStyle(element).borderInlineStartWidth);
-    await page.evaluate((scheme) => window.overlayFixture.applyTheme(`themes:playground-${scheme}`), scheme);
+    await page.evaluate((scheme) => window.overlayFixture.applyTheme(`playground:playground-${scheme}`), scheme);
     await expect(request).toHaveCSS("border-inline-start-width", border);
     const cue = (element: Element) => {
       const style = getComputedStyle(element, "::before");

@@ -15,16 +15,13 @@ it("ships stable built-in theme identities and pairs without executable entrypoi
   expect(plugin.serverModule).toBeUndefined();
   expect(plugin.themes.map(({ id, colorScheme }) => [id, colorScheme])).toEqual([
     ["pi-web-dark", "dark"], ["pi-web-light", "light"], ["classic", "dark"], ["paper", "light"], ["graphite", "dark"],
-    ["playground-dark", "dark"], ["playground-light", "light"],
   ]);
   expect(plugin.themePairs.map(({ id, light, dark }) => [id, light, dark])).toEqual([
     ["pi-web", "pi-web-light", "pi-web-dark"], ["paper-graphite", "paper", "graphite"],
-    ["playground", "playground-light", "playground-dark"],
   ]);
   for (const theme of plugin.themes) {
     expect(theme.stylesheets).toEqual([
       { id: "palette", path: `${theme.id}.css` },
-      ...(theme.id.startsWith("playground-") ? [{ id: "appearance", path: "playground.css", order: 1100 }] : []),
     ]);
     const css = await readFile(new URL(`./${plugin.browserRoot}/${theme.stylesheets[0]?.path ?? ""}`, import.meta.url), "utf8");
     expect(css).toContain("--pi-bg:");

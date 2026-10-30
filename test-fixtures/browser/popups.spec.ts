@@ -73,7 +73,7 @@ test("Playground menu cues survive theme changes and forced colours without addi
     return { content: style.content, border: parseFloat(style.borderInlineStartWidth) };
   };
   for (const scheme of ["dark", "light"]) {
-    await page.evaluate((id) => window.overlayFixture.applyTheme(id), `themes:playground-${scheme}`);
+    await page.evaluate((id) => window.overlayFixture.applyTheme(id), `playground:playground-${scheme}`);
     expect((await current.evaluate(cue)).content).not.toBe("none");
     expect((await current.evaluate(cue)).border).toBeGreaterThan(0);
     expect(await current.boundingBox()).toEqual(before);

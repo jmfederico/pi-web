@@ -13,11 +13,10 @@ describe("production client build contents", () => {
     expect(plugin.id).toBe("themes");
     expect(plugin.module).toBeUndefined();
     expect(plugin.serverModule).toBeUndefined();
-    for (const id of ["classic", "pi-web-dark", "pi-web-light", "paper", "graphite", "playground-dark", "playground-light"]) {
+    for (const id of ["classic", "pi-web-dark", "pi-web-light", "paper", "graphite"]) {
       const theme = plugin.themes.find((theme) => theme.id === id);
       expect(theme.stylesheets).toEqual([
         { id: "palette", path: `${id}.css` },
-        ...(id.startsWith("playground-") ? [{ id: "appearance", path: "playground.css", order: 1100 }] : []),
       ]);
       expect(await readFile(join(packageDir, plugin.browserRoot, theme.stylesheets[0].path), "utf8")).toContain("--pi-bg:");
       for (const sheet of theme.stylesheets) {
@@ -26,6 +25,11 @@ describe("production client build contents", () => {
     }
     const assets = await readdir(join(repoRoot, "dist/client/assets"));
     expect(assets.filter((file) => /^(classic|pi-web-dark|pi-web-light|paper|graphite|playground(?:-dark|-light)?)-.*\.css$/.test(file))).toEqual([]);
+  });
+
+  it("excludes the checkout-only Playground plugin and assets from release output", async () => {
+    const files = await readdir(join(repoRoot, "dist"), { recursive: true });
+    expect(files.filter((file) => /playground/i.test(file))).toEqual([]);
   });
 
   it("emits deployment-relative HTML and PWA URLs", async () => {

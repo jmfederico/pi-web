@@ -28,10 +28,8 @@ describe("built-in CSS themes", () => {
       paper: ["#ffffff", "#202020"],
       graphite: ["#181818", "#e8e8e8"],
     };
-    // Playground shares the palette schema; browser contracts cover its presentation.
-    const palettes = { ...expectedColors, "playground-dark": undefined, "playground-light": undefined };
     let properties: string[] | undefined;
-    for (const [id, colors] of Object.entries(palettes)) {
+    for (const [id, colors] of Object.entries(expectedColors)) {
       const css = await readFile(`pi-web-plugins/themes/assets/${id}.css`, "utf8");
       const declarations = new Map<string, string>();
       walk(parse(css, { parseCustomProperty: false }), {
@@ -56,9 +54,7 @@ describe("built-in CSS themes", () => {
           expect([...declarations.keys()], `${id} has an unresolved palette reference`).toContain(reference[1]);
         }
       }
-      if (colors !== undefined) {
-        expect([declarations.get("--pi-bg"), declarations.get("--pi-text")]).toEqual(colors);
-      }
+      expect([declarations.get("--pi-bg"), declarations.get("--pi-text")]).toEqual(colors);
       properties ??= [...declarations.keys()].sort();
       expect([...declarations.keys()].sort()).toEqual(properties);
     }

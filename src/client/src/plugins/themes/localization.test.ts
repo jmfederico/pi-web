@@ -9,7 +9,7 @@ it("keeps static built-in theme and pair labels live without changing catalog id
   localization.registerCatalog({
     id: "themes-test", namespace: "plugin:themes:themes", locale: "de", load: () => Promise.resolve(catalog),
   });
-  const ids = ["pi-web-dark", "pi-web-light", "classic", "paper", "graphite", "playground-dark", "playground-light", "pi-web", "paper-graphite", "playground"];
+  const ids = ["pi-web-dark", "pi-web-light", "classic", "paper", "graphite", "pi-web", "paper-graphite"];
   const contributions = ids.map((id) => localizeBuiltInThemeMetadata({
     id: `themes:${id}`, name: "Fallback", description: "Fallback", stylesheets: [{ id: "palette", url: `${id}.css` }],
   }, localization));

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PiWebConfig } from "../config.js";
 import type { PiWebThemeBootstrap, PiWebThemeCatalogResponse } from "../shared/themeCatalog.js";
-import { PiWebPluginCatalog } from "./piWebPluginCatalog.js";
+import { defaultPluginRoots, PiWebPluginCatalog } from "./piWebPluginCatalog.js";
 import { PiWebThemeCatalog } from "./themeCatalog.js";
 import { buildApp } from "./app.js";
 import { parseThemeMetadata } from "./themeMetadata.js";
@@ -44,6 +44,28 @@ function catalog() {
 }
 
 describe("static gateway theme catalog", () => {
+  it("discovers Playground only in a source checkout and publishes it only when enabled", async () => {
+    await cp(new URL("../../plugins/playground", import.meta.url), join(root, "plugins", "playground"), { recursive: true });
+    const checkoutRoots = () => defaultPluginRoots(root).filter((entry) => entry.source === "dev");
+    expect(checkoutRoots()).toEqual([]);
+    await mkdir(join(root, "src", "server"), { recursive: true });
+    await writeFile(join(root, "src", "server", "index.ts"), "");
+    const plugins = new PiWebPluginCatalog({ roots: checkoutRoots(), packageProvider: false, configProvider: () => config });
+    expect((await plugins.snapshot()).plugins).toMatchObject([{ id: "playground", enabled: false, defaultEnabled: false, source: "dev" }]);
+    const themes = new PiWebThemeCatalog(plugins);
+    expect(await themes.themes()).toEqual({ themes: [], themePairs: [] });
+    expect(await themes.readAsset("playground", "playground.css")).toBeUndefined();
+
+    config = { plugins: { playground: { enabled: true } } };
+    const enabled = await themes.themes();
+    expect(enabled.themes.map(({ id }) => id)).toEqual(["playground:playground-dark", "playground:playground-light"]);
+    expect(enabled.themePairs).toMatchObject([{ id: "playground:playground", light: "playground:playground-light", dark: "playground:playground-dark" }]);
+    expect((await themes.readAsset("playground", "playground.css"))?.content.toString()).toContain("--playground-speaker-shape");
+    config = { plugins: { playground: { enabled: false } } };
+    expect(await themes.themes()).toEqual({ themes: [], themePairs: [] });
+    expect(await themes.readAsset("playground", "playground.css")).toBeUndefined();
+  });
+
   it("publishes qualified themes and pairs without any runtime and serves revision-in-path dependencies", async () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ piWeb: { plugins: [{
       ...metadata, themes: [...metadata.themes, { ...metadata.themes[1], id: "extra", name: "Extra" }],

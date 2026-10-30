@@ -11,7 +11,7 @@ test("loading and loaded statistics keep composer controls above the reserved sa
   await page.setViewportSize({ width: 360, height: 720 });
   const safeArea = 36;
   await page.evaluate(async (safeArea) => {
-    await window.overlayFixture.applyTheme("themes:playground-dark");
+    await window.overlayFixture.applyTheme("playground:playground-dark");
     await window.overlayFixture.mountStatistics(safeArea);
   }, safeArea);
   const editor = page.locator("prompt-editor");
@@ -48,7 +48,7 @@ test("loading and loaded statistics keep composer controls above the reserved sa
 test("moved Notices content scrolls and its last dismiss action remains reachable under Playground", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 720 });
   await page.evaluate(async () => {
-    await window.overlayFixture.applyTheme("themes:playground-dark");
+    await window.overlayFixture.applyTheme("playground:playground-dark");
     await window.overlayFixture.mountNotices();
   });
   const panel = page.locator("session-notices-panel");

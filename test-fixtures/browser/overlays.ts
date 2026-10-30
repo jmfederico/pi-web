@@ -11,6 +11,7 @@ import { StatusBar } from "../../src/client/src/components/StatusBar";
 import { SessionNoticesPanel } from "../../src/client/src/components/SessionNoticesPanel";
 import { appStyles } from "../../src/client/src/components/shared";
 import themeDefinitions from "../../pi-web-plugins/themes/package.json";
+import playgroundDefinitions from "../../plugins/playground/package.json";
 import { pluginStyles } from "../../src/client/src/plugins/styles";
 import { applyPiWebTheme } from "../../src/client/src/theme";
 import type { QualifiedThemeContribution } from "../../src/client/src/plugins/types";
@@ -30,9 +31,8 @@ style.textContent = `
 `;
 document.head.append(style);
 
-const themePlugin = themeDefinitions.piWeb.plugins[0];
-if (themePlugin === undefined) throw new Error("Missing built-in theme declarations");
-const fixtureThemes: QualifiedThemeContribution[] = themePlugin.themes.map((theme) => ({
+// Browser contracts explicitly opt into the checkout-only experimental plugin.
+const fixtureThemes: QualifiedThemeContribution[] = [...themeDefinitions.piWeb.plugins, ...playgroundDefinitions.piWeb.plugins].flatMap((themePlugin) => themePlugin.themes.map((theme) => ({
   ...theme,
   id: `${themePlugin.id}:${theme.id}`,
   pluginId: themePlugin.id,
@@ -41,9 +41,11 @@ const fixtureThemes: QualifiedThemeContribution[] = themePlugin.themes.map((them
   stylesheets: theme.stylesheets.map((sheet) => ({
     ...sheet,
     id: `${themePlugin.id}:${theme.id}:${sheet.id}`,
-    url: new URL(`../../pi-web-plugins/themes/assets/${sheet.path}`, import.meta.url).href,
+    url: themePlugin.id === "playground"
+      ? new URL(`../../plugins/playground/assets/${sheet.path}`, import.meta.url).href
+      : new URL(`../../pi-web-plugins/themes/assets/${sheet.path}`, import.meta.url).href,
   })),
-}));
+})));
 pluginStyles.registerRoot(document);
 
 const machine = (id: string, kind: Machine["kind"]): Machine => ({ id, name: id, kind, createdAt: "2026-10-21T00:00:00Z", updatedAt: "2026-10-21T00:00:00Z" });

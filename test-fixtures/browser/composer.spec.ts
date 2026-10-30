@@ -103,7 +103,7 @@ test("Playground's default cue follows eligibility and can be removed without ch
     return { content: style.content, border: parseFloat(style.borderBlockEndWidth) };
   };
   const before = await send.boundingBox();
-  await page.evaluate(() => window.overlayFixture.applyTheme("themes:playground-dark"));
+  await page.evaluate(() => window.overlayFixture.applyTheme("playground:playground-dark"));
   expect((await send.evaluate(decoration)).content).not.toBe("none");
   expect((await send.evaluate(decoration)).border).toBeGreaterThan(0);
   expect(await send.boundingBox()).toEqual(before);
