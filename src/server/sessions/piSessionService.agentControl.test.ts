@@ -276,7 +276,7 @@ describe("PiSessionService same-project session messaging", () => {
     expect(target.calls.sendCustomMessage).toEqual([]);
   });
 
-  it("delivers attributed custom follow-ups to children, parents, and unrelated sessions without granting authority", async () => {
+  it("delivers attributed custom steering to children, parents, and unrelated sessions without granting authority", async () => {
     const { service, parent, child, unrelated, listAll } = await trackedFixture();
     await service.start(CWD);
     await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "started" });
@@ -292,7 +292,7 @@ describe("PiSessionService same-project session messaging", () => {
           display: true,
           details: { sendingSessionId },
         },
-        options: { triggerTurn: true, deliverAs: "followUp" },
+        options: { triggerTurn: true, deliverAs: "steer" },
       }]);
     }
     expect(listAll).not.toHaveBeenCalled();
@@ -304,13 +304,13 @@ describe("PiSessionService same-project session messaging", () => {
     await expect(service.stopSubsession(PARENT, unrelated.session.sessionId)).rejects.toThrow(/not one of your subsessions/i);
   });
 
-  it("queues a follow-up for an already streaming recipient", async () => {
+  it("steers an already streaming recipient without aborting its work", async () => {
     const target = journalRuntime(CHILD);
     target.session.isStreaming = true;
     const { service } = fixture([target]);
     await service.start(CWD);
     await expect(send(service)).resolves.toEqual({ sessionId: CHILD, delivery: "queued" });
-    expect(target.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });
+    expect(target.calls.sendCustomMessage[0]?.options).toEqual({ triggerTurn: true, deliverAs: "steer" });
     expect(target.calls.abort).toBe(0);
   });
 
@@ -356,7 +356,7 @@ describe("PiSessionService same-project session messaging", () => {
         display: true,
         details: { sendingSessionId: PARENT },
       },
-      options: { triggerTurn: true, deliverAs: "followUp" },
+      options: { triggerTurn: true, deliverAs: "steer" },
     }]);
   });
 

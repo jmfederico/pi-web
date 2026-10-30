@@ -2192,7 +2192,7 @@ export class PiSessionService implements SessionRouteService {
         content: `Message from session ${input.sendingSessionId}:\n\n${message}`,
         display: true,
         details: { sendingSessionId: input.sendingSessionId },
-      }, { triggerTurn: true, deliverAs: "followUp" });
+      }, { triggerTurn: true, deliverAs: "steer" });
     }).catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       this.logger.info({ sessionId: input.sessionId, sendingSessionId: input.sendingSessionId, error: detail }, "session message delivery failed");
@@ -2638,7 +2638,7 @@ export class PiSessionService implements SessionRouteService {
     }
   }
 
-  /** Busy parents keep results in the inbox; never enqueue a second copy in Pi. */
+  /** Busy parents receive notices at turn boundaries; idle parents need a wake. */
   private async deliverPendingSubsessionCompletions(session: PiAgentSession): Promise<void> {
     if (this.hasActiveWork(session) || !this.isCurrentActiveSession(session) || this.subsessionStoppedParents.has(session)) return;
     const inbox = this.subsessionInbox(session.sessionId, session.sessionFile);
