@@ -1,3 +1,5 @@
+import { MachineSwitcher } from "../../src/client/src/components/MachineSwitcher";
+import { pluginStyles } from "../../src/client/src/plugins/styles";
 import { ProjectList } from "../../src/client/src/components/ProjectList";
 import { WorkspaceList } from "../../src/client/src/components/WorkspaceList";
 import { SessionList } from "../../src/client/src/components/SessionList";
@@ -64,27 +66,40 @@ sessions.unreadSessionIds = new Set([parent.id]);
 sessions.onSelect = (session) => { sessions.selected = session; result.textContent = `sessions:${session.id}`; };
 sessions.collapsible = true;
 sessions.onToggleCollapsed = () => { sessions.collapsed = !sessions.collapsed; };
-main.append(projects, workspaces, sessions);
+const machines = new MachineSwitcher();
+machines.machines = [
+  { id: "local", name: "Local fixture", kind: "local", status: "online", createdAt: "", updatedAt: "" },
+  { id: "remote", name: "Remote fixture", kind: "remote", baseUrl: "https://remote.invalid", status: "online", createdAt: "", updatedAt: "" },
+];
+const selectedMachine = machines.machines[0];
+if (selectedMachine === undefined) throw new Error("Missing machine fixture");
+machines.selected = selectedMachine;
+machines.onSelect = (machine) => { machines.selected = machine; result.textContent = `machines:${machine.id}`; };
+main.append(machines, projects, workspaces, sessions);
 document.body.append(main, result);
-await Promise.all([projects.updateComplete, workspaces.updateComplete, sessions.updateComplete]);
+await Promise.all([machines.updateComplete, projects.updateComplete, workspaces.updateComplete, sessions.updateComplete]);
 
-// Deliberately generic and less specific than legacy unread/session selectors.
-// Supported hooks must still win over all base-layer defaults in each root.
-const sheet = new CSSStyleSheet();
-sheet.replaceSync(`
-  .ui-nav-row-label { color: rgb(200, 210, 220); white-space: normal; }
-  .ui-nav-row-main { padding-inline-start: 24px; }
-`);
 declare global {
-  interface Window { navigationFixture: { applyTheme: () => void }; }
+  interface Window {
+    navigationFixture: {
+      applyTheme: (url: string) => Promise<void>;
+      clearTheme: () => void;
+      intervention: (unread: boolean) => Promise<void>;
+    };
+  }
 }
 window.navigationFixture = {
-  applyTheme: () => {
-    for (const component of [projects, workspaces, sessions]) {
-      const root = component.shadowRoot;
-      if (!root) throw new Error("Missing navigation root");
-      root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
-    }
+  applyTheme: (url) => pluginStyles.setTheme([{ id: "fixture:theme", url }], () => undefined),
+  clearTheme: () => { pluginStyles.clearTheme(); },
+  intervention: async (unread) => {
+    const flags = { "core:working": true, "core:intervention-required": true, "core:unread": unread };
+    const interventionSnapshot = { ...snapshot, machine: flags, projects: { p1: flags }, workspaces: { w1: flags } };
+    machines.statusSnapshots = { local: interventionSnapshot };
+    projects.statusSnapshot = interventionSnapshot;
+    workspaces.statusSnapshot = interventionSnapshot;
+    sessions.sessionFlags = { s1: flags, agent: flags };
+    sessions.unreadSessionIds = new Set(unread ? ["s1", "agent"] : []);
+    await Promise.all([machines.updateComplete, projects.updateComplete, workspaces.updateComplete, sessions.updateComplete]);
   },
 };
 document.body.dataset["ready"] = "true";
