@@ -650,6 +650,7 @@ describe("API parsers", () => {
       ],
       totals: { archiveCount: 2, deleteCount: 4 },
       skippedBusySessionIds: ["busy-1"],
+      skippedPinnedSessionIds: ["pinned-1"],
     };
 
     expect(parseSessionCleanupPreviewResponse(preview)).toEqual(preview);

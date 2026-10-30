@@ -3,6 +3,7 @@ import type { SessionCleanupPreviewResponse } from "./api";
 import { canRunSessionCleanup, confirmSessionCleanup, selectedSessionCleanupProjectCwds, sessionCleanupConfirmationMessage, sessionCleanupPreviewForSelectedProjects, sessionCleanupRequestKey, validateSessionCleanupDraft, type SessionCleanupDraft } from "./sessionCleanupUi";
 
 const draft: SessionCleanupDraft = {
+  skipPinned: true,
   archiveIdleEnabled: true,
   archiveIdleDays: "30",
   deleteArchivedEnabled: true,
@@ -20,11 +21,11 @@ describe("session cleanup UI helpers", () => {
   it("builds request thresholds from enabled runtime inputs", () => {
     expect(validateSessionCleanupDraft(draft)).toEqual({
       ok: true,
-      request: { archiveIdleDays: 30, deleteArchivedDays: 90 },
+      request: { archiveIdleDays: 30, deleteArchivedDays: 90, skipPinned: true },
     });
     expect(validateSessionCleanupDraft({ ...draft, archiveIdleEnabled: false })).toEqual({
       ok: true,
-      request: { archiveIdleDays: null, deleteArchivedDays: 90 },
+      request: { archiveIdleDays: null, deleteArchivedDays: 90, skipPinned: true },
     });
   });
 
@@ -45,10 +46,10 @@ describe("session cleanup UI helpers", () => {
       ok: false, code: "archiveRequired", error: "Archive idle sessions after must be set.",
     });
     expect(validateSessionCleanupDraft({ ...draft, archiveIdleEnabled: false, archiveIdleDays: "invalid", deleteArchivedDays: " 0 " })).toEqual({
-      ok: true, request: { archiveIdleDays: null, deleteArchivedDays: 0 },
+      ok: true, request: { archiveIdleDays: null, deleteArchivedDays: 0, skipPinned: true },
     });
     expect(validateSessionCleanupDraft({ ...draft, deleteArchivedEnabled: false, deleteArchivedDays: "", archiveIdleDays: " 30 " })).toEqual({
-      ok: true, request: { archiveIdleDays: 30, deleteArchivedDays: null },
+      ok: true, request: { archiveIdleDays: 30, deleteArchivedDays: null, skipPinned: true },
     });
     expect(canRunSessionCleanup({ draft: { ...draft, archiveIdleDays: "" }, preview, previewRequest: preview.thresholds })).toBe(false);
   });
@@ -64,6 +65,13 @@ describe("session cleanup UI helpers", () => {
 
   it("normalizes request keys for null, omitted disabled actions, and selected projects", () => {
     expect(sessionCleanupRequestKey({ archiveIdleDays: 30 })).toBe(sessionCleanupRequestKey({ archiveIdleDays: 30, deleteArchivedDays: null, projectCwds: ["/repo"] }));
+  });
+
+  it("invalidates the preview when pinned-session protection changes", () => {
+    const request = { archiveIdleDays: 30, deleteArchivedDays: 90, skipPinned: true };
+    expect(canRunSessionCleanup({ draft: { ...draft, skipPinned: false }, preview, previewRequest: request })).toBe(false);
+    expect(validateSessionCleanupDraft({ ...draft, skipPinned: false })).toEqual({ ok: true, request: { ...request, skipPinned: false } });
+    expect(sessionCleanupRequestKey({ archiveIdleDays: 30 })).toBe(sessionCleanupRequestKey({ archiveIdleDays: 30, skipPinned: false }));
   });
 
   it("summarizes the preview for selected projects", () => {

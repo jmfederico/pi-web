@@ -13,6 +13,7 @@ export interface PlanSessionCleanupInput {
   sessions: readonly PiSessionListEntry[];
   archivedRecords: readonly ArchivedSessionRecord[];
   activeSessions?: readonly CleanupActiveSessionStatus[];
+  excludedPinnedSessionIds?: readonly string[];
   thresholds: SessionCleanupThresholds;
   projectCwds?: readonly string[];
   now: Date;
@@ -26,14 +27,28 @@ export interface SessionCleanupPlan extends SessionCleanupPreviewResponse {
 
 export interface NormalizedSessionCleanupRequest {
   thresholds: SessionCleanupThresholds;
+  /** Resolved by the web/API boundary; sessiond must not load navigation preferences. */
+  excludedPinnedSessionIds?: string[];
   /** Stored cwd paths to include. Undefined means all discovered projects/workspaces. */
   projectCwds?: string[];
 }
 
 export function normalizeSessionCleanupRequest(record: Record<string, unknown>): NormalizedSessionCleanupRequest {
   const projectCwds = optionalProjectCwds(record);
+  const skipPinned = record["skipPinned"];
+  if (skipPinned !== undefined && typeof skipPinned !== "boolean") throw new Error("skipPinned field must be a boolean");
+  let excludedPinnedSessionIds: string[] | undefined;
+  if (skipPinned === true) {
+    const ids = record["excludedPinnedSessionIds"];
+    // A direct daemon request must not silently bypass protection without a web-owned snapshot.
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string" && id.trim() !== "")) {
+      throw new Error("skipPinned requires resolved excludedPinnedSessionIds");
+    }
+    excludedPinnedSessionIds = [...new Set(ids)];
+  }
   return {
     thresholds: normalizeSessionCleanupThresholds(record),
+    ...(excludedPinnedSessionIds === undefined ? {} : { excludedPinnedSessionIds }),
     ...(projectCwds === undefined ? {} : { projectCwds }),
   };
 }
@@ -55,6 +70,8 @@ export function planSessionCleanup(input: PlanSessionCleanupInput): SessionClean
   const includedCwds = input.projectCwds === undefined ? undefined : new Set(input.projectCwds);
   const busySessionIds = new Set((input.activeSessions ?? []).filter((session) => session.hasActiveWork).map((session) => session.sessionId));
   const skippedBusy = new Set<string>();
+  const pinnedSessionIds = new Set(input.excludedPinnedSessionIds ?? []);
+  const skippedPinned = new Set<string>();
   const archiveInputs: ArchiveSessionInput[] = [];
   const deleteRecords: ArchivedSessionRecord[] = [];
 
@@ -63,6 +80,10 @@ export function planSessionCleanup(input: PlanSessionCleanupInput): SessionClean
       if (archivedIds.has(session.id)) continue;
       if (includedCwds !== undefined && !includedCwds.has(session.cwd)) continue;
       if (!isBefore(session.modified, archiveCutoff)) continue;
+      if (pinnedSessionIds.has(session.id)) {
+        skippedPinned.add(session.id);
+        continue;
+      }
       if (busySessionIds.has(session.id)) {
         skippedBusy.add(session.id);
         continue;
@@ -75,6 +96,10 @@ export function planSessionCleanup(input: PlanSessionCleanupInput): SessionClean
     for (const record of input.archivedRecords) {
       if (includedCwds !== undefined && !includedCwds.has(record.cwd)) continue;
       if (!isTimestampBefore(record.archivedAt, deleteCutoff)) continue;
+      if (pinnedSessionIds.has(record.sessionId)) {
+        skippedPinned.add(record.sessionId);
+        continue;
+      }
       if (busySessionIds.has(record.sessionId)) {
         skippedBusy.add(record.sessionId);
         continue;
@@ -84,7 +109,7 @@ export function planSessionCleanup(input: PlanSessionCleanupInput): SessionClean
   }
 
   return {
-    ...summarizeSessionCleanupTargets({ archiveInputs, deleteRecords, thresholds, generatedAt: input.now.toISOString(), skippedBusySessionIds: [...skippedBusy] }),
+    ...summarizeSessionCleanupTargets({ archiveInputs, deleteRecords, thresholds, generatedAt: input.now.toISOString(), skippedBusySessionIds: [...skippedBusy], skippedPinnedSessionIds: [...skippedPinned] }),
     archiveInputs,
     deleteRecords,
     skippedBusySessionIds: [...skippedBusy].sort(),
@@ -97,6 +122,7 @@ export function summarizeSessionCleanupTargets(input: {
   thresholds: SessionCleanupThresholds;
   generatedAt: string;
   skippedBusySessionIds?: readonly string[];
+  skippedPinnedSessionIds?: readonly string[];
 }): SessionCleanupPreviewResponse {
   const projectsByCwd = new Map<string, SessionCleanupProjectSummary>();
   let archiveCount = 0;
@@ -113,12 +139,14 @@ export function summarizeSessionCleanupTargets(input: {
   }
 
   const skippedBusySessionIds = [...new Set(input.skippedBusySessionIds ?? [])].sort();
+  const skippedPinnedSessionIds = [...new Set(input.skippedPinnedSessionIds ?? [])].sort();
   return {
     generatedAt: input.generatedAt,
     thresholds: copyThresholds(input.thresholds),
     projects: [...projectsByCwd.values()].sort((a, b) => a.cwd.localeCompare(b.cwd)),
     totals: { archiveCount, deleteCount },
     ...(skippedBusySessionIds.length === 0 ? {} : { skippedBusySessionIds }),
+    ...(skippedPinnedSessionIds.length === 0 ? {} : { skippedPinnedSessionIds }),
   };
 }
 
@@ -128,6 +156,7 @@ export function summarizeSessionCleanupExecution(input: {
   thresholds: SessionCleanupThresholds;
   generatedAt: string;
   skippedBusySessionIds?: readonly string[];
+  skippedPinnedSessionIds?: readonly string[];
 }): SessionCleanupExecuteResponse {
   return {
     ...summarizeSessionCleanupTargets(input),

@@ -72,6 +72,41 @@ describe("session cleanup planning", () => {
     expect(plan.totals).toEqual({ archiveCount: 0, deleteCount: 0 });
   });
 
+  it("excludes pinned candidates from archive and delete without reporting unrelated pins", () => {
+    const plan = planSessionCleanup({
+      now: new Date("2026-06-25T00:00:00.000Z"),
+      thresholds: { archiveIdleDays: 1, deleteArchivedDays: 1 },
+      projectCwds: ["/repo"],
+      excludedPinnedSessionIds: ["pinned-open", "pinned-archived", "outside", "recent", "stale"],
+      sessions: [
+        sessionEntry("pinned-open", "/repo", "2026-06-01T00:00:00.000Z"),
+        sessionEntry("unpinned-open", "/repo", "2026-06-01T00:00:00.000Z"),
+        sessionEntry("outside", "/other", "2026-06-01T00:00:00.000Z"),
+        sessionEntry("recent", "/repo", "2026-06-25T00:00:00.000Z"),
+      ],
+      archivedRecords: [
+        archivedRecord("pinned-archived", "/repo", "2026-06-01T00:00:00.000Z"),
+        archivedRecord("unpinned-archived", "/repo", "2026-06-01T00:00:00.000Z"),
+      ],
+    });
+    expect(plan.archiveInputs.map((entry) => entry.sessionId)).toEqual(["unpinned-open"]);
+    expect(plan.deleteRecords.map((entry) => entry.sessionId)).toEqual(["unpinned-archived"]);
+    expect(plan.skippedPinnedSessionIds).toEqual(["pinned-archived", "pinned-open"]);
+    expect(plan.totals).toEqual({ archiveCount: 1, deleteCount: 1 });
+  });
+
+  it("requires a resolved pin snapshot only when skipPinned is enabled", () => {
+    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: ["a", "a"] })).toEqual({ thresholds: {}, excludedPinnedSessionIds: ["a"] });
+    expect(normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds: [] })).toEqual({ thresholds: {}, excludedPinnedSessionIds: [] });
+    expect(normalizeSessionCleanupRequest({ skipPinned: false, excludedPinnedSessionIds: ["a"] })).toEqual({ thresholds: {} });
+    for (const skipPinned of [null, "true", 1]) {
+      expect(() => normalizeSessionCleanupRequest({ skipPinned })).toThrow("skipPinned field must be a boolean");
+    }
+    for (const excludedPinnedSessionIds of [undefined, null, "a", [1], [""]]) {
+      expect(() => normalizeSessionCleanupRequest({ skipPinned: true, excludedPinnedSessionIds })).toThrow("requires resolved");
+    }
+  });
+
   it("validates optional runtime thresholds", () => {
     expect(normalizeSessionCleanupThresholds({ archiveIdleDays: 30, deleteArchivedDays: null })).toEqual({ archiveIdleDays: 30 });
     expect(normalizeSessionCleanupThresholds({})).toEqual({});

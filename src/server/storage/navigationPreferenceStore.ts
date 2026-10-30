@@ -84,6 +84,13 @@ export class NavigationPreferenceStore {
     return { ids: [...(entry?.ids ?? [])], revision: entry?.revision ?? 0 };
   }
 
+  /** Union across all scopes, including offline/stale workspaces, for cleanup protection. */
+  async pinnedSessionIds(): Promise<string[]> {
+    await this.writes;
+    const data = await this.read();
+    return [...new Set(data.entries.filter((entry) => entry.scope.kind === "session-pins").flatMap((entry) => entry.ids))].sort();
+  }
+
   async put(scope: NavigationPreferenceScope, value: NavigationPreferenceWrite): Promise<NavigationPreference> {
     const preference = parseNavigationPreference(value);
     let revision = 0;

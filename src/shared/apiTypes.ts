@@ -85,6 +85,7 @@ export type MachineStatus = "unknown" | "online" | "offline" | "error";
  */
 export const PI_WEB_CAPABILITIES = {
   pluginLifecycle: "plugins.lifecycle",
+  sessionCleanupPinnedExclusions: "sessions.cleanup.pinnedExclusions",
 } as const;
 
 export type PiWebCapability = typeof PI_WEB_CAPABILITIES[keyof typeof PI_WEB_CAPABILITIES];
@@ -716,6 +717,8 @@ export interface SessionBulkDeleteArchivedResponse {
 }
 
 export interface SessionCleanupRequest {
+  /** Exclude sessions pinned in navigation preferences. Omit/false to retain existing cleanup behavior. */
+  skipPinned?: boolean;
   /** Archive non-archived sessions whose modified time is older than this many days. Omit/null to disable. */
   archiveIdleDays?: number | null;
   /** Permanently delete archived sessions whose archivedAt time is older than this many days. Omit/null to disable. */
@@ -746,6 +749,7 @@ export interface SessionCleanupPreviewResponse {
   projects: SessionCleanupProjectSummary[];
   totals: SessionCleanupTotals;
   skippedBusySessionIds?: string[];
+  skippedPinnedSessionIds?: string[];
 }
 
 export interface SessionCleanupExecuteResponse extends SessionCleanupPreviewResponse {

@@ -438,6 +438,7 @@ export class PiWebApp extends LitElement {
   @state() private activeThemeId = "";
   @state() private isRefreshingApp = false;
   @state() private sessionCleanupDialog: SessionCleanupDialogState | undefined;
+  private sessionCleanupRequestEpoch = 0;
   @state() private settingsSection: SettingsSection | undefined = readSettingsSection();
   @state() private shortcutConfig: PiWebShortcutConfig = {};
   @state() private defaultStreamingBehavior: "steer" | "followUp" = "steer";
@@ -1988,7 +1989,7 @@ export class PiWebApp extends LitElement {
     this.sessions.clearActiveSession();
     this.realtime.close();
     this.connectRealtime();
-    this.sessionCleanupDialog = undefined;
+    this.closeSessionCleanupDialog();
     this.setState({ piWebStatus: undefined });
     void this.loadPluginsForSelectedMachine();
   }
@@ -2169,40 +2170,55 @@ export class PiWebApp extends LitElement {
   }
 
   private openSessionCleanupDialog(): void {
+    this.sessionCleanupRequestEpoch += 1;
     this.sessionCleanupDialog = { error: "" };
   }
 
   private closeSessionCleanupDialog(): void {
+    this.sessionCleanupRequestEpoch += 1;
     this.sessionCleanupDialog = undefined;
   }
 
+  private isCurrentSessionCleanupRequest(epoch: number, machineId: string): boolean {
+    return this.sessionCleanupDialog !== undefined
+      && this.sessionCleanupRequestEpoch === epoch
+      && selectedMachineId(this.state) === machineId;
+  }
+
   private async previewSessionCleanup(request: SessionCleanupRequest): Promise<void> {
+    if (this.sessionCleanupDialog === undefined) return;
     const machineId = selectedMachineId(this.state);
-    this.sessionCleanupDialog = { ...(this.sessionCleanupDialog ?? {}), loading: true, error: "", preview: undefined, previewRequest: undefined, result: undefined };
+    const epoch = ++this.sessionCleanupRequestEpoch;
+    this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: true, running: false, error: "", preview: undefined, previewRequest: undefined, result: undefined };
     try {
       const preview = await sessionsApi.cleanupPreview(request, machineId);
-      if (selectedMachineId(this.state) !== machineId) return;
+      if (!this.isCurrentSessionCleanupRequest(epoch, machineId)) return;
       this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview, previewRequest: request, result: undefined, loading: false, error: "" };
     } catch (error) {
-      if (selectedMachineId(this.state) === machineId) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: false, error: () => sessionCleanupMessages.t("previewFailed", { error: errorMessage(error) }) };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, loading: false, error: () => sessionCleanupMessages.t("previewFailed", { error: errorMessage(error) }) };
     }
   }
 
   private async runSessionCleanup(request: SessionCleanupRequest): Promise<void> {
     const dialog = this.sessionCleanupDialog;
-    if (dialog?.preview === undefined || sessionCleanupRequestKey(dialog.previewRequest) !== sessionCleanupRequestKey(request)) {
-      this.sessionCleanupDialog = { ...(dialog ?? {}), error: () => sessionCleanupMessages.t("previewRequired") };
+    if (dialog === undefined || dialog.running === true) return;
+    if (dialog.preview === undefined || sessionCleanupRequestKey(dialog.previewRequest) !== sessionCleanupRequestKey(request)) {
+      this.sessionCleanupDialog = { ...dialog, error: () => sessionCleanupMessages.t("previewRequired") };
       return;
     }
     const machineId = selectedMachineId(this.state);
+    const epoch = ++this.sessionCleanupRequestEpoch;
     this.sessionCleanupDialog = { ...dialog, running: true, error: "" };
     try {
       const result = await sessionsApi.cleanup(request, machineId);
       if (selectedMachineId(this.state) !== machineId) return;
-      this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview: result, previewRequest: request, result, running: false, error: "" };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) {
+        this.sessionCleanupDialog = { ...this.sessionCleanupDialog, preview: undefined, previewRequest: undefined, result, running: false, error: "" };
+      }
+      // Closing or replacing the dialog must not skip reconciliation of completed work.
       await this.sessions.applySessionCleanupResult(result, machineId);
     } catch (error) {
-      if (selectedMachineId(this.state) === machineId) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, running: false, error: () => sessionCleanupMessages.t("runFailed", { error: errorMessage(error) }) };
+      if (this.isCurrentSessionCleanupRequest(epoch, machineId)) this.sessionCleanupDialog = { ...this.sessionCleanupDialog, running: false, error: () => sessionCleanupMessages.t("runFailed", { error: errorMessage(error) }) };
     }
   }
 

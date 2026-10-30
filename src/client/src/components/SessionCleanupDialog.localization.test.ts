@@ -31,21 +31,18 @@ function required<T extends HTMLElement>(view: SessionCleanupDialog, selector: s
 async function mount(): Promise<SessionCleanupDialog> {
   const view = new SessionCleanupDialog();
   view.preview = preview;
-  view.previewRequest = { archiveIdleDays: 30, deleteArchivedDays: null };
+  view.previewRequest = { archiveIdleDays: 30, deleteArchivedDays: null, skipPinned: true };
   view.onPreview = vi.fn(); view.onRun = vi.fn(); view.onClose = vi.fn();
   document.body.append(view);
   await view.updateComplete; await view.updateComplete;
   return view;
 }
 
-it("updates complete rules, selection, counts and diagnostics live without resetting controls or running actions", async () => {
+it("updates review selection, counts and diagnostics live without resetting controls or running actions", async () => {
   const view = await mount();
   const firstProject = required(view, "tbody input", HTMLInputElement);
   firstProject.click(); await view.updateComplete;
-  const threshold = required(view, ".days", HTMLInputElement);
-  threshold.value = "42";
-  threshold.dispatchEvent(new InputEvent("input", { bubbles: true }));
-  threshold.focus(); await view.updateComplete;
+  firstProject.focus();
   view.errorMessage = () => messages.t("previewFailed", { error: "Raw <img> backend diagnostic" });
   release = localization.registerCatalog({ id: "cleanup-test", namespace: "core.sessionCleanup", locale: "de", load: () => Promise.resolve({
     archiveRule: "Nach dieser Anzahl inaktiver Tage archivieren",
@@ -55,11 +52,8 @@ it("updates complete rules, selection, counts and diagnostics live without reset
   for (const language of ["de", "en-XA", "ar-XB", "en"]) {
     await localization.setPreferences({ language, formatLocale: "ar-EG" });
     await view.updateComplete; await view.updateComplete;
-    expect(required(view, ".days", HTMLInputElement)).toBe(threshold);
-    expect(threshold.value).toBe("42");
-    expect(required(view, 'label[for="archive-days"]', HTMLElement).textContent).toBe(messages.t("archiveRule"));
-    expect(threshold.getAttribute("aria-label")).toBe(messages.t("archiveThreshold"));
-    expect(view.shadowRoot?.activeElement).toBe(threshold);
+    expect(view.shadowRoot?.querySelector("fieldset")).toBeNull();
+    expect(view.shadowRoot?.activeElement).toBe(firstProject);
     expect(firstProject.checked).toBe(false);
     expect(required(view, "tfoot td", HTMLElement).textContent).toBe(localization.number(4));
     expect(required(view, ".selection-controls span", HTMLElement).textContent).toBe(messages.t("selection", { selected: 1, total: 2 }));
@@ -72,6 +66,8 @@ it("updates complete rules, selection, counts and diagnostics live without reset
 
 it("renders structured validation live and previews only valid requests", async () => {
   const view = await mount();
+  required(view, "footer button:first-child", HTMLButtonElement).click();
+  await view.updateComplete;
   const threshold = required(view, ".days", HTMLInputElement);
   threshold.value = "";
   threshold.dispatchEvent(new InputEvent("input", { bubbles: true }));
@@ -87,7 +83,7 @@ it("renders structured validation live and previews only valid requests", async 
   threshold.dispatchEvent(new InputEvent("input", { bubbles: true }));
   await view.updateComplete;
   required(view, "footer button:nth-child(2)", HTMLButtonElement).click();
-  expect(view.onPreview).toHaveBeenCalledExactlyOnceWith({ archiveIdleDays: 7, deleteArchivedDays: null });
+  expect(view.onPreview).toHaveBeenCalledExactlyOnceWith({ archiveIdleDays: 7, deleteArchivedDays: null, skipPinned: true });
 });
 
 it("confirms the selected project totals in the current language and never executes a rejected confirmation", async () => {
@@ -102,7 +98,7 @@ it("confirms the selected project totals in the current language and never execu
   expect(view.onRun).not.toHaveBeenCalled();
   confirm.mockReturnValue(true);
   required(view, "footer .danger", HTMLButtonElement).click();
-  expect(view.onRun).toHaveBeenCalledExactlyOnceWith({ archiveIdleDays: 30, deleteArchivedDays: null, projectCwds: ["/other"] });
+  expect(view.onRun).toHaveBeenCalledExactlyOnceWith({ archiveIdleDays: 30, deleteArchivedDays: null, skipPinned: true, projectCwds: ["/other"] });
 });
 
 it.each([

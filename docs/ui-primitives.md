@@ -160,7 +160,7 @@ Keep the view buttons on one horizontally scrollable row, using native overflow 
 
 ## Migration boundary
 
-The current consumers are navigation headings, session selection controls, navigation dropdowns, the chat composer's model/thinking/send/stop toolbar, main navigation tabs, the common selection/form dialogs, Settings, and chat transcript sections and controls. More specialized surfaces, such as session cleanup, are not yet migrated.
+The current consumers are navigation headings, session selection controls, navigation dropdowns, the chat composer's model/thinking/send/stop toolbar, main navigation tabs, the common selection/form dialogs, Settings, chat transcript sections and controls, and session cleanup. Cleanup uses the shared dialog and form chrome with its own rules and project-selection table layout.
 
 The base theme's internal style exports also supply the host-managed [shared UI bundle](plugins.md#host-provided-ui-styles). Plugins request `stylesheet-integration` and opt each root in with `{ sharedUi: true }`; the host injects, orders, and removes shared sheets. Plugins must not deep-import these modules, copy their styling, or insert shared CSS text themselves. Relay, Files, Git, and Tasks use the shared controls. Menus, forms, dialogs, and transcript patterns are not currently included.
 

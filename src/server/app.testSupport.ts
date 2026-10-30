@@ -10,6 +10,7 @@ import { buildApp } from "./app.js";
 import { ProjectService } from "./projects/projectService.js";
 import { ProjectStore } from "./storage/projectStore.js";
 import { NavigationPreferenceStore } from "./storage/navigationPreferenceStore.js";
+import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import type { MachineClient } from "./machines/machineClient.js";
 import { MachineService } from "./machines/machineService.js";
 import { MachineStore } from "./machines/machineStore.js";
@@ -375,6 +376,9 @@ function fakeSessionDaemon(projects: ProjectService): SessionProxyDaemon & { clo
     request: async (method, path, body) => {
       const captured = { method, path, ...(body === undefined ? {} : { body }) } satisfies CapturedSessionDaemonRequest;
       sessionDaemonRequests.push(captured);
+      if (method === "GET" && path === "/runtime") {
+        return { statusCode: 200, headers: { "content-type": "application/json" }, body: JSON.stringify({ component: "sessiond", label: "Session daemon", available: true, capabilities: SESSIOND_RUNTIME_CAPABILITIES }) };
+      }
       if ((method === "POST" && path === "/projects") || (method === "DELETE" && path.startsWith("/projects/"))) {
         const response = await daemonApp.inject({ method, url: path, ...(body === undefined ? {} : { payload: JSON.stringify(body), headers: { "content-type": "application/json" } }) });
         return { statusCode: response.statusCode, headers: { "content-type": "application/json" }, body: response.body };
