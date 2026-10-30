@@ -1,5 +1,4 @@
 import { argumentSummaryPresentation, summarizeArgs } from "./chatPresentation";
-import { withSourcePart } from "./chatPresentationIdentity";
 import { ASK_USER_ANSWERS_CUSTOM_TYPE } from "../../shared/apiTypes";
 import { parseAskUserOutcome, parseAskUserRequest } from "./api/parsers";
 import { isSessionMediaId, validImageDimensions } from "../../shared/sessionMedia";
@@ -107,8 +106,10 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   return errorLine === undefined ? lines : [...lines, withMessageMeta(errorLine, message)];
 }
 
+/** Only authoritative messages acquire provenance; manual/legacy lines stay unchanged. */
 function sourcePart<T extends ChatPart>(part: T, rawMessage: unknown, key: string): T {
-  return withSourcePart(part, { entryId: getString(rawMessage, "entryId"), streamId: getString(rawMessage, "streamId") }, key);
+  const addressed = (getString(rawMessage, "entryId") ?? "") !== "" || (getString(rawMessage, "streamId") ?? "") !== "";
+  return !addressed || part.sourcePart !== undefined ? part : { ...part, sourcePart: key };
 }
 
 function assistantErrorLine(message: unknown): ChatLine | undefined {

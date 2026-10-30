@@ -30,9 +30,9 @@ export interface TranscriptRenderContext {
   machineId: string;
   sessionId: string;
   session: SessionRef;
-  sourceMessage: (message: ChatLine, index: number) => ChatLine | undefined;
-  partKeys: (message: ChatLine, part: ChatPart, index: number, partIndex: number) => { owner: string; canonical: string };
-  rowIdentities: (message: ChatLine) => string[];
+  sourceMessage: (index: number) => ChatLine | undefined;
+  partIntentKey: (message: ChatLine, part: ChatPart, index: number, partIndex: number) => string;
+  rowIdentity: (message: ChatLine) => string | undefined;
   rowKey: (message: ChatLine, index: number) => string;
   formState: PendingFormState;
   behaviors: ChatBehaviors;
@@ -44,7 +44,7 @@ export interface TranscriptRenderContext {
   };
   disclosure: {
     isOpen: (key: string, defaultOpen: boolean) => boolean;
-    toggle: (key: string, event: Event, defaultOpen: boolean) => void;
+    toggle: (key: string, event: Event, defaultOpen: boolean, renderedOpen: boolean) => void;
   };
   metadata: {
     expandedKey: string | undefined;
@@ -108,7 +108,7 @@ export function renderToolImageOutputs(context: TranscriptRenderContext, group: 
           `)}
         </div>
         ${outputs.length === 1 ? null : html`
-          <details class="image-output-sources" ?open=${live(sourcesOpen)} @toggle=${(event: Event) => { context.disclosure.toggle(sourcesKey, event, false); }}>
+          <details class="image-output-sources" ?open=${live(sourcesOpen)} @toggle=${(event: Event) => { context.disclosure.toggle(sourcesKey, event, false, sourcesOpen); }}>
             <summary class="ui-transcript-disclosure">${messages.t("sources", { count: outputs.length })}</summary>
             ${sourcesOpen ? outputs.map((output, outputIndex) => html`<section class="image-output-source" aria-label=${messages.t("output", { index: outputIndex + 1 })}>
               ${renderMessageHeader(context, output.message, `image-source:${context.rowKey(output.message, output.index)}`, output.index, entryActionHeaders, messages.t("sourceHeader", { name: output.toolName ?? "", named: output.toolName === undefined || output.toolName === "" ? "no" : "yes", index: outputIndex + 1 }))}
@@ -146,10 +146,10 @@ export function renderMessageGroup(context: TranscriptRenderContext, group: Extr
 
 export function renderMessageGroupBody(context: TranscriptRenderContext, { messages }: Extract<ChatGroup, { kind: "group" }>, entryActionHeaders: ReadonlySet<ChatLine>, renderKeys: ChatRenderKeys) {
     const keys = renderKeys.reconcile("activity", messages.map(({ message, index }) => {
-      const identities = context.rowIdentities(message);
+      const identity = context.rowIdentity(message);
       return {
         slot: JSON.stringify([index, message.role]),
-        ...(identities[0] === undefined ? {} : { identity: identities[0], identities }),
+        ...(identity === undefined ? {} : { identity }),
       };
     }));
     return html`
@@ -193,7 +193,7 @@ export function renderMessageHeader(context: TranscriptRenderContext, message: C
         <span class=${conversation ? "visually-hidden" : "label"}>${heading}</span>
         <pi-message-actions-menu>
           <div class="msg-actions-strip">
-            ${renderMessageActions(context, message, key, context.sourceMessage(message, index) ?? message, entryActionHeaders.has(message))}
+            ${renderMessageActions(context, message, key, context.sourceMessage(index) ?? message, entryActionHeaders.has(message))}
             <button type="button" class="msg-meta ui-button ui-button--icon ui-button--small" title=${meta} aria-label=${messages.t("information")} aria-controls=${detailId} aria-expanded=${String(expanded)} @click=${(event: MouseEvent) => {
               context.metadata.expand(expanded ? undefined : key);
               const menu = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest("pi-message-actions-menu") : null;
@@ -211,17 +211,16 @@ function renderMessageMetadata(context: TranscriptRenderContext, message: ChatLi
 }
 
 export function renderPart(context: TranscriptRenderContext, part: ChatPart, message: ChatLine, messageIndex: number, partIndex: number) {
-    const keys = context.partKeys(message, part, messageIndex, partIndex);
-    const intentKey = keys.owner;
+    const intentKey = context.partIntentKey(message, part, messageIndex, partIndex);
     if (part.type === "text" || part.type === "thinking") {
       const text = part.type === "text" && part.presentation !== undefined ? localizedChatText(part.presentation) : part.displayText ?? part.text;
       if (text === "") return null;
       if (part.type === "thinking") {
-        const disclosureKey = `thinking:${keys.canonical}`;
+        const disclosureKey = `thinking:${intentKey}`;
         const open = context.disclosure.isOpen(disclosureKey, true);
         return html`
           <details class="part thinking ui-transcript-surface ui-transcript-activity" ?open=${live(open)}
-            @toggle=${(event: Event) => { context.disclosure.toggle(disclosureKey, event, true); }}>
+            @toggle=${(event: Event) => { context.disclosure.toggle(disclosureKey, event, true, open); }}>
             <summary class="ui-transcript-disclosure ui-transcript-heading"><svg class="thinking-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 14a5 5 0 1 1 8-1H9l-3 2v-1Z"/><circle cx="4" cy="17" r="1"/></svg>${messages.t("thinking")}</summary>
             ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${text}></formatted-text>` : nothing}
           </details>
@@ -232,10 +231,10 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
       return html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} class="part" .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${text}></formatted-text>`;
     }
     if (part.type === "skillInvocation") {
-      const key = `skill:${keys.canonical}`;
+      const key = `skill:${intentKey}`;
       const open = context.disclosure.isOpen(key, false);
       return html`
-      <details class="part skill-invocation" ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, false); }}>
+      <details class="part skill-invocation" ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, false, open); }}>
         <summary class="ui-transcript-disclosure"><b>${messages.t("skill")}</b> <bdi>${part.name}</bdi></summary>
         ${open ? html`<small>${part.location}</small>
         <formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${part.content}></formatted-text>` : nothing}
@@ -276,10 +275,10 @@ export function renderPart(context: TranscriptRenderContext, part: ChatPart, mes
     if (part.type === "toolCall") return html`<div class="part tool-line ui-transcript-surface ui-transcript-activity ui-transcript-tool"><div class="ui-transcript-heading"><span aria-hidden="true">▶</span> ${part.toolName}<span class="summary">${part.summaryPresentation === undefined ? part.summary : localizedArgumentSummary(part.summaryPresentation)}</span></div></div>`;
     if (part.type === "toolExecution") return html`<tool-execution-view class="part" .execution=${part}></tool-execution-view>`;
     if (part.type === "toolResult") {
-      const key = `tool-result:${keys.canonical}`;
+      const key = `tool-result:${intentKey}`;
       const open = context.disclosure.isOpen(key, part.isError);
       return html`
-      <details class=${`part tool-result ui-transcript-surface ui-transcript-activity ui-transcript-tool${part.isError ? " error" : ""}`} ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, part.isError); }}>
+      <details class=${`part tool-result ui-transcript-surface ui-transcript-activity ui-transcript-tool${part.isError ? " error" : ""}`} ?open=${live(open)} @toggle=${(event: Event) => { context.disclosure.toggle(key, event, part.isError, open); }}>
         <summary class="ui-transcript-disclosure ui-transcript-heading">${part.isError ? "✖" : "✓"} ${messages.t("toolResult", { name: part.toolName, failed: part.isError ? "yes" : "no" })}</summary>
         ${open ? html`<formatted-text .imagesEnabled=${context.behaviors.loadImages} .codeBlocks=${context.behaviors.codeBlocks} .intentKey=${intentKey} .contentRendering=${context.contentRendering} .machineId=${context.machineId} .workspaceContext=${context.workspaceContext} .text=${part.text}></formatted-text>` : nothing}
       </details>

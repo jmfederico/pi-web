@@ -19,30 +19,6 @@ function page(start: number, total: number, messages: unknown[]): RawMessagePage
 }
 
 describe("ChatTranscriptStore", () => {
-  it("reuses normalization for an unchanged raw page and invalidates it after replacement or discard", () => {
-    const cache = new MemoryChatHistoryCache();
-    const store = new ChatTranscriptStore(cache);
-    const first = store.mergeHistory("s1", page(0, 1, [{ role: "user", content: "before" }]));
-    expect(store.cachedView("s1")).toBe(first);
-    const second = store.mergeHistory("s1", page(0, 1, [{ role: "user", content: "after" }]));
-    expect(second.messages).not.toBe(first.messages);
-    expect(second.messages[0]?.parts).toEqual([{ type: "text", text: "after" }]);
-    expect(store.cachedView("s1")).toBe(second);
-
-    // This adapter returns the same raw page after discard. Rehydration must
-    // still create a fresh view owned by the store, not by the raw object.
-    const raw = store.rawHistoryPage("s1");
-    store.discard("s1");
-    const rehydrated = store.cachedView("s1");
-    expect(store.rawHistoryPage("s1")).toBe(raw);
-    expect(rehydrated).toEqual(second);
-    expect(rehydrated).not.toBe(second);
-    expect(rehydrated.messages).not.toBe(second.messages);
-    expect(store.cachedView("s1")).toBe(rehydrated);
-    expect(new ChatTranscriptStore(cache).cachedView("s1")).not.toBe(rehydrated);
-    expect(store.historyRevision("s1")).toBe(1);
-  });
-
   it("hydrates a visible transcript from cached raw history", () => {
     const cache = new MemoryChatHistoryCache();
     cache.write("s1", page(0, 2, [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }]));

@@ -42,6 +42,7 @@ describe("ask-user-card external lifetime", () => {
       await second.updateComplete;
       const send = requiredElement(renderRoot(second).querySelector<HTMLButtonElement>(".send-anyway"), "confirmation");
       send.click();
+      await Promise.resolve();
       expect(submit).toHaveBeenCalledOnce();
       second.remove();
       const third = await mount();
@@ -63,6 +64,7 @@ describe("ask-user-card external lifetime", () => {
       buttonWithText(renderRoot(retry), "Send answers").click();
       await retry.updateComplete;
       buttonWithText(renderRoot(retry), "Send anyway").click();
+      await Promise.resolve();
       expect(submit).toHaveBeenCalledTimes(2);
       finish();
     } finally {
@@ -355,6 +357,7 @@ describe("ask-user-card live form", () => {
     buttonWithText(reloadedRoot, "Send answers").click();
     await Promise.resolve();
     expect(onSubmit).toHaveBeenCalledWith("ask-1", { answers: [{ id: "editor", values: ["vim"] }] });
+    await reloaded.formState.get({ scope: reloaded.draftSessionId, kind: "ask", requestId: "ask-1" }).operation;
     buttonWithText(reloadedRoot, "Add a comment").click();
     await reloaded.updateComplete;
     expect(commentTextarea(reloadedRoot, 0).value).toBe("Only for quick edits.");
@@ -390,6 +393,7 @@ describe("ask-user-card live form", () => {
     expect(onSubmit).toHaveBeenCalledWith("ask-1", {
       answers: [{ id: "editor", values: ["vim"], comment: "Only for quick edits." }],
     });
+    await reloaded.formState.get({ scope: reloaded.draftSessionId, kind: "ask", requestId: "ask-1" }).operation;
     inputWithValue(reloadedRoot, "__pi_web_other__").click();
     await reloaded.updateComplete;
     expect(requiredElement(reloadedRoot.querySelector("textarea"), "custom textarea").value).toBe("Emacs");

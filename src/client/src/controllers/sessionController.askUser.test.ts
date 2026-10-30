@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import { loadAskDraft, saveAskDraft } from "../askDrafts";
 import type { AskUserRequest, MessagePage } from "../api";
-import { SessionController, type SessionControllerDependencies, type SessionEventSocket } from "./sessionController";
+import { SessionController, type SessionEventSocket } from "./sessionController";
 import { defaultApi, EmitSocket, FakeSocket, MemoryStorage, oldSession, runPendingAnimationFrames, sessionKey, status, workspace, type AppState } from "./sessionController.testSupport";
 
 const ask: AskUserRequest = {
@@ -24,14 +24,14 @@ function selectedSessionState(patch: Partial<AppState> = {}): AppState {
   return { ...initialAppState(), selectedWorkspace: workspace, selectedSession: oldSession, sessions: [oldSession], ...patch };
 }
 
-function controllerHarness(api: typeof defaultApi = defaultApi, socket: SessionEventSocket = new FakeSocket(), callbacks: Pick<SessionControllerDependencies, "onAskResponseAccepted"> = {}) {
+function controllerHarness(api: typeof defaultApi = defaultApi, socket: SessionEventSocket = new FakeSocket()) {
   let state = selectedSessionState();
   const controller = new SessionController(
     () => state,
     (patch) => { state = { ...state, ...patch }; },
     () => undefined,
     undefined,
-    { api, socket, ...callbacks },
+    { api, socket },
   );
   return { controller, state: () => state };
 }
@@ -88,21 +88,20 @@ describe("SessionController question responses", () => {
   it("sends answers without a pending slot, clears the draft, and applies status", async () => {
     const calls: { askId: string; answers: unknown; machineId: string }[] = [];
     const returnedStatus = { ...status(oldSession.id), isStreaming: true };
-    const accepted = vi.fn();
     const h = controllerHarness({
       ...defaultApi,
       submitAsk: (_session, askId, submission, machineId) => {
         calls.push({ askId, answers: submission.answers, machineId: machineId ?? "local" });
         return Promise.resolve(returnedStatus);
       },
-    }, new FakeSocket(), { onAskResponseAccepted: accepted });
+    });
     saveAskDraft(sessionKey(oldSession.id), ask.askId, { q1: { values: ["pg"] } });
     try {
       await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: ["pg"] }] });
       expect(calls).toEqual([{ askId: ask.askId, answers: [{ id: "q1", values: ["pg"] }], machineId: "local" }]);
       expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({});
       expect(h.state().status).toEqual(returnedStatus);
-      expect(accepted).toHaveBeenCalledExactlyOnceWith("local", oldSession.id, ask.askId);
+      expect(h.controller.pendingForms.get({ scope: sessionKey(oldSession.id), kind: "ask", requestId: ask.askId }).answers).toEqual({});
     } finally {
       h.controller.dispose();
     }
@@ -140,14 +139,12 @@ describe("SessionController question responses", () => {
   });
 
   it("keeps the draft and reports a failed submission", async () => {
-    const accepted = vi.fn();
-    const h = controllerHarness({ ...defaultApi, submitAsk: () => Promise.reject(new Error("submit failed")) }, new FakeSocket(), { onAskResponseAccepted: accepted });
+    const h = controllerHarness({ ...defaultApi, submitAsk: () => Promise.reject(new Error("submit failed")) });
     saveAskDraft(sessionKey(oldSession.id), ask.askId, { q1: { values: ["pg"] } });
     try {
       await h.controller.submitAsk(ask.askId, { answers: [{ id: "q1", values: ["pg"] }] });
       expect(Object.values(h.state().browserErrors).map((error) => error.message)).toContain("Error: submit failed");
       expect(loadAskDraft(sessionKey(oldSession.id), ask.askId)).toEqual({ q1: { values: ["pg"] } });
-      expect(accepted).not.toHaveBeenCalled();
     } finally {
       h.controller.dispose();
     }

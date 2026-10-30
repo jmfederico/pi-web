@@ -105,17 +105,13 @@ export class PendingFormState {
     if (entry.operation !== undefined) return entry.operation;
     if (entry.closed === true) return Promise.resolve();
     const key = requestKey(identity);
-    let resolve!: (value: void | PromiseLike<void>) => void;
-    let reject!: (reason: unknown) => void;
-    const result = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
-    const locked = result.finally(() => {
+    const locked = Promise.resolve().then(operation).finally(() => {
       delete entry.operation;
       if (entry.closed === true) this.release(owner, key);
       this.notify(owner, key);
     });
     entry.operation = locked;
     this.notify(owner, key);
-    try { resolve(operation()); } catch (error) { reject(error); }
     // Resolution is not authoritative success: controllers can catch errors.
     return locked;
   }
@@ -138,6 +134,16 @@ export class PendingFormState {
   clearAsk(scope: string, requestId: string): void {
     clearAskDraft(scope, requestId);
     this.close({ scope, kind: "ask", requestId });
+  }
+
+  /** A failed or discarded startup can no longer accept any of its forms. */
+  clearScope(scope: string): void {
+    const owner = this.scopes.get(scope);
+    if (owner === undefined) return;
+    for (const entry of owner.forms.values()) {
+      if (entry.kind === "ask") this.clearAsk(scope, entry.requestId);
+      else this.forgetDialog(scope, entry.requestId);
+    }
   }
 
   private close(identity: PendingFormIdentity): void {

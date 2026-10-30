@@ -69,6 +69,7 @@ describe("chat presentation identity", () => {
     ] };
     const seeded = seedStreamingPartial([], partial);
     const updated = applyTranscriptEvent(seeded, { type: "assistant.delta", streamId: "live", text: " continued" }) ?? [];
+    expect(identities(seeded)).toEqual([undefined, undefined]);
     expect(identities(updated)).toEqual(identities(seeded));
     expect(updated[0]?.parts[1]).toEqual({ type: "text", text: "reply continued", sourcePart: "content:2" });
     const final = { ...partial, entryId: "saved", content: [...partial.content.slice(0, 2), { type: "text", text: "final" }] };
@@ -76,7 +77,9 @@ describe("chat presentation identity", () => {
     expect(ended).toEqual(normalizeMessages([final]));
     expect(ended[0]?.streamId).toBe("live");
     expect(ended[0]?.parts.map((part) => part.sourcePart)).toEqual(["content:1", "content:2"]);
-    expect(identities(ended)).not.toEqual(identities(seeded)); // caller owns stream-to-entry aliasing
+    expect(identities(ended)).toEqual([
+      JSON.stringify(["entry", "saved", "content:1"]), JSON.stringify(["entry", "saved", "content:2"]),
+    ]);
   });
 
   it("keeps successive answers to one ask distinct even when their content is identical", () => {

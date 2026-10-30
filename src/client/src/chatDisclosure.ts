@@ -80,21 +80,10 @@ export class ChatDisclosureController {
     return true;
   }
 
-  hasChoice(key: string): boolean {
-    return this.openGroupKeys.has(key) || this.closedDefaultOpenGroupKeys.has(key);
-  }
-
-  /** Move an explicit provisional choice to its committed address. */
-  transferChoice(from: string, to: string): void {
-    if (from === to) return;
-    const open = this.openGroupKeys.delete(from);
-    const closed = this.closedDefaultOpenGroupKeys.delete(from);
-    if (!open && !closed) return;
-    this.openGroupKeys.delete(to);
-    this.closedDefaultOpenGroupKeys.delete(to);
-    if (open) this.openGroupKeys.add(to);
-    else this.closedDefaultOpenGroupKeys.add(to);
-    this.persist();
+  storedChoice(key: string): boolean | undefined {
+    if (this.openGroupKeys.has(key)) return true;
+    if (this.closedDefaultOpenGroupKeys.has(key)) return false;
+    return undefined;
   }
 
   snapshot(): ChatDisclosureSnapshot {

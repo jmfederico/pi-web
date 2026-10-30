@@ -14,6 +14,8 @@ describe("PendingFormState", () => {
       concurrent = state.runExclusive(form(), () => { calls++; });
       return new Promise<void>((resolve) => { finish = resolve; });
     });
+    expect(calls).toBe(0);
+    await Promise.resolve();
     expect(concurrent).toBe(first);
     expect(calls).toBe(1);
     finish();
@@ -45,6 +47,7 @@ describe("PendingFormState", () => {
     state.syncDialogs("machine:session", []);
     expect(state.get(form()).input).toBe("");
     expect(state.get(form()).operation).toBe(operation);
+    await Promise.resolve();
     finish();
     await operation;
     expect(state.get(form("old")).input).toBe("old");
@@ -71,6 +74,7 @@ describe("PendingFormState", () => {
     state.promoteScope("temporary", "ready");
     expect(state.get(form("ready")).input).toBe("half typed");
     expect(state.runExclusive(form("ready"), () => { throw new Error("duplicate"); })).toBe(operation);
+    await Promise.resolve();
     finish();
     await operation;
     expect(notices).toBe(1);
@@ -88,6 +92,7 @@ describe("PendingFormState", () => {
     state.clearAsk("scope", ask.requestId);
     expect(state.get(ask).answers).toEqual({});
     expect(state.get(ask).operation).toBe(operation);
+    await Promise.resolve();
     finish();
     await operation;
   });

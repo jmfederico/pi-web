@@ -20,11 +20,9 @@ Returning to a saved anchor loads earlier history as needed. If complete history
 
 Pi owns durable session history and model context. PI WEB projects that history into browser pages; live events update a separate normalized selected transcript, and HTTP snapshots reconcile committed history. Compaction of model context is not a browser-history retention limit.
 
-Grouping projects the loaded messages into readable slices, activity groups, and adjoining image outputs. Ordinary reactive templates and keyed DOM reuse render those groups; there is no incremental suffix engine or manually maintained rendering-revision system. Activity-group ownership follows surviving members across prepends, and nested entries have their own keys.
+Grouping projects the loaded messages into readable slices, activity groups, and adjoining image outputs. Ordinary reactive templates and keyed DOM reuse render those groups. Activity-group ownership follows surviving members across prepends, and nested entries have their own keys.
 
-`ChatTranscriptStore` owns raw pages and reuses their normalized views while the page is unchanged. Browser session storage remains a best-effort reload cache. Normal pagination determines which history has been loaded; scrolling does not remove loaded messages or impose additional cache budgets.
-
-The daemon caches SDK token/cost/context statistics by committed entry count, branch leaf, session identity and model limits. Volatile activity and queue state remain live. SDKs without a constant-time entry-count API retain uncached reads for compatibility; SDK-provided context usage avoids a duplicate computation.
+`ChatTranscriptStore` owns cached raw pages; normalization produces the selected display messages. Browser session storage remains a best-effort reload cache. Normal pagination determines which history has been loaded; scrolling does not remove loaded messages or impose additional cache budgets.
 
 Loaded messages remain mounted, with closed activity bodies deferred or detached as described above. Loaded history and previously opened bodies can grow during a long visit. The [transcript flow](transcript-flow.md) describes current ownership and the measurement boundary: file size alone does not establish how much content is fetched or rendered.
 

@@ -1,5 +1,4 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { SessionUsageCache } from "./sessionUsageCache.js";
 import { sessionNotificationSources, type SessionNotificationPresentation } from "../../shared/sessionNotificationPresentation.js";
 import { randomUUID } from "node:crypto";
 import { statSync } from "node:fs";
@@ -404,7 +403,6 @@ export interface PiSessionManager {
   getSessionFile(): string | undefined;
   getBranch(): unknown[];
   getEntries?(): readonly unknown[];
-  getEntryCount?(): number;
   getTree?(): readonly ProjectableSessionTreeNode[];
   getLeafId(): string | null;
   branch(branchFromId: string): void;
@@ -498,7 +496,6 @@ export interface PiAgentSession {
    */
   readonly state: { readonly streamingMessage?: unknown };
   model: AgentModel | undefined;
-  readonly routedModel?: { model: AgentModel } | undefined;
   thinkingLevel: ClientThinkingLevel;
   isStreaming: boolean;
   isCompacting: boolean;
@@ -516,7 +513,7 @@ export interface PiAgentSession {
   bindExtensions(bindings: PiExtensionBindings): Promise<void>;
   compact(instructions?: string): Promise<{ summary: string; tokensBefore: number }>;
   getUserMessagesForForking(): readonly { entryId: string; text: string }[];
-  getSessionStats(): { sessionId: string; totalMessages: number; userMessages: number; assistantMessages: number; toolCalls: number; tokens: ClientSessionStatus["tokens"]; cost: number; contextUsage?: ClientSessionStatus["contextUsage"] };
+  getSessionStats(): { sessionId: string; totalMessages: number; userMessages: number; assistantMessages: number; toolCalls: number; tokens: ClientSessionStatus["tokens"]; cost: number };
   reload(options?: { beforeSessionStart?: () => void | Promise<void> }): Promise<void>;
   waitForIdle(): Promise<void>;
   getContextUsage(): ClientSessionStatus["contextUsage"] | undefined;
@@ -1211,7 +1208,6 @@ export class PiSessionService implements SessionRouteService {
   /** Exempt only a command's own prompt receipt while it invokes guarded session control. */
   private readonly extensionCommandExecution = new AsyncLocalStorage<ExtensionCommandExecution>();
   readonly mcpAuthFlows = new McpAuthFlowService();
-  private readonly usageCache = new SessionUsageCache();
   private readonly runtimeMessageCounts = new WeakMap<PiAgentSession, number>();
   private readonly snapshotMessageCounts = new WeakMap<readonly unknown[], number>();
   private readonly pendingPromptEchoes = new WeakMap<PiAgentSession, { userIndex: number; message: ReturnType<typeof userMessage> }[]>();
@@ -4681,7 +4677,6 @@ export class PiSessionService implements SessionRouteService {
         if (sessionId !== session.sessionId) this.clearCompactionPromptQueue(sessionId);
       }
     }
-    this.usageCache.invalidate(session);
     this.restoreSubsessionReceipts(session);
     this.reconcileRuntimeMessageCount(session);
     const unsubscribe = session.subscribe((event) => {
@@ -5220,8 +5215,9 @@ export class PiSessionService implements SessionRouteService {
 
   // session.messages is the compacted model context, not the browser transcript.
   private statusFromSession(session: PiAgentSession, messageCount = this.runtimeMessageCount(session)): ClientSessionStatus {
-    const { tokens, cost, contextUsage } = this.usageCache.read(session);
+    const stats = session.getSessionStats();
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
+    const contextUsage = session.getContextUsage();
     const warnings = this.warningsForSession(session);
     const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
     const suggestedInput = this.suggestedInputs.get(session.sessionId);
@@ -5240,8 +5236,8 @@ export class PiSessionService implements SessionRouteService {
       queuedMessages,
       ...(queueMessageActionsUnavailable === undefined ? {} : { queueMessageActionsUnavailable }),
       messageCount,
-      tokens,
-      cost,
+      tokens: stats.tokens,
+      cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),

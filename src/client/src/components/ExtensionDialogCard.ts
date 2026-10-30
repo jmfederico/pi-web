@@ -137,7 +137,6 @@ export class ExtensionDialogCard extends LitElement {
       if (active) this.unsubscribe = this.formState.subscribe(this.formIdentity, () => { this.requestUpdate(); });
     }
     if (!changed.has("dialog") && !changed.has("outcome") && !changed.has("formScope") && !changed.has("formState")) return;
-    if (this.outcome !== undefined) this.formState.forgetDialog(this.formScope, this.outcome.dialog.dialogId);
     // Identity is keyed by dialogId, not object identity: status refreshes
     // re-project the same open dialog as a new object and must not wipe a
     // half-typed answer or an in-flight close.

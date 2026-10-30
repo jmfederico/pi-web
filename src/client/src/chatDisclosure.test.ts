@@ -34,17 +34,14 @@ describe("ChatDisclosureController", () => {
     expect(controller.isOpen("remote-only", false)).toBe(true);
   });
 
-  it("moves explicit choices to committed addresses without retaining provisional keys", () => {
-    const storage = new MemoryDisclosureStorage();
-    const controller = new ChatDisclosureController(storage);
+  it("distinguishes stored choices from untouched defaults", () => {
+    const controller = new ChatDisclosureController(new MemoryDisclosureStorage());
     controller.syncSession("session");
-    controller.applyToggle("stream", false, true);
-    controller.transferChoice("stream", "entry");
-    expect(controller.hasChoice("stream")).toBe(false);
-    expect(controller.isOpen("entry", true)).toBe(false);
-    const reloaded = new ChatDisclosureController(storage);
-    reloaded.syncSession("session");
-    expect(reloaded.isOpen("entry", true)).toBe(false);
+    expect(controller.storedChoice("untouched")).toBeUndefined();
+    controller.applyToggle("closed", false, true);
+    controller.applyToggle("open", true, false);
+    expect(controller.storedChoice("closed")).toBe(false);
+    expect(controller.storedChoice("open")).toBe(true);
   });
 
   it("keeps a default-open live group closed after the user closes it", () => {

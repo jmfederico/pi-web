@@ -26,14 +26,13 @@ const browserChatHistoryCache: ChatHistoryCacheAdapter = {
 };
 
 export class ChatTranscriptStore {
-  private readonly historyEntries = new Map<string, { page: RawMessagePage; view: ChatTranscriptView }>();
+  private readonly rawHistoryPages = new Map<string, RawMessagePage>();
   private readonly historyRevisions = new Map<string, number>();
 
   constructor(private readonly cache: ChatHistoryCacheAdapter = browserChatHistoryCache) {}
 
   cachedView(sessionId: string): ChatTranscriptView {
-    this.rawHistoryPage(sessionId);
-    return this.historyEntries.get(sessionId)?.view ?? transcriptViewFromHistory(undefined);
+    return transcriptViewFromHistory(this.rawHistoryPage(sessionId));
   }
 
   mergeHistory(sessionId: string, page: RawMessagePage): ChatTranscriptView {
@@ -54,10 +53,9 @@ export class ChatTranscriptStore {
   }
 
   private storeHistory(sessionId: string, history: RawMessagePage): ChatTranscriptView {
-    const view = transcriptViewFromHistory(history);
-    this.historyEntries.set(sessionId, { page: history, view });
+    this.rawHistoryPages.set(sessionId, history);
     this.cache.write(sessionId, history);
-    return view;
+    return transcriptViewFromHistory(history);
   }
 
   applyLiveEvent(messages: ChatLine[], event: SessionUiEvent): ChatLine[] | undefined {
@@ -80,18 +78,14 @@ export class ChatTranscriptStore {
 
   discard(sessionId: string): void {
     this.historyRevisions.set(sessionId, this.historyRevision(sessionId) + 1);
-    this.historyEntries.delete(sessionId);
+    this.rawHistoryPages.delete(sessionId);
     this.cache.remove?.(sessionId);
   }
 
   rawHistoryPage(sessionId: string): RawMessagePage | undefined {
-    const entry = this.historyEntries.get(sessionId);
-    if (entry !== undefined) return entry.page;
-    const page = this.cache.read(sessionId);
-    if (page !== undefined) {
-      this.historyEntries.set(sessionId, { page, view: transcriptViewFromHistory(page) });
-    }
-    return page;
+    const cached = this.rawHistoryPages.get(sessionId) ?? this.cache.read(sessionId);
+    if (cached !== undefined) this.rawHistoryPages.set(sessionId, cached);
+    return cached;
   }
 }
 

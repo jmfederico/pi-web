@@ -15,7 +15,7 @@ it("cleans dialog input on an authoritative close even without a mounted card", 
   const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
     api: { ...defaultApi, transcriptSnapshot: () => Promise.resolve({ page: emptyPage, status: snapshot, seq: 0, partial: null }) },
     socket,
-    onDialogSnapshot: (machineId, sessionId, ids) => { forms.syncDialogs(machineSessionKey(machineId, sessionId), ids); },
+    pendingForms: forms,
   });
   try {
     await controller.selectSession(oldSession, { updateUrl: false });
@@ -39,12 +39,12 @@ it("applies authoritative dialog cleanup to the response's originating machine a
   const bStatus = status(oldSession.id);
   let state: AppState = { ...initialAppState(), selectedMachine: machine("a"), selectedWorkspace: workspace, selectedSession: oldSession };
   const controller = new SessionController(() => state, (patch) => { state = { ...state, ...patch }; }, () => undefined, undefined, {
-    api: { ...defaultApi, setModel: () => response.promise },
+    api: { ...defaultApi, answerDialog: async () => ({ result: "closed", sessionStatus: await response.promise }) },
     socket: new FakeSocket(),
-    onDialogSnapshot: (machineId, sessionId, ids) => { forms.syncDialogs(machineSessionKey(machineId, sessionId), ids); },
+    pendingForms: forms,
   });
   try {
-    const pending = controller.setModel("provider", "model");
+    const pending = controller.answerDialog("same", "answer on A");
     state = { ...state, selectedMachine: machine("b"), status: bStatus };
     response.resolve(status(oldSession.id));
     await pending;

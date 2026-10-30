@@ -40,6 +40,7 @@ describe("extension-dialog-card external lifetime", () => {
     const second = await mount();
     expect(renderRoot(second).querySelector("input")?.value).toBe("private draft");
     buttonWithText(renderRoot(second), "Send").click();
+    await Promise.resolve();
     expect(answer).toHaveBeenCalledWith("dlg-1", "private draft");
     second.remove();
     const third = await mount();
@@ -55,6 +56,7 @@ describe("extension-dialog-card external lifetime", () => {
     const retry = await mount();
     expect(renderRoot(retry).querySelector("input")?.value).toBe("private draft");
     buttonWithText(renderRoot(retry), "Send").click();
+    await Promise.resolve();
     expect(answer).toHaveBeenCalledTimes(2);
     finish();
     await flushClose(retry);
@@ -64,12 +66,13 @@ describe("extension-dialog-card external lifetime", () => {
     expect(renderRoot(cleared).querySelector("input")?.value).toBe("");
   });
 
-  it("invokes the captured callback synchronously before properties can be rebound", async () => {
+  it("invokes the captured callback even after properties are rebound", async () => {
     const answer = vi.fn<ExtensionDialogAnswerCallback>();
     const card = await mountOpenDialog(openDialog(), { onAnswer: answer });
     buttonWithText(renderRoot(card), "Yes").click();
     card.onAnswer = vi.fn<ExtensionDialogAnswerCallback>();
     card.formScope = "changed";
+    await Promise.resolve();
     expect(answer).toHaveBeenCalledWith("dlg-1", true);
     expect(card.onAnswer).not.toHaveBeenCalled();
     await flushClose(card);

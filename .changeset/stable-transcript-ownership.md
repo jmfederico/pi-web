@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Keep split transcript content independently identified and isolate disclosure choices between machines. Preserve pending form drafts and prevent duplicate submissions across session navigation without retargeting callbacks to another session.
+Preserve mounted message and activity state when earlier history loads. Keep split content independently identified and disclosure choices separate between machines. Keep pending form drafts and submissions tied to their originating request across session navigation.
