@@ -19,6 +19,7 @@ import { availableDisplayedMessageActions, availableMessageActions, type Registe
 import { PluginSelectionHost } from "./selection";
 import { PromptChipStore, type PromptChipTarget } from "../promptChips";
 import type { PluginPromptEditor } from "../../../plugin-api";
+import { selectTranscriptRenderers, snapshotTranscriptRenderer, transcriptRenderingCapability, transcriptRenderingCapabilityToken, type RegisteredTranscriptRenderer } from "./transcriptRenderers";
 import { contentRendererMatches, snapshotContentRenderer, type ContentRendererChoice, type RegisteredContentRenderer } from "./contentRenderers";
 import { createContentRenderingCapability, createContentRenderingService, contentRenderingCapabilityToken, type ChatContentRendering } from "../formatting/contentRendering";
 import { requirePluginBackendRevision } from "../../../shared/pluginBackendProtocol";
@@ -100,6 +101,7 @@ interface PreparedPluginContributions {
   readonly stylesheets: readonly QualifiedStylesheetContribution[];
   readonly filePreviewers: readonly RegisteredFilePreviewer[];
   readonly contentRenderers: readonly RegisteredContentRenderer[];
+  readonly transcriptRenderers: readonly RegisteredTranscriptRenderer[];
   readonly syntaxHighlighters: readonly RegisteredSyntaxHighlighter[];
   readonly ids: ReadonlySet<QualifiedContributionId>;
   readonly actions: readonly RegisteredPluginAction[];
@@ -172,6 +174,18 @@ export class PluginRegistry {
     .sort((a, b) => this.compareDiscoveryOrder(a, b))
     .filter((previewer) => filePreviewerMatches(previewer, request)));
   private readonly contentRenderers: RegisteredContentRenderer[] = [];
+  private readonly transcriptRenderers: RegisteredTranscriptRenderer[] = [];
+  private readonly transcriptRendererViews = new Map<string, readonly RegisteredTranscriptRenderer[]>();
+
+  getTranscriptRenderers(machineId: string): readonly RegisteredTranscriptRenderer[] {
+    const selected = selectTranscriptRenderers(this.transcriptRenderers
+      .filter((renderer) => this.isContributionActive(renderer.pluginId, renderer.machineId, machineId, renderer.sourcePluginId))
+      .sort((a, b) => this.compareDiscoveryOrder(a, b)));
+    const previous = this.transcriptRendererViews.get(machineId);
+    if (previous?.length === selected.length && selected.every((renderer, index) => renderer === previous[index])) return previous;
+    this.transcriptRendererViews.set(machineId, selected);
+    return selected;
+  }
   private readonly syntaxHighlighters: RegisteredSyntaxHighlighter[] = [];
   readonly syntaxHighlighting = createSyntaxHighlightingCapability((request) => this.syntaxHighlightingRevision(request.machineId)
     .filter((highlighter) => contentRendererMatches(highlighter, { ...request, text: "" })).at(-1));
@@ -299,6 +313,7 @@ export class PluginRegistry {
     for (const provision of snapshotCapabilityProvisions([
       { capability: filePreviewingCapabilityToken, value: this.filePreviewing },
       { capability: contentRenderingCapabilityToken, value: this.contentRendering },
+      { capability: transcriptRenderingCapabilityToken, value: transcriptRenderingCapability },
       { capability: syntaxHighlightingCapabilityToken, value: this.syntaxHighlighting },
       { capability: stylesheetIntegrationCapabilityToken, value: stylesheetIntegrationCapability },
       ...(options.hostCapabilities ?? []),
@@ -371,6 +386,8 @@ export class PluginRegistry {
     this.messageActions.splice(0);
     this.filePreviewers.splice(0);
     this.contentRenderers.splice(0);
+    this.transcriptRenderers.splice(0);
+    this.transcriptRendererViews.clear();
     this.syntaxHighlighters.splice(0);
     this.chatContentRenderingViews.clear();
     this.syntaxHighlightingViews.clear();
@@ -583,6 +600,17 @@ export class PluginRegistry {
         ...(registration.sourcePluginId === undefined ? {} : { sourcePluginId: registration.sourcePluginId }),
       }));
     });
+    const transcriptRenderers = (contributions.transcriptRenderers ?? []).map((renderer): RegisteredTranscriptRenderer => {
+      const snapshot = snapshotTranscriptRenderer(renderer, lifetimeSignal);
+      return Object.freeze({
+        ...snapshot,
+        id: this.qualify(runtimePluginId, snapshot.id, contributionIds),
+        localId: snapshot.id,
+        pluginId: runtimePluginId,
+        ...(registration.machineId === undefined ? {} : { machineId: registration.machineId }),
+        ...(registration.sourcePluginId === undefined ? {} : { sourcePluginId: registration.sourcePluginId }),
+      });
+    });
     const contentRenderers = (contributions.contentRenderers ?? []).map((renderer): RegisteredContentRenderer => {
       const snapshot = snapshotContentRenderer(renderer);
       const supports = snapshot.supports?.bind(snapshot);
@@ -649,7 +677,7 @@ export class PluginRegistry {
     const themePairs = registration.machineId === undefined
       ? (contributions.themePairs ?? []).map((pair) => this.qualifyThemePair(runtimePluginId, pair, contributionIds))
       : [];
-    return Object.freeze({ ids: contributionIds, filePreviewers, contentRenderers, syntaxHighlighters, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, stylesheets, themes, fileIconThemes, themePairs });
+    return Object.freeze({ ids: contributionIds, filePreviewers, contentRenderers, transcriptRenderers, syntaxHighlighters, actions, messageActions, applicationPanels, workspacePanels, workspaceLabels, sessionLabels, stylesheets, themes, fileIconThemes, themePairs });
   }
 
   private dependencyFailure(
@@ -755,6 +783,7 @@ export class PluginRegistry {
     for (const contributionId of staged.contributions.ids) this.contributionIds.add(contributionId);
     this.filePreviewers.push(...staged.contributions.filePreviewers);
     this.contentRenderers.push(...staged.contributions.contentRenderers);
+    this.transcriptRenderers.push(...staged.contributions.transcriptRenderers);
     this.syntaxHighlighters.push(...staged.contributions.syntaxHighlighters);
     this.actions.push(...staged.contributions.actions);
     this.messageActions.push(...staged.contributions.messageActions);
@@ -1489,6 +1518,9 @@ function contributionsForVersion(contributions: PluginContributions, apiVersion:
     }
     return contributions;
   }
+  if (contributions.transcriptRenderers !== undefined) {
+    throw new BrowserPluginIncompatibleError("Transcript renderer contributions require browser API v5");
+  }
   if (contributions.fileIconThemes !== undefined) {
     throw new BrowserPluginIncompatibleError("File icon theme contributions require browser API v5");
   }
@@ -1851,7 +1883,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "stylesheets", "themes", "fileIconThemes", "themePairs", "contentRenderers", "syntaxHighlighters", "filePreviewers", "messageActions"];
+const contributionNames: readonly string[] = ["actions", "applicationPanels", "workspacePanels", "workspaceLabels", "sessionLabels", "stylesheets", "themes", "fileIconThemes", "themePairs", "contentRenderers", "transcriptRenderers", "syntaxHighlighters", "filePreviewers", "messageActions"];
 
 function isPluginContributions(value: unknown): value is PluginContributions {
   if (!isRecord(value)) return false;

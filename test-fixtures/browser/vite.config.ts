@@ -20,6 +20,8 @@ export default defineConfig({
         recovery: fileURLToPath(new URL("recovery.html", import.meta.url)),
         filePreviews: fileURLToPath(new URL("file-previews.html", import.meta.url)),
         scheduledTasks: fileURLToPath(new URL("scheduled-tasks.html", import.meta.url)),
+        transcriptRenderers: fileURLToPath(new URL("transcript-renderers.html", import.meta.url)),
+        transcriptExample: fileURLToPath(new URL("transcript-example.html", import.meta.url)),
       },
     },
   },
