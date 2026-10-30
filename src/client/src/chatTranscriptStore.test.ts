@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ChatTranscriptStore, type ChatHistoryCacheAdapter } from "./chatTranscriptStore";
 import type { RawMessagePage } from "./chatHistoryCache";
 
@@ -19,41 +19,6 @@ function page(start: number, total: number, messages: unknown[]): RawMessagePage
 }
 
 describe("ChatTranscriptStore", () => {
-  it("evicts the least recently read session and rehydrates it from the cache", () => {
-    const cache = new MemoryChatHistoryCache();
-    const store = new ChatTranscriptStore(cache, { maxSessions: 2, maxBytes: 100_000 });
-    const read = vi.spyOn(cache, "read");
-    store.mergeHistory("a", page(0, 1, [{ role: "user", content: "a" }]));
-    store.mergeHistory("b", page(0, 1, [{ role: "user", content: "b" }]));
-    store.cachedView("a");
-    store.mergeHistory("c", page(0, 1, [{ role: "user", content: "c" }]));
-    read.mockClear();
-
-    store.rawHistoryPage("a");
-    expect(read).not.toHaveBeenCalled();
-    expect(store.cachedView("b").messages[0]?.parts).toEqual([{ type: "text", text: "b" }]);
-    expect(read).toHaveBeenCalledExactlyOnceWith("b");
-    expect(store.historyRevision("b")).toBe(0);
-  });
-
-  it("evicts by byte budget but keeps a single oversized page whole", () => {
-    const cache = new MemoryChatHistoryCache();
-    const store = new ChatTranscriptStore(cache, { maxSessions: 8, maxBytes: 1000 });
-    const read = vi.spyOn(cache, "read");
-    store.mergeHistory("a", page(0, 1, [{ role: "user", content: "small" }]));
-    const large = page(20, 23, Array.from({ length: 3 }, () => ({ role: "user", content: "x".repeat(1000) })));
-    const view = store.mergeHistory("b", large);
-    read.mockClear();
-
-    expect(store.rawHistoryPage("b")).toBe(large);
-    expect(store.cachedView("b")).toBe(view);
-    expect(view.messagePageStart).toBe(20);
-    expect(view.messages).toHaveLength(3);
-    expect(read).not.toHaveBeenCalled();
-    store.rawHistoryPage("a");
-    expect(read).toHaveBeenCalledExactlyOnceWith("a");
-  });
-
   it("reuses normalization for an unchanged raw page and invalidates it after replacement or discard", () => {
     const cache = new MemoryChatHistoryCache();
     const store = new ChatTranscriptStore(cache);
@@ -64,11 +29,20 @@ describe("ChatTranscriptStore", () => {
     expect(second.messages[0]?.parts).toEqual([{ type: "text", text: "after" }]);
     expect(store.cachedView("s1")).toBe(second);
 
+    // This adapter returns the same raw page after discard. Rehydration must
+    // still create a fresh view owned by the store, not by the raw object.
+    const raw = store.rawHistoryPage("s1");
     store.discard("s1");
-    cache.pages.delete("s1");
-    expect(store.cachedView("s1").messages).toEqual([]);
+    const rehydrated = store.cachedView("s1");
+    expect(store.rawHistoryPage("s1")).toBe(raw);
+    expect(rehydrated).toEqual(second);
+    expect(rehydrated).not.toBe(second);
+    expect(rehydrated.messages).not.toBe(second.messages);
+    expect(store.cachedView("s1")).toBe(rehydrated);
+    expect(new ChatTranscriptStore(cache).cachedView("s1")).not.toBe(rehydrated);
     expect(store.historyRevision("s1")).toBe(1);
   });
+
   it("hydrates a visible transcript from cached raw history", () => {
     const cache = new MemoryChatHistoryCache();
     cache.write("s1", page(0, 2, [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }]));

@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("ask-user-card external lifetime", () => {
-  it("restores memory drafts and partial confirmation without storage and shares in-flight sends across remounts", async () => {
+  it("restores memory drafts without storage, keeps confirmation local, and shares in-flight sends across remounts", async () => {
     const unavailable = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
     const unreadable = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
     const state = new PendingFormState();
@@ -37,12 +37,15 @@ describe("ask-user-card external lifetime", () => {
       first.remove();
       const second = await mount();
       expect(renderRoot(second).querySelector("textarea")?.value).toBe("memory draft");
+      expect(renderRoot(second).querySelector(".send-anyway")).toBeNull();
+      buttonWithText(renderRoot(second), "Send answers").click();
+      await second.updateComplete;
       const send = requiredElement(renderRoot(second).querySelector<HTMLButtonElement>(".send-anyway"), "confirmation");
       send.click();
       expect(submit).toHaveBeenCalledOnce();
       second.remove();
       const third = await mount();
-      expect(renderRoot(third).querySelector<HTMLButtonElement>(".send-anyway")?.disabled).toBe(true);
+      expect(buttonWithText(renderRoot(third), "Sending…").disabled).toBe(true);
       expect(renderRoot(third).querySelector("fieldset")?.disabled).toBe(true);
       renderRoot(third).querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
       expect(submit).toHaveBeenCalledOnce();
@@ -57,6 +60,8 @@ describe("ask-user-card external lifetime", () => {
       expect(renderRoot(third).querySelector("textarea")?.value).toBe("");
       const retry = await mount();
       expect(renderRoot(retry).querySelector("textarea")?.value).toBe("memory draft");
+      buttonWithText(renderRoot(retry), "Send answers").click();
+      await retry.updateComplete;
       buttonWithText(renderRoot(retry), "Send anyway").click();
       expect(submit).toHaveBeenCalledTimes(2);
       finish();

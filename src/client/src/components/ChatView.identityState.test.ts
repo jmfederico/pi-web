@@ -3,10 +3,7 @@ import { afterEach, expect, it } from "vitest";
 import { ChatView } from "./ChatView";
 import { normalizeMessages } from "../chatMessages";
 import { applyTranscriptEvent, seedStreamingPartial } from "../chatTranscript";
-import { ChatPresentationOwners } from "../chatPresentationOwners";
-import { TranscriptUiState } from "../transcriptUiState";
 import type { FormattedText } from "./FormattedText";
-import type { ToolExecutionView } from "./ToolExecutionView";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -74,38 +71,4 @@ it("keeps renderer ownership and a closed thinking choice when the stream gains 
   await settle(restored);
   const restoredGroup = await openActivity(restored);
   expect(restoredGroup.querySelector<HTMLDetailsElement>("details.thinking")?.open).toBe(false);
-});
-
-it("restores tool choices after ChatView recreation without sharing sibling tool state", async () => {
-  const uiState = new TranscriptUiState();
-  const owners = new ChatPresentationOwners();
-  const messages = normalizeMessages([{ role: "assistant", entryId: "entry", content: [
-    { type: "toolCall", id: "a", name: "bash", arguments: { command: "first" } },
-    { type: "toolCall", id: "b", name: "bash", arguments: { command: "second" } },
-  ] }]);
-  const mount = async () => {
-    const view = new ChatView();
-    view.sessionId = "session";
-    view.messages = messages;
-    view.uiState = uiState;
-    view.presentationOwners = owners;
-    document.body.append(view);
-    await settle(view);
-    await openActivity(view);
-    const tools = [...view.renderRoot.querySelectorAll<ToolExecutionView>("tool-execution-view")];
-    await Promise.all(tools.map((tool) => tool.updateComplete));
-    return { view, tools };
-  };
-  const first = await mount();
-  expect(first.tools).toHaveLength(2);
-  expect(first.tools[0]?.stateKey).not.toBe(first.tools[1]?.stateKey);
-  const details = first.tools[0]?.renderRoot.querySelector<HTMLDetailsElement>("details.text-body");
-  if (details === null || details === undefined) throw new Error("Missing tool details");
-  details.open = true;
-  details.dispatchEvent(new Event("toggle"));
-  await first.tools[0]?.updateComplete;
-  first.view.remove();
-  const restored = await mount();
-  expect(restored.tools[0]?.renderRoot.querySelector<HTMLDetailsElement>("details.text-body")?.open).toBe(true);
-  expect(restored.tools[1]?.renderRoot.querySelector<HTMLDetailsElement>("details.text-body")?.open).toBe(false);
 });

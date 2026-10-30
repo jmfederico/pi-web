@@ -10,17 +10,6 @@ const legacyActivityWarning = {
 };
 
 describe("API parsers", () => {
-  it.each(["assistant.delta", "assistant.thinking.delta"])("validates optional content indices on %s", (type) => {
-    const event = { type, text: "more", streamId: "stream-1" };
-    expect(parseSessionStreamEvent(event)).toEqual(event);
-    for (const contentIndex of [0, 3]) {
-      expect(parseSessionStreamEvent({ ...event, contentIndex })).toEqual({ ...event, contentIndex });
-    }
-    for (const contentIndex of [-1, 0.5, NaN, Infinity, "0", null]) {
-      expect(() => parseSessionStreamEvent({ ...event, contentIndex })).toThrow("contentIndex");
-    }
-  });
-
   it("preserves remote naming metadata and supports older machine responses", () => {
     const machine = { id: "remote", name: "Alias", kind: "remote", createdAt: "now", updatedAt: "now" };
     expect(parseMachine(machine)).toEqual(machine);

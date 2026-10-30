@@ -40,36 +40,34 @@ export function withMessageMeta(line: ChatLine, rawMessage: unknown): ChatLine {
   };
 }
 
-export function appendText(messages: ChatLine[], role: ChatLine["role"], text: string, originalContentIndex?: number): ChatLine[] {
+export function appendText(messages: ChatLine[], role: ChatLine["role"], text: string): ChatLine[] {
   if (text === "") return messages;
-  const sourcePart = indexedStreamPartKey(originalContentIndex);
   const last = messages.at(-1);
   const lastPart = last?.parts.at(-1);
-  if (last?.role === role && lastPart?.type === "text" && (sourcePart === undefined || lastPart.sourcePart === sourcePart)) {
+  if (last?.role === role && lastPart?.type === "text") {
     return [
       ...messages.slice(0, -1),
-      { ...last, parts: [...last.parts.slice(0, -1), { type: "text", text: lastPart.text + text, ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
+      { ...last, parts: [...last.parts.slice(0, -1), { type: "text", text: lastPart.text + text,
+        ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
     ];
   }
-  const part: ChatPart = { type: "text", text, ...(sourcePart === undefined ? {} : { sourcePart }) };
-  if (last?.role === role) return [...messages.slice(0, -1), { ...last, parts: [...last.parts, withSourcePart(part, last, nextStreamPartKey(last))] }];
-  return [...messages, { role, parts: [part] }];
+  if (last?.role === role) return [...messages.slice(0, -1), { ...last, parts: [...last.parts, { type: "text", text }] }];
+  return [...messages, textMessage(role, text)];
 }
 
-export function appendThinking(messages: ChatLine[], text: string, originalContentIndex?: number): ChatLine[] {
+export function appendThinking(messages: ChatLine[], text: string): ChatLine[] {
   if (text === "") return messages;
-  const sourcePart = indexedStreamPartKey(originalContentIndex);
   const last = messages.at(-1);
   const lastPart = last?.parts.at(-1);
-  if (last?.role === "assistant" && lastPart?.type === "thinking" && (sourcePart === undefined || lastPart.sourcePart === sourcePart)) {
+  if (last?.role === "assistant" && lastPart?.type === "thinking") {
     return [
       ...messages.slice(0, -1),
-      { ...last, parts: [...last.parts.slice(0, -1), { type: "thinking", text: lastPart.text + text, ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
+      { ...last, parts: [...last.parts.slice(0, -1), { type: "thinking", text: lastPart.text + text,
+        ...(lastPart.sourcePart === undefined ? {} : { sourcePart: lastPart.sourcePart }) }] },
     ];
   }
-  const part: ChatPart = { type: "thinking", text, ...(sourcePart === undefined ? {} : { sourcePart }) };
-  if (last?.role === "assistant") return [...messages.slice(0, -1), { ...last, parts: [...last.parts, withSourcePart(part, last, nextStreamPartKey(last))] }];
-  return [...messages, { role: "assistant", parts: [part] }];
+  if (last?.role === "assistant") return [...messages.slice(0, -1), { ...last, parts: [...last.parts, { type: "thinking", text }] }];
+  return [...messages, { role: "assistant", parts: [{ type: "thinking", text }] }];
 }
 
 export function normalizeMessage(message: unknown): ChatLine[] {
@@ -107,21 +105,6 @@ export function normalizeMessage(message: unknown): ChatLine[] {
   const lines = visible.length > 0 ? [withMessageMeta({ role: displayRole, parts: visible, ...(source === undefined ? {} : { source }) }, message)] : [];
   const errorLine = assistantErrorLine(message);
   return errorLine === undefined ? lines : [...lines, withMessageMeta(errorLine, message)];
-}
-
-function indexedStreamPartKey(index: number | undefined): string | undefined {
-  return index !== undefined && Number.isInteger(index) && index >= 0 ? `content:${String(index)}` : undefined;
-}
-
-// Older daemons omit the raw content index. Allocate a live-only key once,
-// then preserve it on every append without guessing a durable content address.
-function nextStreamPartKey(line: ChatLine): string {
-  let next = 0;
-  for (const part of line.parts) {
-    const match = /^delta:(\d+)$/.exec(part.sourcePart ?? "");
-    if (match !== null) next = Math.max(next, Number(match[1]) + 1);
-  }
-  return `delta:${String(next)}`;
 }
 
 function sourcePart<T extends ChatPart>(part: T, rawMessage: unknown, key: string): T {

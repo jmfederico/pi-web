@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Reduce repeated work while streaming long sessions, preserve activity-group elements when earlier history loads, and bound browser history caches. Reuse session usage statistics while persisted history and model context are unchanged.
+Preserve activity-group elements when earlier history loads. Reuse normalized history and session usage statistics while their source data is unchanged.

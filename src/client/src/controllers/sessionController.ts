@@ -2285,9 +2285,13 @@ export class SessionController {
 
   private recordClosedDialog(closed: ClosedExtensionDialog): void {
     const state = this.getState();
+    const pendingDialogs = state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId);
+    if (state.selectedSession !== undefined) {
+      this.onDialogSnapshot?.(selectedMachineId(state), state.selectedSession.id, pendingDialogs.map((dialog) => dialog.dialogId));
+    }
     if (state.closedDialogs.some((entry) => entry.dialog.dialogId === closed.dialog.dialogId)) return;
     this.setState({
-      pendingDialogs: state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId),
+      pendingDialogs,
       closedDialogs: [...state.closedDialogs, closed],
     });
   }

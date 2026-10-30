@@ -8,181 +8,167 @@ export interface PendingFormIdentity {
 }
 
 interface FormEntry {
-  identity: PendingFormIdentity;
+  kind: PendingFormIdentity["kind"];
+  requestId: string;
   answers: AskDraftAnswers;
   input: string;
-  confirmingPartial: boolean;
   operation?: Promise<void>;
-  forgotten?: boolean;
+  closed?: boolean;
+}
+
+interface ScopeOwner {
+  scope: string;
+  forms: Map<string, FormEntry>;
+  listeners: Map<string, Set<() => void>>;
 }
 
 export function pendingFormKey(identity: PendingFormIdentity): string {
   return JSON.stringify([identity.scope, identity.kind, identity.requestId]);
 }
 
-/** Instance-owned form memory. Dialog text never crosses a storage boundary. */
+function requestKey(identity: PendingFormIdentity): string {
+  return JSON.stringify([identity.kind, identity.requestId]);
+}
+
+/** Pending request memory. Dialog text never crosses a storage boundary. */
 export class PendingFormState {
-  private readonly entries = new Map<string, FormEntry>();
-  private readonly listeners = new Map<string, Set<{ key: string; identity: PendingFormIdentity; callback: () => void }>>();
+  private readonly scopes = new Map<string, ScopeOwner>();
 
-  constructor(private readonly maxIdleForms = 256) {
-    if (!Number.isSafeInteger(maxIdleForms) || maxIdleForms < 1) throw new RangeError("maxIdleForms must be a positive safe integer");
-  }
-
+  /** Reading historical cards must not create request owners. */
   get(identity: PendingFormIdentity): Readonly<FormEntry> {
-    return this.getEntry(identity);
+    return this.scopes.get(identity.scope)?.forms.get(requestKey(identity)) ?? this.initialEntry(identity);
   }
 
-  private getEntry(identity: PendingFormIdentity): FormEntry {
-    const key = pendingFormKey(identity);
-    let entry = this.entries.get(key);
-    entry ??= {
-      identity: { ...identity },
+  private initialEntry(identity: PendingFormIdentity): FormEntry {
+    return {
+      kind: identity.kind,
+      requestId: identity.requestId,
       answers: identity.kind === "ask" && identity.scope !== "" ? loadAskDraft(identity.scope, identity.requestId) : {},
       input: "",
-      confirmingPartial: false,
     };
-    this.entries.delete(key);
-    this.entries.set(key, entry);
-    this.trim();
+  }
+
+  private owner(scope: string): ScopeOwner {
+    let owner = this.scopes.get(scope);
+    if (owner === undefined) {
+      owner = { scope, forms: new Map(), listeners: new Map() };
+      this.scopes.set(scope, owner);
+    }
+    return owner;
+  }
+
+  private entry(owner: ScopeOwner, identity: PendingFormIdentity): FormEntry {
+    const key = requestKey(identity);
+    let entry = owner.forms.get(key);
+    if (entry === undefined) {
+      entry = this.initialEntry(identity);
+      owner.forms.set(key, entry);
+    }
     return entry;
   }
 
   setAnswers(identity: PendingFormIdentity, answers: AskDraftAnswers): void {
-    const entry = this.getEntry(identity);
-    if (entry.operation !== undefined) return;
+    const owner = this.owner(identity.scope);
+    const entry = this.entry(owner, identity);
+    if (entry.operation !== undefined || entry.closed === true) return;
     entry.answers = answers;
-    entry.confirmingPartial = false;
-    if (identity.scope !== "") saveAskDraft(identity.scope, identity.requestId, answers);
-    this.notify(identity);
+    if (owner.scope !== "") saveAskDraft(owner.scope, identity.requestId, answers);
+    this.notify(owner, requestKey(identity));
   }
 
   setInput(identity: PendingFormIdentity, input: string): void {
-    const entry = this.getEntry(identity);
-    if (entry.operation !== undefined) return;
+    const owner = this.owner(identity.scope);
+    const entry = this.entry(owner, identity);
+    if (entry.operation !== undefined || entry.closed === true) return;
     entry.input = input;
-    this.notify(identity);
-  }
-
-  setConfirmingPartial(identity: PendingFormIdentity, confirming: boolean): void {
-    const entry = this.getEntry(identity);
-    if (entry.operation !== undefined) return;
-    entry.confirmingPartial = confirming;
-    this.notify(identity);
+    this.notify(owner, requestKey(identity));
   }
 
   subscribe(identity: PendingFormIdentity, listener: () => void): () => void {
-    const key = pendingFormKey(identity);
-    const listeners = this.listeners.get(key) ?? new Set<{ key: string; identity: PendingFormIdentity; callback: () => void }>();
-    const subscription = { key, identity: { ...identity }, callback: listener };
-    this.listeners.set(key, listeners);
-    listeners.add(subscription);
+    const owner = this.owner(identity.scope);
+    this.entry(owner, identity);
+    const key = requestKey(identity);
+    const listeners = owner.listeners.get(key) ?? new Set<() => void>();
+    owner.listeners.set(key, listeners);
+    listeners.add(listener);
     return () => {
-      const current = this.listeners.get(subscription.key);
-      current?.delete(subscription);
-      if (current?.size === 0) this.listeners.delete(subscription.key);
-      this.trim();
+      listeners.delete(listener);
+      if (listeners.size === 0) owner.listeners.delete(key);
+      // Navigation does not close a request or discard its draft.
     };
   }
 
   /** Lock before invoking the captured operation, including synchronous reentry. */
   runExclusive(identity: PendingFormIdentity, operation: () => void | Promise<void>): Promise<void> {
-    const entry = this.getEntry(identity);
+    const owner = this.owner(identity.scope);
+    const entry = this.entry(owner, identity);
     if (entry.operation !== undefined) return entry.operation;
+    if (entry.closed === true) return Promise.resolve();
+    const key = requestKey(identity);
     let resolve!: (value: void | PromiseLike<void>) => void;
     let reject!: (reason: unknown) => void;
     const result = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     const locked = result.finally(() => {
       delete entry.operation;
-      const key = pendingFormKey(entry.identity);
-      if (entry.forgotten === true && this.entries.get(key) === entry) this.entries.delete(key);
-      this.trim();
-      this.notify(entry.identity);
+      if (entry.closed === true) this.release(owner, key);
+      this.notify(owner, key);
     });
     entry.operation = locked;
-    this.notify(identity);
+    this.notify(owner, key);
     try { resolve(operation()); } catch (error) { reject(error); }
     // Resolution is not authoritative success: controllers can catch errors.
     return locked;
   }
 
   forgetDialog(scope: string, requestId: string): void {
-    const identity: PendingFormIdentity = { scope, kind: "dialog", requestId };
-    const key = pendingFormKey(identity);
-    const entry = this.entries.get(key);
-    if (entry === undefined) return;
-    entry.input = "";
-    entry.forgotten = true;
-    if (entry.operation === undefined) this.entries.delete(key);
-    this.notify(identity);
+    this.close({ scope, kind: "dialog", requestId });
   }
 
   /** Call only with an authoritative pending-dialog snapshot for this scope. */
   syncDialogs(scope: string, ids: Iterable<string>): void {
+    const owner = this.scopes.get(scope);
+    if (owner === undefined) return;
     const pending = new Set(ids);
-    for (const entry of this.entries.values()) {
-      const identity = entry.identity;
-      if (identity.kind === "dialog" && identity.scope === scope && !pending.has(identity.requestId)) {
-        this.forgetDialog(scope, identity.requestId);
-      }
+    for (const entry of owner.forms.values()) {
+      if (entry.kind === "dialog" && !pending.has(entry.requestId)) this.forgetDialog(scope, entry.requestId);
     }
   }
 
   /** Called only after the controller receives an accepted ask response. */
   clearAsk(scope: string, requestId: string): void {
-    const identity: PendingFormIdentity = { scope, kind: "ask", requestId };
-    const entry = this.entries.get(pendingFormKey(identity));
-    if (entry === undefined) return;
-    entry.answers = {};
-    entry.confirmingPartial = false;
-    this.notify(identity);
+    clearAskDraft(scope, requestId);
+    this.close({ scope, kind: "ask", requestId });
   }
 
-  /** Synchronous startup handoff, before the real session replaces its temporary row. */
+  private close(identity: PendingFormIdentity): void {
+    const owner = this.scopes.get(identity.scope);
+    const key = requestKey(identity);
+    const entry = owner?.forms.get(key);
+    if (owner === undefined || entry === undefined) return;
+    entry.answers = {};
+    entry.input = "";
+    entry.closed = true;
+    if (entry.operation === undefined) this.release(owner, key);
+    this.notify(owner, key);
+  }
+
+  private release(owner: ScopeOwner, key: string): void {
+    owner.forms.delete(key);
+    if (owner.forms.size === 0 && this.scopes.get(owner.scope) === owner) this.scopes.delete(owner.scope);
+  }
+
+  /** Startup dialogs keep the same owner, listeners, and locks at the real key. */
   promoteScope(previousScope: string, scope: string): void {
     if (previousScope === scope) return;
-    for (const entry of this.entries.values()) {
-      if (entry.identity.scope === previousScope && this.entries.has(pendingFormKey({ ...entry.identity, scope }))) {
-        throw new Error("Cannot promote a form into an existing request owner");
-      }
-    }
-    for (const [key, entry] of this.entries) {
-      if (entry.identity.scope !== previousScope) continue;
-      const identity = { ...entry.identity, scope };
-      const target = pendingFormKey(identity);
-      if (identity.kind === "ask") {
-        saveAskDraft(scope, identity.requestId, entry.answers);
-        clearAskDraft(previousScope, identity.requestId);
-      }
-      this.entries.delete(key);
-      entry.identity = identity;
-      this.entries.set(target, entry);
-    }
-    for (const [key, subscriptions] of this.listeners) {
-      const first = subscriptions.values().next().value;
-      if (first?.identity.scope !== previousScope) continue;
-      const target = pendingFormKey({ ...first.identity, scope });
-      this.listeners.delete(key);
-      const destination = this.listeners.get(target) ?? new Set<typeof first>();
-      for (const subscription of subscriptions) {
-        subscription.key = target;
-        subscription.identity = { ...subscription.identity, scope };
-        destination.add(subscription);
-      }
-      this.listeners.set(target, destination);
-    }
+    const owner = this.scopes.get(previousScope);
+    if (owner === undefined) return;
+    if (this.scopes.has(scope)) throw new Error("Cannot promote into an existing request owner");
+    this.scopes.delete(previousScope);
+    owner.scope = scope;
+    this.scopes.set(scope, owner);
   }
 
-  private notify(identity: PendingFormIdentity): void {
-    this.listeners.get(pendingFormKey(identity))?.forEach((listener) => { listener.callback(); });
-  }
-
-  private trim(): void {
-    const idleEntry = (key: string, entry: FormEntry) => entry.operation === undefined && !this.listeners.has(key);
-    let idle = [...this.entries].filter(([key, entry]) => idleEntry(key, entry)).length;
-    for (const [key, entry] of this.entries) {
-      if (idle <= this.maxIdleForms) break;
-      if (idleEntry(key, entry)) { this.entries.delete(key); idle--; }
-    }
+  private notify(owner: ScopeOwner, key: string): void {
+    owner.listeners.get(key)?.forEach((listener) => { listener(); });
   }
 }

@@ -23,21 +23,25 @@ export class ChatRenderKeys {
       this.previous = [];
       this.sequence = 0;
     }
-    const identities = new Map<string, string>();
+    const identities = new Map<string, string[]>();
     for (const item of this.previous) {
-      for (const identity of item.identities ?? (item.identity === undefined ? [] : [item.identity])) identities.set(identity, item.key);
+      for (const identity of item.identities ?? (item.identity === undefined ? [] : [item.identity])) {
+        const owners = identities.get(identity) ?? [];
+        owners.push(item.key);
+        identities.set(identity, owners);
+      }
     }
     const provisional = new Map(this.previous.filter((item) => item.identity === undefined).map((item) => [item.slot, item.key]));
     const used = new Set<string>();
     this.previous = items.map((item) => {
       const candidates = item.identities ?? (item.identity === undefined ? [] : [item.identity]);
-      const inherited = candidates.map((identity) => identities.get(identity)).find((key) => key !== undefined && !used.has(key));
+      const inherited = candidates.flatMap((identity) => identities.get(identity) ?? []).find((key) => !used.has(key));
       const fallback = provisional.get(item.slot);
       const key = inherited ?? (fallback !== undefined && !used.has(fallback) ? fallback : `render:${String(this.sequence++)}`);
       used.add(key);
       return { ...item, key };
     });
-    // Retain only the rendered window, not every message ever visited.
+    // Reconcile only the current render, not every message ever visited.
     return this.previous.map((item) => item.key);
   }
 }

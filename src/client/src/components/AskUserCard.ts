@@ -3,7 +3,7 @@ import { localization, LocalizationController } from "../localization/browser";
 import definitions from "./askUser.messages";
 import { LitElement, css, html, type TemplateResult } from "lit";
 import { PendingFormState, pendingFormKey, type PendingFormIdentity } from "../pendingFormState";
-import { customElement, property } from "lit/decorators.js";
+import { customElement, property, state } from "lit/decorators.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { uiButtonStyles } from "./ui/controlStyles";
 import { uiTranscriptStyles } from "./ui/transcriptStyles";
@@ -81,8 +81,7 @@ export class AskUserCard extends LitElement {
   }
 
   private get answers(): AskDraftAnswers { return this.formState.get(this.formIdentity).answers; }
-  private get confirmingPartialSubmit(): boolean { return this.formState.get(this.formIdentity).confirmingPartial; }
-  private set confirmingPartialSubmit(value: boolean) { this.formState.setConfirmingPartial(this.formIdentity, value); }
+  @state() private confirmingPartialSubmit = false;
   private get submitting(): boolean { return this.formState.get(this.formIdentity).operation !== undefined; }
 
   override connectedCallback(): void {
@@ -102,6 +101,7 @@ export class AskUserCard extends LitElement {
     if (active && this.boundState === this.formState && this.boundKey === key && this.unsubscribe !== undefined) return;
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    if (this.boundState !== this.formState || this.boundKey !== key || !active) this.confirmingPartialSubmit = false;
     this.boundState = this.formState;
     this.boundKey = key;
     if (active) this.unsubscribe = this.formState.subscribe(this.formIdentity, () => { this.requestUpdate(); });
@@ -394,6 +394,7 @@ export class AskUserCard extends LitElement {
     // toSubmission decides what is sent; switching controls never erases text.
     const answer: AskDraftAnswer = { values: [], ...this.answers[question.id], ...patch };
     const next: AskDraftAnswers = { ...this.answers, [question.id]: answer };
+    this.confirmingPartialSubmit = false;
     this.formState.setAnswers(this.formIdentity, next);
   }
 

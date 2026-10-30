@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { ChatGroupProjection } from "./chatGroupProjection";
 import { groupChatMessages, type ChatGroup } from "./chatGroups";
 import { normalizeMessage, normalizeMessages, textMessage } from "./chatMessages";
 import { chatLinePresentationIdentity, chatPartIdentity } from "./chatPresentationIdentity";
@@ -15,7 +14,7 @@ function identities(lines: ChatLine[]): (string | undefined)[] {
 }
 
 describe("chat presentation identity", () => {
-  it("addresses original parts before filtering and preserves them across both group projections", () => {
+  it("addresses original parts before filtering and preserves them through grouping", () => {
     const lines = normalizeMessages([{ role: "assistant", entryId: "entry", streamId: "live", content: [
       { type: "text", text: "" },
       { type: "thinking", thinking: "plan" },
@@ -30,9 +29,7 @@ describe("chat presentation identity", () => {
       JSON.stringify(["entry", "entry", "content:1"]), JSON.stringify(["entry", "entry", "content:2"]),
     ]);
     expect(new Set(identities(grouped))).toEqual(new Set(identities(lines)));
-    const projection = new ChatGroupProjection();
-    expect(slices(projection.update(lines, 30))).toEqual(grouped);
-    expect(slices(projection.update([...lines], 10)).map(chatLinePresentationIdentity))
+    expect(slices(groupChatMessages([...lines], 10)).map(chatLinePresentationIdentity))
       .toEqual(grouped.map(chatLinePresentationIdentity));
     const restored: unknown = JSON.parse(JSON.stringify(lines));
     if (!Array.isArray(restored)) throw new Error("Expected serialized transcript array");
@@ -80,17 +77,6 @@ describe("chat presentation identity", () => {
     expect(ended[0]?.streamId).toBe("live");
     expect(ended[0]?.parts.map((part) => part.sourcePart)).toEqual(["content:1", "content:2"]);
     expect(identities(ended)).not.toEqual(identities(seeded)); // caller owns stream-to-entry aliasing
-  });
-
-  it("allocates distinct live-only keys once and retains them through delta appends", () => {
-    let lines = seedStreamingPartial([], { role: "assistant", streamId: "live", content: [] });
-    for (const type of ["assistant.thinking.delta", "assistant.delta", "assistant.thinking.delta"] as const) {
-      lines = applyTranscriptEvent(lines, { type, streamId: "live", text: "chunk" }) ?? [];
-    }
-    expect(lines[0]?.parts.map((part) => part.sourcePart)).toEqual(["delta:0", "delta:1", "delta:2"]);
-    const before = identities(lines);
-    lines = applyTranscriptEvent(lines, { type: "assistant.thinking.delta", streamId: "live", text: " more" }) ?? [];
-    expect(identities(lines)).toEqual(before);
   });
 
   it("keeps successive answers to one ask distinct even when their content is identical", () => {

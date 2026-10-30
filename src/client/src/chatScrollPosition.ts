@@ -126,9 +126,7 @@ export class ChatScrollController {
     if (anchor === undefined) return { status: "missing", position };
     const scrollerTop = scroller.getBoundingClientRect().top;
     const currentOffset = anchor.getBoundingClientRect().top - scrollerTop;
-    const adjustment = currentOffset - position.offset;
-    // Even assigning the same scrollTop can interrupt native touch/wheel inertia.
-    if (adjustment !== 0) scroller.scrollTop += adjustment;
+    scroller.scrollTop += currentOffset - position.offset;
     return { status: "restored" };
   }
 

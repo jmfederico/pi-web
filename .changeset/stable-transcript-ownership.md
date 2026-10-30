@@ -2,4 +2,4 @@
 "@jmfederico/pi-web": patch
 ---
 
-Preserve transcript tool-view choices and pending form drafts/submission locks when chat components are recreated. Keep streamed content ownership stable through finalization and isolate interaction state between sessions and machines.
+Keep split transcript content independently identified and isolate disclosure choices between machines. Preserve pending form drafts and prevent duplicate submissions across session navigation without retargeting callbacks to another session.

@@ -25,15 +25,15 @@ describe("PendingFormState", () => {
   it("isolates scopes and kinds and retains drafts after rejection", async () => {
     const state = new PendingFormState();
     state.setInput(form(), "secret");
-    state.setConfirmingPartial(form("machine:session", "ask"), true);
+    state.setAnswers(form("machine:session", "ask"), { q: { values: ["answer"] } });
     expect(state.get(form("other-machine:session")).input).toBe("");
-    expect(state.get(form()).confirmingPartial).toBe(false);
+    expect(state.get(form()).answers).toEqual({});
     await expect(state.runExclusive(form(), () => { throw new Error("offline"); })).rejects.toThrow("offline");
     expect(state.get(form()).input).toBe("secret");
   });
 
-  it("bounds idle LRU state without evicting locks and clears only authoritative dialog scopes", async () => {
-    const state = new PendingFormState(1);
+  it("clears only authoritative dialog scopes and retains a closing lock until settlement", async () => {
+    const state = new PendingFormState();
     let finish!: () => void;
     state.setInput(form(), "private");
     const operation = state.runExclusive(form(), () => new Promise<void>((resolve) => { finish = resolve; }));
@@ -47,19 +47,18 @@ describe("PendingFormState", () => {
     expect(state.get(form()).operation).toBe(operation);
     finish();
     await operation;
-    expect(state.get(form("old")).input).toBe("");
+    expect(state.get(form("old")).input).toBe("old");
+    expect(state.get(form()).operation).toBeUndefined();
   });
 
-  it("protects an active input draft from unrelated idle-cache eviction", () => {
-    const state = new PendingFormState(1);
-    const stop = state.subscribe(form("active"), () => undefined);
-    state.setInput(form("active"), "typed answer");
-    state.setInput(form("other-1"), "old");
-    state.setInput(form("other-2"), "new");
-    expect(state.get(form("active")).input).toBe("typed answer");
+  it("retains a pending input draft while navigation unsubscribes its card", () => {
+    const state = new PendingFormState();
+    const stop = state.subscribe(form(), () => undefined);
+    state.setInput(form(), "typed answer");
     stop();
-    state.setInput(form("other-3"), "newest");
-    expect(state.get(form("active")).input).toBe("");
+    expect(state.get(form()).input).toBe("typed answer");
+    state.syncDialogs(form().scope, []);
+    expect(state.get(form()).input).toBe("");
   });
 
   it("promotes startup drafts and a pending operation without releasing its shared lock", async () => {
@@ -91,6 +90,18 @@ describe("PendingFormState", () => {
     expect(state.get(ask).operation).toBe(operation);
     finish();
     await operation;
+  });
+
+  it("does not retain historical reads or completed request owners", () => {
+    const state = new PendingFormState();
+    state.get(form("historical", "ask"));
+    state.get(form("historical"));
+    state.setInput(form("temporary"), "startup answer");
+    expect(() => { state.promoteScope("temporary", "historical"); }).not.toThrow();
+    state.forgetDialog("historical", form().requestId);
+    state.setInput(form("next-start"), "next answer");
+    expect(() => { state.promoteScope("next-start", "historical"); }).not.toThrow();
+    expect(state.get(form("historical")).input).toBe("next answer");
   });
 
   it("notifies subscribed remounts and unsubscribes detached cards", async () => {

@@ -57,7 +57,7 @@ interface ScrollFixtureState {
   canRequest: boolean;
 }
 
-function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS, roundScroll = false) {
+function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS) {
   const frames = new ManualScheduler();
   const saves = new ManualScheduler();
   const storage = new MemoryStorage();
@@ -78,7 +78,7 @@ function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS, roundScroll 
   const readTop = vi.fn(() => state.top);
   const readHeight = vi.fn(() => state.height);
   const readViewport = vi.fn(() => state.viewport);
-  const writeTop = vi.fn((top: number) => { state.top = Math.max(0, Math.min(roundScroll ? Math.floor(top) : top, state.height - state.viewport)); });
+  const writeTop = vi.fn((top: number) => { state.top = Math.max(0, Math.min(top, state.height - state.viewport)); });
   Object.defineProperties(scroller, {
     scrollTop: { get: readTop, set: writeTop },
     scrollHeight: { get: readHeight },
@@ -97,8 +97,6 @@ function fixture(behaviors: ChatBehaviors = DEFAULT_CHAT_BEHAVIORS, roundScroll 
     requestEarlier: vi.fn(() => { state.loading = true; }),
     getOpenForm: vi.fn(() => state.openForm),
     onFollowingChange: vi.fn(),
-    requestAnchorMount: vi.fn(() => false),
-    resolveHiddenAnchor: vi.fn<() => string | undefined>(() => undefined),
   };
   const flows = new ChatScrollFlows(host, frames, { storage, saveScheduler: saves });
   function element(contentTop: number, anchorId?: string): HTMLElement {
@@ -194,27 +192,6 @@ describe("ChatScrollFlows composition", () => {
     f.update();
     f.frames.flush();
     expect(f.state.top).toBe(1300);
-  });
-
-  it.each([false, true])("joins mounted renders before paint and respects cancellation (cancel: %s)", async (cancel) => {
-    const f = fixture();
-    let finish: () => void = () => undefined;
-    const rendered = new Promise<void>((resolve) => { finish = resolve; });
-    const whenRendered = vi.fn(() => rendered);
-    Object.assign(f.host, { whenRendered });
-    f.state.top = 100;
-    f.start();
-    f.state.height = 1300;
-    f.update();
-    expect(f.writeTop).not.toHaveBeenCalled();
-    expect(whenRendered).toHaveBeenCalledOnce();
-    if (cancel) f.flows.onUpIntent();
-    finish();
-    await rendered;
-    // No later animation frame is required to repair already-rendered geometry.
-    expect(f.frames.pending).toBe(0);
-    if (cancel) expect(f.writeTop).not.toHaveBeenCalled();
-    else expect(f.state.top).toBe(1000);
   });
 
   it("restores an anchor with the existing codec and does not replace it with a tail jump", () => {
@@ -369,123 +346,6 @@ describe("position flow", () => {
     expect(f.writeTop).toHaveBeenCalledOnce();
     expect(f.storage.values.get(chatScrollStorageKey("s1"))).toBe(JSON.stringify(saved));
     expect(f.host.requestEarlier).toHaveBeenCalledTimes(2);
-  });
-
-  it("mounts a retained saved address before requesting missing history", () => {
-    const f = fixture();
-    f.state.hasMore = true;
-    f.state.top = 200;
-    f.storage.seed("s1", { mode: "anchor", anchorId: "retained", offset: -10 });
-    f.host.requestAnchorMount.mockReturnValue(true);
-    f.start(); f.frames.flush();
-    expect(f.flows.restorationAnchor).toBe("retained");
-    expect(f.host.requestAnchorMount).toHaveBeenCalledWith("retained");
-    expect(f.host.requestEarlier).not.toHaveBeenCalled();
-    f.state.anchors = [f.element(400, "retained")];
-    f.update(); f.frames.flush();
-    expect(f.state.top).toBe(410);
-    expect(f.flows.restorationAnchor).toBeUndefined();
-    expect(f.host.requestEarlier).not.toHaveBeenCalled();
-  });
-
-  it("resolves a retained hidden child to its visible owner without requesting history", () => {
-    const f = fixture();
-    f.state.hasMore = true;
-    f.state.anchors = [f.element(400, "summary")];
-    f.storage.seed("s1", { mode: "anchor", anchorId: "hidden-child", offset: -10 });
-    f.host.resolveHiddenAnchor.mockReturnValue("summary");
-    f.start(); f.frames.flush();
-    expect(f.flows.requiredAnchor).toBe("summary");
-    expect(f.host.requestEarlier).not.toHaveBeenCalled();
-    f.frames.flush();
-    expect(f.state.top).toBe(410);
-    expect(f.flows.requiredAnchor).toBeUndefined();
-    expect(f.host.requestEarlier).not.toHaveBeenCalled();
-  });
-
-  it("preserves reading through mount changes independently of history-anchoring capability", () => {
-    const f = fixture(MANUAL_CHAT_BEHAVIORS);
-    f.state.top = 200;
-    f.state.anchors = [f.element(200, "reading")];
-    f.start();
-    f.flows.beforeMountChange();
-    f.state.anchors = [f.element(350, "reading")];
-    f.flows.configure();
-    expect(f.flows.requiredAnchor).toBe("reading");
-    f.update({ contentChanged: false });
-    f.frames.flush();
-    expect(f.flows.requiredAnchor).toBeUndefined();
-    expect(f.state.top).toBe(350);
-    expect(f.writeTop).toHaveBeenCalledOnce();
-    expect(f.flows.followingLive).toBe(false);
-  });
-
-  it("does not reclaim native scrolling that continues after a mounting snapshot", () => {
-    const f = fixture(MANUAL_CHAT_BEHAVIORS);
-    f.state.top = 200;
-    f.state.anchors = [f.element(200, "reading")];
-    f.start();
-    f.flows.beforeMountChange();
-    // WebKit wheel/touch movement can arrive after input dispatch and rendering.
-    f.state.top = 172;
-    f.update({ contentChanged: false }); f.frames.flush();
-    expect(f.state.top).toBe(172);
-    expect(f.writeTop).not.toHaveBeenCalled();
-  });
-
-  it("still corrects layout-induced clamping when estimated spacers shorten the range", () => {
-    const f = fixture(MANUAL_CHAT_BEHAVIORS);
-    f.state.height = 3000;
-    f.state.top = 2400;
-    f.state.anchors = [f.element(2400, "reading")];
-    f.start();
-    f.flows.beforeMountChange();
-    f.state.height = 2000;
-    f.state.top = 1700; // Browser clamps to the new maximum without user input.
-    f.state.anchors = [f.element(1200, "reading")];
-    f.update({ contentChanged: false }); f.frames.flush();
-    expect(f.state.top).toBe(1200);
-    expect(f.writeTop).toHaveBeenCalledOnce();
-  });
-
-  it("preserves the logical anchor offset instead of accumulating scroll rounding", () => {
-    const f = fixture({ ...MANUAL_CHAT_BEHAVIORS, rememberPosition: true }, true);
-    let contentTop = 400.625;
-    f.state.height = 3000;
-    f.state.anchors = [f.element(contentTop, "reading")];
-    f.storage.seed("s1", { mode: "anchor", anchorId: "reading", offset: -17 });
-    f.start(); f.frames.flush();
-    for (let update = 0; update < 5; update++) {
-      f.flows.beforeMountChange();
-      contentTop += 100.625;
-      f.state.anchors = [f.element(contentTop, "reading")];
-      f.update(); f.frames.flush();
-      expect(Math.abs(contentTop - f.state.top + 17)).toBeLessThanOrEqual(1);
-    }
-  });
-
-  it("carries pixel precision across native movement and a different reader anchor", () => {
-    const f = fixture({ ...MANUAL_CHAT_BEHAVIORS, rememberPosition: true }, true);
-    f.state.height = 3000;
-    let contentTop = 400.625;
-    let idealTop = contentTop + 17;
-    f.state.anchors = [f.element(contentTop, "initial")];
-    f.storage.seed("s1", { mode: "anchor", anchorId: "initial", offset: -17 });
-    f.start(); f.frames.flush();
-    for (let step = 0; step < 5; step++) {
-      f.flows.onUpIntent();
-      f.state.top -= 4;
-      idealTop -= 4;
-      f.flows.onScroll();
-      const id = `reader-${String(step)}`;
-      f.state.anchors = [f.element(contentTop, id)];
-      f.flows.beforeMountChange();
-      contentTop += 100.625;
-      idealTop += 100.625;
-      f.state.anchors = [f.element(contentTop, id)];
-      f.update(); f.frames.flush();
-      expect(Math.abs(f.state.top - idealTop)).toBeLessThan(1);
-    }
   });
 
   it("waits for initial history before treating a remembered anchor as gone", () => {

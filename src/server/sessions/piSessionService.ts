@@ -5908,17 +5908,11 @@ function toClientEvent(event: unknown, thinkingLevel?: string, streamId?: string
   }
   const streamIdentity = streamId === undefined ? {} : { streamId };
   const assistantMessageEvent = getProperty(event, "assistantMessageEvent");
-  if (eventType === "message_update") {
-    const deltaType = getString(assistantMessageEvent, "type");
-    if (deltaType === "text_delta" || deltaType === "thinking_delta") {
-      const contentIndex = getProperty(assistantMessageEvent, "contentIndex");
-      return {
-        type: deltaType === "text_delta" ? "assistant.delta" : "assistant.thinking.delta",
-        text: getString(assistantMessageEvent, "delta") ?? "",
-        ...streamIdentity,
-        ...(typeof contentIndex === "number" && Number.isInteger(contentIndex) && contentIndex >= 0 ? { contentIndex } : {}),
-      };
-    }
+  if (eventType === "message_update" && getString(assistantMessageEvent, "type") === "text_delta") {
+    return { type: "assistant.delta", text: getString(assistantMessageEvent, "delta") ?? "", ...streamIdentity };
+  }
+  if (eventType === "message_update" && getString(assistantMessageEvent, "type") === "thinking_delta") {
+    return { type: "assistant.thinking.delta", text: getString(assistantMessageEvent, "delta") ?? "", ...streamIdentity };
   }
   if (eventType === "tool_execution_start") {
     const args = getProperty(event, "args");

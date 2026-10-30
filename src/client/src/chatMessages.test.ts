@@ -345,21 +345,6 @@ describe("chat message normalization", () => {
   });
 });
 
-describe("indexed assistant appends", () => {
-  it.each(["text", "thinking"] as const)("keeps distinct indexed %s blocks separate", (type) => {
-    const append = (messages: ChatLine[], text: string, index?: number) => type === "text"
-      ? appendText(messages, "assistant", text, index) : appendThinking(messages, text, index);
-    let messages = append([], "first", 0);
-    messages = append(messages, " more", 0);
-    messages = append(messages, "second", 2);
-    expect(messages).toEqual([{ role: "assistant", parts: [
-      { type, text: "first more", sourcePart: "content:0" },
-      { type, text: "second", sourcePart: "content:2" },
-    ] }]);
-    expect(append(messages, "", 3)).toBe(messages);
-  });
-});
-
 describe("appendText", () => {
   it("appends to the previous same-role text message", () => {
     expect(appendText([textMessage("assistant", "hello")], "assistant", " world")).toEqual([

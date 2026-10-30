@@ -1,8 +1,5 @@
 const CACHE_PREFIX = "pi-web:chat-history:v2:";
 const CACHE_TTL_MS = 30 * 60 * 1000;
-const MAX_PERSISTED_MESSAGES = 100;
-const MAX_PERSISTED_BYTES = 256 * 1024;
-const MAX_PERSISTED_SESSIONS = 8;
 
 export interface RawMessagePage {
   messages: unknown[];
@@ -18,11 +15,6 @@ export function readChatHistoryCache(sessionId: string): RawMessagePage | undefi
   try {
     const raw = sessionStorage.getItem(cacheKey(sessionId));
     if (raw === null || raw === "") return undefined;
-    // Retire oversized entries written by older clients as cache misses.
-    if (raw.length * 2 > MAX_PERSISTED_BYTES) {
-      sessionStorage.removeItem(cacheKey(sessionId));
-      return undefined;
-    }
     const parsed: unknown = JSON.parse(raw);
     if (!isCachedHistory(parsed)) return undefined;
     if (Date.now() - parsed.savedAt > CACHE_TTL_MS) {
@@ -37,62 +29,10 @@ export function readChatHistoryCache(sessionId: string): RawMessagePage | undefi
 
 export function writeChatHistoryCache(sessionId: string, page: RawMessagePage): void {
   try {
-    const key = cacheKey(sessionId);
-    const payload = persistedHistoryPayload(page);
-    if (payload === undefined) {
-      sessionStorage.removeItem(key);
-      return;
-    }
-    // Keep the most recently written sessions, leaving unrelated storage alone.
-    const entries: { key: string; savedAt: number }[] = [];
-    for (let index = 0; index < sessionStorage.length; index += 1) {
-      const storedKey = sessionStorage.key(index);
-      if (storedKey === null || storedKey === key || !storedKey.startsWith(CACHE_PREFIX)) continue;
-      const raw = sessionStorage.getItem(storedKey);
-      entries.push({ key: storedKey, savedAt: persistedSavedAt(raw) });
-    }
-    entries.sort((a, b) => b.savedAt - a.savedAt);
-    for (const [index, entry] of entries.entries()) {
-      if (index >= MAX_PERSISTED_SESSIONS - 1 || Date.now() - entry.savedAt > CACHE_TTL_MS) {
-        sessionStorage.removeItem(entry.key);
-      }
-    }
-    sessionStorage.setItem(key, payload);
+    sessionStorage.setItem(cacheKey(sessionId), JSON.stringify({ ...page, savedAt: Date.now() }));
   } catch {
     // Ignore quota/private-mode failures; history paging still works without cache.
   }
-}
-
-function persistedSavedAt(raw: string | null): number {
-  if (raw === null || raw.length * 2 > MAX_PERSISTED_BYTES) return 0;
-  try {
-    const stored: unknown = JSON.parse(raw);
-    return isCachedHistory(stored) ? stored.savedAt : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** Persist only a contiguous recent suffix; the store keeps the full page. */
-function persistedHistoryPayload(page: RawMessagePage): string | undefined {
-  const savedAt = Date.now();
-  const end = page.start + page.messages.length;
-  // Using end for the header reserves enough digits for every possible start.
-  let bytes = JSON.stringify({ messages: [], start: end, total: page.total, savedAt }).length * 2;
-  let offset = page.messages.length;
-  const earliest = Math.max(0, offset - MAX_PERSISTED_MESSAGES);
-  while (offset > earliest) {
-    // Array serialization preserves JSON's null representation of empty slots.
-    const message = JSON.stringify([page.messages[offset - 1]]);
-    const nextBytes = (message.length - 2) * 2 + (offset < page.messages.length ? 2 : 0);
-    if (bytes + nextBytes > MAX_PERSISTED_BYTES) break;
-    bytes += nextBytes;
-    offset -= 1;
-  }
-  // A single oversized newest message is a cache miss, not a gapped page or a
-  // stale previous cache entry. The network remains authoritative.
-  if (offset === page.messages.length && page.messages.length > 0) return undefined;
-  return JSON.stringify({ messages: page.messages.slice(offset), start: page.start + offset, total: page.total, savedAt });
 }
 
 export function removeChatHistoryCache(sessionId: string): void {

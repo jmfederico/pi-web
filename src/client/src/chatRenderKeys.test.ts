@@ -14,6 +14,14 @@ describe("transcript render ownership", () => {
     expect(split[1]).not.toBe(owner);
   });
 
+  it("keeps distinct mounted owners for legacy slices sharing one entry identity", () => {
+    const keys = new ChatRenderKeys();
+    const slices = [{ slot: "0", identity: "entry" }, { slot: "1", identity: "entry" }];
+    const owners = keys.reconcile("session", slices);
+    expect(new Set(owners).size).toBe(2);
+    expect(keys.reconcile("session", slices)).toEqual(owners);
+  });
+
   it("finalizes provisional owners but never reuses a different committed entry by position", () => {
     const keys = new ChatRenderKeys();
     const provisional = keys.reconcile("session", [{ slot: "0" }])[0];

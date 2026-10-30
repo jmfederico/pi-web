@@ -114,17 +114,6 @@ describe("ChatScrollController", () => {
     expect(scroller.scrollTop).toBe(550);
   });
 
-  it("does not assign scrollTop when the anchor is already aligned", () => {
-    const controller = new ChatScrollController(new MemoryScrollStorage(), new ManualScheduler());
-    const scroller = new FakeScroller(200, 1000, 300, 100, 400);
-    Object.defineProperty(scroller, "scrollTop", {
-      get: () => 200,
-      set: () => { throw new Error("A no-op write would interrupt the native gesture"); },
-    });
-    expect(controller.restoreExplicitPosition({ mode: "anchor", anchorId: "reader", offset: -20 }, scroller, [new FakeArticle(80, 170, "reader")]))
-      .toEqual({ status: "restored" });
-  });
-
   it("leaves the viewport unchanged when a stored anchor is missing", () => {
     const storage = new MemoryScrollStorage();
     const controller = new ChatScrollController(storage, new ManualScheduler());

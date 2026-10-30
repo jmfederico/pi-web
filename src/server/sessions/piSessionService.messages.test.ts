@@ -108,22 +108,6 @@ describe("PiSessionService", () => {
       } finally { await service.dispose(); }
     });
 
-    it("carries only valid SDK content indices on text and thinking deltas", async () => {
-      const { fake, service, events } = messagesService([]);
-      try {
-        await service.status(sessionRef("session-1"));
-        for (const [sdkType, type] of [["text_delta", "assistant.delta"], ["thinking_delta", "assistant.thinking.delta"]]) {
-          for (const contentIndex of [0, 3, undefined, -1, 0.5, NaN, Infinity, "0", null]) {
-            const before = events.sessionEvents.length;
-            fake.emit({ type: "message_update", assistantMessageEvent: { type: sdkType, delta: "more", contentIndex } });
-            expect(events.sessionEvents.slice(before).map(({ event }) => event).filter((event) => event.type === type)).toEqual([{
-              type, text: "more", ...(contentIndex === 0 || contentIndex === 3 ? { contentIndex } : {}),
-            }]);
-          }
-        }
-      } finally { await service.dispose(); }
-    });
-
     it("annotates paged assistant messages with the thinking level in effect from branch entries", async () => {
       const branch = [
         { type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } },

@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as templates from "./chatTranscriptTemplates";
 import { ChatView } from "./ChatView";
 import { applyTranscriptEvent } from "../chatTranscript";
 import type { ChatLine } from "./shared";
@@ -125,23 +124,6 @@ describe("transcript DOM ownership", () => {
     view.messages = [{ ...textMessage("user", "earlier"), entryId: "earlier-id" }, ...view.messages];
     await settle(view);
     expect(transcript(view).querySelector("article[data-index='2']")).toBe(reply);
-  });
-
-  it("does not reevaluate historical message templates while the reply streams", async () => {
-    const render = vi.spyOn(templates, "renderMessage");
-    const view = new ChatView();
-    const prompt = { ...textMessage("user", "prompt"), entryId: "prompt" };
-    const answer = { ...textMessage("assistant", "previous answer"), entryId: "answer" };
-    view.messages = [prompt, answer, textMessage("assistant", "partial")];
-    document.body.append(view);
-    await settle(view);
-    render.mockClear();
-
-    view.messages = [prompt, answer, textMessage("assistant", "partial reply")];
-    await settle(view);
-    // This guards PI WEB's template orchestration, not Lit's DOM diffing.
-    expect(render).toHaveBeenCalledTimes(1);
-    expect(render.mock.calls[0]?.[1].parts).toEqual([{ type: "text", text: "partial reply" }]);
   });
 
   it("retains an expanded activity group and its existing children when earlier events merge into it", async () => {
