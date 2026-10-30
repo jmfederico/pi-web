@@ -9,9 +9,20 @@ async function geometry(page: Page) {
 
 async function wheel(page: Page, delta: number): Promise<void> {
   const before = await geometry(page);
-  await page.locator("chat-view .chat").hover();
+  const viewport = page.locator("chat-view .chat");
+  await viewport.hover();
+  // WebKit animates wheel input beyond its first scroll event and two RAFs.
+  // Arm before dispatch; Firefox's synthetic wheel path does not emit scrollend.
+  const animatedWheel = page.context().browser()?.browserType().name() === "webkit";
+  if (animatedWheel) {
+    await viewport.evaluate((element) => {
+      element.removeAttribute("data-wheel-ended");
+      element.addEventListener("scrollend", () => { element.setAttribute("data-wheel-ended", "true"); }, { once: true });
+    });
+  }
   await page.mouse.wheel(0, delta);
   await expect.poll(async () => (await geometry(page)).top).not.toBe(before.top);
+  if (animatedWheel) await expect(viewport).toHaveAttribute("data-wheel-ended", "true");
   await page.evaluate(() => window.viewportFixture.settled());
 }
 
