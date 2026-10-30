@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { nextOccurrence, text, validateTask, type Execution, type Task, type TaskInput } from "./domain.js";
+import { nextOccurrence, text, validateTask, type Execution, type Task, type TaskInput, type ThinkingLevel } from "./domain.js";
 import { openSqlite, type SqliteDatabase } from "./sqlite.js";
 
 /** The daemon activation owns one store. Every multi-record mutation is a local SQLite transaction. */
@@ -61,7 +61,10 @@ export class TaskStore {
     const definition = validateTask(input, now);
     return this.change(id, revision, now, (task) => {
       const scheduleChanged = JSON.stringify(definition.schedule) !== JSON.stringify(task.schedule) || definition.timezone !== task.timezone;
-      return { ...task, ...definition, nextDue: scheduleChanged ? nextOccurrence(definition, now) : task.nextDue };
+      const updated = { ...task, ...definition, nextDue: scheduleChanged ? nextOccurrence(definition, now) : task.nextDue };
+      if (definition.model === undefined) delete updated.model;
+      if (definition.thinkingLevel === undefined) delete updated.thinkingLevel;
+      return updated;
     });
   }
 
@@ -101,13 +104,13 @@ export class TaskStore {
     const rows = taskId === undefined
       ? this.db.prepare("SELECT body FROM executions ORDER BY rowid DESC LIMIT ? OFFSET ?").all(limit, offset)
       : this.db.prepare("SELECT body FROM executions WHERE task_id = ? ORDER BY rowid DESC LIMIT ? OFFSET ?").all(taskId, limit, offset);
-    return rows.map((row) => decode<Execution>(row));
+    return rows.map(decodeExecution);
   }
 
   execution(id: string): Execution {
     const row = this.db.prepare("SELECT body FROM executions WHERE id = ?").get(id);
     if (row === undefined || row === null) throw new Error("Execution not found");
-    return decode<Execution>(row);
+    return decodeExecution(row);
   }
 
   /** Called once before starting scheduling. Never retries an interrupted launch. */
@@ -139,7 +142,7 @@ export class TaskStore {
         if (existing !== undefined && existing !== null) return null;
       }
       const execution: Execution = { id: this.id(), taskId, task, trigger, dueAt, createdAt: now,
-        status: "dispatching", sessionId: null, dispatchError: null, reports: [] };
+        status: "dispatching", sessionId: null, dispatchError: null, reports: [], notices: [] };
       this.db.prepare("INSERT INTO executions (id, task_id, occurrence, body) VALUES (?, ?, ?, ?)")
         .run(execution.id, taskId, occurrence, JSON.stringify(execution));
       if (trigger === "scheduled") this.saveTask({ ...task, nextDue: task.schedule.kind === "once" ? null : nextOccurrence(task, now) });
@@ -147,9 +150,17 @@ export class TaskStore {
     });
   }
 
-  confirmDispatch(id: string, sessionId: string): Execution {
+  recordNotices(id: string, notices: readonly string[]): Execution {
+    return this.mutateExecution(id, (execution) => ({ ...execution,
+      notices: [...execution.notices, ...notices] }));
+  }
+
+  confirmDispatch(id: string, sessionId: string, selection: { model?: string; thinkingLevel?: ThinkingLevel; notices?: readonly string[] } = {}): Execution {
     text(sessionId, "sessionId", 512);
     return this.mutateExecution(id, (execution) => ({ ...execution, sessionId,
+      ...(selection.model === undefined ? {} : { model: selection.model }),
+      ...(selection.thinkingLevel === undefined ? {} : { thinkingLevel: selection.thinkingLevel }),
+      notices: [...execution.notices, ...(selection.notices ?? [])],
       // An agent may explicitly report before the host's initial admission promise resolves.
       status: execution.reports.length > 0 ? execution.status : "dispatched" }));
   }
@@ -196,6 +207,12 @@ export class TaskStore {
       throw error;
     }
   }
+}
+
+function decodeExecution(row: Record<string, unknown>): Execution {
+  const execution = decode<Omit<Execution, "notices"> & { notices?: string[] }>(row);
+  // Version 1 ledgers predate notices; optional selection fields already represent defaults.
+  return { ...execution, notices: execution.notices ?? [] };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- The store owns the versioned schema and all JSON writes; callers select the table record type.

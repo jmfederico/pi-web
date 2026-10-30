@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nextOccurrence, validateTask, type Execution, type TaskInput } from "./domain.js";
-import { DispatchRejected, TaskScheduler } from "./scheduler.js";
+import { DispatchRejected, TaskScheduler, type DispatchSettings } from "./scheduler.js";
 import { openSqlite } from "./sqlite.js";
 import { TaskStore } from "./store.js";
 
@@ -30,6 +30,37 @@ afterEach(() => {
 });
 
 describe("task definitions and SQLite ledger", () => {
+  it("keeps requested overrides in immutable revisions and clears omitted overrides on replacement", () => {
+    const store = memory();
+    const task = store.create(input({ model: "provider/model", thinkingLevel: "high" }), NOW);
+    const execution = required(store.claim(task.id, "manual", NOW));
+    const updated = store.update(task.id, 1, input(), NOW);
+    expect(updated).not.toHaveProperty("model");
+    expect(updated).not.toHaveProperty("thinkingLevel");
+    expect(store.task(task.id)).not.toHaveProperty("model");
+    expect(store.revisions(task.id)[0]).toMatchObject({ model: "provider/model", thinkingLevel: "high" });
+    expect(store.execution(execution.id).task).toMatchObject({ model: "provider/model", thinkingLevel: "high" });
+  });
+
+  it("normalizes legacy execution notices and preserves notices through confirmation and outcome corrections", () => {
+    const db = openSqlite(":memory:");
+    const store = new TaskStore(db);
+    stores.push(store);
+    const task = store.create(input(), NOW);
+    const execution = required(store.claim(task.id, "manual", NOW));
+    const legacy: Partial<Execution> = { ...execution };
+    delete legacy.notices;
+    db.prepare("UPDATE executions SET body = ? WHERE id = ?").run(JSON.stringify(legacy), execution.id);
+    expect(store.execution(execution.id).notices).toEqual([]);
+    expect(store.executions()[0]?.notices).toEqual([]);
+    store.recordNotices(execution.id, ["Default model selected"]);
+    store.report(execution.id, "completed", "Fast outcome", NOW);
+    store.confirmDispatch(execution.id, "session", { model: "provider/default", thinkingLevel: "low",
+      notices: ["Thinking adjusted"] });
+    store.report(execution.id, "errored", "Correction", LATER);
+    expect(store.execution(execution.id)).toMatchObject({ status: "errored", model: "provider/default", thinkingLevel: "low",
+      notices: ["Default model selected", "Thinking adjusted"] });
+  });
   it("persists immutable revisions, execution instructions, explicit corrections and conversation identity across reopen", () => {
     const directory = mkdtempSync(join(tmpdir(), "scheduled-tasks-"));
     directories.push(directory);
@@ -41,7 +72,8 @@ describe("task definitions and SQLite ledger", () => {
     expect(store.execution(execution.id).task.prompt).toBe("Review new issues");
     // A fast initial turn can report before admission returns its session id.
     store.report(execution.id, "completed", "Classified 5 issues", NOW);
-    store.confirmDispatch(execution.id, "session-1");
+    store.confirmDispatch(execution.id, "session-1", { model: "provider/default", thinkingLevel: "low",
+      notices: ["Default model selected"] });
     store.report(execution.id, "errored", "Correction: one classification was not saved", LATER);
     store.close();
 
@@ -50,7 +82,8 @@ describe("task definitions and SQLite ledger", () => {
     reopened.recover(LATER);
     expect(reopened.task(task.id)).toMatchObject({ revision: 2, prompt: "Different instructions", nextDue: null });
     expect(reopened.revisions(task.id).map((revision) => revision.prompt)).toEqual(["Review new issues", "Different instructions"]);
-    expect(reopened.execution(execution.id)).toMatchObject({ sessionId: "session-1", status: "errored", reports: [
+    expect(reopened.execution(execution.id)).toMatchObject({ sessionId: "session-1", status: "errored",
+      model: "provider/default", thinkingLevel: "low", notices: ["Default model selected"], reports: [
       { outcome: "completed", summary: "Classified 5 issues" },
       { outcome: "errored", summary: "Correction: one classification was not saved" },
     ] });
@@ -164,6 +197,76 @@ describe("task definitions and SQLite ledger", () => {
 });
 
 describe("dispatch orchestration", () => {
+  it("falls back each unavailable override once, persists notices before retry, and keeps the requested revision", async () => {
+    const store = memory();
+    const task = store.create(input({ model: "provider/missing", thinkingLevel: "max" }), NOW);
+    const dispatch = vi.fn((_execution: Execution, settings: DispatchSettings) => {
+      const notices = store.executions(task.id)[0]?.notices ?? [];
+      if (settings.model !== undefined) {
+        expect(notices).toHaveLength(0);
+        return Promise.reject(Object.assign(new Error("Model missing"), { code: "PI_SESSION_MODEL_UNAVAILABLE" }));
+      }
+      if (settings.thinkingLevel !== undefined) {
+        expect(notices).toHaveLength(1);
+        return Promise.reject(Object.assign(new Error("Thinking missing"), { code: "PI_SESSION_THINKING_UNAVAILABLE" }));
+      }
+      expect(notices).toHaveLength(2);
+      return Promise.resolve({ sessionId: "session", model: "provider/default", thinkingLevel: "low" as const });
+    });
+    const scheduler = new TaskScheduler(store, { dispatch }, () => NOW, vi.fn());
+    const execution = await scheduler.dispatchManually(task.id);
+    expect(dispatch.mock.calls.map((call) => call[1])).toEqual([
+      { model: "provider/missing", thinkingLevel: "max" }, { thinkingLevel: "max" }, {},
+    ]);
+    expect(execution).toMatchObject({ status: "dispatched", model: "provider/default", thinkingLevel: "low",
+      task: { model: "provider/missing", thinkingLevel: "max", revision: 1 } });
+    expect(execution.notices).toHaveLength(2);
+    expect(store.task(task.id)).toMatchObject({ model: "provider/missing", thinkingLevel: "max", revision: 1 });
+  });
+
+  it("preserves the other override and never retries an ambiguous failure after fallback", async () => {
+    const store = memory();
+    const task = store.create(input({ model: "provider/model", thinkingLevel: "max" }), NOW);
+    const dispatch = vi.fn<(_execution: Execution, settings: DispatchSettings) => Promise<{ sessionId: string }>>()
+      .mockRejectedValueOnce(Object.assign(new Error("Thinking unavailable"), { code: "PI_SESSION_THINKING_UNAVAILABLE" }))
+      .mockRejectedValueOnce(new Error("Unknown model after connection lost"));
+    const scheduler = new TaskScheduler(store, { dispatch }, () => NOW, vi.fn());
+    const execution = await scheduler.dispatchManually(task.id);
+    expect(dispatch.mock.calls.map((call) => call[1])).toEqual([
+      { model: "provider/model", thinkingLevel: "max" }, { model: "provider/model" },
+    ]);
+    expect(execution).toMatchObject({ status: "uncertain", dispatchError: "Unknown model after connection lost" });
+    expect(execution.notices).toHaveLength(1);
+    expect(execution).not.toHaveProperty("model");
+  });
+
+  it("stops repeated typed rejections and does not retry untyped unknown-model errors", async () => {
+    const store = memory();
+    const task = store.create(input({ model: "provider/missing" }), NOW);
+    const dispatch = vi.fn<(_execution: Execution, settings: DispatchSettings) => Promise<{ sessionId: string }>>()
+      .mockRejectedValue(Object.assign(new Error("Model unavailable"), { code: "PI_SESSION_MODEL_UNAVAILABLE" }));
+    const scheduler = new TaskScheduler(store, { dispatch }, () => NOW, vi.fn());
+    const rejected = await scheduler.dispatchManually(task.id);
+    expect(rejected).toMatchObject({ status: "failed", notices: [expect.any(String)] });
+    expect(store.execution(rejected.id).notices).toEqual(rejected.notices);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    dispatch.mockClear().mockRejectedValue(new Error("Unknown model: provider/missing"));
+    expect(await scheduler.dispatchManually(task.id)).toMatchObject({ status: "uncertain", notices: [] });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not attempt fallback if its notice cannot be durably recorded", async () => {
+    const db = openSqlite(":memory:");
+    const store = new TaskStore(db);
+    stores.push(store);
+    const task = store.create(input({ model: "provider/missing" }), NOW);
+    db.exec("CREATE TRIGGER reject_execution_update BEFORE UPDATE ON executions BEGIN SELECT RAISE(ABORT, 'notice write failed'); END;");
+    const dispatch = vi.fn(() => Promise.reject(Object.assign(new Error("Model missing"), { code: "PI_SESSION_MODEL_UNAVAILABLE" })));
+    const scheduler = new TaskScheduler(store, { dispatch }, () => NOW, vi.fn());
+    await expect(scheduler.dispatchManually(task.id)).rejects.toThrow("notice write failed");
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(store.executions(task.id)[0]).toMatchObject({ status: "dispatching", notices: [] });
+  });
   it("keeps recurrences independent of unresolved launches and explicit outcomes", async () => {
     const store = memory();
     let now = NOW;
@@ -232,6 +335,17 @@ describe("dispatch orchestration", () => {
 });
 
 describe("schedule/input boundaries", () => {
+  it("validates optional model and thinking independently without resolving availability", () => {
+    expect(validateTask(input({ model: "future-provider/model" }), NOW)).toMatchObject({ model: "future-provider/model" });
+    expect(validateTask(input({ thinkingLevel: "off" }), NOW)).toMatchObject({ thinkingLevel: "off" });
+    expect(validateTask(input(), NOW)).not.toHaveProperty("model");
+    for (const model of ["", " ", "bad\u0000id", "x".repeat(513)]) {
+      expect(() => validateTask(input({ model }), NOW)).toThrow("model");
+    }
+    const invalid = { ...input(), thinkingLevel: "invalid" };
+    // @ts-expect-error -- Runtime transport validation must reject values outside the union.
+    expect(() => validateTask(invalid, NOW)).toThrow("thinkingLevel");
+  });
   it("stores explicit timezones and delegates DST-aware recurrence calculation to cron-parser", () => {
     const task = input({ schedule: { kind: "cron", expression: "0 9 * * *" } });
     expect(nextOccurrence(task, NOW)).toBe("2026-03-08T13:00:00.000Z");

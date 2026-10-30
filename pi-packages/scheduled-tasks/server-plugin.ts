@@ -48,7 +48,7 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
       store = TaskStore.open(join(context.dataDirectory, "tasks.sqlite"));
       store.recover(now());
       scheduler = new TaskScheduler(store, {
-        async dispatch(execution) {
+        async dispatch(execution, settings) {
           let prompt: string;
           try {
             await validateTarget(execution.task);
@@ -57,11 +57,14 @@ export function activateTasks(context: ServerPluginActivationContextV5, now: () 
           } catch (error) {
             throw new DispatchRejected(error instanceof Error ? error.message : String(error));
           }
-          // After entering run(), failure can be ambiguous: never automatically resend.
-          const run = await sessions.run({ projectId: execution.task.projectId, workspaceId: execution.task.workspaceId, prompt });
+          // The scheduler retries only typed pre-prompt rejections, never ambiguous failures.
+          const run = await sessions.run({ projectId: execution.task.projectId, workspaceId: execution.task.workspaceId, prompt, ...settings });
           // Initial-turn completion is deliberately NOT an execution outcome.
           void run.completion.catch(logError);
-          return { sessionId: run.sessionId };
+          return { sessionId: run.sessionId,
+            ...(run.model === undefined ? {} : { model: run.model }),
+            ...(run.thinkingLevel === undefined ? {} : { thinkingLevel: run.thinkingLevel }),
+          };
         },
       }, now, logError);
       service = new TaskService(store, scheduler, validateTarget, defaultTimezone, now, catalog);

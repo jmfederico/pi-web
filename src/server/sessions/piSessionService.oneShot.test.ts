@@ -1,8 +1,11 @@
 import { setImmediate } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import type { ClientThinkingLevel } from "../types.js";
 import { PiSessionService, type PiSessionRuntime } from "./piSessionService.js";
 import {
   CapturingSessionEventHub,
+  createTestModelRuntime,
+  testModel,
   fakeRuntime,
   emptyArchiveStore,
   runtimeCreator,
@@ -26,6 +29,161 @@ function deferred<T = void>() {
 }
 
 describe("PiSessionService host-owned one-shot runs", () => {
+  const modelSpec = `${testModel().provider}/${testModel().id}`;
+
+  it.each([
+    { model: modelSpec },
+    { thinkingLevel: "high" as const },
+    { model: modelSpec, thinkingLevel: "high" as const },
+    {},
+  ])("applies strict overrides before publication and reports effective settings: %j", async (options: { model?: string; thinkingLevel?: ClientThinkingLevel }) => {
+    const modelRuntime = await createTestModelRuntime();
+    const refresh = vi.spyOn(modelRuntime, "refresh");
+    vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([testModel()]);
+    const hub = new CapturingSessionEventHub();
+    const fake = fakeRuntime("session-1", { model: testModel(), getAvailableThinkingLevels: () => ["off", "high"] });
+    const setThinkingLevel = vi.fn((level: ClientThinkingLevel) => {
+      expect(hub.globalEvents.some((event) => event.type === "session.created")).toBe(false);
+      fake.session.thinkingLevel = level;
+    });
+    fake.session.setThinkingLevel = setThinkingLevel;
+    const createAgentRuntime = vi.fn<RuntimeCreator>((_factory, input) => {
+      expect(input.initialModel).toEqual(options.model === undefined ? undefined : testModel());
+      expect(input.initialThinkingLevel).toBeUndefined();
+      if (input.initialModel !== undefined) fake.session.model = input.initialModel;
+      return Promise.resolve(fake.runtime);
+    });
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR, modelRuntime, createAgentRuntime,
+      sessionManager: sessionGateway([]), heartbeatIntervalMs: 60_000,
+    });
+    try {
+      const run = await service.startOneShotRun("/workspace", "Work", new AbortController().signal, options);
+      await run.completion;
+      expect(run).toEqual({
+        id: "session-1", completion: run.completion,
+        model: modelSpec, thinkingLevel: options.thinkingLevel ?? "off",
+      });
+      if (options.model !== undefined) expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      expect(setThinkingLevel).toHaveBeenCalledTimes(options.thinkingLevel === undefined ? 0 : 1);
+      expect(fake.calls.prompt).toHaveLength(1);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it("rejects a known catalog model absent from refreshed availability before creating or prompting", async () => {
+    const modelRuntime = await createTestModelRuntime();
+    expect(modelRuntime.getModel(testModel().provider, testModel().id)).toBeDefined();
+    const refreshed = deferred();
+    const refresh = vi.spyOn(modelRuntime, "refresh").mockImplementation(async () => {
+      await refreshed.promise;
+      return { aborted: false, errors: new Map() };
+    });
+    // Removed credentials or a removed provider can leave a catalog entry that
+    // is not eligible for execution. Do not use getModel as a fallback.
+    const available = vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([]);
+    const fake = fakeRuntime("session-1");
+    const createAgentRuntime = vi.fn(runtimeCreator(fake.runtime));
+    const hub = new CapturingSessionEventHub();
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR, modelRuntime, createAgentRuntime,
+      sessionManager: sessionGateway([]), heartbeatIntervalMs: 60_000,
+    });
+    try {
+      const starting = service.startOneShotRun("/workspace", "Work", new AbortController().signal, { model: modelSpec });
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      expect(available).not.toHaveBeenCalled();
+      refreshed.resolve();
+      await expect(starting).rejects.toMatchObject({ code: "PI_SESSION_MODEL_UNAVAILABLE" });
+      expect(createAgentRuntime).not.toHaveBeenCalled();
+      expect(fake.calls.prompt).toHaveLength(0);
+      expect(hub.globalEvents.some((event) => event.type === "session.created")).toBe(false);
+    } finally {
+      refreshed.resolve();
+      await service.dispose();
+    }
+  });
+
+  it.each(["not-a-spec", "missing/model", "anthropic/missing", `${modelSpec}:high`])("rejects unknown exact model %s without creating or prompting", async (model) => {
+    const fake = fakeRuntime("session-1");
+    const createAgentRuntime = vi.fn(runtimeCreator(fake.runtime));
+    const hub = new CapturingSessionEventHub();
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR, modelRuntime: testModelRuntime, createAgentRuntime,
+      sessionManager: sessionGateway([]), heartbeatIntervalMs: 60_000,
+    });
+    try {
+      await expect(service.startOneShotRun("/workspace", "Work", new AbortController().signal, { model }))
+        .rejects.toMatchObject({ code: "PI_SESSION_MODEL_UNAVAILABLE" });
+      expect(createAgentRuntime).not.toHaveBeenCalled();
+      expect(fake.calls.prompt).toHaveLength(0);
+      expect(hub.globalEvents.some((event) => event.type === "session.created")).toBe(false);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it.each(["unsupported", "clamped", "model-changed"])("cleans up unpublished startup on %s override failure", async (kind) => {
+    const modelRuntime = await createTestModelRuntime();
+    vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([testModel()]);
+    const fake = fakeRuntime("session-1", {
+      model: kind === "model-changed" ? undefined : testModel(),
+      getAvailableThinkingLevels: () => kind === "unsupported" ? ["off"] : ["off", "high"],
+    });
+    const setThinkingLevel = vi.spyOn(fake.session, "setThinkingLevel");
+    const hub = new CapturingSessionEventHub();
+    const service = new PiSessionService(hub, {
+      agentDir: TEST_AGENT_DIR, modelRuntime, createAgentRuntime: runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]), heartbeatIntervalMs: 60_000,
+    });
+    try {
+      await expect(service.startOneShotRun("/workspace", "Work", new AbortController().signal, {
+        ...(kind === "model-changed" ? { model: modelSpec } : {}), thinkingLevel: "high",
+      })).rejects.toMatchObject({ code: kind === "model-changed" ? "PI_SESSION_MODEL_UNAVAILABLE" : "PI_SESSION_THINKING_UNAVAILABLE" });
+      expect(setThinkingLevel).toHaveBeenCalledTimes(kind === "clamped" ? 1 : 0);
+      expect(fake.calls.prompt).toHaveLength(0);
+      expect(fake.calls.dispose).toBe(1);
+      expect(service.activeCount()).toBe(0);
+      expect(hub.globalEvents.some((event) => event.type === "session.created")).toBe(false);
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  it.each(["refresh", "startup", "thinking", "prompt"])("does not relabel %s failures as retry-safe validation errors", async (stage) => {
+    const failure = new Error("provider/config failure");
+    const modelRuntime = await createTestModelRuntime();
+    vi.spyOn(modelRuntime, "getAvailableSnapshot").mockReturnValue([testModel()]);
+    if (stage === "refresh") vi.spyOn(modelRuntime, "refresh").mockRejectedValue(failure);
+    const fake = fakeRuntime("session-1", {
+      model: testModel(), getAvailableThinkingLevels: () => ["off", "high"],
+      setThinkingLevel: () => { throw failure; },
+      prompt: () => Promise.reject(failure),
+    });
+    const service = new PiSessionService(new CapturingSessionEventHub(), {
+      agentDir: TEST_AGENT_DIR, modelRuntime,
+      createAgentRuntime: stage === "startup" ? () => Promise.reject(failure) : runtimeCreator(fake.runtime),
+      sessionManager: sessionGateway([]), heartbeatIntervalMs: 60_000,
+    });
+    try {
+      const starting = service.startOneShotRun("/workspace", "Work", new AbortController().signal, {
+        model: modelSpec, ...(stage === "thinking" ? { thinkingLevel: "high" } : {}),
+      });
+      if (stage === "prompt") {
+        const run = await starting;
+        await expect(run.completion).rejects.toBe(failure);
+        expect(service.activeCount()).toBe(1);
+      } else {
+        await expect(starting).rejects.toBe(failure);
+        expect(fake.calls.prompt).toHaveLength(0);
+      }
+      expect(failure).not.toHaveProperty("code");
+    } finally {
+      await service.dispose();
+    }
+  });
+
   it.each(["managed", "existing"])("observes %s startup without admitting ordinary prompts before binding finishes", async (kind) => {
     const entered = deferred();
     const binding = deferred();
@@ -125,7 +283,7 @@ describe("PiSessionService host-owned one-shot runs", () => {
       expect(hub.globalEvents.some((event) => event.type === "session.created")).toBe(true);
       return prompt.promise;
     });
-    const fake = fakeRuntime("session-1", { prompt: promptCall });
+    const fake = fakeRuntime("session-1", { prompt: promptCall, model: testModel(), thinkingLevel: "medium" });
     let delegationToolsEnabled: boolean | undefined;
     const createAgentRuntime: RuntimeCreator = async (_createRuntime, options) => {
       delegationToolsEnabled = options.delegationToolsEnabled;
@@ -149,7 +307,7 @@ describe("PiSessionService host-owned one-shot runs", () => {
     void run.completion.then(() => { settled = true; });
     await Promise.resolve();
 
-    expect(run.id).toBe("session-1");
+    expect(run).toEqual({ id: "session-1", completion: run.completion, model: modelSpec, thinkingLevel: "medium" });
     expect(promptCall).toHaveBeenCalledWith("Do the bounded work", undefined);
     expect(settled).toBe(false);
     expect(delegationToolsEnabled).toBe(false);

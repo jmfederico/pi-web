@@ -82,7 +82,11 @@ describe("managed launcher native Pi integration", () => {
       archiveStore: emptyArchiveStore(), heartbeatIntervalMs: 60_000,
     });
     try {
-      const run = await service.startOneShotRun(directory, initialPrompt, new AbortController().signal);
+      const model = `${testModel().provider}/${testModel().id}`;
+      const run = await service.startOneShotRun(directory, initialPrompt, new AbortController().signal,
+        initialPrompt === "handled" ? undefined : { model, thinkingLevel: "high" });
+      expect(run).toMatchObject({ model, thinkingLevel: session.thinkingLevel });
+      if (initialPrompt !== "handled") expect(session.thinkingLevel).toBe("high");
       if (initialPrompt === "retry-cancelled") {
         await retryStarted;
         expect(session.isRetrying).toBe(true);

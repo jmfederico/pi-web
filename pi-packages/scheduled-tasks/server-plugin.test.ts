@@ -9,7 +9,7 @@ import { createEventBus, DefaultResourceLoader, SettingsManager, type ExtensionT
 import scheduledTasksExtension from "./extensions/index.js";
 import { activateTasks } from "./server-plugin.js";
 import { TaskStore } from "./store.js";
-import type { Execution } from "./domain.js";
+import type { Execution, TaskInput } from "./domain.js";
 
 const roots: string[] = [];
 const cleanups: (() => Promise<void>)[] = [];
@@ -64,8 +64,8 @@ async function fixture(options: { root?: string; timezone?: string; startTime?: 
     root, run, resolve, lifetime, dispose, logger,
     setNow: (value: string) => { now = value; },
     request: (operation: string, input: JsonValue = {}) => activation.peer.request({ scope: { kind: "machine" }, operation, input, signal }),
-    create: async () => {
-      await activation.peer.request({ scope: { kind: "machine" }, operation: "create", input: definition, signal });
+    create: async (settings: Pick<TaskInput, "model" | "thinkingLevel"> = {}) => {
+      await activation.peer.request({ scope: { kind: "machine" }, operation: "create", input: { ...definition, ...settings }, signal });
       const db = TaskStore.open(join(root, "tasks.sqlite"));
       try { const task = db.listTasks()[0]; if (task === undefined) throw new Error("Missing task"); return task; }
       finally { db.close(); }
@@ -74,6 +74,24 @@ async function fixture(options: { root?: string; timezone?: string; startTime?: 
 }
 
 describe("scheduled task daemon integration", () => {
+  it("passes overrides to the host, safely falls back, and exposes notices and effective settings", async () => {
+    const f = await fixture({ timezone: "UTC" });
+    const task = await f.create({ model: "provider/missing", thinkingLevel: "high" });
+    f.run.mockRejectedValueOnce(Object.assign(new Error("Model missing"), { code: "PI_SESSION_MODEL_UNAVAILABLE" }));
+    f.run.mockResolvedValueOnce({ sessionId: "fallback-session", model: "provider/default", thinkingLevel: "high",
+      completion: Promise.resolve({ status: "completed" }) });
+    await expect(f.request("dispatch", { taskId: task.id })).resolves.toMatchObject({
+      status: "dispatched", model: "provider/default", thinkingLevel: "high", notices: [expect.any(String)],
+      task: { model: "provider/missing", thinkingLevel: "high" },
+    });
+    expect(f.run).toHaveBeenCalledTimes(2);
+    expect(f.run.mock.calls[0]?.[0]).toMatchObject({ model: "provider/missing", thinkingLevel: "high" });
+    expect(f.run.mock.calls[1]?.[0]).not.toHaveProperty("model");
+    expect(f.run.mock.calls[1]?.[0]).toMatchObject({ thinkingLevel: "high" });
+    await expect(f.request("history", { taskId: task.id })).resolves.toMatchObject({ executions: [{
+      model: "provider/default", thinkingLevel: "high", notices: [expect.any(String)],
+    }] });
+  });
   it("dispatches without browser activity, links the conversation, and requires explicit outcome reports", async () => {
     vi.useFakeTimers();
     const f = await fixture({ timezone: "Europe/Madrid" });

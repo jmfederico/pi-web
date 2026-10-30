@@ -11,6 +11,8 @@ export interface TaskView {
   paused: boolean;
   archived: boolean;
   nextDue: string | null;
+  model?: string;
+  thinkingLevel?: string;
 }
 export interface ExecutionView {
   id: string;
@@ -21,6 +23,9 @@ export interface ExecutionView {
   sessionId: string | null;
   dispatchError: string | null;
   latestReport: { summary: string } | null;
+  notices?: string[];
+  model?: string;
+  thinkingLevel?: string;
 }
 export interface TaskOverview extends TaskView { latestExecution: ExecutionView | null }
 export interface HistoryPage { executions: ExecutionView[]; nextOffset: number | null }
@@ -50,6 +55,7 @@ function readTask(value: unknown): TaskView {
     id: string(row["id"]), name: string(row["name"]), revision: row["revision"], projectId: string(row["projectId"]), workspaceId: string(row["workspaceId"]),
     schedule: kind === "once" ? { kind, at: timestamp(schedule["at"]) } : { kind, expression: string(schedule["expression"]) },
     timezone, paused: row["paused"], archived: row["archived"], nextDue: nullable(row["nextDue"], timestamp),
+    ...readModelSettings(row),
   };
 }
 function readExecution(value: unknown): ExecutionView {
@@ -62,7 +68,19 @@ function readExecution(value: unknown): ExecutionView {
     id: string(row["id"]), task: readTask(row["task"]), status, trigger, createdAt: timestamp(row["createdAt"]),
     sessionId: nullable(row["sessionId"], string), dispatchError: nullable(row["dispatchError"], string),
     latestReport: nullable(row["latestReport"], (report) => ({ summary: string(record(report)["summary"]) })),
+    ...readModelSettings(row),
+    ...(row["notices"] === undefined ? {} : { notices: readNotices(row["notices"]) }),
   };
+}
+function readModelSettings(row: Record<string, unknown>): { model?: string; thinkingLevel?: string } {
+  return {
+    ...(row["model"] === undefined ? {} : { model: string(row["model"]) }),
+    ...(row["thinkingLevel"] === undefined ? {} : { thinkingLevel: string(row["thinkingLevel"]) }),
+  };
+}
+function readNotices(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error("Invalid notices");
+  return value.map(string);
 }
 function nullable<T>(value: unknown, parse: (input: unknown) => T): T | null { return value === null ? null : parse(value); }
 function record(value: unknown): Record<string, unknown> {

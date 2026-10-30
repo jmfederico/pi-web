@@ -60,6 +60,7 @@ describe("Scheduled tasks dashboard", () => {
     expect(target.request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     expect(button(target.root, `View task: ${task.name}`).textContent).toBe(task.name);
     expect(target.root.querySelector("script")).toBeNull();
+    expect(target.root.querySelector(".run-warning")).toBeNull();
     // A retained due timestamp is not an upcoming dispatch while the task is paused.
     expect(target.root.querySelector('[aria-labelledby="upcoming-title"] article')).toBeNull();
     expect(target.root.querySelector('[aria-labelledby="awaiting-title"] [data-status="dispatched"]')).not.toBeNull();
@@ -105,6 +106,28 @@ describe("Scheduled tasks dashboard", () => {
     await vi.waitFor(() => { expect(target.root.querySelector('.history-entry [data-status="completed"]')).not.toBeNull(); });
     expect(target.root.querySelector(".history-entry .summary")?.textContent).toBe("Corrected result");
     expect(target.root.querySelector(".pages")).toBeNull();
+    expect(target.request.mock.calls.every(([operation]) => ["overview", "history"].includes(operation))).toBe(true);
+  });
+  it("shows run warnings without changing outcomes and distinguishes requested from effective settings", async () => {
+    const configured = { ...task, model: "provider/requested", thinkingLevel: "high" };
+    const notice = "Model <fallback> used instead.\nCheck configuration.";
+    const run = { ...execution, task: configured, status: "completed", model: "provider/fallback", thinkingLevel: "low", notices: [notice] };
+    const target = setup(vi.fn((operation) => Promise.resolve(operation === "overview"
+      ? { tasks: [{ ...configured, latestExecution: run }] }
+      : { executions: [run], nextOffset: null })));
+    await ready(target);
+    const result = target.root.querySelector('[aria-labelledby="results-title"] article');
+    expect(result?.querySelector('[data-status="completed"]')).not.toBeNull();
+    expect(result?.querySelector(".run-warning")?.textContent).toContain(notice);
+    expect(result?.querySelector("details")).toBeNull();
+    button(target.root, `View task: ${task.name}`).click();
+    await vi.waitFor(() => { expect(target.root.querySelector(".history-entry .run-warning")?.textContent).toContain(notice); });
+    const details = target.root.querySelector(".history-entry details");
+    expect(details?.textContent).toContain("Requested model: provider/requested");
+    expect(details?.textContent).toContain("Effective model: provider/fallback");
+    expect(details?.textContent).toContain("Requested thinking level: high");
+    expect(details?.textContent).toContain("Effective thinking level: low");
+    expect(target.root.querySelector("fallback")).toBeNull();
     expect(target.request.mock.calls.every(([operation]) => ["overview", "history"].includes(operation))).toBe(true);
   });
   it("opens global history on demand and returns to the overview without loading history again", async () => {

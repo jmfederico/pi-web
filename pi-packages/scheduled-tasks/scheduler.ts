@@ -1,12 +1,15 @@
-import type { Execution } from "./domain.js";
+import type { Execution, TaskInput } from "./domain.js";
 import type { TaskStore } from "./store.js";
+
+export type DispatchSettings = Pick<TaskInput, "model" | "thinkingLevel">;
+export interface DispatchedSession extends DispatchSettings { sessionId: string }
 
 export interface TaskDispatcher {
   /** Return only after the host confirms conversation publication and initial prompt admission. */
-  dispatch(execution: Execution): Promise<{ sessionId: string }>;
+  dispatch(execution: Execution, settings: DispatchSettings): Promise<DispatchedSession>;
 }
 
-/** Use only for a failure known to occur before attempting session publication. */
+/** Use only for a failure known to occur before initial prompt admission. */
 export class DispatchRejected extends Error {}
 
 /** Package orchestration only: the activation owns the timer, store and stop/drain lifecycle. */
@@ -60,13 +63,34 @@ export class TaskScheduler {
   }
 
   private async dispatch(execution: Execution): Promise<Execution> {
-    let session: { sessionId: string };
-    try {
-      session = await this.dispatcher.dispatch(execution);
-    } catch (error) {
-      return this.store.dispatchProblem(execution.id, error instanceof Error ? error.message : String(error), error instanceof DispatchRejected);
+    const settings: DispatchSettings = {
+      ...(execution.task.model === undefined ? {} : { model: execution.task.model }),
+      ...(execution.task.thinkingLevel === undefined ? {} : { thinkingLevel: execution.task.thinkingLevel }),
+    };
+    let session: DispatchedSession;
+    for (;;) {
+      try {
+        session = await this.dispatcher.dispatch(execution, { ...settings });
+        break;
+      } catch (error) {
+        // Only these host codes guarantee that no initial prompt was submitted.
+        // Each override can be removed once; all other admission failures remain ambiguous.
+        const code: unknown = error instanceof Error ? Reflect.get(error, "code") : undefined;
+        if (code === "PI_SESSION_MODEL_UNAVAILABLE" && settings.model !== undefined) {
+          this.store.recordNotices(execution.id, [`Requested model ${JSON.stringify(settings.model)} was unavailable; using the session default model.`]);
+          delete settings.model;
+          continue;
+        }
+        if (code === "PI_SESSION_THINKING_UNAVAILABLE" && settings.thinkingLevel !== undefined) {
+          this.store.recordNotices(execution.id, [`Requested thinking level ${JSON.stringify(settings.thinkingLevel)} was unavailable; using the session default thinking level.`]);
+          delete settings.thinkingLevel;
+          continue;
+        }
+        const certainFailure = error instanceof DispatchRejected || code === "PI_SESSION_MODEL_UNAVAILABLE" || code === "PI_SESSION_THINKING_UNAVAILABLE";
+        return this.store.dispatchProblem(execution.id, error instanceof Error ? error.message : String(error), certainFailure);
+      }
     }
     // A failed confirmation write must surface as a storage error, not be mislabeled a rejected launch.
-    return this.store.confirmDispatch(execution.id, session.sessionId);
+    return this.store.confirmDispatch(execution.id, session.sessionId, session);
   }
 }

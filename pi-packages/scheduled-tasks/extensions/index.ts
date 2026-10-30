@@ -11,6 +11,8 @@ const definition = Type.Object({
   projectId: id("Registered project ID from scheduled_tasks_targets; not a filesystem path."),
   workspaceId: id("Registered workspace ID from scheduled_tasks_targets; not a filesystem path."),
   prompt: Type.String({ minLength: 1, maxLength: 49152, description: "Initial instructions for a normal conversation." }),
+  model: Type.Optional(Type.String({ minLength: 1, maxLength: 512, description: "Requested provider/model ID. Omit to use the session default. If unavailable at dispatch, the scheduler uses the default and records a notice." })),
+  thinkingLevel: Type.Optional(Type.Enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"], { description: "Requested thinking level. Omit to use the session default. If unavailable at dispatch, the scheduler uses the default and records a notice." })),
   timezone: Type.Optional(Type.String({ description: "IANA timezone. Omit only to use the configured default; if no default exists, ask the user." })),
   schedule: Type.Union([
     Type.Object({ kind: Type.Literal("once"), at: Type.String({ description: "Future ISO timestamp with an explicit UTC offset or Z." }) }, { additionalProperties: false }),

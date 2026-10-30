@@ -142,6 +142,11 @@ export class ScheduledTasksPanel extends LitElement {
     if (task.paused) return messages.t("paused");
     return task.nextDue === null ? messages.t("noNext") : messages.t("next", { at: this.time(task.nextDue) });
   }
+  private renderNotices(execution: ExecutionView) {
+    const messages = this.contentValue?.messages;
+    if (!messages) return nothing;
+    return execution.notices?.map((notice) => html`<p class="run-warning">${messages.t("runWarning", { notice })}</p>`) ?? nothing;
+  }
   private renderTechnical(task: TaskView, execution?: ExecutionView) {
     const content = this.contentValue;
     if (!content) return nothing;
@@ -149,6 +154,10 @@ export class ScheduledTasksPanel extends LitElement {
     return html`<details class="technical"><summary>${messages.t("technical")}</summary>
       <div class="detail-stack meta">
         <span>${this.renderTarget(task)}</span>
+        ${task.model !== undefined ? html`<span>${messages.t("requestedModel", { value: task.model })}</span>` : nothing}
+        ${task.thinkingLevel !== undefined ? html`<span>${messages.t("requestedThinking", { value: task.thinkingLevel })}</span>` : nothing}
+        ${execution?.model !== undefined ? html`<span>${messages.t("effectiveModel", { value: execution.model })}</span>` : nothing}
+        ${execution?.thinkingLevel !== undefined ? html`<span>${messages.t("effectiveThinking", { value: execution.thinkingLevel })}</span>` : nothing}
         <span>${task.schedule.kind === "cron" ? html`<code>${task.schedule.expression}</code>` : messages.t("once", { at: localization.date(new Date(task.schedule.at), { dateStyle: "full", timeStyle: "long", timeZone: task.timezone }) })} · ${task.timezone}</span>
         ${execution ? html`<span>${messages.t(execution.trigger)} · ${messages.t("recordedAt", { at: this.time(execution.createdAt) })}</span>
           <span>${messages.t("execution", { id: execution.id, revision: execution.task.revision })}</span>
@@ -167,6 +176,7 @@ export class ScheduledTasksPanel extends LitElement {
       ${execution.latestReport ? html`<p class="summary">${execution.latestReport.summary}</p>` : nothing}
       ${execution.status === "uncertain" || execution.status === "failed" || execution.status === "errored"
         ? html`<p class="meta">${messages.t(execution.status === "uncertain" ? "uncertainHelp" : execution.status === "failed" ? "failedHelp" : "erroredHelp")}</p>` : nothing}
+      ${this.renderNotices(execution)}
       ${this.renderTechnical(execution.task, execution)}
     </div>`;
   }
@@ -187,6 +197,7 @@ export class ScheduledTasksPanel extends LitElement {
         <div class="heading"><span class="outcome" data-status=${execution.status}>${messages.t(execution.status)}</span>
           <span class="meta">${this.time(execution.createdAt)}</span></div>
         ${execution.latestReport ? html`<p class="summary preview">${execution.latestReport.summary}</p>` : nothing}
+        ${this.renderNotices(execution)}
         ${execution.status === "uncertain" ? html`<p class="meta">${messages.t("uncertainHelp")}</p>` : nothing}
         ${execution.sessionId !== null ? html`<button type="button" class="ui-button ui-button--action conversation" @click=${() => this.openConversation(execution)}>${messages.t("openConversation")}</button>` : nothing}
       ` : nothing}
@@ -271,6 +282,7 @@ export class ScheduledTasksPanel extends LitElement {
     .next { font-variant-numeric: tabular-nums; }
     .execution, .detail-stack { display: grid; gap: 10px; min-width: 0; }
     .outcome { font-size: 12px; font-weight: 500; }
+    .run-warning { font-size: 12px; white-space: pre-wrap; }
     .summary, .diagnostic { white-space: pre-wrap; line-height: 1.5; }
     .preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .diagnostic, code { font: 12px var(--pi-mono, monospace); }

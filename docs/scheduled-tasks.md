@@ -52,6 +52,14 @@ Agents can discover registered project/workspace IDs, create and inspect tasks, 
 
 Edits use the current task revision to avoid silently overwriting another change. Agents should inspect first and preserve unchanged fields when replacing a definition.
 
+## Model and thinking overrides
+
+Tasks accept optional `model` (an exact `provider/model-id`) and `thinkingLevel` (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Ask the scheduling agent to include either or both. Omitted values stay unset in the task: each execution uses the normal session defaults at that time, not defaults captured when the task was saved. When replacing a definition, omit an override to clear it.
+
+At dispatch, the session host validates the requested settings before submitting the prompt. If the model is unavailable, the scheduler removes that override and uses the normal default model. If the thinking level is unsupported by the effective model, it removes that override and uses the normal default thinking level. Execution history records fallback notices and effective settings; the saved task keeps its requested overrides for future runs.
+
+Fallback is limited to confirmed settings rejections before prompt submission. Provider errors during execution and ambiguous launch failures do not cause another execution with a different model.
+
 ## Schedules and future dispatches
 
 - **One-off:** an ISO timestamp with `Z` or an explicit UTC offset, stored in UTC. The task still stores an explicit timezone.
@@ -64,7 +72,7 @@ Pausing stops future scheduled dispatches. Archiving also prevents manual dispat
 
 To permanently remove a task, archive it first, then ask an agent to delete it. Deletion requires the archived task's current revision and removes the task, every saved definition revision, and all execution history and outcome reports. It cannot be undone. Existing conversations and their transcripts remain intact and are not stopped; reporting outcomes for deleted executions fails. Deletion is temporarily rejected while a dispatch is being admitted; wait for it to settle and inspect the task again before retrying.
 
-There are no automatic execution retries. A scheduled occurrence is consumed even if launch fails or cannot be confirmed. Inspect its history and existing conversations before asking for another dispatch, especially when the result is uncertain.
+Apart from the pre-prompt settings fallback above, there are no automatic execution retries. A scheduled occurrence is consumed even if launch fails or cannot be confirmed. Inspect its history and existing conversations before asking for another dispatch, especially when the result is uncertain.
 
 ## Tasks, executions, and conversations
 

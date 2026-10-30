@@ -1,6 +1,6 @@
 import type { PluginCatalogV1 } from "@jmfederico/pi-web/server-plugin-api";
-import type { Execution, Task, TaskInput } from "./domain.js";
-import { text, validateTask } from "./domain.js";
+import type { Execution, Task, TaskInput, ThinkingLevel } from "./domain.js";
+import { THINKING_LEVELS, text, validateTask } from "./domain.js";
 import type { TaskScheduler } from "./scheduler.js";
 import type { TaskStore } from "./store.js";
 
@@ -87,7 +87,7 @@ export function configuredTimezone(value: unknown): string | undefined {
 }
 
 function parseDefinition(args: Record<string, unknown>, defaultTimezone: string | undefined, now: string): TaskInput {
-  only(args, ["name", "projectId", "workspaceId", "prompt", "timezone", "schedule", "contextPaths"]);
+  only(args, ["name", "projectId", "workspaceId", "prompt", "timezone", "schedule", "contextPaths", "model", "thinkingLevel"]);
   const timezone = args["timezone"] === undefined ? defaultTimezone : args["timezone"];
   if (timezone === undefined) throw new Error("No default timezone is configured. Ask the user for a timezone before creating or rescheduling a task.");
   const schedule = object(args["schedule"]);
@@ -105,7 +105,15 @@ function parseDefinition(args: Record<string, unknown>, defaultTimezone: string 
     name: text(args["name"], "name", 512), projectId: identifier(args, "projectId"), workspaceId: identifier(args, "workspaceId"),
     prompt: text(args["prompt"], "prompt", 48 * 1024), timezone: text(timezone, "timezone", 256),
     schedule: parsedSchedule, contextPaths: paths.map((path: unknown) => text(path, "context path", 1024)),
+    ...(args["model"] === undefined ? {} : { model: text(args["model"], "model", 512) }),
+    ...(args["thinkingLevel"] === undefined ? {} : { thinkingLevel: parseThinkingLevel(args["thinkingLevel"]) }),
   }, now);
+}
+
+function parseThinkingLevel(value: unknown): ThinkingLevel {
+  const level = THINKING_LEVELS.find((candidate) => candidate === value);
+  if (level === undefined) throw new Error("Invalid thinkingLevel");
+  return level;
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -134,6 +142,8 @@ function taskSummary(task: Task) {
   return {
     id: task.id, name: task.name, revision: task.revision, projectId: task.projectId, workspaceId: task.workspaceId,
     schedule: task.schedule, timezone: task.timezone, paused: task.paused, archived: task.archived, nextDue: task.nextDue,
+    ...(task.model === undefined ? {} : { model: task.model }),
+    ...(task.thinkingLevel === undefined ? {} : { thinkingLevel: task.thinkingLevel }),
   };
 }
 function executionSummary(execution: Execution | undefined) {
@@ -141,7 +151,9 @@ function executionSummary(execution: Execution | undefined) {
   return {
     id: execution.id, taskId: execution.taskId, task: taskSummary(execution.task), trigger: execution.trigger,
     dueAt: execution.dueAt, createdAt: execution.createdAt, status: execution.status, sessionId: execution.sessionId,
-    dispatchError: execution.dispatchError, latestReport: execution.reports.at(-1) ?? null,
+    dispatchError: execution.dispatchError, latestReport: execution.reports.at(-1) ?? null, notices: execution.notices,
+    ...(execution.model === undefined ? {} : { model: execution.model }),
+    ...(execution.thinkingLevel === undefined ? {} : { thinkingLevel: execution.thinkingLevel }),
   };
 }
 

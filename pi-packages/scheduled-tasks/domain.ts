@@ -2,7 +2,12 @@ import { CronExpressionParser } from "cron-parser";
 
 export type TaskSchedule = { kind: "once"; at: string } | { kind: "cron"; expression: string };
 
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = typeof THINKING_LEVELS[number];
+
 export interface TaskInput {
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
   name: string;
   projectId: string;
   workspaceId: string;
@@ -41,6 +46,10 @@ export interface Execution {
   sessionId: string | null;
   dispatchError: string | null;
   reports: OutcomeReport[];
+  notices: string[];
+  /** Effective host selection, when reported by the host. */
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 export function text(value: unknown, label: string, maxBytes: number): string {
@@ -52,6 +61,8 @@ export function text(value: unknown, label: string, maxBytes: number): string {
 
 /** Validation is shared by all write entry points; it never guesses a timezone. */
 export function validateTask(input: TaskInput, now: string): TaskInput {
+  if (input.model !== undefined) text(input.model, "model", 512);
+  if (input.thinkingLevel !== undefined && !THINKING_LEVELS.includes(input.thinkingLevel)) throw new Error("Invalid thinkingLevel");
   text(input.name, "name", 512);
   text(input.projectId, "projectId", 512);
   text(input.workspaceId, "workspaceId", 512);
@@ -84,6 +95,8 @@ export function validateTask(input: TaskInput, now: string): TaskInput {
   return {
     name: input.name, projectId: input.projectId, workspaceId: input.workspaceId, prompt: input.prompt,
     timezone: input.timezone, contextPaths: [...input.contextPaths],
+    ...(input.model === undefined ? {} : { model: input.model }),
+    ...(input.thinkingLevel === undefined ? {} : { thinkingLevel: input.thinkingLevel }),
     schedule: input.schedule.kind === "once"
       ? { kind: "once", at: new Date(input.schedule.at).toISOString() }
       : { kind: "cron", expression: input.schedule.expression },
