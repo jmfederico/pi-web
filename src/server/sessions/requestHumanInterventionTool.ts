@@ -11,7 +11,7 @@ export function createRequestHumanInterventionToolDefinition() {
     name: "request_human_intervention",
     exposure: "model-only",
     label: "Request human intervention",
-    description: "Mark this session as needing human input and end this run. Use for a question in prose, an approval, or an external action. Any new agent run clears the indicator, regardless of who starts it; request intervention again if still blocked.",
+    description: "Mark this session as needing the user's attention and end the run. Use when you have a request for the user here, such as a question, an approval, or an action to take. Any new agent run clears the indicator.",
     promptSnippet: "request_human_intervention: signal that human input or action is needed; ends the run",
     promptGuidelines: [
       "When you stop for human input or an external human action, explain what is needed and call request_human_intervention alone and last. A plain-text question does not set the indicator by itself. ask_user sets it automatically for structured forms, so do not call both.",
