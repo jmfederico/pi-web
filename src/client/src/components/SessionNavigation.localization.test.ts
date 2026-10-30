@@ -70,6 +70,21 @@ it("keeps session selection, focus, expansion, content and tree caches stable ac
   }
 });
 
+it("updates intervention status and collapsed rollup labels when language changes", async () => {
+  const view = new SessionList();
+  const root = session("root", { interventionRequired: true });
+  const child = session("child", { parentSessionPath: root.path, agentSubsession: true, interventionRequired: true });
+  view.sessions = [root, child];
+  document.body.append(view);
+  await settle(view);
+  release = localization.registerCatalog({ id: "intervention-test", namespace: "core.activityBadge", locale: "de", load: () => Promise.resolve({ needsInput: "Eingabe erforderlich" }) });
+  await localization.setPreferences({ language: "de", formatLocale: "de-DE" });
+  await settle(view);
+  expect(required(view, ".session-meta", HTMLElement).textContent).toContain("Eingabe erforderlich");
+  expect(required(view, ".action-row .activity-indicator", HTMLElement).getAttribute("aria-label")).toBe("Eingabe erforderlich");
+  expect(required(view, ".agent-subsession-toggle .activity-indicator", HTMLElement).title).toBe("Eingabe erforderlich");
+});
+
 it("keeps a session action menu open and renders destructive confirmations in the current language", async () => {
   const view = new SessionList();
   const archived = session("archived", { archived: true, name: "User <img> session" });

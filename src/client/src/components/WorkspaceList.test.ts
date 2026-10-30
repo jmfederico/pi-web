@@ -89,6 +89,21 @@ describe("workspace sidebar styling contract", () => {
     expect(list.onSelect).toHaveBeenCalledExactlyOnceWith(second);
   });
 
+  it("keeps intervention attention independent from actual work and unread", async () => {
+    const first = workspace("first");
+    const list = await mountWorkspaceList([first], machineStatusSnapshot({ workspaces: { first: { "core:intervention-required": true, "core:working": true, "core:unread": true } } }));
+    const row = rowFor(list, "first");
+    expect(row.getAttribute("data-activity")).toBe("intervention-required");
+    expect(row.getAttribute("data-busy")).toBe("true");
+    expect(row.querySelector(".unread-ring .intervention-required")).not.toBeNull();
+    list.statusSnapshot = machineStatusSnapshot({ workspaces: { first: { "core:intervention-required": true } } });
+    await list.updateComplete;
+    expect(row.getAttribute("data-activity")).toBe("intervention-required");
+    expect(row.getAttribute("data-busy")).toBe("false");
+    expect(row.querySelector(".unread-ring")).toBeNull();
+    expect(row.querySelector(".activity-indicator.intervention-required")?.getAttribute("title")).toBe("Needs input");
+  });
+
   it("refreshes current, activity, busy and unread hooks without replacing the row", async () => {
     const first = workspace("first");
     const second = workspace("second");

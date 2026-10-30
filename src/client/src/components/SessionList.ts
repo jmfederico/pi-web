@@ -13,7 +13,7 @@ import { isSessionActive } from "../../../shared/activity";
 import { CORE_STATUS_FLAGS, type StatusFlags } from "../../../shared/machineStatus";
 import { renderCopyIdAction } from "./copyIdAction";
 import { createActionMenuController } from "./actionMenu";
-import { renderActionActivityIndicator, type ActivityIndicatorKind } from "./activityBadge";
+import { interventionRequiredLabel, renderActionActivityIndicator, type ActivityIndicatorKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles, scrollBoundaryShadow } from "./shared";
@@ -203,8 +203,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       const nested = attention.get(session.id);
       const parent = attention.get(parentId);
       const ownKind = sessionRowActivityKind(session, this.statuses[session.id], this.activities[session.id], this.sending[session.id] === true, this.sessionFlags);
-      const kind = ownKind === "sending" || nested?.kind === "sending" || parent?.kind === "sending"
-        ? "sending" : ownKind ?? nested?.kind ?? parent?.kind;
+      const kinds = [ownKind, nested?.kind, parent?.kind];
+      const kind = kinds.includes("intervention-required") ? "intervention-required"
+        : kinds.includes("sending") ? "sending" : ownKind ?? nested?.kind ?? parent?.kind;
       const unread = sessionRowUnread(session, this.unreadSessionIds) || nested?.unread === true || parent?.unread === true;
       if (kind !== undefined || unread) attention.set(parentId, { kind, unread });
     }
@@ -481,18 +482,20 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const status = this.statuses[session.id];
     const activity = this.activities[session.id];
     const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true, this.sessionFlags);
+    const busy = !isCachedNewSessionInfo(session) && session.archived !== true
+      && (this.sending[session.id] === true || sessionRowIsWorking(session, status, activity, this.sessionFlags));
     const unread = sessionRowUnread(session, this.unreadSessionIds);
     const labelItems = this.sessionLabelItems(session);
     return html`
       <div
-        class="action-row ui-nav-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""} ${agentChildCount > 0 ? "has-agent-subsessions" : ""} ${linkedAgentChild ? "linked-agent-child" : ""}"
+        class="action-row ui-nav-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""} ${indicatorKind === "intervention-required" ? "intervention-required" : ""} ${agentChildCount > 0 ? "has-agent-subsessions" : ""} ${linkedAgentChild ? "linked-agent-child" : ""}"
         style=${`--depth:${String(cappedDepth)};--agent-offset:${String(agentOffset)}px`}
         tabindex="0"
         data-session-id=${session.id}
         data-current=${this.selected?.id === session.id}
         aria-current=${this.selected?.id === session.id ? "true" : nothing}
         data-activity=${indicatorKind ?? "idle"}
-        data-busy=${indicatorKind === "session" || indicatorKind === "sending"}
+        data-busy=${busy}
         data-unread=${unread}
         data-selected=${bulkSelected}
         data-selecting=${showsCheckbox}
@@ -507,7 +510,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         <div class="action-main ui-nav-row-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${sessionNavigationMessages.t("selectSession", { label: sessionLabel(session) })} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name-line"><span class="action-name ui-nav-row-label" dir="auto" title=${sessionLabel(session)}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span>
-          <small class="session-secondary ui-nav-row-meta"><span class="session-meta">${sessionNavigationMessages.t("sessionMeta", { state: this.sessionMetaState(session, status, activity), count: session.messageCount })}</span>${labelItems.length === 0 ? null : html`<span class="session-label-separator" aria-hidden="true">·</span><span class="session-labels">${renderSessionLabelItems(labelItems)}</span>`}</small>
+          <small class="session-secondary ui-nav-row-meta"><span class="session-meta">${indicatorKind === "intervention-required" ? html`${interventionRequiredLabel()} · ` : null}${sessionNavigationMessages.t("sessionMeta", { state: this.sessionMetaState(session, status, activity), count: session.messageCount })}</span>${labelItems.length === 0 ? null : html`<span class="session-label-separator" aria-hidden="true">·</span><span class="session-labels">${renderSessionLabelItems(labelItems)}</span>`}</small>
           ${this.renderActivity(indicatorKind, unread)}
         </div>
         <div class="action-menu ui-nav-row-actions">
@@ -527,7 +530,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const { session } = row;
     const status = this.statuses[session.id];
     const canArchive = isArchivableSessionInfo(session, status);
-    const isWorking = sessionRowActivityKind(session, status, this.activities[session.id], false, this.sessionFlags) === "session";
+    const isWorking = sessionRowIsWorking(session, status, this.activities[session.id], this.sessionFlags);
     const canDeleteTransient = isTransientNewSessionInfo(session, status);
     const descendantCount = descendantCounts?.get(session.id) ?? 0;
     // Keep the panel beside the row scroller; the shared popup uses the top layer.
@@ -966,8 +969,8 @@ function unarchivedDescendantCounts(sessions: SessionInfo[]): Map<string, number
  * Resolve the activity indicator kind for a session row, or undefined when the
  * row should show no work dot. Pure so it can be unit-tested without rendering.
  *
- * "sending" (client-side upload in flight) is reported with its own kind, and
- * takes precedence over server activity, so it can be colored distinctly to
+ * Intervention takes priority over work. "sending" (client-side upload in flight)
+ * takes precedence over ordinary server activity, so it can be colored distinctly to
  * signal that it is not yet propagated to workspace/machine activity. Unread
  * is not a kind: it is an attention flag resolved by `sessionRowUnread` and
  * rendered as a ring around this dot (or a filled dot when this is undefined).
@@ -980,14 +983,27 @@ export function sessionRowActivityKind(
   sessionFlags?: Readonly<Record<string, StatusFlags>>,
 ): ActivityIndicatorKind | undefined {
   if (isCachedNewSessionInfo(session) || session.archived === true) return undefined;
+  // Complete snapshots own navigation state, including absent/cleared flags.
+  // Live status and persisted listings support daemons without that projection.
+  const intervention = sessionFlags !== undefined
+    ? sessionFlags[session.id]?.[CORE_STATUS_FLAGS.interventionRequired] === true
+    : (status?.sessionId === session.id ? status.interventionRequired : undefined) ?? session.interventionRequired;
+  if (intervention === true) return "intervention-required";
   if (sending) return "sending";
+  return sessionRowIsWorking(session, status, activity, sessionFlags) ? "session" : undefined;
+}
+
+function sessionRowIsWorking(
+  session: SessionInfo,
+  status: SessionStatus | undefined,
+  activity: SessionActivity | undefined,
+  sessionFlags?: Readonly<Record<string, StatusFlags>>,
+): boolean {
   // The complete daemon projection owns navigation activity. Live chat events
   // are only a compatibility fallback, not a second writer of this state.
-  const working = sessionFlags === undefined
+  return sessionFlags === undefined
     ? isSessionActive(status, activity)
     : sessionFlags[session.id]?.[CORE_STATUS_FLAGS.working] === true;
-  if (working) return "session";
-  return undefined;
 }
 
 /**

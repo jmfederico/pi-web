@@ -10,6 +10,20 @@ const legacyActivityWarning = {
 };
 
 describe("API parsers", () => {
+  it("preserves optional intervention state and validates live transitions", () => {
+    const info = { id: "s", path: "/s.jsonl", cwd: "/repo", created: "now", modified: "now", messageCount: 1, firstMessage: "hi" };
+    for (const interventionRequired of [true, false]) {
+      expect(parseSessionInfo({ ...info, interventionRequired }).interventionRequired).toBe(interventionRequired);
+      expect(parseSessionStatus({ ...statusWire(), interventionRequired }).interventionRequired).toBe(interventionRequired);
+      const event = parseRealtimeStreamEvent({ type: "status.update", status: { ...statusWire(), interventionRequired } });
+      expect(event.type === "status.update" && event.status.interventionRequired).toBe(interventionRequired);
+    }
+    expect(parseSessionInfo(info).interventionRequired).toBeUndefined();
+    expect(parseSessionStatus(statusWire()).interventionRequired).toBeUndefined();
+    expect(() => parseSessionInfo({ ...info, interventionRequired: "yes" })).toThrow("interventionRequired");
+    expect(() => parseSessionStatus({ ...statusWire(), interventionRequired: 1 })).toThrow("interventionRequired");
+  });
+
   it("preserves remote naming metadata and supports older machine responses", () => {
     const machine = { id: "remote", name: "Alias", kind: "remote", createdAt: "now", updatedAt: "now" };
     expect(parseMachine(machine)).toEqual(machine);

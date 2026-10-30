@@ -67,6 +67,7 @@ describe("delegation tool capability boundary", () => {
 
     expect(toolNames(createPiWebCustomToolDefinitions("/workspace", true, spawn, subsessions))).toEqual([
       "edit",
+      "request_human_intervention",
       "spawn_session",
       "spawn_subsession",
       "list_subsessions",
@@ -80,14 +81,14 @@ describe("delegation tool capability boundary", () => {
   it("continues to honor global delegation feature flags for unrestricted sessions", () => {
     const { spawn } = delegationDeps();
 
-    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", true, spawn))).toEqual(["edit", "spawn_session"]);
-    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", true))).toEqual(["edit"]);
+    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", true, spawn))).toEqual(["edit", "request_human_intervention", "spawn_session"]);
+    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", true))).toEqual(["edit", "request_human_intervention"]);
   });
 
   it("removes every delegation tool but retains ordinary tools for restricted tracked children", () => {
     const { spawn, subsessions } = delegationDeps();
 
-    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, spawn, subsessions))).toEqual(["edit"]);
+    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, spawn, subsessions))).toEqual(["edit", "request_human_intervention"]);
   });
 
   it.each([true, false])("keeps messaging independent of delegation capability (%s)", (delegationEnabled) => {
@@ -95,8 +96,8 @@ describe("delegation tool capability boundary", () => {
     const messaging = { send: vi.fn(() => Promise.resolve({ sessionId: "other", delivery: "started" as const })) };
     const names = toolNames(createPiWebCustomToolDefinitions("/workspace", delegationEnabled, spawn, subsessions, false, messaging));
     expect(names).toContain("send_session_message");
-    if (!delegationEnabled) expect(names).toEqual(["edit", "send_session_message"]);
-    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, undefined, undefined, false, messaging))).toEqual(["edit", "send_session_message"]);
+    if (!delegationEnabled) expect(names).toEqual(["edit", "request_human_intervention", "send_session_message"]);
+    expect(toolNames(createPiWebCustomToolDefinitions("/workspace", false, undefined, undefined, false, messaging))).toEqual(["edit", "request_human_intervention", "send_session_message"]);
   });
 
   it("wires the dispatching session identity, inherited model, and model spec into spawn_session", async () => {

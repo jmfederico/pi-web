@@ -8,6 +8,7 @@ import type { PiSessionListEntry } from "./piSessionService.js";
 import { rewriteHeaderWithoutParentSession } from "./sessionFileRewrite.testSupport.js";
 import { SessionSummaryScanner } from "./sessionSummaryScanner.js";
 import { SESSION_UI_METADATA_CUSTOM_TYPE } from "./sessionMetadata.js";
+import { SESSION_INTERVENTION_CUSTOM_TYPE } from "./sessionIntervention.js";
 
 // Route node:fs/promises through a plain copy of the real module: Node's
 // builtin namespaces are frozen, so vi.spyOn cannot redefine their exports
@@ -126,6 +127,70 @@ describe("session summary scanner public metadata", () => {
     }
     await appendFile(path, `${JSON.stringify(publicEntry(4))}\n`);
     expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([{ metadata: { example: { leg: 4 } } }]);
+  });
+});
+
+describe("session summary scanner intervention state", () => {
+  const interventionLine = (required: boolean) => JSON.stringify({
+    type: "custom", customType: SESSION_INTERVENTION_CUSTOM_TYPE, data: { version: 1, required },
+  });
+
+  it("retains a cold intervention through memo reuse and clears it after an appended resume marker", async () => {
+    const path = await writeSession("intervention.jsonl", [
+      headerLine({ id: "intervention", cwd: WORKSPACE }),
+      interventionLine(true),
+      JSON.stringify({ type: "branch_summary", parentId: "root", summary: "changed branch" }),
+    ]);
+    const scanner = new SessionSummaryScanner({ chunkBytes: 17 });
+    for (let pass = 0; pass < 2; pass++) {
+      expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([{ id: "intervention", interventionRequired: true }]);
+    }
+
+    await appendFile(path, `${interventionLine(false)}\n`);
+    for (let pass = 0; pass < 2; pass++) {
+      const summaries = await scanner.scanSessionSummariesInDir(sessionDir);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.interventionRequired).not.toBe(true);
+    }
+  });
+
+  it("keeps an earlier marker beyond 64 KiB of trailing bookkeeping and message bodies without parsing those bodies", async () => {
+    const padding = "trailing-body-".repeat(8 * 1024);
+    await writeSession("intervention-long-tail.jsonl", [
+      headerLine({ id: "long-tail", cwd: WORKSPACE }),
+      messageLine({ role: "user", content: textContent("first message") }),
+      interventionLine(true),
+      JSON.stringify({ type: "label", id: "bookkeeping", label: padding }),
+      messageLine({ role: "toolResult", content: textContent(padding) }),
+    ]);
+    const parseSpy = vi.spyOn(JSON, "parse");
+    try {
+      const scanner = new SessionSummaryScanner({ chunkBytes: 4096 });
+      expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([
+        { id: "long-tail", interventionRequired: true, messageCount: 2, firstMessage: "first message" },
+      ]);
+      expect(parseSpy.mock.calls.some(([input]) => input.includes(padding))).toBe(false);
+    } finally {
+      parseSpy.mockRestore();
+    }
+  });
+
+  it("folds foreign reordered custom fields and ignores invalid later transitions", async () => {
+    const foreignMarker = (required: boolean) => `  ${JSON.stringify({
+      data: { required, version: 1 }, id: "foreign", customType: SESSION_INTERVENTION_CUSTOM_TYPE, type: "custom",
+    })}`;
+    const path = await writeSession("intervention-foreign.jsonl", [
+      headerLine({ id: "foreign-intervention", cwd: WORKSPACE }),
+      interventionLine(false),
+      foreignMarker(true),
+      JSON.stringify({ type: "custom", customType: SESSION_INTERVENTION_CUSTOM_TYPE, data: { version: 99, required: false } }),
+    ]);
+    const scanner = new SessionSummaryScanner({ chunkBytes: 19 });
+    expect(await scanner.scanSessionSummariesInDir(sessionDir)).toMatchObject([{ interventionRequired: true }]);
+    await appendFile(path, `${foreignMarker(false)}\n`);
+    const summaries = await scanner.scanSessionSummariesInDir(sessionDir);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.interventionRequired).not.toBe(true);
   });
 });
 

@@ -666,6 +666,8 @@ export interface SessionNotificationSummaryEvent {
 
 export interface SessionInfo extends SessionRef {
   path: string;
+  /** Session yielded for human input; any new agent run clears this state. */
+  interventionRequired?: boolean;
   /** Only true for positively verified tracked agent subsessions; absent otherwise. */
   agentSubsession?: boolean;
   /** True when the server has verified a backing session file exists; false when known transient. */
@@ -1236,6 +1238,8 @@ export interface SessionWarning {
 
 export interface SessionStatus {
   sessionId: string;
+  /** Live value, including false; absent on older daemons. */
+  interventionRequired?: boolean;
   /** True when the server has verified a backing session file exists; false when known transient. */
   persisted?: boolean;
   /**
